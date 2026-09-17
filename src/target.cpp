@@ -88,9 +88,9 @@ uint64_t extract_snap_id(const rawstd::URI& uri) {
     return snap_id;
 }
 
-// This URI's own byte offset within its parent mds:// volume, if any --
-// "<uuid>" (0) or "<uuid>:<offset>[@<snap_id>]", the same ':' convention
-// chunk_slot_target() in mds_backend.cpp stamps onto every slot of a
+// This URI's own byte offset within the larger object it's one chunk of,
+// if any -- "<uuid>" (0) or "<uuid>:<offset>[@<snap_id>]", the same ':'
+// convention chunk_slot_target() in mds_backend.cpp stamps onto every slot of a
 // chunk it builds (index * chunk_size). Doubles as the grouping key the
 // constructor below sorts every URI of a multi-chunk target into its
 // own chunk by (see its own comment) -- distinct chunks always differ
@@ -631,61 +631,88 @@ uint64_t Target::offset() const {
 
 rawstd::Task<void>
 Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
-    const std::vector<rawstd::URI>& uris = _chunks.front();
-
     // Mandatory: the caller must always state how many copies it thinks
-    // it's creating, and it must match the target's own URI count exactly
-    // -- a mismatch is a caller bug (e.g. reusing a Spec read from a
-    // different target, or a miscounted/misconfigured URI list) worth
-    // catching here rather than silently creating something narrower or
-    // wider than intended. Each URI's own backend separately validates
-    // its own share is exactly 1 (Backend::_validate_spec()) -- this
-    // check is about the caller's stated *total* matching reality.
-    if (sp.mirrors != uris.size()) {
-        rawstd_error(
-            "Spec mirrors (%u) does not match target's URI count (%zu)\n",
-            sp.mirrors, uris.size()
-        );
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    // it's creating, and it must match every chunk group's own URI count
+    // exactly -- a mismatch is a caller bug (e.g. reusing a Spec read
+    // from a different target, or a miscounted/misconfigured URI list)
+    // worth catching here, before any I/O at all, rather than silently
+    // creating something narrower or wider than intended (or worse,
+    // creating some chunks before noticing a later one doesn't match).
+    // Each URI's own backend separately validates its own share is
+    // exactly 1 (Backend::_validate_spec()) -- this check is about the
+    // caller's stated *total* matching reality.
+    for (const std::vector<rawstd::URI>& uris : _chunks) {
+        if (sp.mirrors != uris.size()) {
+            rawstd_error(
+                "Spec mirrors (%u) does not match target's URI count (%zu)\n",
+                sp.mirrors, uris.size()
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
     }
 
-    // Every URI is one copy: each one's own create() gets mirrors == 1
-    // (which every Backend::create() now validates, see
-    // Backend::_validate_spec()), not sp.mirrors itself (the target-wide
-    // URI count just validated above).
-    RawstorObjectSpec uri_sp = sp;
-    uri_sp.mirrors = 1;
-
-    // Every URI's CREATE goes out concurrently instead of one at a time.
-    // This can't just gather() them, though: on failure, only the URIs
-    // THIS call actually created may be rolled back -- e.g.
-    // test_create_twice creating an already-existing target fails with
-    // EEXIST, and rolling back every URI regardless (as if remove()-ing
-    // an uncreated one were always harmless) would delete the
-    // pre-existing object a completely unrelated, earlier call created.
-    // So each task's own success/failure is tracked here instead of going
-    // through gather()'s single pass/fail-the-whole-batch result.
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(uris.size());
-    for (const auto& target : uris) {
-        tasks.push_back(create_one(queue, target, uri_sp));
-    }
-
+    // Every URI actually created so far, across every chunk group --
+    // rolled back as one flat list on any later failure (below), so a
+    // chunk that fails partway through still gets its own already-
+    // created mirrors undone alongside every earlier chunk's.
     std::vector<rawstd::URI> created;
-    created.reserve(uris.size());
-
-    // co_await isn't allowed inside a catch block, so the failure is only
-    // recorded here; rolling back happens just below, outside the
-    // handler.
     std::exception_ptr eptr;
-    for (size_t i = 0; i < uris.size(); ++i) {
-        try {
-            co_await tasks[i];
-            created.push_back(uris[i]);
-        } catch (...) {
-            if (!eptr) {
-                eptr = std::current_exception();
+
+    for (const std::vector<rawstd::URI>& uris : _chunks) {
+        // Every URI is one copy: each one's own create() gets mirrors ==
+        // 1 (which every Backend::create() now validates, see
+        // Backend::_validate_spec()), not sp.mirrors itself (the
+        // per-chunk URI count just validated above). A single chunk
+        // group (the ordinary case, including a single mds:// URI --
+        // sp.chunk_size there is just the volume's own future chunking
+        // policy, not a statement that *this* call's own size needs
+        // splitting) gets `sp.size` unmodified; only a genuine multi-
+        // chunk-group target (mds::Backend's own internal flat string)
+        // splits it, sp.size then being the whole object's own total
+        // size and this chunk's own share being `sp.chunk_size` starting
+        // at its own offset (extract_offset(), already stamped on its
+        // own URIs) -- smaller for the last, short chunk.
+        RawstorObjectSpec chunk_sp = sp;
+        chunk_sp.mirrors = 1;
+        if (_chunks.size() > 1) {
+            uint64_t offset = extract_offset(uris.front());
+            chunk_sp.size = std::min(sp.chunk_size, sp.size - offset);
+        }
+
+        // Every URI's CREATE goes out concurrently instead of one at a
+        // time. This can't just gather() them, though: on failure, only
+        // the URIs THIS call actually created may be rolled back -- e.g.
+        // test_create_twice creating an already-existing target fails
+        // with EEXIST, and rolling back every URI regardless (as if
+        // remove()-ing an uncreated one were always harmless) would
+        // delete the pre-existing object a completely unrelated, earlier
+        // call created. So each task's own success/failure is tracked
+        // here instead of going through gather()'s single pass/fail-the-
+        // whole-batch result.
+        std::vector<rawstd::Task<void>> tasks;
+        tasks.reserve(uris.size());
+        for (const auto& target : uris) {
+            tasks.push_back(create_one(queue, target, chunk_sp));
+        }
+
+        // co_await isn't allowed inside a catch block, so the failure is
+        // only recorded here; rolling back happens just below, outside
+        // the handler.
+        for (size_t i = 0; i < uris.size(); ++i) {
+            try {
+                co_await tasks[i];
+                created.push_back(uris[i]);
+            } catch (...) {
+                if (!eptr) {
+                    eptr = std::current_exception();
+                }
             }
+        }
+
+        if (eptr) {
+            // A later chunk's own mirrors were never even attempted --
+            // nothing of theirs to roll back.
+            break;
         }
     }
 
@@ -787,11 +814,16 @@ rawstd::Task<void> Target::set_sync_state(
 }
 
 rawstd::Task<void> Target::remove(rawio::Queue& queue) {
-    // Every URI's REMOVE goes out concurrently instead of one at a time;
-    // every one is still attempted regardless of an earlier failure
-    // (gather() never abandons a task still in flight). On failure,
-    // gather() surfaces exactly one exception (not one per failed URI).
-    co_await remove_many(queue, _chunks.front());
+    // Every URI of every chunk group's own REMOVE goes out concurrently
+    // instead of one chunk (or one URI) at a time; every one is still
+    // attempted regardless of an earlier failure (gather() never
+    // abandons a task still in flight). On failure, gather() surfaces
+    // exactly one exception (not one per failed URI).
+    std::vector<rawstd::URI> all_uris;
+    for (const std::vector<rawstd::URI>& uris : _chunks) {
+        all_uris.insert(all_uris.end(), uris.begin(), uris.end());
+    }
+    co_await remove_many(queue, all_uris);
 }
 
 rawstd::Task<void>

@@ -120,6 +120,24 @@ RawstorObjectSpec chunk_spec(const WireMap& map, uint64_t index) {
     return sp;
 }
 
+// The whole volume's own spec -- everything Target::create() (target.hpp's
+// own doc comment) needs to derive each chunk's own share of it by
+// itself (chunk_size + this total size + each chunk's own ":<offset>"),
+// so create() below only has to build this once instead of one
+// chunk_spec() per chunk. Same fields Backend::spec() below already
+// reports for an open volume.
+RawstorObjectSpec volume_spec(const WireMap& map) {
+    RawstorObjectSpec sp{};
+    sp.size = map.logical_size;
+    sp.member_kind = RAWSTOR_MEMBER_DATA;
+    sp.chunk_size = map.chunk_size;
+    sp.width = map.policy.width;
+    sp.mirrors = map.policy.width;
+    sp.failure_domain = map.policy.failure_domain;
+    sp.stripe_width = map.policy.stripe_width;
+    return sp;
+}
+
 // The internal multi-chunk Target string (target.hpp's own doc comment)
 // describing the whole volume: every chunk's own URIs, comma-joined
 // together with every other chunk's -- Target's own constructor sorts
@@ -169,29 +187,23 @@ Backend::create(const RawstdUUID& id, uint64_t, const RawstorObjectSpec& sp) {
     /* Materialize every chunk object on its OSTs. */
     WireMap map = co_await _client.vol_open(id, 0);
 
-    uint64_t created = 0;
+    // co_await isn't allowed inside a catch block, so the failure is only
+    // recorded here; rolling back happens just below, outside the
+    // handler.
     std::exception_ptr error;
     try {
-        for (uint64_t i = 0; i < map.chunks.size(); ++i) {
-            Target chunk_target(chunk_target_string(map, i));
-            co_await chunk_target.create(_queue, chunk_spec(map, i));
-            created = i + 1;
-        }
+        // Target::create() (target.hpp's own doc comment) already fans
+        // out across every chunk group in build_target_string()'s own
+        // flat string, and already rolls back whatever chunks it managed
+        // to create before a later one's own failure -- only the volume
+        // map registration itself is left for this call to roll back.
+        co_await Target(build_target_string(map, 0))
+            .create(_queue, volume_spec(map));
     } catch (...) {
         error = std::current_exception();
     }
 
     if (error) {
-        /* Roll back whatever chunks were already created, then the map. */
-        while (created > 0) {
-            --created;
-            try {
-                Target chunk_target(chunk_target_string(map, created));
-                co_await chunk_target.remove(_queue);
-            } catch (const std::exception& e) {
-                rawstd_error("Failed to rollback chunk create: %s\n", e.what());
-            }
-        }
         try {
             co_await _client.vol_remove(id);
         } catch (const std::exception& e) {
@@ -214,14 +226,14 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t) {
      */
     co_await _client.vol_remove(id);
 
-    for (uint64_t i = 0; i < map.chunks.size(); ++i) {
-        try {
-            Target chunk_target(chunk_target_string(map, i));
-            co_await chunk_target.remove(_queue);
-        } catch (const std::system_error& e) {
-            if (e.code().value() != ENOENT) {
-                throw;
-            }
+    // Target::remove() (target.hpp's own doc comment) already fans out
+    // across every URI of every chunk group in build_target_string()'s
+    // own flat string.
+    try {
+        co_await Target(build_target_string(map, 0)).remove(_queue);
+    } catch (const std::system_error& e) {
+        if (e.code().value() != ENOENT) {
+            throw;
         }
     }
 }

@@ -36,16 +36,17 @@ class Object;
 // ":<offset>" suffix (see extract_offset()'s own comment in target.cpp):
 // URIs sharing one offset are mirrors of one chunk, never two different
 // ones. Deliberately lightweight -- unlike Chunk, it never holds a Slot
-// between calls; create()/spec()/meta()/set_sync_state()/remove()/
-// snapshot_create()/snapshot_remove() only ever operate on the target's
-// own first chunk group (see each one's own comment on why a multi-chunk
-// string can't generalize to them), opening a Slot per URI just for that
-// one call and closing it again before returning, same as the code they
-// replace used to do. open() is the one exception that needs a Slot to
-// survive past the call -- it builds the returned Object's own Chunks
-// via Chunk::create() (a friend of Object, by analogy with Chunk::
-// create() itself), keeping one Slot per URI alive in each Chunk's own
-// pool.
+// between calls; every method below opens a Slot per URI just for that
+// one call and closes it again before returning, same as the code they
+// replace used to do. create()/remove() are the only two that actually
+// work across every chunk group (see each one's own comment) --
+// spec()/meta()/set_sync_state()/snapshot_create()/snapshot_remove()
+// still only ever operate on the target's own first chunk group (see
+// each one's own comment on why a multi-chunk string can't generalize to
+// them). open() is the one exception that needs a Slot to survive past
+// the call -- it builds the returned Object's own Chunks via
+// Chunk::create() (a friend of Object, by analogy with Chunk::create()
+// itself), keeping one Slot per URI alive in each Chunk's own pool.
 class Target final {
 private:
     // One entry per chunk group the constructor sorted the target
@@ -94,14 +95,29 @@ public:
     // above.
     uint64_t snap_id() const;
 
-    // This target's own byte offset within its parent mds:// volume, if
-    // any -- the ":<offset>" suffix mds::Backend stamps onto each chunk
-    // group's own URIs when it builds the internal multi-chunk string
-    // (chunk_slot_target()'s own convention in mds_backend.cpp: `index *
-    // chunk_size`), or 0 if absent (a plain, non-mds:// target has no
-    // such parent to be an offset into). No I/O, same as snap_id() above.
+    // This target's own byte offset within the larger object it's one
+    // chunk of, if any -- the ":<offset>" suffix mds::Backend stamps onto
+    // each chunk group's own URIs when it builds the internal multi-chunk
+    // string (chunk_slot_target()'s own convention in mds_backend.cpp:
+    // `index * chunk_size`), or 0 if absent (a plain, single-chunk target
+    // has no such larger object to be an offset into). No I/O, same as
+    // snap_id() above.
     uint64_t offset() const;
 
+    // Creates every chunk group, in order -- a single group (the plain,
+    // single-chunk case, including a lone mds:// URI -- sp.chunk_size
+    // there is just the volume's own future chunking policy, not a
+    // statement that this call's own size needs splitting) gets `sp.size`
+    // unmodified; a genuine multi-chunk-group target (mds::Backend's own
+    // internal flat string) splits it, `sp.size` then being the whole
+    // object's own total size and each group's own `:<offset>` suffix
+    // (extract_offset()) saying where its own, possibly smaller (the
+    // last chunk), share begins. On any chunk's failure, every URI actually
+    // created so far (earlier chunks in full, plus whichever of the
+    // failing chunk's own mirrors got that far) is rolled back before the
+    // error is rethrown -- same all-or-nothing contract as the
+    // single-chunk case used to have, just spanning every chunk instead
+    // of one.
     rawstd::Task<void> create(rawio::Queue& queue, const RawstorObjectSpec& sp);
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue);
     // One RawstorObjectMeta per URI in the first chunk group, same order
@@ -112,6 +128,12 @@ public:
     rawstd::Task<void> set_sync_state(
         rawio::Queue& queue, const RawstorObjectSyncState& sync_state
     );
+    // Removes every URI of every chunk group concurrently -- unlike
+    // create() above, there's no rollback to speak of (removal has
+    // nothing to undo), so every URI of every chunk is still attempted
+    // even if some others fail (gather() never abandons a task still in
+    // flight); on failure, gather() surfaces exactly one exception (not
+    // one per failed URI).
     rawstd::Task<void> remove(rawio::Queue& queue);
 
     // Opens the object this target addresses (docs/locations_and_targets.md).
