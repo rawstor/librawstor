@@ -87,14 +87,18 @@ Opening a target (`rawstor_target_open()`) resolves it into an
 **Object** made of one or more **Chunks** (see below). For a plain
 target, this is always a single chunk — the target string above, in
 full. `mds://` volumes need more than one: the client library builds,
-internally, a second `;`-separated syntax joining one ordinary
-(comma-separated) group per chunk: `uri1,uri2;uri3;uri4,uri5,uri6`. This
-form only ever exists inside the library (built by the MDS backend from
-the volume's chunk map, consumed by `Target`'s own constructor) — it is
-never part of the target syntax a caller types, appears in the CLI, or
-is returned by any `rawstor_target_*()` call. It is documented here only
-so the internal model below is unambiguous about where a multi-chunk
-Object's own per-chunk URI lists come from.
+internally, a single flat `,`-separated list of every chunk's own URIs,
+one after another, with no second separator marking where one chunk's
+own group ends and the next begins — `Target`'s own constructor sorts
+them back into their chunk groups itself, by each URI's own internal
+`:<offset>` suffix (a chunk's byte offset within the volume, `logical_
+index * chunk_size` — URIs sharing one offset are mirrors of the same
+chunk, distinct chunks always differ). This form only ever exists inside
+the library (built by the MDS backend from the volume's chunk map) — it
+is never part of the target syntax a caller types, appears in the CLI,
+or is returned by any `rawstor_target_*()` call. It is documented here
+only so the internal model below is unambiguous about where a
+multi-chunk Object's own per-chunk URI lists come from.
 
 ---
 
@@ -121,7 +125,7 @@ more Slots. Its URI form is exactly a plain target's own: one URI per
 mirror, comma-separated, all sharing the same UUID —
 `ost://h1:p1/<uuid>,ost://h2:p2/<uuid>`. A single-chunk Object's one
 Chunk *is* the target string that opened it; a multi-chunk `mds://`
-volume's chunks are each one `;`-separated group of the internal form
+volume's chunks are each one same-`:<offset>` group of the internal form
 above.
 
 ## Slot
@@ -149,6 +153,18 @@ Two independent mechanisms use it, at different layers:
   `mds://host:port/<volume_id>@5`. This suffix is never part of a
   location and never carries a comma-separated list of its own — it
   binds whichever single URI it's attached to.
+
+## Chunk offset (not for manual entry)
+
+A chunk's own byte offset within its parent `mds://` volume
+(`logical_index * chunk_size`) rides the same URI, as a `:<offset>`
+suffix right after the UUID: `ost://host:port/<uuid>:1048576` (optionally
+followed by `@<snap_id>`, e.g. `ost://host:port/<uuid>:1048576@5`). Like
+the internal multi-chunk form above, this is built only by `mds::Backend`
+from its own chunk map and never something a caller types — `Target`'s
+own constructor reads it back out to reconstruct chunk grouping, and it's
+also readable through `Target::offset()`/`rawstor_target_offset()`
+directly (0 for a plain, non-`mds://` target).
 
 ---
 

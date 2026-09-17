@@ -25,27 +25,32 @@ class Location;
 class Object;
 
 // A Target addresses one specific object, parsed from its own string
-// form (see docs/locations_and_targets.md): `uri1,uri2,...` (one or more
-// mirrored slots of a single chunk -- the ordinary, user-facing format),
-// or `uri1,uri2;uri3;...` (`;`-separated chunk groups, each itself the
-// ordinary comma-separated format) -- the latter is an internal-only
-// format only mds::Backend ever builds (from its own WireMap), never
-// something a caller types by hand. Deliberately lightweight -- unlike
-// Chunk, it never holds a Slot between calls; create()/spec()/meta()/
-// set_sync_state()/remove()/snapshot_create()/snapshot_remove() only
-// ever operate on the target's own first chunk group (see each one's own
-// comment on why a multi-chunk string can't generalize to them), opening
-// a Slot per URI just for that one call and closing it again before
-// returning, same as the code they replace used to do. open() is the one
-// exception that needs a Slot to survive past the call -- it builds the
-// returned Object's own Chunks via Chunk::create() (a friend of Object,
-// by analogy with Chunk::create() itself), keeping one Slot per URI
-// alive in each Chunk's own pool.
+// form (see docs/locations_and_targets.md): always a single, plain
+// `,`-separated URI list, one or more mirrored slots of a single chunk
+// for the ordinary, user-facing case. mds::Backend's own internal
+// multi-chunk target (built from its own WireMap, never something a
+// caller types by hand) is the exact same flat, comma-only list -- every
+// chunk's own mirrors, one after another, with no second separator
+// marking where one chunk's own group ends and the next begins. The
+// constructor instead groups them back apart itself, by each URI's own
+// ":<offset>" suffix (see extract_offset()'s own comment in target.cpp):
+// URIs sharing one offset are mirrors of one chunk, never two different
+// ones. Deliberately lightweight -- unlike Chunk, it never holds a Slot
+// between calls; create()/spec()/meta()/set_sync_state()/remove()/
+// snapshot_create()/snapshot_remove() only ever operate on the target's
+// own first chunk group (see each one's own comment on why a multi-chunk
+// string can't generalize to them), opening a Slot per URI just for that
+// one call and closing it again before returning, same as the code they
+// replace used to do. open() is the one exception that needs a Slot to
+// survive past the call -- it builds the returned Object's own Chunks
+// via Chunk::create() (a friend of Object, by analogy with Chunk::
+// create() itself), keeping one Slot per URI alive in each Chunk's own
+// pool.
 class Target final {
 private:
-    // One entry per `;`-separated chunk group, each already split into
-    // its own comma-separated URI list -- almost always exactly one
-    // group (see the class's own doc comment).
+    // One entry per chunk group the constructor sorted the target
+    // string's own flat URI list into (see the class's own doc comment)
+    // -- almost always exactly one group.
     std::vector<std::vector<rawstd::URI>> _chunks;
 
 public:

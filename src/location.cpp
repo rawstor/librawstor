@@ -245,13 +245,17 @@ void launch_create_op(
 
 namespace rawstor {
 
-Location::Location(const std::vector<rawstd::URI>& uris) : _uris(uris) {
+// Every public method below used to re-run these two checks itself,
+// identically, before touching _uris -- validated once, here, instead:
+// _uris never changes after construction, so nothing past this point
+// can un-validate it (same pattern as Target's own constructor).
+Location::Location(const std::string& location) :
+    _uris(rawstd::URI::uriv(location.c_str())) {
+    validate_not_empty(_uris);
+    validate_different_uris(_uris);
 }
 
 rawstd::Task<RawstorLocationInfo> Location::info(rawio::Queue& queue) {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-
     std::vector<rawstd::Task<RawstorLocationInfo>> tasks;
     tasks.reserve(_uris.size());
     for (const auto& location : _uris) {
@@ -278,8 +282,6 @@ rawstd::Task<void> Location::list(
     rawio::Queue& queue, unsigned int limit, std::list<Target>& targets,
     RawstorPaginationToken& token
 ) {
-    validate_not_empty(_uris);
-
     RawstdUUID token_uuid = {};
     memcpy(token_uuid.bytes, token.bytes, sizeof(token.bytes));
 
@@ -361,9 +363,6 @@ Location::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
 rawstd::Task<Target> Location::create(
     rawio::Queue& queue, const RawstdUUID& uuid, const RawstorObjectSpec& sp
 ) {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
 
@@ -387,7 +386,7 @@ int rawstor_location_list(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Location loc(rawstd::URI::uriv(location));
+        rawstor::Location loc(location);
         launch_list_op(
             std::move(loc), static_cast<rawio::Queue*>(queue), limit, targets,
             token, cb, data
@@ -411,7 +410,7 @@ int rawstor_location_info(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Location loc(rawstd::URI::uriv(location));
+        rawstor::Location loc(location);
         launch_info_op(
             std::move(loc), static_cast<rawio::Queue*>(queue), info, cb, data
         );

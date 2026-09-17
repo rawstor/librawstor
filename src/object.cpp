@@ -16,15 +16,15 @@
 
 namespace {
 
-// The bound snapshot version embedded in a chunk group's own URIs, if
+// The bound snapshot version embedded in a URI's own filename, if
 // any -- "<uuid>" (live, 0) or "<uuid>@<snap_id>" (chunk_slot_target()'s own
 // convention in mds_backend.cpp). Deliberately a local duplicate of
 // target.cpp's own extract_snap_id(): Chunk::create() takes `snap_id` as a
 // plain scalar, so Object::_chunk() below (like Target::open()) extracts
 // it from its own already-validated URI group once here, rather than
 // Chunk::create() re-parsing it out of every URI itself.
-uint64_t extract_snap_id(const std::vector<rawstd::URI>& uris) {
-    const std::string& filename = uris.front().path().filename();
+uint64_t extract_snap_id(const rawstd::URI& uri) {
+    const std::string& filename = uri.path().filename();
     size_t at = filename.find('@');
     if (at == std::string::npos) {
         return 0;
@@ -115,7 +115,7 @@ rawstd::Task<Chunk*> Object::_chunk(uint32_t index) {
     std::exception_ptr error;
     try {
         entry.chunk = co_await Chunk::create(
-            _queue, entry.targets, extract_snap_id(entry.targets)
+            _queue, entry.targets, extract_snap_id(entry.targets.front())
         );
     } catch (const std::system_error& e) {
         entry.open_errno = e.code().value();

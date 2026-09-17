@@ -97,9 +97,12 @@ chunk_targets(const WireMap& map, uint64_t index, uint64_t snap_id = 0) {
 }
 
 // One chunk's own target string -- the comma-joined single-chunk format
-// every plain (non-mds://) target already uses, one of `;`-separated
-// groups Target::open() joins these into for the whole volume (see
-// build_target_string() below).
+// every plain (non-mds://) target already uses. Also a valid multi-chunk
+// Target string all by itself (Target's own constructor groups by
+// offset, and every URI here shares this one chunk's own) -- used as one
+// wherever a single chunk is all that's needed (create()/remove()/
+// resize()'s own per-chunk loop below), and as one ingredient of
+// build_target_string()'s own whole-volume string otherwise.
 std::string
 chunk_target_string(const WireMap& map, uint64_t index, uint64_t snap_id = 0) {
     return rawstd::URI::uris(chunk_targets(map, index, snap_id));
@@ -128,17 +131,18 @@ RawstorObjectSpec chunk_spec(const WireMap& map, uint64_t index) {
 }
 
 // The internal multi-chunk Target string (target.hpp's own doc comment)
-// describing the whole volume: every chunk's own comma-joined group,
-// joined in turn by ';'.
+// describing the whole volume: every chunk's own URIs, comma-joined
+// together with every other chunk's -- Target's own constructor sorts
+// them back into chunk groups itself, by each URI's own ":<offset>"
+// suffix, so nothing here needs to mark where one chunk's own group ends
+// and the next begins.
 std::string build_target_string(const WireMap& map, uint64_t snap_id) {
-    std::ostringstream oss;
+    std::vector<rawstd::URI> uris;
     for (uint64_t i = 0; i < map.chunks.size(); ++i) {
-        if (i != 0) {
-            oss << ';';
-        }
-        oss << chunk_target_string(map, i, snap_id);
+        std::vector<rawstd::URI> chunk = chunk_targets(map, i, snap_id);
+        uris.insert(uris.end(), chunk.begin(), chunk.end());
     }
-    return oss.str();
+    return rawstd::URI::uris(uris);
 }
 
 } // namespace

@@ -16,6 +16,7 @@
 #include <rawstd/uuid.h>
 
 #include <exception>
+#include <map>
 #include <memory>
 #include <new>
 #include <set>
@@ -90,18 +91,11 @@ RawstdUUID uuid_from_target(const rawstd::URI& target) {
     return id;
 }
 
-// The bound snapshot version embedded in a chunk group's own URIs, if
-// any -- "<uuid>" (live, 0) or "<uuid>@<snap_id>", the same convention
+// The bound snapshot version embedded in a URI's own filename, if any --
+// "<uuid>" (live, 0) or "<uuid>@<snap_id>", the same convention
 // chunk_slot_target() in mds_backend.cpp already uses for a single slot.
-// validate_same_uuid() above already guarantees every URI in the group
-// carries the identical filename (uuid *and* "@<snap_id>" suffix alike), so
-// this only ever needs to look at the first one. Chunk::create() takes
-// `snap_id` as a plain scalar (by analogy with Slot::open()'s own `snap_id`),
-// so whoever builds its call -- Target::open() below, or
-// Object::_chunk() -- extracts it from the group's own URIs once here,
-// rather than Chunk::create() re-parsing it out of every URI itself.
-uint64_t extract_snap_id(const std::vector<rawstd::URI>& uris) {
-    const std::string& filename = uris.front().path().filename();
+uint64_t extract_snap_id(const rawstd::URI& uri) {
+    const std::string& filename = uri.path().filename();
     size_t at = filename.find('@');
     if (at == std::string::npos) {
         return 0;
@@ -115,15 +109,15 @@ uint64_t extract_snap_id(const std::vector<rawstd::URI>& uris) {
     return snap_id;
 }
 
-// This chunk group's own byte offset within its parent mds:// volume, if
-// any -- "<uuid>" (0) or "<uuid>:<offset>[@<snap_id>]", the same ':'
-// convention chunk_slot_target() in mds_backend.cpp stamps onto every
-// slot of a chunk it builds (index * chunk_size). Same reasoning as
-// extract_snap_id() above for reading only the first URI: validate_
-// same_uuid() already guarantees every URI in the group shares the
-// identical filename, offset included.
-uint64_t extract_offset(const std::vector<rawstd::URI>& uris) {
-    const std::string& filename = uris.front().path().filename();
+// This URI's own byte offset within its parent mds:// volume, if any --
+// "<uuid>" (0) or "<uuid>:<offset>[@<snap_id>]", the same ':' convention
+// chunk_slot_target() in mds_backend.cpp stamps onto every slot of a
+// chunk it builds (index * chunk_size). Doubles as the grouping key the
+// constructor below sorts every URI of a multi-chunk target into its
+// own chunk by (see its own comment) -- distinct chunks always differ
+// here, same-chunk mirrors never do.
+uint64_t extract_offset(const rawstd::URI& uri) {
+    const std::string& filename = uri.path().filename();
     size_t colon = filename.find(':');
     if (colon == std::string::npos) {
         return 0;
@@ -139,33 +133,6 @@ uint64_t extract_offset(const std::vector<rawstd::URI>& uris) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     return offset;
-}
-
-// Splits `target` on ';' into its chunk groups, tolerating empty segments
-// from repeated/trailing separators -- "a;b;c", "a;b;c;" and "a;;b;;c;;"
-// all yield the same three groups (docs/locations_and_targets.md: the
-// multi-chunk format is an internal one mds::Backend builds itself, never
-// hand-typed, but its own string-building code is simpler when it doesn't
-// have to worry about a stray trailing ';'). No escaping: unlike ','
-// (which a URI could theoretically embed, see rawstd::URI::uriv()'s own
-// escape handling), ';' never appears inside a single URI.
-std::vector<std::string> split_chunk_groups(const std::string& target) {
-    std::vector<std::string> ret;
-    size_t start = 0;
-    while (true) {
-        size_t semi = target.find(';', start);
-        std::string group = target.substr(
-            start, semi == std::string::npos ? std::string::npos : semi - start
-        );
-        if (!group.empty()) {
-            ret.push_back(std::move(group));
-        }
-        if (semi == std::string::npos) {
-            break;
-        }
-        start = semi + 1;
-    }
-    return ret;
 }
 
 // One URI's worth of Target::create()/remove() work: connect a
@@ -568,23 +535,38 @@ namespace rawstor {
 // Every public method below used to re-run three validate_*() checks
 // itself, identically, before touching _chunks -- validated once, here,
 // instead: _chunks never changes after construction, so nothing past
-// this point can un-validate it. Each ';'-separated group is validated
-// independently (see split_chunk_groups()'s own doc comment on the
-// format), same three checks a plain single-chunk target's own URI list
-// always got.
+// this point can un-validate it.
+//
+// A single, plain ','-separated URI list, same as any plain target
+// (mirroring, no chunking): no second separator for chunk groups.
+// mds::Backend's own internal multi-chunk string is the exact same flat
+// list -- every chunk's own mirrors, all comma-joined together, with no
+// marker of where one chunk's own group ends and the next begins. That
+// grouping instead falls out of each URI's own offset (extract_offset()
+// above, ":<offset>" in its filename, index * chunk_size): URIs sharing
+// one offset are mirrors of the same chunk (never two different chunks
+// -- distinct logical indices always differ here), so bucketing by it
+// and keeping the buckets in ascending order reconstructs exactly the
+// per-chunk grouping and the logical-index order the old explicit ';'
+// separator used to spell out directly. A plain, non-mds:// target's
+// URIs all carry no ":<offset>" suffix at all -- extract_offset()'s own
+// default of 0 for all of them puts every one of them in the same single
+// bucket, the ordinary single-chunk case.
 Target::Target(const std::string& target) {
-    std::vector<std::string> groups = split_chunk_groups(target);
-    if (groups.empty()) {
-        rawstd_error("Empty target\n");
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    std::vector<rawstd::URI> uris = rawstd::URI::uriv(target.c_str());
+    validate_not_empty(uris);
+
+    std::map<uint64_t, std::vector<rawstd::URI>> groups;
+    for (rawstd::URI& uri : uris) {
+        uint64_t offset = extract_offset(uri);
+        groups[offset].push_back(std::move(uri));
     }
+
     _chunks.reserve(groups.size());
-    for (const std::string& group : groups) {
-        std::vector<rawstd::URI> uris = rawstd::URI::uriv(group.c_str());
-        validate_not_empty(uris);
-        validate_different_uris(uris);
-        validate_same_uuid(uris);
-        _chunks.push_back(std::move(uris));
+    for (auto& [offset, group] : groups) {
+        validate_different_uris(group);
+        validate_same_uuid(group);
+        _chunks.push_back(std::move(group));
     }
 }
 
@@ -598,15 +580,15 @@ Location Target::location() const {
     for (const auto& uri : _chunks.front()) {
         uris.push_back(uri.parent());
     }
-    return Location(uris);
+    return Location(rawstd::URI::uris(uris));
 }
 
 uint64_t Target::snap_id() const {
-    return extract_snap_id(_chunks.front());
+    return extract_snap_id(_chunks.front().front());
 }
 
 uint64_t Target::offset() const {
-    return extract_offset(_chunks.front());
+    return extract_offset(_chunks.front().front());
 }
 
 rawstd::Task<void>
@@ -834,19 +816,20 @@ rawstd::Task<uint64_t> Target::snapshot_create_assign(rawio::Queue& queue) {
 // .size() == 1', the ordinary case) becomes a single-chunk Object, whose
 // chunk_size/size are simply whatever Chunk::create() itself reports
 // (spec().size) -- no chunking above the single Chunk at all. More than
-// one chunk group (mds::Backend's own internal ';'-joined format) opens
-// chunk 0 and the last chunk eagerly instead of inventing a new non-URI
-// syntax for chunk_size/the object's total size: chunk_size is chunk 0's
-// own spec().size (every chunk but the last is exactly chunk_size, same
-// convention Object::MultiChunkMap assumes), and the total size is
-// chunk_size * (N - 1) plus the last chunk's own (possibly smaller)
-// spec().size. Both already-opened Chunks are handed straight into the
-// Object's own matching entries below -- Object::_chunk() never reopens
-// them.
+// one chunk group (mds::Backend's own internal multi-chunk string --
+// see the constructor's own comment on how it's grouped back apart)
+// opens chunk 0 and the last chunk eagerly instead of inventing a new
+// non-URI syntax for chunk_size/the object's total size: chunk_size is
+// chunk 0's own spec().size (every chunk but the last is exactly
+// chunk_size, same convention Object::MultiChunkMap assumes), and the
+// total size is chunk_size * (N - 1) plus the last chunk's own (possibly
+// smaller) spec().size. Both already-opened Chunks are handed straight
+// into the Object's own matching entries below -- Object::_chunk() never
+// reopens them.
 rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     if (_chunks.size() == 1) {
         std::unique_ptr<Chunk> chunk = co_await Chunk::create(
-            queue, _chunks.front(), extract_snap_id(_chunks.front())
+            queue, _chunks.front(), extract_snap_id(_chunks.front().front())
         );
         uint64_t size = chunk->spec().size;
         std::unique_ptr<Object> obj(new Object(
@@ -857,10 +840,10 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     }
 
     std::unique_ptr<Chunk> first = co_await Chunk::create(
-        queue, _chunks.front(), extract_snap_id(_chunks.front())
+        queue, _chunks.front(), extract_snap_id(_chunks.front().front())
     );
     std::unique_ptr<Chunk> last = co_await Chunk::create(
-        queue, _chunks.back(), extract_snap_id(_chunks.back())
+        queue, _chunks.back(), extract_snap_id(_chunks.back().front())
     );
 
     uint64_t chunk_size = first->spec().size;

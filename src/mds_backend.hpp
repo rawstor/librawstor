@@ -31,8 +31,8 @@ namespace mds {
  * ordinary single-URI target whose one "chunk" happens to be an entire
  * MDS-orchestrated volume. Opening it (set_object()) fetches the
  * volume's current WireMap from the MDS and builds the same internal
- * ';'-joined multi-chunk Target string Target::open() already knows how
- * to parse (see target.hpp) -- recursing into Target/Object/Chunk/Slot
+ * multi-chunk Target string Target::open() already knows how to parse
+ * (see target.hpp) -- recursing into Target/Object/Chunk/Slot
  * again, the same way ost::Backend's own client recurses into a fresh
  * Target/Backend pair on the far end of the wire (ost/src/client.cpp) --
  * just intra-process here instead of across a socket. The nested Object
