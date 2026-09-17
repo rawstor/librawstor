@@ -38,6 +38,30 @@ uint64_t extract_snap_id(const rawstd::URI& uri) {
     return snap_id;
 }
 
+// This URI's own byte offset within its parent mds:// volume, if any --
+// "<uuid>" (0) or "<uuid>:<offset>[@<snap_id>]" (chunk_slot_target()'s
+// own convention in mds_backend.cpp). Deliberately a local duplicate of
+// target.cpp's own extract_offset(), for the same reason extract_snap_id()
+// above is.
+uint64_t extract_offset(const rawstd::URI& uri) {
+    const std::string& filename = uri.path().filename();
+    size_t colon = filename.find(':');
+    if (colon == std::string::npos) {
+        return 0;
+    }
+    size_t at = filename.find('@', colon);
+    std::string offset_str = filename.substr(
+        colon + 1, at == std::string::npos ? std::string::npos : at - colon - 1
+    );
+    std::istringstream iss(offset_str);
+    uint64_t offset = 0;
+    if (!(iss >> offset) || !iss.eof()) {
+        rawstd_error("Malformed offset suffix: %s\n", filename.c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    return offset;
+}
+
 } // namespace
 
 namespace rawstor {
@@ -115,7 +139,8 @@ rawstd::Task<Chunk*> Object::_chunk(uint32_t index) {
     std::exception_ptr error;
     try {
         entry.chunk = co_await Chunk::create(
-            _queue, entry.targets, extract_snap_id(entry.targets.front())
+            _queue, entry.targets, extract_offset(entry.targets.front()),
+            extract_snap_id(entry.targets.front())
         );
     } catch (const std::system_error& e) {
         entry.open_errno = e.code().value();

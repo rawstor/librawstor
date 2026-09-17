@@ -38,8 +38,20 @@ struct RawstorOpts {
     unsigned int mirror_probe_interval;
 };
 
+/**
+ * Opaque -- no code outside rawstor_location_list()'s own implementation
+ * ever needs to interpret these bytes; rawstor_pagination_token_empty()
+ * (below) is the only thing that ever looks inside one. Internally, it
+ * holds a resume cursor's own string form ("<uuid>[:<offset>][@<snap_id>]",
+ * the same grammar a target string's own filename uses -- see
+ * docs/locations_and_targets.md), sized generously for a realistic one;
+ * an all-zero token means "from the start" (or, on return, "nothing
+ * left").
+ */
+#define RAWSTOR_PAGINATION_TOKEN_SIZE 128
+
 typedef struct {
-    uint8_t bytes[16];
+    char bytes[RAWSTOR_PAGINATION_TOKEN_SIZE];
 } RawstorPaginationToken;
 
 /**

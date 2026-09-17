@@ -17,6 +17,7 @@
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <sstream>
 #include <string>
@@ -52,37 +53,37 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     _parent_dataset(parse_parent_dataset(location)) {
 }
 
-std::string Backend::_device_path(const RawstdUUID& id) const {
+std::string Backend::_dataset(
+    const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+) const {
+    RawstdUUIDString uuid_str;
+    rawstd_uuid_to_string(&id, &uuid_str);
+
+    std::ostringstream oss;
+    oss << _parent_dataset << "/" << uuid_str;
+    if (chunk_offset != 0) {
+        oss << ":" << chunk_offset;
+    }
+    if (snap_id != 0) {
+        oss << "@s" << snap_id;
+    }
+    return oss.str();
+}
+
+std::string Backend::_device_path(
+    const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
 
     std::ostringstream oss;
     oss << "/dev/zvol/" << _parent_dataset << "/" << uuid_str;
-    return oss.str();
-}
-
-std::string Backend::_dataset(const RawstdUUID& id) const {
-    RawstdUUIDString uuid_str;
-    rawstd_uuid_to_string(&id, &uuid_str);
-    return _parent_dataset + "/" + uuid_str;
-}
-
-std::string
-Backend::_device_path(const RawstdUUID& id, uint64_t snap_id) const {
-    if (snap_id == 0) {
-        return _device_path(id);
+    if (chunk_offset != 0) {
+        oss << ":" << chunk_offset;
     }
-    std::ostringstream oss;
-    oss << _device_path(id) << "@s" << snap_id;
-    return oss.str();
-}
-
-std::string Backend::_dataset(const RawstdUUID& id, uint64_t snap_id) const {
-    if (snap_id == 0) {
-        return _dataset(id);
+    if (snap_id != 0) {
+        oss << "@s" << snap_id;
     }
-    std::ostringstream oss;
-    oss << _dataset(id) << "@s" << snap_id;
     return oss.str();
 }
 
@@ -114,8 +115,9 @@ rawstd::Task<void> Backend::_wait_for_blockdev(
     RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
 }
 
-rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t snap_id) {
-    std::string path = _device_path(id, snap_id);
+rawstd::Task<int>
+Backend::_open(const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id) {
+    std::string path = _device_path(id, chunk_offset, snap_id);
 
     // No O_NONBLOCK: opening a ZFS zvol with it caused cache-miss reads to
     // return -EAGAIN, which io_uring could not properly handle for
@@ -135,9 +137,9 @@ rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t snap_id) {
 }
 
 rawstd::Task<void> Backend::list(
-    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+    unsigned int limit, std::vector<ListedObject>& targets, ListedObject& token
 ) {
-    RawstdUUID input_token = token;
+    ListedObject input_token = token;
     targets.clear();
     token = {};
 
@@ -172,27 +174,34 @@ rawstd::Task<void> Backend::list(
             continue; // Not a direct child of the parent dataset.
         }
 
-        RawstdUUID uuid;
-        if (rawstd_uuid_from_string(&uuid, name.c_str()) < 0) {
+        // A UUID's own string form is always exactly 36 characters
+        // (RawstdUUIDString) -- a fixed prefix, since the UUID itself
+        // already embeds dashes (8-4-4-4-12), unlike this backend's own
+        // ":<chunk_offset>" suffix.
+        if (name.size() < 36) {
             continue;
         }
-        targets.push_back(uuid);
+        std::string uuid_part = name.substr(0, 36);
+        uint64_t chunk_offset = 0;
+        if (name.size() > 36) {
+            if (name[36] != ':') {
+                continue;
+            }
+            chunk_offset = strtoull(name.c_str() + 37, nullptr, 10);
+        }
+
+        RawstdUUID uuid;
+        if (rawstd_uuid_from_string(&uuid, uuid_part.c_str()) < 0) {
+            continue;
+        }
+        targets.push_back(ListedObject{uuid, chunk_offset, 0});
     }
 
-    std::sort(
-        targets.begin(), targets.end(),
-        [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-            return rawstd_uuid_cmp(&lhs, &rhs) < 0;
-        }
-    );
+    std::sort(targets.begin(), targets.end());
 
     targets.erase(
-        targets.begin(), std::upper_bound(
-                             targets.begin(), targets.end(), input_token,
-                             [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-                                 return rawstd_uuid_cmp(&lhs, &rhs) < 0;
-                             }
-                         )
+        targets.begin(),
+        std::upper_bound(targets.begin(), targets.end(), input_token)
     );
 
     if (limit == 0) {
@@ -209,8 +218,9 @@ rawstd::Task<void> Backend::list(
     co_return;
 }
 
-rawstd::Task<void>
-Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+rawstd::Task<void> Backend::create(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+) {
     _validate_spec(sp);
 
     // zfs-create(8) rejects volume sizes that are not a multiple of
@@ -232,9 +242,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
         );
     }
 
-    RawstdUUIDString uuid_str;
-    rawstd_uuid_to_string(&id, &uuid_str);
-    std::string device_path = _device_path(id);
+    std::string device_path = _device_path(id, chunk_offset);
 
     // create() must behave like open(O_EXCL): retrying it against an id
     // a previous, unacknowledged attempt already fully created needs to
@@ -248,7 +256,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
         RAWSTD_THROW_SYSTEM_ERROR(EEXIST);
     }
 
-    std::string dataset = _parent_dataset + "/" + uuid_str;
+    std::string dataset = _dataset(id, chunk_offset);
 
     char size_buf[32];
     snprintf(size_buf, sizeof(size_buf), "%" PRIu64, size);
@@ -262,10 +270,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     Backend::ChunkIdentity identity;
     identity.member_kind = sp.member_kind;
     identity.width = static_cast<uint8_t>(sp.width);
-    memcpy(identity.volume_id, sp.volume_id, sizeof(identity.volume_id));
-    identity.logical_index = sp.logical_index;
     identity.chunk_size = sp.chunk_size;
-    identity.snap_id = sp.snap_id;
     std::string prop =
         std::string(rawstor_property) + "=" + meta_encode(sync_state, identity);
 
@@ -281,7 +286,9 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
                                      "-o",  prop,     dataset};
     try {
         co_await rawstor::run_command(_queue, std::move(argv));
-        co_await _wait_for_blockdev(_device_path(id), /*want_present=*/true);
+        co_await _wait_for_blockdev(
+            _device_path(id, chunk_offset), /*want_present=*/true
+        );
     } catch (const std::system_error& e) {
         rawstd_error(
             "zfs: failed to create zvol %s: %s\n", dataset.c_str(), e.what()
@@ -292,29 +299,29 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     co_return;
 }
 
-rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
+rawstd::Task<void>
+Backend::remove(const RawstdUUID& id, uint64_t chunk_offset) {
     // Matches file::Backend::remove()'s own convention: a nonexistent
     // zvol is ENOENT specifically (permanent -- never retried by
     // Slot::_with_retry()'s is_permanent_backend_error()), not the
     // generic, retryable EIO "zfs destroy" itself would produce for the
     // same case.
-    std::string device_path = _device_path(id);
+    std::string device_path = _device_path(id, chunk_offset);
     if (!co_await _exists(device_path)) {
         rawstd_error("zfs: zvol %s does not exist\n", device_path.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
 
-    RawstdUUIDString uuid_str;
-    rawstd_uuid_to_string(&id, &uuid_str);
-
-    std::string dataset = _parent_dataset + "/" + uuid_str;
+    std::string dataset = _dataset(id, chunk_offset);
 
     rawstd_info("zfs: destroying zvol %s\n", dataset.c_str());
 
     std::vector<std::string> argv = {"zfs", "destroy", dataset};
     try {
         co_await rawstor::run_command(_queue, std::move(argv));
-        co_await _wait_for_blockdev(_device_path(id), /*want_present=*/false);
+        co_await _wait_for_blockdev(
+            _device_path(id, chunk_offset), /*want_present=*/false
+        );
     } catch (const std::system_error& e) {
         rawstd_error(
             "zfs: failed to destroy zvol %s: %s\n", dataset.c_str(), e.what()
@@ -360,8 +367,9 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
-    std::string dataset = _dataset(id);
+rawstd::Task<RawstorObjectMeta>
+Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
+    std::string dataset = _dataset(id, chunk_offset);
 
     std::vector<std::string> argv = {"zfs",  "get",   "-H",
                                      "-o",   "value", rawstor_property,
@@ -400,22 +408,20 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     // than trust a value that could go stale if the zvol were ever resized
     // outside rawstor.
     RawstorObjectMeta ret{};
-    ret.spec = co_await spec(id);
+    ret.spec = co_await spec(id, chunk_offset);
     ret.spec.member_kind = identity.member_kind;
     ret.spec.width = identity.width;
-    memcpy(ret.spec.volume_id, identity.volume_id, sizeof(ret.spec.volume_id));
-    ret.spec.logical_index = identity.logical_index;
     ret.spec.chunk_size = identity.chunk_size;
-    ret.spec.snap_id = identity.snap_id;
     ret.sync_state = sync_state;
 
     co_return ret;
 }
 
 rawstd::Task<void> Backend::set_sync_state(
-    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+    const RawstdUUID& id, uint64_t chunk_offset,
+    const RawstorObjectSyncState& sync_state
 ) {
-    std::string dataset = _dataset(id);
+    std::string dataset = _dataset(id, chunk_offset);
 
     // The placement identity is immutable once stamped at create() --
     // read the existing property first and carry it through unchanged
@@ -459,15 +465,16 @@ rawstd::Task<void> Backend::set_sync_state(
     co_return;
 }
 
-rawstd::Task<void>
-Backend::snapshot_create(const RawstdUUID& id, uint64_t snap_id) {
+rawstd::Task<void> Backend::snapshot_create(
+    const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+) {
     if (snap_id == 0) {
         /* 0 is the live version, never a snapshot. */
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    std::string dataset = _dataset(id);
-    std::string snapshot = _dataset(id, snap_id);
+    std::string dataset = _dataset(id, chunk_offset);
+    std::string snapshot = _dataset(id, chunk_offset, snap_id);
 
     rawstd_info("zfs: creating snapshot %s\n", snapshot.c_str());
 
@@ -505,13 +512,14 @@ Backend::snapshot_create(const RawstdUUID& id, uint64_t snap_id) {
     }
 }
 
-rawstd::Task<void>
-Backend::snapshot_remove(const RawstdUUID& id, uint64_t snap_id) {
+rawstd::Task<void> Backend::snapshot_remove(
+    const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+) {
     if (snap_id == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    std::string snapshot = _dataset(id, snap_id);
+    std::string snapshot = _dataset(id, chunk_offset, snap_id);
 
     rawstd_info("zfs: destroying snapshot %s\n", snapshot.c_str());
 

@@ -109,16 +109,13 @@ rawstor::blk::Backend* open_blk_backend(
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     run(queue, target.create(queue, spec));
 
     object = run(queue, rawstor::Chunk::create(queue, {uri}));
 
     slot = run(queue, rawstor::Slot::create(queue, location, 1));
-    run(queue, slot->open(id));
+    run(queue, slot->open(id, 0));
 
     return static_cast<rawstor::blk::Backend*>(slot->get_next_backend().get());
 }
@@ -379,17 +376,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     rawstor::blk::Backend::ChunkIdentity identity;
     identity.member_kind = RAWSTOR_MEMBER_DATA;
     identity.width = 3;
-    RawstdUUID volume_id;
-    ASSERT_EQ(
-        rawstd_uuid_from_string(
-            &volume_id, "018f4e2a-0000-7000-8000-0000000000aa"
-        ),
-        0
-    );
-    memcpy(identity.volume_id, volume_id.bytes, sizeof(identity.volume_id));
-    identity.logical_index = 42;
     identity.chunk_size = 1ull << 20;
-    identity.snap_id = 5;
 
     std::string encoded =
         rawstor::blk::Backend::meta_encode(sync_state, identity);
@@ -416,16 +403,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     );
     EXPECT_EQ(decoded_identity.member_kind, identity.member_kind);
     EXPECT_EQ(decoded_identity.width, identity.width);
-    EXPECT_EQ(
-        memcmp(
-            decoded_identity.volume_id, identity.volume_id,
-            sizeof(identity.volume_id)
-        ),
-        0
-    );
-    EXPECT_EQ(decoded_identity.logical_index, identity.logical_index);
     EXPECT_EQ(decoded_identity.chunk_size, identity.chunk_size);
-    EXPECT_EQ(decoded_identity.snap_id, identity.snap_id);
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_empty_string) {

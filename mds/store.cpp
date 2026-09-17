@@ -445,8 +445,6 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
         uint64_t chunk_size;
         unsigned width;
         std::map<uint64_t, Chunk> chunks;
-        /* snap_id -> its own chunk set (taken before a resize = smaller). */
-        std::map<uint64_t, std::map<uint64_t, Chunk>> snaps;
     };
 
     std::map<std::string, Volume> volumes;
@@ -457,18 +455,16 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
             continue;
         }
 
-        static const uint8_t null_id[16] = {};
-        if (memcmp(r.meta.spec.volume_id, null_id, sizeof(null_id)) == 0) {
-            /* A standalone object, not a volume chunk. */
-            continue;
-        }
-
         RawstdUUIDString obj_str;
         rawstd_uuid_to_string(&r.obj_id, &obj_str);
 
+        // `r.obj_id` is the volume's own id directly (docs/mds.md, "Chunk
+        // identity": obj_id = volume_id) -- including for a standalone
+        // object, which reconstructs as a "volume" of a single chunk,
+        // byte-for-byte compatible with a plain object.
         std::string key(
-            reinterpret_cast<const char*>(r.meta.spec.volume_id),
-            sizeof(r.meta.spec.volume_id)
+            reinterpret_cast<const char*>(r.obj_id.bytes),
+            sizeof(r.obj_id.bytes)
         );
 
         auto [it, fresh] = volumes.try_emplace(key);
@@ -476,6 +472,13 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
         if (fresh) {
             v.chunk_size = r.meta.spec.chunk_size;
             v.width = r.meta.spec.width;
+            if (v.chunk_size == 0 || (v.chunk_size & (v.chunk_size - 1)) != 0 ||
+                v.width == 0) {
+                rawstd_error(
+                    "reconstruct: %s: malformed stored identity\n", obj_str
+                );
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
         } else if (v.chunk_size != r.meta.spec.chunk_size ||
                    v.width != r.meta.spec.width) {
             rawstd_error(
@@ -484,12 +487,13 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
 
-        auto [cit, chunk_fresh] =
-            r.meta.spec.snap_id == 0
-                ? v.chunks.try_emplace(r.meta.spec.logical_index)
-                : v.snaps[r.meta.spec.snap_id].try_emplace(
-                      r.meta.spec.logical_index
-                  );
+        // logical_index is no longer carried on the wire directly -- it's
+        // derived from the chunk's own byte offset (rawstor_target_
+        // offset(), ScanRecord's own doc comment), the same formula
+        // chunk_slot_target() in mds_backend.cpp used to stamp it.
+        uint64_t logical_index = r.chunk_offset / v.chunk_size;
+
+        auto [cit, chunk_fresh] = v.chunks.try_emplace(logical_index);
         Chunk& c = cit->second;
 
         bool duplicate = false;
@@ -530,23 +534,6 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
         RawstdUUIDString vol_str;
         rawstd_uuid_to_string(&volume_id, &vol_str);
 
-        if (v.chunk_size == 0 || (v.chunk_size & (v.chunk_size - 1)) != 0 ||
-            v.width == 0) {
-            rawstd_error(
-                "reconstruct: %s: malformed stored identity\n", vol_str
-            );
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-
-        if (v.chunks.empty()) {
-            /* Snapshot leftovers of a volume whose live data is gone. */
-            rawstd_warning(
-                "reconstruct: %s: only snapshot records survive, skipped\n",
-                vol_str
-            );
-            continue;
-        }
-
         /* std::map is ordered: the last key is the highest index. */
         uint64_t max_index = v.chunks.rbegin()->first;
         if (v.chunks.size() != max_index + 1) {
@@ -574,14 +561,10 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
         }
         uint64_t logical_size = max_index * v.chunk_size + tail;
 
-        /*
-         * Every version ever seen fences the reservation counter — a
-         * leftover of a crashed snapshot attempt must not alias a later
-         * snapshot under a reused id, so it counts even when it is not
-         * registered below.
-         */
-        uint64_t next_snap_id =
-            v.snaps.empty() ? 1 : v.snaps.rbegin()->first + 1;
+        // No snapshot records are ever scanned (docs/mds.md's own
+        // "Snapshot-version records are skipped (stage 2)"), so nothing
+        // fences this beyond its own starting value.
+        uint64_t next_snap_id = 1;
 
         /*
          * The policy knobs are not persisted on chunks: existing chunks
@@ -627,58 +610,6 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
                             4, chunk.ost_ids[slot].bytes,
                             sizeof(chunk.ost_ids[slot].bytes)
                         )
-                        .step();
-                }
-            }
-        }
-
-        /*
-         * Snapshot views: a version that covers every one of its chunks
-         * is registered — a complete-but-uncommitted leftover is
-         * indistinguishable from a committed snapshot and just as
-         * consistent (drain + FLUSH preceded its CoWs). A version with a
-         * hole is the leftover of a crashed attempt: garbage, left for
-         * collection, never registered.
-         */
-        for (const auto& [snap_id, snap_chunks] : v.snaps) {
-            uint64_t snap_max = snap_chunks.rbegin()->first;
-            uint64_t snap_tail =
-                std::min(snap_chunks.rbegin()->second.size, v.chunk_size);
-            if (snap_chunks.size() != snap_max + 1 || snap_tail == 0) {
-                rawstd_warning(
-                    "reconstruct: %s@%llu: incomplete snapshot leftover, "
-                    "not registered\n",
-                    vol_str, static_cast<unsigned long long>(snap_id)
-                );
-                continue;
-            }
-
-            {
-                Stmt insert(
-                    _db, "INSERT INTO snapshots"
-                         " (volume_id, snap_id, logical_size, created_at)"
-                         " VALUES (?, ?, ?, ?);"
-                );
-                insert.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
-                    .bind_int64(2, snap_id)
-                    .bind_int64(3, snap_max * v.chunk_size + snap_tail)
-                    .bind_int64(4, static_cast<uint64_t>(time(nullptr)))
-                    .step();
-            }
-
-            Stmt insert(
-                _db, "INSERT INTO snapshot_members"
-                     " (volume_id, snap_id, logical_index, ost_id)"
-                     " VALUES (?, ?, ?, ?);"
-            );
-            for (const auto& [index, chunk] : snap_chunks) {
-                for (const RawstdUUID& ost : chunk.ost_ids) {
-                    insert.reset();
-                    insert
-                        .bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
-                        .bind_int64(2, snap_id)
-                        .bind_int64(3, index)
-                        .bind_blob(4, ost.bytes, sizeof(ost.bytes))
                         .step();
                 }
             }

@@ -36,8 +36,10 @@ private:
     // placement identity fields (docs/mds.md, chunk_meta) --
     // free to break, per the design's own compatibility stance (no live
     // installations yet). Not bumped again for the `snap_version` ->
-    // `snap_id` key rename (terminology pass only, same unreleased line
-    // as version 2 itself -- nothing to stay compatible with).
+    // `snap_id` key rename, nor for dropping `volume_id`/`logical_index`/
+    // `snap_id` from ChunkIdentity once the resource's own name became
+    // self-describing (same unreleased line as version 2 itself --
+    // nothing to stay compatible with).
     static constexpr unsigned int META_FORMAT_VERSION = 2;
 
     // Writes dispatched to the io queue whose completion hasn't arrived
@@ -82,7 +84,8 @@ protected:
     // `snap_id` is 0 for the live version, or a previously-snapshotted
     // version id (docs/mds.md, "Snapshots") -- ENOTSUP on a
     // subclass without native CoW (file::Backend, lvm::Backend).
-    virtual rawstd::Task<int> _open(const RawstdUUID& id, uint64_t snap_id) = 0;
+    virtual rawstd::Task<int>
+    _open(const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id) = 0;
 
     // A blk-backed backend has no upfront connection step: the fd is
     // opened lazily, by _open(const RawstdUUID&) above, once
@@ -127,29 +130,34 @@ public:
     // the existing record and carry this part through unchanged rather
     // than reset it, since it never receives this identity itself (see
     // RawstorObjectSyncState, which deliberately doesn't carry it).
-    // member_kind/volume_id all-zero (RAWSTOR_MEMBER_DATA, nil UUID) is
-    // a standalone (non-chunk) object -- today's only case, until Volume
-    // creation starts stamping real values.
+    // member_kind all-zero (RAWSTOR_MEMBER_DATA) is a standalone
+    // (non-chunk) object -- today's only case, until Volume creation
+    // starts stamping real values. `volume_id`/`snap_id`/`logical_index`
+    // used to live here too, but the resource's own on-disk/LV/zvol name
+    // is now self-describing (`id` is the volume's own id directly,
+    // `chunk_offset` -- threaded alongside `id` through every method
+    // below -- disambiguates chunks of the same volume, see
+    // rawstor::ListedObject's own doc comment in backend.hpp), so nothing
+    // here needs to duplicate them.
     struct ChunkIdentity {
         RawstorMemberKind member_kind = RAWSTOR_MEMBER_DATA;
         uint8_t width = 0;
-        uint8_t volume_id[16] = {};
-        uint64_t logical_index = 0;
         uint64_t chunk_size = 0;
-        uint64_t snap_id = 0;
     };
 
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     rawstd::Task<void> close() override final;
 
-    rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t snap_id = 0) override final;
+    rawstd::Task<void> set_object(
+        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id = 0
+    ) override final;
 
     // Default spec() for a backend whose object id maps to a real block
     // device (BLKGETSIZE64) -- file::Backend overrides this instead, since
     // its objects are plain regular files.
-    rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) override;
+    rawstd::Task<RawstorObjectSpec>
+    spec(const RawstdUUID& id, uint64_t chunk_offset) override;
 
     // Encodes/decodes a RawstorObjectSyncState plus its ChunkIdentity as
     // a compact colon-separated string of hex fields, e.g.

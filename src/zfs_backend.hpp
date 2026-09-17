@@ -25,8 +25,13 @@ namespace zfs {
  *   Example:    zfs://tank/rawstor
  *
  * Each object is a zvol created under the parent dataset, named after its
- * UUID. Zvol dataset: <parent_dataset>/<uuid>. Device path:
- * /dev/zvol/<parent_dataset>/<uuid>.
+ * UUID -- self-describing (docs/mds.md, "Chunk identity"): `id` is the
+ * volume's own id for every one of its chunks, `chunk_offset`
+ * disambiguates which one, as a ":<chunk_offset>" dataset-name suffix
+ * (omitted when 0) -- ZFS dataset names allow ':', same delimiter as the
+ * target-string syntax's own ":<offset>". Zvol dataset:
+ * <parent_dataset>/<uuid>[:<chunk_offset>]. Device path:
+ * /dev/zvol/<parent_dataset>/<uuid>[:<chunk_offset>].
  *
  * Requires the 'zfs' CLI to be available in PATH and sufficient privileges
  * (typically root or CAP_SYS_ADMIN + ZFS delegation).
@@ -35,17 +40,20 @@ class Backend final : public rawstor::blk::Backend {
 private:
     std::string _parent_dataset;
 
-    std::string _device_path(const RawstdUUID& id) const;
-    std::string _dataset(const RawstdUUID& id) const;
-
     // `snap_id != 0` names that version's own native snapshot:
-    // <dataset>@s<snap_id> / /dev/zvol/.../<uuid>@s<snap_id> -- the "@s<id>"
-    // name is the version key itself (docs/mds.md, "Snapshots"),
-    // nothing stored twice.
-    std::string _device_path(const RawstdUUID& id, uint64_t snap_id) const;
-    std::string _dataset(const RawstdUUID& id, uint64_t snap_id) const;
+    // <dataset>@s<snap_id> / /dev/zvol/.../<uuid>[:<chunk_offset>]@s<snap_id>
+    // -- the "@s<id>" name is the version key itself (docs/mds.md,
+    // "Snapshots"), nothing stored twice.
+    std::string _device_path(
+        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id = 0
+    ) const;
+    std::string _dataset(
+        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id = 0
+    ) const;
 
-    rawstd::Task<int> _open(const RawstdUUID& id, uint64_t snap_id) override;
+    rawstd::Task<int> _open(
+        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+    ) override;
 
     // Polls for `path`'s existence-as-a-block-device to match
     // `want_present`, for up to `timeout_ms`, via _queue.stat()/
@@ -63,22 +71,27 @@ public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     rawstd::Task<void> list(
-        unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+        unsigned int limit, std::vector<ListedObject>& targets,
+        ListedObject& token
+    ) override;
+
+    rawstd::Task<void> create(
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
     ) override;
 
     rawstd::Task<void>
-    create(const RawstdUUID& id, const RawstorObjectSpec& sp) override;
-
-    rawstd::Task<void> remove(const RawstdUUID& id) override;
+    remove(const RawstdUUID& id, uint64_t chunk_offset) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
     // Native per-copy mirror metadata, stored in the zvol's own
     // "rawstor:meta" user property -- see blk::Backend::meta_encode().
-    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) override;
+    rawstd::Task<RawstorObjectMeta>
+    meta(const RawstdUUID& id, uint64_t chunk_offset) override;
 
     rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstorObjectSyncState& sync_state
     ) override;
 
     // The v1 CoW backend (docs/mds.md, "Snapshots"): a native
@@ -86,10 +99,12 @@ public:
     // sets snapdev=visible on the *origin* dataset so every snapshot's
     // own device node (/dev/zvol/.../<uuid>@s<id>) is openable -- one
     // mechanism, old zvols included, rather than per-snapshot.
-    rawstd::Task<void>
-    snapshot_create(const RawstdUUID& id, uint64_t snap_id) override;
-    rawstd::Task<void>
-    snapshot_remove(const RawstdUUID& id, uint64_t snap_id) override;
+    rawstd::Task<void> snapshot_create(
+        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+    ) override;
+    rawstd::Task<void> snapshot_remove(
+        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+    ) override;
 };
 
 } // namespace zfs

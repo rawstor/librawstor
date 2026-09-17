@@ -52,6 +52,13 @@ private:
 
     rawio::Queue& _queue;
     RawstdUUID _id;
+    // The chunk offset this Chunk was open()ed at -- 0 for a plain,
+    // non-volume object or a volume's own chunk 0 (docs/mds.md, "Chunk
+    // identity"). Carried alongside _id so a reconnected member's own
+    // set_object() (Slot::invalidate_backend()) and the reconnect probe's
+    // own re-open() (_probe_tick()) rebind to the same chunk, not
+    // silently chunk 0's.
+    uint64_t _offset;
 
     // The spec() fetched at create() time (see create()'s own comment)
     // -- kept around for any future caller that needs it. _spec.mirrors
@@ -322,17 +329,18 @@ public:
     // comment on why that's safe to let unwind through here). Only once
     // that succeeds does it start the object's own background
     // maintenance (the reconnect probe, an online resync if one is
-    // already due). `snap_id` is 0 for the live version, or a version id
-    // previously registered via Target::snapshot_create() (docs/mds.md,
-    // "Snapshots").
+    // already due). `chunk_offset` is 0 for a plain, non-volume object or
+    // a volume's own chunk 0; `snap_id` is 0 for the live version, or a
+    // version id previously registered via Target::snapshot_create()
+    // (docs/mds.md, "Snapshots").
     static rawstd::Task<std::unique_ptr<Chunk>> create(
         rawio::Queue& queue, const std::vector<rawstd::URI>& uris,
-        uint64_t snap_id = 0
+        uint64_t chunk_offset = 0, uint64_t snap_id = 0
     );
 
     Chunk(
-        Private, rawio::Queue& queue, RawstdUUID id, RawstorObjectSpec spec,
-        std::vector<Member> members
+        Private, rawio::Queue& queue, RawstdUUID id, uint64_t offset,
+        RawstorObjectSpec spec, std::vector<Member> members
     );
     Chunk(const Chunk&) = delete;
     Chunk(Chunk&&) = delete;

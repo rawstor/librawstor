@@ -442,14 +442,16 @@ Slot::invalidate_backend(const std::shared_ptr<Backend>& be) {
                     // outside the handler.
                     std::exception_ptr eptr;
                     try {
-                        co_await backend->set_object(*_id, _snap_id);
+                        co_await backend->set_object(
+                            *_id, _chunk_offset, _snap_id
+                        );
                         // The result is unused -- nothing here needs it
                         // -- this is purely to keep the same SET_OBJECT+
                         // META wire round trip every set_object() caller
                         // gets (see Backend::set_object()'s own doc
                         // comment on why that's two separate calls now,
                         // not one that folds meta() in on its own).
-                        co_await backend->meta(*_id);
+                        co_await backend->meta(*_id, _chunk_offset);
                     } catch (...) {
                         eptr = std::current_exception();
                     }
@@ -531,7 +533,7 @@ const rawstd::URI* Slot::location() const noexcept {
 }
 
 rawstd::Task<void> Slot::list(
-    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+    unsigned int limit, std::vector<ListedObject>& objects, ListedObject& token
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -540,7 +542,47 @@ rawstd::Task<void> Slot::list(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::list, limit, targets, token
+            func_name, trace_event, &Backend::list, limit, objects, token
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void> Slot::snapshot_create(
+    const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::snapshot_create, id, chunk_offset,
+            snap_id
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void> Slot::snapshot_remove(
+    const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::snapshot_remove, id, chunk_offset,
+            snap_id
         );
         _finish(t_call);
     } catch (...) {
@@ -550,7 +592,7 @@ rawstd::Task<void> Slot::list(
 }
 
 rawstd::Task<void>
-Slot::snapshot_create(const RawstdUUID& id, uint64_t snap_id) {
+Slot::resize(const RawstdUUID& id, uint64_t chunk_offset, uint64_t new_size) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -558,7 +600,7 @@ Slot::snapshot_create(const RawstdUUID& id, uint64_t snap_id) {
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::snapshot_create, id, snap_id
+            func_name, trace_event, &Backend::resize, id, chunk_offset, new_size
         );
         _finish(t_call);
     } catch (...) {
@@ -567,42 +609,8 @@ Slot::snapshot_create(const RawstdUUID& id, uint64_t snap_id) {
     }
 }
 
-rawstd::Task<void>
-Slot::snapshot_remove(const RawstdUUID& id, uint64_t snap_id) {
-    const char* func_name = __FUNCTION__;
-    rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
-    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
-
-    try {
-        co_await _with_retry(
-            func_name, trace_event, &Backend::snapshot_remove, id, snap_id
-        );
-        _finish(t_call);
-    } catch (...) {
-        _finish(t_call);
-        throw;
-    }
-}
-
-rawstd::Task<void> Slot::resize(const RawstdUUID& id, uint64_t new_size) {
-    const char* func_name = __FUNCTION__;
-    rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
-    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
-
-    try {
-        co_await _with_retry(
-            func_name, trace_event, &Backend::resize, id, new_size
-        );
-        _finish(t_call);
-    } catch (...) {
-        _finish(t_call);
-        throw;
-    }
-}
-
-rawstd::Task<uint64_t> Slot::snapshot_create_assign(const RawstdUUID& id) {
+rawstd::Task<uint64_t>
+Slot::snapshot_create_assign(const RawstdUUID& id, uint64_t chunk_offset) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -610,7 +618,8 @@ rawstd::Task<uint64_t> Slot::snapshot_create_assign(const RawstdUUID& id) {
 
     try {
         uint64_t result = co_await _with_retry(
-            func_name, trace_event, &Backend::snapshot_create_assign, id
+            func_name, trace_event, &Backend::snapshot_create_assign, id,
+            chunk_offset
         );
         _finish(t_call);
         co_return result;
@@ -620,15 +629,18 @@ rawstd::Task<uint64_t> Slot::snapshot_create_assign(const RawstdUUID& id) {
     }
 }
 
-rawstd::Task<void>
-Slot::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+rawstd::Task<void> Slot::create(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        co_await _with_retry(func_name, trace_event, &Backend::create, id, sp);
+        co_await _with_retry(
+            func_name, trace_event, &Backend::create, id, chunk_offset, sp
+        );
         _finish(t_call);
     } catch (...) {
         _finish(t_call);
@@ -636,14 +648,16 @@ Slot::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     }
 }
 
-rawstd::Task<void> Slot::remove(const RawstdUUID& id) {
+rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t chunk_offset) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        co_await _with_retry(func_name, trace_event, &Backend::remove, id);
+        co_await _with_retry(
+            func_name, trace_event, &Backend::remove, id, chunk_offset
+        );
         _finish(t_call);
     } catch (...) {
         _finish(t_call);
@@ -651,15 +665,17 @@ rawstd::Task<void> Slot::remove(const RawstdUUID& id) {
     }
 }
 
-rawstd::Task<RawstorObjectSpec> Slot::spec(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectSpec>
+Slot::spec(const RawstdUUID& id, uint64_t chunk_offset) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        RawstorObjectSpec result =
-            co_await _with_retry(func_name, trace_event, &Backend::spec, id);
+        RawstorObjectSpec result = co_await _with_retry(
+            func_name, trace_event, &Backend::spec, id, chunk_offset
+        );
         _finish(t_call);
         co_return result;
     } catch (...) {
@@ -686,11 +702,12 @@ rawstd::Task<RawstorLocationInfo> Slot::info() {
 }
 
 rawstd::Task<RawstorObjectMeta>
-Slot::open(const RawstdUUID& id, uint64_t snap_id) {
+Slot::open(const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id) {
     // Set before any of the set_object() calls below: on failure,
     // invalidate_backend() reconnects and set_object()s the replacement
     // itself, using these same members.
     _id = id;
+    _chunk_offset = chunk_offset;
     _snap_id = snap_id;
 
     // Every backend's SET_OBJECT goes out up front, so they run
@@ -698,7 +715,7 @@ Slot::open(const RawstdUUID& id, uint64_t snap_id) {
     std::vector<rawstd::Task<void>> set_objects;
     set_objects.reserve(_backends.size());
     for (std::shared_ptr<Backend>& be : _backends) {
-        set_objects.push_back(be->set_object(id, snap_id));
+        set_objects.push_back(be->set_object(id, chunk_offset, snap_id));
     }
 
     // co_await isn't allowed inside a catch block, so the failure is only
@@ -732,7 +749,7 @@ Slot::open(const RawstdUUID& id, uint64_t snap_id) {
     // location, so any one of them answers the same as the rest --
     // set_object() itself doesn't return it (see its own doc comment),
     // so this is always its own separate call, win or lose above.
-    co_return co_await meta(id);
+    co_return co_await meta(id, chunk_offset);
 }
 
 rawstd::Task<void> Slot::close() {
@@ -884,15 +901,17 @@ Slot::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
     }
 }
 
-rawstd::Task<RawstorObjectMeta> Slot::meta(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectMeta>
+Slot::meta(const RawstdUUID& id, uint64_t chunk_offset) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        RawstorObjectMeta result =
-            co_await _with_retry(func_name, trace_event, &Backend::meta, id);
+        RawstorObjectMeta result = co_await _with_retry(
+            func_name, trace_event, &Backend::meta, id, chunk_offset
+        );
         _finish(t_call);
         co_return result;
     } catch (...) {
@@ -902,7 +921,8 @@ rawstd::Task<RawstorObjectMeta> Slot::meta(const RawstdUUID& id) {
 }
 
 rawstd::Task<void> Slot::set_sync_state(
-    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+    const RawstdUUID& id, uint64_t chunk_offset,
+    const RawstorObjectSyncState& sync_state
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -911,7 +931,8 @@ rawstd::Task<void> Slot::set_sync_state(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::set_sync_state, id, sync_state
+            func_name, trace_event, &Backend::set_sync_state, id, chunk_offset,
+            sync_state
         );
         _finish(t_call);
     } catch (...) {

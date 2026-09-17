@@ -50,17 +50,26 @@ public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     rawstd::Task<void> list(
-        unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+        unsigned int limit, std::vector<ListedObject>& targets,
+        ListedObject& token
+    ) override;
+
+    rawstd::Task<void> create(
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
     ) override;
 
     rawstd::Task<void>
-    create(const RawstdUUID& id, const RawstorObjectSpec& sp) override;
+    remove(const RawstdUUID& id, uint64_t chunk_offset) override;
 
-    rawstd::Task<void> remove(const RawstdUUID& id) override;
+    rawstd::Task<RawstorObjectSpec>
+    spec(const RawstdUUID& id, uint64_t chunk_offset) override;
 
-    rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) override;
-
-    rawstd::Task<void> resize(const RawstdUUID& id, uint64_t new_size) override;
+    // `chunk_offset` is always 0 here -- a single mds:// URI is never
+    // itself split into chunks (chunking happens one level down, inside
+    // the volume) -- see rawstor::Backend::resize()'s own doc comment.
+    rawstd::Task<void> resize(
+        const RawstdUUID& id, uint64_t chunk_offset, uint64_t new_size
+    ) override;
 
     // Two-phase MDS-orchestrated snapshot (docs/mds.md, "Snapshots
     // (stage 2)"): reserves a new snap_id, backend-CoWs every reachable
@@ -70,23 +79,26 @@ public:
     // registers the surviving membership. v1 caveat (see the design
     // doc): assumes no concurrent writer -- draining/flushing an
     // in-flight write session is the writing client's own duty, not this
-    // call's.
-    rawstd::Task<uint64_t>
-    snapshot_create_assign(const RawstdUUID& id) override;
+    // call's. `chunk_offset` is always 0, same reason as resize() above.
+    rawstd::Task<uint64_t> snapshot_create_assign(
+        const RawstdUUID& id, uint64_t chunk_offset
+    ) override;
 
     // A caller-chosen snap_id (Target::snapshot_create()'s own contract)
     // makes no sense on an mds:// volume -- the MDS itself is the only
     // authority that assigns one (snapshot_create_assign() above).
-    rawstd::Task<void>
-    snapshot_create(const RawstdUUID& id, uint64_t snap_id) override;
+    rawstd::Task<void> snapshot_create(
+        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+    ) override;
 
     // Fan-out destroy of a previously committed snapshot. The MDS
     // unregisters it (no new readers) before this returns the recorded
     // member set; the per-member destroy below is therefore best-effort
     // cleanup -- a member that can no longer be resolved (address
     // changed, OST replaced) is left for the reconstruct scan.
-    rawstd::Task<void>
-    snapshot_remove(const RawstdUUID& id, uint64_t snap_id) override;
+    rawstd::Task<void> snapshot_remove(
+        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+    ) override;
 
     // Synthetic: mirrors == 1 at the Target level (a single mds:// URI),
     // but Slot::open()/Chunk's constructor call meta() unconditionally
@@ -94,11 +106,13 @@ public:
     // mds_backend.cpp) -- real per-chunk DIRTY/CLEAN is already honestly
     // tracked one level down, by each chunk's own (possibly mirrored)
     // Chunk.
-    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) override;
+    rawstd::Task<RawstorObjectMeta>
+    meta(const RawstdUUID& id, uint64_t chunk_offset) override;
 
     // No-op, for the same reason meta() above is synthetic.
     rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstorObjectSyncState& sync_state
     ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
@@ -107,9 +121,11 @@ public:
     // multi-chunk Object it describes (see this class's own doc
     // comment) -- `snap_id` is folded into every chunk slot's own URI
     // ("@<snap_id>", chunk_slot_target()'s own convention in
-    // mds_backend.cpp), not passed down any other way.
-    rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t snap_id = 0) override;
+    // mds_backend.cpp), not passed down any other way. `chunk_offset` is
+    // always 0, same reason as resize() above.
+    rawstd::Task<void> set_object(
+        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id = 0
+    ) override;
 
     rawstd::Task<void> close() override;
 

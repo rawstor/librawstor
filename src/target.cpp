@@ -40,27 +40,6 @@ void validate_not_empty(const std::vector<rawstd::URI>& uris) {
     RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
 }
 
-void validate_same_uuid(const std::vector<rawstd::URI>& targets) {
-    if (targets.empty()) {
-        return;
-    }
-
-    std::string uuid_string = targets.front().path().filename();
-    RawstdUUID uuid;
-    int res = rawstd_uuid_from_string(&uuid, uuid_string.c_str());
-    if (res < 0) {
-        rawstd_error("Valid UUID expected\n");
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    for (const auto& target : targets) {
-        if (target.path().filename() != uuid_string) {
-            rawstd_error("Equal UUID expected\n");
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-    }
-}
-
 void validate_different_uris(const std::vector<rawstd::URI>& uris) {
     if (uris.empty()) {
         return;
@@ -135,6 +114,34 @@ uint64_t extract_offset(const rawstd::URI& uri) {
     return offset;
 }
 
+// Every URI in one chunk group must name the same logical resource: same
+// uuid, same bound snapshot version -- compared on their *parsed* values
+// (uuid_from_target()/extract_snap_id()), not the raw filename string, so
+// equivalent-but-differently-spelled URIs (e.g. "<uuid>" and
+// "<uuid>:0@0" -- offset is already guaranteed equal here, both landed in
+// the same bucket via extract_offset() in the constructor below) are
+// correctly accepted as the same chunk rather than rejected as a mismatch.
+void validate_same_uuid(const std::vector<rawstd::URI>& targets) {
+    if (targets.empty()) {
+        return;
+    }
+
+    RawstdUUID uuid = uuid_from_target(targets.front());
+    uint64_t snap_id = extract_snap_id(targets.front());
+
+    for (const auto& target : targets) {
+        RawstdUUID other_uuid = uuid_from_target(target);
+        if (rawstd_uuid_cmp(&uuid, &other_uuid) != 0) {
+            rawstd_error("Equal UUID expected\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        if (extract_snap_id(target) != snap_id) {
+            rawstd_error("Equal snapshot version expected\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
+}
+
 // One URI's worth of Target::create()/remove() work: connect a
 // single-backend Slot just for this call, do the one metadata op, close
 // it again. Factored out so create()/remove() can fan these out across
@@ -143,18 +150,20 @@ rawstd::Task<void> create_one(
     rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectSpec& sp
 ) {
     RawstdUUID id = uuid_from_target(target);
+    uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, target.parent(), 1);
-    co_await slot->create(id, sp);
+    co_await slot->create(id, chunk_offset, sp);
     co_await slot->close();
 }
 
 rawstd::Task<RawstorObjectSpec>
 spec_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
+    uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, target.parent(), 1);
-    RawstorObjectSpec ret = co_await slot->spec(id);
+    RawstorObjectSpec ret = co_await slot->spec(id, chunk_offset);
     co_await slot->close();
     co_return ret;
 }
@@ -162,18 +171,20 @@ spec_one(rawio::Queue& queue, const rawstd::URI& target) {
 rawstd::Task<RawstorObjectMeta>
 meta_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
+    uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, target.parent(), 1);
-    RawstorObjectMeta ret = co_await slot->meta(id);
+    RawstorObjectMeta ret = co_await slot->meta(id, chunk_offset);
     co_await slot->close();
     co_return ret;
 }
 
 rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
+    uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, target.parent(), 1);
-    co_await slot->remove(id);
+    co_await slot->remove(id, chunk_offset);
     co_await slot->close();
 }
 
@@ -181,9 +192,10 @@ rawstd::Task<void> snapshot_create_one(
     rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id
 ) {
     RawstdUUID id = uuid_from_target(target);
+    uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, target.parent(), 1);
-    co_await slot->snapshot_create(id, snap_id);
+    co_await slot->snapshot_create(id, chunk_offset, snap_id);
     co_await slot->close();
 }
 
@@ -191,9 +203,10 @@ rawstd::Task<void> snapshot_remove_one(
     rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id
 ) {
     RawstdUUID id = uuid_from_target(target);
+    uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, target.parent(), 1);
-    co_await slot->snapshot_remove(id, snap_id);
+    co_await slot->snapshot_remove(id, chunk_offset, snap_id);
     co_await slot->close();
 }
 
@@ -202,18 +215,20 @@ rawstd::Task<void> set_sync_state_one(
     const RawstorObjectSyncState& sync_state
 ) {
     RawstdUUID id = uuid_from_target(target);
+    uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, target.parent(), 1);
-    co_await slot->set_sync_state(id, sync_state);
+    co_await slot->set_sync_state(id, chunk_offset, sync_state);
     co_await slot->close();
 }
 
 rawstd::Task<void>
 resize_one(rawio::Queue& queue, const rawstd::URI& target, uint64_t new_size) {
     RawstdUUID id = uuid_from_target(target);
+    uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, target.parent(), 1);
-    co_await slot->resize(id, new_size);
+    co_await slot->resize(id, chunk_offset, new_size);
     co_await slot->close();
 }
 
@@ -805,9 +820,10 @@ rawstd::Task<uint64_t> Target::snapshot_create_assign(rawio::Queue& queue) {
     // default answer is no less correct than asking every mirror).
     const rawstd::URI& target = _chunks.front().front();
     RawstdUUID id = uuid_from_target(target);
+    uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, target.parent(), 1);
-    uint64_t snap_id = co_await slot->snapshot_create_assign(id);
+    uint64_t snap_id = co_await slot->snapshot_create_assign(id, chunk_offset);
     co_await slot->close();
     co_return snap_id;
 }
@@ -829,7 +845,8 @@ rawstd::Task<uint64_t> Target::snapshot_create_assign(rawio::Queue& queue) {
 rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     if (_chunks.size() == 1) {
         std::unique_ptr<Chunk> chunk = co_await Chunk::create(
-            queue, _chunks.front(), extract_snap_id(_chunks.front().front())
+            queue, _chunks.front(), extract_offset(_chunks.front().front()),
+            extract_snap_id(_chunks.front().front())
         );
         uint64_t size = chunk->spec().size;
         std::unique_ptr<Object> obj(new Object(
@@ -840,10 +857,12 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     }
 
     std::unique_ptr<Chunk> first = co_await Chunk::create(
-        queue, _chunks.front(), extract_snap_id(_chunks.front().front())
+        queue, _chunks.front(), extract_offset(_chunks.front().front()),
+        extract_snap_id(_chunks.front().front())
     );
     std::unique_ptr<Chunk> last = co_await Chunk::create(
-        queue, _chunks.back(), extract_snap_id(_chunks.back().front())
+        queue, _chunks.back(), extract_offset(_chunks.back().front()),
+        extract_snap_id(_chunks.back().front())
     );
 
     uint64_t chunk_size = first->spec().size;

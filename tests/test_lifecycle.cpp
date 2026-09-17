@@ -170,9 +170,6 @@ TEST(FileLifecycleTest, create_spec_list_remove) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ssize_t res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
@@ -225,9 +222,6 @@ TEST(FileLifecycleTest, create_twice_preserves_existing) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ssize_t res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
@@ -266,9 +260,6 @@ TEST(FileLifecycleTest, remove_already_removed_target_fails_with_enoent) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ssize_t res = target_create(*queue, target, spec);
     ASSERT_EQ(res, 0);
@@ -305,9 +296,6 @@ TEST(FileLifecycleTest, create_is_zero_filled) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ssize_t res = target_create(*queue, target, spec);
     ASSERT_EQ(res, 0);
@@ -346,9 +334,6 @@ TEST(FileLifecycleTest, create_at_default_spec_list_remove) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ssize_t res = location_create(
         *queue, location, nullptr, spec, target.data(), target.size()
@@ -403,9 +388,6 @@ TEST(FileLifecycleTest, create_at_spec_list_remove) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ssize_t res = location_create(
         *queue, location, uuid.c_str(), spec, target.data(), target.size()
@@ -460,9 +442,6 @@ TEST(FileLifecycleTest, meta_set_state) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ssize_t res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
@@ -515,10 +494,7 @@ TEST(OstLifecycleTest, create_spec_remove) {
         .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
         .reserved = 0,
-        .volume_id = {},
-        .logical_index = 0,
         .chunk_size = 0,
-        .snap_id = 0,
     };
 
     {
@@ -557,9 +533,6 @@ TEST(OstLifecycleTest, create_spec_remove) {
             .width = 0,
             .failure_domain = 0,
             .member_kind = RAWSTOR_MEMBER_DATA,
-            .volume_id = {},
-            .logical_index = 0,
-            .snap_id = 0
         };
 
         ssize_t res = target_create(*queue, target, spec);
@@ -632,9 +605,6 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
             .width = 0,
             .failure_domain = 0,
             .member_kind = RAWSTOR_MEMBER_DATA,
-            .volume_id = {},
-            .logical_index = 0,
-            .snap_id = 0
         };
 
         ssize_t res = location_create(
@@ -692,9 +662,6 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
             .width = 0,
             .failure_domain = 0,
             .member_kind = RAWSTOR_MEMBER_DATA,
-            .volume_id = {},
-            .logical_index = 0,
-            .snap_id = 0
         };
 
         ssize_t res = location_create(

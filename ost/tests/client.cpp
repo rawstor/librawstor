@@ -68,6 +68,7 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, uint32_t mirrors) {
             },
         .payload = {
             .object_id = {},
+            .chunk_offset = 0,
             .size = size,
             .mirrors = mirrors,
             .chunk_size = 0,
@@ -75,9 +76,6 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, uint32_t mirrors) {
             .failure_domain = 0,
             .member_kind = 0, /* RAWSTOR_MEMBER_DATA, <rawstor/target.h> */
             .reserved = 0,
-            .volume_id = {},
-            .logical_index = 0,
-            .snap_id = 0,
         },
     };
     std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));

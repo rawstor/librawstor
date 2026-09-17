@@ -159,9 +159,11 @@ void scan_ost(
 
             RawstdUUIDString uuid_string;
             RawstdUUID obj_id;
+            uint64_t chunk_offset = 0;
             if (rawstor_target_id(target, uuid_string, sizeof(uuid_string)) <
                     0 ||
-                rawstd_uuid_from_string(&obj_id, uuid_string) < 0) {
+                rawstd_uuid_from_string(&obj_id, uuid_string) < 0 ||
+                rawstor_target_offset(target, &chunk_offset) < 0) {
                 rawstd_error("reconstruct: malformed target: %s\n", target);
                 continue;
             }
@@ -169,6 +171,7 @@ void scan_ost(
             rawstor::mds::ScanRecord record;
             record.ost_id = ost_id;
             record.obj_id = obj_id;
+            record.chunk_offset = chunk_offset;
             record.meta = meta;
             records.push_back(record);
         }

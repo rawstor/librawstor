@@ -38,10 +38,7 @@ const RawstorOSTFrameMetaPayload clean_meta_1mb = {
     .member_kind = RAWSTOR_MEMBER_DATA,
     .width = 1,
     .reserved = 0,
-    .volume_id = {},
-    .logical_index = 0,
     .chunk_size = 0,
-    .snap_id = 0,
 };
 
 int callback(size_t result, int error, void* data) {
@@ -146,9 +143,6 @@ public:
             .width = 0,
             .failure_domain = 0,
             .member_kind = RAWSTOR_MEMBER_DATA,
-            .volume_id = {},
-            .logical_index = 0,
-            .snap_id = 0
         };
         ssize_t res =
             rawstor::tests::sync_run(_queue, [&](auto cb, void* data) {

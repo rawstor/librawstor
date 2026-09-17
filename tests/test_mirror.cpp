@@ -290,9 +290,6 @@ TEST(MirrorQuorumTest, open_refused_without_quorum_n2) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -327,9 +324,6 @@ TEST(MirrorQuorumTest, all_mirrors_down_at_open_refused) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -355,9 +349,6 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -405,9 +396,6 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -468,9 +456,6 @@ TEST(MirrorQuorumTest, split_brain_refused) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -507,9 +492,6 @@ TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -551,9 +533,6 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -609,9 +588,6 @@ TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -678,9 +654,6 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -747,9 +720,6 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -771,9 +741,6 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ASSERT_EQ(target_create(queue, members.target(2), member_spec), 0);
 
@@ -810,9 +777,6 @@ TEST(MirrorQuorumTest, clean_close_stable_identity) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -862,10 +826,7 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
         .reserved = 0,
-        .volume_id = {},
-        .logical_index = 0,
         .chunk_size = 0,
-        .snap_id = 0,
     };
 
     /*
@@ -956,10 +917,7 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
         .reserved = 0,
-        .volume_id = {},
-        .logical_index = 0,
         .chunk_size = 0,
-        .snap_id = 0,
     };
 
     // Target::open() fetches spec() from every reachable connection
@@ -1050,10 +1008,7 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
         .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
         .reserved = 0,
-        .volume_id = {},
-        .logical_index = 0,
         .chunk_size = 0,
-        .snap_id = 0,
     };
 
     {
@@ -1122,10 +1077,7 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
         .reserved = 0,
-        .volume_id = {},
-        .logical_index = 0,
         .chunk_size = 0,
-        .snap_id = 0,
     };
 
     {

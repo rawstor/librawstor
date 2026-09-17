@@ -16,6 +16,44 @@
 
 namespace rawstor {
 
+// One object list() found -- also reused, unmodified, as list()'s own
+// pagination cursor (see its doc comment below): a cursor just names the
+// last entry already returned, so it needs exactly the same fields as an
+// entry itself. `id` alone no longer uniquely names a physical resource
+// now that it's the parent mds:// volume's own id for every one of its
+// chunks (mds::Backend's own chunk_slot_target(), docs/mds.md's "Chunk
+// identity": obj_id = volume_id) -- `chunk_offset` (0 for a plain,
+// non-volume object; `logical_index * chunk_size` otherwise) is what
+// actually tells two of a volume's own chunks apart. `snap_id` is always
+// 0 today (no backend's own list() enumerates snapshots yet -- see
+// docs/mds.md's own "Snapshot-version records are skipped (stage 2)"),
+// carried alongside for when one does.
+struct ListedObject {
+    RawstdUUID id;
+    uint64_t chunk_offset;
+    uint64_t snap_id;
+};
+
+inline bool operator==(const ListedObject& lhs, const ListedObject& rhs) {
+    return rawstd_uuid_cmp(&lhs.id, &rhs.id) == 0 &&
+           lhs.chunk_offset == rhs.chunk_offset && lhs.snap_id == rhs.snap_id;
+}
+
+// Three-way order for ListedObject, primarily by `id` (RawstdUUID's own
+// ordering, e.g. every concrete backend's list() already sorts its
+// output this way), then `chunk_offset`, then `snap_id` -- the total
+// order list()'s own pagination is defined over (see its doc comment).
+inline bool operator<(const ListedObject& lhs, const ListedObject& rhs) {
+    int c = rawstd_uuid_cmp(&lhs.id, &rhs.id);
+    if (c != 0) {
+        return c < 0;
+    }
+    if (lhs.chunk_offset != rhs.chunk_offset) {
+        return lhs.chunk_offset < rhs.chunk_offset;
+    }
+    return lhs.snap_id < rhs.snap_id;
+}
+
 class Backend : public std::enable_shared_from_this<Backend> {
 private:
     rawstd::URI _location;
@@ -70,19 +108,32 @@ public:
     // want a graceful async teardown must co_await this themselves.
     virtual rawstd::Task<void> close() = 0;
 
-    // `targets`: overwritten with this page's UUIDs. `token`: this
-    // call's pagination cursor on entry, overwritten with the next
-    // page's cursor on return (zeroed once there's nothing left).
+    // `targets`: overwritten with this page's objects, in the total order
+    // ListedObject's own operator<() defines (id, then chunk_offset, then
+    // snap_id). `token`: this call's pagination cursor on entry,
+    // overwritten with the next page's cursor on return (all-zero once
+    // there's nothing left) -- resumes strictly after the entry `token`
+    // itself names, so `limit` counts entries directly, one row per
+    // returned ListedObject (including every chunk of an mds:// volume
+    // separately, now that they all share their volume's own id -- see
+    // ListedObject's own doc comment). A concrete backend implements this
+    // by re-deriving its own full, sorted listing each call (as today)
+    // and resuming from the first entry strictly greater than `token`
+    // (e.g. std::upper_bound).
     virtual rawstd::Task<void> list(
-        unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+        unsigned int limit, std::vector<ListedObject>& targets,
+        ListedObject& token
+    ) = 0;
+
+    virtual rawstd::Task<void> create(
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
     ) = 0;
 
     virtual rawstd::Task<void>
-    create(const RawstdUUID& id, const RawstorObjectSpec& sp) = 0;
+    remove(const RawstdUUID& id, uint64_t chunk_offset) = 0;
 
-    virtual rawstd::Task<void> remove(const RawstdUUID& id) = 0;
-
-    virtual rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) = 0;
+    virtual rawstd::Task<RawstorObjectSpec>
+    spec(const RawstdUUID& id, uint64_t chunk_offset) = 0;
 
     // Mirror consistency identity for one copy (state/epoch/sync_id and its
     // ancestry, see docs/mirroring.md) -- independent of spec() above,
@@ -92,19 +143,21 @@ public:
     // must implement both -- no universal default exists (see
     // blk::Backend's own doc comment on why this stays pure virtual there
     // too).
-    virtual rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) = 0;
+    virtual rawstd::Task<RawstorObjectMeta>
+    meta(const RawstdUUID& id, uint64_t chunk_offset) = 0;
 
     virtual rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstorObjectSyncState& sync_state
     ) = 0;
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 
-    // Binds this Backend to `id` -- data-path methods below need this
-    // done first. Also the one operation that actually touches the real
-    // store for every backend kind (a blk-backed one's own
-    // _open(const RawstdUUID&) is lazy -- see blk::Backend's own doc
-    // comment -- so nothing before this call genuinely proves the
+    // Binds this Backend to `id`/`chunk_offset` -- data-path methods
+    // below need this done first. Also the one operation that actually
+    // touches the real store for every backend kind (a blk-backed one's
+    // own _open(const RawstdUUID&, uint64_t) is lazy -- see blk::Backend's
+    // own doc comment -- so nothing before this call genuinely proves the
     // object exists; an ost:// one's is a real wire round trip either
     // way), so a caller that also needs this copy's own meta() (e.g.
     // Slot::open(), see its own doc comment) calls it separately,
@@ -112,8 +165,9 @@ public:
     // previously registered via snapshot_create() below (docs/mds.md,
     // "Snapshots") -- ENOTSUP on a backend without native CoW (file://,
     // classic LVM).
-    virtual rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t snap_id = 0) = 0;
+    virtual rawstd::Task<void> set_object(
+        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id = 0
+    ) = 0;
 
     // Native CoW snapshot of the live version as `snap_id` (never 0 -- 0
     // is the live version), and its removal. Default: ENOTSUP, covering
@@ -121,18 +175,23 @@ public:
     // docs/mds.md's own "Snapshots" section) without each
     // needing its own override; zfs::Backend overrides both with the
     // real thing.
-    virtual rawstd::Task<void>
-    snapshot_create(const RawstdUUID& id, uint64_t snap_id);
-    virtual rawstd::Task<void>
-    snapshot_remove(const RawstdUUID& id, uint64_t snap_id);
+    virtual rawstd::Task<void> snapshot_create(
+        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+    );
+    virtual rawstd::Task<void> snapshot_remove(
+        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+    );
 
     // Grows `id` to `new_size` (grow-only -- docs/mds.md: shrink
     // interacts with GC and snapshots, deferred past v1). Default:
     // ENOTSUP, covering every backend a plain (non-mds://) target
     // addresses directly -- their own size is fixed at create() time,
     // same as today. mds::Backend overrides this with the real thing
-    // (Object::resize()'s former per-chunk materialization logic).
-    virtual rawstd::Task<void> resize(const RawstdUUID& id, uint64_t new_size);
+    // (Object::resize()'s former per-chunk materialization logic);
+    // `chunk_offset` is always 0 there (a single mds:// URI is never
+    // itself split into chunks -- resize operates on the whole volume).
+    virtual rawstd::Task<void>
+    resize(const RawstdUUID& id, uint64_t chunk_offset, uint64_t new_size);
 
     // MDS-orchestrated snapshot (docs/mds.md, "Snapshots (stage 2)"):
     // reserves a new snap_id, backend-CoWs every reachable chunk member,
@@ -140,8 +199,10 @@ public:
     // operation from the caller's point of view, unlike
     // snapshot_create() above (a caller-chosen id against an already
     // known target). Default: ENOTSUP; mds::Backend overrides it with
-    // the real thing (Object::snapshot_create()'s former logic).
-    virtual rawstd::Task<uint64_t> snapshot_create_assign(const RawstdUUID& id);
+    // the real thing (Object::snapshot_create()'s former logic);
+    // `chunk_offset` is always 0 there, same reason as resize() above.
+    virtual rawstd::Task<uint64_t>
+    snapshot_create_assign(const RawstdUUID& id, uint64_t chunk_offset);
 
     virtual rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) = 0;

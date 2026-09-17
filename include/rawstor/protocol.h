@@ -123,6 +123,48 @@ struct RawstorOSTFrameBasic {
     struct RawstorOSTFrameBasicPayload payload;
 } RAWSTOR_PACKED;
 
+/*
+ * LIST's request: `token_*` resumes strictly after the entry it names
+ * (rawstor::Backend::list()'s own contract, src/backend.hpp) -- wider
+ * than RawstorOSTFrameBasicPayload's own object_id/offset/val (id plus
+ * one scalar) can carry, since it needs id + chunk_offset + snap_id
+ * alongside `limit` itself, so LIST gets its own request payload instead
+ * of reusing it. All-zero token_id/token_chunk_offset/token_snap_id
+ * means "from the start", matching a default-constructed
+ * rawstor::ListedObject.
+ */
+struct RawstorOSTFrameListPayload {
+    uint8_t token_id[16];
+    uint64_t token_chunk_offset;
+    uint64_t token_snap_id;
+    uint32_t limit;
+} RAWSTOR_PACKED;
+
+struct RawstorOSTFrameList {
+    struct RawstorOSTFrameHead head;
+    struct RawstorOSTFrameListPayload payload;
+} RAWSTOR_PACKED;
+
+/*
+ * One LIST response entry -- the wire form of rawstor::ListedObject
+ * (src/backend.hpp), which it mirrors field-for-field. The response body
+ * is a packed array of these (body.res = count * sizeof(this)), same
+ * "array of T" shape RawstorOSTFrameBasic's own response (e.g. an older
+ * LIST) used, with one addition: the *last* entry is always the resume
+ * cursor for the next page (all-zero once nothing is left), never a real
+ * result -- the serving rawstor-ost may itself be relaying across more
+ * than one local location, whose own merged resume point isn't
+ * necessarily identical to the last real entry returned (see
+ * rawstor::Location::list()'s own doc comment). An empty response body
+ * (no entries at all, not even a cursor) means the far end is already
+ * exhausted.
+ */
+struct RawstorOSTFrameListEntry {
+    uint8_t id[16];
+    uint64_t chunk_offset;
+    uint64_t snap_id;
+} RAWSTOR_PACKED;
+
 // Shared by READ/WRITE/DISCARD/WRITE_ZEROES: `hash` is only meaningful for
 // WRITE (payload integrity check) and READ (of its response body) --
 // DISCARD/WRITE_ZEROES carry no payload, so it's unused there (send as 0,
@@ -154,11 +196,13 @@ struct RawstorOSTFrameIO {
 /*
  * Settable mirror consistency state only -- no size, nothing here changes
  * it. SET_SYNC_STATE's request: unlike SPEC/META, it isn't wrapped in a
- * RawstorOSTFrameBasicPayload of its own, so object_id here is the only way the
- * server learns which object this applies to.
+ * RawstorOSTFrameBasicPayload of its own, so object_id/chunk_offset here
+ * are the only way the server learns which object (and which of its
+ * chunks -- docs/mds.md, "Chunk identity") this applies to.
  */
 struct RawstorOSTFrameSyncStatePayload {
     uint8_t object_id[16];
+    uint64_t chunk_offset;
     uint64_t epoch;
     uint64_t sync_id;
     uint64_t sync_id_history[4];
@@ -175,18 +219,22 @@ struct RawstorOSTFrameSyncState {
  * ALLOCATE's request: the object to create's size and mirrors. Unlike
  * SPEC's response (RawstorOSTFrameSpecPayload below), this does need
  * object_id -- it isn't wrapped in a RawstorOSTFrameBasicPayload of its
- * own, so object_id here is the only way the server learns which object
- * to create.
+ * own, so object_id/chunk_offset here are the only way the server learns
+ * which object (and which of its chunks) to create.
  *
- * The fields below `mirrors` are the chunk placement identity
- * (docs/mds.md, chunk_meta): stamped at create by the volume
- * layer, immutable afterwards, the source (via META) for the reconstruct
- * scan. An all-zero volume_id is a standalone object -- the
- * degenerate case a plain mirrored object already is today, `mirrors`
- * doubling as `width` (copies per chunk).
+ * The fields below `mirrors` are the chunk's own placement policy
+ * (docs/mds.md, chunk_meta): stamped at create by the volume layer,
+ * immutable afterwards. Unlike an earlier version of this payload, no
+ * volume_id/logical_index/snap_id fields are carried here any more --
+ * object_id already *is* the volume's own id for every one of its chunks
+ * (docs/mds.md, "Chunk identity": obj_id = volume_id), chunk_offset
+ * disambiguates which chunk, and this backend's own snap_id is always 0
+ * at create time (RAWSTOR_CMD_SNAPSHOT registers one afterwards) -- see
+ * RawstorObjectSpec's own doc comment in target.h.
  */
 struct RawstorOSTFrameAllocatePayload {
     uint8_t object_id[16];
+    uint64_t chunk_offset;
     uint64_t size;
     uint32_t mirrors;
     uint64_t chunk_size;    /* power of two; 0 = one chunk spans the volume */
@@ -194,9 +242,6 @@ struct RawstorOSTFrameAllocatePayload {
     uint8_t failure_domain; /* RAWSTOR_VOL_DOMAIN_* */
     uint8_t member_kind;    /* enum RawstorMemberKind, <rawstor/target.h> */
     uint16_t reserved;
-    uint8_t volume_id[16];  /* parent volume; all-zero = standalone */
-    uint64_t logical_index; /* chunk position within the volume */
-    uint64_t snap_id; /* snapshot version this copy belongs to; 0 = live */
 } RAWSTOR_PACKED;
 
 /* ALLOCATE request */
@@ -241,15 +286,16 @@ struct RawstorOSTFrameMetaPayload {
     RawstorOSTSyncStateType state;
     /*
      * Placement identity (docs/mds.md, chunk_meta): reported by
-     * META, ignored by SET_SYNC_STATE (the stored values always win).
+     * META, ignored by SET_SYNC_STATE (the stored values always win). No
+     * volume_id/logical_index/snap_id here any more -- see
+     * RawstorOSTFrameAllocatePayload's own doc comment above on why
+     * object_id/chunk_offset (already known by the caller that issued
+     * this META request) already cover them.
      */
     uint8_t member_kind; /* enum RawstorMemberKind, <rawstor/target.h> */
     uint8_t width;       /* redundancy: copies per chunk */
     uint16_t reserved;
-    uint8_t volume_id[16];
-    uint64_t logical_index;
     uint64_t chunk_size;
-    uint64_t snap_id;
 } RAWSTOR_PACKED;
 
 /*

@@ -31,10 +31,20 @@ struct VolumeMap {
     std::vector<std::vector<PlacementSlot>> chunks;
 };
 
-/* One stored chunk copy found by the reconstruct scan of one OST. */
+/*
+ * One stored chunk copy found by the reconstruct scan of one OST.
+ * `obj_id` is the volume's own id for every one of its chunks
+ * (docs/mds.md, "Chunk identity": obj_id = volume_id -- the physical
+ * resource's own name is self-describing, so nothing here needs a
+ * separate volume_id field); `chunk_offset` (read back via
+ * rawstor_target_offset(), the same suffix chunk_slot_target() stamped
+ * on the target LIST returned) disambiguates which of that volume's
+ * chunks this is.
+ */
 struct ScanRecord {
     RawstdUUID ost_id;
     RawstdUUID obj_id;
+    uint64_t chunk_offset;
     RawstorObjectMeta meta;
 };
 
@@ -133,18 +143,20 @@ public:
      * is the truth, the map is an index over it. Replaces every stored
      * volume in one transaction.
      *
-     * Witness records and standalone objects (all-zero volume_id) are
-     * skipped. A volume with conflicting identity records fails with
+     * Witness records are skipped; every remaining record groups by
+     * `obj_id` directly (ScanRecord's own doc comment) -- the topology's
+     * own OSTs are dedicated to MDS-managed volumes (docs/mds.md), so
+     * every id found there is exactly one volume's own id, standalone
+     * objects included (a "volume" of a single chunk, byte-for-byte
+     * compatible with a plain object, docs/mds.md's own "Chunk
+     * identity"). A volume with conflicting identity records fails with
      * EINVAL, a hole in the chunk index sequence with EIO: reconstruct
      * must not silently drop a volume it cannot reassemble, and it
      * cannot invent placement for a chunk with no surviving copies.
      *
-     * Snapshot versions rebuild the registry: a version covering every
-     * one of its chunks is registered (a complete-but-uncommitted
-     * leftover is indistinguishable from a committed snapshot and just
-     * as consistent), a version with a hole is a crashed attempt's
-     * garbage and stays unregistered. Every seen version fences the
-     * volume's next_snap_id either way — reserved ids never repeat.
+     * Snapshot versions are not rebuilt (docs/mds.md's own "Snapshot-
+     * version records are skipped (stage 2)"): no backend's own list()
+     * enumerates them yet, so the scan never sees one to register.
      *
      * The placement policy knobs (failure_domain, stripe_width, seed) are
      * deliberately not persisted on chunks: the rebuilt descriptor gets

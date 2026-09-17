@@ -66,16 +66,15 @@ struct RawstorObjectSpec {
     uint8_t failure_domain; /**< RAWSTOR_VOL_DOMAIN_*; default server. */
 
     /*
-     * Placement identity of a chunk object (docs/mds.md,
-     * chunk_meta): stamped at create by the volume layer, immutable
-     * afterwards (set_sync_state never touches it), the source (via
-     * rawstor_target_meta()) for the reconstruct scan. An all-zero
-     * volume_id is a standalone object.
+     * Placement identity of a chunk object (docs/mds.md, chunk_meta),
+     * minus the parts a caller already has to hand: the resource's own
+     * name is self-describing (docs/mds.md, "Chunk identity" -- obj_id =
+     * volume_id) -- a chunk's volume_id is exactly the id its own target
+     * string carries, and its logical_index is chunk_offset / chunk_size
+     * (the target string's own ":<offset>" suffix,
+     * rawstor_target_offset()). Nothing here needs to repeat either.
      */
     enum RawstorMemberKind member_kind;
-    uint8_t volume_id[16];  /**< Parent volume; all-zero = standalone. */
-    uint64_t logical_index; /**< Chunk position within the volume. */
-    uint64_t snap_id; /**< Snapshot version this copy belongs to; 0 = live. */
 };
 
 /**

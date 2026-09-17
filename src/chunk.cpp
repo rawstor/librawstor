@@ -24,6 +24,7 @@
 #include <optional>
 #include <random>
 #include <set>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -44,27 +45,6 @@ void validate_not_empty(const std::vector<rawstd::URI>& uris) {
 
     rawstd_error("Empty uri list\n");
     RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-}
-
-void validate_same_uuid(const std::vector<rawstd::URI>& uris) {
-    if (uris.empty()) {
-        return;
-    }
-
-    std::string uuid_string = uris.front().path().filename();
-    RawstdUUID uuid;
-    int res = rawstd_uuid_from_string(&uuid, uuid_string.c_str());
-    if (res < 0) {
-        rawstd_error("Valid UUID expected\n");
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    for (const auto& uri : uris) {
-        if (uri.path().filename() != uuid_string) {
-            rawstd_error("Equal UUID expected\n");
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-    }
 }
 
 void validate_different_uris(const std::vector<rawstd::URI>& uris) {
@@ -97,6 +77,51 @@ RawstdUUID uuid_from_target(const rawstd::URI& uri) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
     return id;
+}
+
+// Local duplicate of target.cpp's own extract_snap_id() -- see
+// uuid_from_target()'s own comment above on why Chunk::create() carries
+// its own copies rather than relying on Target having already run them.
+uint64_t extract_snap_id(const rawstd::URI& uri) {
+    const std::string& filename = uri.path().filename();
+    size_t at = filename.find('@');
+    if (at == std::string::npos) {
+        return 0;
+    }
+    std::istringstream iss(filename.substr(at + 1));
+    uint64_t snap_id = 0;
+    if (!(iss >> snap_id) || !iss.eof()) {
+        rawstd_error("Malformed snapshot suffix: %s\n", filename.c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    return snap_id;
+}
+
+// Every URI in one chunk group must name the same logical resource: same
+// uuid, same bound snapshot version -- compared on their *parsed* values,
+// not the raw filename string, so equivalent-but-differently-spelled URIs
+// (e.g. "<uuid>" and "<uuid>:0@0") are correctly accepted as the same
+// chunk rather than rejected as a mismatch (target.cpp's own
+// validate_same_uuid() has the identical fix, for the identical reason).
+void validate_same_uuid(const std::vector<rawstd::URI>& uris) {
+    if (uris.empty()) {
+        return;
+    }
+
+    RawstdUUID uuid = uuid_from_target(uris.front());
+    uint64_t snap_id = extract_snap_id(uris.front());
+
+    for (const auto& uri : uris) {
+        RawstdUUID other_uuid = uuid_from_target(uri);
+        if (rawstd_uuid_cmp(&uuid, &other_uuid) != 0) {
+            rawstd_error("Equal UUID expected\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        if (extract_snap_id(uri) != snap_id) {
+            rawstd_error("Equal snapshot version expected\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
 }
 
 // One URI's worth of create()'s own connect step: just stand up a Slot
@@ -169,11 +194,12 @@ namespace rawstor {
 // _reconcile_sync_set()'s own doc comment on why a refusal here is
 // safe to let unwind through a throwing constructor.
 Chunk::Chunk(
-    Private, rawio::Queue& queue, RawstdUUID id, RawstorObjectSpec spec,
-    std::vector<Member> members
+    Private, rawio::Queue& queue, RawstdUUID id, uint64_t offset,
+    RawstorObjectSpec spec, std::vector<Member> members
 ) :
     _queue(queue),
     _id(id),
+    _offset(offset),
     _spec(spec),
     _members(std::move(members)),
     _size(0),
@@ -221,7 +247,8 @@ Chunk::~Chunk() {
 }
 
 rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
-    rawio::Queue& queue, const std::vector<rawstd::URI>& uris, uint64_t snap_id
+    rawio::Queue& queue, const std::vector<rawstd::URI>& uris,
+    uint64_t chunk_offset, uint64_t snap_id
 ) {
     // Same three checks a Target's own constructor used to run on `uris`
     // on this factory's behalf -- now run here instead, since Object's
@@ -332,7 +359,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     spec_tasks.reserve(reachable);
     for (auto& slot : cns) {
         if (slot) {
-            spec_tasks.push_back(slot->spec(id));
+            spec_tasks.push_back(slot->spec(id, chunk_offset));
         }
     }
 
@@ -387,7 +414,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     );
     for (size_t i = 0; i < cns.size(); ++i) {
         if (cns[i]) {
-            open_tasks[i] = cns[i]->open(id, snap_id);
+            open_tasks[i] = cns[i]->open(id, chunk_offset, snap_id);
         }
     }
 
@@ -464,7 +491,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // shortcut, or _reconcile_sync_set()'s own quorum/split-brain/no-
     // trusted-member analysis) is the constructor's own job from here.
     co_return std::make_unique<Chunk>(
-        Private(), queue, id, std::move(spec), std::move(members)
+        Private(), queue, id, chunk_offset, std::move(spec), std::move(members)
     );
 }
 
@@ -911,7 +938,7 @@ rawstd::Task<void> Chunk::_run_meta_fan_out(RawstorObjectSyncState sync_state) {
 rawstd::Task<void>
 Chunk::_set_sync_state_one(size_t idx, RawstorObjectSyncState sync_state) {
     try {
-        co_await _members[idx].slot->set_sync_state(_id, sync_state);
+        co_await _members[idx].slot->set_sync_state(_id, _offset, sync_state);
     } catch (const std::system_error& e) {
         int error = e.code().value();
         if (error == ENOSYS) {
@@ -1208,7 +1235,7 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
 
         int error = 0;
         try {
-            co_await _members[idx].slot->set_sync_state(_id, m);
+            co_await _members[idx].slot->set_sync_state(_id, _offset, m);
         } catch (const std::system_error& e) {
             error = e.code().value();
         }
@@ -1409,7 +1436,7 @@ rawstd::DetachedTask Chunk::_resync_finish() {
 
     int error = 0;
     try {
-        co_await _members[idx].slot->set_sync_state(_id, m);
+        co_await _members[idx].slot->set_sync_state(_id, _offset, m);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1531,7 +1558,7 @@ rawstd::DetachedTask Chunk::_probe_tick() {
         slot = co_await Slot::create(
             _queue, _members[idx].target.parent(), rawstor_opts_sessions()
         );
-        co_await slot->open(_id);
+        co_await slot->open(_id, _offset);
     } catch (const std::system_error& e) {
         error = e.code().value();
     } catch (const std::exception& e) {

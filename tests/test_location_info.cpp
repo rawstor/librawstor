@@ -74,9 +74,6 @@ TEST(FileLocationInfoTest, empty_then_used) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
@@ -119,9 +116,6 @@ TEST(FileLocationInfoTest, multi_location_aggregation) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     ssize_t res = target_create(*queue, target_a, spec_a);
     EXPECT_EQ(res, 0);
@@ -134,9 +128,6 @@ TEST(FileLocationInfoTest, multi_location_aggregation) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     res = target_create(*queue, target_b, spec_b);
     EXPECT_EQ(res, 0);

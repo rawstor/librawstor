@@ -30,14 +30,32 @@
 
 namespace {
 
-std::string get_target_meta_path(
-    const std::string& location_path, const RawstdUUIDString& uuid
+// The physical file's own name is self-describing (docs/mds.md, "Chunk
+// identity"): `id` is the volume's own id for every one of its chunks
+// (mds::Backend no longer scrambles it), `chunk_offset` (0 for a plain
+// object or a volume's own chunk 0 -- the two are indistinguishable at
+// this layer by design) disambiguates which chunk of that id this is.
+// Omitted (bare "<uuid>") when 0, so a plain object's name is unchanged
+// from before this suffix existed.
+std::string get_target_path(
+    const std::string& location_path, const RawstdUUIDString& uuid,
+    uint64_t chunk_offset
 ) {
     std::ostringstream oss;
 
-    oss << location_path << "/" << uuid << ".meta";
+    oss << location_path << "/" << uuid;
+    if (chunk_offset != 0) {
+        oss << ":" << chunk_offset;
+    }
 
     return oss.str();
+}
+
+std::string get_target_meta_path(
+    const std::string& location_path, const RawstdUUIDString& uuid,
+    uint64_t chunk_offset
+) {
+    return get_target_path(location_path, uuid, chunk_offset) + ".meta";
 }
 
 std::string get_location_path(const rawstd::URI& location) {
@@ -52,16 +70,6 @@ std::string get_location_path(const rawstd::URI& location) {
     return location.path().str();
 }
 
-std::string get_target_path(
-    const std::string& location_path, const RawstdUUIDString& uuid
-) {
-    std::ostringstream oss;
-
-    oss << location_path << "/" << uuid;
-
-    return oss.str();
-}
-
 } // unnamed namespace
 
 namespace rawstor {
@@ -71,7 +79,8 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::blk::Backend(p, queue, location) {
 }
 
-rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t snap_id) {
+rawstd::Task<int>
+Backend::_open(const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id) {
     if (snap_id != 0) {
         /* No native CoW: docs/mds.md, "Snapshots". */
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
@@ -82,7 +91,8 @@ rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t snap_id) {
     RawstdUUIDString id_string;
     rawstd_uuid_to_string(&id, &id_string);
 
-    std::string target_path = get_target_path(location_path, id_string);
+    std::string target_path =
+        get_target_path(location_path, id_string, chunk_offset);
 
     // O_CLOEXEC: a file:// backend can be live in the same process as an
     // lvm:// or zfs:// one (Target::open() fans out across every URI of a
@@ -96,9 +106,9 @@ rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t snap_id) {
 }
 
 rawstd::Task<void> Backend::list(
-    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+    unsigned int limit, std::vector<ListedObject>& targets, ListedObject& token
 ) {
-    RawstdUUID input_token = token;
+    ListedObject input_token = token;
     targets.clear();
     token = {};
     try {
@@ -111,8 +121,17 @@ rawstd::Task<void> Backend::list(
             }
             std::string filename = entry.path().filename().string();
 
+            std::string uuid_part = filename;
+            uint64_t chunk_offset = 0;
+            size_t colon = filename.find(':');
+            if (colon != std::string::npos) {
+                uuid_part = filename.substr(0, colon);
+                chunk_offset =
+                    strtoull(filename.c_str() + colon + 1, nullptr, 10);
+            }
+
             RawstdUUID uuid;
-            int res = rawstd_uuid_from_string(&uuid, filename.c_str());
+            int res = rawstd_uuid_from_string(&uuid, uuid_part.c_str());
             if (res < 0) {
                 rawstd_warning(
                     "%s: %s\n", strerror(-res), entry.path().string().c_str()
@@ -120,24 +139,14 @@ rawstd::Task<void> Backend::list(
                 continue;
             }
 
-            targets.push_back(uuid);
+            targets.push_back(ListedObject{uuid, chunk_offset, 0});
         }
 
-        std::sort(
-            targets.begin(), targets.end(),
-            [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-                return rawstd_uuid_cmp(&lhs, &rhs) < 0;
-            }
-        );
+        std::sort(targets.begin(), targets.end());
 
         targets.erase(
             targets.begin(),
-            std::upper_bound(
-                targets.begin(), targets.end(), input_token,
-                [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-                    return rawstd_uuid_cmp(&lhs, &rhs) < 0;
-                }
-            )
+            std::upper_bound(targets.begin(), targets.end(), input_token)
         );
 
         if (limit == 0) {
@@ -163,8 +172,9 @@ rawstd::Task<void> Backend::list(
     co_return;
 }
 
-rawstd::Task<void>
-Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+rawstd::Task<void> Backend::create(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+) {
     _validate_spec(sp);
 
     std::string location_path = get_location_path(location());
@@ -179,7 +189,8 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string target_path = get_target_path(location_path, uuid_string);
+    std::string target_path =
+        get_target_path(location_path, uuid_string, chunk_offset);
 
     int fd = ::open(
         target_path.c_str(), O_EXCL | O_CREAT | O_WRONLY | O_CLOEXEC,
@@ -271,7 +282,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     std::exception_ptr meta_error;
     try {
         std::string meta_path =
-            get_target_meta_path(location_path, uuid_string);
+            get_target_meta_path(location_path, uuid_string, chunk_offset);
 
         int meta_fd = co_await _queue.open(
             meta_path.c_str(), O_EXCL | O_CREAT | O_WRONLY | O_CLOEXEC,
@@ -289,12 +300,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
             ChunkIdentity identity;
             identity.member_kind = sp.member_kind;
             identity.width = static_cast<uint8_t>(sp.width);
-            memcpy(
-                identity.volume_id, sp.volume_id, sizeof(identity.volume_id)
-            );
-            identity.logical_index = sp.logical_index;
             identity.chunk_size = sp.chunk_size;
-            identity.snap_id = sp.snap_id;
 
             // meta_encode()'s own (shorter, variable-length) return value
             // is NUL-padded out to a fixed META_MAX_SIZE bytes here,
@@ -337,16 +343,19 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     co_return;
 }
 
-rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
+rawstd::Task<void>
+Backend::remove(const RawstdUUID& id, uint64_t chunk_offset) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string target_path = get_target_path(location_path, uuid_string);
+    std::string target_path =
+        get_target_path(location_path, uuid_string, chunk_offset);
     co_await _queue.unlink(target_path.c_str());
 
-    std::string meta_path = get_target_meta_path(location_path, uuid_string);
+    std::string meta_path =
+        get_target_meta_path(location_path, uuid_string, chunk_offset);
     try {
         co_await _queue.unlink(meta_path.c_str());
     } catch (const std::system_error& e) {
@@ -356,13 +365,15 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
     }
 }
 
-rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectSpec>
+Backend::spec(const RawstdUUID& id, uint64_t chunk_offset) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string target_path = get_target_path(location_path, uuid_string);
+    std::string target_path =
+        get_target_path(location_path, uuid_string, chunk_offset);
 
     struct stat st;
     co_await _queue.stat(target_path.c_str(), &st);
@@ -374,13 +385,15 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
     co_return ret;
 }
 
-rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectMeta>
+Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string meta_path = get_target_meta_path(location_path, uuid_string);
+    std::string meta_path =
+        get_target_meta_path(location_path, uuid_string, chunk_offset);
 
     int fd = co_await _queue.open(meta_path.c_str(), O_RDONLY | O_CLOEXEC, 0);
 
@@ -409,27 +422,26 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     }
 
     RawstorObjectMeta ret{};
-    ret.spec = co_await spec(id);
+    ret.spec = co_await spec(id, chunk_offset);
     ret.spec.member_kind = identity.member_kind;
     ret.spec.width = identity.width;
-    memcpy(ret.spec.volume_id, identity.volume_id, sizeof(ret.spec.volume_id));
-    ret.spec.logical_index = identity.logical_index;
     ret.spec.chunk_size = identity.chunk_size;
-    ret.spec.snap_id = identity.snap_id;
     ret.sync_state = sync_state;
 
     co_return ret;
 }
 
 rawstd::Task<void> Backend::set_sync_state(
-    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+    const RawstdUUID& id, uint64_t chunk_offset,
+    const RawstorObjectSyncState& sync_state
 ) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string meta_path = get_target_meta_path(location_path, uuid_string);
+    std::string meta_path =
+        get_target_meta_path(location_path, uuid_string, chunk_offset);
 
     // O_TRUNC would be wrong here regardless of sync_state carrying no
     // size of its own: this file is fixed-size, and a short write must

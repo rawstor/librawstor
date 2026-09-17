@@ -80,7 +80,7 @@ private:
 
     static rawstd::DetachedTask _list(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
+        RawstorOSTFrameListPayload payload
     );
     static rawstd::DetachedTask _allocate(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
@@ -142,7 +142,14 @@ private:
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameSyncStatePayload payload
     );
-    std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
+    // Every configured location's own URI for `uuid`, with `chunk_offset`/
+    // `snap_id` folded into each one's own filename as
+    // "<uuid>[:<chunk_offset>][@<snap_id>]" (Target's own doc comment,
+    // src/target.hpp) -- the same self-describing name every backend on
+    // the receiving end already expects (docs/mds.md, "Chunk identity").
+    std::vector<rawstd::URI> _targets(
+        const RawstdUUID& uuid, uint64_t chunk_offset = 0, uint64_t snap_id = 0
+    );
 
     // Sends a response frame and awaits its actual completion (not just
     // submission) -- unlike every other rawio_*() bridge in the .cpp,

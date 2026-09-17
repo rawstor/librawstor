@@ -129,9 +129,18 @@ naming a volume per version would contradict the snapshot design (stage 2):
 
 | Backend | Slot home + metadata | Versions (`snap_id`) |
 |---------|----------------------|----------------------|
-| `file://` | `<volume_id>/<offset>#<slot>.dat` + `.spec` sidecar | `-ENOTSUP` in v1 |
-| `lvm://`  | thin LV `<volume_id>-<offset>-<slot>`, meta in LVM tags | thin snapshot LV |
-| `zfs://`  | zvol `<volume_id>-<offset>-<slot>`, meta in user properties | `@<snap_id>` |
+| `file://` | `<volume_id>[:<offset>]` + `.meta` sidecar | `-ENOTSUP` in v1 |
+| `lvm://`  | thin LV `<volume_id>[-<offset>]`, meta in LVM tags | thin snapshot LV |
+| `zfs://`  | zvol `<volume_id>[:<offset>]`, meta in user properties | `@<snap_id>` |
+
+(`offset` omitted when 0 -- a standalone object and a volume's own chunk
+0 are then byte-for-byte the same name, by design. `slot_index` isn't
+part of the physical name at all: each mirror of one chunk gets its own
+URI in the target string that addresses it -- comma-separated, same as
+any plain mirrored target -- rather than a naming-scheme component; `-`
+is LVM's own separator since its naming forbids `:`, unlike the
+`:<offset>` the target-string syntax and `file://`/`zfs://` share. See
+docs/locations_and_targets.md, "Chunk offset".)
 
 ### `chunk_meta` — one schema, two layers
 
@@ -144,8 +153,15 @@ of inventing a second one:
 ```
 chunk_meta {
   magic, format_version
-  // placement identity (new)
-  volume_id, logical_index, chunk_size
+  // placement identity (new). volume_id/logical_index are no longer
+  // stored here as of the self-describing rename (v1, implemented):
+  // obj_id already *is* volume_id (see above), logical_index is
+  // chunk_offset / chunk_size, and chunk_offset already rides the wire
+  // unconditionally (RawstorOSTFrameBasicBody.offset above / its own
+  // dedicated field on ALLOCATE) -- only chunk_size is still worth
+  // storing here (needed to invert chunk_offset back into logical_index
+  // without a separate lookup).
+  chunk_size
   version                  // snap_id this slot belongs to; 0 = live
   redundancy               // mirror{R} | ec{k,m} — how to decode
   slot_index

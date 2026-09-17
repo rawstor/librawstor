@@ -101,9 +101,6 @@ open_object(rawio::Queue& queue, const rawstd::URI& location) {
         .width = 0,
         .failure_domain = 0,
         .member_kind = RAWSTOR_MEMBER_DATA,
-        .volume_id = {},
-        .logical_index = 0,
-        .snap_id = 0
     };
     run(queue, target.create(queue, spec));
 
@@ -323,10 +320,7 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
         .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
         .reserved = 0,
-        .volume_id = {},
-        .logical_index = 0,
         .chunk_size = 0,
-        .snap_id = 0,
     };
 
     // Left open for the whole test -- see server.hpp's Session::~Session()

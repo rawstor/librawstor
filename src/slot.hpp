@@ -1,6 +1,7 @@
 #ifndef RAWSTOR_SLOT_HPP
 #define RAWSTOR_SLOT_HPP
 
+#include "backend.hpp"
 #include "telemetry.hpp"
 
 #include <rawstor/location.h>
@@ -23,8 +24,6 @@
 
 namespace rawstor {
 
-class Backend;
-
 class Slot final {
 private:
     rawio::Queue& _queue;
@@ -33,11 +32,13 @@ private:
     // Slot is only ever used for metadata (list/create/remove/
     // spec/info), which needs no SET_OBJECT step of its own.
     std::optional<RawstdUUID> _id;
-    // The version open() bound _id to -- 0 (live) unless open() was
-    // called with a snapshot id (docs/mds.md, "Snapshots").
-    // Meaningless while _id is unset; carried alongside it so a
-    // reconnected backend's own set_object() (invalidate_backend())
-    // rebinds to the same version, not silently back to live.
+    // The chunk offset/version open() bound _id to -- 0/0 (whole object,
+    // live) unless open() was called otherwise (docs/mds.md, "Chunk
+    // identity"/"Snapshots"). Meaningless while _id is unset; carried
+    // alongside it so a reconnected backend's own set_object()
+    // (invalidate_backend()) rebinds to the same chunk/version, not
+    // silently back to the whole object's own live one.
+    uint64_t _chunk_offset = 0;
     uint64_t _snap_id = 0;
 
     std::vector<std::shared_ptr<Backend>> _backends;
@@ -133,26 +134,38 @@ public:
     // data-path methods below -- same shape as the matching Backend
     // methods they wrap, since a connect()ed Slot is (like a
     // Backend) already bound to one location.
+    rawstd::Task<void> list(
+        unsigned int limit, std::vector<ListedObject>& objects,
+        ListedObject& token
+    );
+
+    rawstd::Task<void> snapshot_create(
+        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+    );
+    rawstd::Task<void> snapshot_remove(
+        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+    );
+
     rawstd::Task<void>
-    list(unsigned int limit, std::vector<RawstdUUID>& uuids, RawstdUUID& token);
+    resize(const RawstdUUID& id, uint64_t chunk_offset, uint64_t new_size);
+    rawstd::Task<uint64_t>
+    snapshot_create_assign(const RawstdUUID& id, uint64_t chunk_offset);
 
-    rawstd::Task<void> snapshot_create(const RawstdUUID& id, uint64_t snap_id);
-    rawstd::Task<void> snapshot_remove(const RawstdUUID& id, uint64_t snap_id);
+    rawstd::Task<void> create(
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+    );
 
-    rawstd::Task<void> resize(const RawstdUUID& id, uint64_t new_size);
-    rawstd::Task<uint64_t> snapshot_create_assign(const RawstdUUID& id);
+    rawstd::Task<void> remove(const RawstdUUID& id, uint64_t chunk_offset);
 
-    rawstd::Task<void>
-    create(const RawstdUUID& id, const RawstorObjectSpec& sp);
+    rawstd::Task<RawstorObjectSpec>
+    spec(const RawstdUUID& id, uint64_t chunk_offset);
 
-    rawstd::Task<void> remove(const RawstdUUID& id);
-
-    rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id);
-
-    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id);
+    rawstd::Task<RawstorObjectMeta>
+    meta(const RawstdUUID& id, uint64_t chunk_offset);
 
     rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstorObjectSyncState& sync_state
     );
 
     rawstd::Task<RawstorLocationInfo> info();
@@ -169,7 +182,7 @@ public:
     // doesn't return it, see its own doc comment) -- spec.mirrors on it
     // is this copy's own local share, not the target-wide count.
     rawstd::Task<RawstorObjectMeta>
-    open(const RawstdUUID& id, uint64_t snap_id = 0);
+    open(const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id = 0);
 
     // Not called implicitly by ~Slot() (a coroutine can't run in a
     // destructor, and there's no other synchronous fallback here beyond

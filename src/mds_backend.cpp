@@ -44,25 +44,16 @@ RawstorVolPolicy policy_of(const RawstorObjectSpec& sp) {
     return ret;
 }
 
-/*
- * The uuid of a chunk's backing object: the volume id with the low 8 id
- * bytes XORed with the chunk index. Index 0 is the identity -- a
- * single-chunk volume is bit-for-bit today's plain object.
- */
-RawstdUUID volume_chunk_uuid(const RawstdUUID& volume_id, uint64_t index) {
-    RawstdUUID ret = volume_id;
-    for (unsigned i = 0; i < 8; ++i) {
-        ret.bytes[8 + i] ^= static_cast<uint8_t>(index >> (8 * i));
-    }
-    return ret;
-}
-
 // One chunk slot's own target URI: "<uuid>[:<offset>][@<snap_id>]"
-// (Target's own doc comment) -- `offset` (index * chunk_size, the same
-// formula docs/mds.md's own "chunk_offset" uses) is what
-// Target::offset() reads back on the far end, `snap_id` what
-// Target::snap_id() does. Throws if the MDS could not resolve the OST:
-// refuse loudly instead of silently opening under-protected.
+// (Target's own doc comment) -- `uuid` is the volume's own id, unchanged
+// for every one of its chunks (docs/mds.md, "Chunk identity": obj_id =
+// volume_id -- the physical resource's own name is self-describing, so
+// nothing here needs to scramble it into a per-chunk uuid of its own);
+// `offset` (index * chunk_size, the same formula docs/mds.md's own
+// "chunk_offset" uses) is what Target::offset() reads back on the far
+// end and disambiguates which of the volume's chunks this is, `snap_id`
+// what Target::snap_id() does. Throws if the MDS could not resolve the
+// OST: refuse loudly instead of silently opening under-protected.
 rawstd::URI chunk_slot_target(
     const RawstdUUID& volume_id, uint64_t index, const WireSlot& slot,
     uint64_t chunk_size, uint64_t snap_id = 0
@@ -71,9 +62,8 @@ rawstd::URI chunk_slot_target(
         rawstd_error("Chunk slot without a resolved OST address\n");
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
-    RawstdUUID uuid = volume_chunk_uuid(volume_id, index);
     RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&uuid, &uuid_string);
+    rawstd_uuid_to_string(&volume_id, &uuid_string);
 
     std::ostringstream oss;
     oss << "ost://" << slot.address << "/" << uuid_string;
@@ -117,12 +107,12 @@ chunk_logical_size(uint64_t logical_size, uint64_t chunk_size, uint64_t index) {
 RawstorObjectSpec chunk_spec(const WireMap& map, uint64_t index) {
     RawstorObjectSpec sp{};
     sp.size = chunk_logical_size(map.logical_size, map.chunk_size, index);
-    /* The placement identity the chunk carries from now on. */
+    // The chunk's own placement identity: member_kind plus the target
+    // string's own id/":<offset>" (chunk_slot_target() above) -- no
+    // volume_id/logical_index/snap_id fields to stamp here any more (see
+    // RawstorObjectSpec's own doc comment in target.h).
     sp.member_kind = RAWSTOR_MEMBER_DATA;
-    memcpy(sp.volume_id, map.volume_id.bytes, sizeof(sp.volume_id));
-    sp.logical_index = index;
     sp.chunk_size = map.chunk_size;
-    sp.snap_id = 0;
     sp.width = map.policy.width;
     sp.mirrors = map.policy.width;
     sp.failure_domain = map.policy.failure_domain;
@@ -160,12 +150,12 @@ rawstd::Task<void> Backend::_connect() {
 }
 
 rawstd::Task<void>
-Backend::list(unsigned int, std::vector<RawstdUUID>&, RawstdUUID&) {
+Backend::list(unsigned int, std::vector<ListedObject>&, ListedObject&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
 rawstd::Task<void>
-Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+Backend::create(const RawstdUUID& id, uint64_t, const RawstorObjectSpec& sp) {
     if (sp.size == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -211,7 +201,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     }
 }
 
-rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
+rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t) {
     WireMap map = co_await _client.vol_open(id, 0);
 
     /*
@@ -236,7 +226,7 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
     }
 }
 
-rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id, uint64_t) {
     WireMap map = co_await _client.vol_open(id, 0);
 
     RawstorObjectSpec sp{};
@@ -249,7 +239,8 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
     co_return sp;
 }
 
-rawstd::Task<void> Backend::resize(const RawstdUUID& id, uint64_t new_size) {
+rawstd::Task<void>
+Backend::resize(const RawstdUUID& id, uint64_t, uint64_t new_size) {
     if (new_size == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -297,7 +288,8 @@ rawstd::Task<void> Backend::resize(const RawstdUUID& id, uint64_t new_size) {
     }
 }
 
-rawstd::Task<uint64_t> Backend::snapshot_create_assign(const RawstdUUID& id) {
+rawstd::Task<uint64_t>
+Backend::snapshot_create_assign(const RawstdUUID& id, uint64_t) {
     uint64_t snap_id = co_await _client.vol_snap_begin(id);
     WireMap map = co_await _client.vol_open(id, 0);
 
@@ -357,7 +349,8 @@ rawstd::Task<uint64_t> Backend::snapshot_create_assign(const RawstdUUID& id) {
     co_return snap_id;
 }
 
-rawstd::Task<void> Backend::snapshot_create(const RawstdUUID&, uint64_t) {
+rawstd::Task<void>
+Backend::snapshot_create(const RawstdUUID&, uint64_t, uint64_t) {
     // A caller-chosen id makes no sense here -- the volume's own MDS is
     // the only authority that assigns one (snapshot_create_assign()
     // above).
@@ -365,7 +358,7 @@ rawstd::Task<void> Backend::snapshot_create(const RawstdUUID&, uint64_t) {
 }
 
 rawstd::Task<void>
-Backend::snapshot_remove(const RawstdUUID& id, uint64_t snap_id) {
+Backend::snapshot_remove(const RawstdUUID& id, uint64_t, uint64_t snap_id) {
     if (snap_id == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -417,7 +410,7 @@ Backend::snapshot_remove(const RawstdUUID& id, uint64_t snap_id) {
     }
 }
 
-rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id, uint64_t) {
     WireMap map = co_await _client.vol_open(id, 0);
 
     RawstorObjectMeta ret{};
@@ -436,8 +429,9 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     co_return ret;
 }
 
-rawstd::Task<void>
-Backend::set_sync_state(const RawstdUUID&, const RawstorObjectSyncState&) {
+rawstd::Task<void> Backend::set_sync_state(
+    const RawstdUUID&, uint64_t, const RawstorObjectSyncState&
+) {
     // No-op, for the same reason meta() above is synthetic.
     co_return;
 }
@@ -446,7 +440,8 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
-rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t snap_id) {
+rawstd::Task<void>
+Backend::set_object(const RawstdUUID& id, uint64_t, uint64_t snap_id) {
     WireMap map = co_await _client.vol_open(id, snap_id);
     std::string target_string = build_target_string(map, snap_id);
 
