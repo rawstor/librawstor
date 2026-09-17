@@ -43,15 +43,6 @@ public:
         RawstorPaginationToken& token
     );
 
-    // The reconstruct scan's source (docs/mds.md, "Reconstruct /
-    // DR"): unlike list() above, this is a per-URI physical inventory,
-    // not a mirror-aware target listing -- every URI is scanned
-    // independently and its own chunks appended as-is (no merge-by-uuid:
-    // the same object seen on two URIs of a mirrored location is two
-    // separate records here, exactly what the reconstruct scan needs).
-    rawstd::Task<void>
-    list_chunks(rawio::Queue& queue, std::vector<RawstorLocationChunk>& chunks);
-
     // Creates a new object at this location under a fresh UUID v7 and
     // returns the Target addressing it.
     rawstd::Task<Target>

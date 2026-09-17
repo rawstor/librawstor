@@ -98,34 +98,6 @@ rawstd::Task<uint64_t> Backend::snapshot_create_assign(const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
-rawstd::Task<void>
-Backend::list_chunks(std::vector<RawstorLocationChunk>& chunks) {
-    chunks.clear();
-
-    RawstdUUID token = {};
-    RawstdUUID empty = {};
-    do {
-        std::vector<RawstdUUID> uuids;
-        co_await list(0, uuids, token);
-        for (const RawstdUUID& id : uuids) {
-            RawstorLocationChunk chunk{};
-            memcpy(chunk.object_id, id.bytes, sizeof(chunk.object_id));
-            try {
-                chunk.meta = co_await meta(id);
-            } catch (const std::exception& e) {
-                RawstdUUIDString uuid_string;
-                rawstd_uuid_to_string(&id, &uuid_string);
-                rawstd_error(
-                    "list_chunks: skipping %s: unreadable metadata: %s\n",
-                    uuid_string, e.what()
-                );
-                continue;
-            }
-            chunks.push_back(chunk);
-        }
-    } while (rawstd_uuid_cmp(&token, &empty) != 0);
-}
-
 std::string Backend::str() const {
     // Only ost::Backend ever calls set_fd() -- file/lvm/zfs backends have
     // no socket of their own, so _fd stays at its constructor default of

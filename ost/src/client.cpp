@@ -671,20 +671,6 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
-            case RAWSTOR_CMD_LIST_CHUNKS: {
-                RawstorOSTFrameBasicPayload basic;
-                co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
-                    &stream_failed
-                );
-                client = weak.lock();
-                if (client == nullptr) {
-                    co_return;
-                }
-                _list_chunks(weak, head);
-                rawstd::DetachedTask::rethrow_if_pending();
-                break;
-            }
             case RAWSTOR_CMD_SPEC: {
                 RawstorOSTFrameBasicPayload basic;
                 co_await recv_frame(
@@ -924,109 +910,6 @@ Client::_close_current_object(std::weak_ptr<Client> weak) {
     }
 
     co_return weak.lock();
-}
-
-// The reconstruct scan's server side (docs/mds.md, "Reconstruct /
-// DR"): every object this server's own location(s) physically store,
-// full metadata included. Unlike _list(), this rides RawstorOSTFrameBasic
-// but ignores every field of it (no pagination token yet -- see
-// protocol.h's own doc comment on RAWSTOR_CMD_LIST_CHUNKS).
-rawstd::DetachedTask
-Client::_list_chunks(std::weak_ptr<Client> weak, RawstorOSTFrameHead head) {
-    std::shared_ptr<Client> client = co_await _close_current_object(weak);
-    if (client == nullptr) {
-        co_return;
-    }
-
-    RawstorLocationChunk* chunks = nullptr;
-    size_t nchunks = 0;
-    int result = 0;
-    try {
-        std::string location = rawstd::URI::uris(client->_server.locations());
-        rawstd::CallbackAwaitable<void> awaiter;
-        int res = rawstor_location_list_chunks(
-            client->_queue, location.c_str(), &chunks, &nchunks,
-            result_trampoline, &awaiter
-        );
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-        co_await awaiter;
-    } catch (const std::system_error& e) {
-        result = -e.code().value();
-    }
-    if (result < 0) {
-        bool send_failed = false;
-        try {
-            co_await client->_send_response(
-                RAWSTOR_CMD_LIST_CHUNKS, head.cid, result, 0
-            );
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            send_failed = true;
-        }
-        if (send_failed) {
-            co_await client->_server.del_client(client->_fd);
-        }
-        co_return;
-    }
-
-    bool send_failed = false;
-    try {
-        // Same 64MiB frame cap as the data commands (protocol.h's own
-        // doc comment) -- v1 has no continuation token, so a scan this
-        // large simply fails loudly instead of silently truncating.
-        size_t total = nchunks * sizeof(RawstorOSTFrameChunkPayload);
-        if (total > (1ULL << 26)) {
-            rawstd_error(
-                "fd %d: list_chunks: %zu records too large for one frame\n",
-                client->_fd, nchunks
-            );
-            RAWSTD_THROW_SYSTEM_ERROR(EFBIG);
-        }
-
-        std::vector<unsigned char> data(total);
-        RawstorOSTFrameChunkPayload* out =
-            reinterpret_cast<RawstorOSTFrameChunkPayload*>(data.data());
-        for (size_t i = 0; i < nchunks; ++i) {
-            const RawstorLocationChunk& chunk = chunks[i];
-            RawstorOSTFrameChunkPayload& record = out[i];
-            memcpy(record.object_id, chunk.object_id, sizeof(record.object_id));
-            record.meta.size = chunk.meta.spec.size;
-            record.meta.epoch = chunk.meta.sync_state.epoch;
-            record.meta.sync_id = chunk.meta.sync_state.sync_id;
-            memcpy(
-                record.meta.sync_id_history,
-                chunk.meta.sync_state.sync_id_history,
-                sizeof(record.meta.sync_id_history)
-            );
-            record.meta.state = static_cast<RawstorOSTSyncStateType>(
-                chunk.meta.sync_state.state
-            );
-            record.meta.member_kind =
-                static_cast<uint8_t>(chunk.meta.spec.member_kind);
-            record.meta.width = static_cast<uint8_t>(chunk.meta.spec.mirrors);
-            record.meta.reserved = 0;
-            memcpy(
-                record.meta.volume_id, chunk.meta.spec.volume_id,
-                sizeof(record.meta.volume_id)
-            );
-            record.meta.logical_index = chunk.meta.spec.logical_index;
-            record.meta.chunk_size = chunk.meta.spec.chunk_size;
-            record.meta.snap_version = chunk.meta.spec.snap_version;
-        }
-        co_await client->_send_response(
-            RAWSTOR_CMD_LIST_CHUNKS, head.cid,
-            static_cast<int32_t>(data.size()), 0, data
-        );
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        send_failed = true;
-    }
-    free(chunks);
-    if (send_failed) {
-        co_await client->_server.del_client(client->_fd);
-    }
 }
 
 rawstd::DetachedTask Client::_list(

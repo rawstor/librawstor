@@ -241,7 +241,7 @@ reserved ranges per role:
 ```
 0x00    session:         SET_OBJECT                    // handshake, every role
 0x01..  data:            READ, WRITE, DISCARD, ALLOCATE, RELEASE, FLUSH
-0x20..  shared metadata: SPEC, SET_STATE, LIST_CHUNKS  // the witness subset + scan
+0x20..  shared metadata: SPEC, SET_STATE               // the witness subset
 0x40..  volume (MDS):    VOL_CREATE, VOL_OPEN, VOL_RESIZE, VOL_SNAPSHOT,
                          VOL_UPDATE_PLACEMENT, VOL_REMOVE, VOL_GET_PLACEMENT
 ```
@@ -262,7 +262,7 @@ Role matrix:
 | session (`SET_OBJECT`) | yes | yes | yes |
 | data (`READ`,`WRITE`,`DISCARD`,`ALLOCATE`,`RELEASE`,`FLUSH`) | yes | yes | no (`-ENOSYS`) |
 | per-object/chunk metadata (`SPEC`, `SET_STATE`) — the **witness subset** | yes (today) | yes | yes |
-| `LIST_CHUNKS` | yes | yes | yes (serves its own index) |
+| reconstruct/scrub scan (`LIST` + per-object `SPEC`/`SET_STATE`) | yes | yes | yes (serves its own index) |
 | volume commands (`CMD_VOL_*`) | no | optional | yes |
 
 Consequence for stage 3: **a witness needs no new server.** A metadata-only
@@ -507,9 +507,9 @@ is the third vote that restores auto-start with one OST down. Implementation:
 any server speaking the witness subset (`SPEC`/`SET_STATE`) — a plain OST, an
 OST doubling as partial MDS, or the MDS itself. The member appears in the
 target list like any other member; data I/O and resync skip it. Its stored
-record carries `member_kind = witness` (see `chunk_meta`), so a
-`LIST_CHUNKS` reconstruct scan never mistakes the witness host for a data
-slot.
+record carries `member_kind = witness` (see `chunk_meta`), so the
+reconstruct scan (`LIST` + per-object `SPEC`) never mistakes the witness
+host for a data slot.
 
 **Hard requirement: the witness is not on the failure hot path.** When a data
 member dies mid-session, the client records the new generation on the
@@ -647,13 +647,21 @@ witness tables being the reason `synchronous=FULL` is non-negotiable.
 ```
 rebuild the map:
   get the OST roster from topology (v1: static config)
-  for each OST: CMD_LIST_CHUNKS -> [(physical chunk_id, chunk_meta)]
+  for each OST: LIST -> physical ids, then per id: SPEC -> chunk_meta
   drop member_kind = witness records (metadata-only, not slots)
   group by (volume_id, version): version 0 -> live chunk_map,
                                  version = snap_id -> snapshot view
   within each group: order by logical_index
   -> reassembled maps (+ snapshot views)
 ```
+
+No dedicated batch scan opcode: this is the same `LIST` + per-object `SPEC`
+a caller composing the scan itself would do anyway, at O(n) round trips
+per OST rather than one — an acceptable cost for a scan that only runs on
+`rawstor-mds --reconstruct`, not a hot path (an earlier version of this
+design had a single-round-trip `CMD_LIST_CHUNKS` batch opcode; retired for
+the code path it duplicated without a use case that needed the round-trip
+savings badly enough to justify it).
 
 This same scan doubles as a scrub / consistency check. Witness records are
 **not** reconstructed (see the two state classes); after a from-scratch
@@ -663,10 +671,13 @@ of normal opens/closes.
 **v1 notes (shipped as `rawstor-mds --reconstruct`, scan before serving):**
 
 - **No partial scans, by construction:** every OST of the topology must
-  answer `LIST_CHUNKS` or the reconstruct aborts. A half scan would
+  answer `LIST` or the reconstruct aborts outright. A half scan would
   silently drop the unanswered OST's live copies from the map; an OST that
   is really gone is removed from the topology first — an explicit
-  operator decision, not a timeout.
+  operator decision, not a timeout. One object's own `SPEC` failing on an
+  OST that otherwise answered is a softer case: that one record is
+  skipped (logged), the same "salvage the readable copies" tolerance the
+  next bullet's degraded-chunk handling already relies on.
 - **The map is restored, the policy knobs are not.** `failure_domain`,
   `stripe_width` and the placement seed are deliberately not persisted on
   chunks (descriptor-only state); the rebuilt descriptor gets the weakest
@@ -682,17 +693,12 @@ of normal opens/closes.
   extent, ZFS volblocksize); the reconstructed `logical_size` takes the
   smallest copy, clamped to `chunk_size` — never smaller than what was
   written.
-- Snapshot-version records are skipped (stage 2); the full MDS serving
-  `LIST_CHUNKS` from its own index (the scrub comparison) is not
-  implemented yet.
-- Wire shape: the response payload is `res` chunk_meta records (the SPEC
-  meta body with `obj_id` = the physical id), bounded by the same 64 MiB
-  cap as the data commands.
+- Snapshot-version records are skipped (stage 2); the full MDS serving the
+  same `LIST` + per-object `SPEC` scan from its own index (the scrub
+  comparison) is not implemented yet.
 
 ## Protocol deltas (to Protocol.md)
 
-- New shared opcode `CMD_LIST_CHUNKS -> [(physical chunk_id, chunk_meta)]` —
-  reconstruct / scrub.
 - New MDS opcodes `CMD_VOL_*` (same `rstr` command space; `-ENOSYS` outside a
   server's role); opcodes regrouped into reserved ranges per role.
 - Unified response frame `{res, len, hash}` + body for **all** commands
@@ -714,7 +720,7 @@ of normal opens/closes.
 
 1. **Chunking**: `CMD_VOL_CREATE/OPEN/RESIZE/REMOVE`, HRW placement + topology config,
    explicit map in MDS (SQLite), client-side routing, `map_epoch` + fence watermark,
-   `CMD_LIST_CHUNKS` + reconstruct.
+   `LIST` + per-object `SPEC` reconstruct scan.
 2. **Snapshots**: `CMD_VOL_SNAPSHOT`, `version`/`snap_id` in chunk identity,
    member-set registry, deletion, `-ENOTSUP` on `file://`.
 3. **Witness**: metadata-only member in the target list, witness record kinds

@@ -279,58 +279,6 @@ int rawstor_location_create(
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-/**
- * @brief One stored object found by rawstor_location_list_chunks().
- *
- * @see rawstor_location_list_chunks
- */
-struct RawstorLocationChunk {
-    uint8_t object_id[16]; /**< Physical object id. */
-    struct RawstorObjectMeta meta;
-};
-
-/**
- * @brief Asynchronously enumerate every object stored at a location,
- *        together with its metadata.
- *
- * The source of the MDS map reconstruct scan (docs/mds.md,
- * "Reconstruct / DR", wire opcode @c RAWSTOR_CMD_LIST_CHUNKS): unlike
- * rawstor_location_list(), this is not paginated (bounded by the same
- * 64 MiB frame cap as the data commands) and reports each object's full
- * metadata, not just its target string. Objects whose metadata cannot be
- * read are skipped with an error logged -- a reconstruct scan must
- * salvage the readable copies, and every skipped copy is covered by its
- * mirrors.
- *
- * This function returns immediately; the actual result is reported via
- * @p cb once the operation completes.
- *
- * @param queue     Queue used to drive the asynchronous scan.
- * @param location  Location string, see rawstor_location_list().
- * @param chunks    Out-parameter written exactly once, immediately before
- *                  @p cb is invoked: on success, a pointer to a
- *                  malloc'd array of @p nchunks entries that the caller
- *                  releases with free(). NULL when @p nchunks is 0. Left
- *                  untouched on error.
- * @param nchunks   Out-parameter: number of entries written to @p chunks.
- * @param cb        Callback invoked on completion.
- *                  - @p result is zero on success, or a negative errno on
- *                    failure (@c -EINVAL for invalid @p location, @c
- *                    -ENOMEM, @c -EIO, @c -EACCES).
- *                  - @p data is the same pointer passed as @p data below.
- * @param data      User-defined context pointer passed unchanged to @p cb.
- *
- * @return 0 if the scan was successfully queued; negative errno on
- *         immediate failure (in which case @p cb is never invoked).
- *
- * @see RawstorLocationChunk
- */
-int rawstor_location_list_chunks(
-    RawIOQueue* queue, const char* location,
-    struct RawstorLocationChunk** chunks, size_t* nchunks,
-    int (*cb)(ssize_t result, void* data), void* data
-) RAWSTOR_NOEXCEPT;
-
 #ifdef __cplusplus
 }
 #endif

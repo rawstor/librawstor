@@ -82,13 +82,6 @@ public:
         unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
     ) override;
 
-    // Overrides the generic list()+meta() default (rawstor::Backend's
-    // own) with the dedicated LIST_CHUNKS wire command: one round trip,
-    // the remote OST does its own local scan the same way, via that same
-    // default over its own local (file/lvm/zfs) backend.
-    rawstd::Task<void>
-    list_chunks(std::vector<RawstorLocationChunk>& chunks) override;
-
     rawstd::Task<void>
     create(const RawstdUUID& id, const RawstorObjectSpec& sp) override;
 

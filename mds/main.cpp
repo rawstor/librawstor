@@ -49,7 +49,7 @@ void usage() {
         << std::endl
         << "  --queue-size SIZE     RawIO queue size (default: "
         << DEFAULT_QUEUE_SIZE << ")" << std::endl
-        << "  -r, --reconstruct     Rebuild the map from a LIST_CHUNKS scan"
+        << "  -r, --reconstruct     Rebuild the map from a LIST+META scan"
         << std::endl
         << "                        of every OST in the topology before"
         << std::endl
@@ -103,12 +103,87 @@ ssize_t sync_op_wait(SyncOp& op, int res) {
     return op.result;
 }
 
-// rawstor-mds --reconstruct (docs/mds.md, "Reconstruct / DR"):
-// rebuilds the whole map from a LIST_CHUNKS scan of every OST in the
-// topology. No partial scans, by construction (see VolumeStore::
-// reconstruct()'s own doc comment): any OST that doesn't answer aborts
-// the whole reconstruct rather than silently dropping its live copies
-// from the map.
+// One OST's own share of --reconstruct's scan: every object it stores,
+// full metadata included -- the same LIST + META per object a caller
+// composing this from the public API would do anyway (there used to be a
+// dedicated LIST_CHUNKS wire command for it; see protocol.h's own comment
+// on why it was retired), just paid here at O(n) round trips instead of
+// one. An object whose own META fails is skipped (logged) rather than
+// aborting the whole scan -- salvaging the readable copies, every skipped
+// copy covered by its mirrors (docs/mds.md, "Reconstruct / DR"); a LIST
+// failure, in contrast, means this OST didn't answer at all and aborts
+// the whole reconstruct (see reconstruct()'s own doc comment on why a
+// partial scan is never silently accepted).
+void scan_ost(
+    RawIOQueue* queue, const std::string& location, const RawstdUUID& ost_id,
+    std::vector<rawstor::mds::ScanRecord>& records
+) {
+    RawstorPaginationToken token = {};
+    do {
+        RawstorStringList* targets = nullptr;
+        SyncOp op;
+        op.queue = queue;
+        ssize_t r = sync_op_wait(
+            op,
+            rawstor_location_list(
+                queue, location.c_str(), 0, &targets, &token, sync_op_cb, &op
+            )
+        );
+        if (r < 0) {
+            rawstor_string_list_delete(targets);
+            throw std::system_error(
+                static_cast<int>(-r), std::generic_category(),
+                "LIST failed for " + location
+            );
+        }
+
+        for (const char** it = rawstor_string_list_iter(targets); it != nullptr;
+             it = rawstor_string_list_next(it)) {
+            const char* target = *it;
+
+            RawstorObjectMeta meta{};
+            SyncOp meta_op;
+            meta_op.queue = queue;
+            ssize_t mr = sync_op_wait(
+                meta_op, rawstor_target_meta(
+                             queue, target, &meta, 1, sync_op_cb, &meta_op
+                         )
+            );
+            if (mr < 0) {
+                rawstd_error(
+                    "reconstruct: skipping %s: unreadable metadata: %s\n",
+                    target, strerror(static_cast<int>(-mr))
+                );
+                continue;
+            }
+
+            RawstdUUIDString uuid_string;
+            RawstdUUID obj_id;
+            if (rawstor_target_id(target, uuid_string, sizeof(uuid_string)) <
+                    0 ||
+                rawstd_uuid_from_string(&obj_id, uuid_string) < 0) {
+                rawstd_error("reconstruct: malformed target: %s\n", target);
+                continue;
+            }
+
+            rawstor::mds::ScanRecord record;
+            record.ost_id = ost_id;
+            record.obj_id = obj_id;
+            record.meta = meta;
+            records.push_back(record);
+        }
+
+        rawstor_string_list_delete(targets);
+    } while (!rawstor_pagination_token_empty(&token));
+}
+
+// rawstor-mds --reconstruct (docs/mds.md, "Reconstruct / DR"): rebuilds
+// the whole map from a scan of every OST in the topology. No partial
+// scans, by construction (see VolumeStore::reconstruct()'s own doc
+// comment): any OST that doesn't answer LIST at all aborts the whole
+// reconstruct rather than silently dropping its live copies from the map
+// (see scan_ost()'s own doc comment for the softer per-object tolerance
+// on META).
 void reconstruct(
     const rawstor::mds::Topology& topology, rawstor::mds::VolumeStore& store
 ) {
@@ -129,36 +204,7 @@ void reconstruct(
                 ost_id_string
             );
 
-            RawstorLocationChunk* chunks = nullptr;
-            size_t nchunks = 0;
-            SyncOp op;
-            op.queue = queue;
-            ssize_t r = sync_op_wait(
-                op,
-                rawstor_location_list_chunks(
-                    queue, location.c_str(), &chunks, &nchunks, sync_op_cb, &op
-                )
-            );
-            if (r < 0) {
-                free(chunks);
-                rawio_queue_delete(queue);
-                throw std::system_error(
-                    static_cast<int>(-r), std::generic_category(),
-                    "LIST_CHUNKS failed for " + location
-                );
-            }
-
-            for (size_t i = 0; i < nchunks; ++i) {
-                rawstor::mds::ScanRecord record;
-                record.ost_id = ost.id;
-                memcpy(
-                    record.obj_id.bytes, chunks[i].object_id,
-                    sizeof(record.obj_id.bytes)
-                );
-                record.meta = chunks[i].meta;
-                records.push_back(record);
-            }
-            free(chunks);
+            scan_ost(queue, location, ost.id, records);
         }
     } catch (...) {
         rawio_queue_delete(queue);

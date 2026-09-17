@@ -50,14 +50,16 @@ extern "C" {
 #define RAWSTOR_CMD_META 12
 
 /*
- * LIST_CHUNKS (docs/mds.md, "Reconstruct / DR") rides
- * RawstorOSTFrameBasicPayload (object_id/offset/val ignored). The response
- * payload is a run of RawstorOSTFrameChunkPayload records, one per stored
- * object, packing that many records into the same 64 MiB frame cap as the
- * data commands (a large OST may need several LIST_CHUNKS round trips --
- * left to the caller for v1, no continuation token yet).
+ * 0x22 used to be LIST_CHUNKS, a dedicated one-round-trip reconstruct scan
+ * command (docs/mds.md, "Reconstruct / DR"). Removed: the reconstruct scan
+ * now does the same LIST + META per object the caller would otherwise do
+ * itself anyway, so a separate wire command bought nothing but a second
+ * code path to a result LIST+META already gets, at O(n) round trips
+ * instead of one -- an acceptable cost for a scan that only runs on
+ * `rawstor-mds --reconstruct`, not a hot path. Left unassigned rather than
+ * reused, so an old client/server pairing fails loudly (-ENOSYS) instead
+ * of silently misinterpreting a repurposed opcode.
  */
-#define RAWSTOR_CMD_LIST_CHUNKS 0x22
 /*
  * Native CoW snapshot of one stored object version (docs/mds.md,
  * "Snapshots"): rides RawstorOSTFrameBasicPayload, val = snap_id (never 0
@@ -178,8 +180,8 @@ struct RawstorOSTFrameSyncState {
  *
  * The fields below `mirrors` are the chunk placement identity
  * (docs/mds.md, chunk_meta): stamped at create by the volume
- * layer, immutable afterwards, the source for the LIST_CHUNKS map
- * reconstruct scan. An all-zero volume_id is a standalone object -- the
+ * layer, immutable afterwards, the source (via META) for the reconstruct
+ * scan. An all-zero volume_id is a standalone object -- the
  * degenerate case a plain mirrored object already is today, `mirrors`
  * doubling as `width` (copies per chunk).
  */
@@ -248,18 +250,6 @@ struct RawstorOSTFrameMetaPayload {
     uint64_t logical_index;
     uint64_t chunk_size;
     uint64_t snap_version;
-} RAWSTOR_PACKED;
-
-/*
- * LIST_CHUNKS response entry (docs/mds.md, "Reconstruct / DR"):
- * unlike META's own response, this enumerates potentially many objects in
- * one frame, so each record needs its own object_id -- RawstorOSTFrameHead
- * ::cid correlation (every other response's own scheme) only identifies
- * the LIST_CHUNKS request as a whole, not which object a given record is.
- */
-struct RawstorOSTFrameChunkPayload {
-    uint8_t object_id[16];
-    struct RawstorOSTFrameMetaPayload meta;
 } RAWSTOR_PACKED;
 
 /*

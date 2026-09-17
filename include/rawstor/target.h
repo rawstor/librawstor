@@ -68,9 +68,9 @@ struct RawstorObjectSpec {
     /*
      * Placement identity of a chunk object (docs/mds.md,
      * chunk_meta): stamped at create by the volume layer, immutable
-     * afterwards (set_sync_state never touches it), the source for the
-     * LIST_CHUNKS map reconstruct scan. An all-zero volume_id is a
-     * standalone object.
+     * afterwards (set_sync_state never touches it), the source (via
+     * rawstor_target_meta()) for the reconstruct scan. An all-zero
+     * volume_id is a standalone object.
      */
     enum RawstorMemberKind member_kind;
     uint8_t volume_id[16];  /**< Parent volume; all-zero = standalone. */

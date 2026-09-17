@@ -442,7 +442,7 @@ rawstd::Task<void> Session::_dispatch(
     default:
         // Forward-compat and role separation (docs/mds.md, "Wire
         // protocol"): this v1 MDS serves the volume group only, not yet
-        // the shared metadata group (SPEC/SET_STATE/LIST_CHUNKS -- stage
+        // the shared metadata group (SPEC/META/SET_SYNC_STATE -- stage
         // 3's witness role) -- there's no length field on the request to
         // safely skip an unknown payload, so answering -ENOSYS here still
         // requires the peer to close and reconnect, same as an OST's own

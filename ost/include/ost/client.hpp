@@ -82,8 +82,6 @@ private:
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameBasicPayload payload
     );
-    static rawstd::DetachedTask
-    _list_chunks(std::weak_ptr<Client> weak, RawstorOSTFrameHead head);
     static rawstd::DetachedTask _allocate(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameAllocatePayload payload
