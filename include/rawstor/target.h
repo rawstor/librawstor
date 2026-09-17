@@ -54,22 +54,22 @@ struct RawstorObjectSpec {
     unsigned int mirrors; /**< Number of URIs configured for the target. */
 
     /*
-     * Volume policy, mds:// targets only (docs/mds.md). Zeros are
-     * defaults that degenerate to a single-chunk, single-copy volume --
+     * Object policy, mds:// targets only (docs/mds.md). Zeros are
+     * defaults that degenerate to a single-chunk, single-copy object --
      * which behaves exactly like a plain object.
      */
     uint64_t chunk_size;    /**< Power of two; 0 = one chunk spans the
-                                  volume. */
+                                  object. */
     uint64_t stripe_width;  /**< K; 0 = spread every chunk, 1 =
-                                  volume-local. */
+                                  object-local. */
     uint8_t width;          /**< Copies per chunk; 0 = 1. */
-    uint8_t failure_domain; /**< RAWSTOR_VOL_DOMAIN_*; default server. */
+    uint8_t failure_domain; /**< RAWSTOR_OBJ_DOMAIN_*; default server. */
 
     /*
      * Placement identity of a chunk object (docs/mds.md, chunk_meta),
      * minus the parts a caller already has to hand: the resource's own
      * name is self-describing (docs/mds.md, "Chunk identity" -- obj_id =
-     * volume_id) -- a chunk's volume_id is exactly the id its own target
+     * id) -- a chunk's own id is exactly the id its own target
      * string carries, and its logical_index is chunk_offset / chunk_size
      * (the target string's own ":<offset>" suffix,
      * rawstor_target_offset()). Nothing here needs to repeat either.
@@ -219,12 +219,12 @@ int rawstor_target_spec(
  * didn't answer at all by `state` alone (`RAWSTOR_OBJECT_SYNC_STATE_CLEAN`
  * vs `_UNREACHABLE`).
  *
- * An mds://host:port/<volume_id> @p target is, from this call's own
+ * An mds://host:port/<id> @p target is, from this call's own
  * point of view, an ordinary single-URI target -- it succeeds with one
- * synthetic entry: `spec` reflects the volume's own logical size/chunk_size/
+ * synthetic entry: `spec` reflects the object's own logical size/chunk_size/
  * policy, `sync_state` a "legacy copy" CLEAN/epoch-0/sync_id-0 answer. The
  * real per-chunk DIRTY/CLEAN state (many chunks, each with its own slots)
- * is tracked one level down and not exposed through the volume-level
+ * is tracked one level down and not exposed through the object-level
  * target at all.
  *
  * This function returns immediately; the actual result is reported via
@@ -284,9 +284,9 @@ int rawstor_target_meta(
  * `rawstor-ost` relaying an incoming wire `SET_SYNC_STATE` command), not
  * for routine application use.
  *
- * An mds://host:port/<volume_id> @p target succeeds as a no-op --
+ * An mds://host:port/<id> @p target succeeds as a no-op --
  * mds::Backend's own consistency state is tracked one level down, per
- * chunk, not at the volume level this call writes to (same reason
+ * chunk, not at the object level this call writes to (same reason
  * rawstor_target_meta() reports a synthetic answer instead of failing).
  *
  * This function returns immediately; the actual result is reported via
@@ -583,11 +583,11 @@ int rawstor_target_snap_id(
 
 /**
  * @brief Retrieve a target string's own byte offset within its parent
- *        mds:// volume.
+ *        mds:// object.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
  * this function reads the ":<offset>" suffix (if any) off @p target's own
- * UUID path segment -- present only on a chunk of an mds:// volume opened
+ * UUID path segment -- present only on a chunk of an mds:// object opened
  * internally by the library (mds::Backend's own internal target strings; a
  * plain, user-facing target never carries one). This is purely a syntactic
  * operation on @p target -- no backend is contacted, and the target need
@@ -596,7 +596,7 @@ int rawstor_target_snap_id(
  * @param target  Target string, e.g.:
  *                - "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00"
  * @param offset  Out-parameter written on success: the target's own byte
- *                offset within its parent volume, or 0 if @p target carries
+ *                offset within its parent object, or 0 if @p target carries
  *                no ":<offset>" suffix. Left untouched on error.
  *
  * @return 0 on success; a negative errno if @p target is not valid target
@@ -610,7 +610,7 @@ int rawstor_target_offset(
 
 /**
  * @brief Asynchronously take a snapshot of a target -- either a caller-
- *        chosen native CoW version, or an MDS-assigned volume version.
+ *        chosen native CoW version, or an MDS-assigned object version.
  *
  * The two are picked apart by @p snap_id's input value:
  *
@@ -619,11 +619,11 @@ int rawstor_target_offset(
  *   earlier one fails, and the first error encountered is reported). The
  *   caller owns crash consistency: all acknowledged writes must be
  *   flushed before this call (docs/mds.md, "Snapshots"). Only valid for
- *   a non-mds:// @p target -- an mds:// volume has no single physical
+ *   a non-mds:// @p target -- an mds:// object has no single physical
  *   backend a caller-chosen id could apply to; fails with -EINVAL.
  * - `*snap_id == 0`: an MDS-orchestrated snapshot (docs/mds.md,
- *   "Snapshots (stage 2)") of an mds://host:port/<volume_id> @p target
- *   (no "@snap_id" suffix) -- the version is chosen by the volume's MDS
+ *   "Snapshots (stage 2)") of an mds://host:port/<id> @p target
+ *   (no "@snap_id" suffix) -- the version is chosen by the object's MDS
  *   instead: reserves it, backend-CoWs every reachable chunk member,
  *   then registers the surviving membership, and writes the reserved id
  *   into `*snap_id` immediately before @p cb runs on success. v1 caveat:
@@ -634,7 +634,7 @@ int rawstor_target_offset(
  *
  * @param queue    Queue used to drive the asynchronous snapshot.
  * @param target   Target string, see rawstor_target_spec().
- * @param snap_id  Input: 0 to have the volume's MDS assign a version (
+ * @param snap_id  Input: 0 to have the object's MDS assign a version (
  *                 mds:// only), or the caller's own chosen version id
  *                 (any other target). Output: on success, the version
  *                 actually taken -- unchanged from the input value
@@ -661,7 +661,7 @@ int rawstor_target_snapshot_create(
 /**
  * @brief Asynchronously destroy snapshot version @p snap_id of a target.
  *
- * For an mds://host:port/<volume_id> @p target, the MDS unregisters
+ * For an mds://host:port/<id> @p target, the MDS unregisters
  * @p snap_id (no new readers) before a best-effort per-member fan-out
  * destroy runs -- a member that can no longer be resolved (address
  * changed, OST replaced) is left for the reconstruct scan rather than
@@ -681,9 +681,9 @@ int rawstor_target_snapshot_remove(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously grow an mds:// volume to a new logical size.
+ * @brief Asynchronously grow an mds:// object to a new logical size.
  *
- * Grow-only: a @p new_size smaller than the volume's current size fails
+ * Grow-only: a @p new_size smaller than the object's current size fails
  * with -EINVAL (docs/mds.md -- shrink interacts with GC and
  * snapshots, deferred past v1). Reserves placement for whatever new
  * chunks the larger size needs on the MDS, then materializes exactly
@@ -691,10 +691,10 @@ int rawstor_target_snapshot_remove(
  * data are untouched.
  *
  * @param queue     Queue used to drive the asynchronous resize.
- * @param target    An mds://host:port/<volume_id> target; anything else
+ * @param target    An mds://host:port/<id> target; anything else
  *                  fails with -EINVAL (a plain target has no notion of
  *                  growing -- its size is fixed at create()).
- * @param new_size  The volume's new logical size in bytes; must be
+ * @param new_size  The object's new logical size in bytes; must be
  *                  greater than or equal to its current size.
  * @param cb        Callback invoked on completion.
  *                  - @p result is zero on success, or a negative errno on

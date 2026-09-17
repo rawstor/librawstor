@@ -26,7 +26,7 @@ extern "C" {
  *   0x00        session   -- every role
  *   0x01..0x1f  data      -- OST
  *   0x20..0x3f  metadata  -- shared between OST and MDS (the witness subset)
- *   0x40..0x5f  volume    -- MDS
+ *   0x40..0x5f  object    -- MDS
  *
  * A server answers -ENOSYS to any opcode outside its role. SET_SYNC_STATE
  * (11) and META (12) predate this grouping and keep the values they were
@@ -70,25 +70,26 @@ extern "C" {
 #define RAWSTOR_CMD_SNAP_REMOVE 0x24
 
 /*
- * Volume (MDS) commands -- docs/mds.md, "Wire protocol". VOL_OPEN,
- * VOL_RESIZE and VOL_REMOVE ride RawstorOSTFrameBasicPayload (object_id =
- * volume_id; val = snap_id for open, the new size for resize).
+ * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/open/
+ * resize/remove a whole, possibly multi-chunk mds:// object. OBJ_OPEN,
+ * OBJ_RESIZE and OBJ_REMOVE ride RawstorOSTFrameBasicPayload (object_id =
+ * id; val = snap_id for open, the new size for resize).
  */
-#define RAWSTOR_CMD_VOL_CREATE 0x40
-#define RAWSTOR_CMD_VOL_OPEN 0x41
-#define RAWSTOR_CMD_VOL_RESIZE 0x42
-#define RAWSTOR_CMD_VOL_REMOVE 0x43
+#define RAWSTOR_CMD_OBJ_CREATE 0x40
+#define RAWSTOR_CMD_OBJ_OPEN 0x41
+#define RAWSTOR_CMD_OBJ_RESIZE 0x42
+#define RAWSTOR_CMD_OBJ_REMOVE 0x43
 /*
- * Volume snapshots are two-phase (docs/mds.md, "Snapshots"): BEGIN
+ * Object snapshots are two-phase (docs/mds.md, "Snapshots"): BEGIN
  * durably reserves the snap_id (never reused -- leftovers of a crashed
  * attempt must not alias a later snapshot), the client then drains, takes
  * the per-chunk CoW snapshots, and COMMIT registers exactly who holds
  * them. REMOVE unregisters first (no new readers) and returns the member
  * set for the client's fan-out destroy.
  */
-#define RAWSTOR_CMD_VOL_SNAP_BEGIN 0x44
-#define RAWSTOR_CMD_VOL_SNAP_COMMIT 0x45
-#define RAWSTOR_CMD_VOL_SNAP_REMOVE 0x46
+#define RAWSTOR_CMD_OBJ_SNAP_BEGIN 0x44
+#define RAWSTOR_CMD_OBJ_SNAP_COMMIT 0x45
+#define RAWSTOR_CMD_OBJ_SNAP_REMOVE 0x46
 
 typedef uint16_t RawstorOSTCommandType;
 
@@ -237,9 +238,9 @@ struct RawstorOSTFrameAllocatePayload {
     uint64_t chunk_offset;
     uint64_t size;
     uint32_t mirrors;
-    uint64_t chunk_size;    /* power of two; 0 = one chunk spans the volume */
-    uint64_t stripe_width;  /* K; 0 = spread every chunk, 1 = volume-local */
-    uint8_t failure_domain; /* RAWSTOR_VOL_DOMAIN_* */
+    uint64_t chunk_size;    /* power of two; 0 = one chunk spans the object */
+    uint64_t stripe_width;  /* K; 0 = spread every chunk, 1 = object-local */
+    uint8_t failure_domain; /* RAWSTOR_OBJ_DOMAIN_* */
     uint8_t member_kind;    /* enum RawstorMemberKind, <rawstor/target.h> */
     uint16_t reserved;
 } RAWSTOR_PACKED;
@@ -316,26 +317,27 @@ struct RawstorOSTFrameSpecPayload {
 } RAWSTOR_PACKED;
 
 /*
- * Volume (MDS) wire structs -- docs/mds.md, "Wire protocol" /
- * "MDS data model". VOL_OPEN, VOL_RESIZE and VOL_REMOVE ride
- * RawstorOSTFrameBasicPayload (object_id = volume_id; val = snap_id for
- * open, the new size for resize) and need no struct of their own.
+ * Object (MDS) wire structs -- docs/mds.md, "Wire protocol" /
+ * "MDS data model": a whole, possibly multi-chunk mds:// object. OBJ_OPEN,
+ * OBJ_RESIZE and OBJ_REMOVE ride RawstorOSTFrameBasicPayload (object_id =
+ * id; val = snap_id for open, the new size for resize) and need no
+ * struct of their own.
  */
 
 /* Redundancy is a policy, not a wire concept: mirror in v1. */
-#define RAWSTOR_VOL_REDUNDANCY_MIRROR 0
+#define RAWSTOR_OBJ_REDUNDANCY_MIRROR 0
 
 /* Failure-domain levels of the topology tree. */
-#define RAWSTOR_VOL_DOMAIN_DC 0
-#define RAWSTOR_VOL_DOMAIN_RACK 1
-#define RAWSTOR_VOL_DOMAIN_SERVER 2
-#define RAWSTOR_VOL_DOMAIN_OST 3
+#define RAWSTOR_OBJ_DOMAIN_DC 0
+#define RAWSTOR_OBJ_DOMAIN_RACK 1
+#define RAWSTOR_OBJ_DOMAIN_SERVER 2
+#define RAWSTOR_OBJ_DOMAIN_OST 3
 
-/* stripe_width: 1 = volume-local (DRBD-like), 0 = spread (Ceph-like). */
-#define RAWSTOR_VOL_STRIPE_ALL 0
+/* stripe_width: 1 = object-local (DRBD-like), 0 = spread (Ceph-like). */
+#define RAWSTOR_OBJ_STRIPE_ALL 0
 
-struct RawstorVolPolicy {
-    uint8_t redundancy; /* RAWSTOR_VOL_REDUNDANCY_* */
+struct RawstorObjectPolicy {
+    uint8_t redundancy; /* RAWSTOR_OBJ_REDUNDANCY_* */
     uint8_t width;      /* slots per chunk: mirror R */
     uint8_t failure_domain;
     uint8_t reserved;
@@ -343,43 +345,44 @@ struct RawstorVolPolicy {
     uint64_t placement_seed;
 } RAWSTOR_PACKED;
 
-struct RawstorVolCreatePayload {
-    uint8_t volume_id[16]; /* client-generated, like every object id */
+struct RawstorObjectCreatePayload {
+    uint8_t id[16]; /* client-generated, like every object id */
     uint64_t logical_size;
     uint64_t chunk_size; /* power of two */
-    struct RawstorVolPolicy policy;
+    struct RawstorObjectPolicy policy;
 } RAWSTOR_PACKED;
 
-struct RawstorVolCreate {
+struct RawstorObjectCreate {
     struct RawstorOSTFrameHead head;
-    struct RawstorVolCreatePayload payload;
+    struct RawstorObjectCreatePayload payload;
 } RAWSTOR_PACKED;
 
-/* VOL_CREATE response payload. */
-struct RawstorVolCreatedPayload {
+/* OBJ_CREATE response payload. */
+struct RawstorObjectCreatedPayload {
     uint64_t map_epoch;
 } RAWSTOR_PACKED;
 
-/* VOL_RESIZE response payload. */
-struct RawstorVolResizedPayload {
+/* OBJ_RESIZE response payload. */
+struct RawstorObjectResizedPayload {
     uint64_t map_epoch;
 } RAWSTOR_PACKED;
 
 /*
- * VOL_OPEN response payload: the descriptor followed by nchunks chunk
- * entries, each entry followed by its width slots (RawstorVolChunkEntry,
- * then that many RawstorVolChunkSlot records).
+ * OBJ_OPEN response payload: the descriptor followed by nchunks chunk
+ * entries, each entry followed by its width slots
+ * (RawstorObjectChunkEntry, then that many RawstorObjectChunkSlot
+ * records).
  */
-struct RawstorVolDescriptorPayload {
-    uint8_t volume_id[16];
+struct RawstorObjectDescriptorPayload {
+    uint8_t id[16];
     uint64_t logical_size;
     uint64_t chunk_size;
-    struct RawstorVolPolicy policy;
+    struct RawstorObjectPolicy policy;
     uint64_t map_epoch;
     uint32_t nchunks;
 } RAWSTOR_PACKED;
 
-struct RawstorVolChunkEntry {
+struct RawstorObjectChunkEntry {
     uint64_t snap_id; /* 0 = live */
     uint8_t width;    /* slots that follow */
 } RAWSTOR_PACKED;
@@ -390,43 +393,43 @@ struct RawstorVolChunkEntry {
  * zero-config. A null-terminated <ip>:<port>; empty when the topology no
  * longer lists the OST (the client treats such a member as unreachable).
  */
-#define RAWSTOR_VOL_ADDRESS_LEN 32
+#define RAWSTOR_OBJ_ADDRESS_LEN 32
 
-struct RawstorVolChunkSlot {
+struct RawstorObjectChunkSlot {
     uint8_t slot_index;
     uint8_t ost_id[16];
-    char address[RAWSTOR_VOL_ADDRESS_LEN];
+    char address[RAWSTOR_OBJ_ADDRESS_LEN];
 } RAWSTOR_PACKED;
 
-/* VOL_SNAP_BEGIN response payload: the durably reserved snap_id. */
-struct RawstorVolSnapBeganPayload {
+/* OBJ_SNAP_BEGIN response payload: the durably reserved snap_id. */
+struct RawstorObjectSnapBeganPayload {
     uint64_t snap_id;
 } RAWSTOR_PACKED;
 
 /*
- * VOL_SNAP_COMMIT request: the payload is followed by nmembers member
+ * OBJ_SNAP_COMMIT request: the payload is followed by nmembers member
  * records -- the chunk copies that actually hold the snapshot (the
- * IN-SYNC set at creation; a degraded volume snapshots with less
+ * IN-SYNC set at creation; a degraded object snapshots with less
  * redundancy, recorded, not repaired -- see Mds.md).
  *
- * VOL_SNAP_REMOVE rides RawstorOSTFrameBasicPayload (object_id =
- * volume_id, val = snap_id); its response payload is `res`
- * RawstorVolSnapMemberPayload records: what was registered, for the
+ * OBJ_SNAP_REMOVE rides RawstorOSTFrameBasicPayload (object_id = id,
+ * val = snap_id); its response payload is `res`
+ * RawstorObjectSnapMemberPayload records: what was registered, for the
  * fan-out destroy.
  */
-struct RawstorVolSnapCommitPayload {
-    uint8_t volume_id[16];
+struct RawstorObjectSnapCommitPayload {
+    uint8_t id[16];
     uint64_t snap_id;
     uint32_t nmembers;
 } RAWSTOR_PACKED;
 
-struct RawstorVolSnapMemberPayload {
+struct RawstorObjectSnapMemberPayload {
     uint64_t logical_index;
     uint8_t ost_id[16];
 } RAWSTOR_PACKED;
 
-/* VOL_SNAP_COMMIT response payload. */
-struct RawstorVolSnapCommittedPayload {
+/* OBJ_SNAP_COMMIT response payload. */
+struct RawstorObjectSnapCommittedPayload {
     uint64_t map_epoch;
 } RAWSTOR_PACKED;
 

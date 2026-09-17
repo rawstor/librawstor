@@ -14,7 +14,7 @@
 int rawstor_cli_resize(const char* target, uint64_t new_size) {
     char buf[256];
     rawstd_bytes_to_size(new_size, buf, sizeof(buf));
-    fprintf(stderr, "Resizing volume %s to %s\n", target, buf);
+    fprintf(stderr, "Resizing object %s to %s\n", target, buf);
 
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);
@@ -36,7 +36,7 @@ int rawstor_cli_resize(const char* target, uint64_t new_size) {
         return rawstd_exitcode_for_errno((int)-result);
     }
 
-    fprintf(stderr, "Volume resized\n");
+    fprintf(stderr, "Object resized\n");
 
     return EXIT_SUCCESS;
 }

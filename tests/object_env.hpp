@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_TESTS_VOLUME_ENV_HPP
-#define RAWSTOR_TESTS_VOLUME_ENV_HPP
+#ifndef RAWSTOR_TESTS_OBJECT_ENV_HPP
+#define RAWSTOR_TESTS_OBJECT_ENV_HPP
 
 #include "tmp_dir.hpp"
 
@@ -23,7 +23,7 @@ namespace tests {
 // environment exists to exercise end to end (the reservation/rollback
 // bookkeeping around a failed CoW); the real CoW positive path needs a
 // live zfs pool, out of reach in a portable test.
-class VolumeEnv {
+class ObjectEnv {
 private:
     TmpDir _ost_dir;
     TmpDir _mds_dir;
@@ -39,13 +39,13 @@ public:
     // thread's own bind()/listen() racing the first test call's connect()
     // would otherwise make this flaky) -- see the .cpp file's own doc
     // comment on how.
-    VolumeEnv(unsigned int mds_port, unsigned int ost_port);
-    VolumeEnv(const VolumeEnv&) = delete;
-    VolumeEnv(VolumeEnv&&) = delete;
-    ~VolumeEnv();
+    ObjectEnv(unsigned int mds_port, unsigned int ost_port);
+    ObjectEnv(const ObjectEnv&) = delete;
+    ObjectEnv(ObjectEnv&&) = delete;
+    ~ObjectEnv();
 
-    VolumeEnv& operator=(const VolumeEnv&) = delete;
-    VolumeEnv& operator=(VolumeEnv&&) = delete;
+    ObjectEnv& operator=(const ObjectEnv&) = delete;
+    ObjectEnv& operator=(ObjectEnv&&) = delete;
 
     // "mds://127.0.0.1:<mds_port>" -- every test target in this
     // environment is built under this location.
@@ -55,4 +55,4 @@ public:
 } // namespace tests
 } // namespace rawstor
 
-#endif // RAWSTOR_TESTS_VOLUME_ENV_HPP
+#endif // RAWSTOR_TESTS_OBJECT_ENV_HPP

@@ -17,28 +17,28 @@ struct sqlite3;
 namespace rawstor {
 namespace mds {
 
-struct VolumeDescriptor {
-    RawstdUUID volume_id;
+struct ObjectDescriptor {
+    RawstdUUID id;
     uint64_t logical_size;
     uint64_t chunk_size;
     PlacementPolicy policy;
     uint64_t map_epoch;
 };
 
-struct VolumeMap {
-    VolumeDescriptor descriptor;
+struct ObjectMap {
+    ObjectDescriptor descriptor;
     /* chunk_map[logical_index] = width slots. */
     std::vector<std::vector<PlacementSlot>> chunks;
 };
 
 /*
  * One stored chunk copy found by the reconstruct scan of one OST.
- * `obj_id` is the volume's own id for every one of its chunks
- * (docs/mds.md, "Chunk identity": obj_id = volume_id -- the physical
+ * `obj_id` is the whole object's own id for every one of its chunks
+ * (docs/mds.md, "Chunk identity": obj_id = id -- the physical
  * resource's own name is self-describing, so nothing here needs a
- * separate volume_id field); `chunk_offset` (read back via
+ * separate id field); `chunk_offset` (read back via
  * rawstor_target_offset(), the same suffix chunk_slot_target() stamped
- * on the target LIST returned) disambiguates which of that volume's
+ * on the target LIST returned) disambiguates which of that object's
  * chunks this is.
  */
 struct ScanRecord {
@@ -55,7 +55,7 @@ struct SnapMember {
 };
 
 /*
- * The explicit volume map, stored in SQLite (docs/mds.md, "MDS
+ * The explicit chunk map, stored in SQLite (docs/mds.md, "MDS
  * server, v1"): WAL journal, synchronous=FULL — crash-safety by
  * construction rather than by our own fsync protocol. The map is an index
  * over the OST-side truth and can be rebuilt by scan; single instance,
@@ -66,34 +66,34 @@ struct SnapMember {
  * loop is accepted.
  *
  * Errors are thrown as std::system_error: EINVAL (malformed request or
- * unsatisfiable placement), ENOENT (no such volume), EEXIST, EIO
+ * unsatisfiable placement), ENOENT (no such object), EEXIST, EIO
  * (storage failure).
  */
-class VolumeStore final {
+class ObjectStore final {
 private:
     sqlite3* _db;
     Topology _topology;
 
-    VolumeDescriptor _descriptor(const RawstdUUID& volume_id);
-    VolumeMap _open_snapshot(const RawstdUUID& volume_id, uint64_t snap_id);
+    ObjectDescriptor _descriptor(const RawstdUUID& id);
+    ObjectMap _open_snapshot(const RawstdUUID& id, uint64_t snap_id);
 
 public:
-    VolumeStore(const std::string& path, Topology topology);
-    VolumeStore(const VolumeStore&) = delete;
-    VolumeStore(VolumeStore&&) = delete;
-    ~VolumeStore();
+    ObjectStore(const std::string& path, Topology topology);
+    ObjectStore(const ObjectStore&) = delete;
+    ObjectStore(ObjectStore&&) = delete;
+    ~ObjectStore();
 
-    VolumeStore& operator=(const VolumeStore&) = delete;
-    VolumeStore& operator=(VolumeStore&&) = delete;
+    ObjectStore& operator=(const ObjectStore&) = delete;
+    ObjectStore& operator=(ObjectStore&&) = delete;
 
     const Topology& topology() const noexcept { return _topology; }
 
     /*
-     * Places every chunk up front; the backends stay sparse. The volume
-     * id is client-generated (like every object id); EEXIST on reuse.
+     * Places every chunk up front; the backends stay sparse. The object's
+     * own id is client-generated (like every object id); EEXIST on reuse.
      */
-    VolumeDescriptor create(
-        const RawstdUUID& volume_id, uint64_t logical_size, uint64_t chunk_size,
+    ObjectDescriptor create(
+        const RawstdUUID& id, uint64_t logical_size, uint64_t chunk_size,
         const PlacementPolicy& policy
     );
 
@@ -101,32 +101,32 @@ public:
      * snap_id != 0 opens the registered snapshot view: the logical size
      * frozen at commit, chunks routed to the recorded members only.
      */
-    VolumeMap open(const RawstdUUID& volume_id, uint64_t snap_id);
+    ObjectMap open(const RawstdUUID& id, uint64_t snap_id);
 
     /* Grow-only in v1; returns the new map_epoch. */
-    uint64_t resize(const RawstdUUID& volume_id, uint64_t new_size);
+    uint64_t resize(const RawstdUUID& id, uint64_t new_size);
 
     /* EBUSY while snapshots exist: they must be removed explicitly. */
-    void remove(const RawstdUUID& volume_id);
+    void remove(const RawstdUUID& id);
 
     /*
-     * Durably reserves the next snap_id of the volume. A reserved id is
+     * Durably reserves the next snap_id of the object. A reserved id is
      * never handed out again, even across a crash before commit — the
      * CoW leftovers of a crashed attempt must not alias a later
      * snapshot under the same id.
      */
-    uint64_t snap_begin(const RawstdUUID& volume_id);
+    uint64_t snap_begin(const RawstdUUID& id);
 
     /*
      * Registers the snapshot: members = exactly the chunk copies that
-     * hold it. Every chunk of the volume must be covered (an unreadable
+     * hold it. Every chunk of the object must be covered (an unreadable
      * snapshot is never registered — EINVAL), the id must come from
      * snap_begin (EINVAL) and not be registered yet (EEXIST). The
-     * volume's logical size is frozen into the snapshot. Returns the
+     * object's logical size is frozen into the snapshot. Returns the
      * bumped map_epoch.
      */
     uint64_t snap_commit(
-        const RawstdUUID& volume_id, uint64_t snap_id,
+        const RawstdUUID& id, uint64_t snap_id,
         const std::vector<SnapMember>& members
     );
 
@@ -134,24 +134,23 @@ public:
      * Unregisters the snapshot (no new readers) and returns what was
      * registered: the member set for the caller's fan-out destroy.
      */
-    std::vector<SnapMember>
-    snap_remove(const RawstdUUID& volume_id, uint64_t snap_id);
+    std::vector<SnapMember> snap_remove(const RawstdUUID& id, uint64_t snap_id);
 
     /*
      * Rebuilds the whole map from a scan of every OST in the topology
      * (docs/mds.md, "Reconstruct / DR"): the stored chunk identity
      * is the truth, the map is an index over it. Replaces every stored
-     * volume in one transaction.
+     * object in one transaction.
      *
      * Witness records are skipped; every remaining record groups by
      * `obj_id` directly (ScanRecord's own doc comment) -- the topology's
-     * own OSTs are dedicated to MDS-managed volumes (docs/mds.md), so
-     * every id found there is exactly one volume's own id, standalone
-     * objects included (a "volume" of a single chunk, byte-for-byte
+     * own OSTs are dedicated to MDS-managed objects (docs/mds.md), so
+     * every id found there is exactly one object's own id, standalone
+     * objects included (an "object" of a single chunk, byte-for-byte
      * compatible with a plain object, docs/mds.md's own "Chunk
-     * identity"). A volume with conflicting identity records fails with
+     * identity"). An object with conflicting identity records fails with
      * EINVAL, a hole in the chunk index sequence with EIO: reconstruct
-     * must not silently drop a volume it cannot reassemble, and it
+     * must not silently drop an object it cannot reassemble, and it
      * cannot invent placement for a chunk with no surviving copies.
      *
      * Snapshot versions are not rebuilt (docs/mds.md's own "Snapshot-

@@ -47,12 +47,12 @@ static void usage(void) {
         "  list                  List rawstor objects\n"
         "  create                Create rawstor object\n"
         "  remove                Remove rawstor object\n"
-        "  resize                Grow an mds:// volume\n"
+        "  resize                Grow an mds:// object\n"
         "  show                  Show rawstor object\n"
         "  info                  Show rawstor location info\n"
         "  resolve               Resolve a mirrored object's split brain\n"
-        "  snapshot              Snapshot an mds:// volume\n"
-        "  snap-remove           Remove an mds:// volume snapshot\n"
+        "  snapshot              Snapshot an mds:// object\n"
+        "  snap-remove           Remove an mds:// object snapshot\n"
         "  testio                Test rawstor IO routines\n"
         "\n"
         "command options:        Run `<command> --help` to show command usage\n"
@@ -105,20 +105,20 @@ static void command_create_usage(void) {
         "T, P, E).\n"
         "                        Examples: 10G, 5M, 2T.\n"
         "\n"
-        "volume policy (mds:// targets only -- docs/mds.md; "
+        "object policy (mds:// targets only -- docs/mds.md; "
         "ignored\n"
         "otherwise):\n"
         "  --chunk-size SIZE     Chunk size with unit suffix, power of "
         "two.\n"
         "                        Default: one chunk spans the whole "
-        "volume.\n"
+        "object.\n"
         "  --width N             Copies per chunk (N > 0). Default 1.\n"
         "  --failure-domain LEVEL  Placement failure domain: dc, rack, "
         "server\n"
         "                        (default), ost.\n"
         "  --stripe-width K      0 = spread every chunk across the "
         "cluster\n"
-        "                        (default), 1 = volume-local, K = spread "
+        "                        (default), 1 = object-local, K = spread "
         "across K\n"
         "                        OSTs.\n"
     );
@@ -301,15 +301,15 @@ static int command_create(int argc, char** argv) {
     uint8_t failure_domain = 0;
     if (failure_domain_arg != NULL) {
         if (strcmp(failure_domain_arg, "rack") == 0) {
-            failure_domain = RAWSTOR_VOL_DOMAIN_RACK;
+            failure_domain = RAWSTOR_OBJ_DOMAIN_RACK;
         } else if (strcmp(failure_domain_arg, "server") == 0) {
-            failure_domain = RAWSTOR_VOL_DOMAIN_SERVER;
+            failure_domain = RAWSTOR_OBJ_DOMAIN_SERVER;
         } else if (strcmp(failure_domain_arg, "ost") == 0) {
-            failure_domain = RAWSTOR_VOL_DOMAIN_OST;
+            failure_domain = RAWSTOR_OBJ_DOMAIN_OST;
         } else if (strcmp(failure_domain_arg, "dc") == 0) {
-            /* RAWSTOR_VOL_DOMAIN_DC is 0, indistinguishable on the wire
+            /* RAWSTOR_OBJ_DOMAIN_DC is 0, indistinguishable on the wire
              * from "not set" (struct RawstorObjectSpec's own convention,
-             * see policy_of() in src/volume.cpp) -- refuse rather than
+             * see policy_of() in src/mds_backend.cpp) -- refuse rather than
              * silently falling back to the "server" default. */
             fprintf(
                 stderr, "failure-domain \"dc\" cannot currently be "
@@ -415,7 +415,7 @@ static void command_resize_usage(void) {
         "\n"
         "usage: rawstor [options] resize TARGET -s SIZE [command_options]\n"
         "\n"
-        "Grows an mds:// volume to a new logical size (grow-only -- "
+        "Grows an mds:// object to a new logical size (grow-only -- "
         "shrinking\n"
         "is not supported). Reserves placement for any newly needed "
         "chunks on\n"
@@ -423,10 +423,10 @@ static void command_resize_usage(void) {
         "their\n"
         "data are untouched.\n"
         "\n"
-        "  TARGET                An mds://host:port/<volume_id> target.\n"
+        "  TARGET                An mds://host:port/<id> target.\n"
         "  -s, --size SIZE       New size with unit suffix (B, K, M, G, "
         "T, P,\n"
-        "                        E); must be >= the volume's current "
+        "                        E); must be >= the object's current "
         "size.\n"
         "\n"
         "command options:\n"
@@ -869,16 +869,16 @@ static void command_snapshot_usage(void) {
         "\n"
         "usage: rawstor [options] snapshot TARGET [command_options]\n"
         "\n"
-        "Takes an MDS-orchestrated native CoW snapshot of a volume "
+        "Takes an MDS-orchestrated native CoW snapshot of an object "
         "(docs/mds.md,\n"
         "\"Snapshots (stage 2)\"): the MDS assigns the new snapshot "
         "id,\n"
         "which is printed to stdout on success (status messages go to "
         "stderr). Not\n"
-        "supported on a volume with file:// or classic-LVM chunk members\n"
+        "supported on an object with file:// or classic-LVM chunk members\n"
         "(-ENOTSUP, no fallback copies).\n"
         "\n"
-        "  TARGET                An mds://host:port/<volume_id> target.\n"
+        "  TARGET                An mds://host:port/<id> target.\n"
         "\n"
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
@@ -936,13 +936,13 @@ static void command_snap_remove_usage(void) {
         "usage: rawstor [options] snap-remove TARGET -s SNAP_ID "
         "[command_options]\n"
         "\n"
-        "Destroys a volume snapshot previously created by `rawstor "
+        "Destroys an object snapshot previously created by `rawstor "
         "snapshot`. The\n"
         "MDS unregisters it first (no new readers); the per-member destroy "
         "is\n"
         "best-effort on whichever members still resolve.\n"
         "\n"
-        "  TARGET                An mds://host:port/<volume_id> target.\n"
+        "  TARGET                An mds://host:port/<id> target.\n"
         "  -s, --snap-id ID      Snapshot id to remove, as printed by "
         "`rawstor\n"
         "                        snapshot`.\n"

@@ -19,8 +19,8 @@ namespace {
 using rawstor::mds::PlacementPolicy;
 
 constexpr const char* SCHEMA =
-    "CREATE TABLE IF NOT EXISTS volumes ("
-    "  volume_id BLOB PRIMARY KEY,"
+    "CREATE TABLE IF NOT EXISTS objects ("
+    "  id BLOB PRIMARY KEY,"
     "  logical_size INTEGER NOT NULL,"
     "  chunk_size INTEGER NOT NULL,"
     "  width INTEGER NOT NULL,"
@@ -32,32 +32,32 @@ constexpr const char* SCHEMA =
     "  next_snap_id INTEGER NOT NULL DEFAULT 1"
     ");"
     "CREATE TABLE IF NOT EXISTS chunk_map ("
-    "  volume_id BLOB NOT NULL"
-    "    REFERENCES volumes(volume_id) ON DELETE CASCADE,"
+    "  id BLOB NOT NULL"
+    "    REFERENCES objects(id) ON DELETE CASCADE,"
     "  logical_index INTEGER NOT NULL,"
     "  slot_index INTEGER NOT NULL,"
     "  ost_id BLOB NOT NULL,"
-    "  PRIMARY KEY (volume_id, logical_index, slot_index)"
+    "  PRIMARY KEY (id, logical_index, slot_index)"
     ") WITHOUT ROWID;"
     /*
-     * No ON DELETE CASCADE from volumes: a volume with snapshots must
+     * No ON DELETE CASCADE from objects: an object with snapshots must
      * not silently disappear — remove() refuses with EBUSY.
      */
     "CREATE TABLE IF NOT EXISTS snapshots ("
-    "  volume_id BLOB NOT NULL REFERENCES volumes(volume_id),"
+    "  id BLOB NOT NULL REFERENCES objects(id),"
     "  snap_id INTEGER NOT NULL,"
     "  logical_size INTEGER NOT NULL,"
     "  created_at INTEGER NOT NULL,"
-    "  PRIMARY KEY (volume_id, snap_id)"
+    "  PRIMARY KEY (id, snap_id)"
     ") WITHOUT ROWID;"
     "CREATE TABLE IF NOT EXISTS snapshot_members ("
-    "  volume_id BLOB NOT NULL,"
+    "  id BLOB NOT NULL,"
     "  snap_id INTEGER NOT NULL,"
     "  logical_index INTEGER NOT NULL,"
     "  ost_id BLOB NOT NULL,"
-    "  PRIMARY KEY (volume_id, snap_id, logical_index, ost_id),"
-    "  FOREIGN KEY (volume_id, snap_id)"
-    "    REFERENCES snapshots(volume_id, snap_id) ON DELETE CASCADE"
+    "  PRIMARY KEY (id, snap_id, logical_index, ost_id),"
+    "  FOREIGN KEY (id, snap_id)"
+    "    REFERENCES snapshots(id, snap_id) ON DELETE CASCADE"
     ") WITHOUT ROWID;";
 
 [[noreturn]] void throw_sqlite(sqlite3* db, const char* what) {
@@ -172,7 +172,7 @@ uint64_t nchunks_of(uint64_t logical_size, uint64_t chunk_size) {
 
 void validate_geometry(uint64_t logical_size, uint64_t chunk_size) {
     if (logical_size == 0) {
-        rawstd_error("Volume size 0\n");
+        rawstd_error("Object size 0\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     /* Architecture.md: the chunk size must be a power of two. */
@@ -181,29 +181,29 @@ void validate_geometry(uint64_t logical_size, uint64_t chunk_size) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     if (nchunks_of(logical_size, chunk_size) > UINT32_MAX) {
-        rawstd_error("Volume has too many chunks\n");
+        rawstd_error("Object has too many chunks\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 }
 
 void insert_chunks(
-    sqlite3* db, const rawstor::mds::Topology& topology,
-    const RawstdUUID& volume_id, uint64_t first_index, uint64_t end_index,
-    uint64_t chunk_size, const PlacementPolicy& policy
+    sqlite3* db, const rawstor::mds::Topology& topology, const RawstdUUID& id,
+    uint64_t first_index, uint64_t end_index, uint64_t chunk_size,
+    const PlacementPolicy& policy
 ) {
     (void)chunk_size;
     Stmt insert(
         db, "INSERT INTO chunk_map"
-            " (volume_id, logical_index, slot_index, ost_id)"
+            " (id, logical_index, slot_index, ost_id)"
             " VALUES (?, ?, ?, ?);"
     );
 
     for (uint64_t index = first_index; index < end_index; ++index) {
         std::vector<rawstor::mds::PlacementSlot> slots =
-            rawstor::mds::place(topology, volume_id, index, policy);
+            rawstor::mds::place(topology, id, index, policy);
         for (const rawstor::mds::PlacementSlot& slot : slots) {
             insert.reset();
-            insert.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
+            insert.bind_blob(1, id.bytes, sizeof(id.bytes))
                 .bind_int64(2, index)
                 .bind_int64(3, slot.slot_index)
                 .bind_blob(4, slot.ost_id.bytes, sizeof(slot.ost_id.bytes))
@@ -217,7 +217,7 @@ void insert_chunks(
 namespace rawstor {
 namespace mds {
 
-VolumeStore::VolumeStore(const std::string& path, Topology topology) :
+ObjectStore::ObjectStore(const std::string& path, Topology topology) :
     _db(nullptr),
     _topology(std::move(topology)) {
     int res = sqlite3_open_v2(
@@ -245,17 +245,17 @@ VolumeStore::VolumeStore(const std::string& path, Topology topology) :
         exec(_db, SCHEMA);
 
         /*
-         * A pre-snapshot database has a volumes table without
+         * A pre-snapshot database has an objects table without
          * next_snap_id (CREATE IF NOT EXISTS keeps it as is): the column
          * itself is the version marker.
          */
         sqlite3_stmt* probe = nullptr;
         if (sqlite3_prepare_v2(
-                _db, "SELECT next_snap_id FROM volumes LIMIT 1;", -1, &probe,
+                _db, "SELECT next_snap_id FROM objects LIMIT 1;", -1, &probe,
                 nullptr
             ) != SQLITE_OK) {
             exec(
-                _db, "ALTER TABLE volumes"
+                _db, "ALTER TABLE objects"
                      " ADD COLUMN next_snap_id INTEGER NOT NULL DEFAULT 1;"
             );
         }
@@ -266,24 +266,24 @@ VolumeStore::VolumeStore(const std::string& path, Topology topology) :
     }
 }
 
-VolumeStore::~VolumeStore() {
+ObjectStore::~ObjectStore() {
     sqlite3_close(_db);
 }
 
-VolumeDescriptor VolumeStore::_descriptor(const RawstdUUID& volume_id) {
+ObjectDescriptor ObjectStore::_descriptor(const RawstdUUID& id) {
     Stmt select(
         _db, "SELECT logical_size, chunk_size, width, failure_domain,"
              " stripe_width, placement_seed, map_epoch"
-             " FROM volumes WHERE volume_id = ?;"
+             " FROM objects WHERE id = ?;"
     );
-    select.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes));
+    select.bind_blob(1, id.bytes, sizeof(id.bytes));
 
     if (!select.step()) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
 
-    VolumeDescriptor ret{};
-    ret.volume_id = volume_id;
+    ObjectDescriptor ret{};
+    ret.id = id;
     ret.logical_size = select.column_int64(0);
     ret.chunk_size = select.column_int64(1);
     ret.policy.width = static_cast<unsigned>(select.column_int64(2));
@@ -294,14 +294,14 @@ VolumeDescriptor VolumeStore::_descriptor(const RawstdUUID& volume_id) {
     return ret;
 }
 
-VolumeDescriptor VolumeStore::create(
-    const RawstdUUID& volume_id, uint64_t logical_size, uint64_t chunk_size,
+ObjectDescriptor ObjectStore::create(
+    const RawstdUUID& id, uint64_t logical_size, uint64_t chunk_size,
     const PlacementPolicy& policy
 ) {
     validate_geometry(logical_size, chunk_size);
 
-    VolumeDescriptor ret{};
-    ret.volume_id = volume_id;
+    ObjectDescriptor ret{};
+    ret.id = id;
     ret.logical_size = logical_size;
     ret.chunk_size = chunk_size;
     ret.policy = policy;
@@ -310,19 +310,19 @@ VolumeDescriptor VolumeStore::create(
     uint64_t nchunks = nchunks_of(logical_size, chunk_size);
 
     /* Hard-fails on an unsatisfiable topology before anything lands. */
-    place(_topology, ret.volume_id, 0, policy);
+    place(_topology, ret.id, 0, policy);
 
     Transaction tx(_db);
 
     {
         Stmt insert(
-            _db, "INSERT INTO volumes"
-                 " (volume_id, logical_size, chunk_size, width,"
+            _db, "INSERT INTO objects"
+                 " (id, logical_size, chunk_size, width,"
                  " failure_domain, stripe_width, placement_seed, map_epoch,"
                  " created_at)"
                  " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);"
         );
-        insert.bind_blob(1, ret.volume_id.bytes, sizeof(ret.volume_id.bytes))
+        insert.bind_blob(1, ret.id.bytes, sizeof(ret.id.bytes))
             .bind_int64(2, logical_size)
             .bind_int64(3, chunk_size)
             .bind_int64(4, policy.width)
@@ -334,22 +334,20 @@ VolumeDescriptor VolumeStore::create(
             .step();
     }
 
-    insert_chunks(
-        _db, _topology, ret.volume_id, 0, nchunks, chunk_size, ret.policy
-    );
+    insert_chunks(_db, _topology, ret.id, 0, nchunks, chunk_size, ret.policy);
 
     tx.commit();
 
     return ret;
 }
 
-VolumeMap VolumeStore::open(const RawstdUUID& volume_id, uint64_t snap_id) {
+ObjectMap ObjectStore::open(const RawstdUUID& id, uint64_t snap_id) {
     if (snap_id != 0) {
-        return _open_snapshot(volume_id, snap_id);
+        return _open_snapshot(id, snap_id);
     }
 
-    VolumeMap ret{};
-    ret.descriptor = _descriptor(volume_id);
+    ObjectMap ret{};
+    ret.descriptor = _descriptor(id);
 
     uint64_t nchunks =
         nchunks_of(ret.descriptor.logical_size, ret.descriptor.chunk_size);
@@ -357,15 +355,15 @@ VolumeMap VolumeStore::open(const RawstdUUID& volume_id, uint64_t snap_id) {
 
     Stmt select(
         _db, "SELECT logical_index, slot_index, ost_id FROM chunk_map"
-             " WHERE volume_id = ?"
+             " WHERE id = ?"
              " ORDER BY logical_index, slot_index;"
     );
-    select.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes));
+    select.bind_blob(1, id.bytes, sizeof(id.bytes));
 
     while (select.step()) {
         uint64_t index = select.column_int64(0);
         if (index >= nchunks) {
-            rawstd_error("MDS store: chunk index out of volume bounds\n");
+            rawstd_error("MDS store: chunk index out of object bounds\n");
             RAWSTD_THROW_SYSTEM_ERROR(EIO);
         }
         PlacementSlot slot{};
@@ -396,14 +394,14 @@ VolumeMap VolumeStore::open(const RawstdUUID& volume_id, uint64_t snap_id) {
     return ret;
 }
 
-uint64_t VolumeStore::resize(const RawstdUUID& volume_id, uint64_t new_size) {
-    VolumeDescriptor descriptor = _descriptor(volume_id);
+uint64_t ObjectStore::resize(const RawstdUUID& id, uint64_t new_size) {
+    ObjectDescriptor descriptor = _descriptor(id);
 
     validate_geometry(new_size, descriptor.chunk_size);
 
     /* Grow-only in v1: shrink interacts with GC and snapshots. */
     if (new_size < descriptor.logical_size) {
-        rawstd_error("Volume shrink is not supported\n");
+        rawstd_error("Object shrink is not supported\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
@@ -416,18 +414,18 @@ uint64_t VolumeStore::resize(const RawstdUUID& volume_id, uint64_t new_size) {
 
     {
         Stmt update(
-            _db, "UPDATE volumes SET logical_size = ?, map_epoch = ?"
-                 " WHERE volume_id = ?;"
+            _db, "UPDATE objects SET logical_size = ?, map_epoch = ?"
+                 " WHERE id = ?;"
         );
         update.bind_int64(1, new_size)
             .bind_int64(2, map_epoch)
-            .bind_blob(3, volume_id.bytes, sizeof(volume_id.bytes))
+            .bind_blob(3, id.bytes, sizeof(id.bytes))
             .step();
     }
 
     insert_chunks(
-        _db, _topology, volume_id, old_chunks, new_chunks,
-        descriptor.chunk_size, descriptor.policy
+        _db, _topology, id, old_chunks, new_chunks, descriptor.chunk_size,
+        descriptor.policy
     );
 
     tx.commit();
@@ -435,19 +433,19 @@ uint64_t VolumeStore::resize(const RawstdUUID& volume_id, uint64_t new_size) {
     return map_epoch;
 }
 
-void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
+void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
     struct Chunk {
         uint64_t size;
         /* Scan order becomes the slot order. */
         std::vector<RawstdUUID> ost_ids;
     };
-    struct Volume {
+    struct Object {
         uint64_t chunk_size;
         unsigned width;
         std::map<uint64_t, Chunk> chunks;
     };
 
-    std::map<std::string, Volume> volumes;
+    std::map<std::string, Object> objects;
 
     for (const ScanRecord& r : records) {
         /* Witness records are metadata-only votes, not data slots. */
@@ -458,31 +456,31 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
         RawstdUUIDString obj_str;
         rawstd_uuid_to_string(&r.obj_id, &obj_str);
 
-        // `r.obj_id` is the volume's own id directly (docs/mds.md, "Chunk
-        // identity": obj_id = volume_id) -- including for a standalone
-        // object, which reconstructs as a "volume" of a single chunk,
+        // `r.obj_id` is the whole object's own id directly (docs/mds.md,
+        // "Chunk identity": obj_id = id) -- including for a standalone
+        // object, which reconstructs as an "object" of a single chunk,
         // byte-for-byte compatible with a plain object.
         std::string key(
             reinterpret_cast<const char*>(r.obj_id.bytes),
             sizeof(r.obj_id.bytes)
         );
 
-        auto [it, fresh] = volumes.try_emplace(key);
-        Volume& v = it->second;
+        auto [it, fresh] = objects.try_emplace(key);
+        Object& o = it->second;
         if (fresh) {
-            v.chunk_size = r.meta.spec.chunk_size;
-            v.width = r.meta.spec.width;
-            if (v.chunk_size == 0 || (v.chunk_size & (v.chunk_size - 1)) != 0 ||
-                v.width == 0) {
+            o.chunk_size = r.meta.spec.chunk_size;
+            o.width = r.meta.spec.width;
+            if (o.chunk_size == 0 || (o.chunk_size & (o.chunk_size - 1)) != 0 ||
+                o.width == 0) {
                 rawstd_error(
                     "reconstruct: %s: malformed stored identity\n", obj_str
                 );
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
-        } else if (v.chunk_size != r.meta.spec.chunk_size ||
-                   v.width != r.meta.spec.width) {
+        } else if (o.chunk_size != r.meta.spec.chunk_size ||
+                   o.width != r.meta.spec.width) {
             rawstd_error(
-                "reconstruct: %s: identity conflicts with its volume\n", obj_str
+                "reconstruct: %s: identity conflicts with its object\n", obj_str
             );
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
@@ -491,9 +489,9 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
         // derived from the chunk's own byte offset (rawstor_target_
         // offset(), ScanRecord's own doc comment), the same formula
         // chunk_slot_target() in mds_backend.cpp used to stamp it.
-        uint64_t logical_index = r.chunk_offset / v.chunk_size;
+        uint64_t logical_index = r.chunk_offset / o.chunk_size;
 
-        auto [cit, chunk_fresh] = v.chunks.try_emplace(logical_index);
+        auto [cit, chunk_fresh] = o.chunks.try_emplace(logical_index);
         Chunk& c = cit->second;
 
         bool duplicate = false;
@@ -525,24 +523,24 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
     exec(
         _db, "DELETE FROM snapshot_members;"
              "DELETE FROM snapshots;"
-             "DELETE FROM volumes;"
+             "DELETE FROM objects;"
     );
 
-    for (const auto& [key, v] : volumes) {
-        RawstdUUID volume_id;
-        memcpy(volume_id.bytes, key.data(), sizeof(volume_id.bytes));
-        RawstdUUIDString vol_str;
-        rawstd_uuid_to_string(&volume_id, &vol_str);
+    for (const auto& [key, o] : objects) {
+        RawstdUUID id;
+        memcpy(id.bytes, key.data(), sizeof(id.bytes));
+        RawstdUUIDString id_str;
+        rawstd_uuid_to_string(&id, &id_str);
 
         /* std::map is ordered: the last key is the highest index. */
-        uint64_t max_index = v.chunks.rbegin()->first;
-        if (v.chunks.size() != max_index + 1) {
+        uint64_t max_index = o.chunks.rbegin()->first;
+        if (o.chunks.size() != max_index + 1) {
             rawstd_error(
                 "reconstruct: %s: no surviving copy of %llu of %llu "
                 "chunks\n",
-                vol_str,
+                id_str,
                 static_cast<unsigned long long>(
-                    max_index + 1 - v.chunks.size()
+                    max_index + 1 - o.chunks.size()
                 ),
                 static_cast<unsigned long long>(max_index + 1)
             );
@@ -554,12 +552,12 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
          * keeps the chunk count consistent with the geometry. The
          * reconstructed size never shrinks below what was written.
          */
-        uint64_t tail = std::min(v.chunks.rbegin()->second.size, v.chunk_size);
+        uint64_t tail = std::min(o.chunks.rbegin()->second.size, o.chunk_size);
         if (tail == 0) {
-            rawstd_error("reconstruct: %s: zero-sized tail chunk\n", vol_str);
+            rawstd_error("reconstruct: %s: zero-sized tail chunk\n", id_str);
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
-        uint64_t logical_size = max_index * v.chunk_size + tail;
+        uint64_t logical_size = max_index * o.chunk_size + tail;
 
         // No snapshot records are ever scanned (docs/mds.md's own
         // "Snapshot-version records are skipped (stage 2)"), so nothing
@@ -574,16 +572,16 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
          */
         {
             Stmt insert(
-                _db, "INSERT INTO volumes"
-                     " (volume_id, logical_size, chunk_size, width,"
+                _db, "INSERT INTO objects"
+                     " (id, logical_size, chunk_size, width,"
                      " failure_domain, stripe_width, placement_seed,"
                      " map_epoch, created_at, next_snap_id)"
                      " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
             );
-            insert.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
+            insert.bind_blob(1, id.bytes, sizeof(id.bytes))
                 .bind_int64(2, logical_size)
-                .bind_int64(3, v.chunk_size)
-                .bind_int64(4, v.width)
+                .bind_int64(3, o.chunk_size)
+                .bind_int64(4, o.width)
                 .bind_int64(5, static_cast<uint64_t>(rawstor::mds::Level::OST))
                 .bind_int64(6, STRIPE_ALL)
                 .bind_int64(7, 0)
@@ -596,14 +594,13 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
         {
             Stmt insert(
                 _db, "INSERT INTO chunk_map"
-                     " (volume_id, logical_index, slot_index, ost_id)"
+                     " (id, logical_index, slot_index, ost_id)"
                      " VALUES (?, ?, ?, ?);"
             );
-            for (const auto& [index, chunk] : v.chunks) {
+            for (const auto& [index, chunk] : o.chunks) {
                 for (size_t slot = 0; slot < chunk.ost_ids.size(); ++slot) {
                     insert.reset();
-                    insert
-                        .bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
+                    insert.bind_blob(1, id.bytes, sizeof(id.bytes))
                         .bind_int64(2, index)
                         .bind_int64(3, slot)
                         .bind_blob(
@@ -619,29 +616,27 @@ void VolumeStore::reconstruct(const std::vector<ScanRecord>& records) {
     tx.commit();
 
     rawstd_info(
-        "reconstruct: %zu volumes rebuilt from %zu records\n", volumes.size(),
+        "reconstruct: %zu objects rebuilt from %zu records\n", objects.size(),
         records.size()
     );
 }
 
-void VolumeStore::remove(const RawstdUUID& volume_id) {
+void ObjectStore::remove(const RawstdUUID& id) {
     Transaction tx(_db);
 
     {
-        /* A volume with snapshots must not silently disappear. */
-        Stmt busy(
-            _db, "SELECT snap_id FROM snapshots WHERE volume_id = ? LIMIT 1;"
-        );
-        busy.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes));
+        /* An object with snapshots must not silently disappear. */
+        Stmt busy(_db, "SELECT snap_id FROM snapshots WHERE id = ? LIMIT 1;");
+        busy.bind_blob(1, id.bytes, sizeof(id.bytes));
         if (busy.step()) {
-            rawstd_error("Volume has snapshots; remove them first\n");
+            rawstd_error("Object has snapshots; remove them first\n");
             RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
         }
     }
 
     {
-        Stmt del(_db, "DELETE FROM volumes WHERE volume_id = ?;");
-        del.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes)).step();
+        Stmt del(_db, "DELETE FROM objects WHERE id = ?;");
+        del.bind_blob(1, id.bytes, sizeof(id.bytes)).step();
     }
 
     if (sqlite3_changes(_db) == 0) {
@@ -651,22 +646,20 @@ void VolumeStore::remove(const RawstdUUID& volume_id) {
     tx.commit();
 }
 
-VolumeMap
-VolumeStore::_open_snapshot(const RawstdUUID& volume_id, uint64_t snap_id) {
-    VolumeMap ret{};
-    ret.descriptor = _descriptor(volume_id);
+ObjectMap ObjectStore::_open_snapshot(const RawstdUUID& id, uint64_t snap_id) {
+    ObjectMap ret{};
+    ret.descriptor = _descriptor(id);
 
     {
         Stmt select(
             _db, "SELECT logical_size FROM snapshots"
-                 " WHERE volume_id = ? AND snap_id = ?;"
+                 " WHERE id = ? AND snap_id = ?;"
         );
-        select.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
-            .bind_int64(2, snap_id);
+        select.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, snap_id);
         if (!select.step()) {
             RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
         }
-        /* The size the volume had when the snapshot was taken. */
+        /* The size the object had when the snapshot was taken. */
         ret.descriptor.logical_size = select.column_int64(0);
     }
 
@@ -676,11 +669,10 @@ VolumeStore::_open_snapshot(const RawstdUUID& volume_id, uint64_t snap_id) {
 
     Stmt select(
         _db, "SELECT logical_index, ost_id FROM snapshot_members"
-             " WHERE volume_id = ? AND snap_id = ?"
+             " WHERE id = ? AND snap_id = ?"
              " ORDER BY logical_index, ost_id;"
     );
-    select.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
-        .bind_int64(2, snap_id);
+    select.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, snap_id);
 
     uint64_t prev_index = 0;
     uint8_t slot = 0;
@@ -711,15 +703,13 @@ VolumeStore::_open_snapshot(const RawstdUUID& volume_id, uint64_t snap_id) {
     return ret;
 }
 
-uint64_t VolumeStore::snap_begin(const RawstdUUID& volume_id) {
+uint64_t ObjectStore::snap_begin(const RawstdUUID& id) {
     Transaction tx(_db);
 
     uint64_t snap_id;
     {
-        Stmt select(
-            _db, "SELECT next_snap_id FROM volumes WHERE volume_id = ?;"
-        );
-        select.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes));
+        Stmt select(_db, "SELECT next_snap_id FROM objects WHERE id = ?;");
+        select.bind_blob(1, id.bytes, sizeof(id.bytes));
         if (!select.step()) {
             RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
         }
@@ -727,11 +717,9 @@ uint64_t VolumeStore::snap_begin(const RawstdUUID& volume_id) {
     }
 
     {
-        Stmt update(
-            _db, "UPDATE volumes SET next_snap_id = ? WHERE volume_id = ?;"
-        );
+        Stmt update(_db, "UPDATE objects SET next_snap_id = ? WHERE id = ?;");
         update.bind_int64(1, snap_id + 1)
-            .bind_blob(2, volume_id.bytes, sizeof(volume_id.bytes))
+            .bind_blob(2, id.bytes, sizeof(id.bytes))
             .step();
     }
 
@@ -741,11 +729,11 @@ uint64_t VolumeStore::snap_begin(const RawstdUUID& volume_id) {
     return snap_id;
 }
 
-uint64_t VolumeStore::snap_commit(
-    const RawstdUUID& volume_id, uint64_t snap_id,
+uint64_t ObjectStore::snap_commit(
+    const RawstdUUID& id, uint64_t snap_id,
     const std::vector<SnapMember>& members
 ) {
-    VolumeDescriptor descriptor = _descriptor(volume_id);
+    ObjectDescriptor descriptor = _descriptor(id);
     uint64_t nchunks =
         nchunks_of(descriptor.logical_size, descriptor.chunk_size);
 
@@ -756,10 +744,8 @@ uint64_t VolumeStore::snap_commit(
 
     {
         /* The id must have been reserved by snap_begin(). */
-        Stmt select(
-            _db, "SELECT next_snap_id FROM volumes WHERE volume_id = ?;"
-        );
-        select.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes));
+        Stmt select(_db, "SELECT next_snap_id FROM objects WHERE id = ?;");
+        select.bind_blob(1, id.bytes, sizeof(id.bytes));
         if (!select.step() || snap_id >= select.column_int64(0)) {
             rawstd_error("Snapshot id was never reserved\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -768,13 +754,13 @@ uint64_t VolumeStore::snap_commit(
 
     /*
      * Every chunk must be covered: an unreadable snapshot is never
-     * registered. (A degraded volume legitimately registers fewer members
+     * registered. (A degraded object legitimately registers fewer members
      * per chunk than the policy width — recorded, not repaired.)
      */
     std::vector<bool> covered(nchunks, false);
     for (const SnapMember& m : members) {
         if (m.logical_index >= nchunks) {
-            rawstd_error("Snapshot member out of volume bounds\n");
+            rawstd_error("Snapshot member out of object bounds\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
         covered[m.logical_index] = true;
@@ -793,10 +779,10 @@ uint64_t VolumeStore::snap_commit(
     {
         Stmt insert(
             _db, "INSERT INTO snapshots"
-                 " (volume_id, snap_id, logical_size, created_at)"
+                 " (id, snap_id, logical_size, created_at)"
                  " VALUES (?, ?, ?, ?);"
         );
-        insert.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
+        insert.bind_blob(1, id.bytes, sizeof(id.bytes))
             .bind_int64(2, snap_id)
             .bind_int64(3, descriptor.logical_size)
             .bind_int64(4, static_cast<uint64_t>(time(nullptr)))
@@ -806,12 +792,12 @@ uint64_t VolumeStore::snap_commit(
     {
         Stmt insert(
             _db, "INSERT INTO snapshot_members"
-                 " (volume_id, snap_id, logical_index, ost_id)"
+                 " (id, snap_id, logical_index, ost_id)"
                  " VALUES (?, ?, ?, ?);"
         );
         for (const SnapMember& m : members) {
             insert.reset();
-            insert.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
+            insert.bind_blob(1, id.bytes, sizeof(id.bytes))
                 .bind_int64(2, snap_id)
                 .bind_int64(3, m.logical_index)
                 .bind_blob(4, m.ost_id.bytes, sizeof(m.ost_id.bytes))
@@ -820,11 +806,9 @@ uint64_t VolumeStore::snap_commit(
     }
 
     {
-        Stmt update(
-            _db, "UPDATE volumes SET map_epoch = ? WHERE volume_id = ?;"
-        );
+        Stmt update(_db, "UPDATE objects SET map_epoch = ? WHERE id = ?;");
         update.bind_int64(1, map_epoch)
-            .bind_blob(2, volume_id.bytes, sizeof(volume_id.bytes))
+            .bind_blob(2, id.bytes, sizeof(id.bytes))
             .step();
     }
 
@@ -834,7 +818,7 @@ uint64_t VolumeStore::snap_commit(
 }
 
 std::vector<SnapMember>
-VolumeStore::snap_remove(const RawstdUUID& volume_id, uint64_t snap_id) {
+ObjectStore::snap_remove(const RawstdUUID& id, uint64_t snap_id) {
     std::vector<SnapMember> ret;
 
     Transaction tx(_db);
@@ -842,11 +826,10 @@ VolumeStore::snap_remove(const RawstdUUID& volume_id, uint64_t snap_id) {
     {
         Stmt select(
             _db, "SELECT logical_index, ost_id FROM snapshot_members"
-                 " WHERE volume_id = ? AND snap_id = ?"
+                 " WHERE id = ? AND snap_id = ?"
                  " ORDER BY logical_index, ost_id;"
         );
-        select.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
-            .bind_int64(2, snap_id);
+        select.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, snap_id);
         while (select.step()) {
             SnapMember m{};
             m.logical_index = select.column_int64(0);
@@ -858,9 +841,9 @@ VolumeStore::snap_remove(const RawstdUUID& volume_id, uint64_t snap_id) {
     {
         Stmt del(
             _db, "DELETE FROM snapshots"
-                 " WHERE volume_id = ? AND snap_id = ?;"
+                 " WHERE id = ? AND snap_id = ?;"
         );
-        del.bind_blob(1, volume_id.bytes, sizeof(volume_id.bytes))
+        del.bind_blob(1, id.bytes, sizeof(id.bytes))
             .bind_int64(2, snap_id)
             .step();
     }

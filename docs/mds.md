@@ -13,7 +13,7 @@ See also: [Architecture.md](Architecture.md), [Protocol.md](Protocol.md),
 ## Requirements, in priority order
 
 0. **Allocation and tracking** — answer "which OST hosts which part of which
-   volume" (`getObj` / `getObjPart` / `getFreeOst` of Architecture.md, refined
+   object" (`getObj` / `getObjPart` / `getFreeOst` of Architecture.md, refined
    below) and generate placements at create/grow time. This is the reason MDS
    exists; everything else layers on top.
 1. **Snapshot / version registry** — assign `snap_id`s and remember which
@@ -33,9 +33,9 @@ redesign.
   (`chunk_meta`). Losing the MDS map is therefore **not** fatal — it can be
   rebuilt by scanning all OSTs.
 - **MDS is an index over that truth.** It is the normal source for
-  `openVolume`, but it is recoverable, so v1 runs a single instance.
+  `openObject`, but it is recoverable, so v1 runs a single instance.
 - **MDS is off the hot path — including the moment of a disk failure.** The
-  map is read once at volume open and cached; degrade decisions during I/O are
+  map is read once at object open and cached; degrade decisions during I/O are
   made and recorded by the client on the surviving data members only, exactly
   as mirroring does today. The witness is written synchronously only at
   non-hot moments (open / clean close / resync completion); see *Witness*.
@@ -47,7 +47,7 @@ redesign.
   (the shared metadata subset), and a full MDS is a server speaking the same
   protocol without the data opcodes.
 
-Why the explicit map works for block storage: with 1 GiB chunks a 1 TiB volume
+Why the explicit map works for block storage: with 1 GiB chunks a 1 TiB object
 has **≤ 1024** map entries (a few KiB), so the map is stored **explicitly**
 rather than computed (unlike Ceph/CRUSH). The deterministic placement function
 is only the *generator* of placements at create/grow time and the reference
@@ -55,8 +55,8 @@ used when rebuilding by scan.
 
 | | Ceph (4 MiB objects) | rawstor block (1+ GiB chunks) |
 |---|---|---|
-| 1 TiB volume | ~256 000 objects | **≤ 1024 map entries** |
-| Per-volume map | huge, computed (CRUSH) | **tiny, stored explicitly** |
+| 1 TiB object | ~256 000 objects | **≤ 1024 map entries** |
+| Per-object map | huge, computed (CRUSH) | **tiny, stored explicitly** |
 | MDS on hot path | — | **no, allocation only** |
 
 ## Compatibility stance
@@ -79,7 +79,7 @@ in four places and spent on one addition:
   with a random `sync_id` would read as split brain at the next open; with
   the current set's `sync_id` it would claim data it does not have).
 - **Opcode space**: regrouped into reserved ranges per role (session / data /
-  shared metadata / volume) instead of appending to one enum — free today, a
+  shared metadata / object) instead of appending to one enum — free today, a
   breaking change after the first install.
 - The degenerate single-chunk unification (below) is kept as *design* — one
   schema, one code path — not as a migration bridge; there is nothing to
@@ -100,14 +100,14 @@ in four places and spent on one addition:
 | Hand-rolled packed structs, count prefixes, `format_version` | Keep | codebase idiom, no new dependency |
 | Chunk identity rides `RawstorOSTFrameBasicBody` unchanged | Keep | see *Chunk identity* |
 | Opaque stable `ost_id` (UUID), resolved via topology | Keep | required for HRW stability |
-| epoch-fence (client cache vs per-chunk hard gate) | Keep, **collapsed + renamed** | one counter `map_epoch` per volume; the per-slot fence is a stored *watermark* of it, not a second counter; the mirroring per-copy `mirror_epoch` (already shipped) provably cannot be merged in — see *epoch-fence* |
-| Shard by `volume_id`; primary + replicated log per shard; reads from any replica | **Replaced in v1: single MDS instance** | witness availability does not require MDS replication (a dead witness = one lost vote); the map is rebuildable by scan; replication is v2, the epoch/CAS model below is compatible with primary+log |
+| epoch-fence (client cache vs per-chunk hard gate) | Keep, **collapsed + renamed** | one counter `map_epoch` per object; the per-slot fence is a stored *watermark* of it, not a second counter; the mirroring per-copy `mirror_epoch` (already shipped) provably cannot be merged in — see *epoch-fence* |
+| Shard by `id`; primary + replicated log per shard; reads from any replica | **Replaced in v1: single MDS instance** | witness availability does not require MDS replication (a dead witness = one lost vote); the map is rebuildable by scan; replication is v2, the epoch/CAS model below is compatible with primary+log |
 
 ## Chunk identity
 
 ```
-logical chunk_id  = (volume_id, chunk_offset, version)
-physical chunk_id = (volume_id, chunk_offset, version, slot_index)
+logical chunk_id  = (id, chunk_offset, version)
+physical chunk_id = (id, chunk_offset, version, slot_index)
 ```
 
 A logical chunk has `width` slots (`slot_index` 0..width-1); see *Redundancy*.
@@ -116,7 +116,7 @@ wire-format change:
 
 ```c
 struct RawstorOSTFrameBasicBody {
-    uint8_t  obj_id[16];   // = volume_id
+    uint8_t  obj_id[16];   // = id
     uint64_t offset;       // = chunk_offset (logical_index * chunk_size)
     uint64_t val;          // = version / snap_id
 } __attribute__((packed));
@@ -129,12 +129,12 @@ naming a volume per version would contradict the snapshot design (stage 2):
 
 | Backend | Slot home + metadata | Versions (`snap_id`) |
 |---------|----------------------|----------------------|
-| `file://` | `<volume_id>[:<offset>]` + `.meta` sidecar | `-ENOTSUP` in v1 |
-| `lvm://`  | thin LV `<volume_id>[-<offset>]`, meta in LVM tags | thin snapshot LV |
-| `zfs://`  | zvol `<volume_id>[:<offset>]`, meta in user properties | `@<snap_id>` |
+| `file://` | `<id>[:<offset>]` + `.meta` sidecar | `-ENOTSUP` in v1 |
+| `lvm://`  | thin LV `<id>[-<offset>]`, meta in LVM tags | thin snapshot LV |
+| `zfs://`  | zvol `<id>[:<offset>]`, meta in user properties | `@<snap_id>` |
 
-(`offset` omitted when 0 -- a standalone object and a volume's own chunk
-0 are then byte-for-byte the same name, by design. `slot_index` isn't
+(`offset` omitted when 0 -- a standalone object and a multi-chunk
+object's own chunk 0 are then byte-for-byte the same name, by design. `slot_index` isn't
 part of the physical name at all: each mirror of one chunk gets its own
 URI in the target string that addresses it -- comma-separated, same as
 any plain mirrored target -- rather than a naming-scheme component; `-`
@@ -153,9 +153,9 @@ of inventing a second one:
 ```
 chunk_meta {
   magic, format_version
-  // placement identity (new). volume_id/logical_index are no longer
+  // placement identity (new). id/logical_index are no longer
   // stored here as of the self-describing rename (v1, implemented):
-  // obj_id already *is* volume_id (see above), logical_index is
+  // obj_id already *is* id (see above), logical_index is
   // chunk_offset / chunk_size, and chunk_offset already rides the wire
   // unconditionally (RawstorOSTFrameBasicBody.offset above / its own
   // dedicated field on ALLOCATE) -- only chunk_size is still worth
@@ -176,7 +176,7 @@ chunk_meta {
 ```
 
 A present-day plain (non-`mds://`) target is the degenerate case: a
-single chunk (`logical_index = 0`, `chunk_size = volume size`,
+single chunk (`logical_index = 0`, `chunk_size = object size`,
 `version = 0`), `width = N`.
 One schema and one code path for both worlds — kept as design, not as a
 migration bridge (no live installations, nothing to migrate; see
@@ -189,8 +189,8 @@ global MDS reconstruct.
 ## MDS data model
 
 ```
-volume_descriptor {
-  volume_id, logical_size, chunk_size,
+object_descriptor {
+  id, logical_size, chunk_size,
   policy {
     redundancy    = mirror{ copies R } | ec{ data k, parity m },  // width = R | k+m
     failure_domain = server | rack | dc,   // level at which slots must differ
@@ -213,7 +213,7 @@ snapshots[snap_id] = {
   view: { logical_index -> version }     // cache over OST-side snapshots
 }
 
-witness[volume_id or (volume_id, logical_index)] = {
+witness[id or (id, logical_index)] = {
   state,                                 // CLEAN | DIRTY_OPEN | DIRTY_DEGRADED
   sync_id, sync_id_history[4], mirror_epoch,
   survivors[]                            // only for DIRTY_DEGRADED
@@ -222,7 +222,7 @@ witness[volume_id or (volume_id, logical_index)] = {
 
 Two classes of state, by recoverability:
 
-- `volume_descriptor` / `chunk_map` / `snapshots` — an **index**; DR = rebuild
+- `object_descriptor` / `chunk_map` / `snapshots` — an **index**; DR = rebuild
   by OST scan (below).
 - `witness` records — **not** rebuildable by scan (they *are* the extra vote).
   Losing them degrades availability (auto-start falls back to plain N=2
@@ -232,12 +232,12 @@ Two classes of state, by recoverability:
 
 | Method | When | Hot? |
 |--------|------|------|
-| `createVolume(size, chunk_size, policy) -> {volume_id, map_epoch}` | once | no |
-| `openVolume(volume_id) -> {descriptor, map_epoch, chunk_map}` | at open | **only hot read**, client-cached |
-| `resizeVolume(volume_id, new_size)` | grow (v1: grow-only) | no |
-| `snapshot(volume_id) -> snap_id` | snapshot | no |
-| `updatePlacement(volume_id, index, slots)` | rebalance/recovery | rare |
-| `removeVolume(volume_id)` | delete | no |
+| `createObject(size, chunk_size, policy) -> {id, map_epoch}` | once | no |
+| `openObject(id) -> {descriptor, map_epoch, chunk_map}` | at open | **only hot read**, client-cached |
+| `resizeObject(id, new_size)` | grow (v1: grow-only) | no |
+| `snapshot(id) -> snap_id` | snapshot | no |
+| `updatePlacement(id, index, slots)` | rebalance/recovery | rare |
+| `removeObject(id)` | delete | no |
 | witness get/put | open (incl. witness-assisted degraded open) / clean close / resync-complete; async after degrade | no (see Witness) |
 
 Refines `getObj / getObjPart / getFreeOst` from Architecture.md; `getFreeOst`
@@ -258,14 +258,14 @@ reserved ranges per role:
 0x00    session:         SET_OBJECT                    // handshake, every role
 0x01..  data:            READ, WRITE, DISCARD, ALLOCATE, RELEASE, FLUSH
 0x20..  shared metadata: SPEC, SET_STATE               // the witness subset
-0x40..  volume (MDS):    VOL_CREATE, VOL_OPEN, VOL_RESIZE, VOL_SNAPSHOT,
-                         VOL_UPDATE_PLACEMENT, VOL_REMOVE, VOL_GET_PLACEMENT
+0x40..  object (MDS):    OBJ_CREATE, OBJ_OPEN, OBJ_RESIZE, OBJ_REMOVE,
+                         OBJ_SNAP_BEGIN, OBJ_SNAP_COMMIT, OBJ_SNAP_REMOVE
 ```
 
 - `SET_OBJECT` is the mandatory first command on **every** connection and
   carries the handshake: **protocol version + feature bits** (added now,
   while breaking is free) plus the object binding. On control connections
-  (volume commands only) the binding is null — which is why it sits in its
+  (object commands only) the binding is null — which is why it sits in its
   own *session* group, implemented by every role, not in the data group.
 - A server answers `-ENOSYS` to any opcode outside its role — the existing
   convention; this is also the misconnection guard that the separate magic
@@ -279,14 +279,14 @@ Role matrix:
 | data (`READ`,`WRITE`,`DISCARD`,`ALLOCATE`,`RELEASE`,`FLUSH`) | yes | yes | no (`-ENOSYS`) |
 | per-object/chunk metadata (`SPEC`, `SET_STATE`) — the **witness subset** | yes (today) | yes | yes |
 | reconstruct/scrub scan (`LIST` + per-object `SPEC`/`SET_STATE`) | yes | yes | yes (serves its own index) |
-| volume commands (`CMD_VOL_*`) | no | optional | yes |
+| object commands (`CMD_OBJ_*`) | no | optional | yes |
 
 Consequence for stage 3: **a witness needs no new server.** A metadata-only
 member on a plain `rawstor-ost` already speaks the witness subset.
 
-Example `CMD_VOL_OPEN`:
+Example `CMD_OBJ_OPEN`:
 ```
-req  body: { volume_id[16], snap_id u64 }               // 0 = live
+req  body: { id[16], snap_id u64 }                      // 0 = live
 resp: { res, len, hash }; body:
       { descriptor{...}, nchunks u32,
         entry[nchunks] { version u64, width u8, (slot_index u8, ost_id[16]) * width } }
@@ -297,7 +297,7 @@ stability; resolved to an address via topology (v1: static config, see MGS).
 
 ## Placement function
 
-Role: `place(volume_id, index, topology) -> [ (slot_index, ost_id) * width ]`.
+Role: `place(id, index, topology) -> [ (slot_index, ost_id) * width ]`.
 Used only at create/grow (generate the plan) and at rebalance/recovery (where
 to put a rebuilt slot). The MDS map stays authoritative; the function is a
 generator.
@@ -313,7 +313,7 @@ generator.
   making a domain loss survivable.
 
 ```
-place(volume_id, index):
+place(id, index):
   slots = HRW_choose(width, level=failure_domain, key)  // distinct domains
   for s in slots: ost = HRW_descend_to_leaf(s, key)
   return [(slot_index, ost) ...]
@@ -326,13 +326,13 @@ place(volume_id, index):
 
 | stripe_width | HRW key | behavior |
 |---|---|---|
-| `K=1` (local) | `volume_id` only | all chunks -> same OSTs (DRBD-like), still domain-separated |
-| `K=all` (spread) | `(volume_id, index)` | each chunk independent (Ceph-like) |
-| `K` partial | pool of K by `volume_id`, then `(volume_id, index)` within | stripe over a subset |
+| `K=1` (local) | `id` only | all chunks -> same OSTs (DRBD-like), still domain-separated |
+| `K=all` (spread) | `(id, index)` | each chunk independent (Ceph-like) |
+| `K` partial | pool of K by `id`, then `(id, index)` within | stripe over a subset |
 
 - **Unsatisfiable topology hard-fails.** If `R`/`failure_domain` cannot be met
-  (need 3 racks, have 2), `createVolume` fails; it does not silently place an
-  under-protected volume. The same rule holds at recovery time: if a rebuilt
+  (need 3 racks, have 2), `createObject` fails; it does not silently place an
+  under-protected object. The same rule holds at recovery time: if a rebuilt
   slot cannot be placed without violating domain-distinctness, the chunk stays
   explicitly degraded and is reported — an operator may relax the policy, the
   system never does it silently. (Design-by-construction: "protected by
@@ -361,22 +361,22 @@ client holds the cached map: which OST owns which (logical_index, slot)
   |
   |- splits the request at chunk boundaries ONLY to pick owning OST(s)
   |- encodes per redundancy (mirror: copy; EC: shards)
-  '- one connection per (OST, volume):
-        SET_OBJECT(volume_id, val = snap_id; 0 = live)   <- once
-        READ/WRITE(offset = logical volume offset, len)  <- many, pipelined by cid
+  '- one connection per (OST, object):
+        SET_OBJECT(id, val = snap_id; 0 = live)          <- once
+        READ/WRITE(offset = logical object offset, len)  <- many, pipelined by cid
               '- OST: offset -> local slot -> backing file/LV/zvol
 ```
 
-- IO frame **unchanged** — `offset` stays the 64-bit logical volume offset.
-- **One connection per (OST, volume)** serves all of that OST's chunks.
+- IO frame **unchanged** — `offset` stays the 64-bit logical object offset.
+- **One connection per (OST, object)** serves all of that OST's chunks.
 - Client needs `chunk_size` only for **routing**, not for addressing inside an OST.
 
 ## epoch-fence
 
-One placement counter per volume; the fence is a stored watermark of it, not
+One placement counter per object; the fence is a stored watermark of it, not
 a second counter:
 
-- `volume.map_epoch` — the **only** placement counter. ++ on any map change,
+- `object.map_epoch` — the **only** placement counter. ++ on any map change,
   rides in every IO frame (advisory freshness hint), and doubles as the CAS
   token for MDS mutations.
 - `slot.fence` on the OST — a **watermark**: the `map_epoch` value at which
@@ -396,7 +396,7 @@ surviving arms only, with no MDS round-trip (the hot-path requirement). If it
 shared the fence numbering, the surviving client would either fence *itself*
 out (its cached `map_epoch` is now behind the value it just wrote to the
 survivors) or need the MDS at the failure moment — both unacceptable. The two
-also differ in scope and writer: `map_epoch` is per-volume, MDS-issued, and
+also differ in scope and writer: `map_epoch` is per-object, MDS-issued, and
 versions *placement*; `mirror_epoch` is per slot-set, client-issued, versions
 *membership health*, and is part of the durable consistency tuple on arms and
 witness. (Within mirroring, `mirror_epoch` vs `sync_id` is likewise left
@@ -442,13 +442,13 @@ Two-phase, because the OSTs need the `snap_id` before the MDS can know the
 snapshot exists:
 
 ```
-snapshot(volume_id):
-  MDS:    VOL_SNAPSHOT begin  -> reserve snap_id
+snapshot(id):
+  MDS:    OBJ_SNAP_BEGIN  -> reserve snap_id
   client: drain in-flight I/O, FLUSH all IN-SYNC members   (point-in-time barrier)
   OST*:   each IN-SYNC member -> backend CoW (zfs snapshot zvol@<snap_id> / lvcreate -s)
-  MDS:    VOL_SNAPSHOT commit -> record snapshots[snap_id] { members = the IN-SYNC set },
-                                 map_epoch++
-  read:   client SET_OBJECT(volume_id, val = snap_id) -> OST serves that version
+  MDS:    OBJ_SNAP_COMMIT -> record snapshots[snap_id] { members = the IN-SYNC set },
+                             map_epoch++
+  read:   client SET_OBJECT(id, val = snap_id) -> OST serves that version
 ```
 
 A crash between begin and commit leaves unregistered native snapshots on the
@@ -460,16 +460,16 @@ reconstruct scan (below).
 - **In-sync snapshots are immutable → they never resync.** A member that was
   STALE at snapshot time simply does not have that snapshot; rejoin/resync
   covers the live version only (v1).
-- **Degraded volumes:** the snapshot is taken on the IN-SYNC members only and
+- **Degraded objects:** the snapshot is taken on the IN-SYNC members only and
   `snapshots[snap_id].members` records exactly who holds it. Snapshot reads
   route only to recorded members. A snapshot may therefore have less
-  redundancy than the volume policy; this is surfaced in status, not silently
+  redundancy than the object policy; this is surfaced in status, not silently
   repaired (v1; a repair = copy of an immutable version, safe to add later).
 - **Deletion:** MDS unregisters first (no new readers), then fan-out destroy
   on members; the reconstruct scan reconciles leftovers from a crash between
   the two steps (an unreferenced snapshot version found on an OST is garbage,
   collectable).
-- **`file://` backend has no CoW** → `snapshot` on a volume with `file://`
+- **`file://` backend has no CoW** → `snapshot` on an object with `file://`
   members fails with `-ENOTSUP` in v1 (no fallback copies behind the caller's
   back).
 
@@ -484,7 +484,7 @@ reconstruct scan (below).
   each one that exists is also openable), read via
   `/dev/zvol/…@s<id>`, read-only at the device level too.
 - **Reads:** `<target>@<snap_id>` on the regular open
-  (`mds://host:port/<volume_id>@<snap_id>`, `ost://…/<uuid>@<snap_id>`);
+  (`mds://host:port/<id>@<snap_id>`, `ost://…/<uuid>@<snap_id>`);
   the wire carries the version in the `val` field SET_OBJECT and SPEC
   already had. Opening a snapshot **bypasses the mirror state machine
   entirely** — no metadata compare, no quorum, no barriers, no resync, no
@@ -492,7 +492,7 @@ reconstruct scan (below).
   (snapshots are taken mid-session), which the live open logic would
   treat as a crash to recover from. Immutability is what makes the bypass
   sound: one reachable member serves, writes fail with EROFS.
-- **The two-phase begin is durable and never reuses an id** (per-volume
+- **The two-phase begin is durable and never reuses an id** (per-object
   monotonic `next_snap_id`, fsync'd at begin): leftovers of a crashed
   attempt can never alias a later snapshot. The reconstruct scan re-fences
   the counter from every version it sees — garbage included.
@@ -505,8 +505,8 @@ reconstruct scan (below).
   registered even if the commit never landed — they are indistinguishable
   from committed ones and just as consistent (drain + FLUSH preceded the
   CoWs); holed versions stay unregistered garbage.
-- **Volume deletion order matches snapshot deletion**: the MDS
-  unregisters the map first — which is also where "the volume still has
+- **Object deletion order matches snapshot deletion**: the MDS
+  unregisters the map first — which is also where "the object still has
   snapshots" refuses with `-EBUSY` *before* any data is touched — then
   the chunk objects are destroyed.
 - **v1 caveat:** the CLI-driven snapshot assumes no concurrent writer —
@@ -556,7 +556,7 @@ The witness's vote counts **only when its record is provably consistent**:
 
 1. **`CLEAN` witness**: approves auto-start of a `CLEAN` data member with the
    **same `sync_id`** — `{arm, W}` is a quorum. This is the headline case:
-   volume closed cleanly, one OST died between sessions.
+   object closed cleanly, one OST died between sessions.
 2. **`DIRTY_DEGRADED { survivors }` witness** (the async degrade update did
    land, or a witness-assisted degraded open wrote it): approves auto-start
    **only of the single recorded survivor** (`|survivors| = 1`) whose
@@ -627,10 +627,10 @@ alone), and the degrade barrier still touches only the survivors.
 
 ### Witness in the chunked world
 
-Witness records are per `(volume_id, logical_index)` — chunks degrade
+Witness records are per `(id, logical_index)` — chunks degrade
 independently in general. With `stripe_width K=1` (all chunks on the same
 OSTs) member loss degrades every chunk identically; the record may be stored
-once per volume with the index dimension collapsed (an optimization of the
+once per object with the index dimension collapsed (an optimization of the
 same schema, decided at descriptor level).
 
 ## MDS server, v1: single instance
@@ -651,7 +651,7 @@ binary.
 | Option | Verdict |
 |---|---|
 | PostgreSQL | **Rejected.** An external server and its operational surface for kilobytes of state; breaks "MDS = one binary"; v2 replication must follow the epoch model anyway, not a DBMS's |
-| Own format (append-log + snapshot, or per-volume files à la `.spec`) | Viable, zero dependencies, codebase style — but the fsync-ordering / torn-write / atomic-rename protocol must be designed and proven by us, and every schema change is manual |
+| Own format (append-log + snapshot, or per-object files à la `.spec`) | Viable, zero dependencies, codebase style — but the fsync-ordering / torn-write / atomic-rename protocol must be designed and proven by us, and every schema change is manual |
 | **SQLite** (WAL mode; `synchronous=FULL` for witness and map mutations) | **Chosen.** Crash-safety and transactional atomicity by construction rather than by our own proof; trivial schema migrations; ubiquitous, dependency-wise in the same class as liburing/xxhash. Mutations are rare — they run on a worker thread reporting back to the I/O queue, the same pattern as the `file://` control plane |
 
 The asymmetry of the two state classes (map = recoverable cache, witness =
@@ -665,7 +665,7 @@ rebuild the map:
   get the OST roster from topology (v1: static config)
   for each OST: LIST -> physical ids, then per id: SPEC -> chunk_meta
   drop member_kind = witness records (metadata-only, not slots)
-  group by (volume_id, version): version 0 -> live chunk_map,
+  group by (id, version): version 0 -> live chunk_map,
                                  version = snap_id -> snapshot view
   within each group: order by logical_index
   -> reassembled maps (+ snapshot views)
@@ -701,9 +701,9 @@ of normal opens/closes.
   Existing chunks keep their placement — the map is explicit — so only a
   post-disaster resize places new chunks under the reset policy.
 - **Degraded chunks reconstruct degraded:** a chunk with some copies lost
-  keeps its surviving slots and `VOL_OPEN` serves them (the mirror layer
+  keeps its surviving slots and `OBJ_OPEN` serves them (the mirror layer
   owns the redundancy question). A chunk with **no** surviving copy fails
-  the whole reconstruct loudly — the MDS must not pretend the volume is
+  the whole reconstruct loudly — the MDS must not pretend the object is
   whole, and it cannot invent data.
 - The tail chunk's stored size may be rounded up by a block backend (LVM
   extent, ZFS volblocksize); the reconstructed `logical_size` takes the
@@ -715,14 +715,14 @@ of normal opens/closes.
 
 ## Protocol deltas (to Protocol.md)
 
-- New MDS opcodes `CMD_VOL_*` (same `rstr` command space; `-ENOSYS` outside a
+- New MDS opcodes `CMD_OBJ_*` (same `rstr` command space; `-ENOSYS` outside a
   server's role); opcodes regrouped into reserved ranges per role.
 - Unified response frame `{res, len, hash}` + body for **all** commands
   (breaking change, free pre-install; resolves the `protocol.h` TODO).
 - `SET_OBJECT` handshake gains protocol version + feature bits.
 - `+uint64_t map_epoch` in the IO frame — epoch-fence.
-- `SET_OBJECT`: `val` = `snap_id` (0 = live); `obj_id` = `volume_id`.
-- Semantics: IO `offset` = logical volume offset (OST resolves to a local slot).
+- `SET_OBJECT`: `val` = `snap_id` (0 = live); `obj_id` = `id`.
+- Semantics: IO `offset` = logical object offset (OST resolves to a local slot).
 - Witness subset = existing `SPEC` / `SET_STATE`; the meta body is extended
   directly with the record kind (`DIRTY_OPEN` / `DIRTY_DEGRADED`) and
   `survivors[]` — no parallel opcodes, no legacy meta-body acceptance.
@@ -734,10 +734,10 @@ of normal opens/closes.
 
 ## Implementation stages
 
-1. **Chunking**: `CMD_VOL_CREATE/OPEN/RESIZE/REMOVE`, HRW placement + topology config,
+1. **Chunking**: `CMD_OBJ_CREATE/OPEN/RESIZE/REMOVE`, HRW placement + topology config,
    explicit map in MDS (SQLite), client-side routing, `map_epoch` + fence watermark,
    `LIST` + per-object `SPEC` reconstruct scan.
-2. **Snapshots**: `CMD_VOL_SNAPSHOT`, `version`/`snap_id` in chunk identity,
+2. **Snapshots**: `CMD_OBJ_SNAP_BEGIN/COMMIT`, `version`/`snap_id` in chunk identity,
    member-set registry, deletion, `-ENOTSUP` on `file://`.
 3. **Witness**: metadata-only member in the target list, witness record kinds
    + voting rules in the client quorum logic, async post-degrade updates,

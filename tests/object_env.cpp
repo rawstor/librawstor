@@ -1,4 +1,4 @@
-#include "volume_env.hpp"
+#include "object_env.hpp"
 
 #include <mds/server.hpp>
 
@@ -38,7 +38,7 @@ std::thread spawn_server(ConstructAndLoop&& body) {
 
 } // namespace
 
-VolumeEnv::VolumeEnv(unsigned int mds_port, unsigned int ost_port) :
+ObjectEnv::ObjectEnv(unsigned int mds_port, unsigned int ost_port) :
     _ost_listen_fd(-1),
     _ost_wake_write_fd(-1),
     _mds_wake_write_fd(-1),
@@ -120,7 +120,7 @@ VolumeEnv::VolumeEnv(unsigned int mds_port, unsigned int ost_port) :
     });
 }
 
-VolumeEnv::~VolumeEnv() {
+ObjectEnv::~ObjectEnv() {
     // Wake both loop()s -- see mds::Server/ostserver::Server's own
     // constructor doc comments: wake_fd is only ever read from, so the
     // one write byte each expects is exactly the "stop" signal
@@ -151,7 +151,7 @@ VolumeEnv::~VolumeEnv() {
     }
 }
 
-std::string VolumeEnv::location() const {
+std::string ObjectEnv::location() const {
     std::ostringstream oss;
     oss << "mds://127.0.0.1:" << _mds_port;
     return oss.str();

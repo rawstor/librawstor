@@ -17,9 +17,9 @@ namespace mds {
 class Session;
 
 // Single-instance MDS server (docs/mds.md, "MDS server, v1"):
-// owns its own listening socket and VolumeStore, one worker (VolumeStore's
+// owns its own listening socket and ObjectStore, one worker (ObjectStore's
 // calls are synchronous and rare -- a briefly blocked event loop is
-// accepted, see VolumeStore's own doc comment), no accept_multishot
+// accepted, see ObjectStore's own doc comment), no accept_multishot
 // sharing across threads unlike ost::Server.
 class Server final {
 private:
@@ -27,7 +27,7 @@ private:
     int _fd;
     int _wake_fd;
     bool _stop;
-    VolumeStore _store;
+    ObjectStore _store;
     RawIOEvent* _accept_event;
     std::unordered_map<int, std::shared_ptr<Session>> _sessions;
 
@@ -55,7 +55,7 @@ public:
     Server& operator=(const Server&) = delete;
     Server& operator=(Server&&) = delete;
 
-    VolumeStore& store() noexcept { return _store; }
+    ObjectStore& store() noexcept { return _store; }
 
     rawstd::Task<void> del_session(int fd);
     void loop();

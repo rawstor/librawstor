@@ -20,7 +20,7 @@ static void log_spec(FILE* output, const struct RawstorObjectSpec* spec) {
     fprintf(output, "  size: %s\n", buf);
     fprintf(output, "  mirrors: %u\n", spec->mirrors);
 
-    /* Volume policy (mds:// targets only) -- silently unused otherwise. */
+    /* Object policy (mds:// targets only) -- silently unused otherwise. */
     if (spec->chunk_size != 0) {
         rawstd_bytes_to_size(spec->chunk_size, buf, sizeof(buf));
         fprintf(output, "  chunk size: %s\n", buf);

@@ -182,13 +182,13 @@ void scan_ost(
 
 // rawstor-mds --reconstruct (docs/mds.md, "Reconstruct / DR"): rebuilds
 // the whole map from a scan of every OST in the topology. No partial
-// scans, by construction (see VolumeStore::reconstruct()'s own doc
+// scans, by construction (see ObjectStore::reconstruct()'s own doc
 // comment): any OST that doesn't answer LIST at all aborts the whole
 // reconstruct rather than silently dropping its live copies from the map
 // (see scan_ost()'s own doc comment for the softer per-object tolerance
 // on META).
 void reconstruct(
-    const rawstor::mds::Topology& topology, rawstor::mds::VolumeStore& store
+    const rawstor::mds::Topology& topology, rawstor::mds::ObjectStore& store
 ) {
     RawIOQueue* queue;
     int res = rawio_queue_create(256, &queue);

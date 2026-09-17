@@ -29,7 +29,7 @@ Currently, four URI schemes are supported:
 | `file` | Local filesystem backend (a folder path) |
 | `lvm`  | Local LVM thin pool backend |
 | `zfs`  | Local ZFS pool backend |
-| `mds`  | Metadata server addressing a whole chunked, possibly multi-copy volume rather than a single physical store (see [mds.md](mds.md)) |
+| `mds`  | Metadata server addressing a whole chunked, possibly multi-copy object rather than a single physical store (see [mds.md](mds.md)) |
 
 ### Single backend examples
 
@@ -69,7 +69,7 @@ Where:
 
 - `ost://<host>:<port>/<uuid>` – an object stored on a single OST server.
 - `file://<path_to_folder>/<uuid>` – an object stored as a file in a local folder.
-- `mds://<host>:<port>/<uuid>` – a whole volume addressed through its MDS; always a single URI (no comma list — mirroring/locality here happen per chunk, inside the volume, not at this level). See [mds.md](mds.md).
+- `mds://<host>:<port>/<uuid>` – a whole object addressed through its MDS; always a single URI (no comma list — mirroring/locality here happen per chunk, inside the object, not at this level). See [mds.md](mds.md).
 
 ### Multiple backend target (mirroring / locality)
 
@@ -86,15 +86,15 @@ This target references the same object (UUID `019cbfad-a389-7d42-a0f6-c29993ac8c
 Opening a target (`rawstor_target_open()`) resolves it into an
 **Object** made of one or more **Chunks** (see below). For a plain
 target, this is always a single chunk — the target string above, in
-full. `mds://` volumes need more than one: the client library builds,
+full. `mds://` objects need more than one: the client library builds,
 internally, a single flat `,`-separated list of every chunk's own URIs,
 one after another, with no second separator marking where one chunk's
 own group ends and the next begins — `Target`'s own constructor sorts
 them back into their chunk groups itself, by each URI's own internal
-`:<offset>` suffix (a chunk's byte offset within the volume, `logical_
+`:<offset>` suffix (a chunk's byte offset within the object, `logical_
 index * chunk_size` — URIs sharing one offset are mirrors of the same
 chunk, distinct chunks always differ). This form only ever exists inside
-the library (built by the MDS backend from the volume's chunk map) — it
+the library (built by the MDS backend from the object's chunk map) — it
 is never part of the target syntax a caller types, appears in the CLI,
 or is returned by any `rawstor_target_*()` call. It is documented here
 only so the internal model below is unambiguous about where a
@@ -111,21 +111,21 @@ call (`pread`/`pwrite`/`discard`/`write_zeroes`/`flush`/`close`) acts on.
 It has no URI form of its own: it is *derived* from the target string
 that opened it, routing each I/O request to the Chunk that logically
 owns the touched byte range. A plain target's Object is always the
-degenerate case of exactly one Chunk; an `mds://` volume's Object may
+degenerate case of exactly one Chunk; an `mds://` target's Object may
 route across many.
 
 ## Chunk
 
 A **Chunk** is one logical piece of an Object's data — for a plain
-target, the whole object; for an `mds://` volume, one fixed-size slice of
-it (docs/mds.md: with 1 GiB chunks, a 1 TiB volume has ≤ 1024 chunks). A
+target, the whole object; for an `mds://` object, one fixed-size slice of
+it (docs/mds.md: with 1 GiB chunks, a 1 TiB object has ≤ 1024 chunks). A
 Chunk owns the mirror-consistency protocol (DIRTY/CLEAN/SYNCING,
 epoch/sync_id, degrade/resync — docs/mirroring.md) across its own one or
 more Slots. Its URI form is exactly a plain target's own: one URI per
 mirror, comma-separated, all sharing the same UUID —
 `ost://h1:p1/<uuid>,ost://h2:p2/<uuid>`. A single-chunk Object's one
 Chunk *is* the target string that opened it; a multi-chunk `mds://`
-volume's chunks are each one same-`:<offset>` group of the internal form
+object's chunks are each one same-`:<offset>` group of the internal form
 above.
 
 ## Slot
@@ -142,21 +142,21 @@ A **snapshot** is a bound, read-only version of a target/chunk/slot,
 identified by a version id (`snap_id`, never 0 — 0 always means "live").
 Two independent mechanisms use it, at different layers:
 
-- **mds:// volume-level**: `vol_snap_begin`/CoW-every-chunk/
-  `vol_snap_commit` (docs/mds.md, "Snapshots (stage 2)") registers a new
-  id against the whole volume, driven by `mds::Backend::
+- **mds:// object-level**: `OBJ_SNAP_BEGIN`/CoW-every-chunk/
+  `OBJ_SNAP_COMMIT` (docs/mds.md, "Snapshots (stage 2)") registers a new
+  id against the whole object, driven by `mds::Backend::
   snapshot_create_assign()`.
 - **Per-slot native CoW**: a single backend's own thin-clone/snapshot
   primitive (zfs::Backend today), addressed directly by target/chunk-
   slot URI with the version appended as `@<snap_id>`:
-  `ost://host:port/<uuid>@5` or, on a bare (non-mds://) target,
-  `mds://host:port/<volume_id>@5`. This suffix is never part of a
+  `ost://host:port/<uuid>@5` or, on an `mds://` target,
+  `mds://host:port/<id>@5`. This suffix is never part of a
   location and never carries a comma-separated list of its own — it
   binds whichever single URI it's attached to.
 
 ## Chunk offset (not for manual entry)
 
-A chunk's own byte offset within its parent `mds://` volume
+A chunk's own byte offset within its parent `mds://` object
 (`logical_index * chunk_size`) rides the same URI, as a `:<offset>`
 suffix right after the UUID: `ost://host:port/<uuid>:1048576` (optionally
 followed by `@<snap_id>`, e.g. `ost://host:port/<uuid>:1048576@5`). Like
@@ -177,7 +177,7 @@ directly (0 for a plain, non-`mds://` target).
 | **Object** | (none — derived from the target string that opened it) | The open handle `rawstor_object_*()` I/O acts on; routes to the owning Chunk | — |
 | **Chunk** | Same as Target: `uri1,uri2,...` (one UUID per group) | One logical slice of an Object's data; owns mirror consistency | `ost://h1:p1/<uuid>,ost://h2:p2/<uuid>` |
 | **Slot** | A single URI | One physical mirror arm of a Chunk; owns retries/reconnects | `ost://h1:p1/<uuid>` |
-| **Snapshot** | `@<snap_id>` suffix on a target/chunk-slot URI, or a volume-level id assigned by the MDS | A bound, read-only version | `ost://host:port/<uuid>@5` |
+| **Snapshot** | `@<snap_id>` suffix on a target/chunk-slot URI, or an object-level id assigned by the MDS | A bound, read-only version | `ost://host:port/<uuid>@5` |
 
 ---
 

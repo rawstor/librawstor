@@ -19,11 +19,11 @@
 
 namespace {
 
+using rawstor::mds::ObjectMap;
+using rawstor::mds::ObjectStore;
 using rawstor::mds::PlacementSlot;
 using rawstor::mds::SnapMember;
 using rawstor::mds::Topology;
-using rawstor::mds::VolumeMap;
-using rawstor::mds::VolumeStore;
 
 int recv_trampoline(ssize_t result, void* data) {
     size_t value = result < 0 ? 0 : static_cast<size_t>(result);
@@ -107,20 +107,17 @@ std::string ost_address(const Topology& topology, const RawstdUUID& ost_id) {
     return std::string(); // no longer in the topology -- unreachable
 }
 
-// Serializes a VolumeMap into a VOL_OPEN response payload: descriptor,
-// then one RawstorVolChunkEntry + its width RawstorVolChunkSlot records
-// per chunk (docs/mds.md, "Wire protocol").
+// Serializes an ObjectMap into an OBJ_OPEN response payload: descriptor,
+// then one RawstorObjectChunkEntry + its width RawstorObjectChunkSlot
+// records per chunk (docs/mds.md, "Wire protocol").
 std::vector<unsigned char>
-encode_volume_map(const Topology& topology, const VolumeMap& map) {
-    RawstorVolDescriptorPayload descriptor{};
-    memcpy(
-        descriptor.volume_id, map.descriptor.volume_id.bytes,
-        sizeof(descriptor.volume_id)
-    );
+encode_object_map(const Topology& topology, const ObjectMap& map) {
+    RawstorObjectDescriptorPayload descriptor{};
+    memcpy(descriptor.id, map.descriptor.id.bytes, sizeof(descriptor.id));
     descriptor.logical_size = map.descriptor.logical_size;
     descriptor.chunk_size = map.descriptor.chunk_size;
-    descriptor.policy = RawstorVolPolicy{
-        .redundancy = RAWSTOR_VOL_REDUNDANCY_MIRROR,
+    descriptor.policy = RawstorObjectPolicy{
+        .redundancy = RAWSTOR_OBJ_REDUNDANCY_MIRROR,
         .width = static_cast<uint8_t>(map.descriptor.policy.width),
         .failure_domain =
             static_cast<uint8_t>(map.descriptor.policy.failure_domain),
@@ -135,7 +132,7 @@ encode_volume_map(const Topology& topology, const VolumeMap& map) {
     memcpy(data.data(), &descriptor, sizeof(descriptor));
 
     for (const std::vector<PlacementSlot>& slots : map.chunks) {
-        RawstorVolChunkEntry entry{
+        RawstorObjectChunkEntry entry{
             .snap_id = 0, // v1 always opens the live view here
             .width = static_cast<uint8_t>(slots.size()),
         };
@@ -144,7 +141,7 @@ encode_volume_map(const Topology& topology, const VolumeMap& map) {
         memcpy(data.data() + off, &entry, sizeof(entry));
 
         for (const PlacementSlot& slot : slots) {
-            RawstorVolChunkSlot wire_slot{};
+            RawstorObjectChunkSlot wire_slot{};
             wire_slot.slot_index = slot.slot_index;
             memcpy(
                 wire_slot.ost_id, slot.ost_id.bytes, sizeof(wire_slot.ost_id)
@@ -252,9 +249,9 @@ rawstd::Task<void> Session::_dispatch(
     }
     RawIOQueue* queue = session->_queue;
     int fd = session->_fd;
-    VolumeStore& store = session->_server.store();
+    ObjectStore& store = session->_server.store();
 
-    // Every request below is served synchronously against VolumeStore
+    // Every request below is served synchronously against ObjectStore
     // (docs/mds.md: "Calls are synchronous... a briefly blocked
     // event loop is accepted") -- the only actual awaiting here is the
     // socket read/write around it.
@@ -268,11 +265,11 @@ rawstd::Task<void> Session::_dispatch(
         co_await session->_send_response(head.cmd, head.cid, 0);
         break;
     }
-    case RAWSTOR_CMD_VOL_CREATE: {
-        RawstorVolCreatePayload payload;
+    case RAWSTOR_CMD_OBJ_CREATE: {
+        RawstorObjectCreatePayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
-        RawstorVolCreatedPayload out{};
+        RawstorObjectCreatedPayload out{};
         try {
             PlacementPolicy policy{
                 .width = payload.policy.width,
@@ -281,9 +278,9 @@ rawstd::Task<void> Session::_dispatch(
                 .stripe_width = payload.policy.stripe_width,
                 .seed = payload.policy.placement_seed,
             };
-            VolumeDescriptor descriptor = store.create(
-                uuid_of(payload.volume_id), payload.logical_size,
-                payload.chunk_size, policy
+            ObjectDescriptor descriptor = store.create(
+                uuid_of(payload.id), payload.logical_size, payload.chunk_size,
+                policy
             );
             out.map_epoch = descriptor.map_epoch;
         } catch (const std::system_error& e) {
@@ -298,14 +295,14 @@ rawstd::Task<void> Session::_dispatch(
         }
         break;
     }
-    case RAWSTOR_CMD_VOL_OPEN: {
+    case RAWSTOR_CMD_OBJ_OPEN: {
         RawstorOSTFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
         std::vector<unsigned char> data;
         try {
-            VolumeMap map = store.open(uuid_of(payload.object_id), payload.val);
-            data = encode_volume_map(store.topology(), map);
+            ObjectMap map = store.open(uuid_of(payload.object_id), payload.val);
+            data = encode_object_map(store.topology(), map);
         } catch (const std::system_error& e) {
             res = -e.code().value();
         }
@@ -319,11 +316,11 @@ rawstd::Task<void> Session::_dispatch(
         }
         break;
     }
-    case RAWSTOR_CMD_VOL_RESIZE: {
+    case RAWSTOR_CMD_OBJ_RESIZE: {
         RawstorOSTFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
-        RawstorVolResizedPayload out{};
+        RawstorObjectResizedPayload out{};
         try {
             out.map_epoch =
                 store.resize(uuid_of(payload.object_id), payload.val);
@@ -339,7 +336,7 @@ rawstd::Task<void> Session::_dispatch(
         }
         break;
     }
-    case RAWSTOR_CMD_VOL_REMOVE: {
+    case RAWSTOR_CMD_OBJ_REMOVE: {
         RawstorOSTFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
@@ -351,11 +348,11 @@ rawstd::Task<void> Session::_dispatch(
         co_await session->_send_response(head.cmd, head.cid, res);
         break;
     }
-    case RAWSTOR_CMD_VOL_SNAP_BEGIN: {
+    case RAWSTOR_CMD_OBJ_SNAP_BEGIN: {
         RawstorOSTFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
-        RawstorVolSnapBeganPayload out{};
+        RawstorObjectSnapBeganPayload out{};
         try {
             out.snap_id = store.snap_begin(uuid_of(payload.object_id));
         } catch (const std::system_error& e) {
@@ -370,22 +367,24 @@ rawstd::Task<void> Session::_dispatch(
         }
         break;
     }
-    case RAWSTOR_CMD_VOL_SNAP_COMMIT: {
-        RawstorVolSnapCommitPayload payload;
+    case RAWSTOR_CMD_OBJ_SNAP_COMMIT: {
+        RawstorObjectSnapCommitPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
-        std::vector<RawstorVolSnapMemberPayload> wire_members(payload.nmembers);
+        std::vector<RawstorObjectSnapMemberPayload> wire_members(
+            payload.nmembers
+        );
         if (payload.nmembers > 0) {
             co_await recv_all(
                 queue, fd, wire_members.data(),
-                wire_members.size() * sizeof(RawstorVolSnapMemberPayload)
+                wire_members.size() * sizeof(RawstorObjectSnapMemberPayload)
             );
         }
         int32_t res = 0;
-        RawstorVolSnapCommittedPayload out{};
+        RawstorObjectSnapCommittedPayload out{};
         try {
             std::vector<SnapMember> members;
             members.reserve(wire_members.size());
-            for (const RawstorVolSnapMemberPayload& m : wire_members) {
+            for (const RawstorObjectSnapMemberPayload& m : wire_members) {
                 members.push_back(
                     SnapMember{
                         .logical_index = m.logical_index,
@@ -394,7 +393,7 @@ rawstd::Task<void> Session::_dispatch(
                 );
             }
             out.map_epoch = store.snap_commit(
-                uuid_of(payload.volume_id), payload.snap_id, members
+                uuid_of(payload.id), payload.snap_id, members
             );
         } catch (const std::system_error& e) {
             res = -e.code().value();
@@ -408,7 +407,7 @@ rawstd::Task<void> Session::_dispatch(
         }
         break;
     }
-    case RAWSTOR_CMD_VOL_SNAP_REMOVE: {
+    case RAWSTOR_CMD_OBJ_SNAP_REMOVE: {
         RawstorOSTFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
@@ -416,9 +415,11 @@ rawstd::Task<void> Session::_dispatch(
         try {
             std::vector<SnapMember> members =
                 store.snap_remove(uuid_of(payload.object_id), payload.val);
-            data.resize(members.size() * sizeof(RawstorVolSnapMemberPayload));
-            RawstorVolSnapMemberPayload* out =
-                reinterpret_cast<RawstorVolSnapMemberPayload*>(data.data());
+            data.resize(
+                members.size() * sizeof(RawstorObjectSnapMemberPayload)
+            );
+            RawstorObjectSnapMemberPayload* out =
+                reinterpret_cast<RawstorObjectSnapMemberPayload*>(data.data());
             for (size_t i = 0; i < members.size(); ++i) {
                 out[i].logical_index = members[i].logical_index;
                 memcpy(
@@ -441,7 +442,7 @@ rawstd::Task<void> Session::_dispatch(
     }
     default:
         // Forward-compat and role separation (docs/mds.md, "Wire
-        // protocol"): this v1 MDS serves the volume group only, not yet
+        // protocol"): this v1 MDS serves the object group only, not yet
         // the shared metadata group (SPEC/META/SET_SYNC_STATE -- stage
         // 3's witness role) -- there's no length field on the request to
         // safely skip an unknown payload, so answering -ENOSYS here still

@@ -24,10 +24,10 @@ struct WireSlot {
 };
 
 struct WireMap {
-    RawstdUUID volume_id;
+    RawstdUUID id;
     uint64_t logical_size;
     uint64_t chunk_size;
-    RawstorVolPolicy policy;
+    RawstorObjectPolicy policy;
     uint64_t map_epoch;
     std::vector<std::vector<WireSlot>> chunks;
 };
@@ -39,9 +39,9 @@ struct WireSnapMember {
 };
 
 /*
- * Control-plane client for the volume commands of an MDS
+ * Control-plane client for the object commands of an MDS
  * (docs/mds.md). One connection, plain request/response
- * exchanges (no pipelining: volume operations are rare and serialized by
+ * exchanges (no pipelining: object operations are rare and serialized by
  * the caller).
  */
 class Client final {
@@ -66,31 +66,29 @@ public:
     /* TCP connect + the SET_OBJECT handshake (null binding). */
     rawstd::Task<void> connect();
 
-    rawstd::Task<uint64_t> vol_create(
-        const RawstdUUID& volume_id, uint64_t logical_size, uint64_t chunk_size,
-        const RawstorVolPolicy& policy
+    rawstd::Task<uint64_t> create(
+        const RawstdUUID& id, uint64_t logical_size, uint64_t chunk_size,
+        const RawstorObjectPolicy& policy
     );
 
-    rawstd::Task<WireMap>
-    vol_open(const RawstdUUID& volume_id, uint64_t snap_id);
+    rawstd::Task<WireMap> open(const RawstdUUID& id, uint64_t snap_id);
 
-    rawstd::Task<uint64_t>
-    vol_resize(const RawstdUUID& volume_id, uint64_t new_size);
+    rawstd::Task<uint64_t> resize(const RawstdUUID& id, uint64_t new_size);
 
-    rawstd::Task<void> vol_remove(const RawstdUUID& volume_id);
+    rawstd::Task<void> remove(const RawstdUUID& id);
 
     /* Durably reserves the next snap_id (docs/mds.md, two-phase). */
-    rawstd::Task<uint64_t> vol_snap_begin(const RawstdUUID& volume_id);
+    rawstd::Task<uint64_t> snap_begin(const RawstdUUID& id);
 
     /* Registers the snapshot; returns the bumped map_epoch. */
-    rawstd::Task<uint64_t> vol_snap_commit(
-        const RawstdUUID& volume_id, uint64_t snap_id,
+    rawstd::Task<uint64_t> snap_commit(
+        const RawstdUUID& id, uint64_t snap_id,
         const std::vector<WireSnapMember>& members
     );
 
     /* Unregisters and returns the member set for the fan-out destroy. */
     rawstd::Task<std::vector<WireSnapMember>>
-    vol_snap_remove(const RawstdUUID& volume_id, uint64_t snap_id);
+    snap_remove(const RawstdUUID& id, uint64_t snap_id);
 };
 
 } // namespace mds

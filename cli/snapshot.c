@@ -12,7 +12,7 @@
 #include <string.h>
 
 int rawstor_cli_snapshot(const char* target) {
-    fprintf(stderr, "Snapshotting volume: %s\n", target);
+    fprintf(stderr, "Snapshotting object: %s\n", target);
 
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);

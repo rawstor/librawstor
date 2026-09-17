@@ -17,10 +17,10 @@ class Server;
 
 // One MDS client connection. Same framing as an OST connection (shared
 // `rstr` magic and frame heads, docs/mds.md "Wire protocol") --
-// only the volume opcode group (CMD_VOL_*) is actually served here; every
+// only the object opcode group (CMD_OBJ_*) is actually served here; every
 // other opcode answers -ENOSYS (a plain rawstor-ost, or an OST doubling as
 // partial MDS, serves the session/data/shared-metadata groups instead).
-// Unlike ost::Client, request handling calls straight into VolumeStore's
+// Unlike ost::Client, request handling calls straight into ObjectStore's
 // synchronous API -- no per-request async I/O beyond the socket read/
 // write itself, so this needs none of ost::Client's ring-buffer multishot
 // recv machinery: MDS traffic is low-rate control-plane only

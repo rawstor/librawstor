@@ -21,28 +21,28 @@ namespace rawstor {
 namespace mds {
 
 /*
- * mds:// volume storage backend.
+ * mds:// object storage backend.
  *
  * Location URI: mds://host:port
  *
  * A peer of file/lvm/ost/zfs::Backend, not a special case Target/Object
  * dispatch around them (docs/locations_and_targets.md, docs/mds.md):
- * `mds://host:port/<volume_id>` is, from Target's own point of view, an
+ * `mds://host:port/<id>` is, from Target's own point of view, an
  * ordinary single-URI target whose one "chunk" happens to be an entire
- * MDS-orchestrated volume. Opening it (set_object()) fetches the
- * volume's current WireMap from the MDS and builds the same internal
+ * MDS-orchestrated object. Opening it (set_object()) fetches the
+ * object's current WireMap from the MDS and builds the same internal
  * multi-chunk Target string Target::open() already knows how to parse
  * (see target.hpp) -- recursing into Target/Object/Chunk/Slot
  * again, the same way ost::Backend's own client recurses into a fresh
  * Target/Backend pair on the far end of the wire (ost/src/client.cpp) --
  * just intra-process here instead of across a socket. The nested Object
- * this produces (`_volume` below) is what every data-path method
+ * this produces (`_object` below) is what every data-path method
  * delegates to.
  */
 class Backend final : public rawstor::Backend {
 private:
     mds::Client _client;
-    std::unique_ptr<Object> _volume;
+    std::unique_ptr<Object> _object;
 
     rawstd::Task<void> _connect() override;
 
@@ -65,7 +65,7 @@ public:
 
     // `chunk_offset` is always 0 here -- a single mds:// URI is never
     // itself split into chunks (chunking happens one level down, inside
-    // the volume) -- see rawstor::Backend::resize()'s own doc comment.
+    // the object) -- see rawstor::Backend::resize()'s own doc comment.
     rawstd::Task<void> resize(
         const RawstdUUID& id, uint64_t chunk_offset, uint64_t new_size
     ) override;
@@ -84,7 +84,7 @@ public:
     ) override;
 
     // A caller-chosen snap_id (Target::snapshot_create()'s own contract)
-    // makes no sense on an mds:// volume -- the MDS itself is the only
+    // makes no sense on an mds:// object -- the MDS itself is the only
     // authority that assigns one (snapshot_create_assign() above).
     rawstd::Task<void> snapshot_create(
         const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
@@ -116,7 +116,7 @@ public:
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
-    // Fetches the volume's current WireMap and opens the nested
+    // Fetches the object's current WireMap and opens the nested
     // multi-chunk Object it describes (see this class's own doc
     // comment) -- `snap_id` is folded into every chunk slot's own URI
     // ("@<snap_id>", chunk_slot_target()'s own convention in

@@ -29,19 +29,17 @@ struct Domain {
 };
 
 uint64_t hrw_hash(
-    uint8_t tag, uint64_t seed, const RawstdUUID& volume_id,
-    const uint64_t* index, const std::string& name
+    uint8_t tag, uint64_t seed, const RawstdUUID& id, const uint64_t* index,
+    const std::string& name
 ) {
     std::vector<unsigned char> buf;
-    buf.reserve(1 + sizeof(seed) + sizeof(volume_id.bytes) + 8 + name.size());
+    buf.reserve(1 + sizeof(seed) + sizeof(id.bytes) + 8 + name.size());
 
     buf.push_back(tag);
     for (unsigned i = 0; i < 8; ++i) {
         buf.push_back(static_cast<unsigned char>(seed >> (8 * i)));
     }
-    buf.insert(
-        buf.end(), volume_id.bytes, volume_id.bytes + sizeof(volume_id.bytes)
-    );
+    buf.insert(buf.end(), id.bytes, id.bytes + sizeof(id.bytes));
     if (index != nullptr) {
         for (unsigned i = 0; i < 8; ++i) {
             buf.push_back(static_cast<unsigned char>(*index >> (8 * i)));
@@ -67,7 +65,7 @@ namespace rawstor {
 namespace mds {
 
 std::vector<PlacementSlot> place(
-    const Topology& topology, const RawstdUUID& volume_id, uint64_t index,
+    const Topology& topology, const RawstdUUID& id, uint64_t index,
     const PlacementPolicy& policy
 ) {
     if (policy.width == 0) {
@@ -108,7 +106,7 @@ std::vector<PlacementSlot> place(
     }
 
     /*
-     * A partial stripe pins a pool of max(K, width) domains per volume;
+     * A partial stripe pins a pool of max(K, width) domains per object;
      * chunks then spread within it. K=1 degenerates to a pool of exactly
      * width domains — every chunk on the same OSTs. K=all keeps every
      * domain in play.
@@ -116,10 +114,10 @@ std::vector<PlacementSlot> place(
     auto rank = [&](uint8_t tag, const uint64_t* idx) {
         return [&, tag, idx](const Domain* a, const Domain* b) {
             double sa = hrw_score(
-                hrw_hash(tag, policy.seed, volume_id, idx, a->key), a->weight
+                hrw_hash(tag, policy.seed, id, idx, a->key), a->weight
             );
             double sb = hrw_score(
-                hrw_hash(tag, policy.seed, volume_id, idx, b->key), b->weight
+                hrw_hash(tag, policy.seed, id, idx, b->key), b->weight
             );
             if (sa != sb) {
                 return sa > sb;
@@ -158,7 +156,7 @@ std::vector<PlacementSlot> place(
             RawstdUUIDString s;
             rawstd_uuid_to_string(&leaf->id, &s);
             double leaf_score = hrw_score(
-                hrw_hash(TAG_LEAF, policy.seed, volume_id, chunk_index, s),
+                hrw_hash(TAG_LEAF, policy.seed, id, chunk_index, s),
                 leaf->weight
             );
             if (best == nullptr || leaf_score > best_score) {
