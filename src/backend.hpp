@@ -16,18 +16,24 @@
 
 namespace rawstor {
 
-// One object list() found -- also reused, unmodified, as list()'s own
-// pagination cursor (see its doc comment below): a cursor just names the
-// last entry already returned, so it needs exactly the same fields as an
-// entry itself. `id` alone no longer uniquely names a physical resource
-// now that it's the parent mds:// volume's own id for every one of its
-// chunks (mds::Backend's own chunk_slot_target(), docs/mds.md's "Chunk
-// identity": obj_id = volume_id) -- `chunk_offset` (0 for a plain,
-// non-volume object; `logical_index * chunk_size` otherwise) is what
-// actually tells two of a volume's own chunks apart. `snap_id` is always
-// 0 today (no backend's own list() enumerates snapshots yet -- see
-// docs/mds.md's own "Snapshot-version records are skipped (stage 2)"),
-// carried alongside for when one does.
+// Only named here as list()'s own pagination cursor type below -- the
+// per-entry results themselves are full Target objects (list()'s own doc
+// comment) -- so this stays a forward declaration to avoid a header
+// cycle (Target -> Object -> Chunk -> Slot -> Backend); every concrete
+// Backend's own list() includes "target.hpp" itself to build one.
+class Target;
+
+// list()'s own pagination cursor: names the last entry already returned
+// by its id/chunk_offset/snap_id, the same identity a returned Target's
+// own id()/offset()/snap_id() report. `id` alone no longer uniquely
+// names a physical resource now that it's the parent mds:// volume's own
+// id for every one of its chunks (mds::Backend's own chunk_slot_target(),
+// docs/mds.md's "Chunk identity": obj_id = volume_id) -- `chunk_offset`
+// (0 for a plain, non-volume object; `logical_index * chunk_size`
+// otherwise) is what actually tells two of a volume's own chunks apart.
+// `snap_id` is always 0 today (no backend's own list() enumerates
+// snapshots yet -- see docs/mds.md's own "Snapshot-version records are
+// skipped (stage 2)"), carried alongside for when one does.
 struct ListedObject {
     RawstdUUID id;
     uint64_t chunk_offset;
@@ -108,21 +114,23 @@ public:
     // want a graceful async teardown must co_await this themselves.
     virtual rawstd::Task<void> close() = 0;
 
-    // `targets`: overwritten with this page's objects, in the total order
-    // ListedObject's own operator<() defines (id, then chunk_offset, then
-    // snap_id). `token`: this call's pagination cursor on entry,
-    // overwritten with the next page's cursor on return (all-zero once
-    // there's nothing left) -- resumes strictly after the entry `token`
-    // itself names, so `limit` counts entries directly, one row per
-    // returned ListedObject (including every chunk of an mds:// volume
-    // separately, now that they all share their volume's own id -- see
-    // ListedObject's own doc comment). A concrete backend implements this
-    // by re-deriving its own full, sorted listing each call (as today)
-    // and resuming from the first entry strictly greater than `token`
-    // (e.g. std::upper_bound).
+    // `targets`: overwritten with this page's own single-URI Targets
+    // (this backend's own location() plus one entry's id/chunk_offset/
+    // snap_id, "<uuid>[:<offset>][@<snap_id>]" -- Target's own doc
+    // comment), in the total order ListedObject's own operator<()
+    // defines (id, then chunk_offset, then snap_id). `token`: this
+    // call's pagination cursor on entry, overwritten with the next
+    // page's cursor on return (all-zero once there's nothing left) --
+    // resumes strictly after the entry `token` itself names, so `limit`
+    // counts entries directly, one row per returned Target (including
+    // every chunk of an mds:// volume separately, now that they all
+    // share their volume's own id -- see ListedObject's own doc
+    // comment). A concrete backend implements this by re-deriving its
+    // own full, sorted listing each call (as today) and resuming from
+    // the first entry strictly greater than `token` (e.g.
+    // std::upper_bound), then building one Target per surviving entry.
     virtual rawstd::Task<void> list(
-        unsigned int limit, std::vector<ListedObject>& targets,
-        ListedObject& token
+        unsigned int limit, std::vector<Target>& targets, ListedObject& token
     ) = 0;
 
     virtual rawstd::Task<void> create(

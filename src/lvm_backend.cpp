@@ -1,7 +1,9 @@
 #include "lvm_backend.hpp"
 
+#include "location.hpp"
 #include "opts.h"
 #include "subprocess.hpp"
+#include "target.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -184,13 +186,15 @@ Backend::_open(const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id) {
 }
 
 rawstd::Task<void> Backend::list(
-    unsigned int limit, std::vector<ListedObject>& targets, ListedObject& token
+    unsigned int limit, std::vector<Target>& targets, ListedObject& token
 ) {
     co_await _cleanup_staging_lvs();
 
     ListedObject input_token = token;
     targets.clear();
     token = {};
+
+    std::vector<ListedObject> found;
 
     // GCC 13 ICEs (is_this_parameter) when a std::vector<std::string>
     // argument is brace-initialized directly at the call site of a nested
@@ -237,7 +241,7 @@ rawstd::Task<void> Backend::list(
             if (rawstd_uuid_from_string(&uuid, uuid_part.c_str()) < 0) {
                 continue;
             }
-            targets.push_back(ListedObject{uuid, chunk_offset, 0});
+            found.push_back(ListedObject{uuid, chunk_offset, 0});
         }
     } catch (const std::exception& e) {
         rawstd_error(
@@ -247,11 +251,10 @@ rawstd::Task<void> Backend::list(
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    std::sort(targets.begin(), targets.end());
+    std::sort(found.begin(), found.end());
 
-    targets.erase(
-        targets.begin(),
-        std::upper_bound(targets.begin(), targets.end(), input_token)
+    found.erase(
+        found.begin(), std::upper_bound(found.begin(), found.end(), input_token)
     );
 
     if (limit == 0) {
@@ -260,9 +263,20 @@ rawstd::Task<void> Backend::list(
         limit = std::min(limit, rawstor_opts_list_limit());
     }
 
-    if (targets.size() > limit) {
-        targets.resize(limit);
-        token = targets.back();
+    bool capped = found.size() > limit;
+    if (capped) {
+        found.resize(limit);
+    }
+
+    Location self_location(location().str());
+    targets.reserve(found.size());
+    for (const ListedObject& obj : found) {
+        targets.emplace_back(
+            self_location, obj.id, obj.chunk_offset, obj.snap_id
+        );
+    }
+    if (capped) {
+        token = found.back();
     }
 
     co_return;

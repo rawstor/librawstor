@@ -585,6 +585,29 @@ Target::Target(const std::string& target) {
     }
 }
 
+Target::Target(
+    const Location& location, const RawstdUUID& id, uint64_t offset,
+    uint64_t snap_id
+) {
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    std::string filename = uuid_string;
+    if (offset != 0) {
+        filename += ":" + std::to_string(offset);
+    }
+    if (snap_id != 0) {
+        filename += "@" + std::to_string(snap_id);
+    }
+
+    std::vector<rawstd::URI> uris;
+    uris.reserve(location.uris().size());
+    for (const rawstd::URI& uri : location.uris()) {
+        uris.emplace_back(uri, filename);
+    }
+    _chunks.push_back(std::move(uris));
+}
+
 RawstdUUID Target::id() const {
     return uuid_from_target(_chunks.front().front());
 }

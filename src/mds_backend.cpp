@@ -150,7 +150,7 @@ rawstd::Task<void> Backend::_connect() {
 }
 
 rawstd::Task<void>
-Backend::list(unsigned int, std::vector<ListedObject>&, ListedObject&) {
+Backend::list(unsigned int, std::vector<Target>&, ListedObject&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 

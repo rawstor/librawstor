@@ -1,6 +1,8 @@
 #include "file_backend.hpp"
 
+#include "location.hpp"
 #include "opts.h"
+#include "target.hpp"
 
 #include <rawio/awaitable.hpp>
 #include <rawio/queue.hpp>
@@ -106,7 +108,7 @@ Backend::_open(const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id) {
 }
 
 rawstd::Task<void> Backend::list(
-    unsigned int limit, std::vector<ListedObject>& targets, ListedObject& token
+    unsigned int limit, std::vector<Target>& targets, ListedObject& token
 ) {
     ListedObject input_token = token;
     targets.clear();
@@ -114,6 +116,7 @@ rawstd::Task<void> Backend::list(
     try {
         std::string location_path = get_location_path(location());
 
+        std::vector<ListedObject> found;
         for (const auto& entry :
              std::filesystem::directory_iterator(location_path)) {
             if (!entry.path().extension().empty()) {
@@ -139,14 +142,14 @@ rawstd::Task<void> Backend::list(
                 continue;
             }
 
-            targets.push_back(ListedObject{uuid, chunk_offset, 0});
+            found.push_back(ListedObject{uuid, chunk_offset, 0});
         }
 
-        std::sort(targets.begin(), targets.end());
+        std::sort(found.begin(), found.end());
 
-        targets.erase(
-            targets.begin(),
-            std::upper_bound(targets.begin(), targets.end(), input_token)
+        found.erase(
+            found.begin(),
+            std::upper_bound(found.begin(), found.end(), input_token)
         );
 
         if (limit == 0) {
@@ -155,9 +158,20 @@ rawstd::Task<void> Backend::list(
             limit = std::min(limit, rawstor_opts_list_limit());
         }
 
-        if (targets.size() > limit) {
-            targets.resize(limit);
-            token = targets.back();
+        bool capped = found.size() > limit;
+        if (capped) {
+            found.resize(limit);
+        }
+
+        Location self_location(location().str());
+        targets.reserve(found.size());
+        for (const ListedObject& obj : found) {
+            targets.emplace_back(
+                self_location, obj.id, obj.chunk_offset, obj.snap_id
+            );
+        }
+        if (capped) {
+            token = found.back();
         }
     } catch (const std::system_error&) {
         throw;

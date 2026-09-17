@@ -533,7 +533,7 @@ const rawstd::URI* Slot::location() const noexcept {
 }
 
 rawstd::Task<void> Slot::list(
-    unsigned int limit, std::vector<ListedObject>& objects, ListedObject& token
+    unsigned int limit, std::vector<Target>& objects, ListedObject& token
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =

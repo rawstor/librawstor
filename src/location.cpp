@@ -112,19 +112,18 @@ info_one(rawio::Queue& queue, const rawstd::URI& location) {
     co_return ret;
 }
 
-// Location::list()'s per-URI result: the objects it found plus the
-// pagination cursor it reported (seeded from the caller's incoming
-// cursor, same as the old sequential loop's per-iteration
+// Location::list()'s per-URI result: the (single-URI) Targets it found
+// plus the pagination cursor it reported (seeded from the caller's
+// incoming cursor, same as the old sequential loop's per-iteration
 // `loc_token_uuid` local) -- .first/.second are unpacked back into those
 // same names via structured bindings at every call site below, so the
 // pair itself never needs to be read directly.
-rawstd::Task<
-    std::pair<std::vector<rawstor::ListedObject>, rawstor::ListedObject>>
+rawstd::Task<std::pair<std::vector<rawstor::Target>, rawstor::ListedObject>>
 list_one(
     rawio::Queue& queue, const rawstd::URI& location, unsigned int limit,
     rawstor::ListedObject token
 ) {
-    std::pair<std::vector<rawstor::ListedObject>, rawstor::ListedObject> ret;
+    std::pair<std::vector<rawstor::Target>, rawstor::ListedObject> ret;
     ret.second = token;
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location, 1);
@@ -333,39 +332,32 @@ rawstd::Task<void> Location::list(
     );
 
     // Every URI's LIST goes out concurrently instead of one at a time;
-    // the per-URI objects/cursor are only merged below, once every URI
+    // the per-URI Targets/cursor are only merged below, once every URI
     // has answered.
-    std::vector<
-        rawstd::Task<std::pair<std::vector<ListedObject>, ListedObject>>>
+    std::vector<rawstd::Task<std::pair<std::vector<Target>, ListedObject>>>
         tasks;
     tasks.reserve(_uris.size());
     for (const auto& location : _uris) {
         tasks.push_back(list_one(queue, location, limit, token_obj));
     }
-    std::vector<std::pair<std::vector<ListedObject>, ListedObject>> listings =
+    std::vector<std::pair<std::vector<Target>, ListedObject>> listings =
         co_await rawstd::gather(std::move(tasks));
 
     // ListedObject's own operator<() (id, then chunk_offset, then
     // snap_id -- backend.hpp) is exactly the total order every one of
     // list()'s concrete implementations already sorts its own output by,
-    // so a plain std::map needs no custom comparator here.
+    // so a plain std::map needs no custom comparator here. Each per-URI
+    // Target is already single-URI (its own backend's own list() built
+    // it from just its own location()), so .uris().front() is always
+    // exactly the one URI to merge into this id/offset/snap_id's own
+    // mirror group.
     std::map<ListedObject, std::vector<rawstd::URI>> targets_map;
     ListedObject empty{};
     ListedObject next_token = empty;
-    for (size_t i = 0; i < _uris.size(); ++i) {
-        const rawstd::URI& location = _uris[i];
-        const auto& [loc_objs, loc_token] = listings[i];
-        for (const auto& obj : loc_objs) {
-            RawstdUUIDString uuid_string;
-            rawstd_uuid_to_string(&obj.id, &uuid_string);
-            std::string filename = uuid_string;
-            if (obj.chunk_offset != 0) {
-                filename += ":" + std::to_string(obj.chunk_offset);
-            }
-            if (obj.snap_id != 0) {
-                filename += "@" + std::to_string(obj.snap_id);
-            }
-            targets_map[obj].emplace_back(location, filename);
+    for (const auto& [loc_targets, loc_token] : listings) {
+        for (const Target& t : loc_targets) {
+            ListedObject key{t.id(), t.offset(), t.snap_id()};
+            targets_map[key].push_back(t.uris().front());
         }
         if (!(loc_token == empty)) {
             if (next_token == empty || loc_token < next_token) {

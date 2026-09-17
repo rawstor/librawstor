@@ -134,10 +134,8 @@ public:
     // data-path methods below -- same shape as the matching Backend
     // methods they wrap, since a connect()ed Slot is (like a
     // Backend) already bound to one location.
-    rawstd::Task<void> list(
-        unsigned int limit, std::vector<ListedObject>& objects,
-        ListedObject& token
-    );
+    rawstd::Task<void>
+    list(unsigned int limit, std::vector<Target>& objects, ListedObject& token);
 
     rawstd::Task<void> snapshot_create(
         const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id

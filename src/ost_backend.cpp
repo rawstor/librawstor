@@ -1,6 +1,8 @@
 #include "ost_backend.hpp"
 
+#include "location.hpp"
 #include "opts.h"
+#include "target.hpp"
 #include "telemetry.hpp"
 
 #include <rawio/awaitable.hpp>
@@ -1302,7 +1304,7 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
 }
 
 rawstd::Task<void> Backend::list(
-    unsigned int limit, std::vector<ListedObject>& targets, ListedObject& token
+    unsigned int limit, std::vector<Target>& targets, ListedObject& token
 ) {
     ListedObject input_token = token;
     targets.clear();
@@ -1349,14 +1351,15 @@ rawstd::Task<void> Backend::list(
         co_return;
     }
 
+    Location self_location(location().str());
     targets.reserve(entries.size() - 1);
     for (size_t i = 0; i + 1 < entries.size(); ++i) {
         const RawstorOSTFrameListEntry& entry = entries[i];
-        ListedObject obj{};
-        memcpy(obj.id.bytes, entry.id, sizeof(obj.id.bytes));
-        obj.chunk_offset = entry.chunk_offset;
-        obj.snap_id = entry.snap_id;
-        targets.push_back(obj);
+        RawstdUUID id;
+        memcpy(id.bytes, entry.id, sizeof(id.bytes));
+        targets.emplace_back(
+            self_location, id, entry.chunk_offset, entry.snap_id
+        );
     }
 
     const RawstorOSTFrameListEntry& token_entry = entries.back();

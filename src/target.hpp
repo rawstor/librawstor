@@ -56,6 +56,22 @@ private:
 public:
     explicit Target(const std::string& target);
 
+    // Builds a single-chunk Target directly from `location`'s own URIs
+    // plus `id`/`offset`/`snap_id`, skipping the string round-trip the
+    // constructor above needs -- each of `location`'s own URIs gets `id`
+    // (plus the same ":<offset>"/"@<snap_id>" suffix, if nonzero)
+    // appended as its own path, the same way Location::create() already
+    // builds one for a fresh object. `location`'s own constructor already
+    // guarantees at least one URI, so there's nothing left to validate
+    // here. Used where the pieces are already known separately (e.g. a
+    // concrete Backend's own list(), building one Target per entry from
+    // its own location() and a just-listed id/chunk_offset/snap_id)
+    // rather than assembled into a string first.
+    Target(
+        const Location& location, const RawstdUUID& id, uint64_t offset = 0,
+        uint64_t snap_id = 0
+    );
+
     // The target's first (and, outside mds::Backend's own internal
     // multi-chunk format, only) chunk group's URIs, in order.
     inline const std::vector<rawstd::URI>& uris() const noexcept {
