@@ -39,22 +39,22 @@ public:
         return _uris;
     }
 
-    rawstd::Task<RawstorLocationInfo> info(rawio::Queue& queue);
+    rawstd::Task<RawstorLocationInfo> info(rawio::Queue& queue) const;
 
     rawstd::Task<void> list(
         rawio::Queue& queue, unsigned int limit, std::list<Target>& targets,
         RawstorPaginationToken& token
-    );
+    ) const;
 
     // Creates a new object at this location under a fresh UUID v7 and
     // returns the Target addressing it.
     rawstd::Task<Target>
-    create(rawio::Queue& queue, const RawstorObjectSpec& sp);
+    create(rawio::Queue& queue, const RawstorObjectSpec& sp) const;
 
     // Same, but under the caller-supplied UUID.
     rawstd::Task<Target> create(
         rawio::Queue& queue, const RawstdUUID& uuid, const RawstorObjectSpec& sp
-    );
+    ) const;
 };
 
 } // namespace rawstor

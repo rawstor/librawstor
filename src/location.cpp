@@ -302,7 +302,7 @@ Location::Location(const std::string& location) :
     validate_different_uris(_uris);
 }
 
-rawstd::Task<RawstorLocationInfo> Location::info(rawio::Queue& queue) {
+rawstd::Task<RawstorLocationInfo> Location::info(rawio::Queue& queue) const {
     std::vector<rawstd::Task<RawstorLocationInfo>> tasks;
     tasks.reserve(_uris.size());
     for (const auto& location : _uris) {
@@ -328,7 +328,7 @@ rawstd::Task<RawstorLocationInfo> Location::info(rawio::Queue& queue) {
 rawstd::Task<void> Location::list(
     rawio::Queue& queue, unsigned int limit, std::list<Target>& targets,
     RawstorPaginationToken& token
-) {
+) const {
     ListedObject token_obj = decode_token(
         std::string(token.bytes, strnlen(token.bytes, sizeof(token.bytes)))
     );
@@ -410,7 +410,7 @@ rawstd::Task<void> Location::list(
 }
 
 rawstd::Task<Target>
-Location::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
+Location::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     RawstdUUID id;
     int res = rawstd_uuid7_init(&id);
     if (res < 0) {
@@ -422,7 +422,7 @@ Location::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
 
 rawstd::Task<Target> Location::create(
     rawio::Queue& queue, const RawstdUUID& uuid, const RawstorObjectSpec& sp
-) {
+) const {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
 
