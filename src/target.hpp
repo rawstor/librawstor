@@ -43,9 +43,9 @@ class Object;
 // (first_group() in target.cpp). Deliberately lightweight -- unlike
 // Chunk, it never holds a Slot between calls; every method below opens a
 // Slot per URI just for that one call and closes it again before
-// returning, same as the code they replace used to do. create()/remove()
-// are the only two that actually work across every chunk group (see each
-// one's own comment) -- spec()/meta()/set_sync_state()/snapshot_create()
+// returning, same as the code they replace used to do. create()/remove()/
+// meta() are the ones that actually work across every chunk group (see
+// each one's own comment) -- spec()/set_sync_state()/snapshot_create()
 // still only ever operate on the target's own first chunk group (see
 // each one's own comment on why a multi-chunk string can't generalize to
 // them). open() is the one exception that needs a Slot to survive past
@@ -202,10 +202,10 @@ public:
     rawstd::Task<void>
     create(rawio::Queue& queue, const RawstorObjectSpec& sp) const;
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue) const;
-    // One RawstorObjectMeta per URI in the first chunk group, same order
-    // -- every URI is queried, not just the first reachable one; a URI
-    // that doesn't answer gets a zero-filled entry (see this method's
-    // own doc comment in target.cpp for why).
+    // One RawstorObjectMeta per URI, across every chunk group, same
+    // order as `_uris` itself -- every URI is queried, not just the
+    // first reachable one; a URI that doesn't answer gets a zero-filled
+    // entry (see this method's own doc comment in target.cpp for why).
     rawstd::Task<std::vector<RawstorObjectMeta>>
     meta(rawio::Queue& queue) const;
     rawstd::Task<void> set_sync_state(

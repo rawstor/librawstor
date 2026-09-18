@@ -847,33 +847,43 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
 // rest by fail-over -- e.g. rawstor show -v printing every mirror's own
 // state, or a future rawstor-cli status/resolve needing to compare copies
 // against each other, neither of which a single-answer result could ever
-// support. Every URI is still queried concurrently (own tasks, awaited
-// one by one below, same pattern as create()'s own per-URI tracking --
-// this can't use gather() either, for the same reason: one URI's failure
-// must not erase what the others answered). A URI that doesn't answer
-// gets a zero-filled entry rather than being left out: the result's own
-// index is what ties an entry back to its URI, and dropping entries would
-// lose that correspondence. spec.mirrors is overwritten with the local
-// URI count on the way out for every entry that did answer, same as
-// spec() above -- the answering backend has no idea what the target's
-// own URI count is, so whatever it put there (if anything) isn't
-// meaningful.
+// support. Spans every chunk group, not just the first (unlike spec()):
+// a caller asking for consistency state wants every physical copy this
+// target has, chunked object included. Every URI is still queried
+// concurrently (own tasks, awaited one by one below, same pattern as
+// create()'s own per-URI tracking -- this can't use gather() either, for
+// the same reason: one URI's failure must not erase what the others
+// answered). A URI that doesn't answer gets a zero-filled entry rather
+// than being left out: the result's own index is what ties an entry back
+// to its URI, and dropping entries would lose that correspondence.
+// spec.mirrors is overwritten on the way out for every entry that did
+// answer, same as spec() above -- the answering backend has no idea what
+// the target's own mirror count is, so whatever it put there (if
+// anything) isn't meaningful. Always the *first* chunk group's own URI
+// count (mirrors_of_group below), not this call's own total URI count:
+// every chunk of one object shares the same width by construction (the
+// object's own policy, docs/mds.md), so the first group's count already
+// is the per-chunk mirror count the caller actually wants -- the total
+// across every chunk would count the same policy value once per chunk
+// instead.
 rawstd::Task<std::vector<RawstorObjectMeta>>
 Target::meta(rawio::Queue& queue) const {
-    std::vector<rawstd::URI> uris = first_group(_uris);
+    unsigned int mirrors_of_group =
+        static_cast<unsigned int>(first_group(_uris).size());
+
     std::vector<rawstd::Task<RawstorObjectMeta>> tasks;
-    tasks.reserve(uris.size());
-    for (const auto& uri : uris) {
+    tasks.reserve(_uris.size());
+    for (const auto& uri : _uris) {
         tasks.push_back(meta_one(queue, uri));
     }
 
     std::vector<RawstorObjectMeta> ret;
-    ret.reserve(uris.size());
+    ret.reserve(_uris.size());
     for (size_t i = 0; i < tasks.size(); ++i) {
         RawstorObjectMeta m{};
         try {
             m = co_await tasks[i];
-            m.spec.mirrors = static_cast<unsigned int>(uris.size());
+            m.spec.mirrors = mirrors_of_group;
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unreachable: %s\n", e.what());
         }
