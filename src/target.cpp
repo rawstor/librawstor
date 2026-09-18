@@ -381,12 +381,12 @@ rawstd::DetachedTask launch_remove_op_coro(
 }
 
 rawstd::DetachedTask launch_snapshot_create_op_coro(
-    rawstor::Target t, rawio::Queue* queue, RawstdUUID snap_id, ssize_t length,
+    rawstor::Target t, rawio::Queue* queue, ssize_t length,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = length;
     try {
-        co_await t.snapshot_create(*queue, snap_id);
+        co_await t.snapshot_create(*queue);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -916,15 +916,20 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
     co_await remove_many(queue, _uris);
 }
 
-rawstd::Task<void>
-Target::snapshot_create(rawio::Queue& queue, const RawstdUUID& snap_id) const {
+rawstd::Task<void> Target::snapshot_create(rawio::Queue& queue) const {
+    if (rawstd_uuid_is_nil(&_snap_id)) {
+        // nil is the live version -- nothing to name the new snapshot
+        // with.
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     std::vector<rawstd::URI> uris = first_group(_uris);
     // Same fan-out shape as remove() above: every URI is attempted
     // concurrently regardless of an earlier failure.
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(uris.size());
     for (const auto& uri : uris) {
-        tasks.push_back(snapshot_create_one(queue, uri, snap_id));
+        tasks.push_back(snapshot_create_one(queue, uri, _snap_id));
     }
     co_await rawstd::gather(std::move(tasks));
 }
@@ -1061,6 +1066,12 @@ int rawstor_target_snapshot_create(
     size_t size, int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
+        // Validates `target` before resolving/writing the version to
+        // `buf` below -- an immediate failure (malformed target) must
+        // leave `buf` untouched, same as every other immediate-failure
+        // case here. Also hands back the already-parsed, already-
+        // validated URI list to embed the version into further down,
+        // instead of re-parsing the raw string a second time.
         rawstor::Target t(target);
 
         RawstdUUID id;
@@ -1095,8 +1106,19 @@ int rawstor_target_snapshot_create(
             return 0;
         }
 
+        // No separate snap_id parameter on Target::snapshot_create()
+        // itself (its own doc comment) -- append the version to every
+        // URI in `target` before constructing, the same logical/physical
+        // shape rawstor_target_snapshot_remove() already builds.
+        std::vector<rawstd::URI> uris = t.uris();
+        for (rawstd::URI& uri : uris) {
+            uri = rawstd::URI(uri, std::string(uuid_string));
+        }
+        rawstor::Target combined(rawstd::URI::uris(uris));
+
         launch_snapshot_create_op_coro(
-            std::move(t), static_cast<rawio::Queue*>(queue), id, res, cb, data
+            std::move(combined), static_cast<rawio::Queue*>(queue), res, cb,
+            data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;

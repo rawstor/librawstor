@@ -238,18 +238,21 @@ public:
     rawstd::Task<std::unique_ptr<Object>> open(rawio::Queue& queue) const;
 
     // Native CoW snapshot of every URI in the first chunk group
-    // (docs/mds.md, "Snapshots"): every URI is attempted even if an
-    // earlier one fails, and the first error encountered is returned.
-    // `snap_id` is the caller's own already-generated version id (like
-    // every object id -- client-generated, single point of generation);
-    // never nil. ENOTSUP on a backend without native CoW (file://,
-    // classic LVM). Not generalized across every chunk group of a
-    // multi-chunk string: mds::Backend's own snapshot_create() override
-    // already does that itself, in descending logical-index order
-    // (docs/mds.md) -- an order this method has no way to express over a
-    // flat `;`-joined string.
-    rawstd::Task<void>
-    snapshot_create(rawio::Queue& queue, const RawstdUUID& snap_id) const;
+    // (docs/mds.md, "Snapshots") under this target's own bound snapshot
+    // version (snap_id() above -- never nil here; EINVAL otherwise,
+    // there being nothing to name the new version): every URI is
+    // attempted even if an earlier one fails, and the first error
+    // encountered is returned. No separate `snap_id` parameter -- the
+    // caller builds the target string with the version it wants already
+    // in place (like every object id, client-generated, single point of
+    // generation) before constructing this Target, the same way create()
+    // above never takes an id either. ENOTSUP on a backend without
+    // native CoW (file://, classic LVM). Not generalized across every
+    // chunk group of a multi-chunk string: mds::Backend's own
+    // snapshot_create() override already does that itself, in descending
+    // logical-index order (docs/mds.md) -- an order this method has no
+    // way to express over a flat `;`-joined string.
+    rawstd::Task<void> snapshot_create(rawio::Queue& queue) const;
 
     // Grows the object to `new_size` -- ENOTSUP on every target except a
     // single mds:// one (mds::Backend::resize()); see Backend::resize()'s

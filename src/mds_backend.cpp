@@ -50,8 +50,8 @@ RawstorObjectPolicy policy_of(const RawstorObjectSpec& sp) {
 // obj_id = id -- the physical resource's own name is self-describing, so
 // nothing here needs to scramble it into a per-chunk uuid of its own);
 // `offset` (index * chunk_size, the same formula docs/mds.md's own
-// "chunk_offset" uses) is what Target::offset() reads back on the far
-// end and disambiguates which of the object's chunks this is -- always
+// "chunk_offset" uses) is what Target::parse_path() reads back on the
+// far end and disambiguates which of the object's chunks this is -- always
 // stamped, even 0 for chunk 0 (unlike a plain, non-chunked target's own
 // offset segment, which Target::parse_path() only ever sees omitted):
 // its presence is what marks this URI as one chunk of a larger object
@@ -341,9 +341,10 @@ rawstd::Task<void> Backend::snapshot_create(
             }
             try {
                 Target t(
-                    chunk_slot_target(map.id, i, slot, map.chunk_size).str()
+                    chunk_slot_target(map.id, i, slot, map.chunk_size, snap_id)
+                        .str()
                 );
-                co_await t.snapshot_create(_queue, snap_id);
+                co_await t.snapshot_create(_queue);
                 members.push_back(mds::WireSnapMember{i, slot.ost_id});
                 any = true;
             } catch (const std::exception& e) {
