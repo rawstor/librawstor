@@ -109,6 +109,43 @@ rawstd::URI strip_path(const rawstd::URI& uri) {
     return ret;
 }
 
+// The maximal prefix of `uris` sharing its own first element's offset
+// (extract_offset()) -- Target's own storage is one flat, offset-sorted
+// list (Target's own class doc comment, target.hpp), so a chunk group is
+// always exactly this: contiguous, offset-uniform, and, for the
+// ordinary single-group case every user-facing target is, the whole
+// list. Used by every Target method that only ever touches its own
+// first (and usually only) chunk group.
+std::vector<rawstd::URI> first_group(const std::vector<rawstd::URI>& uris) {
+    uint64_t offset = extract_offset(uris.front());
+    std::vector<rawstd::URI> ret;
+    for (const rawstd::URI& uri : uris) {
+        if (extract_offset(uri) != offset) {
+            break;
+        }
+        ret.push_back(uri);
+    }
+    return ret;
+}
+
+// Every one of `uris`'s own chunk groups, in order -- offset-contiguous
+// runs (see first_group()'s own comment above), reconstructing the
+// grouping Target::Target(const std::string&)'s own constructor already
+// validated at parse time. Only create()/open() need this: every other
+// Target method only ever touches the first group (first_group() above).
+std::vector<std::vector<rawstd::URI>>
+group_by_offset(const std::vector<rawstd::URI>& uris) {
+    std::vector<std::vector<rawstd::URI>> ret;
+    for (const rawstd::URI& uri : uris) {
+        if (ret.empty() ||
+            extract_offset(ret.back().front()) != extract_offset(uri)) {
+            ret.emplace_back();
+        }
+        ret.back().push_back(uri);
+    }
+    return ret;
+}
+
 // Every URI in one chunk group must name the same logical resource: same
 // uuid, same bound snapshot version -- compared on their *parsed* values
 // (uuid_from_target()/extract_snap_id()), not the raw path string, so
@@ -280,7 +317,7 @@ rawstd::DetachedTask launch_open_op_coro(
 // object it was called on, not lifetime-extended past that call the way
 // a by-value coroutine *parameter* is -- see co_target_open()'s own doc
 // comment in ost/src/client.cpp for the general hazard this avoids;
-// Target::create()'s own _chunks.front()[i] access right after its own
+// Target::create()'s own uris[i] access right after its own
 // `co_await tasks[i]` is a real, confirmed instance of it, not just a
 // theoretical one). Each reports a result code via `cb` -- 0 on success,
 // negative errno on failure (mirroring every other error/result callback
@@ -567,28 +604,34 @@ Target::Path Target::parse_path(const rawstd::URI& uri) {
 }
 
 // Every public method below used to re-run three validate_*() checks
-// itself, identically, before touching _chunks -- validated once, here,
-// instead: _chunks never changes after construction, so nothing past
-// this point can un-validate it.
+// itself, identically, before touching _uris -- validated once, here,
+// instead: _uris never changes after construction, so nothing past this
+// point can un-validate it.
 //
 // A single, plain ','-separated URI list, same as any plain target
 // (mirroring, no chunking): no second separator for chunk groups.
 // mds::Backend's own internal multi-chunk string is the exact same flat
 // list -- every chunk's own mirrors, all comma-joined together, with no
-// marker of where one chunk's own group ends and the next begins. That
-// grouping instead falls out of each URI's own offset (extract_offset()
-// above, its own trailing path segment, index * chunk_size): URIs
-// sharing one offset are mirrors of the same chunk (never two different
-// chunks -- distinct logical indices always differ here), so bucketing
-// by it and keeping the buckets in ascending order reconstructs exactly
-// the per-chunk grouping and the logical-index order the old explicit
-// ';' separator used to spell out directly. A plain, non-mds:// target's
+// marker of where one chunk's own group ends and the next begins. Chunk
+// grouping falls out of each URI's own offset (extract_offset() above,
+// its own trailing path segment, index * chunk_size): URIs sharing one
+// offset are mirrors of the same chunk (never two different chunks --
+// distinct logical indices always differ here), so bucketing by it and
+// keeping the buckets in ascending order reconstructs exactly the
+// per-chunk grouping and the logical-index order the old explicit ';'
+// separator used to spell out directly -- done here only to validate
+// each group in isolation (validate_different_uris()/validate_same_uuid()
+// below), then flattened straight back into `_uris` in that same
+// ascending-offset order (Target's own class doc comment, target.hpp: the
+// grouping itself is never stored, only ever re-derived on demand by
+// first_group()/group_by_offset() above). A plain, non-mds:// target's
 // URIs all carry no offset segment at all -- extract_offset()'s own
 // default of 0 for all of them puts every one of them in the same single
 // bucket, the ordinary single-chunk case.
 Target::Target(const std::string& target) {
     std::vector<rawstd::URI> uris = rawstd::URI::uriv(target.c_str());
     validate_not_empty(uris);
+    size_t total = uris.size();
 
     std::map<uint64_t, std::vector<rawstd::URI>> groups;
     for (rawstd::URI& uri : uris) {
@@ -596,11 +639,13 @@ Target::Target(const std::string& target) {
         groups[offset].push_back(std::move(uri));
     }
 
-    _chunks.reserve(groups.size());
+    _uris.reserve(total);
     for (auto& [offset, group] : groups) {
         validate_different_uris(group);
         validate_same_uuid(group);
-        _chunks.push_back(std::move(group));
+        for (rawstd::URI& uri : group) {
+            _uris.push_back(std::move(uri));
+        }
     }
 }
 
@@ -626,33 +671,36 @@ Target::Target(
         child += "/" + std::string(snap_string);
     }
 
-    std::vector<rawstd::URI> uris;
-    uris.reserve(location.uris().size());
+    _uris.reserve(location.uris().size());
     for (const rawstd::URI& uri : location.uris()) {
-        uris.emplace_back(uri, child);
+        _uris.emplace_back(uri, child);
     }
-    _chunks.push_back(std::move(uris));
+}
+
+std::vector<rawstd::URI> Target::uris() const {
+    return first_group(_uris);
 }
 
 RawstdUUID Target::id() const {
-    return uuid_from_target(_chunks.front().front());
+    return uuid_from_target(_uris.front());
 }
 
 Location Target::location() const {
-    std::vector<rawstd::URI> uris;
-    uris.reserve(_chunks.front().size());
-    for (const auto& uri : _chunks.front()) {
-        uris.push_back(strip_path(uri));
+    std::vector<rawstd::URI> group = first_group(_uris);
+    std::vector<rawstd::URI> stripped;
+    stripped.reserve(group.size());
+    for (const auto& uri : group) {
+        stripped.push_back(strip_path(uri));
     }
-    return Location(rawstd::URI::uris(uris));
+    return Location(rawstd::URI::uris(stripped));
 }
 
 RawstdUUID Target::snap_id() const {
-    return extract_snap_id(_chunks.front().front());
+    return extract_snap_id(_uris.front());
 }
 
 uint64_t Target::offset() const {
-    return extract_offset(_chunks.front().front());
+    return extract_offset(_uris.front());
 }
 
 rawstd::Task<void>
@@ -667,7 +715,8 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     // Each URI's own backend separately validates its own share is
     // exactly 1 (Backend::_validate_spec()) -- this check is about the
     // caller's stated *total* matching reality.
-    for (const std::vector<rawstd::URI>& uris : _chunks) {
+    std::vector<std::vector<rawstd::URI>> chunks = group_by_offset(_uris);
+    for (const std::vector<rawstd::URI>& uris : chunks) {
         if (sp.mirrors != uris.size()) {
             rawstd_error(
                 "Spec mirrors (%u) does not match target's URI count (%zu)\n",
@@ -684,7 +733,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     std::vector<rawstd::URI> created;
     std::exception_ptr eptr;
 
-    for (const std::vector<rawstd::URI>& uris : _chunks) {
+    for (const std::vector<rawstd::URI>& uris : chunks) {
         // Every URI is one copy: each one's own create() gets mirrors ==
         // 1 (which every Backend::create() now validates, see
         // Backend::_validate_spec()), not sp.mirrors itself (the
@@ -700,7 +749,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
         // own URIs) -- smaller for the last, short chunk.
         RawstorObjectSpec chunk_sp = sp;
         chunk_sp.mirrors = 1;
-        if (_chunks.size() > 1) {
+        if (chunks.size() > 1) {
             uint64_t offset = extract_offset(uris.front());
             chunk_sp.size = std::min(sp.chunk_size, sp.size - offset);
         }
@@ -762,7 +811,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
 // copy, so this only needs one to answer: URIs are tried in order, first
 // reachable wins, same fail-over tolerance as meta() below.
 rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
-    const std::vector<rawstd::URI>& uris = _chunks.front();
+    std::vector<rawstd::URI> uris = first_group(_uris);
     int first_error = 0;
     for (const auto& uri : uris) {
         try {
@@ -798,7 +847,7 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
 // own URI count is, so whatever it put there (if anything) isn't
 // meaningful.
 rawstd::Task<std::vector<RawstorObjectMeta>> Target::meta(rawio::Queue& queue) {
-    const std::vector<rawstd::URI>& uris = _chunks.front();
+    std::vector<rawstd::URI> uris = first_group(_uris);
     std::vector<rawstd::Task<RawstorObjectMeta>> tasks;
     tasks.reserve(uris.size());
     for (const auto& uri : uris) {
@@ -830,7 +879,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Target::meta(rawio::Queue& queue) {
 rawstd::Task<void> Target::set_sync_state(
     rawio::Queue& queue, const RawstorObjectSyncState& sync_state
 ) {
-    const std::vector<rawstd::URI>& uris = _chunks.front();
+    std::vector<rawstd::URI> uris = first_group(_uris);
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(uris.size());
     for (const auto& uri : uris) {
@@ -841,7 +890,9 @@ rawstd::Task<void> Target::set_sync_state(
 
 rawstd::Task<void> Target::remove(rawio::Queue& queue) {
     // Every URI of every chunk group's own REMOVE goes out concurrently
-    // instead of one chunk (or one URI) at a time; every one is still
+    // instead of one chunk (or one URI) at a time -- _uris is already a
+    // flat list of all of them (Target's own class doc comment), so
+    // there's no flattening left to do here. Every one is still
     // attempted regardless of an earlier failure (gather() never
     // abandons a task still in flight). On failure, gather() surfaces
     // exactly one exception (not one per failed URI). remove_one() reads
@@ -849,16 +900,12 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) {
     // (extract_snap_id(), nil meaning the live version) -- there is no
     // separate snapshot_remove() any more (Backend::remove()'s own doc
     // comment).
-    std::vector<rawstd::URI> all_uris;
-    for (const std::vector<rawstd::URI>& uris : _chunks) {
-        all_uris.insert(all_uris.end(), uris.begin(), uris.end());
-    }
-    co_await remove_many(queue, all_uris);
+    co_await remove_many(queue, _uris);
 }
 
 rawstd::Task<void>
 Target::snapshot_create(rawio::Queue& queue, const RawstdUUID& snap_id) {
-    const std::vector<rawstd::URI>& uris = _chunks.front();
+    std::vector<rawstd::URI> uris = first_group(_uris);
     // Same fan-out shape as remove() above: every URI is attempted
     // concurrently regardless of an earlier failure.
     std::vector<rawstd::Task<void>> tasks;
@@ -870,7 +917,7 @@ Target::snapshot_create(rawio::Queue& queue, const RawstdUUID& snap_id) {
 }
 
 rawstd::Task<void> Target::resize(rawio::Queue& queue, uint64_t new_size) {
-    const std::vector<rawstd::URI>& uris = _chunks.front();
+    std::vector<rawstd::URI> uris = first_group(_uris);
     // Every URI's own backend is asked to grow -- for the one real
     // caller (a single mds:// URI, mds::Backend::resize()) this is a
     // single call; a plain (non-mds://) target has no backend that
@@ -885,49 +932,51 @@ rawstd::Task<void> Target::resize(rawio::Queue& queue, uint64_t new_size) {
     co_await rawstd::gather(std::move(tasks));
 }
 
-// Opens the object this target addresses. A single chunk group ('_chunks
-// .size() == 1', the ordinary case) becomes a single-chunk Object, whose
-// chunk_size/size are simply whatever Chunk::create() itself reports
-// (spec().size) -- no chunking above the single Chunk at all. More than
-// one chunk group (mds::Backend's own internal multi-chunk string --
-// see the constructor's own comment on how it's grouped back apart)
-// opens chunk 0 and the last chunk eagerly instead of inventing a new
-// non-URI syntax for chunk_size/the object's total size: chunk_size is
-// chunk 0's own spec().size (every chunk but the last is exactly
-// chunk_size, same convention Object::MultiChunkMap assumes), and the
-// total size is chunk_size * (N - 1) plus the last chunk's own (possibly
-// smaller) spec().size. Both already-opened Chunks are handed straight
-// into the Object's own matching entries below -- Object::_chunk() never
-// reopens them.
+// Opens the object this target addresses. A single chunk group
+// ('chunks.size() == 1', the ordinary case) becomes a single-chunk
+// Object, whose chunk_size/size are simply whatever Chunk::create()
+// itself reports (spec().size) -- no chunking above the single Chunk at
+// all. More than one chunk group (mds::Backend's own internal
+// multi-chunk string -- see the constructor's own comment on how it's
+// grouped back apart, group_by_offset() above) opens chunk 0 and the
+// last chunk eagerly instead of inventing a new non-URI syntax for
+// chunk_size/the object's total size: chunk_size is chunk 0's own
+// spec().size (every chunk but the last is exactly chunk_size, same
+// convention Object::MultiChunkMap assumes), and the total size is
+// chunk_size * (N - 1) plus the last chunk's own (possibly smaller)
+// spec().size. Both already-opened Chunks are handed straight into the
+// Object's own matching entries below -- Object::_chunk() never reopens
+// them.
 rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
-    if (_chunks.size() == 1) {
+    std::vector<std::vector<rawstd::URI>> chunks = group_by_offset(_uris);
+
+    if (chunks.size() == 1) {
         std::unique_ptr<Chunk> chunk = co_await Chunk::create(
-            queue, _chunks.front(), extract_offset(_chunks.front().front()),
-            extract_snap_id(_chunks.front().front())
+            queue, chunks.front(), extract_offset(chunks.front().front()),
+            extract_snap_id(chunks.front().front())
         );
         uint64_t size = chunk->spec().size;
         std::unique_ptr<Object> obj(new Object(
-            queue, size, std::make_unique<Object::SingleChunkMap>(), _chunks
+            queue, size, std::make_unique<Object::SingleChunkMap>(), chunks
         ));
         obj->_chunks.front().chunk = std::move(chunk);
         co_return obj;
     }
 
     std::unique_ptr<Chunk> first = co_await Chunk::create(
-        queue, _chunks.front(), extract_offset(_chunks.front().front()),
-        extract_snap_id(_chunks.front().front())
+        queue, chunks.front(), extract_offset(chunks.front().front()),
+        extract_snap_id(chunks.front().front())
     );
     std::unique_ptr<Chunk> last = co_await Chunk::create(
-        queue, _chunks.back(), extract_offset(_chunks.back().front()),
-        extract_snap_id(_chunks.back().front())
+        queue, chunks.back(), extract_offset(chunks.back().front()),
+        extract_snap_id(chunks.back().front())
     );
 
     uint64_t chunk_size = first->spec().size;
-    uint64_t size = chunk_size * (_chunks.size() - 1) + last->spec().size;
+    uint64_t size = chunk_size * (chunks.size() - 1) + last->spec().size;
 
     std::unique_ptr<Object> obj(new Object(
-        queue, size, std::make_unique<Object::MultiChunkMap>(chunk_size),
-        _chunks
+        queue, size, std::make_unique<Object::MultiChunkMap>(chunk_size), chunks
     ));
     obj->_chunks.front().chunk = std::move(first);
     obj->_chunks.back().chunk = std::move(last);

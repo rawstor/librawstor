@@ -31,16 +31,21 @@ class Object;
 // multi-chunk target (built from its own WireMap, never something a
 // caller types by hand) is the exact same flat, comma-only list -- every
 // chunk's own mirrors, one after another, with no second separator
-// marking where one chunk's own group ends and the next begins. The
-// constructor instead groups them back apart itself, by each URI's own
-// offset path segment (see parse_path()'s own comment below): URIs
-// sharing one offset are mirrors of one chunk, never two different
-// ones. Deliberately lightweight -- unlike Chunk, it never holds a Slot
-// between calls; every method below opens a Slot per URI just for that
-// one call and closes it again before returning, same as the code they
-// replace used to do. create()/remove() are the only two that actually
-// work across every chunk group (see each one's own comment) --
-// spec()/meta()/set_sync_state()/snapshot_create()
+// marking where one chunk's own group ends and the next begins. Stored
+// exactly that way too (`_uris` below) -- a chunk group (URIs sharing
+// one offset path segment, see parse_path()'s own comment in target.cpp)
+// is a derived view, not the primary representation: the ordinary,
+// single-group case (every user-facing target) is the common one, and
+// only create()/open() ever need the grouped-apart view at all (each
+// one derives it locally, group_by_offset() in target.cpp), so nothing
+// is gained by keeping every other method reaching through one extra
+// level of nesting just for their own, always-first-and-only group
+// (first_group() in target.cpp). Deliberately lightweight -- unlike
+// Chunk, it never holds a Slot between calls; every method below opens a
+// Slot per URI just for that one call and closes it again before
+// returning, same as the code they replace used to do. create()/remove()
+// are the only two that actually work across every chunk group (see each
+// one's own comment) -- spec()/meta()/set_sync_state()/snapshot_create()
 // still only ever operate on the target's own first chunk group (see
 // each one's own comment on why a multi-chunk string can't generalize to
 // them). open() is the one exception that needs a Slot to survive past
@@ -101,10 +106,11 @@ public:
     static Path parse_path(const rawstd::URI& uri);
 
 private:
-    // One entry per chunk group the constructor sorted the target
-    // string's own flat URI list into (see the class's own doc comment)
-    // -- almost always exactly one group.
-    std::vector<std::vector<rawstd::URI>> _chunks;
+    // The target string's own flat URI list, offset-sorted (see the
+    // class's own doc comment) -- every chunk group is a contiguous run
+    // within it, but that grouping is never stored here (first_group()/
+    // group_by_offset() in target.cpp derive it on demand instead).
+    std::vector<rawstd::URI> _uris;
 
 public:
     explicit Target(const std::string& target);
@@ -127,10 +133,11 @@ public:
     );
 
     // The target's first (and, outside mds::Backend's own internal
-    // multi-chunk format, only) chunk group's URIs, in order.
-    inline const std::vector<rawstd::URI>& uris() const noexcept {
-        return _chunks.front();
-    }
+    // multi-chunk format, only) chunk group's URIs, in order -- a small
+    // copy (first_group() in target.cpp), not a reference: unlike the
+    // old _chunks.front(), there's no already-materialized group vector
+    // left to hand out one of.
+    std::vector<rawstd::URI> uris() const;
 
     // The UUID shared by every URI in the first chunk group -- parsed
     // from the first one.
