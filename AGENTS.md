@@ -167,6 +167,14 @@ backends and the io_uring/poll RawIO backends.
   `const char* const udev_sync_config = ...`) — no Hungarian-notation-style
   prefix (no `k` for constants, no `m_`/`_` for members beyond the
   existing leading-underscore convention already covered above).
+- No historical notes in new code comments — don't explain what a
+  function/member/wire command used to be, used to do, or was renamed/
+  merged/removed from; describe only the current shape and its current
+  rationale. A reader of the code will never see the old behavior, so a
+  "used to be X" comparison only orients someone who already knows the
+  history — that context belongs in the commit message instead. Applies
+  to comments being written now, not a mandate to rewrite pre-existing
+  ones on sight.
 
 ## Git conventions
 
