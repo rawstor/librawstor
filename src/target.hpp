@@ -40,7 +40,7 @@ class Object;
 // one call and closes it again before returning, same as the code they
 // replace used to do. create()/remove() are the only two that actually
 // work across every chunk group (see each one's own comment) --
-// spec()/meta()/set_sync_state()/snapshot_create()/snapshot_remove()
+// spec()/meta()/set_sync_state()/snapshot_create()
 // still only ever operate on the target's own first chunk group (see
 // each one's own comment on why a multi-chunk string can't generalize to
 // them). open() is the one exception that needs a Slot to survive past
@@ -49,29 +49,41 @@ class Object;
 // itself), keeping one Slot per URI alive in each Chunk's own pool.
 class Target final {
 public:
-    // One URI's own trailing path identity: `/<uuid>[/<offset>[/
-    // <snap_id>]]` -- offset omitted when 0 *and* there's no snap_id,
-    // snap_id omitted when nil, exactly the optionality the old
-    // ":<offset>@<snap_id>" filename suffix had, just spelled as path
-    // segments instead. Offset is otherwise mandatory the moment a
-    // snap_id follows (even "0") -- a target's own location can itself
-    // carry an arbitrary path (e.g. file:///a/b), so the identity is
-    // always read off the *end*, and a UUID-shaped segment alone can't
-    // tell "this is a snapshot" apart from "this is just the id, with an
-    // unrelated (if coincidentally UUID-shaped) location segment ahead
-    // of it" -- only a valid offset segment right before it can (see
-    // parse_path()'s own comment in target.cpp for exactly how).
-    // `segments` is how many trailing path segments this identity
-    // actually consumed -- callers that need the URI with the identity
-    // stripped back off (to recover the plain Location it was built
-    // under) call URI::parent() this many times, not just once.
+    // One URI's own trailing path identity, in either of two equivalent
+    // shapes:
+    // - Physical: `/<uuid>/<offset>/<snap_id>...` -- offset always an
+    //   explicit segment (even "0"), the convention every internal
+    //   builder in this codebase uses (mds_backend.cpp's
+    //   chunk_slot_target(), ost/src/client.cpp's _targets(), Target's
+    //   own synthetic constructor below) whenever it addresses one chunk
+    //   of a larger object, since a chunk's own offset is a real,
+    //   meaningful value there.
+    // - Logical: `/<uuid>[/<snap_id>...]` -- no offset segment at all,
+    //   implied 0. This is the shape a caller types by hand to name a
+    //   plain (non-mds://-chunk) target's own bound snapshot -- there is
+    //   no chunk-offset concept to name at that level, so spelling one
+    //   out just to satisfy a parsing rule would be pure noise.
     //
-    // Ready for a future snapshot-of-a-snapshot chain
-    // (".../offset/snap1/snap2", where snap2's own parent is snap1, not
-    // always the offset): parse_path() already walks every trailing
-    // UUID-shaped segment, not just one, and counts all of them into
-    // `segments` -- only the deepest (leaf) link is exposed as `snap_id`
-    // today, since nothing constructs a longer chain yet.
+    // Both are really the same grammar read from the *end* (a target's
+    // own location can itself carry an arbitrary path, e.g. file:///a/b,
+    // so the identity can't be found any other way): find the longest
+    // trailing run of UUID-shaped segments -- a snapshot chain candidate,
+    // deepest link last, ready for a future ".../snap1/snap2" hierarchy
+    // (only the leaf is exposed as `snap_id` today, since nothing
+    // constructs a longer one yet). If a valid decimal offset segment,
+    // and another UUID (the id) right before that, precede the whole
+    // run, it's the physical shape: offset comes from that decimal
+    // segment, the id from the UUID before it, and the run itself is
+    // purely the snapshot chain. Otherwise it's the logical shape
+    // instead: the run's own leftmost segment is the id, and -- only if
+    // the run is more than one segment long -- its rightmost is the
+    // snapshot chain (a lone trailing UUID, the common case, is simply a
+    // bare id with no snapshot at all). See parse_path()'s own comment in
+    // target.cpp for the exact algorithm. `segments` is how many
+    // trailing path segments this identity actually consumed -- callers
+    // that need the URI with the identity stripped back off (to recover
+    // the plain Location it was built under) call URI::parent() this
+    // many times, not just once.
     struct Path {
         RawstdUUID id;
         uint64_t offset;
@@ -174,7 +186,12 @@ public:
     // nothing to undo), so every URI of every chunk is still attempted
     // even if some others fail (gather() never abandons a task still in
     // flight); on failure, gather() surfaces exactly one exception (not
-    // one per failed URI).
+    // one per failed URI). A bound snapshot version, if any, is already
+    // part of each URI's own path (same convention as open() below) --
+    // removes that one version instead of the live object, nil meaning
+    // the live version (Backend::remove()'s own doc comment). There is no
+    // separate "snapshot_remove()": the identity being removed is already
+    // whatever the target string itself names.
     rawstd::Task<void> remove(rawio::Queue& queue);
 
     // Opens the object this target addresses (docs/locations_and_targets.md).
@@ -203,8 +220,6 @@ public:
     // flat `;`-joined string.
     rawstd::Task<void>
     snapshot_create(rawio::Queue& queue, const RawstdUUID& snap_id);
-    rawstd::Task<void>
-    snapshot_remove(rawio::Queue& queue, const RawstdUUID& snap_id);
 
     // Grows the object to `new_size` -- ENOTSUP on every target except a
     // single mds:// one (mds::Backend::resize()); see Backend::resize()'s

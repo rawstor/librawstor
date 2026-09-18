@@ -87,11 +87,6 @@ Backend::snapshot_create(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
-rawstd::Task<void>
-Backend::snapshot_remove(const RawstdUUID&, uint64_t, const RawstdUUID&) {
-    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
-}
-
 rawstd::Task<void> Backend::resize(const RawstdUUID&, uint64_t, uint64_t) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }

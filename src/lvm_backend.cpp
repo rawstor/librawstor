@@ -533,8 +533,14 @@ rawstd::Task<void> Backend::create(
     co_return;
 }
 
-rawstd::Task<void>
-Backend::remove(const RawstdUUID& id, uint64_t chunk_offset) {
+rawstd::Task<void> Backend::remove(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+) {
+    if (!rawstd_uuid_is_nil(&snap_id)) {
+        /* No thin CoW on classic LVM: docs/mds.md, "Snapshots". */
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
+
     co_await _cleanup_staging_lvs();
 
     std::string path = _device_path(id, chunk_offset);

@@ -178,9 +178,10 @@ meta_one(rawio::Queue& queue, const rawstd::URI& target) {
 rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t chunk_offset = extract_offset(target);
+    RawstdUUID snap_id = extract_snap_id(target);
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, strip_path(target), 1);
-    co_await slot->remove(id, chunk_offset);
+    co_await slot->remove(id, chunk_offset, snap_id);
     co_await slot->close();
 }
 
@@ -192,17 +193,6 @@ rawstd::Task<void> snapshot_create_one(
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, strip_path(target), 1);
     co_await slot->snapshot_create(id, chunk_offset, snap_id);
-    co_await slot->close();
-}
-
-rawstd::Task<void> snapshot_remove_one(
-    rawio::Queue& queue, const rawstd::URI& target, const RawstdUUID& snap_id
-) {
-    RawstdUUID id = uuid_from_target(target);
-    uint64_t chunk_offset = extract_offset(target);
-    std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, strip_path(target), 1);
-    co_await slot->snapshot_remove(id, chunk_offset, snap_id);
     co_await slot->close();
 }
 
@@ -374,30 +364,6 @@ rawstd::DetachedTask launch_snapshot_create_op_coro(
     }
 }
 
-rawstd::DetachedTask launch_snapshot_remove_op_coro(
-    rawstor::Target t, rawio::Queue* queue, RawstdUUID snap_id,
-    int (*cb)(ssize_t result, void* data), void* data
-) {
-    ssize_t result = 0;
-    try {
-        co_await t.snapshot_remove(*queue, snap_id);
-    } catch (const std::system_error& e) {
-        result = -e.code().value();
-    } catch (const std::bad_alloc&) {
-        result = -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        result = -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        result = -EINVAL;
-    }
-    int res = cb(result, data);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-}
-
 rawstd::DetachedTask launch_resize_op_coro(
     rawstor::Target t, rawio::Queue* queue, uint64_t new_size,
     int (*cb)(ssize_t result, void* data), void* data
@@ -514,27 +480,25 @@ rawstd::DetachedTask launch_set_sync_state_op_coro(
 
 namespace rawstor {
 
-// See Path's own doc comment in target.hpp for the shape parsed here.
-// A static method (declared in target.hpp), not tied to an instance --
-// Chunk::create()/Object::_chunk() call this directly on a raw URI they
-// don't have a Target already built around.
+// See Path's own doc comment in target.hpp for the two shapes (physical,
+// logical) parsed here. A static method (declared in target.hpp), not
+// tied to an instance -- Chunk::create()/Object::_chunk() call this
+// directly on a raw URI they don't have a Target already built around.
 //
 // A location's own path can end in an arbitrary number of segments
-// before the identity even starts (e.g. file:///a/b/<uuid>), so a
-// trailing UUID-shaped segment alone never proves it's a snapshot: it
-// could just as well be the id itself, with an unrelated (if
-// coincidentally UUID-looking) location segment ahead of it. The only
-// thing that actually disambiguates a snapshot chain from the id is
-// what's found *before* it -- a valid offset, which the corresponding
-// builders (Target's own synthetic constructor, mds_backend.cpp's
-// chunk_slot_target(), ost/src/client.cpp's _targets()) always stamp
-// (even "0") whenever a snapshot segment follows, specifically so this
-// can tell the two apart. So: find the longest trailing run of
-// UUID-shaped segments (a snapshot chain candidate, deepest link last);
-// if a valid offset and an id precede that whole run, it really is one;
-// otherwise the run isn't a snapshot at all -- its last (and, for
-// anything actually constructed by this library, only) UUID-shaped
-// segment is simply the id, and nothing here is a chain link after all.
+// before the identity even starts (e.g. file:///a/b/<uuid>), so the
+// identity is always read off the *end*: find the longest trailing run
+// of UUID-shaped segments (a snapshot chain candidate, deepest link
+// last). If a valid decimal offset, and another UUID (the id) right
+// before that, precede the whole run, it's the physical shape -- offset
+// from that decimal segment, id from the UUID before it, the run itself
+// purely the snapshot chain. Otherwise there's no offset segment at all:
+// the run's own leftmost segment is the id instead (the logical shape),
+// and -- only when the run is more than one segment long -- its
+// rightmost is the snapshot chain. A lone trailing UUID (chain length 1,
+// the common case) falls out of this same rule as simply a bare id with
+// no snapshot: its only element is both leftmost and rightmost, and
+// "more than one segment long" is false.
 Target::Path Target::parse_path(const rawstd::URI& uri) {
     std::vector<std::string> segments = path_segments(uri.path().str());
     if (segments.empty() || segments.back().empty()) {
@@ -570,12 +534,18 @@ Target::Path Target::parse_path(const rawstd::URI& uri) {
     }
 
     if (chain > 0) {
-        // No valid offset precedes the trailing UUID run -- it isn't a
-        // snapshot chain after all, just the id itself (chain's own
-        // definition already guarantees segments.back() is a valid
-        // UUID).
-        rawstd_uuid_from_string(&ret.id, segments.back().c_str());
-        ret.segments = 1;
+        // No valid offset precedes the trailing UUID run -- the logical
+        // shape (Path's own doc comment): the run's own leftmost segment
+        // is the id, and its rightmost is the bound snapshot version,
+        // unless the run is only one segment long, in which case that
+        // one segment is simply the id and there is no snapshot at all.
+        rawstd_uuid_from_string(
+            &ret.id, segments[segments.size() - chain].c_str()
+        );
+        if (chain > 1) {
+            rawstd_uuid_from_string(&ret.snap_id, segments.back().c_str());
+        }
+        ret.segments = static_cast<unsigned int>(chain);
         return ret;
     }
 
@@ -874,7 +844,11 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) {
     // instead of one chunk (or one URI) at a time; every one is still
     // attempted regardless of an earlier failure (gather() never
     // abandons a task still in flight). On failure, gather() surfaces
-    // exactly one exception (not one per failed URI).
+    // exactly one exception (not one per failed URI). remove_one() reads
+    // each URI's own bound snapshot version back out of its own path
+    // (extract_snap_id(), nil meaning the live version) -- there is no
+    // separate snapshot_remove() any more (Backend::remove()'s own doc
+    // comment).
     std::vector<rawstd::URI> all_uris;
     for (const std::vector<rawstd::URI>& uris : _chunks) {
         all_uris.insert(all_uris.end(), uris.begin(), uris.end());
@@ -891,17 +865,6 @@ Target::snapshot_create(rawio::Queue& queue, const RawstdUUID& snap_id) {
     tasks.reserve(uris.size());
     for (const auto& uri : uris) {
         tasks.push_back(snapshot_create_one(queue, uri, snap_id));
-    }
-    co_await rawstd::gather(std::move(tasks));
-}
-
-rawstd::Task<void>
-Target::snapshot_remove(rawio::Queue& queue, const RawstdUUID& snap_id) {
-    const std::vector<rawstd::URI>& uris = _chunks.front();
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(uris.size());
-    for (const auto& uri : uris) {
-        tasks.push_back(snapshot_remove_one(queue, uri, snap_id));
     }
     co_await rawstd::gather(std::move(tasks));
 }
@@ -1092,14 +1055,36 @@ int rawstor_target_snapshot_remove(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Target t(target);
         RawstdUUID id;
         int res = rawstd_uuid_from_string(&id, snap_id);
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
-        launch_snapshot_remove_op_coro(
-            std::move(t), static_cast<rawio::Queue*>(queue), id, cb, data
+        if (rawstd_uuid_is_nil(&id)) {
+            // nil means "live" everywhere else -- rejected here, before
+            // any I/O, rather than silently falling through to
+            // Target::remove()'s own live-object removal (this call's
+            // entire contract is destroying one specific, named
+            // snapshot).
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        RawstdUUIDString snap_string;
+        rawstd_uuid_to_string(&id, &snap_string);
+
+        // No separate wire/backend path any more (Backend::remove()'s own
+        // doc comment) -- append "/<snap_id>" to every URI in `target`,
+        // the logical form (Target::Path's own doc comment: no offset
+        // segment, this is a plain, user-facing target rather than one
+        // chunk of a larger object), and hand the result to the same
+        // remove() this call's own Target::remove() already implements.
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        for (rawstd::URI& uri : uris) {
+            uri = rawstd::URI(uri, std::string(snap_string));
+        }
+        rawstor::Target t(rawstd::URI::uris(uris));
+
+        launch_remove_op_coro(
+            std::move(t), static_cast<rawio::Queue*>(queue), cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;

@@ -1036,7 +1036,7 @@ void auto_respond_writes_then_flush_and_release(
                         server.accept("SESSION <<< (target remove)");
                         server.read(
                             "RAWSTOR_CMD_RELEASE <<<",
-                            sizeof(RawstorOSTFrameBasic), [](const void*) {}
+                            sizeof(RawstorOSTFrameSnap), [](const void*) {}
                         );
                         RawstorOSTFrameResponse release_response = {
                             .head{

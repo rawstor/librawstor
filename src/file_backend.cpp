@@ -403,8 +403,14 @@ rawstd::Task<void> Backend::create(
     co_return;
 }
 
-rawstd::Task<void>
-Backend::remove(const RawstdUUID& id, uint64_t chunk_offset) {
+rawstd::Task<void> Backend::remove(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+) {
+    if (!rawstd_uuid_is_nil(&snap_id)) {
+        /* No native CoW: docs/mds.md, "Snapshots". */
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
+
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;

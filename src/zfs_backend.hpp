@@ -80,8 +80,13 @@ public:
         const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
     ) override;
 
-    rawstd::Task<void>
-    remove(const RawstdUUID& id, uint64_t chunk_offset) override;
+    // `snap_id` nil destroys the live zvol; non-nil destroys that one
+    // snapshot instead (the former snapshot_remove() -- Backend::remove()'s
+    // own doc comment).
+    rawstd::Task<void> remove(
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
+    ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
@@ -101,9 +106,6 @@ public:
     // own device node (/dev/zvol/.../<uuid>@s<id>) is openable -- one
     // mechanism, old zvols included, rather than per-snapshot.
     rawstd::Task<void> snapshot_create(
-        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
-    ) override;
-    rawstd::Task<void> snapshot_remove(
         const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     ) override;
 };

@@ -151,14 +151,20 @@ independent mechanisms use the same id, at different layers:
   the whole object, driven by `mds::Backend::snapshot_create()`.
 - **Per-slot native CoW**: a single backend's own thin-clone/snapshot
   primitive (zfs::Backend today), addressed directly by target/chunk-
-  slot URI with the version appended as a trailing path segment, right
-  after an *explicit* offset segment (never omitted once a snapshot
-  follows it -- see "Chunk offset" below for why):
-  `ost://host:port/<uuid>/0/018f4e2a-3000-7000-8000-000000000001` or, on
-  an `mds://` target,
-  `mds://host:port/<id>/0/018f4e2a-3000-7000-8000-000000000001`. This
-  segment is never part of a location and never carries a
-  comma-separated list of its own — it binds whichever single URI it's
+  slot URI with the version appended as a trailing path segment, in
+  either of two equivalent shapes:
+  - **Logical** — no offset segment, for a plain target (there is no
+    chunk-offset concept to name at that level):
+    `ost://host:port/<uuid>/018f4e2a-3000-7000-8000-000000000001`, or on
+    an `mds://` target,
+    `mds://host:port/<id>/018f4e2a-3000-7000-8000-000000000001`.
+  - **Physical** — an *explicit* offset segment right before the
+    version (never omitted, even "0" — see "Chunk offset" below for
+    why), the shape every chunk-of-a-larger-object address always uses:
+    `ost://host:port/<uuid>/0/018f4e2a-3000-7000-8000-000000000001`.
+
+  Either way this segment is never part of a location and never carries
+  a comma-separated list of its own — it binds whichever single URI it's
   attached to.
 
 ## Chunk offset (not for manual entry)
@@ -168,18 +174,22 @@ A chunk's own byte offset within its parent `mds://` object
 right after the UUID: `ost://host:port/<uuid>/1048576` (optionally
 followed by a snapshot segment, e.g.
 `ost://host:port/<uuid>/1048576/018f4e2a-3000-7000-8000-000000000001`).
-Offset and snapshot are both told apart from an arbitrary preceding
-location path by shape alone (a UUID-shaped segment vs. a decimal one),
-which only works because the offset segment is never omitted once a
-snapshot segment follows it, even when it's "0" -- `<uuid>/<snap_id>`
-would otherwise be indistinguishable from `<uuid>/<offset>` with no
-snapshot at all (`Target::parse_path()`, src/target.hpp, has the exact
-disambiguation rule). Like the internal multi-chunk form above, this is
-built only by `mds::Backend` from its own chunk map and never something
-a caller types — `Target`'s own constructor reads it back out to
-reconstruct chunk grouping, and it's also readable through
-`Target::offset()`/`rawstor_target_offset()` directly (0 for a plain,
-non-`mds://` target).
+Offset and snapshot are told apart from an arbitrary preceding location
+path by shape alone (a UUID-shaped segment vs. a decimal one):
+`Target::parse_path()` (src/target.hpp) reads the identity off the
+*end* of the path, so a trailing run of UUID-shaped segments is a
+snapshot chain candidate only if a valid decimal offset (and another
+UUID, the id) precede it — the *physical* shape above; otherwise the
+run's own leftmost segment is the id and its rightmost (if the run is
+more than one segment long) is the snapshot instead — the *logical*
+shape, offset implied 0. A chunk's own offset is always spelled out
+explicitly (the physical shape) since it's never 0-and-absent-by-
+convention the way a plain target's own implied offset is. Like the
+internal multi-chunk form above, this is built only by `mds::Backend`
+from its own chunk map and never something a caller types — `Target`'s
+own constructor reads it back out to reconstruct chunk grouping, and
+it's also readable through `Target::offset()`/`rawstor_target_offset()`
+directly (0 for a plain, non-`mds://` target).
 
 ---
 
@@ -192,7 +202,7 @@ non-`mds://` target).
 | **Object** | (none — derived from the target string that opened it) | The open handle `rawstor_object_*()` I/O acts on; routes to the owning Chunk | — |
 | **Chunk** | Same as Target: `uri1,uri2,...` (one UUID per group) | One logical slice of an Object's data; owns mirror consistency | `ost://h1:p1/<uuid>,ost://h2:p2/<uuid>` |
 | **Slot** | A single URI | One physical mirror arm of a Chunk; owns retries/reconnects | `ost://h1:p1/<uuid>` |
-| **Snapshot** | Trailing path segment on a target/chunk-slot URI (after an explicit offset), `snap_id` a client-generated UUID | A bound, read-only version | `ost://host:port/<uuid>/0/018f4e2a-3000-7000-8000-000000000001` |
+| **Snapshot** | Trailing path segment on a target/chunk-slot URI (logical: right after the id; physical: after an explicit offset), `snap_id` a client-generated UUID | A bound, read-only version | `ost://host:port/<uuid>/018f4e2a-3000-7000-8000-000000000001` |
 
 ---
 

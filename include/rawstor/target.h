@@ -373,18 +373,27 @@ int rawstor_target_create(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously remove an object from the storage system.
+ * @brief Asynchronously remove an object -- or one of its snapshots --
+ *        from the storage system.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
  * this function deletes the specified object from all backends listed in the
  * target. If the target contains multiple URIs (mirroring or locality),
  * the object is removed from every backend in the list.
  *
+ * A @p target that carries a bound snapshot version (its own trailing
+ * "/<offset>/<snap_id>" path segments, present only alongside an explicit
+ * offset -- see rawstor_target_snap_id()) instead destroys that one
+ * version, exactly like rawstor_target_snapshot_remove() -- there is no
+ * separate function for it: which identity gets removed is already
+ * whatever @p target itself names, live object or a specific snapshot.
+ *
  * This function returns immediately; the actual result is reported via
  * @p cb once the operation completes.
  *
  * @param queue   Queue used to drive the asynchronous remove.
- * @param target  Target string identifying the object to remove, e.g.:
+ * @param target  Target string identifying the object (or bound snapshot)
+ *                to remove, e.g.:
  *                - "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00"
  *                - "file:///var/rawstor/019cbfad-a389-7d42-a0f6-c29993ac8c00"
  *                - "ost://host1:9090/abc,ost://host2:9090/abc"  (mirroring)
@@ -561,17 +570,18 @@ int rawstor_target_location(
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
  * this function reads the trailing snapshot path segment (if any) off
- * @p target's own path -- present only alongside an explicit offset segment
- * (even "0"): a target string's identity is `<uuid>[/<offset>[/<snap_id>]]`,
- * offset never omitted once a snapshot follows it, so a bound version and an
- * unrelated trailing path segment of the target's own location can never be
- * confused for one another. This is purely a syntactic operation on
- * @p target -- no backend is contacted, and the target need not exist.
+ * @p target's own path, in either of two equivalent shapes: logical
+ * (`<uuid>/<snap_id>`, the shape a caller types for a plain target's own
+ * bound snapshot -- no chunk-offset concept to name at that level) or
+ * physical (`<uuid>/<offset>/<snap_id>`, offset never omitted even "0" --
+ * the shape internally used for one chunk of a larger mds:// object). This
+ * is purely a syntactic operation on @p target -- no backend is contacted,
+ * and the target need not exist.
  *
  * @param target   Target string, e.g.:
  *                 - "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00"
  *                 -
- * "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00/0/019cbfad-..."
+ * "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00/019cbfad-..."
  * @param buf      Output buffer for the bound version's UUID string, or an
  *                 empty string if @p target carries no bound snapshot
  *                 (the live version). Same truncation convention as
@@ -599,10 +609,11 @@ int rawstor_target_snap_id(
  * this function reads the offset path segment (if any) right after @p
  * target's own UUID path segment -- present only on a chunk of an mds://
  * object opened internally by the library (mds::Backend's own internal
- * target strings; a plain, user-facing target never carries one, unless it
- * also has a bound snapshot -- see rawstor_target_snap_id()). This is purely
- * a syntactic operation on @p target -- no backend is contacted, and the
- * target need not exist.
+ * target strings, the "physical" shape rawstor_target_snap_id() describes);
+ * a plain, user-facing target never carries one, even with a bound
+ * snapshot (the "logical" shape instead -- see rawstor_target_snap_id()).
+ * This is purely a syntactic operation on @p target -- no backend is
+ * contacted, and the target need not exist.
  *
  * @param target  Target string, e.g.:
  *                - "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00"
@@ -671,14 +682,20 @@ int rawstor_target_snapshot_create(
 /**
  * @brief Asynchronously destroy snapshot version @p snap_id of a target.
  *
- * For an mds://host:port/<id> @p target, the MDS unregisters
- * @p snap_id (no new readers) before a best-effort per-member fan-out
- * destroy runs -- a member that can no longer be resolved (address
- * changed, OST replaced) is left for the reconstruct scan rather than
- * failing the call. For any other @p target, this is instead a plain
- * fan-out over every URI (same semantics as the native CoW branch of
- * rawstor_target_snapshot_create()): every URI is attempted, the first
- * error is reported.
+ * A convenience over rawstor_target_remove() for a caller that already
+ * has @p target and @p snap_id as two separate strings (this is the
+ * common shape -- @p snap_id came back from a prior
+ * rawstor_target_snapshot_create() or listing, @p target did not): it
+ * appends @p snap_id, as a bound-snapshot path segment, to every URI in
+ * @p target itself (@see rawstor_target_snap_id) and hands the result to
+ * rawstor_target_remove() -- there is no separate removal path. For an
+ * mds://host:port/<id> @p target, the MDS unregisters @p snap_id (no new
+ * readers) before a best-effort per-member fan-out destroy runs -- a
+ * member that can no longer be resolved (address changed, OST replaced)
+ * is left for the reconstruct scan rather than failing the call. For any
+ * other @p target, this is instead a plain fan-out over every URI (same
+ * semantics as the native CoW branch of rawstor_target_snapshot_create()):
+ * every URI is attempted, the first error is reported.
  *
  * @param snap_id  The version id's UUID string -- always the caller's own,
  *                 never generated here (there is nothing left to report
@@ -689,6 +706,7 @@ int rawstor_target_snapshot_create(
  *         immediate failure (in which case @p cb is never invoked).
  *
  * @see rawstor_target_snapshot_create
+ * @see rawstor_target_remove
  */
 int rawstor_target_snapshot_remove(
     RawIOQueue* queue, const char* target, const char* snap_id,

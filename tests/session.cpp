@@ -81,7 +81,7 @@ void Session::cmd_set_object(uint32_t magic, uint16_t cid, int32_t res) {
 
 void Session::cmd_release_request() {
     _server.read(
-        "RAWSTOR_CMD_RELEASE <<<", sizeof(RawstorOSTFrameBasic),
+        "RAWSTOR_CMD_RELEASE <<<", sizeof(RawstorOSTFrameSnap),
         [](const void*) {}
     );
 }

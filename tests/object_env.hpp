@@ -18,8 +18,8 @@ namespace tests {
 // wire protocol for plain Chunks. The OST's one backend is a fresh
 // TmpDir's file:// -- the only backend guaranteed available in a build/
 // test environment, which means every chunk's Backend::snapshot_create()/
-// snapshot_remove() always answers -ENOTSUP (docs/mds.md: "file://
-// backend has no CoW"). That is exactly the negative path this
+// remove() with a non-nil snap_id always answers -ENOTSUP (docs/mds.md:
+// "file:// backend has no CoW"). That is exactly the negative path this
 // environment exists to exercise end to end (the reservation/rollback
 // bookkeeping around a failed CoW); the real CoW positive path needs a
 // live zfs pool, out of reach in a portable test.

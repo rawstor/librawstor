@@ -1,4 +1,4 @@
-// Object::snapshot_create()/snapshot_remove() (docs/mds.md, "Snapshots
+// mds::Backend::snapshot_create()/remove() (docs/mds.md, "Snapshots
 // (stage 2)"), exercised against a real rawstor::mds::Server +
 // rawstor::ostserver::Server pair (object_env.hpp) -- the actual wire
 // path a `mds://` target goes through, not a hand-scripted mock of it.
@@ -219,8 +219,9 @@ TEST(ObjectSnapshotTest, snapshot_remove_uncommitted_returns_enoent) {
 }
 
 // The nil UUID means "live" everywhere (docs/mds.md, "version in chunk
-// identity") -- Object::snapshot_remove() rejects it before any network
-// round trip.
+// identity") -- rawstor_target_snapshot_remove() rejects it before any
+// network round trip (removing "the snapshot with id nil" is
+// nonsensical; nil is reserved for the live version).
 TEST(ObjectSnapshotTest, snapshot_remove_nil_id_is_einval) {
     rawstor::tests::ObjectEnv env(8776, 8777);
     std::string target =

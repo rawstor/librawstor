@@ -40,6 +40,15 @@ extern "C" {
 #define RAWSTOR_CMD_WRITE 2
 #define RAWSTOR_CMD_DISCARD 3
 #define RAWSTOR_CMD_ALLOCATE 4
+/*
+ * Removes an object/chunk -- or, if `snap_id` is non-nil, one previously
+ * snapshotted version of it instead (nil-means-live, same convention as
+ * SET_OBJECT/OBJ_OPEN) -- rides RawstorOSTFrameSnapPayload. Used to be
+ * two separate commands (RELEASE for the live version,
+ * RAWSTOR_CMD_SNAP_REMOVE -- now retired, see below -- for a snapshot);
+ * merged once ost::Backend::remove()/rawstor::Backend::remove() merged
+ * their own two functions the same way.
+ */
 #define RAWSTOR_CMD_RELEASE 5
 #define RAWSTOR_CMD_LIST 6
 #define RAWSTOR_CMD_SPEC 7
@@ -68,7 +77,14 @@ extern "C" {
  * -ENOTSUP on backends without CoW (file://, classic LVM).
  */
 #define RAWSTOR_CMD_SNAPSHOT 0x23
-#define RAWSTOR_CMD_SNAP_REMOVE 0x24
+/*
+ * 0x24 used to be SNAP_REMOVE, a dedicated command for destroying a
+ * snapshot version -- merged into RAWSTOR_CMD_RELEASE above once
+ * removing the live version and removing a snapshot became the same
+ * function (rawstor::Backend::remove(), nil-means-live) with no
+ * remaining reason for two wire commands either. Left unassigned rather
+ * than reused, same reasoning as 0x22/0x44's own doc comments.
+ */
 
 /*
  * 0x44 used to be OBJ_SNAP_BEGIN, half of a two-phase snapshot protocol
@@ -142,11 +158,11 @@ struct RawstorOSTFrameBasic {
 /*
  * Same shape as RawstorOSTFrameBasicPayload, for the handful of commands
  * that need a UUID snap_id alongside object_id/offset instead of a plain
- * uint64_t val: SET_OBJECT, SNAPSHOT, SNAP_REMOVE, OBJ_OPEN,
- * OBJ_SNAP_REMOVE (each command's own doc comment above says which).
- * snap_id nil means "the live version" where that's a meaningful state
- * for the command (SET_OBJECT, OBJ_OPEN); SNAPSHOT/SNAP_REMOVE/
- * OBJ_SNAP_REMOVE always carry a real, non-nil version.
+ * uint64_t val: SET_OBJECT, RELEASE, SNAPSHOT, OBJ_OPEN, OBJ_SNAP_REMOVE
+ * (each command's own doc comment above says which). snap_id nil means
+ * "the live version" where that's a meaningful state for the command
+ * (SET_OBJECT, RELEASE, OBJ_OPEN); SNAPSHOT/OBJ_SNAP_REMOVE always carry
+ * a real, non-nil version.
  */
 struct RawstorOSTFrameSnapPayload {
     uint8_t object_id[16];

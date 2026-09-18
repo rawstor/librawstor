@@ -113,7 +113,7 @@ physical chunk_id = (id, chunk_offset, version, slot_index)
 A logical chunk has `width` slots (`slot_index` 0..width-1); see *Redundancy*.
 `version` is a UUID (`snap_id`, client-generated like every other id --
 never a monotonic counter), so it no longer fits the plain `uint64_t val`
-field the id/chunk_offset-only commands (RELEASE, SPEC, META, OBJ_RESIZE,
+field the id/chunk_offset-only commands (SPEC, META, OBJ_RESIZE,
 OBJ_REMOVE) still share via `RawstorOSTFrameBasicBody`:
 
 ```c
@@ -124,12 +124,14 @@ struct RawstorOSTFrameBasicBody {
 } __attribute__((packed));
 ```
 
-Every command that *does* carry a `version` (SET_OBJECT, OBJ_OPEN,
-SNAPSHOT, SNAP_REMOVE, OBJ_SNAP_REMOVE) instead rides its own
+Every command that *does* carry a `version` (SET_OBJECT, RELEASE,
+OBJ_OPEN, SNAPSHOT, OBJ_SNAP_REMOVE) instead rides its own
 `RawstorOSTFrameSnapBody { obj_id[16]; offset; snap_id[16]; }`, with
-`snap_id` nil for "live". On-OST layout (the slot's home, also where
-`chunk_meta` lives). `version` is
-part of the *logical* identity only: on CoW backends a version materializes as
+`snap_id` nil for "live" -- RELEASE removes the live version this way,
+non-nil the same command instead removes that one snapshot (the former
+separate SNAP_REMOVE command, retired: protocol.h's own doc comment).
+On-OST layout (the slot's home, also where `chunk_meta` lives). `version`
+is part of the *logical* identity only: on CoW backends a version materializes as
 a **native snapshot of the slot's live volume**, not a separately named one —
 naming a volume per version would contradict the snapshot design (stage 2).
 `snap_id` is a UUID string wherever it appears in a name below, not a

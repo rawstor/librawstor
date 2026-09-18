@@ -138,8 +138,18 @@ public:
         const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
     ) = 0;
 
-    virtual rawstd::Task<void>
-    remove(const RawstdUUID& id, uint64_t chunk_offset) = 0;
+    // `snap_id` is nil for the live version, or a version id previously
+    // registered via snapshot_create() below -- same nil-means-live
+    // convention as set_object(), so there is no separate
+    // "snapshot_remove()" any more. A backend without native CoW (file://,
+    // classic LVM) must reject a non-nil snap_id itself with ENOTSUP
+    // (mirroring _open()'s own convention for the same reason), since
+    // this method stays pure virtual -- there is no shared body to
+    // default the rejection into.
+    virtual rawstd::Task<void> remove(
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
+    ) = 0;
 
     virtual rawstd::Task<RawstorObjectSpec>
     spec(const RawstdUUID& id, uint64_t chunk_offset) = 0;
@@ -181,16 +191,14 @@ public:
 
     // Native CoW snapshot of the live version as `snap_id` (never nil --
     // nil is the live version; like every object id, the caller
-    // generates it itself before calling, docs/mds.md), and its removal.
-    // Default: ENOTSUP, covering file::Backend and lvm::Backend (classic
-    // LVM has no thin CoW -- docs/mds.md's own "Snapshots" section)
-    // without each needing its own override; zfs::Backend overrides both
-    // with the real thing, mds::Backend overrides both with its own
-    // MDS-orchestrated fan-out (see mds_backend.cpp).
+    // generates it itself before calling, docs/mds.md). Its removal is
+    // remove() above, called with this same `snap_id`. Default: ENOTSUP,
+    // covering file::Backend and lvm::Backend (classic LVM has no thin
+    // CoW -- docs/mds.md's own "Snapshots" section) without each needing
+    // its own override; zfs::Backend overrides this with the real thing,
+    // mds::Backend overrides it with its own MDS-orchestrated fan-out
+    // (see mds_backend.cpp).
     virtual rawstd::Task<void> snapshot_create(
-        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
-    );
-    virtual rawstd::Task<void> snapshot_remove(
         const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     );
 

@@ -95,8 +95,15 @@ public:
         const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
     ) override;
 
-    rawstd::Task<void>
-    remove(const RawstdUUID& id, uint64_t chunk_offset) override;
+    // `snap_id` nil for the live version, non-nil for a previously
+    // snapshotted one -- relayed over the wire as one RAWSTOR_CMD_RELEASE
+    // request either way (Backend::remove()'s own doc comment; protocol.h
+    // widened this command's own payload for exactly this merge, same as
+    // SET_OBJECT/OBJ_OPEN's own nil-means-live convention).
+    rawstd::Task<void> remove(
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
+    ) override;
 
     rawstd::Task<RawstorObjectSpec>
     spec(const RawstdUUID& id, uint64_t chunk_offset) override;
@@ -116,13 +123,10 @@ public:
         const RawstdUUID& snap_id = {}
     ) override;
 
-    // Relays RAWSTOR_CMD_SNAPSHOT/_SNAP_REMOVE over the wire -- the
-    // remote rawstor-ost forwards to its own local backend the same way
-    // (docs/mds.md, "Snapshots").
+    // Relays RAWSTOR_CMD_SNAPSHOT over the wire -- the remote rawstor-ost
+    // forwards to its own local backend the same way (docs/mds.md,
+    // "Snapshots").
     rawstd::Task<void> snapshot_create(
-        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
-    ) override;
-    rawstd::Task<void> snapshot_remove(
         const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     ) override;
 

@@ -319,8 +319,27 @@ rawstd::Task<void> Backend::create(
     co_return;
 }
 
-rawstd::Task<void>
-Backend::remove(const RawstdUUID& id, uint64_t chunk_offset) {
+rawstd::Task<void> Backend::remove(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+) {
+    if (!rawstd_uuid_is_nil(&snap_id)) {
+        std::string snapshot = _dataset(id, chunk_offset, snap_id);
+
+        rawstd_info("zfs: destroying snapshot %s\n", snapshot.c_str());
+
+        std::vector<std::string> destroy_argv = {"zfs", "destroy", snapshot};
+        try {
+            co_await rawstor::run_command(_queue, std::move(destroy_argv));
+        } catch (const std::system_error& e) {
+            rawstd_error(
+                "zfs: failed to destroy snapshot %s: %s\n", snapshot.c_str(),
+                e.what()
+            );
+            throw;
+        }
+        co_return;
+    }
+
     // Matches file::Backend::remove()'s own convention: a nonexistent
     // zvol is ENOENT specifically (permanent -- never retried by
     // Slot::_with_retry()'s is_permanent_backend_error()), not the
@@ -526,29 +545,6 @@ rawstd::Task<void> Backend::snapshot_create(
     } catch (const std::system_error& e) {
         rawstd_error(
             "zfs: failed to set snapdev=visible on %s: %s\n", dataset.c_str(),
-            e.what()
-        );
-        throw;
-    }
-}
-
-rawstd::Task<void> Backend::snapshot_remove(
-    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
-) {
-    if (rawstd_uuid_is_nil(&snap_id)) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-
-    std::string snapshot = _dataset(id, chunk_offset, snap_id);
-
-    rawstd_info("zfs: destroying snapshot %s\n", snapshot.c_str());
-
-    std::vector<std::string> destroy_argv = {"zfs", "destroy", snapshot};
-    try {
-        co_await rawstor::run_command(_queue, std::move(destroy_argv));
-    } catch (const std::system_error& e) {
-        rawstd_error(
-            "zfs: failed to destroy snapshot %s: %s\n", snapshot.c_str(),
             e.what()
         );
         throw;

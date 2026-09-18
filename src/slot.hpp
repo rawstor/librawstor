@@ -140,9 +140,6 @@ public:
     rawstd::Task<void> snapshot_create(
         const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     );
-    rawstd::Task<void> snapshot_remove(
-        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
-    );
 
     rawstd::Task<void>
     resize(const RawstdUUID& id, uint64_t chunk_offset, uint64_t new_size);
@@ -151,7 +148,10 @@ public:
         const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
     );
 
-    rawstd::Task<void> remove(const RawstdUUID& id, uint64_t chunk_offset);
+    rawstd::Task<void> remove(
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
+    );
 
     rawstd::Task<RawstorObjectSpec>
     spec(const RawstdUUID& id, uint64_t chunk_offset);

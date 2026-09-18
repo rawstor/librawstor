@@ -708,16 +708,16 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 break;
             }
             case RAWSTOR_CMD_RELEASE: {
-                RawstorOSTFrameBasicPayload basic;
+                RawstorOSTFrameSnapPayload snap;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
+                    stream, &snap, sizeof(snap), fd, "request payload",
                     &stream_failed
                 );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                _release(weak, head, basic);
+                _release(weak, head, snap);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -732,20 +732,6 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                     co_return;
                 }
                 _snapshot_create(weak, head, snap);
-                rawstd::DetachedTask::rethrow_if_pending();
-                break;
-            }
-            case RAWSTOR_CMD_SNAP_REMOVE: {
-                RawstorOSTFrameSnapPayload snap;
-                co_await recv_frame(
-                    stream, &snap, sizeof(snap), fd, "request payload",
-                    &stream_failed
-                );
-                client = weak.lock();
-                if (client == nullptr) {
-                    co_return;
-                }
-                _snapshot_remove(weak, head, snap);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -1146,7 +1132,7 @@ rawstd::DetachedTask Client::_allocate(
 
 rawstd::DetachedTask Client::_release(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicPayload payload
+    RawstorOSTFrameSnapPayload payload
 ) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
@@ -1155,8 +1141,11 @@ rawstd::DetachedTask Client::_release(
 
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
+    RawstdUUID snap_id;
+    memcpy(snap_id.bytes, payload.snap_id, sizeof(payload.snap_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
+    std::vector<rawstd::URI> targets =
+        client->_targets(uuid, payload.offset, snap_id);
 
     int result = 0;
     try {
@@ -1187,9 +1176,9 @@ rawstd::DetachedTask Client::_release(
     }
 }
 
-// SNAPSHOT/SNAP_REMOVE (docs/mds.md, "Snapshots"): forwarded to the same
-// rawstor_target_snapshot_create()/_remove() this server's own local
-// backend(s) implement -- same shape as _release() above.
+// SNAPSHOT (docs/mds.md, "Snapshots"): forwarded to the same
+// rawstor_target_snapshot_create() this server's own local backend(s)
+// implement -- same shape as _release() above.
 rawstd::DetachedTask Client::_snapshot_create(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
     RawstorOSTFrameSnapPayload payload
@@ -1232,54 +1221,6 @@ rawstd::DetachedTask Client::_snapshot_create(
     try {
         co_await client->_send_response(
             RAWSTOR_CMD_SNAPSHOT, head.cid, result, 0
-        );
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        send_failed = true;
-    }
-    if (send_failed) {
-        co_await client->_server.del_client(client->_fd);
-    }
-}
-
-rawstd::DetachedTask Client::_snapshot_remove(
-    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameSnapPayload payload
-) {
-    std::shared_ptr<Client> client = weak.lock();
-    if (client == nullptr) {
-        co_return;
-    }
-
-    RawstdUUID uuid;
-    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-
-    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
-
-    int result = 0;
-    try {
-        std::string target = rawstd::URI::uris(targets);
-        rawstd::CallbackAwaitable<void> awaiter;
-        RawstdUUID snap_id;
-        memcpy(snap_id.bytes, payload.snap_id, sizeof(payload.snap_id));
-        RawstdUUIDString snap_string;
-        rawstd_uuid_to_string(&snap_id, &snap_string);
-        int res = rawstor_target_snapshot_remove(
-            client->_queue, target.c_str(), snap_string, result_trampoline,
-            &awaiter
-        );
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-        co_await awaiter;
-    } catch (const std::system_error& e) {
-        result = -e.code().value();
-    }
-
-    bool send_failed = false;
-    try {
-        co_await client->_send_response(
-            RAWSTOR_CMD_SNAP_REMOVE, head.cid, result, 0
         );
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());

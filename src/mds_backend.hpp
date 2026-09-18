@@ -46,6 +46,10 @@ private:
 
     rawstd::Task<void> _connect() override;
 
+    // The `snap_id` branch of the merged remove() below.
+    rawstd::Task<void>
+    _snapshot_remove(const RawstdUUID& id, const RawstdUUID& snap_id);
+
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
@@ -57,8 +61,18 @@ public:
         const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
     ) override;
 
-    rawstd::Task<void>
-    remove(const RawstdUUID& id, uint64_t chunk_offset) override;
+    // `snap_id` nil unregisters and destroys the whole object (docs/mds.md,
+    // deletion order); non-nil instead removes that one previously
+    // committed snapshot -- the former snapshot_remove() below, merged
+    // here (Backend::remove()'s own doc comment). The MDS unregisters
+    // first (no new readers) either way, before this returns; the
+    // per-chunk destroy that follows is therefore best-effort cleanup for
+    // the snapshot case -- a member that can no longer be resolved
+    // (address changed, OST replaced) is left for the reconstruct scan.
+    rawstd::Task<void> remove(
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
+    ) override;
 
     rawstd::Task<RawstorObjectSpec>
     spec(const RawstdUUID& id, uint64_t chunk_offset) override;
@@ -87,15 +101,6 @@ public:
     // is the writing client's own duty, not this call's. `chunk_offset`
     // is always 0, same reason as resize() above.
     rawstd::Task<void> snapshot_create(
-        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
-    ) override;
-
-    // Fan-out destroy of a previously committed snapshot. The MDS
-    // unregisters it (no new readers) before this returns the recorded
-    // member set; the per-member destroy below is therefore best-effort
-    // cleanup -- a member that can no longer be resolved (address
-    // changed, OST replaced) is left for the reconstruct scan.
-    rawstd::Task<void> snapshot_remove(
         const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     ) override;
 

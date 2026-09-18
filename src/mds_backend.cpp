@@ -222,7 +222,13 @@ Backend::create(const RawstdUUID& id, uint64_t, const RawstorObjectSpec& sp) {
     }
 }
 
-rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t) {
+rawstd::Task<void>
+Backend::remove(const RawstdUUID& id, uint64_t, const RawstdUUID& snap_id) {
+    if (!rawstd_uuid_is_nil(&snap_id)) {
+        co_await _snapshot_remove(id, snap_id);
+        co_return;
+    }
+
     WireMap map = co_await _client.open(id, RawstdUUID{});
 
     /*
@@ -373,13 +379,14 @@ rawstd::Task<void> Backend::snapshot_create(
     co_await _client.snap_commit(id, snap_id, members);
 }
 
-rawstd::Task<void> Backend::snapshot_remove(
-    const RawstdUUID& id, uint64_t, const RawstdUUID& snap_id
-) {
-    if (rawstd_uuid_is_nil(&snap_id)) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-
+// Fan-out destroy of a previously committed snapshot -- the `snap_id`
+// branch of the merged remove() above. The MDS unregisters it (no new
+// readers) before this returns the recorded member set; the per-member
+// destroy below is therefore best-effort cleanup -- a member that can no
+// longer be resolved (address changed, OST replaced) is left for the
+// reconstruct scan.
+rawstd::Task<void>
+Backend::_snapshot_remove(const RawstdUUID& id, const RawstdUUID& snap_id) {
     std::vector<mds::WireSnapMember> members =
         co_await _client.snap_remove(id, snap_id);
 
@@ -412,11 +419,11 @@ rawstd::Task<void> Backend::snapshot_remove(
             continue;
         }
         try {
-            Target t(
-                chunk_slot_target(map.id, m.logical_index, *it, map.chunk_size)
-                    .str()
-            );
-            co_await t.snapshot_remove(_queue, snap_id);
+            Target t(chunk_slot_target(
+                         map.id, m.logical_index, *it, map.chunk_size, snap_id
+            )
+                         .str());
+            co_await t.remove(_queue);
         } catch (const std::exception& e) {
             rawstd_error("Snapshot remove: %s\n", e.what());
             error = std::current_exception();

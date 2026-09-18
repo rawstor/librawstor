@@ -86,15 +86,14 @@ private:
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameAllocatePayload payload
     );
+    // `payload.snap_id` nil for the live version, non-nil for one
+    // previously snapshotted -- RELEASE merged what used to be a separate
+    // SNAP_REMOVE command (protocol.h's own doc comment).
     static rawstd::DetachedTask _release(
-        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
-    );
-    static rawstd::DetachedTask _snapshot_create(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameSnapPayload payload
     );
-    static rawstd::DetachedTask _snapshot_remove(
+    static rawstd::DetachedTask _snapshot_create(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameSnapPayload payload
     );

@@ -65,10 +65,10 @@ unsigned int backoff_delay_ms(
 // A rejection retrying can never turn into success: the target object
 // doesn't exist (ENOENT), already exists where create() needs it not to
 // (EEXIST), the request itself is malformed (EINVAL), or the backend
-// permanently lacks a capability (ENOTSUP -- e.g. snapshot_create()/
-// snapshot_remove() on file:// or classic LVM, docs/mds.md's "Snapshots":
-// no retry will ever make a backend grow native CoW support it doesn't
-// have).
+// permanently lacks a capability (ENOTSUP -- e.g. snapshot_create()/a
+// non-nil snap_id to remove() on file:// or classic LVM, docs/mds.md's
+// "Snapshots": no retry will ever make a backend grow native CoW support
+// it doesn't have).
 // Anything else defaults to retryable -- safer to spend a few pointless
 // retries on a genuinely transient rejection we don't recognize than to
 // silently give up on one that would have gone away on its own (e.g.
@@ -571,26 +571,6 @@ rawstd::Task<void> Slot::snapshot_create(
     }
 }
 
-rawstd::Task<void> Slot::snapshot_remove(
-    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
-) {
-    const char* func_name = __FUNCTION__;
-    rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
-    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
-
-    try {
-        co_await _with_retry(
-            func_name, trace_event, &Backend::snapshot_remove, id, chunk_offset,
-            snap_id
-        );
-        _finish(t_call);
-    } catch (...) {
-        _finish(t_call);
-        throw;
-    }
-}
-
 rawstd::Task<void>
 Slot::resize(const RawstdUUID& id, uint64_t chunk_offset, uint64_t new_size) {
     const char* func_name = __FUNCTION__;
@@ -628,7 +608,9 @@ rawstd::Task<void> Slot::create(
     }
 }
 
-rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t chunk_offset) {
+rawstd::Task<void> Slot::remove(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -636,7 +618,7 @@ rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t chunk_offset) {
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::remove, id, chunk_offset
+            func_name, trace_event, &Backend::remove, id, chunk_offset, snap_id
         );
         _finish(t_call);
     } catch (...) {
