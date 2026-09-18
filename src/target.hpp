@@ -114,12 +114,14 @@ private:
 
     // The object's own identity -- the same for every URI in `_uris`,
     // across every chunk group, not just within one (validated once, at
-    // construction: the constructor's own comment, target.cpp). Unlike
-    // offset (see the class's own doc comment on why Target dropped that
-    // accessor) or location() (a chunk group's own physical placement,
-    // genuinely different chunk to chunk on a real multi-chunk mds://
-    // object), id/snap_id name *what* this target addresses, not *where*
-    // or *which slice* -- a single value the whole target agrees on.
+    // construction: the constructor's own comment, target.cpp). id/
+    // snap_id name *what* this target addresses -- a single value the
+    // whole target agrees on, unlike location() (a chunk group's own
+    // physical placement, genuinely different chunk to chunk on a real
+    // multi-chunk mds:// object) or a chunk's own offset (which tells it
+    // apart from every other chunk of the same object, so has no
+    // whole-target value at all -- id()/snap_id()'s own doc comments
+    // below say more).
     RawstdUUID _id;
     RawstdUUID _snap_id;
 
@@ -143,12 +145,10 @@ public:
         const RawstdUUID& snap_id = {}
     );
 
-    // The target's first (and, outside mds::Backend's own internal
-    // multi-chunk format, only) chunk group's URIs, in order -- a small
-    // copy (first_group() in target.cpp), not a reference: unlike the
-    // old _chunks.front(), there's no already-materialized group vector
-    // left to hand out one of.
-    std::vector<rawstd::URI> uris() const;
+    // Every URI this target's own string names, in order.
+    inline const std::vector<rawstd::URI>& uris() const noexcept {
+        return _uris;
+    }
 
     // The UUID every URI in `_uris` agrees on -- validated once, at
     // construction (the constructor's own comment, target.cpp), not

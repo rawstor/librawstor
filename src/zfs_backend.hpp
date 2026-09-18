@@ -81,8 +81,7 @@ public:
     ) override;
 
     // `snap_id` nil destroys the live zvol; non-nil destroys that one
-    // snapshot instead (the former snapshot_remove() -- Backend::remove()'s
-    // own doc comment).
+    // snapshot instead (Backend::remove()'s own doc comment).
     rawstd::Task<void> remove(
         const RawstdUUID& id, uint64_t chunk_offset,
         const RawstdUUID& snap_id = {}

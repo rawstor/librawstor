@@ -87,8 +87,7 @@ private:
         RawstorOSTFrameAllocatePayload payload
     );
     // `payload.snap_id` nil for the live version, non-nil for one
-    // previously snapshotted -- RELEASE merged what used to be a separate
-    // SNAP_REMOVE command (protocol.h's own doc comment).
+    // previously snapshotted (protocol.h's own doc comment on RELEASE).
     static rawstd::DetachedTask _release(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameSnapPayload payload

@@ -380,7 +380,7 @@ rawstd::Task<void> Backend::snapshot_create(
 }
 
 // Fan-out destroy of a previously committed snapshot -- the `snap_id`
-// branch of the merged remove() above. The MDS unregisters it (no new
+// branch of remove() above. The MDS unregisters it (no new
 // readers) before this returns the recorded member set; the per-member
 // destroy below is therefore best-effort cleanup -- a member that can no
 // longer be resolved (address changed, OST replaced) is left for the

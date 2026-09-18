@@ -46,7 +46,7 @@ private:
 
     rawstd::Task<void> _connect() override;
 
-    // The `snap_id` branch of the merged remove() below.
+    // The `snap_id` branch of remove() below.
     rawstd::Task<void>
     _snapshot_remove(const RawstdUUID& id, const RawstdUUID& snap_id);
 
@@ -63,12 +63,12 @@ public:
 
     // `snap_id` nil unregisters and destroys the whole object (docs/mds.md,
     // deletion order); non-nil instead removes that one previously
-    // committed snapshot -- the former snapshot_remove() below, merged
-    // here (Backend::remove()'s own doc comment). The MDS unregisters
-    // first (no new readers) either way, before this returns; the
-    // per-chunk destroy that follows is therefore best-effort cleanup for
-    // the snapshot case -- a member that can no longer be resolved
-    // (address changed, OST replaced) is left for the reconstruct scan.
+    // committed snapshot, via _snapshot_remove() below (Backend::remove()'s
+    // own doc comment). The MDS unregisters first (no new readers) either
+    // way, before this returns; the per-chunk destroy that follows is
+    // therefore best-effort cleanup for the snapshot case -- a member
+    // that can no longer be resolved (address changed, OST replaced) is
+    // left for the reconstruct scan.
     rawstd::Task<void> remove(
         const RawstdUUID& id, uint64_t chunk_offset,
         const RawstdUUID& snap_id = {}

@@ -43,11 +43,7 @@ extern "C" {
 /*
  * Removes an object/chunk -- or, if `snap_id` is non-nil, one previously
  * snapshotted version of it instead (nil-means-live, same convention as
- * SET_OBJECT/OBJ_OPEN) -- rides RawstorOSTFrameSnapPayload. Used to be
- * two separate commands (RELEASE for the live version,
- * RAWSTOR_CMD_SNAP_REMOVE -- now retired, see below -- for a snapshot);
- * merged once ost::Backend::remove()/rawstor::Backend::remove() merged
- * their own two functions the same way.
+ * SET_OBJECT/OBJ_OPEN) -- rides RawstorOSTFrameSnapPayload.
  */
 #define RAWSTOR_CMD_RELEASE 5
 #define RAWSTOR_CMD_LIST 6

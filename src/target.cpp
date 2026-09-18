@@ -131,8 +131,10 @@ std::vector<rawstd::URI> first_group(const std::vector<rawstd::URI>& uris) {
 // Every one of `uris`'s own chunk groups, in order -- offset-contiguous
 // runs (see first_group()'s own comment above), reconstructing the
 // grouping Target::Target(const std::string&)'s own constructor already
-// validated at parse time. Only create()/open() need this: every other
-// Target method only ever touches the first group (first_group() above).
+// validated at parse time. Only create()/open() need this: spec()/meta()/
+// set_sync_state()/snapshot_create()/resize() only ever touch the first
+// group (first_group() above); uris()/location()/id()/snap_id() answer
+// for the whole target instead, not any one group.
 std::vector<std::vector<rawstd::URI>>
 group_by_offset(const std::vector<rawstd::URI>& uris) {
     std::vector<std::vector<rawstd::URI>> ret;
@@ -686,10 +688,6 @@ Target::Target(
     for (const rawstd::URI& uri : location.uris()) {
         _uris.emplace_back(uri, child);
     }
-}
-
-std::vector<rawstd::URI> Target::uris() const {
-    return first_group(_uris);
 }
 
 RawstdUUID Target::id() const {
