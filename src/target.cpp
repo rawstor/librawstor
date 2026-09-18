@@ -55,72 +55,67 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
     }
 }
 
+// Splits a URI's own path into '/'-separated segments, dropping the
+// leading empty one the leading '/' itself produces -- "/a/b/c" ->
+// {"a", "b", "c"}.
+std::vector<std::string> path_segments(const std::string& path) {
+    std::vector<std::string> ret;
+    size_t start = !path.empty() && path.front() == '/' ? 1 : 0;
+    while (start <= path.size()) {
+        size_t end = path.find('/', start);
+        if (end == std::string::npos) {
+            ret.push_back(path.substr(start));
+            break;
+        }
+        ret.push_back(path.substr(start, end - start));
+        start = end + 1;
+    }
+    return ret;
+}
+
 // A connect()ed Slot's metadata methods take a bare id (like the
 // Backend methods they wrap) rather than a full target -- extract it once
 // here instead of in every one of this file's own call sites.
-// rawstd_uuid_from_string() only ever reads the first 36 characters (see
-// its own implementation), so a "@<snap_id>" suffix (see extract_snap_id()
-// below) never trips this up.
 RawstdUUID uuid_from_target(const rawstd::URI& target) {
-    RawstdUUID id;
-    int res = rawstd_uuid_from_string(&id, target.path().filename().c_str());
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    return id;
+    return rawstor::Target::parse_path(target).id;
 }
 
-// The bound snapshot version embedded in a URI's own filename, if any --
-// "<uuid>" (live, nil) or "<uuid>@<snap_id>", the same convention
-// chunk_slot_target() in mds_backend.cpp already uses for a single slot.
+// The bound snapshot version embedded in a URI's own trailing path
+// segments, if any -- see Target::Path's own doc comment in target.hpp.
 RawstdUUID extract_snap_id(const rawstd::URI& uri) {
-    const std::string& filename = uri.path().filename();
-    size_t at = filename.find('@');
-    if (at == std::string::npos) {
-        return RawstdUUID{};
-    }
-    RawstdUUID snap_id;
-    int res = rawstd_uuid_from_string(&snap_id, filename.c_str() + at + 1);
-    if (res < 0) {
-        rawstd_error("Malformed snapshot suffix: %s\n", filename.c_str());
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    return snap_id;
+    return rawstor::Target::parse_path(uri).snap_id;
 }
 
 // This URI's own byte offset within the larger object it's one chunk of,
-// if any -- "<uuid>" (0) or "<uuid>:<offset>[@<snap_id>]", the same ':'
-// convention chunk_slot_target() in mds_backend.cpp stamps onto every slot of a
-// chunk it builds (index * chunk_size). Doubles as the grouping key the
-// constructor below sorts every URI of a multi-chunk target into its
-// own chunk by (see its own comment) -- distinct chunks always differ
-// here, same-chunk mirrors never do.
+// if any -- see Target::Path's own doc comment in target.hpp. Doubles as
+// the grouping key the constructor below sorts every URI of a
+// multi-chunk target into its own chunk by (see its own comment) --
+// distinct chunks always differ here, same-chunk mirrors never do.
 uint64_t extract_offset(const rawstd::URI& uri) {
-    const std::string& filename = uri.path().filename();
-    size_t colon = filename.find(':');
-    if (colon == std::string::npos) {
-        return 0;
+    return rawstor::Target::parse_path(uri).offset;
+}
+
+// The URI with its own trailing identity (Target::Path) stripped back
+// off -- the Location it was built under (Location::create()'s own
+// inverse). Calls URI::parent() once per identity segment instead of
+// just once, now that the identity doesn't always fit in a single
+// trailing one.
+rawstd::URI strip_path(const rawstd::URI& uri) {
+    rawstor::Target::Path path = rawstor::Target::parse_path(uri);
+    rawstd::URI ret = uri;
+    for (unsigned int i = 0; i < path.segments; ++i) {
+        ret = ret.parent();
     }
-    size_t at = filename.find('@', colon);
-    std::string offset_str = filename.substr(
-        colon + 1, at == std::string::npos ? std::string::npos : at - colon - 1
-    );
-    std::istringstream iss(offset_str);
-    uint64_t offset = 0;
-    if (!(iss >> offset) || !iss.eof()) {
-        rawstd_error("Malformed offset suffix: %s\n", filename.c_str());
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    return offset;
+    return ret;
 }
 
 // Every URI in one chunk group must name the same logical resource: same
 // uuid, same bound snapshot version -- compared on their *parsed* values
-// (uuid_from_target()/extract_snap_id()), not the raw filename string, so
-// equivalent-but-differently-spelled URIs (e.g. "<uuid>" and
-// "<uuid>:0@0" -- offset is already guaranteed equal here, both landed in
-// the same bucket via extract_offset() in the constructor below) are
-// correctly accepted as the same chunk rather than rejected as a mismatch.
+// (uuid_from_target()/extract_snap_id()), not the raw path string, so
+// equivalent-but-differently-spelled URIs (e.g. "<uuid>" and "<uuid>/0"
+// -- offset is already guaranteed equal here, both landed in the same
+// bucket via extract_offset() in the constructor below) are correctly
+// accepted as the same chunk rather than rejected as a mismatch.
 void validate_same_uuid(const std::vector<rawstd::URI>& targets) {
     if (targets.empty()) {
         return;
@@ -153,7 +148,7 @@ rawstd::Task<void> create_one(
     RawstdUUID id = uuid_from_target(target);
     uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, target.parent(), 1);
+        co_await rawstor::Slot::create(queue, strip_path(target), 1);
     co_await slot->create(id, chunk_offset, sp);
     co_await slot->close();
 }
@@ -163,7 +158,7 @@ spec_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, target.parent(), 1);
+        co_await rawstor::Slot::create(queue, strip_path(target), 1);
     RawstorObjectSpec ret = co_await slot->spec(id, chunk_offset);
     co_await slot->close();
     co_return ret;
@@ -174,7 +169,7 @@ meta_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, target.parent(), 1);
+        co_await rawstor::Slot::create(queue, strip_path(target), 1);
     RawstorObjectMeta ret = co_await slot->meta(id, chunk_offset);
     co_await slot->close();
     co_return ret;
@@ -184,7 +179,7 @@ rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, target.parent(), 1);
+        co_await rawstor::Slot::create(queue, strip_path(target), 1);
     co_await slot->remove(id, chunk_offset);
     co_await slot->close();
 }
@@ -195,7 +190,7 @@ rawstd::Task<void> snapshot_create_one(
     RawstdUUID id = uuid_from_target(target);
     uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, target.parent(), 1);
+        co_await rawstor::Slot::create(queue, strip_path(target), 1);
     co_await slot->snapshot_create(id, chunk_offset, snap_id);
     co_await slot->close();
 }
@@ -206,7 +201,7 @@ rawstd::Task<void> snapshot_remove_one(
     RawstdUUID id = uuid_from_target(target);
     uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, target.parent(), 1);
+        co_await rawstor::Slot::create(queue, strip_path(target), 1);
     co_await slot->snapshot_remove(id, chunk_offset, snap_id);
     co_await slot->close();
 }
@@ -218,7 +213,7 @@ rawstd::Task<void> set_sync_state_one(
     RawstdUUID id = uuid_from_target(target);
     uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, target.parent(), 1);
+        co_await rawstor::Slot::create(queue, strip_path(target), 1);
     co_await slot->set_sync_state(id, chunk_offset, sync_state);
     co_await slot->close();
 }
@@ -228,7 +223,7 @@ resize_one(rawio::Queue& queue, const rawstd::URI& target, uint64_t new_size) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t chunk_offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, target.parent(), 1);
+        co_await rawstor::Slot::create(queue, strip_path(target), 1);
     co_await slot->resize(id, chunk_offset, new_size);
     co_await slot->close();
 }
@@ -519,6 +514,88 @@ rawstd::DetachedTask launch_set_sync_state_op_coro(
 
 namespace rawstor {
 
+// See Path's own doc comment in target.hpp for the shape parsed here.
+// A static method (declared in target.hpp), not tied to an instance --
+// Chunk::create()/Object::_chunk() call this directly on a raw URI they
+// don't have a Target already built around.
+//
+// A location's own path can end in an arbitrary number of segments
+// before the identity even starts (e.g. file:///a/b/<uuid>), so a
+// trailing UUID-shaped segment alone never proves it's a snapshot: it
+// could just as well be the id itself, with an unrelated (if
+// coincidentally UUID-looking) location segment ahead of it. The only
+// thing that actually disambiguates a snapshot chain from the id is
+// what's found *before* it -- a valid offset, which the corresponding
+// builders (Target's own synthetic constructor, mds_backend.cpp's
+// chunk_slot_target(), ost/src/client.cpp's _targets()) always stamp
+// (even "0") whenever a snapshot segment follows, specifically so this
+// can tell the two apart. So: find the longest trailing run of
+// UUID-shaped segments (a snapshot chain candidate, deepest link last);
+// if a valid offset and an id precede that whole run, it really is one;
+// otherwise the run isn't a snapshot at all -- its last (and, for
+// anything actually constructed by this library, only) UUID-shaped
+// segment is simply the id, and nothing here is a chain link after all.
+Target::Path Target::parse_path(const rawstd::URI& uri) {
+    std::vector<std::string> segments = path_segments(uri.path().str());
+    if (segments.empty() || segments.back().empty()) {
+        rawstd_error("Empty target path: %s\n", uri.str().c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    size_t chain = 0;
+    while (chain < segments.size()) {
+        RawstdUUID probe;
+        const std::string& candidate = segments[segments.size() - 1 - chain];
+        if (rawstd_uuid_from_string(&probe, candidate.c_str()) != 0) {
+            break;
+        }
+        ++chain;
+    }
+
+    Path ret{};
+
+    if (chain > 0 && segments.size() >= chain + 2) {
+        const std::string& offset_segment =
+            segments[segments.size() - chain - 1];
+        const std::string& id_segment = segments[segments.size() - chain - 2];
+        std::istringstream iss(offset_segment);
+        uint64_t offset = 0;
+        if ((iss >> offset) && iss.eof() &&
+            rawstd_uuid_from_string(&ret.id, id_segment.c_str()) == 0) {
+            ret.offset = offset;
+            rawstd_uuid_from_string(&ret.snap_id, segments.back().c_str());
+            ret.segments = static_cast<unsigned int>(chain + 2);
+            return ret;
+        }
+    }
+
+    if (chain > 0) {
+        // No valid offset precedes the trailing UUID run -- it isn't a
+        // snapshot chain after all, just the id itself (chain's own
+        // definition already guarantees segments.back() is a valid
+        // UUID).
+        rawstd_uuid_from_string(&ret.id, segments.back().c_str());
+        ret.segments = 1;
+        return ret;
+    }
+
+    if (segments.size() >= 2) {
+        std::istringstream iss(segments.back());
+        uint64_t offset = 0;
+        if ((iss >> offset) && iss.eof() &&
+            rawstd_uuid_from_string(
+                &ret.id, segments[segments.size() - 2].c_str()
+            ) == 0) {
+            ret.offset = offset;
+            ret.segments = 2;
+            return ret;
+        }
+    }
+
+    rawstd_error("Malformed target path: %s\n", uri.str().c_str());
+    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+}
+
 // Every public method below used to re-run three validate_*() checks
 // itself, identically, before touching _chunks -- validated once, here,
 // instead: _chunks never changes after construction, so nothing past
@@ -530,13 +607,13 @@ namespace rawstor {
 // list -- every chunk's own mirrors, all comma-joined together, with no
 // marker of where one chunk's own group ends and the next begins. That
 // grouping instead falls out of each URI's own offset (extract_offset()
-// above, ":<offset>" in its filename, index * chunk_size): URIs sharing
-// one offset are mirrors of the same chunk (never two different chunks
-// -- distinct logical indices always differ here), so bucketing by it
-// and keeping the buckets in ascending order reconstructs exactly the
-// per-chunk grouping and the logical-index order the old explicit ';'
-// separator used to spell out directly. A plain, non-mds:// target's
-// URIs all carry no ":<offset>" suffix at all -- extract_offset()'s own
+// above, its own trailing path segment, index * chunk_size): URIs
+// sharing one offset are mirrors of the same chunk (never two different
+// chunks -- distinct logical indices always differ here), so bucketing
+// by it and keeping the buckets in ascending order reconstructs exactly
+// the per-chunk grouping and the logical-index order the old explicit
+// ';' separator used to spell out directly. A plain, non-mds:// target's
+// URIs all carry no offset segment at all -- extract_offset()'s own
 // default of 0 for all of them puts every one of them in the same single
 // bucket, the ordinary single-chunk case.
 Target::Target(const std::string& target) {
@@ -564,20 +641,25 @@ Target::Target(
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string filename = uuid_string;
-    if (offset != 0) {
-        filename += ":" + std::to_string(offset);
+    bool has_snap = !rawstd_uuid_is_nil(&snap_id);
+    std::string child = uuid_string;
+    // The offset segment is mandatory once a snapshot segment follows it
+    // (Path's own doc comment in target.hpp) -- otherwise a bare
+    // "<uuid>/<snap_id>" would be indistinguishable from "<uuid>/<offset>"
+    // with no snapshot at all.
+    if (offset != 0 || has_snap) {
+        child += "/" + std::to_string(offset);
     }
-    if (!rawstd_uuid_is_nil(&snap_id)) {
+    if (has_snap) {
         RawstdUUIDString snap_string;
         rawstd_uuid_to_string(&snap_id, &snap_string);
-        filename += "@" + std::string(snap_string);
+        child += "/" + std::string(snap_string);
     }
 
     std::vector<rawstd::URI> uris;
     uris.reserve(location.uris().size());
     for (const rawstd::URI& uri : location.uris()) {
-        uris.emplace_back(uri, filename);
+        uris.emplace_back(uri, child);
     }
     _chunks.push_back(std::move(uris));
 }
@@ -590,7 +672,7 @@ Location Target::location() const {
     std::vector<rawstd::URI> uris;
     uris.reserve(_chunks.front().size());
     for (const auto& uri : _chunks.front()) {
-        uris.push_back(uri.parent());
+        uris.push_back(strip_path(uri));
     }
     return Location(rawstd::URI::uris(uris));
 }

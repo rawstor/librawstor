@@ -119,9 +119,9 @@ public:
     // Fetches the object's current WireMap and opens the nested
     // multi-chunk Object it describes (see this class's own doc
     // comment) -- `snap_id` is folded into every chunk slot's own URI
-    // ("@<snap_id>", chunk_slot_target()'s own convention in
-    // mds_backend.cpp), not passed down any other way. `chunk_offset` is
-    // always 0, same reason as resize() above.
+    // (its own trailing path segment, chunk_slot_target()'s own
+    // convention in mds_backend.cpp), not passed down any other way.
+    // `chunk_offset` is always 0, same reason as resize() above.
     rawstd::Task<void> set_object(
         const RawstdUUID& id, uint64_t chunk_offset,
         const RawstdUUID& snap_id = {}

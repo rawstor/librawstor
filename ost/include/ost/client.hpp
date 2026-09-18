@@ -143,10 +143,11 @@ private:
         RawstorOSTFrameSyncStatePayload payload
     );
     // Every configured location's own URI for `uuid`, with `chunk_offset`/
-    // `snap_id` folded into each one's own filename as
-    // "<uuid>[:<chunk_offset>][@<snap_id>]" (Target's own doc comment,
-    // src/target.hpp) -- the same self-describing name every backend on
-    // the receiving end already expects (docs/mds.md, "Chunk identity").
+    // `snap_id` folded into each one's own path as
+    // "<uuid>[/<chunk_offset>[/<snap_id>]]" (Target::Path's own doc
+    // comment, src/target.hpp) -- the same self-describing name every
+    // backend on the receiving end already expects (docs/mds.md, "Chunk
+    // identity").
     std::vector<rawstd::URI> _targets(
         const RawstdUUID& uuid, uint64_t chunk_offset = 0,
         const RawstdUUID& snap_id = {}

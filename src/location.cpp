@@ -56,51 +56,48 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
 }
 
 // A resume cursor's own string form, mirroring a target string's own
-// filename grammar ("<uuid>[:<offset>][@<snap_id>]", target.hpp's own doc
-// comment) -- never a full URI itself: a RawstorPaginationToken's cursor
-// has no scheme/host of its own, it only ever gets passed back to the
-// exact Location it came from. Empty (all-zero ListedObject) means "from
-// the start"/"nothing left", matching rawstor_pagination_token_empty().
+// trailing path grammar (Target::Path's own doc comment, target.hpp) --
+// never a full URI itself: a RawstorPaginationToken's cursor has no
+// scheme/host of its own, it only ever gets passed back to the exact
+// Location it came from. Empty (all-zero ListedObject) means "from the
+// start"/"nothing left", matching rawstor_pagination_token_empty().
 std::string encode_token(const rawstor::ListedObject& obj) {
     if (obj == rawstor::ListedObject{}) {
         return "";
     }
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&obj.id, &uuid_string);
+    bool has_snap = !rawstd_uuid_is_nil(&obj.snap_id);
     std::string ret = uuid_string;
-    if (obj.chunk_offset != 0) {
-        ret += ":" + std::to_string(obj.chunk_offset);
+    // The offset segment is mandatory once a snapshot segment follows it
+    // (Target::Path's own doc comment, target.hpp).
+    if (obj.chunk_offset != 0 || has_snap) {
+        ret += "/" + std::to_string(obj.chunk_offset);
     }
-    if (!rawstd_uuid_is_nil(&obj.snap_id)) {
+    if (has_snap) {
         RawstdUUIDString snap_string;
         rawstd_uuid_to_string(&obj.snap_id, &snap_string);
-        ret += "@" + std::string(snap_string);
+        ret += "/" + std::string(snap_string);
     }
     return ret;
 }
 
+// Reuses Target::parse_path() (a static method, not tied to an instance)
+// rather than a second copy of its own id/offset/snap_id grammar -- see
+// ost/src/client.cpp's own decode_pagination_token() for why a
+// throwaway scheme/host wrapped around the bare cursor string parses
+// identically (parse_path() never looks past the path itself).
 rawstor::ListedObject decode_token(const std::string& s) {
     rawstor::ListedObject ret{};
     if (s.empty()) {
         return ret;
     }
 
-    size_t colon = s.find(':');
-    size_t at = s.find('@');
-    std::string uuid_part = s.substr(0, std::min(colon, at));
-    int res = rawstd_uuid_from_string(&ret.id, uuid_part.c_str());
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    if (colon != std::string::npos) {
-        ret.chunk_offset = strtoull(s.c_str() + colon + 1, nullptr, 10);
-    }
-    if (at != std::string::npos) {
-        res = rawstd_uuid_from_string(&ret.snap_id, s.c_str() + at + 1);
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-    }
+    rawstor::Target::Path path =
+        rawstor::Target::parse_path(rawstd::URI("x://x/" + s));
+    ret.id = path.id;
+    ret.chunk_offset = path.offset;
+    ret.snap_id = path.snap_id;
     return ret;
 }
 

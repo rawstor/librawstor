@@ -137,18 +137,20 @@ number:
 
 | Backend | Slot home + metadata | Versions (`snap_id`) |
 |---------|----------------------|----------------------|
-| `file://` | `<id>[:<offset>]` + `.meta` sidecar | `-ENOTSUP` in v1 |
+| `file://` | dir `<id>/<offset>/`, `data` + `meta` inside it | `-ENOTSUP` in v1 |
 | `lvm://`  | thin LV `<id>[-<offset>]`, meta in LVM tags | thin snapshot LV |
 | `zfs://`  | zvol `<id>[:<offset>]`, meta in user properties | `@s<snap_id>` |
 
-(`offset` omitted when 0 -- a standalone object and a multi-chunk
-object's own chunk 0 are then byte-for-byte the same name, by design. `slot_index` isn't
-part of the physical name at all: each mirror of one chunk gets its own
-URI in the target string that addresses it -- comma-separated, same as
-any plain mirrored target -- rather than a naming-scheme component; `-`
-is LVM's own separator since its naming forbids `:`, unlike the
-`:<offset>` the target-string syntax and `file://`/`zfs://` share. See
-docs/locations_and_targets.md, "Chunk offset".)
+(`file://`'s own `<offset>` directory is never omitted, even "0" --
+unlike the target-string syntax's own offset path segment
+(docs/locations_and_targets.md, "Chunk offset"), a physical directory
+layout has no ambiguity to avoid by omitting it, so there's nothing to
+gain from doing so; `lvm://`/`zfs://` still omit it when 0, same as
+before. `slot_index` isn't part of the physical name at all: each
+mirror of one chunk gets its own URI in the target string that
+addresses it -- comma-separated, same as any plain mirrored target --
+rather than a naming-scheme component; `-` is LVM's own separator since
+its naming forbids `:`.)
 
 ### `chunk_meta` — one schema, two layers
 
@@ -495,9 +497,11 @@ reconstruct scan (below).
   nothing stored twice; `snapdev=visible` is set with every snapshot so
   each one that exists is also openable), read via
   `/dev/zvol/…@s<id>`, read-only at the device level too.
-- **Reads:** `<target>@<snap_id>` on the regular open
-  (`mds://host:port/<id>@<snap_id>`, `ost://…/<uuid>@<snap_id>`), `snap_id`
-  a UUID string; the wire carries it in SET_OBJECT's/OBJ_OPEN's own
+- **Reads:** a trailing snapshot path segment on the regular open
+  (`mds://host:port/<id>/0/<snap_id>`, `ost://…/<uuid>/0/<snap_id>` -- the
+  offset segment is mandatory once a snapshot follows it, docs/
+  locations_and_targets.md's own "Chunk offset"), `snap_id` a UUID
+  string; the wire carries it in SET_OBJECT's/OBJ_OPEN's own
   `snap_id[16]` field (`RawstorOSTFrameSnapPayload`) -- SPEC never carried
   a version at all, it only ever answers about the live object. Opening a
   snapshot **bypasses the mirror state machine

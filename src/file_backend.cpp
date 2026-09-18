@@ -32,32 +32,62 @@
 
 namespace {
 
-// The physical file's own name is self-describing (docs/mds.md, "Chunk
-// identity"): `id` is the volume's own id for every one of its chunks
-// (mds::Backend no longer scrambles it), `chunk_offset` (0 for a plain
-// object or a volume's own chunk 0 -- the two are indistinguishable at
-// this layer by design) disambiguates which chunk of that id this is.
-// Omitted (bare "<uuid>") when 0, so a plain object's name is unchanged
-// from before this suffix existed.
+// One chunk's own directory: <location>/<uuid>/<chunk_offset>[/<snap_id>]
+// -- self-describing (docs/mds.md, "Chunk identity"): `uuid` is the
+// volume's own id for every one of its chunks (mds::Backend no longer
+// scrambles it), `chunk_offset` (0 for a plain object or a volume's own
+// chunk 0 -- the two are indistinguishable at this layer by design)
+// disambiguates which chunk of that id this is, always its own path
+// component (never omitted, unlike the id/offset/snap_id path *target
+// strings* use -- see Target::Path's own doc comment in target.hpp for
+// why those stay optional; a physical directory layout has no such
+// ambiguity to worry about, so there's nothing to gain from omitting
+// it). `snap_id`, when bound, is one directory deeper still -- file://
+// never actually creates one (_open() below always rejects a non-nil
+// one, no native CoW), but the layout is already shaped for a backend
+// that could. Two files live directly under this directory: `data` (the
+// object's own bytes) and `meta` (get_target_meta_path() below).
+std::string get_target_dir(
+    const std::string& location_path, const RawstdUUIDString& uuid,
+    uint64_t chunk_offset, const RawstdUUID& snap_id = {}
+) {
+    std::ostringstream oss;
+
+    oss << location_path << "/" << uuid << "/" << chunk_offset;
+    if (!rawstd_uuid_is_nil(&snap_id)) {
+        RawstdUUIDString snap_string;
+        rawstd_uuid_to_string(&snap_id, &snap_string);
+        oss << "/" << snap_string;
+    }
+
+    return oss.str();
+}
+
 std::string get_target_path(
     const std::string& location_path, const RawstdUUIDString& uuid,
     uint64_t chunk_offset
 ) {
-    std::ostringstream oss;
-
-    oss << location_path << "/" << uuid;
-    if (chunk_offset != 0) {
-        oss << ":" << chunk_offset;
-    }
-
-    return oss.str();
+    return get_target_dir(location_path, uuid, chunk_offset) + "/data";
 }
 
 std::string get_target_meta_path(
     const std::string& location_path, const RawstdUUIDString& uuid,
     uint64_t chunk_offset
 ) {
-    return get_target_path(location_path, uuid, chunk_offset) + ".meta";
+    return get_target_dir(location_path, uuid, chunk_offset) + "/meta";
+}
+
+// Creates `path` if it doesn't already exist -- shared by create()'s own
+// chain of nested directories (<location>/<uuid>/<chunk_offset>), each
+// level possibly already made by an earlier chunk of the same id.
+void mkdir_or_exist(const std::string& path) {
+    if (mkdir(path.c_str(), 0755) == -1) {
+        if (errno == EEXIST) {
+            errno = 0;
+        } else {
+            RAWSTD_THROW_ERRNO();
+        }
+    }
 }
 
 std::string get_location_path(const rawstd::URI& location) {
@@ -117,33 +147,51 @@ rawstd::Task<void> Backend::list(
     try {
         std::string location_path = get_location_path(location());
 
+        // Two levels deep: <location>/<uuid>/<chunk_offset>/data --
+        // list() only ever enumerates live objects (docs/mds.md,
+        // "Snapshot-version records are skipped (stage 2)"), so a third,
+        // snapshot-named level (get_target_dir()'s own doc comment)
+        // never applies here; an offset directory missing its own `data`
+        // file (mid-create(), or a leftover empty one after remove())
+        // is silently skipped rather than reported as a malformed name.
         std::vector<ListedObject> found;
-        for (const auto& entry :
+        for (const auto& uuid_entry :
              std::filesystem::directory_iterator(location_path)) {
-            if (!entry.path().extension().empty()) {
+            if (!uuid_entry.is_directory()) {
                 continue;
             }
-            std::string filename = entry.path().filename().string();
-
-            std::string uuid_part = filename;
-            uint64_t chunk_offset = 0;
-            size_t colon = filename.find(':');
-            if (colon != std::string::npos) {
-                uuid_part = filename.substr(0, colon);
-                chunk_offset =
-                    strtoull(filename.c_str() + colon + 1, nullptr, 10);
-            }
-
+            std::string uuid_name = uuid_entry.path().filename().string();
             RawstdUUID uuid;
-            int res = rawstd_uuid_from_string(&uuid, uuid_part.c_str());
+            int res = rawstd_uuid_from_string(&uuid, uuid_name.c_str());
             if (res < 0) {
                 rawstd_warning(
-                    "%s: %s\n", strerror(-res), entry.path().string().c_str()
+                    "%s: %s\n", strerror(-res),
+                    uuid_entry.path().string().c_str()
                 );
                 continue;
             }
 
-            found.push_back(ListedObject{uuid, chunk_offset, RawstdUUID{}});
+            for (const auto& offset_entry :
+                 std::filesystem::directory_iterator(uuid_entry.path())) {
+                if (!offset_entry.is_directory()) {
+                    continue;
+                }
+                std::string offset_name = offset_entry.path().filename();
+                char* endptr = nullptr;
+                errno = 0;
+                uint64_t chunk_offset =
+                    strtoull(offset_name.c_str(), &endptr, 10);
+                if (errno != 0 || endptr == offset_name.c_str() ||
+                    *endptr != '\0') {
+                    errno = 0;
+                    continue;
+                }
+                if (!std::filesystem::exists(offset_entry.path() / "data")) {
+                    continue;
+                }
+
+                found.push_back(ListedObject{uuid, chunk_offset, RawstdUUID{}});
+            }
         }
 
         std::sort(found.begin(), found.end());
@@ -193,19 +241,17 @@ rawstd::Task<void> Backend::create(
     _validate_spec(sp);
 
     std::string location_path = get_location_path(location());
-    if (mkdir(location_path.c_str(), 0755) == -1) {
-        if (errno == EEXIST) {
-            errno = 0;
-        } else {
-            RAWSTD_THROW_ERRNO();
-        }
-    }
+    mkdir_or_exist(location_path);
 
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
+    mkdir_or_exist(location_path + "/" + uuid_string);
 
-    std::string target_path =
-        get_target_path(location_path, uuid_string, chunk_offset);
+    std::string target_dir =
+        get_target_dir(location_path, uuid_string, chunk_offset);
+    mkdir_or_exist(target_dir);
+
+    std::string target_path = target_dir + "/data";
 
     int fd = ::open(
         target_path.c_str(), O_EXCL | O_CREAT | O_WRONLY | O_CLOEXEC,
@@ -291,13 +337,12 @@ rawstd::Task<void> Backend::create(
 
     // A fresh copy starts with sync_id 0: it has never been part of an
     // established sync set (see docs/mirroring.md). Written after the data
-    // file so a crash between the two never leaves a .meta file without
+    // file so a crash between the two never leaves a meta file without
     // its data file; set_sync_state()/meta() failing ENOENT on the reverse
-    // (data file present, no .meta yet) is exactly case F10.
+    // (data file present, no meta yet) is exactly case F10.
     std::exception_ptr meta_error;
     try {
-        std::string meta_path =
-            get_target_meta_path(location_path, uuid_string, chunk_offset);
+        std::string meta_path = target_dir + "/meta";
 
         int meta_fd = co_await _queue.open(
             meta_path.c_str(), O_EXCL | O_CREAT | O_WRONLY | O_CLOEXEC,
@@ -365,18 +410,27 @@ Backend::remove(const RawstdUUID& id, uint64_t chunk_offset) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string target_path =
-        get_target_path(location_path, uuid_string, chunk_offset);
-    co_await _queue.unlink(target_path.c_str());
+    std::string target_dir =
+        get_target_dir(location_path, uuid_string, chunk_offset);
+    co_await _queue.unlink((target_dir + "/data").c_str());
 
-    std::string meta_path =
-        get_target_meta_path(location_path, uuid_string, chunk_offset);
     try {
-        co_await _queue.unlink(meta_path.c_str());
+        co_await _queue.unlink((target_dir + "/meta").c_str());
     } catch (const std::system_error& e) {
         if (e.code().value() != ENOENT) {
             throw;
         }
+    }
+
+    // Best-effort cleanup of the now-empty directory chain -- rmdir()
+    // fails ENOTEMPTY, silently tolerated, the moment a sibling still
+    // lives there: another chunk_offset under the same uuid (the uuid
+    // directory), or -- once a backend actually creates one -- a
+    // surviving snapshot under this same offset (this directory).
+    if (rmdir(target_dir.c_str()) == -1) {
+        errno = 0;
+    } else if (rmdir((location_path + "/" + uuid_string).c_str()) == -1) {
+        errno = 0;
     }
 }
 
@@ -516,9 +570,17 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
         // the event loop scanning this directory -- io_uring has no
         // readdir/getdents opcode to make that part async too, only
         // IORING_OP_STATX for the per-entry stat() below (already async
-        // via _queue.stat()).
+        // via _queue.stat()). Recursive now that each object's own
+        // `data`/`meta` live a directory (or two) deep
+        // (get_target_dir()'s own doc comment) rather than directly
+        // under location_path -- every directory level along the way is
+        // skipped by the is_regular_file() check, only the leaf files
+        // themselves are stat()ed and summed.
         for (const auto& entry :
-             std::filesystem::directory_iterator(location_path)) {
+             std::filesystem::recursive_directory_iterator(location_path)) {
+            if (!entry.is_regular_file()) {
+                continue;
+            }
             struct stat st;
             try {
                 co_await _queue.stat(entry.path().c_str(), &st);

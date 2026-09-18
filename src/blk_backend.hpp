@@ -118,7 +118,7 @@ protected:
     // covering every field at its widest (a full 16 hex digits for each
     // uint64_t one, a full 36-char dashed UUID for volume_id). Protected
     // (not private): file::Backend, the only subclass that needs it,
-    // sizes its own fixed-length on-disk .meta record to this constant
+    // sizes its own fixed-length on-disk `meta` record to this constant
     // instead of guessing; nothing outside the class hierarchy needs it,
     // unlike meta_encode()/meta_decode() themselves (public further
     // down, for tests/).
@@ -168,7 +168,7 @@ public:
     // logical_index=0:chunk_size=0:snap_id=0" -- shared by every
     // blk-backed subclass's own native per-copy metadata storage:
     // lvm::Backend's LVM tag, zfs::Backend's ZFS user property, and
-    // file::Backend's own on-disk .meta file (NUL-padded out to
+    // file::Backend's own on-disk `meta` file (NUL-padded out to
     // META_MAX_SIZE bytes -- see its own doc comment for why). Only
     // characters valid in all three are used (no comma, no whitespace).
     // Public (not protected) so tests/ can exercise them directly

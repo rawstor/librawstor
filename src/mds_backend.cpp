@@ -44,16 +44,21 @@ RawstorObjectPolicy policy_of(const RawstorObjectSpec& sp) {
     return ret;
 }
 
-// One chunk slot's own target URI: "<uuid>[:<offset>][@<snap_id>]"
+// One chunk slot's own target URI: "<uuid>/<offset>[/<snap_id>]"
 // (Target's own doc comment) -- `uuid` is the whole object's own id,
 // unchanged for every one of its chunks (docs/mds.md, "Chunk identity":
 // obj_id = id -- the physical resource's own name is self-describing, so
 // nothing here needs to scramble it into a per-chunk uuid of its own);
 // `offset` (index * chunk_size, the same formula docs/mds.md's own
 // "chunk_offset" uses) is what Target::offset() reads back on the far
-// end and disambiguates which of the object's chunks this is, `snap_id`
-// what Target::snap_id() does. Throws if the MDS could not resolve the
-// OST: refuse loudly instead of silently opening under-protected.
+// end and disambiguates which of the object's chunks this is -- always
+// stamped, even 0 for chunk 0 (unlike a plain, non-chunked target's own
+// offset segment, which Target::parse_path() only ever sees omitted):
+// its presence is what marks this URI as one chunk of a larger object
+// rather than a standalone one. `snap_id` is what Target::snap_id()
+// reads back, omitted when nil (live). Throws if the MDS could not
+// resolve the OST: refuse loudly instead of silently opening
+// under-protected.
 rawstd::URI chunk_slot_target(
     const RawstdUUID& id, uint64_t index, const WireSlot& slot,
     uint64_t chunk_size, const RawstdUUID& snap_id = {}
@@ -67,11 +72,11 @@ rawstd::URI chunk_slot_target(
 
     std::ostringstream oss;
     oss << "ost://" << slot.address << "/" << uuid_string;
-    oss << ":" << (index * chunk_size);
+    oss << "/" << (index * chunk_size);
     if (!rawstd_uuid_is_nil(&snap_id)) {
         RawstdUUIDString snap_string;
         rawstd_uuid_to_string(&snap_id, &snap_string);
-        oss << "@" << snap_string;
+        oss << "/" << snap_string;
     }
     return rawstd::URI(oss.str());
 }
@@ -112,7 +117,7 @@ RawstorObjectSpec chunk_spec(const WireMap& map, uint64_t index) {
     RawstorObjectSpec sp{};
     sp.size = chunk_logical_size(map.logical_size, map.chunk_size, index);
     // The chunk's own placement identity: member_kind plus the target
-    // string's own id/":<offset>" (chunk_slot_target() above) -- no
+    // string's own id/offset segment (chunk_slot_target() above) -- no
     // separate id/logical_index/snap_id fields to stamp here any more
     // (see RawstorObjectSpec's own doc comment in target.h).
     sp.member_kind = RAWSTOR_MEMBER_DATA;
@@ -126,8 +131,8 @@ RawstorObjectSpec chunk_spec(const WireMap& map, uint64_t index) {
 
 // The whole object's own spec -- everything Target::create() (target.hpp's
 // own doc comment) needs to derive each chunk's own share of it by
-// itself (chunk_size + this total size + each chunk's own ":<offset>"),
-// so create() below only has to build this once instead of one
+// itself (chunk_size + this total size + each chunk's own offset
+// segment), so create() below only has to build this once instead of one
 // chunk_spec() per chunk. Same fields Backend::spec() below already
 // reports for an open object.
 RawstorObjectSpec object_spec(const WireMap& map) {
@@ -145,9 +150,9 @@ RawstorObjectSpec object_spec(const WireMap& map) {
 // The internal multi-chunk Target string (target.hpp's own doc comment)
 // describing the whole object: every chunk's own URIs, comma-joined
 // together with every other chunk's -- Target's own constructor sorts
-// them back into chunk groups itself, by each URI's own ":<offset>"
-// suffix, so nothing here needs to mark where one chunk's own group ends
-// and the next begins.
+// them back into chunk groups itself, by each URI's own offset path
+// segment, so nothing here needs to mark where one chunk's own group
+// ends and the next begins.
 std::string build_target_string(const WireMap& map, const RawstdUUID& snap_id) {
     std::vector<rawstd::URI> uris;
     for (uint64_t i = 0; i < map.chunks.size(); ++i) {

@@ -7,6 +7,7 @@
 #include "opts.h"
 #include "ost_backend.hpp"
 #include "slot.hpp"
+#include "target.hpp"
 
 #include <rawio/awaitable.hpp>
 #include <rawio/stream.hpp>
@@ -64,43 +65,36 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
 
 // A connect()ed Slot's metadata methods take a bare id (like the Backend
 // methods they wrap) rather than a full URI -- extract it once here
-// instead of in every one of this file's own call sites. Deliberately a
-// local duplicate of target.cpp's own uuid_from_target(): Chunk::create()
-// below must be able to validate/derive an id from a raw URI list on its
-// own, without relying on a Target having done it first (see chunk.hpp's
-// own doc comment on why Chunk is no longer built exclusively via
-// Target).
+// instead of in every one of this file's own call sites. Uses Target's
+// own parse_path() (a static method, not tied to an instance):
+// Chunk::create() below must be able to validate/derive an id from a raw
+// URI list on its own, without relying on a Target having done it first
+// (see chunk.hpp's own doc comment on why Chunk is no longer built
+// exclusively via Target).
 RawstdUUID uuid_from_target(const rawstd::URI& uri) {
-    RawstdUUID id;
-    int res = rawstd_uuid_from_string(&id, uri.path().filename().c_str());
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    return id;
+    return rawstor::Target::parse_path(uri).id;
 }
 
-// Local duplicate of target.cpp's own extract_snap_id() -- see
-// uuid_from_target()'s own comment above on why Chunk::create() carries
-// its own copies rather than relying on Target having already run them.
 RawstdUUID extract_snap_id(const rawstd::URI& uri) {
-    const std::string& filename = uri.path().filename();
-    size_t at = filename.find('@');
-    if (at == std::string::npos) {
-        return RawstdUUID{};
+    return rawstor::Target::parse_path(uri).snap_id;
+}
+
+// The URI with its own trailing identity (Target::Path) stripped back
+// off -- see target.cpp's own strip_path() for why this isn't just
+// URI::parent() any more.
+rawstd::URI strip_path(const rawstd::URI& uri) {
+    rawstor::Target::Path path = rawstor::Target::parse_path(uri);
+    rawstd::URI ret = uri;
+    for (unsigned int i = 0; i < path.segments; ++i) {
+        ret = ret.parent();
     }
-    RawstdUUID snap_id;
-    int res = rawstd_uuid_from_string(&snap_id, filename.c_str() + at + 1);
-    if (res < 0) {
-        rawstd_error("Malformed snapshot suffix: %s\n", filename.c_str());
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    return snap_id;
+    return ret;
 }
 
 // Every URI in one chunk group must name the same logical resource: same
 // uuid, same bound snapshot version -- compared on their *parsed* values,
-// not the raw filename string, so equivalent-but-differently-spelled URIs
-// (e.g. "<uuid>" and "<uuid>:0@0") are correctly accepted as the same
+// not the raw path string, so equivalent-but-differently-spelled URIs
+// (e.g. "<uuid>" and "<uuid>/0") are correctly accepted as the same
 // chunk rather than rejected as a mismatch (target.cpp's own
 // validate_same_uuid() has the identical fix, for the identical reason).
 void validate_same_uuid(const std::vector<rawstd::URI>& uris) {
@@ -137,7 +131,7 @@ void validate_same_uuid(const std::vector<rawstd::URI>& uris) {
 rawstd::Task<std::unique_ptr<rawstor::Slot>>
 connect_one(rawio::Queue& queue, const rawstd::URI& uri) {
     co_return co_await rawstor::Slot::create(
-        queue, uri.parent(), rawstor_opts_sessions()
+        queue, strip_path(uri), rawstor_opts_sessions()
     );
 }
 
@@ -1557,7 +1551,7 @@ rawstd::DetachedTask Chunk::_probe_tick() {
     int error = 0;
     try {
         slot = co_await Slot::create(
-            _queue, _members[idx].target.parent(), rawstor_opts_sessions()
+            _queue, strip_path(_members[idx].target), rawstor_opts_sessions()
         );
         co_await slot->open(_id, _offset);
     } catch (const std::system_error& e) {

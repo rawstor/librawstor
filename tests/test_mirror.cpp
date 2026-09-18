@@ -169,10 +169,10 @@ public:
 
     void drop(size_t i) const { fs::remove_all(_dirs[i]); }
 
-    // file::Backend keeps one data file per object, named after the UUID
-    // alone (see get_target_path() in src/file_backend.cpp) -- no .dat/.spec
-    // split.
-    fs::path dat(size_t i) const { return _dirs[i] / _uuid; }
+    // file::Backend keeps one `data` file per object, under a directory
+    // named after the UUID and the (here, always 0) chunk_offset (see
+    // get_target_dir() in src/file_backend.cpp) -- no .dat/.spec split.
+    fs::path dat(size_t i) const { return _dirs[i] / _uuid / "0" / "data"; }
 };
 
 std::string read_file(const fs::path& path) {

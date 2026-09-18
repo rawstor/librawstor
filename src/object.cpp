@@ -1,6 +1,7 @@
 #include "object.hpp"
 
 #include "chunk.hpp"
+#include "target.hpp"
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
@@ -16,50 +17,21 @@
 
 namespace {
 
-// The bound snapshot version embedded in a URI's own filename, if
-// any -- "<uuid>" (live, nil) or "<uuid>@<snap_id>" (chunk_slot_target()'s
-// own convention in mds_backend.cpp). Deliberately a local duplicate of
-// target.cpp's own extract_snap_id(): Chunk::create() takes `snap_id` as a
-// plain scalar, so Object::_chunk() below (like Target::open()) extracts
-// it from its own already-validated URI group once here, rather than
-// Chunk::create() re-parsing it out of every URI itself.
+// The bound snapshot version/byte offset embedded in a URI's own
+// trailing path segments, if any -- see Target::Path's own doc comment
+// in target.hpp. Deliberately calling Target's own parse_path() (a
+// static method, not tied to an instance) rather than duplicating the
+// parsing logic here a third time: Chunk::create() takes `snap_id`/
+// `chunk_offset` as plain scalars, so Object::_chunk() below (like
+// Target::open()) extracts them from its own already-validated URI
+// group once here, rather than Chunk::create() re-parsing them out of
+// every URI itself.
 RawstdUUID extract_snap_id(const rawstd::URI& uri) {
-    const std::string& filename = uri.path().filename();
-    size_t at = filename.find('@');
-    if (at == std::string::npos) {
-        return RawstdUUID{};
-    }
-    RawstdUUID snap_id;
-    int res = rawstd_uuid_from_string(&snap_id, filename.c_str() + at + 1);
-    if (res < 0) {
-        rawstd_error("Malformed snapshot suffix: %s\n", filename.c_str());
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    return snap_id;
+    return rawstor::Target::parse_path(uri).snap_id;
 }
 
-// This URI's own byte offset within its parent mds:// volume, if any --
-// "<uuid>" (0) or "<uuid>:<offset>[@<snap_id>]" (chunk_slot_target()'s
-// own convention in mds_backend.cpp). Deliberately a local duplicate of
-// target.cpp's own extract_offset(), for the same reason extract_snap_id()
-// above is.
 uint64_t extract_offset(const rawstd::URI& uri) {
-    const std::string& filename = uri.path().filename();
-    size_t colon = filename.find(':');
-    if (colon == std::string::npos) {
-        return 0;
-    }
-    size_t at = filename.find('@', colon);
-    std::string offset_str = filename.substr(
-        colon + 1, at == std::string::npos ? std::string::npos : at - colon - 1
-    );
-    std::istringstream iss(offset_str);
-    uint64_t offset = 0;
-    if (!(iss >> offset) || !iss.eof()) {
-        rawstd_error("Malformed offset suffix: %s\n", filename.c_str());
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    return offset;
+    return rawstor::Target::parse_path(uri).offset;
 }
 
 } // namespace

@@ -57,7 +57,7 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
 }
 
 // Encodes id/chunk_offset/snap_id into a RawstorPaginationToken's own
-// cursor string ("<uuid>[:<offset>][@<snap_id>]", the same grammar
+// cursor string ("<uuid>[/<offset>[/<snap_id>]]", the same grammar
 // rawstor::Location::list()'s own encode_token() in src/location.cpp
 // uses) -- an all-zero id means "from the start", matching a zeroed
 // RawstorOSTFrameListPayload's own token_id.
@@ -72,16 +72,19 @@ std::string encode_pagination_token(
     memcpy(uuid.bytes, id, sizeof(uuid.bytes));
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
-    std::string ret = uuid_string;
-    if (chunk_offset != 0) {
-        ret += ":" + std::to_string(chunk_offset);
-    }
     RawstdUUID snap_uuid;
     memcpy(snap_uuid.bytes, snap_id, sizeof(snap_uuid.bytes));
-    if (!rawstd_uuid_is_nil(&snap_uuid)) {
+    bool has_snap = !rawstd_uuid_is_nil(&snap_uuid);
+    std::string ret = uuid_string;
+    // The offset segment is mandatory once a snapshot segment follows it
+    // (Target::Path's own doc comment, target.hpp).
+    if (chunk_offset != 0 || has_snap) {
+        ret += "/" + std::to_string(chunk_offset);
+    }
+    if (has_snap) {
         RawstdUUIDString snap_string;
         rawstd_uuid_to_string(&snap_uuid, &snap_string);
-        ret += "@" + std::string(snap_string);
+        ret += "/" + std::string(snap_string);
     }
     return ret;
 }
@@ -90,7 +93,12 @@ std::string encode_pagination_token(
 // RawstorPaginationToken's own cursor string back into a
 // RawstorOSTFrameListEntry (LIST's response uses the identical shape for
 // both a real entry and its own trailing resume cursor -- protocol.h's
-// own doc comment on RawstorOSTFrameListEntry).
+// own doc comment on RawstorOSTFrameListEntry). Reuses Target::parse_path()
+// (a static method, not tied to an instance) rather than a fourth copy of
+// its own id/offset/snap_id grammar: the cursor string is exactly a
+// target's own trailing path with no scheme/host in front of it, so a
+// throwaway scheme/host ("x://x") wrapped around it parses identically
+// -- parse_path() never looks past the path itself.
 RawstorOSTFrameListEntry
 decode_pagination_token(const RawstorPaginationToken& token) {
     RawstorOSTFrameListEntry ret{};
@@ -99,27 +107,12 @@ decode_pagination_token(const RawstorPaginationToken& token) {
     }
 
     std::string s(token.bytes, strnlen(token.bytes, sizeof(token.bytes)));
-    size_t colon = s.find(':');
-    size_t at = s.find('@');
-    std::string uuid_part = s.substr(0, std::min(colon, at));
+    rawstor::Target::Path path =
+        rawstor::Target::parse_path(rawstd::URI("x://x/" + s));
 
-    RawstdUUID id;
-    int res = rawstd_uuid_from_string(&id, uuid_part.c_str());
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    memcpy(ret.id, id.bytes, sizeof(ret.id));
-    if (colon != std::string::npos) {
-        ret.chunk_offset = strtoull(s.c_str() + colon + 1, nullptr, 10);
-    }
-    if (at != std::string::npos) {
-        RawstdUUID snap_id;
-        res = rawstd_uuid_from_string(&snap_id, s.c_str() + at + 1);
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-        memcpy(ret.snap_id, snap_id.bytes, sizeof(ret.snap_id));
-    }
+    memcpy(ret.id, path.id.bytes, sizeof(ret.id));
+    ret.chunk_offset = path.offset;
+    memcpy(ret.snap_id, path.snap_id.bytes, sizeof(ret.snap_id));
     return ret;
 }
 
@@ -178,33 +171,19 @@ RawstorOSTFrameListEntry list_entry_from_target(const char* target) {
 // ---------------------------------------------------------------------
 
 // Uses rawstor::Target directly (not the rawstor_target_open() C API):
-// this is the one place in ost/ that needs a snap_id-bound open (rawstor_
-// docs/Mds.md, "Snapshots" -- the wire's SET_OBJECT `val` already carries
-// it, but the public C API has no way to pass it through). Target::open()
-// takes no `snap_id` parameter of its own -- the bound version, if any, is
-// part of the target string itself (the "@<snap_id>" suffix,
-// chunk_slot_target()'s own convention in mds_backend.cpp) -- so `snap_id`
-// is folded onto every URI's own path here first. `uris` is taken by
-// value for the same reason a by-value std::string used to be here: a
-// coroutine parameter declared as a reference is not lifetime-extended
-// past the initiating call the way an ordinary function's would be.
-rawstd::Task<RawstorObject*> co_target_open(
-    RawIOQueue* queue, std::vector<rawstd::URI> uris, const RawstdUUID& snap_id
-) {
-    std::vector<rawstd::URI> snapped;
-    snapped.reserve(uris.size());
-    for (const auto& uri : uris) {
-        std::ostringstream oss;
-        oss << uri.str();
-        if (!rawstd_uuid_is_nil(&snap_id)) {
-            RawstdUUIDString snap_string;
-            rawstd_uuid_to_string(&snap_id, &snap_string);
-            oss << '@' << snap_string;
-        }
-        snapped.emplace_back(oss.str());
-    }
-
-    rawstor::Target t(rawstd::URI::uris(snapped));
+// this is the one place in ost/ that needs a snap_id-bound open
+// (docs/mds.md, "Snapshots" -- SET_OBJECT's own snap_id field already
+// carries it, but the public C API has no way to pass it through).
+// `uris` already has any bound version folded into its own trailing path
+// segment (Client::_targets()'s own `snap_id` parameter, called by
+// _set_object() below) -- Target::open() itself takes no `snap_id`
+// parameter of its own. Taken by value for the same reason a by-value
+// std::string used to be here: a coroutine parameter declared as a
+// reference is not lifetime-extended past the initiating call the way an
+// ordinary function's would be.
+rawstd::Task<RawstorObject*>
+co_target_open(RawIOQueue* queue, std::vector<rawstd::URI> uris) {
+    rawstor::Target t(rawstd::URI::uris(uris));
     std::unique_ptr<rawstor::Object> object =
         co_await t.open(*static_cast<rawio::Queue*>(queue));
     co_return object.release();
@@ -1577,17 +1556,17 @@ rawstd::DetachedTask Client::_set_object(
 
         RawstdUUID uuid;
         memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-        targets = client->_targets(uuid, payload.offset);
+        // snap_id is the bound version -- nil for live, or a previously
+        // snapshotted id (docs/mds.md, "Snapshots").
+        RawstdUUID snap_id;
+        memcpy(snap_id.bytes, payload.snap_id, sizeof(payload.snap_id));
+        targets = client->_targets(uuid, payload.offset, snap_id);
     }
 
     RawstorObject* object = nullptr;
     int error = 0;
     try {
-        // snap_id is the bound version -- nil for live, or a previously
-        // snapshotted id (docs/mds.md, "Snapshots").
-        RawstdUUID snap_id;
-        memcpy(snap_id.bytes, payload.snap_id, sizeof(payload.snap_id));
-        object = co_await co_target_open(queue, targets, snap_id);
+        object = co_await co_target_open(queue, targets);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1991,15 +1970,20 @@ std::vector<rawstd::URI> Client::_targets(
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
 
+    bool has_snap = !rawstd_uuid_is_nil(&snap_id);
     std::ostringstream filename;
     filename << uuid_string;
-    if (chunk_offset != 0) {
-        filename << ":" << chunk_offset;
+    // The offset segment is mandatory once a snapshot segment follows it
+    // (Target::Path's own doc comment, target.hpp) -- otherwise a bare
+    // "<uuid>/<snap_id>" would be indistinguishable from "<uuid>/<offset>"
+    // with no snapshot at all.
+    if (chunk_offset != 0 || has_snap) {
+        filename << "/" << chunk_offset;
     }
-    if (!rawstd_uuid_is_nil(&snap_id)) {
+    if (has_snap) {
         RawstdUUIDString snap_string;
         rawstd_uuid_to_string(&snap_id, &snap_string);
-        filename << "@" << snap_string;
+        filename << "/" << snap_string;
     }
 
     std::vector<rawstd::URI> ret;

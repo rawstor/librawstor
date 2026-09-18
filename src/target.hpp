@@ -33,8 +33,8 @@ class Object;
 // chunk's own mirrors, one after another, with no second separator
 // marking where one chunk's own group ends and the next begins. The
 // constructor instead groups them back apart itself, by each URI's own
-// ":<offset>" suffix (see extract_offset()'s own comment in target.cpp):
-// URIs sharing one offset are mirrors of one chunk, never two different
+// offset path segment (see parse_path()'s own comment below): URIs
+// sharing one offset are mirrors of one chunk, never two different
 // ones. Deliberately lightweight -- unlike Chunk, it never holds a Slot
 // between calls; every method below opens a Slot per URI just for that
 // one call and closes it again before returning, same as the code they
@@ -48,6 +48,46 @@ class Object;
 // Chunk::create() (a friend of Object, by analogy with Chunk::create()
 // itself), keeping one Slot per URI alive in each Chunk's own pool.
 class Target final {
+public:
+    // One URI's own trailing path identity: `/<uuid>[/<offset>[/
+    // <snap_id>]]` -- offset omitted when 0 *and* there's no snap_id,
+    // snap_id omitted when nil, exactly the optionality the old
+    // ":<offset>@<snap_id>" filename suffix had, just spelled as path
+    // segments instead. Offset is otherwise mandatory the moment a
+    // snap_id follows (even "0") -- a target's own location can itself
+    // carry an arbitrary path (e.g. file:///a/b), so the identity is
+    // always read off the *end*, and a UUID-shaped segment alone can't
+    // tell "this is a snapshot" apart from "this is just the id, with an
+    // unrelated (if coincidentally UUID-shaped) location segment ahead
+    // of it" -- only a valid offset segment right before it can (see
+    // parse_path()'s own comment in target.cpp for exactly how).
+    // `segments` is how many trailing path segments this identity
+    // actually consumed -- callers that need the URI with the identity
+    // stripped back off (to recover the plain Location it was built
+    // under) call URI::parent() this many times, not just once.
+    //
+    // Ready for a future snapshot-of-a-snapshot chain
+    // (".../offset/snap1/snap2", where snap2's own parent is snap1, not
+    // always the offset): parse_path() already walks every trailing
+    // UUID-shaped segment, not just one, and counts all of them into
+    // `segments` -- only the deepest (leaf) link is exposed as `snap_id`
+    // today, since nothing constructs a longer chain yet.
+    struct Path {
+        RawstdUUID id;
+        uint64_t offset;
+        RawstdUUID snap_id;
+        unsigned int segments;
+    };
+
+    // Parses one URI's own trailing identity (see Path's own doc comment
+    // above). Throws EINVAL if the path's last segment (past any
+    // snapshot/offset segments) isn't a valid UUID. A static method, not
+    // an instance one -- by analogy with Chunk::create(), callers that
+    // don't (yet) have a Target instance to ask (Chunk::create() itself,
+    // Object::_chunk()'s own lazy reopen) can still parse a raw URI on
+    // their own.
+    static Path parse_path(const rawstd::URI& uri);
+
 private:
     // One entry per chunk group the constructor sorted the target
     // string's own flat URI list into (see the class's own doc comment)
@@ -59,16 +99,16 @@ public:
 
     // Builds a single-chunk Target directly from `location`'s own URIs
     // plus `id`/`offset`/`snap_id`, skipping the string round-trip the
-    // constructor above needs -- each of `location`'s own URIs gets `id`
-    // (plus the same ":<offset>"/"@<snap_id>" suffix, if `offset`/
-    // `snap_id` isn't 0/nil) appended as its own path, the same way
-    // Location::create() already builds one for a fresh object.
-    // `location`'s own constructor already guarantees at least one URI,
-    // so there's nothing left to validate here. Used where the pieces are
-    // already known separately (e.g. a concrete Backend's own list(),
-    // building one Target per entry from its own location() and a
-    // just-listed id/chunk_offset/snap_id) rather than assembled into a
-    // string first.
+    // constructor above needs -- each of `location`'s own URIs gets
+    // `id`/`offset`/`snap_id` appended as its own trailing path segments
+    // (Path's own doc comment above), `offset`/`snap_id` omitted when
+    // 0/nil, the same way Location::create() already builds one for a
+    // fresh object. `location`'s own constructor already guarantees at
+    // least one URI, so there's nothing left to validate here. Used
+    // where the pieces are already known separately (e.g. a concrete
+    // Backend's own list(), building one Target per entry from its own
+    // location() and a just-listed id/chunk_offset/snap_id) rather than
+    // assembled into a string first.
     Target(
         const Location& location, const RawstdUUID& id, uint64_t offset = 0,
         const RawstdUUID& snap_id = {}
@@ -89,20 +129,20 @@ public:
     // Location::create()).
     Location location() const;
 
-    // The bound snapshot version, if any -- the "@<snap_id>" suffix on
-    // the first chunk group's own URIs (chunk_slot_target()'s own
-    // convention in mds_backend.cpp), or nil (live) if absent. No I/O:
-    // parsed from the target string itself, same as id()/location()
-    // above.
+    // The bound snapshot version, if any -- the trailing snapshot path
+    // segment on the first chunk group's own URIs (Path's own doc
+    // comment above; chunk_slot_target()'s own convention in
+    // mds_backend.cpp), or nil (live) if absent. No I/O: parsed from the
+    // target string itself, same as id()/location() above.
     RawstdUUID snap_id() const;
 
     // This target's own byte offset within the larger object it's one
-    // chunk of, if any -- the ":<offset>" suffix mds::Backend stamps onto
-    // each chunk group's own URIs when it builds the internal multi-chunk
-    // string (chunk_slot_target()'s own convention in mds_backend.cpp:
-    // `index * chunk_size`), or 0 if absent (a plain, single-chunk target
-    // has no such larger object to be an offset into). No I/O, same as
-    // snap_id() above.
+    // chunk of, if any -- the offset path segment mds::Backend stamps
+    // onto each chunk group's own URIs when it builds the internal
+    // multi-chunk string (chunk_slot_target()'s own convention in
+    // mds_backend.cpp: `index * chunk_size`), or 0 if absent (a plain,
+    // single-chunk target has no such larger object to be an offset
+    // into). No I/O, same as snap_id() above.
     uint64_t offset() const;
 
     // Creates every chunk group, in order -- a single group (the plain,
@@ -111,8 +151,8 @@ public:
     // statement that this call's own size needs splitting) gets `sp.size`
     // unmodified; a genuine multi-chunk-group target (mds::Backend's own
     // internal flat string) splits it, `sp.size` then being the whole
-    // object's own total size and each group's own `:<offset>` suffix
-    // (extract_offset()) saying where its own, possibly smaller (the
+    // object's own total size and each group's own offset path segment
+    // (parse_path()) saying where its own, possibly smaller (the
     // last chunk), share begins. On any chunk's failure, every URI actually
     // created so far (earlier chunks in full, plus whichever of the
     // failing chunk's own mirrors got that far) is rolled back before the
@@ -145,9 +185,9 @@ public:
     // non-URI syntax for them (see this method's own comment in
     // target.cpp) -- every other chunk stays lazily opened, same as
     // before (Object::_chunk()). A snapshot view, if any, is already
-    // part of each URI (the "@<snap_id>" suffix, same convention as
-    // chunk_slot_target() in mds_backend.cpp) -- there's no separate
-    // `snap_id` parameter here.
+    // part of each URI (the trailing snapshot path segment, same
+    // convention as chunk_slot_target() in mds_backend.cpp) -- there's no
+    // separate `snap_id` parameter here.
     rawstd::Task<std::unique_ptr<Object>> open(rawio::Queue& queue);
 
     // Native CoW snapshot of every URI in the first chunk group

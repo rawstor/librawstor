@@ -71,7 +71,7 @@ struct RawstorObjectSpec {
      * name is self-describing (docs/mds.md, "Chunk identity" -- obj_id =
      * id) -- a chunk's own id is exactly the id its own target
      * string carries, and its logical_index is chunk_offset / chunk_size
-     * (the target string's own ":<offset>" suffix,
+     * (the target string's own offset path segment,
      * rawstor_target_offset()). Nothing here needs to repeat either.
      */
     enum RawstorMemberKind member_kind;
@@ -560,16 +560,20 @@ int rawstor_target_location(
  * @brief Retrieve the snapshot version bound to a target string.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
- * this function reads the "@<snap_id>" suffix (if any) off @p target's own
- * UUID path segment. This is purely a syntactic operation on @p target -- no
- * backend is contacted, and the target need not exist.
+ * this function reads the trailing snapshot path segment (if any) off
+ * @p target's own path -- present only alongside an explicit offset segment
+ * (even "0"): a target string's identity is `<uuid>[/<offset>[/<snap_id>]]`,
+ * offset never omitted once a snapshot follows it, so a bound version and an
+ * unrelated trailing path segment of the target's own location can never be
+ * confused for one another. This is purely a syntactic operation on
+ * @p target -- no backend is contacted, and the target need not exist.
  *
  * @param target   Target string, e.g.:
  *                 - "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00"
  *                 -
- * "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00@019cbfad-..."
+ * "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00/0/019cbfad-..."
  * @param buf      Output buffer for the bound version's UUID string, or an
- *                 empty string if @p target carries no "@<snap_id>" suffix
+ *                 empty string if @p target carries no bound snapshot
  *                 (the live version). Same truncation convention as
  *                 rawstor_target_id().
  * @param size     Size of the output buffer in bytes (including space for the
@@ -592,18 +596,19 @@ int rawstor_target_snap_id(
  *        mds:// object.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
- * this function reads the ":<offset>" suffix (if any) off @p target's own
- * UUID path segment -- present only on a chunk of an mds:// object opened
- * internally by the library (mds::Backend's own internal target strings; a
- * plain, user-facing target never carries one). This is purely a syntactic
- * operation on @p target -- no backend is contacted, and the target need
- * not exist.
+ * this function reads the offset path segment (if any) right after @p
+ * target's own UUID path segment -- present only on a chunk of an mds://
+ * object opened internally by the library (mds::Backend's own internal
+ * target strings; a plain, user-facing target never carries one, unless it
+ * also has a bound snapshot -- see rawstor_target_snap_id()). This is purely
+ * a syntactic operation on @p target -- no backend is contacted, and the
+ * target need not exist.
  *
  * @param target  Target string, e.g.:
  *                - "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00"
  * @param offset  Out-parameter written on success: the target's own byte
  *                offset within its parent object, or 0 if @p target carries
- *                no ":<offset>" suffix. Left untouched on error.
+ *                no offset path segment. Left untouched on error.
  *
  * @return 0 on success; a negative errno if @p target is not valid target
  *         syntax.
