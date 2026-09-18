@@ -358,8 +358,14 @@ rawstd::Task<void> Location::list(
     ListedObject next_token = empty;
     for (const auto& [loc_targets, loc_token] : listings) {
         for (const Target& t : loc_targets) {
-            ListedObject key{t.id(), t.offset(), t.snap_id()};
-            targets_map[key].push_back(t.uris().front());
+            // No Target::offset() accessor (its own doc comment,
+            // target.hpp) -- read straight off the one URI this Target
+            // wraps instead, same as .front() just below.
+            std::vector<rawstd::URI> uris = t.uris();
+            ListedObject key{
+                t.id(), Target::parse_path(uris.front()).offset, t.snap_id()
+            };
+            targets_map[key].push_back(uris.front());
         }
         if (!(loc_token == empty)) {
             if (next_token == empty || loc_token < next_token) {

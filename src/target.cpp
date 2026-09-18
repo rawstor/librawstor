@@ -146,24 +146,25 @@ group_by_offset(const std::vector<rawstd::URI>& uris) {
     return ret;
 }
 
-// Every URI in one chunk group must name the same logical resource: same
-// uuid, same bound snapshot version -- compared on their *parsed* values
-// (uuid_from_target()/extract_snap_id()), not the raw path string, so
-// equivalent-but-differently-spelled URIs (e.g. "<uuid>" and "<uuid>/0"
-// -- offset is already guaranteed equal here, both landed in the same
-// bucket via extract_offset() in the constructor below) are correctly
-// accepted as the same chunk rather than rejected as a mismatch.
-void validate_same_uuid(const std::vector<rawstd::URI>& targets) {
-    if (targets.empty()) {
-        return;
-    }
-
-    RawstdUUID uuid = uuid_from_target(targets.front());
-    RawstdUUID snap_id = extract_snap_id(targets.front());
-
+// Every URI in `targets` must name the same logical resource as `id`/
+// `snap_id` -- compared on their *parsed* values (uuid_from_target()/
+// extract_snap_id()), not the raw path string, so equivalent-but-
+// differently-spelled URIs (e.g. "<uuid>" and "<uuid>/0" -- offset is
+// already guaranteed equal within one chunk group, both landed in the
+// same bucket via extract_offset() in the constructor below) are
+// correctly accepted as the same resource rather than rejected as a
+// mismatch. Takes the expected id/snap_id explicitly rather than
+// deriving them from `targets.front()` itself, so the same check works
+// both within one chunk group and across every group of a multi-chunk
+// target (Target's own class doc comment: the whole target agrees on
+// one id/snap_id, not just one group of it).
+void validate_same_uuid(
+    const std::vector<rawstd::URI>& targets, const RawstdUUID& id,
+    const RawstdUUID& snap_id
+) {
     for (const auto& target : targets) {
-        RawstdUUID other_uuid = uuid_from_target(target);
-        if (rawstd_uuid_cmp(&uuid, &other_uuid) != 0) {
+        RawstdUUID other_id = uuid_from_target(target);
+        if (rawstd_uuid_cmp(&id, &other_id) != 0) {
             rawstd_error("Equal UUID expected\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
@@ -633,6 +634,14 @@ Target::Target(const std::string& target) {
     validate_not_empty(uris);
     size_t total = uris.size();
 
+    // The whole target's own identity (Target's own class doc comment,
+    // target.hpp) -- any URI answers it identically, so the very first
+    // one (before grouping/sorting reorders anything) is as good as any
+    // other; validate_same_uuid() below then checks every URI in every
+    // group actually agrees.
+    _id = uuid_from_target(uris.front());
+    _snap_id = extract_snap_id(uris.front());
+
     std::map<uint64_t, std::vector<rawstd::URI>> groups;
     for (rawstd::URI& uri : uris) {
         uint64_t offset = extract_offset(uri);
@@ -642,7 +651,7 @@ Target::Target(const std::string& target) {
     _uris.reserve(total);
     for (auto& [offset, group] : groups) {
         validate_different_uris(group);
-        validate_same_uuid(group);
+        validate_same_uuid(group, _id, _snap_id);
         for (rawstd::URI& uri : group) {
             _uris.push_back(std::move(uri));
         }
@@ -652,7 +661,9 @@ Target::Target(const std::string& target) {
 Target::Target(
     const Location& location, const RawstdUUID& id, uint64_t offset,
     const RawstdUUID& snap_id
-) {
+) :
+    _id(id),
+    _snap_id(snap_id) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
@@ -682,25 +693,28 @@ std::vector<rawstd::URI> Target::uris() const {
 }
 
 RawstdUUID Target::id() const {
-    return uuid_from_target(_uris.front());
+    return _id;
 }
 
 Location Target::location() const {
-    std::vector<rawstd::URI> group = first_group(_uris);
+    // Every URI, across every chunk group -- not just the first
+    // (Target::location()'s own doc comment, target.hpp) -- deduplicated
+    // (Location itself rejects a duplicate URI, and nothing about
+    // placement rules out two different chunks landing on the same OST).
+    std::set<rawstd::URI> seen;
     std::vector<rawstd::URI> stripped;
-    stripped.reserve(group.size());
-    for (const auto& uri : group) {
-        stripped.push_back(strip_path(uri));
+    stripped.reserve(_uris.size());
+    for (const auto& uri : _uris) {
+        rawstd::URI s = strip_path(uri);
+        if (seen.insert(s).second) {
+            stripped.push_back(std::move(s));
+        }
     }
     return Location(rawstd::URI::uris(stripped));
 }
 
 RawstdUUID Target::snap_id() const {
-    return extract_snap_id(_uris.front());
-}
-
-uint64_t Target::offset() const {
-    return extract_offset(_uris.front());
+    return _snap_id;
 }
 
 rawstd::Task<void>
@@ -1360,7 +1374,10 @@ int rawstor_target_snap_id(
 int rawstor_target_offset(const char* target, uint64_t* offset) noexcept {
     try {
         rawstor::Target t(target);
-        *offset = t.offset();
+        // No Target::offset() accessor (its own doc comment, target.hpp)
+        // -- read straight off the first URI's own path instead, the
+        // same way Target's own free functions in this file do.
+        *offset = rawstor::Target::parse_path(t.uris().front()).offset;
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

@@ -526,8 +526,11 @@ int rawstor_target_id(
  * Given a target string (as defined in the Rawstor location/target syntax),
  * this function writes a comma‑separated list of location URIs (i.e. @p target
  * with the UUID path segment stripped back off each URI) into the provided
- * buffer. This is purely a syntactic operation on @p target -- no backend is
- * contacted, and the target need not exist.
+ * buffer -- every URI @p target names, deduplicated (a plain target's own
+ * URIs are already all distinct, but an mds://-internal multi-chunk string
+ * can legitimately repeat the same backend across different chunks). This
+ * is purely a syntactic operation on @p target -- no backend is contacted,
+ * and the target need not exist.
  *
  * The format is the same as the location part of a target string, for example:
  *

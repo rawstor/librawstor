@@ -112,6 +112,17 @@ private:
     // group_by_offset() in target.cpp derive it on demand instead).
     std::vector<rawstd::URI> _uris;
 
+    // The object's own identity -- the same for every URI in `_uris`,
+    // across every chunk group, not just within one (validated once, at
+    // construction: the constructor's own comment, target.cpp). Unlike
+    // offset (see the class's own doc comment on why Target dropped that
+    // accessor) or location() (a chunk group's own physical placement,
+    // genuinely different chunk to chunk on a real multi-chunk mds://
+    // object), id/snap_id name *what* this target addresses, not *where*
+    // or *which slice* -- a single value the whole target agrees on.
+    RawstdUUID _id;
+    RawstdUUID _snap_id;
+
 public:
     explicit Target(const std::string& target);
 
@@ -139,30 +150,40 @@ public:
     // left to hand out one of.
     std::vector<rawstd::URI> uris() const;
 
-    // The UUID shared by every URI in the first chunk group -- parsed
-    // from the first one.
+    // The UUID every URI in `_uris` agrees on -- validated once, at
+    // construction (the constructor's own comment, target.cpp), not
+    // re-parsed on every call.
     RawstdUUID id() const;
 
-    // The Location the first chunk group was created under -- each URI
-    // with its UUID path segment stripped back off (the inverse of
-    // Location::create()).
-    Location location() const;
-
     // The bound snapshot version, if any -- the trailing snapshot path
-    // segment on the first chunk group's own URIs (Path's own doc
-    // comment above; chunk_slot_target()'s own convention in
-    // mds_backend.cpp), or nil (live) if absent. No I/O: parsed from the
-    // target string itself, same as id()/location() above.
+    // segment every URI in `_uris` agrees on (Path's own doc comment
+    // above; chunk_slot_target()'s own convention in mds_backend.cpp),
+    // or nil (live) if absent. Same validated-once, stored shape as id()
+    // above.
     RawstdUUID snap_id() const;
 
-    // This target's own byte offset within the larger object it's one
-    // chunk of, if any -- the offset path segment mds::Backend stamps
-    // onto each chunk group's own URIs when it builds the internal
-    // multi-chunk string (chunk_slot_target()'s own convention in
-    // mds_backend.cpp: `index * chunk_size`), or 0 if absent (a plain,
-    // single-chunk target has no such larger object to be an offset
-    // into). No I/O, same as snap_id() above.
-    uint64_t offset() const;
+    // Every backend location this target's own URIs touch, across every
+    // chunk group, not just the first -- each URI's own identity path
+    // segments stripped back off (Location::create()'s own inverse),
+    // deduplicated (a real multi-chunk mds:// object's own chunks can
+    // legitimately land on the same OST as each other, nothing about
+    // placement rules that out, and Location itself rejects a duplicate
+    // URI). Unlike id()/snap_id() above, there's no single value every
+    // chunk agrees on to just validate-and-store -- this is a set
+    // union, computed fresh each call.
+    Location location() const;
+
+    // Deliberately no offset() accessor here, unlike id()/snap_id()/
+    // location() above: unlike those, a chunk group's own offset within
+    // a larger mds:// object has no sensible whole-target combination at
+    // all (not a single agreed value like id/snap_id, not a
+    // meaningfully unioned set like location() -- an offset's entire
+    // point is telling one chunk apart from every other chunk of the
+    // same object, so there is no coherent "this target's own offset"
+    // for anything but a single-chunk target). A caller that actually
+    // wants one specific URI's own offset already has that URI in hand
+    // (uris() above) and can ask parse_path() directly, the same way
+    // this class's own free functions in target.cpp do.
 
     // Creates every chunk group, in order -- a single group (the plain,
     // single-chunk case, including a lone mds:// URI -- sp.chunk_size
