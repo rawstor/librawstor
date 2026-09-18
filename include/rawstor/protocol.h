@@ -55,17 +55,6 @@ extern "C" {
 #define RAWSTOR_CMD_META 12
 
 /*
- * 0x22 used to be LIST_CHUNKS, a dedicated one-round-trip reconstruct scan
- * command (docs/mds.md, "Reconstruct / DR"). Removed: the reconstruct scan
- * now does the same LIST + META per object the caller would otherwise do
- * itself anyway, so a separate wire command bought nothing but a second
- * code path to a result LIST+META already gets, at O(n) round trips
- * instead of one -- an acceptable cost for a scan that only runs on
- * `rawstor-mds --reconstruct`, not a hot path. Left unassigned rather than
- * reused, so an old client/server pairing fails loudly (-ENOSYS) instead
- * of silently misinterpreting a repurposed opcode.
- */
-/*
  * Native CoW snapshot of one stored object version (docs/mds.md,
  * "Snapshots"): rides RawstorOSTFrameSnapPayload, snap_id is the caller's
  * own already-generated version id (like every object id, client-
@@ -73,26 +62,6 @@ extern "C" {
  * -ENOTSUP on backends without CoW (file://, classic LVM).
  */
 #define RAWSTOR_CMD_SNAPSHOT 0x23
-/*
- * 0x24 used to be SNAP_REMOVE, a dedicated command for destroying a
- * snapshot version -- merged into RAWSTOR_CMD_RELEASE above once
- * removing the live version and removing a snapshot became the same
- * function (rawstor::Backend::remove(), nil-means-live) with no
- * remaining reason for two wire commands either. Left unassigned rather
- * than reused, same reasoning as 0x22/0x44's own doc comments.
- */
-
-/*
- * 0x44 used to be OBJ_SNAP_BEGIN, half of a two-phase snapshot protocol
- * where the MDS durably reserved the next snap_id of a monotonic
- * per-object counter before the client could use it. Removed once
- * snap_id became a UUID (docs/mds.md, "Snapshots"): the client generates
- * it itself, the same single point every other id is generated at
- * (rawstd_uuid7_init()) -- nothing left for the MDS to hand out, and a
- * generated id can never collide with the counter a crashed attempt left
- * behind, because there is no counter any more. Left unassigned rather
- * than reused, for the same reason 0x22 (LIST_CHUNKS) above is.
- */
 
 /*
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/open/
