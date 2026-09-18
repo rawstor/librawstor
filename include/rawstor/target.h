@@ -133,9 +133,10 @@ struct RawstorObjectSyncState {
  * copy's mirror consistency identity (sync_state, the part
  * rawstor_target_set_sync_state() can actually change). `spec.mirrors`
  * is filled in by rawstor_target_meta() itself the same way
- * rawstor_target_spec() fills its own -- the number of URIs in the
- * target string, computed locally -- not by the backend that answered:
- * mirrors isn't a property of any single copy.
+ * rawstor_target_spec() fills its own -- the target's own per-chunk
+ * mirror count, computed locally (for a plain target, this is simply
+ * the number of URIs in the target string) -- not by the backend that
+ * answered: mirrors isn't a property of any single copy.
  *
  * @see rawstor_target_meta
  * @see rawstor_target_set_sync_state
@@ -210,8 +211,9 @@ int rawstor_target_spec(
  * call or being left out -- the entry's own position in @p metas is what
  * ties it back to that URI, so skipping it would lose that. `spec.mirrors`
  * in every entry that did answer is filled in the same way
- * rawstor_target_spec() fills its own -- the number of URIs in @p target,
- * computed locally -- not whatever the answering copy's own backend
+ * rawstor_target_spec() fills its own -- the target's own per-chunk
+ * mirror count, computed locally (for a plain @p target, simply the
+ * number of URIs in it) -- not whatever the answering copy's own backend
  * happened to report.
  *
  * Legacy copies created before metadata support report size only, with

@@ -177,18 +177,22 @@ followed by a snapshot segment, e.g.
 Offset and snapshot are told apart from an arbitrary preceding location
 path by shape alone (a UUID-shaped segment vs. a decimal one):
 `Target::parse_path()` (src/target.hpp) reads the identity off the
-*end* of the path, so a trailing run of UUID-shaped segments is a
-snapshot chain candidate only if a valid decimal offset (and another
-UUID, the id) precede it — the *physical* shape above; otherwise the
-run's own leftmost segment is the id and its rightmost (if the run is
-more than one segment long) is the snapshot instead — the *logical*
-shape, offset implied 0. A chunk's own offset is always spelled out
-explicitly (the physical shape) since it's never 0-and-absent-by-
-convention the way a plain target's own implied offset is. Like the
-internal multi-chunk form above, this is built only by `mds::Backend`
-from its own chunk map and never something a caller types — `Target`'s
-own constructor reads it back out to reconstruct chunk grouping, and
-it's also readable through `Target::offset()`/`rawstor_target_offset()`
+*end* of the path. A trailing run of UUID-shaped segments is a snapshot
+chain candidate only if a valid decimal offset (and another UUID, the
+id) precede it — the *physical, with a bound snapshot* shape above;
+otherwise the run's own leftmost segment is the id and its rightmost (if
+the run is more than one segment long) is the snapshot instead — the
+*logical* shape, offset implied 0. If the last segment isn't UUID-shaped
+at all (no snapshot chain to find), it must instead be the decimal
+offset itself, with the id right before it — `ost://host:port/<uuid>/
+1048576` above, the *physical, live* shape: an explicit offset with no
+snapshot anywhere in the path. A chunk's own offset is always spelled
+out explicitly (one of the two physical shapes) since it's never
+0-and-absent-by-convention the way a plain target's own implied offset
+is. Like the internal multi-chunk form above, this is built only by
+`mds::Backend` from its own chunk map and never something a caller
+types — `Target`'s own constructor reads it back out to reconstruct
+chunk grouping, and it's also readable through `rawstor_target_offset()`
 directly (0 for a plain, non-`mds://` target).
 
 ---
