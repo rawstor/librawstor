@@ -690,7 +690,7 @@ Target::Target(
     }
 }
 
-RawstdUUID Target::id() const {
+const RawstdUUID& Target::id() const {
     return _id;
 }
 
@@ -711,12 +711,12 @@ Location Target::location() const {
     return Location(rawstd::URI::uris(stripped));
 }
 
-RawstdUUID Target::snap_id() const {
+const RawstdUUID& Target::snap_id() const {
     return _snap_id;
 }
 
 rawstd::Task<void>
-Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
+Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     // Mandatory: the caller must always state how many copies it thinks
     // it's creating, and it must match every chunk group's own URI count
     // exactly -- a mismatch is a caller bug (e.g. reusing a Spec read
@@ -822,7 +822,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
 // its local share, is not summed here). `size` is identical on every
 // copy, so this only needs one to answer: URIs are tried in order, first
 // reachable wins, same fail-over tolerance as meta() below.
-rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
+rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
     std::vector<rawstd::URI> uris = first_group(_uris);
     int first_error = 0;
     for (const auto& uri : uris) {
@@ -858,7 +858,8 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
 // spec() above -- the answering backend has no idea what the target's
 // own URI count is, so whatever it put there (if anything) isn't
 // meaningful.
-rawstd::Task<std::vector<RawstorObjectMeta>> Target::meta(rawio::Queue& queue) {
+rawstd::Task<std::vector<RawstorObjectMeta>>
+Target::meta(rawio::Queue& queue) const {
     std::vector<rawstd::URI> uris = first_group(_uris);
     std::vector<rawstd::Task<RawstorObjectMeta>> tasks;
     tasks.reserve(uris.size());
@@ -890,7 +891,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Target::meta(rawio::Queue& queue) {
 // as possible rather than none.
 rawstd::Task<void> Target::set_sync_state(
     rawio::Queue& queue, const RawstorObjectSyncState& sync_state
-) {
+) const {
     std::vector<rawstd::URI> uris = first_group(_uris);
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(uris.size());
@@ -900,7 +901,7 @@ rawstd::Task<void> Target::set_sync_state(
     co_await rawstd::gather(std::move(tasks));
 }
 
-rawstd::Task<void> Target::remove(rawio::Queue& queue) {
+rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
     // Every URI of every chunk group's own REMOVE goes out concurrently
     // instead of one chunk (or one URI) at a time -- _uris is already a
     // flat list of all of them (Target's own class doc comment), so
@@ -916,7 +917,7 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) {
 }
 
 rawstd::Task<void>
-Target::snapshot_create(rawio::Queue& queue, const RawstdUUID& snap_id) {
+Target::snapshot_create(rawio::Queue& queue, const RawstdUUID& snap_id) const {
     std::vector<rawstd::URI> uris = first_group(_uris);
     // Same fan-out shape as remove() above: every URI is attempted
     // concurrently regardless of an earlier failure.
@@ -928,7 +929,8 @@ Target::snapshot_create(rawio::Queue& queue, const RawstdUUID& snap_id) {
     co_await rawstd::gather(std::move(tasks));
 }
 
-rawstd::Task<void> Target::resize(rawio::Queue& queue, uint64_t new_size) {
+rawstd::Task<void>
+Target::resize(rawio::Queue& queue, uint64_t new_size) const {
     std::vector<rawstd::URI> uris = first_group(_uris);
     // Every URI's own backend is asked to grow -- for the one real
     // caller (a single mds:// URI, mds::Backend::resize()) this is a
@@ -959,7 +961,7 @@ rawstd::Task<void> Target::resize(rawio::Queue& queue, uint64_t new_size) {
 // spec().size. Both already-opened Chunks are handed straight into the
 // Object's own matching entries below -- Object::_chunk() never reopens
 // them.
-rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
+rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) const {
     std::vector<std::vector<rawstd::URI>> chunks = group_by_offset(_uris);
 
     if (chunks.size() == 1) {

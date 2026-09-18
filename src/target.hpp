@@ -153,14 +153,14 @@ public:
     // The UUID every URI in `_uris` agrees on -- validated once, at
     // construction (the constructor's own comment, target.cpp), not
     // re-parsed on every call.
-    RawstdUUID id() const;
+    const RawstdUUID& id() const;
 
     // The bound snapshot version, if any -- the trailing snapshot path
     // segment every URI in `_uris` agrees on (Path's own doc comment
     // above; chunk_slot_target()'s own convention in mds_backend.cpp),
     // or nil (live) if absent. Same validated-once, stored shape as id()
     // above.
-    RawstdUUID snap_id() const;
+    const RawstdUUID& snap_id() const;
 
     // Every backend location this target's own URIs touch, across every
     // chunk group, not just the first -- each URI's own identity path
@@ -199,16 +199,18 @@ public:
     // error is rethrown -- same all-or-nothing contract as the
     // single-chunk case used to have, just spanning every chunk instead
     // of one.
-    rawstd::Task<void> create(rawio::Queue& queue, const RawstorObjectSpec& sp);
-    rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue);
+    rawstd::Task<void>
+    create(rawio::Queue& queue, const RawstorObjectSpec& sp) const;
+    rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue) const;
     // One RawstorObjectMeta per URI in the first chunk group, same order
     // -- every URI is queried, not just the first reachable one; a URI
     // that doesn't answer gets a zero-filled entry (see this method's
     // own doc comment in target.cpp for why).
-    rawstd::Task<std::vector<RawstorObjectMeta>> meta(rawio::Queue& queue);
+    rawstd::Task<std::vector<RawstorObjectMeta>>
+    meta(rawio::Queue& queue) const;
     rawstd::Task<void> set_sync_state(
         rawio::Queue& queue, const RawstorObjectSyncState& sync_state
-    );
+    ) const;
     // Removes every URI of every chunk group concurrently -- unlike
     // create() above, there's no rollback to speak of (removal has
     // nothing to undo), so every URI of every chunk is still attempted
@@ -220,7 +222,7 @@ public:
     // the live version (Backend::remove()'s own doc comment). There is no
     // separate "snapshot_remove()": the identity being removed is already
     // whatever the target string itself names.
-    rawstd::Task<void> remove(rawio::Queue& queue);
+    rawstd::Task<void> remove(rawio::Queue& queue) const;
 
     // Opens the object this target addresses (docs/locations_and_targets.md).
     // A single chunk group becomes a single-chunk Object -- the ordinary
@@ -233,7 +235,7 @@ public:
     // part of each URI (the trailing snapshot path segment, same
     // convention as chunk_slot_target() in mds_backend.cpp) -- there's no
     // separate `snap_id` parameter here.
-    rawstd::Task<std::unique_ptr<Object>> open(rawio::Queue& queue);
+    rawstd::Task<std::unique_ptr<Object>> open(rawio::Queue& queue) const;
 
     // Native CoW snapshot of every URI in the first chunk group
     // (docs/mds.md, "Snapshots"): every URI is attempted even if an
@@ -247,12 +249,12 @@ public:
     // (docs/mds.md) -- an order this method has no way to express over a
     // flat `;`-joined string.
     rawstd::Task<void>
-    snapshot_create(rawio::Queue& queue, const RawstdUUID& snap_id);
+    snapshot_create(rawio::Queue& queue, const RawstdUUID& snap_id) const;
 
     // Grows the object to `new_size` -- ENOTSUP on every target except a
     // single mds:// one (mds::Backend::resize()); see Backend::resize()'s
     // own doc comment.
-    rawstd::Task<void> resize(rawio::Queue& queue, uint64_t new_size);
+    rawstd::Task<void> resize(rawio::Queue& queue, uint64_t new_size) const;
 };
 
 } // namespace rawstor
