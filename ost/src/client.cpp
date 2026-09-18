@@ -62,7 +62,7 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
 // uses) -- an all-zero id means "from the start", matching a zeroed
 // RawstorOSTFrameListPayload's own token_id.
 std::string encode_pagination_token(
-    const uint8_t (&id)[16], uint64_t chunk_offset, uint64_t snap_id
+    const uint8_t (&id)[16], uint64_t chunk_offset, const uint8_t (&snap_id)[16]
 ) {
     static const uint8_t null_id[16] = {};
     if (memcmp(id, null_id, sizeof(null_id)) == 0) {
@@ -76,8 +76,12 @@ std::string encode_pagination_token(
     if (chunk_offset != 0) {
         ret += ":" + std::to_string(chunk_offset);
     }
-    if (snap_id != 0) {
-        ret += "@" + std::to_string(snap_id);
+    RawstdUUID snap_uuid;
+    memcpy(snap_uuid.bytes, snap_id, sizeof(snap_uuid.bytes));
+    if (!rawstd_uuid_is_nil(&snap_uuid)) {
+        RawstdUUIDString snap_string;
+        rawstd_uuid_to_string(&snap_uuid, &snap_string);
+        ret += "@" + std::string(snap_string);
     }
     return ret;
 }
@@ -109,7 +113,12 @@ decode_pagination_token(const RawstorPaginationToken& token) {
         ret.chunk_offset = strtoull(s.c_str() + colon + 1, nullptr, 10);
     }
     if (at != std::string::npos) {
-        ret.snap_id = strtoull(s.c_str() + at + 1, nullptr, 10);
+        RawstdUUID snap_id;
+        res = rawstd_uuid_from_string(&snap_id, s.c_str() + at + 1);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        memcpy(ret.snap_id, snap_id.bytes, sizeof(ret.snap_id));
     }
     return ret;
 }
@@ -117,7 +126,7 @@ decode_pagination_token(const RawstorPaginationToken& token) {
 // One LIST response entry from a target string rawstor_location_list()
 // returned -- rawstor_target_id()/_offset()/_snap_id() read back exactly
 // what the serving location's own chunk naming (or a plain target's
-// implicit 0 defaults) stamped on it.
+// implicit defaults) stamped on it.
 RawstorOSTFrameListEntry list_entry_from_target(const char* target) {
     RawstorOSTFrameListEntry ret{};
 
@@ -140,12 +149,19 @@ RawstorOSTFrameListEntry list_entry_from_target(const char* target) {
     }
     ret.chunk_offset = chunk_offset;
 
-    uint64_t snap_id = 0;
-    res = rawstor_target_snap_id(target, &snap_id);
+    char snap_id_buf[64];
+    res = rawstor_target_snap_id(target, snap_id_buf, sizeof(snap_id_buf));
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
-    ret.snap_id = snap_id;
+    if (res > 0) {
+        RawstdUUID snap_id;
+        res = rawstd_uuid_from_string(&snap_id, snap_id_buf);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        memcpy(ret.snap_id, snap_id.bytes, sizeof(ret.snap_id));
+    }
 
     return ret;
 }
@@ -173,15 +189,17 @@ RawstorOSTFrameListEntry list_entry_from_target(const char* target) {
 // coroutine parameter declared as a reference is not lifetime-extended
 // past the initiating call the way an ordinary function's would be.
 rawstd::Task<RawstorObject*> co_target_open(
-    RawIOQueue* queue, std::vector<rawstd::URI> uris, uint64_t snap_id
+    RawIOQueue* queue, std::vector<rawstd::URI> uris, const RawstdUUID& snap_id
 ) {
     std::vector<rawstd::URI> snapped;
     snapped.reserve(uris.size());
     for (const auto& uri : uris) {
         std::ostringstream oss;
         oss << uri.str();
-        if (snap_id != 0) {
-            oss << '@' << snap_id;
+        if (!rawstd_uuid_is_nil(&snap_id)) {
+            RawstdUUIDString snap_string;
+            rawstd_uuid_to_string(&snap_id, &snap_string);
+            oss << '@' << snap_string;
         }
         snapped.emplace_back(oss.str());
     }
@@ -683,16 +701,16 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
             // --- read this request's frame payload and dispatch it ---
             switch (head.cmd) {
             case RAWSTOR_CMD_SET_OBJECT: {
-                RawstorOSTFrameBasicPayload basic;
+                RawstorOSTFrameSnapPayload snap;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
+                    stream, &snap, sizeof(snap), fd, "request payload",
                     &stream_failed
                 );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                _set_object(weak, head, basic);
+                _set_object(weak, head, snap);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -725,30 +743,30 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 break;
             }
             case RAWSTOR_CMD_SNAPSHOT: {
-                RawstorOSTFrameBasicPayload basic;
+                RawstorOSTFrameSnapPayload snap;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
+                    stream, &snap, sizeof(snap), fd, "request payload",
                     &stream_failed
                 );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                _snapshot_create(weak, head, basic);
+                _snapshot_create(weak, head, snap);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
             case RAWSTOR_CMD_SNAP_REMOVE: {
-                RawstorOSTFrameBasicPayload basic;
+                RawstorOSTFrameSnapPayload snap;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
+                    stream, &snap, sizeof(snap), fd, "request payload",
                     &stream_failed
                 );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                _snapshot_remove(weak, head, basic);
+                _snapshot_remove(weak, head, snap);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -1195,7 +1213,7 @@ rawstd::DetachedTask Client::_release(
 // backend(s) implement -- same shape as _release() above.
 rawstd::DetachedTask Client::_snapshot_create(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicPayload payload
+    RawstorOSTFrameSnapPayload payload
 ) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
@@ -1211,15 +1229,17 @@ rawstd::DetachedTask Client::_snapshot_create(
     try {
         std::string target = rawstd::URI::uris(targets);
         rawstd::CallbackAwaitable<void> awaiter;
-        // payload.val is always a concrete, already-chosen id off the
-        // wire (never 0 -- the "assign one" sentinel only applies to an
-        // mds:// target, which a plain OST-local snapshot never is), so
-        // the "MDS assigns a version" branch of
-        // rawstor_target_snapshot_create() never triggers here.
-        uint64_t snap_id = payload.val;
+        // payload.snap_id is always a concrete, already-chosen id off the
+        // wire (never nil -- a plain OST-local snapshot always names an
+        // exact version, client-generated like every object id).
+        RawstdUUID snap_id;
+        memcpy(snap_id.bytes, payload.snap_id, sizeof(payload.snap_id));
+        RawstdUUIDString snap_string;
+        rawstd_uuid_to_string(&snap_id, &snap_string);
+        char buf[sizeof(RawstdUUIDString)];
         int res = rawstor_target_snapshot_create(
-            client->_queue, target.c_str(), &snap_id, result_trampoline,
-            &awaiter
+            client->_queue, target.c_str(), snap_string, buf, sizeof(buf),
+            result_trampoline, &awaiter
         );
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -1245,7 +1265,7 @@ rawstd::DetachedTask Client::_snapshot_create(
 
 rawstd::DetachedTask Client::_snapshot_remove(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicPayload payload
+    RawstorOSTFrameSnapPayload payload
 ) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
@@ -1261,8 +1281,12 @@ rawstd::DetachedTask Client::_snapshot_remove(
     try {
         std::string target = rawstd::URI::uris(targets);
         rawstd::CallbackAwaitable<void> awaiter;
+        RawstdUUID snap_id;
+        memcpy(snap_id.bytes, payload.snap_id, sizeof(payload.snap_id));
+        RawstdUUIDString snap_string;
+        rawstd_uuid_to_string(&snap_id, &snap_string);
         int res = rawstor_target_snapshot_remove(
-            client->_queue, target.c_str(), payload.val, result_trampoline,
+            client->_queue, target.c_str(), snap_string, result_trampoline,
             &awaiter
         );
         if (res < 0) {
@@ -1540,7 +1564,7 @@ Client::_info(std::weak_ptr<Client> weak, RawstorOSTFrameHead head) {
 
 rawstd::DetachedTask Client::_set_object(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicPayload payload
+    RawstorOSTFrameSnapPayload payload
 ) {
     RawIOQueue* queue;
     std::vector<rawstd::URI> targets;
@@ -1559,9 +1583,11 @@ rawstd::DetachedTask Client::_set_object(
     RawstorObject* object = nullptr;
     int error = 0;
     try {
-        // `val` is the bound version -- 0 for live, or a previously
+        // snap_id is the bound version -- nil for live, or a previously
         // snapshotted id (docs/mds.md, "Snapshots").
-        object = co_await co_target_open(queue, targets, payload.val);
+        RawstdUUID snap_id;
+        memcpy(snap_id.bytes, payload.snap_id, sizeof(payload.snap_id));
+        object = co_await co_target_open(queue, targets, snap_id);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1960,7 +1986,7 @@ rawstd::DetachedTask Client::_write_zeroes(
 }
 
 std::vector<rawstd::URI> Client::_targets(
-    const RawstdUUID& uuid, uint64_t chunk_offset, uint64_t snap_id
+    const RawstdUUID& uuid, uint64_t chunk_offset, const RawstdUUID& snap_id
 ) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
@@ -1970,8 +1996,10 @@ std::vector<rawstd::URI> Client::_targets(
     if (chunk_offset != 0) {
         filename << ":" << chunk_offset;
     }
-    if (snap_id != 0) {
-        filename << "@" << snap_id;
+    if (!rawstd_uuid_is_nil(&snap_id)) {
+        RawstdUUIDString snap_string;
+        rawstd_uuid_to_string(&snap_id, &snap_string);
+        filename << "@" << snap_string;
     }
 
     std::vector<rawstd::URI> ret;

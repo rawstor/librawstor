@@ -62,32 +62,47 @@ extern "C" {
  */
 /*
  * Native CoW snapshot of one stored object version (docs/mds.md,
- * "Snapshots"): rides RawstorOSTFrameBasicPayload, val = snap_id (never 0
- * -- 0 is the live version). -ENOTSUP on backends without CoW (file://,
- * classic LVM).
+ * "Snapshots"): rides RawstorOSTFrameSnapPayload, snap_id is the caller's
+ * own already-generated version id (like every object id, client-
+ * generated -- never nil, nil is reserved for the live version).
+ * -ENOTSUP on backends without CoW (file://, classic LVM).
  */
 #define RAWSTOR_CMD_SNAPSHOT 0x23
 #define RAWSTOR_CMD_SNAP_REMOVE 0x24
 
 /*
+ * 0x44 used to be OBJ_SNAP_BEGIN, half of a two-phase snapshot protocol
+ * where the MDS durably reserved the next snap_id of a monotonic
+ * per-object counter before the client could use it. Removed once
+ * snap_id became a UUID (docs/mds.md, "Snapshots"): the client generates
+ * it itself, the same single point every other id is generated at
+ * (rawstd_uuid7_init()) -- nothing left for the MDS to hand out, and a
+ * generated id can never collide with the counter a crashed attempt left
+ * behind, because there is no counter any more. Left unassigned rather
+ * than reused, for the same reason 0x22 (LIST_CHUNKS) above is.
+ */
+
+/*
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/open/
- * resize/remove a whole, possibly multi-chunk mds:// object. OBJ_OPEN,
- * OBJ_RESIZE and OBJ_REMOVE ride RawstorOSTFrameBasicPayload (object_id =
- * id; val = snap_id for open, the new size for resize).
+ * resize/remove a whole, possibly multi-chunk mds:// object. OBJ_RESIZE
+ * and OBJ_REMOVE ride RawstorOSTFrameBasicPayload (object_id = id; val =
+ * the new size for resize, unused for remove). OBJ_OPEN rides
+ * RawstorOSTFrameSnapPayload instead (object_id = id; snap_id = the
+ * bound version, nil = live) -- a plain uint64_t val has no room for one.
  */
 #define RAWSTOR_CMD_OBJ_CREATE 0x40
 #define RAWSTOR_CMD_OBJ_OPEN 0x41
 #define RAWSTOR_CMD_OBJ_RESIZE 0x42
 #define RAWSTOR_CMD_OBJ_REMOVE 0x43
 /*
- * Object snapshots are two-phase (docs/mds.md, "Snapshots"): BEGIN
- * durably reserves the snap_id (never reused -- leftovers of a crashed
- * attempt must not alias a later snapshot), the client then drains, takes
- * the per-chunk CoW snapshots, and COMMIT registers exactly who holds
- * them. REMOVE unregisters first (no new readers) and returns the member
- * set for the client's fan-out destroy.
+ * Object snapshots (docs/mds.md, "Snapshots"): the client generates
+ * snap_id itself, like every object id, before taking any per-chunk CoW
+ * copy -- COMMIT registers exactly who ends up holding them once every
+ * reachable chunk has one (rides RawstorObjectSnapCommitPayload). REMOVE
+ * unregisters first (no new readers) and returns the member set for the
+ * client's fan-out destroy (rides RawstorOSTFrameSnapPayload: object_id =
+ * id, snap_id = the version to remove).
  */
-#define RAWSTOR_CMD_OBJ_SNAP_BEGIN 0x44
 #define RAWSTOR_CMD_OBJ_SNAP_COMMIT 0x45
 #define RAWSTOR_CMD_OBJ_SNAP_REMOVE 0x46
 
@@ -125,6 +140,26 @@ struct RawstorOSTFrameBasic {
 } RAWSTOR_PACKED;
 
 /*
+ * Same shape as RawstorOSTFrameBasicPayload, for the handful of commands
+ * that need a UUID snap_id alongside object_id/offset instead of a plain
+ * uint64_t val: SET_OBJECT, SNAPSHOT, SNAP_REMOVE, OBJ_OPEN,
+ * OBJ_SNAP_REMOVE (each command's own doc comment above says which).
+ * snap_id nil means "the live version" where that's a meaningful state
+ * for the command (SET_OBJECT, OBJ_OPEN); SNAPSHOT/SNAP_REMOVE/
+ * OBJ_SNAP_REMOVE always carry a real, non-nil version.
+ */
+struct RawstorOSTFrameSnapPayload {
+    uint8_t object_id[16];
+    uint64_t offset;
+    uint8_t snap_id[16];
+} RAWSTOR_PACKED;
+
+struct RawstorOSTFrameSnap {
+    struct RawstorOSTFrameHead head;
+    struct RawstorOSTFrameSnapPayload payload;
+} RAWSTOR_PACKED;
+
+/*
  * LIST's request: `token_*` resumes strictly after the entry it names
  * (rawstor::Backend::list()'s own contract, src/backend.hpp) -- wider
  * than RawstorOSTFrameBasicPayload's own object_id/offset/val (id plus
@@ -137,7 +172,7 @@ struct RawstorOSTFrameBasic {
 struct RawstorOSTFrameListPayload {
     uint8_t token_id[16];
     uint64_t token_chunk_offset;
-    uint64_t token_snap_id;
+    uint8_t token_snap_id[16];
     uint32_t limit;
 } RAWSTOR_PACKED;
 
@@ -163,7 +198,7 @@ struct RawstorOSTFrameList {
 struct RawstorOSTFrameListEntry {
     uint8_t id[16];
     uint64_t chunk_offset;
-    uint64_t snap_id;
+    uint8_t snap_id[16];
 } RAWSTOR_PACKED;
 
 // Shared by READ/WRITE/DISCARD/WRITE_ZEROES: `hash` is only meaningful for
@@ -383,8 +418,7 @@ struct RawstorObjectDescriptorPayload {
 } RAWSTOR_PACKED;
 
 struct RawstorObjectChunkEntry {
-    uint64_t snap_id; /* 0 = live */
-    uint8_t width;    /* slots that follow */
+    uint8_t width; /* slots that follow */
 } RAWSTOR_PACKED;
 
 /*
@@ -401,25 +435,22 @@ struct RawstorObjectChunkSlot {
     char address[RAWSTOR_OBJ_ADDRESS_LEN];
 } RAWSTOR_PACKED;
 
-/* OBJ_SNAP_BEGIN response payload: the durably reserved snap_id. */
-struct RawstorObjectSnapBeganPayload {
-    uint64_t snap_id;
-} RAWSTOR_PACKED;
-
 /*
  * OBJ_SNAP_COMMIT request: the payload is followed by nmembers member
  * records -- the chunk copies that actually hold the snapshot (the
  * IN-SYNC set at creation; a degraded object snapshots with less
- * redundancy, recorded, not repaired -- see Mds.md).
+ * redundancy, recorded, not repaired -- see Mds.md). snap_id is the
+ * client's own already-generated version id (like every object id) --
+ * never nil, nil is reserved for the live version.
  *
- * OBJ_SNAP_REMOVE rides RawstorOSTFrameBasicPayload (object_id = id,
- * val = snap_id); its response payload is `res`
+ * OBJ_SNAP_REMOVE rides RawstorOSTFrameSnapPayload (object_id = id,
+ * snap_id = the version to remove); its response payload is `res`
  * RawstorObjectSnapMemberPayload records: what was registered, for the
  * fan-out destroy.
  */
 struct RawstorObjectSnapCommitPayload {
     uint8_t id[16];
-    uint64_t snap_id;
+    uint8_t snap_id[16];
     uint32_t nmembers;
 } RAWSTOR_PACKED;
 

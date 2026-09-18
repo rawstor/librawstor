@@ -56,7 +56,7 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
 }
 
 std::string Backend::_dataset(
-    const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
 ) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
@@ -66,14 +66,16 @@ std::string Backend::_dataset(
     if (chunk_offset != 0) {
         oss << ":" << chunk_offset;
     }
-    if (snap_id != 0) {
-        oss << "@s" << snap_id;
+    if (!rawstd_uuid_is_nil(&snap_id)) {
+        RawstdUUIDString snap_str;
+        rawstd_uuid_to_string(&snap_id, &snap_str);
+        oss << "@s" << snap_str;
     }
     return oss.str();
 }
 
 std::string Backend::_device_path(
-    const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
 ) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
@@ -83,8 +85,10 @@ std::string Backend::_device_path(
     if (chunk_offset != 0) {
         oss << ":" << chunk_offset;
     }
-    if (snap_id != 0) {
-        oss << "@s" << snap_id;
+    if (!rawstd_uuid_is_nil(&snap_id)) {
+        RawstdUUIDString snap_str;
+        rawstd_uuid_to_string(&snap_id, &snap_str);
+        oss << "@s" << snap_str;
     }
     return oss.str();
 }
@@ -117,8 +121,9 @@ rawstd::Task<void> Backend::_wait_for_blockdev(
     RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
 }
 
-rawstd::Task<int>
-Backend::_open(const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id) {
+rawstd::Task<int> Backend::_open(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+) {
     std::string path = _device_path(id, chunk_offset, snap_id);
 
     // No O_NONBLOCK: opening a ZFS zvol with it caused cache-miss reads to
@@ -133,7 +138,8 @@ Backend::_open(const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id) {
     // fails as soon as the fd itself is wrong, before ever reaching
     // pwrite().
     int fd = co_await _queue.open(
-        path.c_str(), (snap_id == 0 ? O_RDWR : O_RDONLY) | O_CLOEXEC, 0
+        path.c_str(),
+        (rawstd_uuid_is_nil(&snap_id) ? O_RDWR : O_RDONLY) | O_CLOEXEC, 0
     );
     co_return fd;
 }
@@ -198,7 +204,7 @@ rawstd::Task<void> Backend::list(
         if (rawstd_uuid_from_string(&uuid, uuid_part.c_str()) < 0) {
             continue;
         }
-        found.push_back(ListedObject{uuid, chunk_offset, 0});
+        found.push_back(ListedObject{uuid, chunk_offset, RawstdUUID{}});
     }
 
     std::sort(found.begin(), found.end());
@@ -480,10 +486,10 @@ rawstd::Task<void> Backend::set_sync_state(
 }
 
 rawstd::Task<void> Backend::snapshot_create(
-    const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
 ) {
-    if (snap_id == 0) {
-        /* 0 is the live version, never a snapshot. */
+    if (rawstd_uuid_is_nil(&snap_id)) {
+        /* nil is the live version, never a snapshot. */
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
@@ -527,9 +533,9 @@ rawstd::Task<void> Backend::snapshot_create(
 }
 
 rawstd::Task<void> Backend::snapshot_remove(
-    const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
 ) {
-    if (snap_id == 0) {
+    if (rawstd_uuid_is_nil(&snap_id)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 

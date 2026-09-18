@@ -75,7 +75,7 @@ private:
     Topology _topology;
 
     ObjectDescriptor _descriptor(const RawstdUUID& id);
-    ObjectMap _open_snapshot(const RawstdUUID& id, uint64_t snap_id);
+    ObjectMap _open_snapshot(const RawstdUUID& id, const RawstdUUID& snap_id);
 
 public:
     ObjectStore(const std::string& path, Topology topology);
@@ -98,10 +98,10 @@ public:
     );
 
     /*
-     * snap_id != 0 opens the registered snapshot view: the logical size
-     * frozen at commit, chunks routed to the recorded members only.
+     * A non-nil snap_id opens the registered snapshot view: the logical
+     * size frozen at commit, chunks routed to the recorded members only.
      */
-    ObjectMap open(const RawstdUUID& id, uint64_t snap_id);
+    ObjectMap open(const RawstdUUID& id, const RawstdUUID& snap_id);
 
     /* Grow-only in v1; returns the new map_epoch. */
     uint64_t resize(const RawstdUUID& id, uint64_t new_size);
@@ -110,23 +110,17 @@ public:
     void remove(const RawstdUUID& id);
 
     /*
-     * Durably reserves the next snap_id of the object. A reserved id is
-     * never handed out again, even across a crash before commit — the
-     * CoW leftovers of a crashed attempt must not alias a later
-     * snapshot under the same id.
-     */
-    uint64_t snap_begin(const RawstdUUID& id);
-
-    /*
      * Registers the snapshot: members = exactly the chunk copies that
-     * hold it. Every chunk of the object must be covered (an unreadable
-     * snapshot is never registered — EINVAL), the id must come from
-     * snap_begin (EINVAL) and not be registered yet (EEXIST). The
-     * object's logical size is frozen into the snapshot. Returns the
-     * bumped map_epoch.
+     * hold it. `snap_id` is the caller's own already-generated version
+     * id (like every object id -- client-generated, single point of
+     * generation, see docs/mds.md) -- never nil (EINVAL; nil is reserved
+     * for the live version) and not already registered (EEXIST). Every
+     * chunk of the object must be covered (an unreadable snapshot is
+     * never registered — EINVAL). The object's logical size is frozen
+     * into the snapshot. Returns the bumped map_epoch.
      */
     uint64_t snap_commit(
-        const RawstdUUID& id, uint64_t snap_id,
+        const RawstdUUID& id, const RawstdUUID& snap_id,
         const std::vector<SnapMember>& members
     );
 
@@ -134,7 +128,8 @@ public:
      * Unregisters the snapshot (no new readers) and returns what was
      * registered: the member set for the caller's fan-out destroy.
      */
-    std::vector<SnapMember> snap_remove(const RawstdUUID& id, uint64_t snap_id);
+    std::vector<SnapMember>
+    snap_remove(const RawstdUUID& id, const RawstdUUID& snap_id);
 
     /*
      * Rebuilds the whole map from a scan of every OST in the topology

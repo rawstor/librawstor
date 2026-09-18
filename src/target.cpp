@@ -71,17 +71,17 @@ RawstdUUID uuid_from_target(const rawstd::URI& target) {
 }
 
 // The bound snapshot version embedded in a URI's own filename, if any --
-// "<uuid>" (live, 0) or "<uuid>@<snap_id>", the same convention
+// "<uuid>" (live, nil) or "<uuid>@<snap_id>", the same convention
 // chunk_slot_target() in mds_backend.cpp already uses for a single slot.
-uint64_t extract_snap_id(const rawstd::URI& uri) {
+RawstdUUID extract_snap_id(const rawstd::URI& uri) {
     const std::string& filename = uri.path().filename();
     size_t at = filename.find('@');
     if (at == std::string::npos) {
-        return 0;
+        return RawstdUUID{};
     }
-    std::istringstream iss(filename.substr(at + 1));
-    uint64_t snap_id = 0;
-    if (!(iss >> snap_id) || !iss.eof()) {
+    RawstdUUID snap_id;
+    int res = rawstd_uuid_from_string(&snap_id, filename.c_str() + at + 1);
+    if (res < 0) {
         rawstd_error("Malformed snapshot suffix: %s\n", filename.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -127,7 +127,7 @@ void validate_same_uuid(const std::vector<rawstd::URI>& targets) {
     }
 
     RawstdUUID uuid = uuid_from_target(targets.front());
-    uint64_t snap_id = extract_snap_id(targets.front());
+    RawstdUUID snap_id = extract_snap_id(targets.front());
 
     for (const auto& target : targets) {
         RawstdUUID other_uuid = uuid_from_target(target);
@@ -135,7 +135,8 @@ void validate_same_uuid(const std::vector<rawstd::URI>& targets) {
             rawstd_error("Equal UUID expected\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
-        if (extract_snap_id(target) != snap_id) {
+        RawstdUUID other_snap_id = extract_snap_id(target);
+        if (rawstd_uuid_cmp(&other_snap_id, &snap_id) != 0) {
             rawstd_error("Equal snapshot version expected\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
@@ -189,7 +190,7 @@ rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
 }
 
 rawstd::Task<void> snapshot_create_one(
-    rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id
+    rawio::Queue& queue, const rawstd::URI& target, const RawstdUUID& snap_id
 ) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t chunk_offset = extract_offset(target);
@@ -200,7 +201,7 @@ rawstd::Task<void> snapshot_create_one(
 }
 
 rawstd::Task<void> snapshot_remove_one(
-    rawio::Queue& queue, const rawstd::URI& target, uint64_t snap_id
+    rawio::Queue& queue, const rawstd::URI& target, const RawstdUUID& snap_id
 ) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t chunk_offset = extract_offset(target);
@@ -355,10 +356,10 @@ rawstd::DetachedTask launch_remove_op_coro(
 }
 
 rawstd::DetachedTask launch_snapshot_create_op_coro(
-    rawstor::Target t, rawio::Queue* queue, uint64_t snap_id,
+    rawstor::Target t, rawio::Queue* queue, RawstdUUID snap_id, ssize_t length,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
-    ssize_t result = 0;
+    ssize_t result = length;
     try {
         co_await t.snapshot_create(*queue, snap_id);
     } catch (const std::system_error& e) {
@@ -378,37 +379,8 @@ rawstd::DetachedTask launch_snapshot_create_op_coro(
     }
 }
 
-// Unlike the caller-chosen-id branch above, the snap_id here is chosen by
-// the target's own backend (mds::Backend::snapshot_create_assign(); every
-// other backend's default ENOTSUP) -- delivered through `snap_id`, an
-// out-parameter written immediately before `cb` runs (same convention as
-// launch_spec_op_coro()'s `spec`).
-rawstd::DetachedTask launch_snapshot_create_assign_op_coro(
-    rawstor::Target t, rawio::Queue* queue, uint64_t* snap_id,
-    int (*cb)(ssize_t result, void* data), void* data
-) {
-    ssize_t result = 0;
-    try {
-        *snap_id = co_await t.snapshot_create_assign(*queue);
-    } catch (const std::system_error& e) {
-        result = -e.code().value();
-    } catch (const std::bad_alloc&) {
-        result = -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        result = -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        result = -EINVAL;
-    }
-    int res = cb(result, data);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-}
-
 rawstd::DetachedTask launch_snapshot_remove_op_coro(
-    rawstor::Target t, rawio::Queue* queue, uint64_t snap_id,
+    rawstor::Target t, rawio::Queue* queue, RawstdUUID snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
@@ -587,7 +559,7 @@ Target::Target(const std::string& target) {
 
 Target::Target(
     const Location& location, const RawstdUUID& id, uint64_t offset,
-    uint64_t snap_id
+    const RawstdUUID& snap_id
 ) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
@@ -596,8 +568,10 @@ Target::Target(
     if (offset != 0) {
         filename += ":" + std::to_string(offset);
     }
-    if (snap_id != 0) {
-        filename += "@" + std::to_string(snap_id);
+    if (!rawstd_uuid_is_nil(&snap_id)) {
+        RawstdUUIDString snap_string;
+        rawstd_uuid_to_string(&snap_id, &snap_string);
+        filename += "@" + std::string(snap_string);
     }
 
     std::vector<rawstd::URI> uris;
@@ -621,7 +595,7 @@ Location Target::location() const {
     return Location(rawstd::URI::uris(uris));
 }
 
-uint64_t Target::snap_id() const {
+RawstdUUID Target::snap_id() const {
     return extract_snap_id(_chunks.front().front());
 }
 
@@ -827,7 +801,7 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) {
 }
 
 rawstd::Task<void>
-Target::snapshot_create(rawio::Queue& queue, uint64_t snap_id) {
+Target::snapshot_create(rawio::Queue& queue, const RawstdUUID& snap_id) {
     const std::vector<rawstd::URI>& uris = _chunks.front();
     // Same fan-out shape as remove() above: every URI is attempted
     // concurrently regardless of an earlier failure.
@@ -840,7 +814,7 @@ Target::snapshot_create(rawio::Queue& queue, uint64_t snap_id) {
 }
 
 rawstd::Task<void>
-Target::snapshot_remove(rawio::Queue& queue, uint64_t snap_id) {
+Target::snapshot_remove(rawio::Queue& queue, const RawstdUUID& snap_id) {
     const std::vector<rawstd::URI>& uris = _chunks.front();
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(uris.size());
@@ -864,23 +838,6 @@ rawstd::Task<void> Target::resize(rawio::Queue& queue, uint64_t new_size) {
         tasks.push_back(resize_one(queue, uri, new_size));
     }
     co_await rawstd::gather(std::move(tasks));
-}
-
-rawstd::Task<uint64_t> Target::snapshot_create_assign(rawio::Queue& queue) {
-    // Unlike the fan-out methods above, this asks only the first URI:
-    // assigning a new snapshot id has exactly one authority (the volume's
-    // own MDS, for the one real caller -- a plain mirrored target has no
-    // such authority to ask in the first place, so asking just its first
-    // URI and letting Backend::snapshot_create_assign()'s own ENOTSUP
-    // default answer is no less correct than asking every mirror).
-    const rawstd::URI& target = _chunks.front().front();
-    RawstdUUID id = uuid_from_target(target);
-    uint64_t chunk_offset = extract_offset(target);
-    std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, target.parent(), 1);
-    uint64_t snap_id = co_await slot->snapshot_create_assign(id, chunk_offset);
-    co_await slot->close();
-    co_return snap_id;
 }
 
 // Opens the object this target addresses. A single chunk group ('_chunks
@@ -982,28 +939,57 @@ int rawstor_target_remove(
     }
 }
 
-// snap_id's input value picks the branch: 0 asks the target's own backend
-// to assign one (Target::snapshot_create_assign(); mds:// is the only
-// backend that implements it today, every other one's default ENOTSUP
-// surfaces as-is), a nonzero value is the caller's own chosen id for a
-// plain native CoW fan-out (Target::snapshot_create()).
+// `snap_id`: NULL to have this call generate a fresh one itself (the
+// single point every snapshot id is generated at, by analogy with how a
+// fresh object id is generated in Location::create()/rawstor_location_
+// create() -- rawstd_uuid7_init(), same function, same reasoning), or a
+// caller-chosen version id string (any target -- mds:// included, now
+// that its own snapshot_create() no longer needs a separate MDS round
+// trip to assign one, see mds_backend.cpp). Either way, the id actually
+// used is written into `buf`/`size` synchronously, before any I/O, same
+// convention as rawstor_location_create()'s own `target`/`size`.
 int rawstor_target_snapshot_create(
-    RawIOQueue* queue, const char* target, uint64_t* snap_id,
-    int (*cb)(ssize_t result, void* data), void* data
+    RawIOQueue* queue, const char* target, const char* snap_id, char* buf,
+    size_t size, int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Target t(target);
-        if (*snap_id == 0) {
-            launch_snapshot_create_assign_op_coro(
-                std::move(t), static_cast<rawio::Queue*>(queue), snap_id, cb,
-                data
-            );
+
+        RawstdUUID id;
+        int res;
+        if (snap_id == nullptr) {
+            res = rawstd_uuid7_init(&id);
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
         } else {
-            launch_snapshot_create_op_coro(
-                std::move(t), static_cast<rawio::Queue*>(queue), *snap_id, cb,
-                data
-            );
+            res = rawstd_uuid_from_string(&id, snap_id);
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
         }
+
+        RawstdUUIDString uuid_string;
+        rawstd_uuid_to_string(&id, &uuid_string);
+        res = snprintf(buf, size, "%s", uuid_string);
+        if (res < 0) {
+            return res;
+        }
+
+        if (static_cast<size_t>(res) >= size) {
+            // Buffer too small -- nothing was queued (the id string is
+            // fully known without any I/O), same convention as
+            // rawstor_location_create()'s own too-small-buffer case.
+            int cbres = cb(res, data);
+            if (cbres < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-cbres);
+            }
+            return 0;
+        }
+
+        launch_snapshot_create_op_coro(
+            std::move(t), static_cast<rawio::Queue*>(queue), id, res, cb, data
+        );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;
     } catch (const std::system_error& e) {
@@ -1020,13 +1006,18 @@ int rawstor_target_snapshot_create(
 }
 
 int rawstor_target_snapshot_remove(
-    RawIOQueue* queue, const char* target, uint64_t snap_id,
+    RawIOQueue* queue, const char* target, const char* snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Target t(target);
+        RawstdUUID id;
+        int res = rawstd_uuid_from_string(&id, snap_id);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
         launch_snapshot_remove_op_coro(
-            std::move(t), static_cast<rawio::Queue*>(queue), snap_id, cb, data
+            std::move(t), static_cast<rawio::Queue*>(queue), id, cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;
@@ -1214,11 +1205,28 @@ int rawstor_target_location(
     }
 }
 
-int rawstor_target_snap_id(const char* target, uint64_t* snap_id) noexcept {
+int rawstor_target_snap_id(
+    const char* target, char* buf, size_t size
+) noexcept {
     try {
         rawstor::Target t(target);
-        *snap_id = t.snap_id();
-        return 0;
+        RawstdUUID snap_id = t.snap_id();
+        if (rawstd_uuid_is_nil(&snap_id)) {
+            // Live: no "@<snap_id>" suffix -- an empty string, same as
+            // rawstor_target_id()'s own convention has nothing analogous
+            // to fall back to (every target always has a real id).
+            if (size > 0) {
+                buf[0] = '\0';
+            }
+            return 0;
+        }
+        RawstdUUIDString uuid_string;
+        rawstd_uuid_to_string(&snap_id, &uuid_string);
+        int res = snprintf(buf, size, "%s", uuid_string);
+        if (res < 0) {
+            RAWSTD_THROW_ERRNO();
+        }
+        return res;
     } catch (const std::system_error& e) {
         return -e.code().value();
     } catch (const std::bad_alloc& e) {

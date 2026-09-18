@@ -21,7 +21,7 @@ namespace file {
 class Backend final : public rawstor::blk::Backend {
 private:
     rawstd::Task<int> _open(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     ) override;
 
 public:

@@ -139,27 +139,32 @@ Slots; a plain, unmirrored target's Chunk has exactly one.
 ## Snapshot
 
 A **snapshot** is a bound, read-only version of a target/chunk/slot,
-identified by a version id (`snap_id`, never 0 — 0 always means "live").
-Two independent mechanisms use it, at different layers:
+identified by a version id (`snap_id`, a UUID -- never nil, nil always
+means "live"). Like every other id in this design, `snap_id` is
+client-generated (`Target::snapshot_create(queue, snap_id)`,
+`rawstor_target_snapshot_create()`'s own `NULL`-generates-a-fresh-one
+convenience) -- there is no separate "assign" mode, mds:// included: two
+independent mechanisms use the same id, at different layers:
 
-- **mds:// object-level**: `OBJ_SNAP_BEGIN`/CoW-every-chunk/
-  `OBJ_SNAP_COMMIT` (docs/mds.md, "Snapshots (stage 2)") registers a new
-  id against the whole object, driven by `mds::Backend::
-  snapshot_create_assign()`.
+- **mds:// object-level**: CoW-every-chunk/`OBJ_SNAP_COMMIT`
+  (docs/mds.md, "Snapshots (stage 2)") registers the caller's id against
+  the whole object, driven by `mds::Backend::snapshot_create()`.
 - **Per-slot native CoW**: a single backend's own thin-clone/snapshot
   primitive (zfs::Backend today), addressed directly by target/chunk-
   slot URI with the version appended as `@<snap_id>`:
-  `ost://host:port/<uuid>@5` or, on an `mds://` target,
-  `mds://host:port/<id>@5`. This suffix is never part of a
-  location and never carries a comma-separated list of its own — it
-  binds whichever single URI it's attached to.
+  `ost://host:port/<uuid>@018f4e2a-3000-7000-8000-000000000001` or, on an
+  `mds://` target, `mds://host:port/<id>@018f4e2a-3000-7000-8000-000000000001`.
+  This suffix is never part of a location and never carries a
+  comma-separated list of its own — it binds whichever single URI it's
+  attached to.
 
 ## Chunk offset (not for manual entry)
 
 A chunk's own byte offset within its parent `mds://` object
 (`logical_index * chunk_size`) rides the same URI, as a `:<offset>`
 suffix right after the UUID: `ost://host:port/<uuid>:1048576` (optionally
-followed by `@<snap_id>`, e.g. `ost://host:port/<uuid>:1048576@5`). Like
+followed by `@<snap_id>`, e.g.
+`ost://host:port/<uuid>:1048576@018f4e2a-3000-7000-8000-000000000001`). Like
 the internal multi-chunk form above, this is built only by `mds::Backend`
 from its own chunk map and never something a caller types — `Target`'s
 own constructor reads it back out to reconstruct chunk grouping, and it's
@@ -177,7 +182,7 @@ directly (0 for a plain, non-`mds://` target).
 | **Object** | (none — derived from the target string that opened it) | The open handle `rawstor_object_*()` I/O acts on; routes to the owning Chunk | — |
 | **Chunk** | Same as Target: `uri1,uri2,...` (one UUID per group) | One logical slice of an Object's data; owns mirror consistency | `ost://h1:p1/<uuid>,ost://h2:p2/<uuid>` |
 | **Slot** | A single URI | One physical mirror arm of a Chunk; owns retries/reconnects | `ost://h1:p1/<uuid>` |
-| **Snapshot** | `@<snap_id>` suffix on a target/chunk-slot URI, or an object-level id assigned by the MDS | A bound, read-only version | `ost://host:port/<uuid>@5` |
+| **Snapshot** | `@<snap_id>` suffix on a target/chunk-slot URI, `snap_id` a client-generated UUID | A bound, read-only version | `ost://host:port/<uuid>@018f4e2a-3000-7000-8000-000000000001` |
 
 ---
 

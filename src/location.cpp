@@ -71,8 +71,10 @@ std::string encode_token(const rawstor::ListedObject& obj) {
     if (obj.chunk_offset != 0) {
         ret += ":" + std::to_string(obj.chunk_offset);
     }
-    if (obj.snap_id != 0) {
-        ret += "@" + std::to_string(obj.snap_id);
+    if (!rawstd_uuid_is_nil(&obj.snap_id)) {
+        RawstdUUIDString snap_string;
+        rawstd_uuid_to_string(&obj.snap_id, &snap_string);
+        ret += "@" + std::string(snap_string);
     }
     return ret;
 }
@@ -94,7 +96,10 @@ rawstor::ListedObject decode_token(const std::string& s) {
         ret.chunk_offset = strtoull(s.c_str() + colon + 1, nullptr, 10);
     }
     if (at != std::string::npos) {
-        ret.snap_id = strtoull(s.c_str() + at + 1, nullptr, 10);
+        res = rawstd_uuid_from_string(&ret.snap_id, s.c_str() + at + 1);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
     }
     return ret;
 }

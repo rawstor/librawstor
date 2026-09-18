@@ -17,21 +17,21 @@
 namespace {
 
 // The bound snapshot version embedded in a URI's own filename, if
-// any -- "<uuid>" (live, 0) or "<uuid>@<snap_id>" (chunk_slot_target()'s own
-// convention in mds_backend.cpp). Deliberately a local duplicate of
+// any -- "<uuid>" (live, nil) or "<uuid>@<snap_id>" (chunk_slot_target()'s
+// own convention in mds_backend.cpp). Deliberately a local duplicate of
 // target.cpp's own extract_snap_id(): Chunk::create() takes `snap_id` as a
 // plain scalar, so Object::_chunk() below (like Target::open()) extracts
 // it from its own already-validated URI group once here, rather than
 // Chunk::create() re-parsing it out of every URI itself.
-uint64_t extract_snap_id(const rawstd::URI& uri) {
+RawstdUUID extract_snap_id(const rawstd::URI& uri) {
     const std::string& filename = uri.path().filename();
     size_t at = filename.find('@');
     if (at == std::string::npos) {
-        return 0;
+        return RawstdUUID{};
     }
-    std::istringstream iss(filename.substr(at + 1));
-    uint64_t snap_id = 0;
-    if (!(iss >> snap_id) || !iss.eof()) {
+    RawstdUUID snap_id;
+    int res = rawstd_uuid_from_string(&snap_id, filename.c_str() + at + 1);
+    if (res < 0) {
         rawstd_error("Malformed snapshot suffix: %s\n", filename.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }

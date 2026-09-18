@@ -70,24 +70,24 @@ public:
         const RawstdUUID& id, uint64_t chunk_offset, uint64_t new_size
     ) override;
 
-    // Two-phase MDS-orchestrated snapshot (docs/mds.md, "Snapshots
-    // (stage 2)"): reserves a new snap_id, backend-CoWs every reachable
-    // chunk member (descending logical index, so a crash midway always
-    // leaves a hole at the low indices -- the reconstruct scan tells
-    // that apart from a legitimately shorter, pre-resize snapshot), then
-    // registers the surviving membership. v1 caveat (see the design
-    // doc): assumes no concurrent writer -- draining/flushing an
-    // in-flight write session is the writing client's own duty, not this
-    // call's. `chunk_offset` is always 0, same reason as resize() above.
-    rawstd::Task<uint64_t> snapshot_create_assign(
-        const RawstdUUID& id, uint64_t chunk_offset
-    ) override;
-
-    // A caller-chosen snap_id (Target::snapshot_create()'s own contract)
-    // makes no sense on an mds:// object -- the MDS itself is the only
-    // authority that assigns one (snapshot_create_assign() above).
+    // MDS-orchestrated snapshot (docs/mds.md, "Snapshots (stage 2)"):
+    // `snap_id` is the caller's own already-generated version id (like
+    // every object id -- client-generated, single point of generation,
+    // Target::snapshot_create()'s own contract, target.h). No more
+    // separate "assign" step (there used to be one, back when the MDS
+    // itself handed out a monotonic counter's next value): a client-
+    // generated id can never collide with a crashed attempt's leftovers,
+    // so there's nothing left for the MDS to reserve ahead of time.
+    // backend-CoWs every reachable chunk member under it (descending
+    // logical index, so a crash midway always leaves a hole at the low
+    // indices -- the reconstruct scan tells that apart from a
+    // legitimately shorter, pre-resize snapshot), then registers the
+    // surviving membership. v1 caveat (see the design doc): assumes no
+    // concurrent writer -- draining/flushing an in-flight write session
+    // is the writing client's own duty, not this call's. `chunk_offset`
+    // is always 0, same reason as resize() above.
     rawstd::Task<void> snapshot_create(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     ) override;
 
     // Fan-out destroy of a previously committed snapshot. The MDS
@@ -96,7 +96,7 @@ public:
     // cleanup -- a member that can no longer be resolved (address
     // changed, OST replaced) is left for the reconstruct scan.
     rawstd::Task<void> snapshot_remove(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     ) override;
 
     // Synthetic: mirrors == 1 at the Target level (a single mds:// URI),
@@ -123,7 +123,8 @@ public:
     // mds_backend.cpp), not passed down any other way. `chunk_offset` is
     // always 0, same reason as resize() above.
     rawstd::Task<void> set_object(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id = 0
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
     ) override;
 
     rawstd::Task<void> close() override;

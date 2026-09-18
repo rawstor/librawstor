@@ -56,7 +56,7 @@ RawstorObjectPolicy policy_of(const RawstorObjectSpec& sp) {
 // OST: refuse loudly instead of silently opening under-protected.
 rawstd::URI chunk_slot_target(
     const RawstdUUID& id, uint64_t index, const WireSlot& slot,
-    uint64_t chunk_size, uint64_t snap_id = 0
+    uint64_t chunk_size, const RawstdUUID& snap_id = {}
 ) {
     if (slot.address.empty()) {
         rawstd_error("Chunk slot without a resolved OST address\n");
@@ -68,14 +68,17 @@ rawstd::URI chunk_slot_target(
     std::ostringstream oss;
     oss << "ost://" << slot.address << "/" << uuid_string;
     oss << ":" << (index * chunk_size);
-    if (snap_id != 0) {
-        oss << "@" << snap_id;
+    if (!rawstd_uuid_is_nil(&snap_id)) {
+        RawstdUUIDString snap_string;
+        rawstd_uuid_to_string(&snap_id, &snap_string);
+        oss << "@" << snap_string;
     }
     return rawstd::URI(oss.str());
 }
 
-std::vector<rawstd::URI>
-chunk_targets(const WireMap& map, uint64_t index, uint64_t snap_id = 0) {
+std::vector<rawstd::URI> chunk_targets(
+    const WireMap& map, uint64_t index, const RawstdUUID& snap_id = {}
+) {
     std::vector<rawstd::URI> ret;
     ret.reserve(map.chunks[index].size());
     for (const WireSlot& slot : map.chunks[index]) {
@@ -93,8 +96,9 @@ chunk_targets(const WireMap& map, uint64_t index, uint64_t snap_id = 0) {
 // wherever a single chunk is all that's needed (resize()'s own per-chunk
 // loop below), and as one ingredient of build_target_string()'s own
 // whole-object string otherwise.
-std::string
-chunk_target_string(const WireMap& map, uint64_t index, uint64_t snap_id = 0) {
+std::string chunk_target_string(
+    const WireMap& map, uint64_t index, const RawstdUUID& snap_id = {}
+) {
     return rawstd::URI::uris(chunk_targets(map, index, snap_id));
 }
 
@@ -144,7 +148,7 @@ RawstorObjectSpec object_spec(const WireMap& map) {
 // them back into chunk groups itself, by each URI's own ":<offset>"
 // suffix, so nothing here needs to mark where one chunk's own group ends
 // and the next begins.
-std::string build_target_string(const WireMap& map, uint64_t snap_id) {
+std::string build_target_string(const WireMap& map, const RawstdUUID& snap_id) {
     std::vector<rawstd::URI> uris;
     for (uint64_t i = 0; i < map.chunks.size(); ++i) {
         std::vector<rawstd::URI> chunk = chunk_targets(map, i, snap_id);
@@ -185,7 +189,7 @@ Backend::create(const RawstdUUID& id, uint64_t, const RawstorObjectSpec& sp) {
     co_await _client.create(id, sp.size, chunk_size, policy);
 
     /* Materialize every chunk object on its OSTs. */
-    WireMap map = co_await _client.open(id, 0);
+    WireMap map = co_await _client.open(id, RawstdUUID{});
 
     // co_await isn't allowed inside a catch block, so the failure is only
     // recorded here; rolling back happens just below, outside the
@@ -197,7 +201,7 @@ Backend::create(const RawstdUUID& id, uint64_t, const RawstorObjectSpec& sp) {
         // flat string, and already rolls back whatever chunks it managed
         // to create before a later one's own failure -- only the object
         // map registration itself is left for this call to roll back.
-        co_await Target(build_target_string(map, 0))
+        co_await Target(build_target_string(map, RawstdUUID{}))
             .create(_queue, object_spec(map));
     } catch (...) {
         error = std::current_exception();
@@ -214,7 +218,7 @@ Backend::create(const RawstdUUID& id, uint64_t, const RawstorObjectSpec& sp) {
 }
 
 rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t) {
-    WireMap map = co_await _client.open(id, 0);
+    WireMap map = co_await _client.open(id, RawstdUUID{});
 
     /*
      * Unregister first (docs/mds.md, deletion order): the MDS is where
@@ -230,7 +234,7 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t) {
     // across every URI of every chunk group in build_target_string()'s
     // own flat string.
     try {
-        co_await Target(build_target_string(map, 0)).remove(_queue);
+        co_await Target(build_target_string(map, RawstdUUID{})).remove(_queue);
     } catch (const std::system_error& e) {
         if (e.code().value() != ENOENT) {
             throw;
@@ -239,7 +243,7 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t) {
 }
 
 rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id, uint64_t) {
-    WireMap map = co_await _client.open(id, 0);
+    WireMap map = co_await _client.open(id, RawstdUUID{});
 
     RawstorObjectSpec sp{};
     sp.size = map.logical_size;
@@ -258,13 +262,13 @@ Backend::resize(const RawstdUUID& id, uint64_t, uint64_t new_size) {
     }
 
     /* Chunk count before the resize -- everything from here on is new. */
-    WireMap before = co_await _client.open(id, 0);
+    WireMap before = co_await _client.open(id, RawstdUUID{});
     uint64_t old_chunks = before.chunks.size();
 
     co_await _client.resize(id, new_size);
 
     /* Re-fetch: the map now has whatever new chunks the MDS reserved. */
-    WireMap after = co_await _client.open(id, 0);
+    WireMap after = co_await _client.open(id, RawstdUUID{});
 
     uint64_t created = old_chunks;
     std::exception_ptr error;
@@ -300,10 +304,15 @@ Backend::resize(const RawstdUUID& id, uint64_t, uint64_t new_size) {
     }
 }
 
-rawstd::Task<uint64_t>
-Backend::snapshot_create_assign(const RawstdUUID& id, uint64_t) {
-    uint64_t snap_id = co_await _client.snap_begin(id);
-    WireMap map = co_await _client.open(id, 0);
+rawstd::Task<void> Backend::snapshot_create(
+    const RawstdUUID& id, uint64_t, const RawstdUUID& snap_id
+) {
+    if (rawstd_uuid_is_nil(&snap_id)) {
+        /* nil is the live version, never a snapshot. */
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    WireMap map = co_await _client.open(id, RawstdUUID{});
 
     /*
      * Chunks are CoW'd in descending index order (docs/mds.md): a crash
@@ -357,20 +366,12 @@ Backend::snapshot_create_assign(const RawstdUUID& id, uint64_t) {
     }
 
     co_await _client.snap_commit(id, snap_id, members);
-    co_return snap_id;
 }
 
-rawstd::Task<void>
-Backend::snapshot_create(const RawstdUUID&, uint64_t, uint64_t) {
-    // A caller-chosen id makes no sense here -- the object's own MDS is
-    // the only authority that assigns one (snapshot_create_assign()
-    // above).
-    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-}
-
-rawstd::Task<void>
-Backend::snapshot_remove(const RawstdUUID& id, uint64_t, uint64_t snap_id) {
-    if (snap_id == 0) {
+rawstd::Task<void> Backend::snapshot_remove(
+    const RawstdUUID& id, uint64_t, const RawstdUUID& snap_id
+) {
+    if (rawstd_uuid_is_nil(&snap_id)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
@@ -383,7 +384,7 @@ Backend::snapshot_remove(const RawstdUUID& id, uint64_t, uint64_t snap_id) {
      * members it recorded -- a member that no longer resolves (address
      * changed, OST replaced) is left for the reconstruct scan.
      */
-    WireMap map = co_await _client.open(id, 0);
+    WireMap map = co_await _client.open(id, RawstdUUID{});
 
     std::exception_ptr error;
     for (const mds::WireSnapMember& m : members) {
@@ -422,7 +423,7 @@ Backend::snapshot_remove(const RawstdUUID& id, uint64_t, uint64_t snap_id) {
 }
 
 rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id, uint64_t) {
-    WireMap map = co_await _client.open(id, 0);
+    WireMap map = co_await _client.open(id, RawstdUUID{});
 
     RawstorObjectMeta ret{};
     ret.spec.size = map.logical_size;
@@ -452,7 +453,7 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
 }
 
 rawstd::Task<void>
-Backend::set_object(const RawstdUUID& id, uint64_t, uint64_t snap_id) {
+Backend::set_object(const RawstdUUID& id, uint64_t, const RawstdUUID& snap_id) {
     WireMap map = co_await _client.open(id, snap_id);
     std::string target_string = build_target_string(map, snap_id);
 

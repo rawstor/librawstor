@@ -6,7 +6,6 @@
 
 #include <rawstd/exitcode.h>
 
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,9 +20,10 @@ int rawstor_cli_snapshot(const char* target) {
         return rawstd_exitcode_for_errno(-res);
     }
 
-    uint64_t snap_id = 0;
+    /* NULL: this call generates a fresh version id itself. */
+    char snap_id[64];
     int sres = rawstor_target_snapshot_create(
-        op.queue, target, &snap_id, rawstor_cli_op_cb, &op
+        op.queue, target, NULL, snap_id, sizeof(snap_id), rawstor_cli_op_cb, &op
     );
     ssize_t result = rawstor_cli_op_wait(&op, sres);
     rawstor_cli_op_destroy(&op);
@@ -35,8 +35,8 @@ int rawstor_cli_snapshot(const char* target) {
         return rawstd_exitcode_for_errno((int)-result);
     }
 
-    fprintf(stderr, "Snapshot created: %llu\n", (unsigned long long)snap_id);
-    fprintf(stdout, "%llu\n", (unsigned long long)snap_id);
+    fprintf(stderr, "Snapshot created: %s\n", snap_id);
+    fprintf(stdout, "%s\n", snap_id);
 
     return EXIT_SUCCESS;
 }

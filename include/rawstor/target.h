@@ -567,18 +567,24 @@ int rawstor_target_location(
  * @param target   Target string, e.g.:
  *                 - "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00"
  *                 -
- * "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00@5"
- * @param snap_id  Out-parameter written on success: the bound version, or 0
- *                 if @p target carries no "@<snap_id>" suffix (the live
- *                 version). Left untouched on error.
+ * "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00@019cbfad-..."
+ * @param buf      Output buffer for the bound version's UUID string, or an
+ *                 empty string if @p target carries no "@<snap_id>" suffix
+ *                 (the live version). Same truncation convention as
+ *                 rawstor_target_id().
+ * @param size     Size of the output buffer in bytes (including space for the
+ *                 terminating null byte). If size is 0, no data is written,
+ *                 but the required length is still returned.
  *
- * @return 0 on success; a negative errno if @p target is not valid target
+ * @return On success, the number of characters that would have been written
+ *         to buf (excluding the terminating null byte; 0 for the live
+ *         version). A negative errno if @p target is not valid target
  *         syntax.
  *
  * @see rawstor_target_offset
  */
 int rawstor_target_snap_id(
-    const char* target, uint64_t* snap_id
+    const char* target, char* buf, size_t size
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -609,53 +615,52 @@ int rawstor_target_offset(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously take a snapshot of a target -- either a caller-
- *        chosen native CoW version, or an MDS-assigned object version.
+ * @brief Asynchronously take a snapshot of a target under a fresh or
+ *        caller-chosen version id.
  *
- * The two are picked apart by @p snap_id's input value:
- *
- * - `*snap_id != 0`: a native CoW snapshot as that exact version, taken
- *   on every URI in @p target (every URI is still attempted even if an
- *   earlier one fails, and the first error encountered is reported). The
- *   caller owns crash consistency: all acknowledged writes must be
- *   flushed before this call (docs/mds.md, "Snapshots"). Only valid for
- *   a non-mds:// @p target -- an mds:// object has no single physical
- *   backend a caller-chosen id could apply to; fails with -EINVAL.
- * - `*snap_id == 0`: an MDS-orchestrated snapshot (docs/mds.md,
- *   "Snapshots (stage 2)") of an mds://host:port/<id> @p target
- *   (no "@snap_id" suffix) -- the version is chosen by the object's MDS
- *   instead: reserves it, backend-CoWs every reachable chunk member,
- *   then registers the surviving membership, and writes the reserved id
- *   into `*snap_id` immediately before @p cb runs on success. v1 caveat:
- *   assumes no concurrent writer -- draining/flushing an in-flight write
- *   session is the writing client's own duty, not this call's. Only
- *   valid for an mds:// @p target (0 is otherwise reserved for "live",
- *   never a valid caller-supplied id); anything else fails with -EINVAL.
+ * Every version id is client-generated, like every object id (see
+ * rawstor_location_create()) -- there is no more MDS-assigned mode: an
+ * mds://host:port/<id> @p target's own MDS no longer hands out the id
+ * itself, it just registers whichever one this call already generated or
+ * was given, once every reachable chunk member has been backend-CoW'd
+ * under it (docs/mds.md, "Snapshots (stage 2)"). A non-mds:// @p target
+ * instead takes a plain native CoW snapshot as that exact version on
+ * every URI in @p target (every URI is still attempted even if an
+ * earlier one fails, and the first error encountered is reported); the
+ * caller owns crash consistency there -- all acknowledged writes must be
+ * flushed before this call.
  *
  * @param queue    Queue used to drive the asynchronous snapshot.
  * @param target   Target string, see rawstor_target_spec().
- * @param snap_id  Input: 0 to have the object's MDS assign a version (
- *                 mds:// only), or the caller's own chosen version id
- *                 (any other target). Output: on success, the version
- *                 actually taken -- unchanged from the input value
- *                 outside the MDS-assigned case.
+ * @param snap_id  The version id's UUID string, or NULL to have this call
+ *                 generate a fresh one itself (rawstd_uuid7_init(), the
+ *                 same single point of generation a fresh object id comes
+ *                 from -- rawstor_location_create()).
+ * @param buf      Output buffer for the version id actually used (whether
+ *                 generated here or supplied in @p snap_id), written
+ *                 synchronously before this call returns -- same
+ *                 truncation convention as rawstor_target_id().
+ * @param size     Size of @p buf in bytes (including space for the
+ *                 terminating null byte).
  * @param cb       Callback invoked on completion.
  *                 - @p result is zero on success, or a negative errno on
  *                   failure (@c -ENOTSUP if a backend has no CoW --
  *                   file://, classic LVM -- no fallback copies are made
  *                   behind the caller's back; @c -EIO if no chunk member
- *                   survived, MDS-assigned case only).
+ *                   survived, mds:// target only).
  *                 - @p data is the same pointer passed as @p data below.
  * @param data     User-defined context pointer passed unchanged to @p cb.
  *
- * @return 0 if the snapshot was successfully queued; negative errno on
- *         immediate failure (in which case @p cb is never invoked).
+ * @return The number of characters written to @p buf (see
+ *         rawstor_target_id()) if the snapshot was successfully queued;
+ *         negative errno on immediate failure (in which case @p cb is
+ *         never invoked).
  *
  * @see rawstor_target_snapshot_remove
  */
 int rawstor_target_snapshot_create(
-    RawIOQueue* queue, const char* target, uint64_t* snap_id,
-    int (*cb)(ssize_t result, void* data), void* data
+    RawIOQueue* queue, const char* target, const char* snap_id, char* buf,
+    size_t size, int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -670,13 +675,18 @@ int rawstor_target_snapshot_create(
  * rawstor_target_snapshot_create()): every URI is attempted, the first
  * error is reported.
  *
+ * @param snap_id  The version id's UUID string -- always the caller's own,
+ *                 never generated here (there is nothing left to report
+ *                 back: the caller already knows which snapshot it means
+ *                 to remove).
+ *
  * @return 0 if the removal was successfully queued; negative errno on
  *         immediate failure (in which case @p cb is never invoked).
  *
  * @see rawstor_target_snapshot_create
  */
 int rawstor_target_snapshot_remove(
-    RawIOQueue* queue, const char* target, uint64_t snap_id,
+    RawIOQueue* queue, const char* target, const char* snap_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 

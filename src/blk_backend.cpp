@@ -169,7 +169,7 @@ rawstd::Task<void> Backend::close() {
 }
 
 rawstd::Task<void> Backend::set_object(
-    const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
 ) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
@@ -182,7 +182,7 @@ rawstd::Task<void> Backend::set_object(
 rawstd::Task<RawstorObjectSpec>
 Backend::spec(const RawstdUUID& id, uint64_t chunk_offset) {
 #if defined(RAWSTD_ON_LINUX)
-    int f = co_await _open(id, chunk_offset, 0);
+    int f = co_await _open(id, chunk_offset, RawstdUUID{});
 
     uint64_t size = 0;
     if (ioctl(f, BLKGETSIZE64, &size) == -1) {

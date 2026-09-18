@@ -10,11 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-int rawstor_cli_snap_remove(const char* target, uint64_t snap_id) {
-    fprintf(
-        stderr, "Removing snapshot %llu of object: %s\n",
-        (unsigned long long)snap_id, target
-    );
+int rawstor_cli_snap_remove(const char* target, const char* snap_id) {
+    fprintf(stderr, "Removing snapshot %s of object: %s\n", snap_id, target);
 
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);

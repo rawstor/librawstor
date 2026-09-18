@@ -552,7 +552,7 @@ rawstd::Task<void> Slot::list(
 }
 
 rawstd::Task<void> Slot::snapshot_create(
-    const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -572,7 +572,7 @@ rawstd::Task<void> Slot::snapshot_create(
 }
 
 rawstd::Task<void> Slot::snapshot_remove(
-    const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -603,26 +603,6 @@ Slot::resize(const RawstdUUID& id, uint64_t chunk_offset, uint64_t new_size) {
             func_name, trace_event, &Backend::resize, id, chunk_offset, new_size
         );
         _finish(t_call);
-    } catch (...) {
-        _finish(t_call);
-        throw;
-    }
-}
-
-rawstd::Task<uint64_t>
-Slot::snapshot_create_assign(const RawstdUUID& id, uint64_t chunk_offset) {
-    const char* func_name = __FUNCTION__;
-    rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
-    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
-
-    try {
-        uint64_t result = co_await _with_retry(
-            func_name, trace_event, &Backend::snapshot_create_assign, id,
-            chunk_offset
-        );
-        _finish(t_call);
-        co_return result;
     } catch (...) {
         _finish(t_call);
         throw;
@@ -701,8 +681,9 @@ rawstd::Task<RawstorLocationInfo> Slot::info() {
     }
 }
 
-rawstd::Task<RawstorObjectMeta>
-Slot::open(const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id) {
+rawstd::Task<RawstorObjectMeta> Slot::open(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+) {
     // Set before any of the set_object() calls below: on failure,
     // invalidate_backend() reconnects and set_object()s the replacement
     // itself, using these same members.

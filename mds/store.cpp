@@ -28,8 +28,7 @@ constexpr const char* SCHEMA =
     "  stripe_width INTEGER NOT NULL,"
     "  placement_seed INTEGER NOT NULL,"
     "  map_epoch INTEGER NOT NULL,"
-    "  created_at INTEGER NOT NULL,"
-    "  next_snap_id INTEGER NOT NULL DEFAULT 1"
+    "  created_at INTEGER NOT NULL"
     ");"
     "CREATE TABLE IF NOT EXISTS chunk_map ("
     "  id BLOB NOT NULL"
@@ -45,14 +44,14 @@ constexpr const char* SCHEMA =
      */
     "CREATE TABLE IF NOT EXISTS snapshots ("
     "  id BLOB NOT NULL REFERENCES objects(id),"
-    "  snap_id INTEGER NOT NULL,"
+    "  snap_id BLOB NOT NULL,"
     "  logical_size INTEGER NOT NULL,"
     "  created_at INTEGER NOT NULL,"
     "  PRIMARY KEY (id, snap_id)"
     ") WITHOUT ROWID;"
     "CREATE TABLE IF NOT EXISTS snapshot_members ("
     "  id BLOB NOT NULL,"
-    "  snap_id INTEGER NOT NULL,"
+    "  snap_id BLOB NOT NULL,"
     "  logical_index INTEGER NOT NULL,"
     "  ost_id BLOB NOT NULL,"
     "  PRIMARY KEY (id, snap_id, logical_index, ost_id),"
@@ -243,23 +242,6 @@ ObjectStore::ObjectStore(const std::string& path, Topology topology) :
         exec(_db, "PRAGMA synchronous=FULL;");
         exec(_db, "PRAGMA foreign_keys=ON;");
         exec(_db, SCHEMA);
-
-        /*
-         * A pre-snapshot database has an objects table without
-         * next_snap_id (CREATE IF NOT EXISTS keeps it as is): the column
-         * itself is the version marker.
-         */
-        sqlite3_stmt* probe = nullptr;
-        if (sqlite3_prepare_v2(
-                _db, "SELECT next_snap_id FROM objects LIMIT 1;", -1, &probe,
-                nullptr
-            ) != SQLITE_OK) {
-            exec(
-                _db, "ALTER TABLE objects"
-                     " ADD COLUMN next_snap_id INTEGER NOT NULL DEFAULT 1;"
-            );
-        }
-        sqlite3_finalize(probe);
     } catch (...) {
         sqlite3_close(_db);
         throw;
@@ -341,8 +323,8 @@ ObjectDescriptor ObjectStore::create(
     return ret;
 }
 
-ObjectMap ObjectStore::open(const RawstdUUID& id, uint64_t snap_id) {
-    if (snap_id != 0) {
+ObjectMap ObjectStore::open(const RawstdUUID& id, const RawstdUUID& snap_id) {
+    if (!rawstd_uuid_is_nil(&snap_id)) {
         return _open_snapshot(id, snap_id);
     }
 
@@ -559,11 +541,6 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
         }
         uint64_t logical_size = max_index * o.chunk_size + tail;
 
-        // No snapshot records are ever scanned (docs/mds.md's own
-        // "Snapshot-version records are skipped (stage 2)"), so nothing
-        // fences this beyond its own starting value.
-        uint64_t next_snap_id = 1;
-
         /*
          * The policy knobs are not persisted on chunks: existing chunks
          * keep their placement (the map below is explicit), the rebuilt
@@ -575,8 +552,8 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
                 _db, "INSERT INTO objects"
                      " (id, logical_size, chunk_size, width,"
                      " failure_domain, stripe_width, placement_seed,"
-                     " map_epoch, created_at, next_snap_id)"
-                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+                     " map_epoch, created_at)"
+                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);"
             );
             insert.bind_blob(1, id.bytes, sizeof(id.bytes))
                 .bind_int64(2, logical_size)
@@ -587,7 +564,6 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
                 .bind_int64(7, 0)
                 .bind_int64(8, 1)
                 .bind_int64(9, static_cast<uint64_t>(time(nullptr)))
-                .bind_int64(10, next_snap_id)
                 .step();
         }
 
@@ -646,7 +622,8 @@ void ObjectStore::remove(const RawstdUUID& id) {
     tx.commit();
 }
 
-ObjectMap ObjectStore::_open_snapshot(const RawstdUUID& id, uint64_t snap_id) {
+ObjectMap
+ObjectStore::_open_snapshot(const RawstdUUID& id, const RawstdUUID& snap_id) {
     ObjectMap ret{};
     ret.descriptor = _descriptor(id);
 
@@ -655,7 +632,8 @@ ObjectMap ObjectStore::_open_snapshot(const RawstdUUID& id, uint64_t snap_id) {
             _db, "SELECT logical_size FROM snapshots"
                  " WHERE id = ? AND snap_id = ?;"
         );
-        select.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, snap_id);
+        select.bind_blob(1, id.bytes, sizeof(id.bytes))
+            .bind_blob(2, snap_id.bytes, sizeof(snap_id.bytes));
         if (!select.step()) {
             RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
         }
@@ -672,7 +650,8 @@ ObjectMap ObjectStore::_open_snapshot(const RawstdUUID& id, uint64_t snap_id) {
              " WHERE id = ? AND snap_id = ?"
              " ORDER BY logical_index, ost_id;"
     );
-    select.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, snap_id);
+    select.bind_blob(1, id.bytes, sizeof(id.bytes))
+        .bind_blob(2, snap_id.bytes, sizeof(snap_id.bytes));
 
     uint64_t prev_index = 0;
     uint8_t slot = 0;
@@ -703,53 +682,17 @@ ObjectMap ObjectStore::_open_snapshot(const RawstdUUID& id, uint64_t snap_id) {
     return ret;
 }
 
-uint64_t ObjectStore::snap_begin(const RawstdUUID& id) {
-    Transaction tx(_db);
-
-    uint64_t snap_id;
-    {
-        Stmt select(_db, "SELECT next_snap_id FROM objects WHERE id = ?;");
-        select.bind_blob(1, id.bytes, sizeof(id.bytes));
-        if (!select.step()) {
-            RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
-        }
-        snap_id = select.column_int64(0);
-    }
-
-    {
-        Stmt update(_db, "UPDATE objects SET next_snap_id = ? WHERE id = ?;");
-        update.bind_int64(1, snap_id + 1)
-            .bind_blob(2, id.bytes, sizeof(id.bytes))
-            .step();
-    }
-
-    /* Durable before the id is handed out: reserved ids never repeat. */
-    tx.commit();
-
-    return snap_id;
-}
-
 uint64_t ObjectStore::snap_commit(
-    const RawstdUUID& id, uint64_t snap_id,
+    const RawstdUUID& id, const RawstdUUID& snap_id,
     const std::vector<SnapMember>& members
 ) {
     ObjectDescriptor descriptor = _descriptor(id);
     uint64_t nchunks =
         nchunks_of(descriptor.logical_size, descriptor.chunk_size);
 
-    if (snap_id == 0) {
-        rawstd_error("Snapshot id 0 is the live version\n");
+    if (rawstd_uuid_is_nil(&snap_id)) {
+        rawstd_error("A nil snap_id is the live version\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-
-    {
-        /* The id must have been reserved by snap_begin(). */
-        Stmt select(_db, "SELECT next_snap_id FROM objects WHERE id = ?;");
-        select.bind_blob(1, id.bytes, sizeof(id.bytes));
-        if (!select.step() || snap_id >= select.column_int64(0)) {
-            rawstd_error("Snapshot id was never reserved\n");
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
     }
 
     /*
@@ -783,7 +726,7 @@ uint64_t ObjectStore::snap_commit(
                  " VALUES (?, ?, ?, ?);"
         );
         insert.bind_blob(1, id.bytes, sizeof(id.bytes))
-            .bind_int64(2, snap_id)
+            .bind_blob(2, snap_id.bytes, sizeof(snap_id.bytes))
             .bind_int64(3, descriptor.logical_size)
             .bind_int64(4, static_cast<uint64_t>(time(nullptr)))
             .step();
@@ -798,7 +741,7 @@ uint64_t ObjectStore::snap_commit(
         for (const SnapMember& m : members) {
             insert.reset();
             insert.bind_blob(1, id.bytes, sizeof(id.bytes))
-                .bind_int64(2, snap_id)
+                .bind_blob(2, snap_id.bytes, sizeof(snap_id.bytes))
                 .bind_int64(3, m.logical_index)
                 .bind_blob(4, m.ost_id.bytes, sizeof(m.ost_id.bytes))
                 .step();
@@ -818,7 +761,7 @@ uint64_t ObjectStore::snap_commit(
 }
 
 std::vector<SnapMember>
-ObjectStore::snap_remove(const RawstdUUID& id, uint64_t snap_id) {
+ObjectStore::snap_remove(const RawstdUUID& id, const RawstdUUID& snap_id) {
     std::vector<SnapMember> ret;
 
     Transaction tx(_db);
@@ -829,7 +772,8 @@ ObjectStore::snap_remove(const RawstdUUID& id, uint64_t snap_id) {
                  " WHERE id = ? AND snap_id = ?"
                  " ORDER BY logical_index, ost_id;"
         );
-        select.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, snap_id);
+        select.bind_blob(1, id.bytes, sizeof(id.bytes))
+            .bind_blob(2, snap_id.bytes, sizeof(snap_id.bytes));
         while (select.step()) {
             SnapMember m{};
             m.logical_index = select.column_int64(0);
@@ -844,7 +788,7 @@ ObjectStore::snap_remove(const RawstdUUID& id, uint64_t snap_id) {
                  " WHERE id = ? AND snap_id = ?;"
         );
         del.bind_blob(1, id.bytes, sizeof(id.bytes))
-            .bind_int64(2, snap_id)
+            .bind_blob(2, snap_id.bytes, sizeof(snap_id.bytes))
             .step();
     }
 

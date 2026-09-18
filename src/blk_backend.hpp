@@ -81,11 +81,12 @@ private:
     void _throttle_release() noexcept;
 
 protected:
-    // `snap_id` is 0 for the live version, or a previously-snapshotted
+    // `snap_id` is nil for the live version, or a previously-snapshotted
     // version id (docs/mds.md, "Snapshots") -- ENOTSUP on a
     // subclass without native CoW (file::Backend, lvm::Backend).
-    virtual rawstd::Task<int>
-    _open(const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id) = 0;
+    virtual rawstd::Task<int> _open(
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+    ) = 0;
 
     // A blk-backed backend has no upfront connection step: the fd is
     // opened lazily, by _open(const RawstdUUID&) above, once
@@ -150,7 +151,8 @@ public:
     rawstd::Task<void> close() override final;
 
     rawstd::Task<void> set_object(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id = 0
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
     ) override final;
 
     // Default spec() for a backend whose object id maps to a real block

@@ -71,24 +71,25 @@ public:
         const RawstorObjectPolicy& policy
     );
 
-    rawstd::Task<WireMap> open(const RawstdUUID& id, uint64_t snap_id);
+    rawstd::Task<WireMap> open(const RawstdUUID& id, const RawstdUUID& snap_id);
 
     rawstd::Task<uint64_t> resize(const RawstdUUID& id, uint64_t new_size);
 
     rawstd::Task<void> remove(const RawstdUUID& id);
 
-    /* Durably reserves the next snap_id (docs/mds.md, two-phase). */
-    rawstd::Task<uint64_t> snap_begin(const RawstdUUID& id);
-
-    /* Registers the snapshot; returns the bumped map_epoch. */
+    /*
+     * Registers the snapshot; snap_id is the caller's own already-
+     * generated version id (like every object id). Returns the bumped
+     * map_epoch.
+     */
     rawstd::Task<uint64_t> snap_commit(
-        const RawstdUUID& id, uint64_t snap_id,
+        const RawstdUUID& id, const RawstdUUID& snap_id,
         const std::vector<WireSnapMember>& members
     );
 
     /* Unregisters and returns the member set for the fan-out destroy. */
     rawstd::Task<std::vector<WireSnapMember>>
-    snap_remove(const RawstdUUID& id, uint64_t snap_id);
+    snap_remove(const RawstdUUID& id, const RawstdUUID& snap_id);
 };
 
 } // namespace mds

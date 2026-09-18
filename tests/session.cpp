@@ -52,7 +52,7 @@ void Session::cmd_allocate(uint32_t magic, uint16_t cid, int32_t res) {
 
 void Session::cmd_set_object_request() {
     _server.read(
-        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameBasic),
+        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameSnap),
         [](const void*) {}
     );
 }

@@ -166,9 +166,10 @@ Backend::_device_path(const RawstdUUID& id, uint64_t chunk_offset) const {
     return _device_path_for_name(name);
 }
 
-rawstd::Task<int>
-Backend::_open(const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id) {
-    if (snap_id != 0) {
+rawstd::Task<int> Backend::_open(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+) {
+    if (!rawstd_uuid_is_nil(&snap_id)) {
         /* Classic LVM has no thin CoW: docs/mds.md, "Snapshots". */
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
@@ -241,7 +242,7 @@ rawstd::Task<void> Backend::list(
             if (rawstd_uuid_from_string(&uuid, uuid_part.c_str()) < 0) {
                 continue;
             }
-            found.push_back(ListedObject{uuid, chunk_offset, 0});
+            found.push_back(ListedObject{uuid, chunk_offset, RawstdUUID{}});
         }
     } catch (const std::exception& e) {
         rawstd_error(

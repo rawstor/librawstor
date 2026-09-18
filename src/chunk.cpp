@@ -82,15 +82,15 @@ RawstdUUID uuid_from_target(const rawstd::URI& uri) {
 // Local duplicate of target.cpp's own extract_snap_id() -- see
 // uuid_from_target()'s own comment above on why Chunk::create() carries
 // its own copies rather than relying on Target having already run them.
-uint64_t extract_snap_id(const rawstd::URI& uri) {
+RawstdUUID extract_snap_id(const rawstd::URI& uri) {
     const std::string& filename = uri.path().filename();
     size_t at = filename.find('@');
     if (at == std::string::npos) {
-        return 0;
+        return RawstdUUID{};
     }
-    std::istringstream iss(filename.substr(at + 1));
-    uint64_t snap_id = 0;
-    if (!(iss >> snap_id) || !iss.eof()) {
+    RawstdUUID snap_id;
+    int res = rawstd_uuid_from_string(&snap_id, filename.c_str() + at + 1);
+    if (res < 0) {
         rawstd_error("Malformed snapshot suffix: %s\n", filename.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -109,7 +109,7 @@ void validate_same_uuid(const std::vector<rawstd::URI>& uris) {
     }
 
     RawstdUUID uuid = uuid_from_target(uris.front());
-    uint64_t snap_id = extract_snap_id(uris.front());
+    RawstdUUID snap_id = extract_snap_id(uris.front());
 
     for (const auto& uri : uris) {
         RawstdUUID other_uuid = uuid_from_target(uri);
@@ -117,7 +117,8 @@ void validate_same_uuid(const std::vector<rawstd::URI>& uris) {
             rawstd_error("Equal UUID expected\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
-        if (extract_snap_id(uri) != snap_id) {
+        RawstdUUID other_snap_id = extract_snap_id(uri);
+        if (rawstd_uuid_cmp(&other_snap_id, &snap_id) != 0) {
             rawstd_error("Equal snapshot version expected\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
@@ -248,7 +249,7 @@ Chunk::~Chunk() {
 
 rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     rawio::Queue& queue, const std::vector<rawstd::URI>& uris,
-    uint64_t chunk_offset, uint64_t snap_id
+    uint64_t chunk_offset, const RawstdUUID& snap_id
 ) {
     // Same three checks a Target's own constructor used to run on `uris`
     // on this factory's behalf -- now run here instead, since Object's

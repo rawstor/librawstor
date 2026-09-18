@@ -871,12 +871,13 @@ static void command_snapshot_usage(void) {
         "\n"
         "Takes an MDS-orchestrated native CoW snapshot of an object "
         "(docs/mds.md,\n"
-        "\"Snapshots (stage 2)\"): the MDS assigns the new snapshot "
-        "id,\n"
-        "which is printed to stdout on success (status messages go to "
-        "stderr). Not\n"
-        "supported on an object with file:// or classic-LVM chunk members\n"
-        "(-ENOTSUP, no fallback copies).\n"
+        "\"Snapshots (stage 2)\"): this command generates the new "
+        "snapshot id\n"
+        "itself, and prints it to stdout on success (status messages go "
+        "to\n"
+        "stderr). Not supported on an object with file:// or classic-LVM "
+        "chunk\n"
+        "members (-ENOTSUP, no fallback copies).\n"
         "\n"
         "  TARGET                An mds://host:port/<id> target.\n"
         "\n"
@@ -943,9 +944,9 @@ static void command_snap_remove_usage(void) {
         "best-effort on whichever members still resolve.\n"
         "\n"
         "  TARGET                An mds://host:port/<id> target.\n"
-        "  -s, --snap-id ID      Snapshot id to remove, as printed by "
-        "`rawstor\n"
-        "                        snapshot`.\n"
+        "  -s, --snap-id ID      Snapshot id (UUID) to remove, as printed "
+        "by\n"
+        "                        `rawstor snapshot`.\n"
         "\n"
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
@@ -1003,21 +1004,7 @@ static int command_snap_remove(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    uint64_t snap_id = 0;
-    char* endptr = NULL;
-    errno = 0;
-    unsigned long long parsed_snap_id = strtoull(snap_id_arg, &endptr, 10);
-    if (errno != 0 || endptr == snap_id_arg || *endptr != '\0') {
-        fprintf(stderr, "Invalid --snap-id value: %s\n", snap_id_arg);
-        return EX_USAGE;
-    }
-    if (parsed_snap_id == 0) {
-        fprintf(stderr, "--snap-id must be greater than 0\n");
-        return EX_USAGE;
-    }
-    snap_id = (uint64_t)parsed_snap_id;
-
-    return rawstor_cli_snap_remove(target_arg, snap_id);
+    return rawstor_cli_snap_remove(target_arg, snap_id_arg);
 }
 
 static void command_testio_usage(void) {

@@ -48,6 +48,15 @@ private:
         RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
         uint64_t chunk_offset, uint64_t val
     );
+    // Same shape as _basic_request() above, for the handful of commands
+    // that need a UUID snap_id instead of a plain uint64_t val
+    // (RawstorOSTFrameSnapPayload, protocol.h): SET_OBJECT, SNAPSHOT,
+    // SNAP_REMOVE.
+    template <typename T = char>
+    rawstd::Task<std::vector<T>> _snap_request(
+        RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
+        uint64_t chunk_offset, const RawstdUUID& snap_id
+    );
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
     // response can legitimately race with Slot::_op() already having
@@ -103,17 +112,18 @@ public:
     rawstd::Task<RawstorLocationInfo> info() override;
 
     rawstd::Task<void> set_object(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id = 0
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
     ) override;
 
     // Relays RAWSTOR_CMD_SNAPSHOT/_SNAP_REMOVE over the wire -- the
     // remote rawstor-ost forwards to its own local backend the same way
     // (docs/mds.md, "Snapshots").
     rawstd::Task<void> snapshot_create(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     ) override;
     rawstd::Task<void> snapshot_remove(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     ) override;
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;

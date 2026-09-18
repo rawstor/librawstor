@@ -92,11 +92,11 @@ private:
     );
     static rawstd::DetachedTask _snapshot_create(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
+        RawstorOSTFrameSnapPayload payload
     );
     static rawstd::DetachedTask _snapshot_remove(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
+        RawstorOSTFrameSnapPayload payload
     );
     static rawstd::DetachedTask _spec(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
@@ -110,7 +110,7 @@ private:
     _info(std::weak_ptr<Client> weak, RawstorOSTFrameHead head);
     static rawstd::DetachedTask _set_object(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
+        RawstorOSTFrameSnapPayload payload
     );
     static rawstd::DetachedTask _read(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
@@ -148,7 +148,8 @@ private:
     // src/target.hpp) -- the same self-describing name every backend on
     // the receiving end already expects (docs/mds.md, "Chunk identity").
     std::vector<rawstd::URI> _targets(
-        const RawstdUUID& uuid, uint64_t chunk_offset = 0, uint64_t snap_id = 0
+        const RawstdUUID& uuid, uint64_t chunk_offset = 0,
+        const RawstdUUID& snap_id = {}
     );
 
     // Sends a response frame and awaits its actual completion (not just

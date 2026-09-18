@@ -39,7 +39,7 @@ private:
     // (invalidate_backend()) rebinds to the same chunk/version, not
     // silently back to the whole object's own live one.
     uint64_t _chunk_offset = 0;
-    uint64_t _snap_id = 0;
+    RawstdUUID _snap_id{};
 
     std::vector<std::shared_ptr<Backend>> _backends;
     size_t _backend_index;
@@ -138,16 +138,14 @@ public:
     list(unsigned int limit, std::vector<Target>& objects, ListedObject& token);
 
     rawstd::Task<void> snapshot_create(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     );
     rawstd::Task<void> snapshot_remove(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     );
 
     rawstd::Task<void>
     resize(const RawstdUUID& id, uint64_t chunk_offset, uint64_t new_size);
-    rawstd::Task<uint64_t>
-    snapshot_create_assign(const RawstdUUID& id, uint64_t chunk_offset);
 
     rawstd::Task<void> create(
         const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
@@ -179,8 +177,10 @@ public:
     // against whichever backend the pool now has (set_object() itself
     // doesn't return it, see its own doc comment) -- spec.mirrors on it
     // is this copy's own local share, not the target-wide count.
-    rawstd::Task<RawstorObjectMeta>
-    open(const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id = 0);
+    rawstd::Task<RawstorObjectMeta> open(
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
+    );
 
     // Not called implicitly by ~Slot() (a coroutine can't run in a
     // destructor, and there's no other synchronous fallback here beyond

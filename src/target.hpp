@@ -60,17 +60,18 @@ public:
     // Builds a single-chunk Target directly from `location`'s own URIs
     // plus `id`/`offset`/`snap_id`, skipping the string round-trip the
     // constructor above needs -- each of `location`'s own URIs gets `id`
-    // (plus the same ":<offset>"/"@<snap_id>" suffix, if nonzero)
-    // appended as its own path, the same way Location::create() already
-    // builds one for a fresh object. `location`'s own constructor already
-    // guarantees at least one URI, so there's nothing left to validate
-    // here. Used where the pieces are already known separately (e.g. a
-    // concrete Backend's own list(), building one Target per entry from
-    // its own location() and a just-listed id/chunk_offset/snap_id)
-    // rather than assembled into a string first.
+    // (plus the same ":<offset>"/"@<snap_id>" suffix, if `offset`/
+    // `snap_id` isn't 0/nil) appended as its own path, the same way
+    // Location::create() already builds one for a fresh object.
+    // `location`'s own constructor already guarantees at least one URI,
+    // so there's nothing left to validate here. Used where the pieces are
+    // already known separately (e.g. a concrete Backend's own list(),
+    // building one Target per entry from its own location() and a
+    // just-listed id/chunk_offset/snap_id) rather than assembled into a
+    // string first.
     Target(
         const Location& location, const RawstdUUID& id, uint64_t offset = 0,
-        uint64_t snap_id = 0
+        const RawstdUUID& snap_id = {}
     );
 
     // The target's first (and, outside mds::Backend's own internal
@@ -90,10 +91,10 @@ public:
 
     // The bound snapshot version, if any -- the "@<snap_id>" suffix on
     // the first chunk group's own URIs (chunk_slot_target()'s own
-    // convention in mds_backend.cpp), or 0 (live) if absent. No I/O:
+    // convention in mds_backend.cpp), or nil (live) if absent. No I/O:
     // parsed from the target string itself, same as id()/location()
     // above.
-    uint64_t snap_id() const;
+    RawstdUUID snap_id() const;
 
     // This target's own byte offset within the larger object it's one
     // chunk of, if any -- the ":<offset>" suffix mds::Backend stamps onto
@@ -152,25 +153,23 @@ public:
     // Native CoW snapshot of every URI in the first chunk group
     // (docs/mds.md, "Snapshots"): every URI is attempted even if an
     // earlier one fails, and the first error encountered is returned.
-    // ENOTSUP on a backend without native CoW (file://, classic LVM).
-    // Not generalized across every chunk group of a multi-chunk string:
-    // mds::Backend's own snapshot_create_assign() below already does
-    // that itself, in descending logical-index order (docs/mds.md) --
-    // an order this method has no way to express over a flat `;`-joined
-    // string.
-    rawstd::Task<void> snapshot_create(rawio::Queue& queue, uint64_t snap_id);
-    rawstd::Task<void> snapshot_remove(rawio::Queue& queue, uint64_t snap_id);
+    // `snap_id` is the caller's own already-generated version id (like
+    // every object id -- client-generated, single point of generation);
+    // never nil. ENOTSUP on a backend without native CoW (file://,
+    // classic LVM). Not generalized across every chunk group of a
+    // multi-chunk string: mds::Backend's own snapshot_create() override
+    // already does that itself, in descending logical-index order
+    // (docs/mds.md) -- an order this method has no way to express over a
+    // flat `;`-joined string.
+    rawstd::Task<void>
+    snapshot_create(rawio::Queue& queue, const RawstdUUID& snap_id);
+    rawstd::Task<void>
+    snapshot_remove(rawio::Queue& queue, const RawstdUUID& snap_id);
 
     // Grows the object to `new_size` -- ENOTSUP on every target except a
     // single mds:// one (mds::Backend::resize()); see Backend::resize()'s
     // own doc comment.
     rawstd::Task<void> resize(rawio::Queue& queue, uint64_t new_size);
-
-    // Assigns and returns a new snapshot id (mds::Backend::
-    // snapshot_create_assign()); ENOTSUP on every other target. Unlike
-    // snapshot_create() above (a caller-chosen id against an already
-    // known target), the id itself comes from this call.
-    rawstd::Task<uint64_t> snapshot_create_assign(rawio::Queue& queue);
 };
 
 } // namespace rawstor

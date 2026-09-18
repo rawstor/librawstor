@@ -40,19 +40,21 @@ class Backend final : public rawstor::blk::Backend {
 private:
     std::string _parent_dataset;
 
-    // `snap_id != 0` names that version's own native snapshot:
+    // A non-nil `snap_id` names that version's own native snapshot:
     // <dataset>@s<snap_id> / /dev/zvol/.../<uuid>[:<chunk_offset>]@s<snap_id>
     // -- the "@s<id>" name is the version key itself (docs/mds.md,
     // "Snapshots"), nothing stored twice.
     std::string _device_path(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id = 0
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
     ) const;
     std::string _dataset(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id = 0
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
     ) const;
 
     rawstd::Task<int> _open(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     ) override;
 
     // Polls for `path`'s existence-as-a-block-device to match
@@ -99,10 +101,10 @@ public:
     // own device node (/dev/zvol/.../<uuid>@s<id>) is openable -- one
     // mechanism, old zvols included, rather than per-snapshot.
     rawstd::Task<void> snapshot_create(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     ) override;
     rawstd::Task<void> snapshot_remove(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     ) override;
 };
 

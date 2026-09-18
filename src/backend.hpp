@@ -31,18 +31,19 @@ class Target;
 // docs/mds.md's "Chunk identity": obj_id = volume_id) -- `chunk_offset`
 // (0 for a plain, non-volume object; `logical_index * chunk_size`
 // otherwise) is what actually tells two of a volume's own chunks apart.
-// `snap_id` is always 0 today (no backend's own list() enumerates
+// `snap_id` is always nil today (no backend's own list() enumerates
 // snapshots yet -- see docs/mds.md's own "Snapshot-version records are
 // skipped (stage 2)"), carried alongside for when one does.
 struct ListedObject {
     RawstdUUID id;
     uint64_t chunk_offset;
-    uint64_t snap_id;
+    RawstdUUID snap_id;
 };
 
 inline bool operator==(const ListedObject& lhs, const ListedObject& rhs) {
     return rawstd_uuid_cmp(&lhs.id, &rhs.id) == 0 &&
-           lhs.chunk_offset == rhs.chunk_offset && lhs.snap_id == rhs.snap_id;
+           lhs.chunk_offset == rhs.chunk_offset &&
+           rawstd_uuid_cmp(&lhs.snap_id, &rhs.snap_id) == 0;
 }
 
 // Three-way order for ListedObject, primarily by `id` (RawstdUUID's own
@@ -57,7 +58,7 @@ inline bool operator<(const ListedObject& lhs, const ListedObject& rhs) {
     if (lhs.chunk_offset != rhs.chunk_offset) {
         return lhs.chunk_offset < rhs.chunk_offset;
     }
-    return lhs.snap_id < rhs.snap_id;
+    return rawstd_uuid_cmp(&lhs.snap_id, &rhs.snap_id) < 0;
 }
 
 class Backend : public std::enable_shared_from_this<Backend> {
@@ -169,25 +170,28 @@ public:
     // object exists; an ost:// one's is a real wire round trip either
     // way), so a caller that also needs this copy's own meta() (e.g.
     // Slot::open(), see its own doc comment) calls it separately,
-    // afterward. `snap_id` is 0 for the live version, or a version id
+    // afterward. `snap_id` is nil for the live version, or a version id
     // previously registered via snapshot_create() below (docs/mds.md,
     // "Snapshots") -- ENOTSUP on a backend without native CoW (file://,
     // classic LVM).
     virtual rawstd::Task<void> set_object(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id = 0
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
     ) = 0;
 
-    // Native CoW snapshot of the live version as `snap_id` (never 0 -- 0
-    // is the live version), and its removal. Default: ENOTSUP, covering
-    // file::Backend and lvm::Backend (classic LVM has no thin CoW --
-    // docs/mds.md's own "Snapshots" section) without each
-    // needing its own override; zfs::Backend overrides both with the
-    // real thing.
+    // Native CoW snapshot of the live version as `snap_id` (never nil --
+    // nil is the live version; like every object id, the caller
+    // generates it itself before calling, docs/mds.md), and its removal.
+    // Default: ENOTSUP, covering file::Backend and lvm::Backend (classic
+    // LVM has no thin CoW -- docs/mds.md's own "Snapshots" section)
+    // without each needing its own override; zfs::Backend overrides both
+    // with the real thing, mds::Backend overrides both with its own
+    // MDS-orchestrated fan-out (see mds_backend.cpp).
     virtual rawstd::Task<void> snapshot_create(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     );
     virtual rawstd::Task<void> snapshot_remove(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t snap_id
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     );
 
     // Grows `id` to `new_size` (grow-only -- docs/mds.md: shrink
@@ -200,17 +204,6 @@ public:
     // itself split into chunks -- resize operates on the whole volume).
     virtual rawstd::Task<void>
     resize(const RawstdUUID& id, uint64_t chunk_offset, uint64_t new_size);
-
-    // MDS-orchestrated snapshot (docs/mds.md, "Snapshots (stage 2)"):
-    // reserves a new snap_id, backend-CoWs every reachable chunk member,
-    // then registers the surviving membership -- one indivisible
-    // operation from the caller's point of view, unlike
-    // snapshot_create() above (a caller-chosen id against an already
-    // known target). Default: ENOTSUP; mds::Backend overrides it with
-    // the real thing (Object::snapshot_create()'s former logic);
-    // `chunk_offset` is always 0 there, same reason as resize() above.
-    virtual rawstd::Task<uint64_t>
-    snapshot_create_assign(const RawstdUUID& id, uint64_t chunk_offset);
 
     virtual rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) = 0;
