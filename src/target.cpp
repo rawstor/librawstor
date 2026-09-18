@@ -1279,9 +1279,10 @@ int rawstor_target_snap_id(
         rawstor::Target t(target);
         RawstdUUID snap_id = t.snap_id();
         if (rawstd_uuid_is_nil(&snap_id)) {
-            // Live: no "@<snap_id>" suffix -- an empty string, same as
-            // rawstor_target_id()'s own convention has nothing analogous
-            // to fall back to (every target always has a real id).
+            // Live: no bound snapshot segment -- an empty string, same
+            // as rawstor_target_id()'s own convention has nothing
+            // analogous to fall back to (every target always has a real
+            // id).
             if (size > 0) {
                 buf[0] = '\0';
             }

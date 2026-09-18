@@ -117,8 +117,8 @@ public:
 
     // `targets`: overwritten with this page's own single-URI Targets
     // (this backend's own location() plus one entry's id/chunk_offset/
-    // snap_id, "<uuid>[:<offset>][@<snap_id>]" -- Target's own doc
-    // comment), in the total order ListedObject's own operator<()
+    // snap_id, "<uuid>[/<offset>][/<snap_id>]" -- Target::Path's own doc
+    // comment, target.hpp), in the total order ListedObject's own operator<()
     // defines (id, then chunk_offset, then snap_id). `token`: this
     // call's pagination cursor on entry, overwritten with the next
     // page's cursor on return (all-zero once there's nothing left) --

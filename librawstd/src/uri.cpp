@@ -32,8 +32,8 @@ void parse_uri(
 
     // The authority (userinfo@host:port) ends at the first '/' after the
     // scheme -- bounding the userinfo search to before it keeps an '@'
-    // appearing in the path itself (e.g. rawstor's own "@<snap_id>"
-    // snapshot suffix, uuid@5) from being mistaken for userinfo syntax.
+    // appearing in the path itself (a path segment can legitimately
+    // contain one) from being mistaken for userinfo syntax.
     size_t authority_end = uri.find('/', scheme_delim);
     if (authority_end == uri.npos) {
         authority_end = uri.length();
