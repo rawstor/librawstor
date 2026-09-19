@@ -132,7 +132,7 @@ std::vector<rawstd::URI> first_group(const std::vector<rawstd::URI>& uris) {
 // runs (see first_group()'s own comment above), reconstructing the
 // grouping Target::Target(const std::string&)'s own constructor already
 // validated at parse time. Only create()/open() need this: spec()/meta()/
-// set_sync_state()/snapshot_create()/resize() only ever touch the first
+// set_sync_state()/create_snapshot()/resize() only ever touch the first
 // group (first_group() above); uris()/location()/id()/snap_id() answer
 // for the whole target instead, not any one group.
 std::vector<std::vector<rawstd::URI>>
@@ -267,7 +267,7 @@ rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
     }
 }
 
-rawstd::Task<void> snapshot_create_one(
+rawstd::Task<void> create_snapshot_one(
     rawio::Queue& queue, const rawstd::URI& target, const RawstdUUID& snap_id
 ) {
     RawstdUUID id = uuid_from_target(target);
@@ -276,7 +276,7 @@ rawstd::Task<void> snapshot_create_one(
         co_await rawstor::Slot::create(queue, strip_path(target), 1);
     std::exception_ptr error;
     try {
-        co_await slot->snapshot_create(id, chunk_offset, snap_id);
+        co_await slot->create_snapshot(id, chunk_offset, snap_id);
     } catch (...) {
         error = std::current_exception();
     }
@@ -446,13 +446,13 @@ rawstd::DetachedTask launch_remove_op_coro(
     }
 }
 
-rawstd::DetachedTask launch_snapshot_create_op_coro(
+rawstd::DetachedTask launch_create_snapshot_op_coro(
     rawstor::Target t, rawio::Queue* queue, ssize_t length,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = length;
     try {
-        co_await t.snapshot_create(*queue);
+        co_await t.create_snapshot(*queue);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -694,14 +694,14 @@ Target::Path Target::parse_path(const rawstd::URI& uri) {
 // distinct logical indices always differ here), so bucketing by it and
 // keeping the buckets in ascending order reconstructs exactly the
 // per-chunk grouping and logical-index order -- done here only to
-// validate each group in isolation (validate_different_uris()/validate_same_uuid()
-// below), then flattened straight back into `_uris` in that same
-// ascending-offset order (Target's own class doc comment, target.hpp: the
-// grouping itself is never stored, only ever re-derived on demand by
-// first_group()/group_by_offset() above). A plain, non-mds:// target's
-// URIs all carry no offset segment at all -- extract_offset()'s own
-// default of 0 for all of them puts every one of them in the same single
-// bucket, the ordinary single-chunk case.
+// validate each group in isolation
+// (validate_different_uris()/validate_same_uuid() below), then flattened
+// straight back into `_uris` in that same ascending-offset order (Target's own
+// class doc comment, target.hpp: the grouping itself is never stored, only ever
+// re-derived on demand by first_group()/group_by_offset() above). A plain,
+// non-mds:// target's URIs all carry no offset segment at all --
+// extract_offset()'s own default of 0 for all of them puts every one of them in
+// the same single bucket, the ordinary single-chunk case.
 Target::Target(const std::string& target) {
     std::vector<rawstd::URI> uris = rawstd::URI::uriv(target.c_str());
     validate_not_empty(uris);
@@ -998,7 +998,7 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
     co_await remove_many(queue, _uris);
 }
 
-rawstd::Task<void> Target::snapshot_create(rawio::Queue& queue) const {
+rawstd::Task<void> Target::create_snapshot(rawio::Queue& queue) const {
     if (rawstd_uuid_is_nil(&_snap_id)) {
         // nil is the live version -- nothing to name the new snapshot
         // with.
@@ -1011,7 +1011,7 @@ rawstd::Task<void> Target::snapshot_create(rawio::Queue& queue) const {
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(uris.size());
     for (const auto& uri : uris) {
-        tasks.push_back(snapshot_create_one(queue, uri, _snap_id));
+        tasks.push_back(create_snapshot_one(queue, uri, _snap_id));
     }
     co_await rawstd::gather(std::move(tasks));
 }
@@ -1139,11 +1139,11 @@ int rawstor_target_remove(
 // fresh object id is generated in Location::create()/rawstor_location_
 // create() -- rawstd_uuid7_init(), same function, same reasoning), or a
 // caller-chosen version id string (any target -- mds:// included, now
-// that its own snapshot_create() no longer needs a separate MDS round
+// that its own create_snapshot() no longer needs a separate MDS round
 // trip to assign one, see mds_backend.cpp). Either way, the id actually
 // used is written into `buf`/`size` synchronously, before any I/O, same
 // convention as rawstor_location_create()'s own `target`/`size`.
-int rawstor_target_snapshot_create(
+int rawstor_target_create_snapshot(
     RawIOQueue* queue, const char* target, const char* snap_id, char* buf,
     size_t size, int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
@@ -1188,7 +1188,7 @@ int rawstor_target_snapshot_create(
             return 0;
         }
 
-        // No separate snap_id parameter on Target::snapshot_create()
+        // No separate snap_id parameter on Target::create_snapshot()
         // itself (its own doc comment) -- append the version to every
         // URI in `target` before constructing, the same logical/physical
         // shape rawstor_target_snapshot_remove() already builds.
@@ -1198,7 +1198,7 @@ int rawstor_target_snapshot_create(
         }
         rawstor::Target combined(rawstd::URI::uris(uris));
 
-        launch_snapshot_create_op_coro(
+        launch_create_snapshot_op_coro(
             std::move(combined), static_cast<rawio::Queue*>(queue), res, cb,
             data
         );

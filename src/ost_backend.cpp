@@ -1532,12 +1532,12 @@ rawstd::Task<void> Backend::remove(
     co_return;
 }
 
-rawstd::Task<void> Backend::snapshot_create(
+rawstd::Task<void> Backend::create_snapshot(
     const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
 ) {
     try {
         co_await _snap_request(
-            RAWSTOR_CMD_SNAPSHOT, "snapshot_create", id, chunk_offset, snap_id
+            RAWSTOR_CMD_SNAPSHOT, "create_snapshot", id, chunk_offset, snap_id
         );
     } catch (const std::system_error&) {
         throw;

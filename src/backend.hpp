@@ -139,7 +139,7 @@ public:
     ) = 0;
 
     // `snap_id` is nil for the live version, or a version id previously
-    // registered via snapshot_create() below -- same nil-means-live
+    // registered via create_snapshot() below -- same nil-means-live
     // convention as set_object(), so there is no separate
     // "snapshot_remove()" any more. A backend without native CoW (file://,
     // classic LVM) must reject a non-nil snap_id itself with ENOTSUP
@@ -181,7 +181,7 @@ public:
     // way), so a caller that also needs this copy's own meta() (e.g.
     // Slot::open(), see its own doc comment) calls it separately,
     // afterward. `snap_id` is nil for the live version, or a version id
-    // previously registered via snapshot_create() below (docs/mds.md,
+    // previously registered via create_snapshot() below (docs/mds.md,
     // "Snapshots") -- ENOTSUP on a backend without native CoW (file://,
     // classic LVM).
     virtual rawstd::Task<void> set_object(
@@ -198,7 +198,7 @@ public:
     // its own override; zfs::Backend overrides this with the real thing,
     // mds::Backend overrides it with its own MDS-orchestrated fan-out
     // (see mds_backend.cpp).
-    virtual rawstd::Task<void> snapshot_create(
+    virtual rawstd::Task<void> create_snapshot(
         const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     );
 

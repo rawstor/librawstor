@@ -524,7 +524,7 @@ Seen when building with `--enable-asan` (e.g. `configure --enable-asan
 --without-python3`) under GCC 15 (Ubuntu 26.04's default `g++`), on any code
 path where a self-destroying coroutine (`rawstd::DetachedTask`) `co_await`s a
 `rawstd::Task<T>` that completes synchronously -- no genuine suspension
-anywhere in the awaited chain, e.g. `Target::snapshot_create()` against a
+anywhere in the awaited chain, e.g. `Target::create_snapshot()` against a
 `file://` backend's default `ENOTSUP` throw. The ASan trace shows the same
 coroutine's own frame appearing recursively around
 `coroutine_handle<promise_type>::destroy()` and

@@ -45,7 +45,7 @@ class Object;
 // Slot per URI just for that one call and closes it again before
 // returning, same as the code they replace used to do. create()/remove()/
 // meta() are the ones that actually work across every chunk group (see
-// each one's own comment) -- spec()/set_sync_state()/snapshot_create()
+// each one's own comment) -- spec()/set_sync_state()/create_snapshot()
 // still only ever operate on the target's own first chunk group (see
 // each one's own comment on why a multi-chunk string can't generalize to
 // them). open() is the one exception that needs a Slot to survive past
@@ -257,13 +257,13 @@ public:
     // above never takes an id either. ENOTSUP on a backend without
     // native CoW (file://, classic LVM). Not generalized across every
     // chunk group of a multi-chunk string: mds::Backend's own
-    // snapshot_create() override already does that itself, in descending
+    // create_snapshot() override already does that itself, in descending
     // logical-index order (docs/mds.md) -- group_by_offset() (target.cpp)
     // always walks a target string's own chunk groups in ascending
     // offset order, ascending logical-index order, so this method has no
     // way to express that descending order even if it did fan out across
     // every group.
-    rawstd::Task<void> snapshot_create(rawio::Queue& queue) const;
+    rawstd::Task<void> create_snapshot(rawio::Queue& queue) const;
 
     // Grows the object to `new_size` -- ENOTSUP on every target except a
     // single mds:// one (mds::Backend::resize()); see Backend::resize()'s

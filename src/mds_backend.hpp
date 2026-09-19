@@ -87,7 +87,7 @@ public:
     // MDS-orchestrated snapshot (docs/mds.md, "Snapshots (stage 2)"):
     // `snap_id` is the caller's own already-generated version id (like
     // every object id -- client-generated, single point of generation,
-    // Target::snapshot_create()'s own contract, target.h). No more
+    // Target::create_snapshot()'s own contract, target.h). No more
     // separate "assign" step (there used to be one, back when the MDS
     // itself handed out a monotonic counter's next value): a client-
     // generated id can never collide with a crashed attempt's leftovers,
@@ -100,7 +100,7 @@ public:
     // concurrent writer -- draining/flushing an in-flight write session
     // is the writing client's own duty, not this call's. `chunk_offset`
     // is always 0, same reason as resize() above.
-    rawstd::Task<void> snapshot_create(
+    rawstd::Task<void> create_snapshot(
         const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     ) override;
 

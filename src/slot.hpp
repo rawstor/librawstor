@@ -137,7 +137,7 @@ public:
     rawstd::Task<void>
     list(unsigned int limit, std::vector<Target>& objects, ListedObject& token);
 
-    rawstd::Task<void> snapshot_create(
+    rawstd::Task<void> create_snapshot(
         const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     );
 

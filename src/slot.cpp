@@ -65,7 +65,7 @@ unsigned int backoff_delay_ms(
 // A rejection retrying can never turn into success: the target object
 // doesn't exist (ENOENT), already exists where create() needs it not to
 // (EEXIST), the request itself is malformed (EINVAL), or the backend
-// permanently lacks a capability (ENOTSUP -- e.g. snapshot_create()/a
+// permanently lacks a capability (ENOTSUP -- e.g. create_snapshot()/a
 // non-nil snap_id to remove() on file:// or classic LVM, docs/mds.md's
 // "Snapshots": no retry will ever make a backend grow native CoW support
 // it doesn't have).
@@ -551,7 +551,7 @@ rawstd::Task<void> Slot::list(
     }
 }
 
-rawstd::Task<void> Slot::snapshot_create(
+rawstd::Task<void> Slot::create_snapshot(
     const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
 ) {
     const char* func_name = __FUNCTION__;
@@ -561,7 +561,7 @@ rawstd::Task<void> Slot::snapshot_create(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::snapshot_create, id, chunk_offset,
+            func_name, trace_event, &Backend::create_snapshot, id, chunk_offset,
             snap_id
         );
         _finish(t_call);

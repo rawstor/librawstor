@@ -331,7 +331,7 @@ public:
     // maintenance (the reconnect probe, an online resync if one is
     // already due). `chunk_offset` is 0 for a plain, non-volume object or
     // a volume's own chunk 0; `snap_id` is nil for the live version, or a
-    // version id previously registered via Target::snapshot_create()
+    // version id previously registered via Target::create_snapshot()
     // (docs/mds.md, "Snapshots").
     static rawstd::Task<std::unique_ptr<Chunk>> create(
         rawio::Queue& queue, const std::vector<rawstd::URI>& uris,

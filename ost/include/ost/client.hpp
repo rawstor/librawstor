@@ -92,7 +92,7 @@ private:
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameSnapPayload payload
     );
-    static rawstd::DetachedTask _snapshot_create(
+    static rawstd::DetachedTask _create_snapshot(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameSnapPayload payload
     );

@@ -126,7 +126,7 @@ public:
     // Relays RAWSTOR_CMD_SNAPSHOT over the wire -- the remote rawstor-ost
     // forwards to its own local backend the same way (docs/mds.md,
     // "Snapshots").
-    rawstd::Task<void> snapshot_create(
+    rawstd::Task<void> create_snapshot(
         const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     ) override;
 

@@ -679,7 +679,7 @@ int rawstor_target_offset(
  *
  * @see rawstor_target_snapshot_remove
  */
-int rawstor_target_snapshot_create(
+int rawstor_target_create_snapshot(
     RawIOQueue* queue, const char* target, const char* snap_id, char* buf,
     size_t size, int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
@@ -690,7 +690,7 @@ int rawstor_target_snapshot_create(
  * A convenience over rawstor_target_remove() for a caller that already
  * has @p target and @p snap_id as two separate strings (this is the
  * common shape -- @p snap_id came back from a prior
- * rawstor_target_snapshot_create() or listing, @p target did not): it
+ * rawstor_target_create_snapshot() or listing, @p target did not): it
  * appends @p snap_id, as a bound-snapshot path segment, to every URI in
  * @p target itself (@see rawstor_target_snap_id) and hands the result to
  * rawstor_target_remove() -- there is no separate removal path. For an
@@ -699,7 +699,7 @@ int rawstor_target_snapshot_create(
  * member that can no longer be resolved (address changed, OST replaced)
  * is left for the reconstruct scan rather than failing the call. For any
  * other @p target, this is instead a plain fan-out over every URI (same
- * semantics as the native CoW branch of rawstor_target_snapshot_create()):
+ * semantics as the native CoW branch of rawstor_target_create_snapshot()):
  * every URI is attempted, the first error is reported.
  *
  * @param snap_id  The version id's UUID string -- always the caller's own,
@@ -710,7 +710,7 @@ int rawstor_target_snapshot_create(
  * @return 0 if the removal was successfully queued; negative errno on
  *         immediate failure (in which case @p cb is never invoked).
  *
- * @see rawstor_target_snapshot_create
+ * @see rawstor_target_create_snapshot
  * @see rawstor_target_remove
  */
 int rawstor_target_snapshot_remove(

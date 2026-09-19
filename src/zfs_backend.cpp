@@ -504,7 +504,7 @@ rawstd::Task<void> Backend::set_sync_state(
     co_return;
 }
 
-rawstd::Task<void> Backend::snapshot_create(
+rawstd::Task<void> Backend::create_snapshot(
     const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
 ) {
     if (rawstd_uuid_is_nil(&snap_id)) {

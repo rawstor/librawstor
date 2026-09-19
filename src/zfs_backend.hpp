@@ -100,11 +100,11 @@ public:
     ) override;
 
     // The v1 CoW backend (docs/mds.md, "Snapshots"): a native
-    // "zfs snapshot"/"zfs destroy" of the zvol. snapshot_create() also
+    // "zfs snapshot"/"zfs destroy" of the zvol. create_snapshot() also
     // sets snapdev=visible on the *origin* dataset so every snapshot's
     // own device node (/dev/zvol/.../<uuid>@s<id>) is openable -- one
     // mechanism, old zvols included, rather than per-snapshot.
-    rawstd::Task<void> snapshot_create(
+    rawstd::Task<void> create_snapshot(
         const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
     ) override;
 };

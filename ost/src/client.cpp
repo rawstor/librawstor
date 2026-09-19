@@ -731,7 +731,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
-                _snapshot_create(weak, head, snap);
+                _create_snapshot(weak, head, snap);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -1177,9 +1177,9 @@ rawstd::DetachedTask Client::_release(
 }
 
 // SNAPSHOT (docs/mds.md, "Snapshots"): forwarded to the same
-// rawstor_target_snapshot_create() this server's own local backend(s)
+// rawstor_target_create_snapshot() this server's own local backend(s)
 // implement -- same shape as _release() above.
-rawstd::DetachedTask Client::_snapshot_create(
+rawstd::DetachedTask Client::_create_snapshot(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
     RawstorOSTFrameSnapPayload payload
 ) {
@@ -1205,7 +1205,7 @@ rawstd::DetachedTask Client::_snapshot_create(
         RawstdUUIDString snap_string;
         rawstd_uuid_to_string(&snap_id, &snap_string);
         char buf[sizeof(RawstdUUIDString)];
-        int res = rawstor_target_snapshot_create(
+        int res = rawstor_target_create_snapshot(
             client->_queue, target.c_str(), snap_string, buf, sizeof(buf),
             result_trampoline, &awaiter
         );

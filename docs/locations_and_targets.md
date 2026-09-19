@@ -141,14 +141,14 @@ Slots; a plain, unmirrored target's Chunk has exactly one.
 A **snapshot** is a bound, read-only version of a target/chunk/slot,
 identified by a version id (`snap_id`, a UUID -- never nil, nil always
 means "live"). Like every other id in this design, `snap_id` is
-client-generated (`Target::snapshot_create(queue, snap_id)`,
-`rawstor_target_snapshot_create()`'s own `NULL`-generates-a-fresh-one
+client-generated (`Target::create_snapshot(queue, snap_id)`,
+`rawstor_target_create_snapshot()`'s own `NULL`-generates-a-fresh-one
 convenience) -- there is no separate "assign" mode, mds:// included: two
 independent mechanisms use the same id, at different layers:
 
 - **mds:// object-level**: CoW-every-chunk/`OBJ_SNAP_COMMIT`
   (docs/mds.md, "Snapshots (stage 2)") registers the caller's id against
-  the whole object, driven by `mds::Backend::snapshot_create()`.
+  the whole object, driven by `mds::Backend::create_snapshot()`.
 - **Per-slot native CoW**: a single backend's own thin-clone/snapshot
   primitive (zfs::Backend today), addressed directly by target/chunk-
   slot URI with the version appended as a trailing path segment, in

@@ -315,7 +315,7 @@ Backend::resize(const RawstdUUID& id, uint64_t, uint64_t new_size) {
     }
 }
 
-rawstd::Task<void> Backend::snapshot_create(
+rawstd::Task<void> Backend::create_snapshot(
     const RawstdUUID& id, uint64_t, const RawstdUUID& snap_id
 ) {
     if (rawstd_uuid_is_nil(&snap_id)) {
@@ -344,7 +344,7 @@ rawstd::Task<void> Backend::snapshot_create(
                     chunk_slot_target(map.id, i, slot, map.chunk_size, snap_id)
                         .str()
                 );
-                co_await t.snapshot_create(_queue);
+                co_await t.create_snapshot(_queue);
                 members.push_back(mds::WireSnapMember{i, slot.ost_id});
                 any = true;
             } catch (const std::exception& e) {
