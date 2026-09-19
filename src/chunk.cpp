@@ -593,6 +593,23 @@ void Chunk::_reconcile_sync_set() {
     }
 }
 
+RawstorObjectSyncState Chunk::_bump_sync_state() const {
+    RawstorObjectSyncState m{};
+    m.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
+    m.epoch = _epoch + 1;
+    m.sync_id = random_sync_id();
+    if (_sync_id != 0) {
+        m.sync_id_history[0] = _sync_id;
+        memcpy(
+            &m.sync_id_history[1], _sync_id_history,
+            (RAWSTOR_OBJECT_SYNC_ID_HISTORY - 1) * sizeof(uint64_t)
+        );
+    } else {
+        memcpy(m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history));
+    }
+    return m;
+}
+
 rawstd::Task<void> Chunk::_with_dirty() {
     if (_spec.mirrors == 1) {
         co_return;
@@ -634,23 +651,10 @@ rawstd::Task<void> Chunk::_run_dirty_barrier() {
                     _unrecorded_stale > 0;
 
         RawstorObjectSyncState m{};
-        m.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
         if (bump) {
-            m.epoch = _epoch + 1;
-            m.sync_id = random_sync_id();
-            if (_sync_id != 0) {
-                m.sync_id_history[0] = _sync_id;
-                memcpy(
-                    &m.sync_id_history[1], _sync_id_history,
-                    (RAWSTOR_OBJECT_SYNC_ID_HISTORY - 1) * sizeof(uint64_t)
-                );
-            } else {
-                memcpy(
-                    m.sync_id_history, _sync_id_history,
-                    sizeof(m.sync_id_history)
-                );
-            }
+            m = _bump_sync_state();
         } else {
+            m.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
             m.epoch = _epoch;
             m.sync_id = _sync_id;
             memcpy(
@@ -770,17 +774,7 @@ rawstd::Task<void> Chunk::_run_degrade_barrier() {
     _meta_gate.begin();
 
     try {
-        RawstorObjectSyncState m{};
-        m.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
-        m.epoch = _epoch + 1;
-        m.sync_id = random_sync_id();
-        if (_sync_id != 0) {
-            m.sync_id_history[0] = _sync_id;
-            memcpy(
-                &m.sync_id_history[1], _sync_id_history,
-                (RAWSTOR_OBJECT_SYNC_ID_HISTORY - 1) * sizeof(uint64_t)
-            );
-        }
+        RawstorObjectSyncState m = _bump_sync_state();
 
         co_await _run_meta_fan_out(m);
 

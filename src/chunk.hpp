@@ -192,6 +192,13 @@ private:
     // for a Slot torn down this way instead of via close().
     void _reconcile_sync_set();
 
+    // New epoch, freshly generated sync_id, with the chunk's own current
+    // sync_id (if any) pushed onto the front of the ancestry
+    // (_sync_id_history's own comment above) -- shared by
+    // _run_dirty_barrier()'s own membership-change path and
+    // _run_degrade_barrier(), which always bumps.
+    RawstorObjectSyncState _bump_sync_state() const;
+
     // Runs cont(0) once DIRTY is durably recorded on the in-sync members; the
     // first write (or read-repair) of a mirrored object passes through
     // here before anything is acknowledged.
