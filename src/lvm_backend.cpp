@@ -1,7 +1,9 @@
 #include "lvm_backend.hpp"
 
+#include "location.hpp"
 #include "opts.h"
 #include "subprocess.hpp"
+#include "target.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -17,6 +19,7 @@
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <mutex>
 #include <sstream>
@@ -77,7 +80,7 @@ constexpr long staging_min_age_seconds = 300;
 
 // Guards Backend::_cleanup_staging_lvs() so the orphan sweep for a given
 // VG runs at most once per process, regardless of how many Backend
-// instances end up connected to it over time (one per Connection pool
+// instances end up connected to it over time (one per Slot pool
 // slot, plus reconnects) -- listing/removing the same (already-gone,
 // after the first sweep) orphans repeatedly would be pure waste.
 std::mutex swept_vgs_mutex;
@@ -152,14 +155,26 @@ std::string Backend::_device_path_for_name(const std::string& name) const {
     return oss.str();
 }
 
-std::string Backend::_device_path(const RawstdUUID& id) const {
+std::string
+Backend::_device_path(const RawstdUUID& id, uint64_t chunk_offset) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
-    return _device_path_for_name(uuid_str);
+    std::string name = uuid_str;
+    if (chunk_offset != 0) {
+        name += "-" + std::to_string(chunk_offset);
+    }
+    return _device_path_for_name(name);
 }
 
-rawstd::Task<int> Backend::_open(const RawstdUUID& id) {
-    std::string path = _device_path(id);
+rawstd::Task<int> Backend::_open(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+) {
+    if (!rawstd_uuid_is_nil(&snap_id)) {
+        /* Classic LVM has no thin CoW: docs/mds.md, "Snapshots". */
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
+
+    std::string path = _device_path(id, chunk_offset);
 
     // No O_NONBLOCK: io_uring does not need the fd to be non-blocking --
     // it handles blocking operations internally via io_wq worker threads.
@@ -172,13 +187,15 @@ rawstd::Task<int> Backend::_open(const RawstdUUID& id) {
 }
 
 rawstd::Task<void> Backend::list(
-    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+    unsigned int limit, std::vector<Target>& targets, ListedObject& token
 ) {
     co_await _cleanup_staging_lvs();
 
-    RawstdUUID input_token = token;
+    ListedObject input_token = token;
     targets.clear();
     token = {};
+
+    std::vector<ListedObject> found;
 
     // GCC 13 ICEs (is_this_parameter) when a std::vector<std::string>
     // argument is brace-initialized directly at the call site of a nested
@@ -204,11 +221,28 @@ rawstd::Task<void> Backend::list(
         for (const auto& lv : parsed.at("report").at(0).at("lv")) {
             std::string name = lv.at("lv_name").get<std::string>();
 
-            RawstdUUID uuid;
-            if (rawstd_uuid_from_string(&uuid, name.c_str()) < 0) {
+            // A UUID's own string form is always exactly 36 characters
+            // (RawstdUUIDString) -- a fixed prefix, since the UUID itself
+            // already embeds dashes (8-4-4-4-12), unlike this backend's
+            // own "-<chunk_offset>" suffix, which can't be told apart
+            // from those by splitting on the last '-' alone.
+            if (name.size() < 36) {
                 continue;
             }
-            targets.push_back(uuid);
+            std::string uuid_part = name.substr(0, 36);
+            uint64_t chunk_offset = 0;
+            if (name.size() > 36) {
+                if (name[36] != '-') {
+                    continue;
+                }
+                chunk_offset = strtoull(name.c_str() + 37, nullptr, 10);
+            }
+
+            RawstdUUID uuid;
+            if (rawstd_uuid_from_string(&uuid, uuid_part.c_str()) < 0) {
+                continue;
+            }
+            found.push_back(ListedObject{uuid, chunk_offset, RawstdUUID{}});
         }
     } catch (const std::exception& e) {
         rawstd_error(
@@ -218,20 +252,10 @@ rawstd::Task<void> Backend::list(
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    std::sort(
-        targets.begin(), targets.end(),
-        [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-            return rawstd_uuid_cmp(&lhs, &rhs) < 0;
-        }
-    );
+    std::sort(found.begin(), found.end());
 
-    targets.erase(
-        targets.begin(), std::upper_bound(
-                             targets.begin(), targets.end(), input_token,
-                             [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-                                 return rawstd_uuid_cmp(&lhs, &rhs) < 0;
-                             }
-                         )
+    found.erase(
+        found.begin(), std::upper_bound(found.begin(), found.end(), input_token)
     );
 
     if (limit == 0) {
@@ -240,9 +264,20 @@ rawstd::Task<void> Backend::list(
         limit = std::min(limit, rawstor_opts_list_limit());
     }
 
-    if (targets.size() > limit) {
-        targets.resize(limit);
-        token = targets.back();
+    bool capped = found.size() > limit;
+    if (capped) {
+        found.resize(limit);
+    }
+
+    Location self_location(location().str());
+    targets.reserve(found.size());
+    for (const ListedObject& obj : found) {
+        targets.emplace_back(
+            self_location, obj.id, obj.chunk_offset, obj.snap_id
+        );
+    }
+    if (capped) {
+        token = found.back();
     }
 
     co_return;
@@ -323,8 +358,9 @@ rawstd::Task<void> Backend::_cleanup_staging_lvs() {
     }
 }
 
-rawstd::Task<void>
-Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+rawstd::Task<void> Backend::create(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+) {
     _validate_spec(sp);
 
     if (sp.size == 0) {
@@ -334,14 +370,18 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
 
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
-    std::string real_path = _device_path(id);
+    std::string real_name = uuid_str;
+    if (chunk_offset != 0) {
+        real_name += "-" + std::to_string(chunk_offset);
+    }
+    std::string real_path = _device_path(id, chunk_offset);
 
     // create() must behave like open(O_EXCL): retrying it against an id
     // a previous, unacknowledged attempt already fully created (lvcreate
     // + zero-fill + lvrename all succeeded, but the response never made
     // it back to the caller) needs to fail fast with EEXIST -- already
     // classified as permanent, never retried, by
-    // Connection::_with_retry()'s is_permanent_backend_error(), and the
+    // Slot::_with_retry()'s is_permanent_backend_error(), and the
     // same convention file::Backend's own O_EXCL create() already
     // follows -- instead of redoing the whole lvcreate + zero-fill cycle
     // only to fail later at the rename step with a generic, retried-
@@ -389,7 +429,12 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // window -- staged or revealed -- where the LV exists without one.
     RawstorObjectSyncState sync_state{};
     sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    std::string tag = std::string(rawstor_tag_prefix) + meta_encode(sync_state);
+    Backend::ChunkIdentity identity;
+    identity.member_kind = sp.member_kind;
+    identity.width = static_cast<uint8_t>(sp.width);
+    identity.chunk_size = sp.chunk_size;
+    std::string tag =
+        std::string(rawstor_tag_prefix) + meta_encode(sync_state, identity);
 
     rawstd_info(
         "lvm: creating LV %s in VG %s, size %s\n", uuid_str, _vg_name.c_str(),
@@ -453,7 +498,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
 
         std::vector<std::string> rename_argv = {"lvrename",   "--config",
                                                 lvm_config,   _vg_name,
-                                                staging_name, uuid_str};
+                                                staging_name, real_name};
         co_await rawstor::run_command(_queue, std::move(rename_argv));
     } catch (const std::system_error& e) {
         rawstd_error(
@@ -488,14 +533,21 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     co_return;
 }
 
-rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
+rawstd::Task<void> Backend::remove(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+) {
+    if (!rawstd_uuid_is_nil(&snap_id)) {
+        /* No thin CoW on classic LVM: docs/mds.md, "Snapshots". */
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
+
     co_await _cleanup_staging_lvs();
 
-    std::string path = _device_path(id);
+    std::string path = _device_path(id, chunk_offset);
 
     // Matches file::Backend::remove()'s own convention: a nonexistent LV
     // is ENOENT specifically (permanent -- never retried by
-    // Connection::_with_retry()'s is_permanent_backend_error()), not the
+    // Slot::_with_retry()'s is_permanent_backend_error()), not the
     // generic, retryable EIO lvremove itself would produce for the same
     // case.
     if (!co_await _exists(path)) {
@@ -599,8 +651,9 @@ rawstd::Task<std::string> Backend::_lv_tags(const std::string& path) {
     }
 }
 
-rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
-    std::string path = _device_path(id);
+rawstd::Task<RawstorObjectMeta>
+Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
+    std::string path = _device_path(id, chunk_offset);
     std::string tags = co_await _lv_tags(path);
     std::string tag = find_tag(tags, rawstor_tag_prefix);
 
@@ -609,8 +662,9 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     // CLEAN -- the caller treats any error here as "member stale, needs a
     // resync" (docs/mirroring.md, case F10).
     RawstorObjectSyncState sync_state;
+    Backend::ChunkIdentity identity;
     try {
-        sync_state = meta_decode(tag);
+        meta_decode(tag, &sync_state, &identity);
     } catch (const std::system_error&) {
         rawstd_error("lvm: no recorded mirror state on %s\n", path.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
@@ -621,21 +675,40 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     // trust a value that could go stale if the LV were ever resized
     // outside rawstor.
     RawstorObjectMeta ret{};
-    ret.spec = co_await spec(id);
+    ret.spec = co_await spec(id, chunk_offset);
+    ret.spec.member_kind = identity.member_kind;
+    ret.spec.width = identity.width;
+    ret.spec.chunk_size = identity.chunk_size;
     ret.sync_state = sync_state;
 
     co_return ret;
 }
 
 rawstd::Task<void> Backend::set_sync_state(
-    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+    const RawstdUUID& id, uint64_t chunk_offset,
+    const RawstorObjectSyncState& sync_state
 ) {
-    std::string path = _device_path(id);
-    std::string new_tag =
-        std::string(rawstor_tag_prefix) + meta_encode(sync_state);
+    std::string path = _device_path(id, chunk_offset);
 
     std::string tags = co_await _lv_tags(path);
     std::string old_tag = find_tag(tags, rawstor_tag_prefix);
+
+    // The placement identity is immutable once stamped at create() --
+    // carry the existing tag's through unchanged rather than clobber it
+    // with a zeroed one. An empty/unrecorded old_tag (an LV created
+    // before this feature, or by something else) has no identity to
+    // preserve; the fresh one is a standalone (non-chunk) default.
+    Backend::ChunkIdentity identity;
+    if (!old_tag.empty()) {
+        RawstorObjectSyncState old_sync_state;
+        try {
+            meta_decode(old_tag, &old_sync_state, &identity);
+        } catch (const std::system_error&) {
+            identity = Backend::ChunkIdentity{};
+        }
+    }
+    std::string new_tag =
+        std::string(rawstor_tag_prefix) + meta_encode(sync_state, identity);
 
     std::vector<std::string> argv = {"lvchange", "--config", lvm_config};
     if (!old_tag.empty()) {

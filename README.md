@@ -517,3 +517,26 @@ CVE-2024-35880, CVE-2025-21836; see
 There's no known `sysctl`/`ulimit` fix for it; running the affected tests
 against a different kernel (a genuine upstream stable release, or a different
 distribution's) is the only known way around it so far.
+
+### Known issue: ASan heap-use-after-free inside a coroutine's own destruction (GCC 15)
+
+Seen when building with `--enable-asan` (e.g. `configure --enable-asan
+--without-python3`) under GCC 15 (Ubuntu 26.04's default `g++`), on any code
+path where a self-destroying coroutine (`rawstd::DetachedTask`) `co_await`s a
+`rawstd::Task<T>` that completes synchronously -- no genuine suspension
+anywhere in the awaited chain, e.g. `Target::create_snapshot()` against a
+`file://` backend's default `ENOTSUP` throw. The ASan trace shows the same
+coroutine's own frame appearing recursively around
+`coroutine_handle<promise_type>::destroy()` and
+`final_awaiter::await_suspend()`.
+
+This reproduces with a minimal, `librawstor`-independent example (a
+`DetachedTask` awaiting a `Task` that finishes via a bare `co_return`, no
+exception involved) and is a known, already-filed, already-assigned upstream
+regression: [GCC PR c++/116880](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=116880),
+"too early coroutine destruction of `co_await`", bisected to a change in
+GCC 15's coroutine lowering. It reproduces on GCC 15.2.0 and is absent on
+GCC 13.4.0 and Clang 21.1.8 -- CI (Ubuntu 24.04, GCC 13) never hits it. There
+is no code-level workaround (naming the awaited `Task` as a local variable,
+or removing the `try`/`catch`, both still crash); use GCC 13 (or Clang) for
+local ASan builds until upstream fixes PR 116880.

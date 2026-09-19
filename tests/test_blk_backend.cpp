@@ -1,7 +1,7 @@
 #include "blk_backend.hpp"
-#include "connection.hpp"
-#include "object.hpp"
+#include "chunk.hpp"
 #include "opts.h"
+#include "slot.hpp"
 #include "target.hpp"
 #include "tmp_dir.hpp"
 
@@ -26,7 +26,7 @@
 
 namespace {
 
-// Duplicate of object.cpp's own `run()` -- see that one's doc comment for
+// Duplicate of chunk.cpp's own `run()` -- see that one's doc comment for
 // why it isn't shared.
 template <typename T>
 T run(rawio::Queue& q, rawstd::Task<T> t) {
@@ -82,14 +82,14 @@ public:
     ThrottleOptsOverride& operator=(ThrottleOptsOverride&&) = delete;
 };
 
-// Stands up a real file:// object and a spare Connection/Backend against
-// it (independent of the Object's own internal one, same as
+// Stands up a real file:// object and a spare Slot/Backend against
+// it (independent of the Chunk's own internal one, same as
 // Target::open()'s own _open_one() sets one up) so the test can drive
 // blk::Backend::pwrite() -- and inspect its throttle state -- directly.
 rawstor::blk::Backend* open_blk_backend(
     rawio::Queue& queue, const rawstd::URI& location,
-    std::unique_ptr<rawstor::Object>& object,
-    std::unique_ptr<rawstor::Connection>& cn
+    std::unique_ptr<rawstor::Chunk>& object,
+    std::unique_ptr<rawstor::Slot>& slot
 ) {
     RawstdUUID id;
     if (rawstd_uuid7_init(&id) != 0) {
@@ -98,17 +98,26 @@ rawstor::blk::Backend* open_blk_backend(
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    rawstor::Target target({rawstd::URI(location, uuid_string)});
+    rawstd::URI uri(location, uuid_string);
+    rawstor::Target target(uri.str());
 
-    RawstorObjectSpec spec{.size = 1u << 20, .mirrors = 1};
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .mirrors = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     run(queue, target.create(queue, spec));
 
-    object = run(queue, target.open(queue));
+    object = run(queue, rawstor::Chunk::create(queue, {uri}));
 
-    cn = run(queue, rawstor::Connection::create(queue, location, 1));
-    run(queue, cn->open(id));
+    slot = run(queue, rawstor::Slot::create(queue, location, 1));
+    run(queue, slot->open(id, 0));
 
-    return static_cast<rawstor::blk::Backend*>(cn->get_next_backend().get());
+    return static_cast<rawstor::blk::Backend*>(slot->get_next_backend().get());
 }
 
 } // namespace
@@ -129,10 +138,10 @@ TEST(BlkBackendTest, write_throttle_limit) {
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
-    std::unique_ptr<rawstor::Object> object;
-    std::unique_ptr<rawstor::Connection> cn;
+    std::unique_ptr<rawstor::Chunk> object;
+    std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
-        open_blk_backend(*queue, location, object, cn);
+        open_blk_backend(*queue, location, object, slot);
 
     std::string payload = "throttle-me";
     std::vector<rawstd::Task<size_t>> tasks;
@@ -177,10 +186,10 @@ TEST(BlkBackendTest, write_backlog_capacity) {
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
-    std::unique_ptr<rawstor::Object> object;
-    std::unique_ptr<rawstor::Connection> cn;
+    std::unique_ptr<rawstor::Chunk> object;
+    std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
-        open_blk_backend(*queue, location, object, cn);
+        open_blk_backend(*queue, location, object, slot);
 
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(writes);
@@ -225,10 +234,10 @@ TEST(BlkBackendTest, write_zeroes_zeroes_the_range) {
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
-    std::unique_ptr<rawstor::Object> object;
-    std::unique_ptr<rawstor::Connection> cn;
+    std::unique_ptr<rawstor::Chunk> object;
+    std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
-        open_blk_backend(*queue, location, object, cn);
+        open_blk_backend(*queue, location, object, slot);
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
@@ -262,10 +271,10 @@ TEST(BlkBackendTest, write_zeroes_unmap_zeroes_the_range) {
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
-    std::unique_ptr<rawstor::Object> object;
-    std::unique_ptr<rawstor::Connection> cn;
+    std::unique_ptr<rawstor::Chunk> object;
+    std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
-        open_blk_backend(*queue, location, object, cn);
+        open_blk_backend(*queue, location, object, slot);
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
@@ -299,10 +308,10 @@ TEST(BlkBackendTest, write_zeroes_sync_zeroes_the_range) {
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
-    std::unique_ptr<rawstor::Object> object;
-    std::unique_ptr<rawstor::Connection> cn;
+    std::unique_ptr<rawstor::Chunk> object;
+    std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
-        open_blk_backend(*queue, location, object, cn);
+        open_blk_backend(*queue, location, object, slot);
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
@@ -336,10 +345,10 @@ TEST(BlkBackendTest, discard_reports_requested_size) {
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
-    std::unique_ptr<rawstor::Object> object;
-    std::unique_ptr<rawstor::Connection> cn;
+    std::unique_ptr<rawstor::Chunk> object;
+    std::unique_ptr<rawstor::Slot> slot;
     rawstor::blk::Backend* backend =
-        open_blk_backend(*queue, location, object, cn);
+        open_blk_backend(*queue, location, object, slot);
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
@@ -364,34 +373,68 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     sync_state.sync_id_history[2] = 2;
     sync_state.sync_id_history[3] = 3;
 
-    std::string encoded = rawstor::blk::Backend::meta_encode(sync_state);
+    rawstor::blk::Backend::ChunkIdentity identity;
+    identity.member_kind = RAWSTOR_MEMBER_DATA;
+    identity.width = 3;
+    identity.chunk_size = 1ull << 20;
 
-    RawstorObjectSyncState decoded =
-        rawstor::blk::Backend::meta_decode(encoded);
-    EXPECT_EQ(decoded.state, sync_state.state);
-    EXPECT_EQ(decoded.epoch, sync_state.epoch);
-    EXPECT_EQ(decoded.sync_id, sync_state.sync_id);
-    EXPECT_EQ(decoded.sync_id_history[0], sync_state.sync_id_history[0]);
-    EXPECT_EQ(decoded.sync_id_history[1], sync_state.sync_id_history[1]);
-    EXPECT_EQ(decoded.sync_id_history[2], sync_state.sync_id_history[2]);
-    EXPECT_EQ(decoded.sync_id_history[3], sync_state.sync_id_history[3]);
+    std::string encoded =
+        rawstor::blk::Backend::meta_encode(sync_state, identity);
+
+    RawstorObjectSyncState decoded_sync_state;
+    rawstor::blk::Backend::ChunkIdentity decoded_identity;
+    rawstor::blk::Backend::meta_decode(
+        encoded, &decoded_sync_state, &decoded_identity
+    );
+    EXPECT_EQ(decoded_sync_state.state, sync_state.state);
+    EXPECT_EQ(decoded_sync_state.epoch, sync_state.epoch);
+    EXPECT_EQ(decoded_sync_state.sync_id, sync_state.sync_id);
+    EXPECT_EQ(
+        decoded_sync_state.sync_id_history[0], sync_state.sync_id_history[0]
+    );
+    EXPECT_EQ(
+        decoded_sync_state.sync_id_history[1], sync_state.sync_id_history[1]
+    );
+    EXPECT_EQ(
+        decoded_sync_state.sync_id_history[2], sync_state.sync_id_history[2]
+    );
+    EXPECT_EQ(
+        decoded_sync_state.sync_id_history[3], sync_state.sync_id_history[3]
+    );
+    EXPECT_EQ(decoded_identity.member_kind, identity.member_kind);
+    EXPECT_EQ(decoded_identity.width, identity.width);
+    EXPECT_EQ(decoded_identity.chunk_size, identity.chunk_size);
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_empty_string) {
     /* A missing property/tag/record must never be mistaken for a valid
      * one. */
-    EXPECT_THROW(rawstor::blk::Backend::meta_decode(""), std::system_error);
+    RawstorObjectSyncState sync_state;
+    rawstor::blk::Backend::ChunkIdentity identity;
+    EXPECT_THROW(
+        rawstor::blk::Backend::meta_decode("", &sync_state, &identity),
+        std::system_error
+    );
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_dash) {
     /* ZFS's own "property never set" marker -- must not be mistaken for a
      * valid record either. */
-    EXPECT_THROW(rawstor::blk::Backend::meta_decode("-"), std::system_error);
+    RawstorObjectSyncState sync_state;
+    rawstor::blk::Backend::ChunkIdentity identity;
+    EXPECT_THROW(
+        rawstor::blk::Backend::meta_decode("-", &sync_state, &identity),
+        std::system_error
+    );
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_malformed_string) {
+    RawstorObjectSyncState sync_state;
+    rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
-        rawstor::blk::Backend::meta_decode("not the right format"),
+        rawstor::blk::Backend::meta_decode(
+            "not the right format", &sync_state, &identity
+        ),
         std::system_error
     );
 }
@@ -399,9 +442,14 @@ TEST(BlkBackendTest, meta_decode_rejects_malformed_string) {
 TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
     /* A record from a format version this build no longer understands (or
      * ever wrote) must not be mistaken for a valid one. */
+    RawstorObjectSyncState sync_state;
+    rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
         rawstor::blk::Backend::meta_decode(
-            "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0"
+            "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
+            "member_kind=0:width=0:volume_id=00000000-0000-0000-0000-"
+            "000000000000:logical_index=0:chunk_size=0:snap_id=0",
+            &sync_state, &identity
         ),
         std::system_error
     );

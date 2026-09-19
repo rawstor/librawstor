@@ -2,9 +2,9 @@
 #include "session.hpp"
 #include "tmp_dir.hpp"
 
-#include "connection.hpp"
 #include "opts.h"
 #include "rawio_sync.hpp"
+#include "slot.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -26,7 +26,7 @@
 
 namespace {
 
-// Duplicate of object.cpp's own `run()` -- see that one's doc comment for
+// Duplicate of chunk.cpp's own `run()` -- see that one's doc comment for
 // why it isn't shared.
 template <typename T>
 T run(rawio::Queue& q, rawstd::Task<T> t) {
@@ -88,7 +88,15 @@ TEST(ListTest, merge) {
     };
 
     ssize_t res;
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 1};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .mirrors = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     res = create(target11, spec);
     ASSERT_EQ(res, 0);
     res = create(target12, spec);
@@ -180,7 +188,15 @@ TEST(ListTest, pagination) {
     std::vector<std::string> targets;
     targets.reserve(total);
     for (unsigned int i = 0; i < total; ++i) {
-        RawstorObjectSpec spec{.size = 1ull << 10, .mirrors = 1};
+        RawstorObjectSpec spec{
+            .size = 1ull << 10,
+            .mirrors = 1,
+            .chunk_size = 0,
+            .stripe_width = 0,
+            .width = 0,
+            .failure_domain = 0,
+            .member_kind = RAWSTOR_MEMBER_DATA,
+        };
 
         char target[65536];
         ssize_t res =
@@ -254,8 +270,8 @@ TEST(ListTest, pagination) {
 }
 
 // Location::list()/create() and Target::create()/remove()/spec() all use
-// a Connection::create()-only, never-open()-ed Connection for their
-// metadata work -- unlike a data-path Connection, _id stays unset on
+// a Slot::create()-only, never-open()-ed Slot for their
+// metadata work -- unlike a data-path Slot, _id stays unset on
 // one of these for its whole lifetime. invalidate_backend()'s reconnect
 // path used to call the replacement backend's set_object(*_id)
 // unconditionally regardless -- dereferencing an unset
@@ -267,11 +283,11 @@ TEST(ListTest, invalidate_backend_on_metadata_only_connection) {
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
-    std::unique_ptr<rawstor::Connection> cn =
-        run(*queue, rawstor::Connection::create(*queue, location, 1));
-    std::shared_ptr<rawstor::Backend> be = cn->get_next_backend();
+    std::unique_ptr<rawstor::Slot> slot =
+        run(*queue, rawstor::Slot::create(*queue, location, 1));
+    std::shared_ptr<rawstor::Backend> be = slot->get_next_backend();
 
-    EXPECT_NO_THROW(run(*queue, cn->invalidate_backend(be)));
+    EXPECT_NO_THROW(run(*queue, slot->invalidate_backend(be)));
 }
 
 } // unnamed namespace

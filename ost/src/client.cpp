@@ -2,6 +2,11 @@
 
 #include <ost/server.hpp>
 
+#include "object.hpp"
+#include "target.hpp"
+
+#include <rawio/queue.hpp>
+
 #include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
@@ -25,6 +30,7 @@
 #include <vector>
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -50,6 +56,109 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
     return EIO;
 }
 
+// Encodes id/chunk_offset/snap_id into a RawstorPaginationToken's own
+// cursor string ("<uuid>[/<offset>[/<snap_id>]]", the same grammar
+// rawstor::Location::list()'s own encode_token() in src/location.cpp
+// uses) -- an all-zero id means "from the start", matching a zeroed
+// RawstorOSTFrameListPayload's own token_id.
+std::string encode_pagination_token(
+    const uint8_t (&id)[16], uint64_t chunk_offset, const uint8_t (&snap_id)[16]
+) {
+    static const uint8_t null_id[16] = {};
+    if (memcmp(id, null_id, sizeof(null_id)) == 0) {
+        return "";
+    }
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, id, sizeof(uuid.bytes));
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&uuid, &uuid_string);
+    RawstdUUID snap_uuid;
+    memcpy(snap_uuid.bytes, snap_id, sizeof(snap_uuid.bytes));
+    bool has_snap = !rawstd_uuid_is_nil(&snap_uuid);
+    std::string ret = uuid_string;
+    // The offset segment is mandatory once a snapshot segment follows it
+    // (Target::Path's own doc comment, target.hpp).
+    if (chunk_offset != 0 || has_snap) {
+        ret += "/" + std::to_string(chunk_offset);
+    }
+    if (has_snap) {
+        RawstdUUIDString snap_string;
+        rawstd_uuid_to_string(&snap_uuid, &snap_string);
+        ret += "/" + std::string(snap_string);
+    }
+    return ret;
+}
+
+// Reverses encode_pagination_token() above -- decodes a
+// RawstorPaginationToken's own cursor string back into a
+// RawstorOSTFrameListEntry (LIST's response uses the identical shape for
+// both a real entry and its own trailing resume cursor -- protocol.h's
+// own doc comment on RawstorOSTFrameListEntry). Reuses Target::parse_path()
+// (a static method, not tied to an instance) rather than a fourth copy of
+// its own id/offset/snap_id grammar: the cursor string is exactly a
+// target's own trailing path with no scheme/host in front of it, so a
+// throwaway scheme/host ("x://x") wrapped around it parses identically
+// -- parse_path() never looks past the path itself.
+RawstorOSTFrameListEntry
+decode_pagination_token(const RawstorPaginationToken& token) {
+    RawstorOSTFrameListEntry ret{};
+    if (rawstor_pagination_token_empty(&token)) {
+        return ret;
+    }
+
+    std::string s(token.bytes, strnlen(token.bytes, sizeof(token.bytes)));
+    rawstor::Target::Path path =
+        rawstor::Target::parse_path(rawstd::URI("x://x/" + s));
+
+    memcpy(ret.id, path.id.bytes, sizeof(ret.id));
+    ret.chunk_offset = path.offset;
+    memcpy(ret.snap_id, path.snap_id.bytes, sizeof(ret.snap_id));
+    return ret;
+}
+
+// One LIST response entry from a target string rawstor_location_list()
+// returned -- rawstor_target_id()/_offset()/_snap_id() read back exactly
+// what the serving location's own chunk naming (or a plain target's
+// implicit defaults) stamped on it.
+RawstorOSTFrameListEntry list_entry_from_target(const char* target) {
+    RawstorOSTFrameListEntry ret{};
+
+    char id_buf[64];
+    int res = rawstor_target_id(target, id_buf, sizeof(id_buf));
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    RawstdUUID id;
+    res = rawstd_uuid_from_string(&id, id_buf);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    memcpy(ret.id, id.bytes, sizeof(ret.id));
+
+    uint64_t chunk_offset = 0;
+    res = rawstor_target_offset(target, &chunk_offset);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    ret.chunk_offset = chunk_offset;
+
+    char snap_id_buf[64];
+    res = rawstor_target_snap_id(target, snap_id_buf, sizeof(snap_id_buf));
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    if (res > 0) {
+        RawstdUUID snap_id;
+        res = rawstd_uuid_from_string(&snap_id, snap_id_buf);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        memcpy(ret.snap_id, snap_id.bytes, sizeof(ret.snap_id));
+    }
+
+    return ret;
+}
+
 // ---------------------------------------------------------------------
 // rawstd::CallbackAwaitable<T> bridge over the async rawstor/{object,
 // target}.h C API: each co_object_*()/co_target_open() wrapper submits
@@ -61,38 +170,23 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
 // comment for the general shape this follows.
 // ---------------------------------------------------------------------
 
-// Same shape as close_trampoline() below -- rawstor_target_open() writes
-// the opened object directly to `*object` (an out-parameter, see
-// co_target_open() below) rather than delivering it as one of the C
-// callback's own arguments, so there's nothing left for this one to hand
-// to complete() beyond the result.
-int open_trampoline(ssize_t result, void* data) {
-    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
-    return 0;
-}
-
-// `target` is taken by value (not `const std::string&`): a coroutine
-// parameter declared as a reference is *not* lifetime-extended past the
-// initiating call the way an ordinary function's would be, so a caller
-// passing a temporary (e.g. rawstd::URI::uris(...)) needs this to make its
-// own copy, safely owned by the coroutine frame across suspension.
+// Uses rawstor::Target directly (not the rawstor_target_open() C API):
+// this is the one place in ost/ that needs a snap_id-bound open
+// (docs/mds.md, "Snapshots" -- SET_OBJECT's own snap_id field already
+// carries it, but the public C API has no way to pass it through).
+// `uris` already has any bound version folded into its own trailing path
+// segment (Client::_targets()'s own `snap_id` parameter, called by
+// _set_object() below) -- Target::open() itself takes no `snap_id`
+// parameter of its own. Taken by value for the same reason a by-value
+// std::string used to be here: a coroutine parameter declared as a
+// reference is not lifetime-extended past the initiating call the way an
+// ordinary function's would be.
 rawstd::Task<RawstorObject*>
-co_target_open(RawIOQueue* queue, std::string target) {
-    // rawstor_target_open() writes `object` before open_trampoline() ever
-    // runs (see its own doc comment), and open_trampoline() only fires
-    // once co_await awaiter below resumes -- so `object` is always
-    // already valid, whether it took a real suspension or completed
-    // synchronously, by the time it's read here.
-    RawstorObject* object = nullptr;
-    rawstd::CallbackAwaitable<void> awaiter;
-    int res = rawstor_target_open(
-        queue, target.c_str(), &object, open_trampoline, &awaiter
-    );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_await awaiter;
-    co_return object;
+co_target_open(RawIOQueue* queue, std::vector<rawstd::URI> uris) {
+    rawstor::Target t(rawstd::URI::uris(uris));
+    std::unique_ptr<rawstor::Object> object =
+        co_await t.open(*static_cast<rawio::Queue*>(queue));
+    co_return object.release();
 }
 
 int close_trampoline(ssize_t result, void* data) {
@@ -439,7 +533,7 @@ Client::~Client() noexcept {
         // Fire-and-forget: the close's own Task<> is driven by `_queue`
         // (owned by Server, outliving every Client), not by this Client,
         // so it completes fine whether or not this destructor's caller
-        // sticks around to see it -- same as ~Object()'s own connection
+        // sticks around to see it -- same as ~Chunk()'s own connection
         // cleanup doesn't need Client to still exist either.
         int res = rawstor_object_close(_object, ignore_close_result, nullptr);
         if (res < 0) {
@@ -586,16 +680,16 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
             // --- read this request's frame payload and dispatch it ---
             switch (head.cmd) {
             case RAWSTOR_CMD_SET_OBJECT: {
-                RawstorOSTFrameBasicPayload basic;
+                RawstorOSTFrameSnapPayload snap;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
+                    stream, &snap, sizeof(snap), fd, "request payload",
                     &stream_failed
                 );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                _set_object(weak, head, basic);
+                _set_object(weak, head, snap);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -614,30 +708,44 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 break;
             }
             case RAWSTOR_CMD_RELEASE: {
-                RawstorOSTFrameBasicPayload basic;
+                RawstorOSTFrameSnapPayload snap;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
+                    stream, &snap, sizeof(snap), fd, "request payload",
                     &stream_failed
                 );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                _release(weak, head, basic);
+                _release(weak, head, snap);
+                rawstd::DetachedTask::rethrow_if_pending();
+                break;
+            }
+            case RAWSTOR_CMD_SNAPSHOT: {
+                RawstorOSTFrameSnapPayload snap;
+                co_await recv_frame(
+                    stream, &snap, sizeof(snap), fd, "request payload",
+                    &stream_failed
+                );
+                client = weak.lock();
+                if (client == nullptr) {
+                    co_return;
+                }
+                _create_snapshot(weak, head, snap);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
             case RAWSTOR_CMD_LIST: {
-                RawstorOSTFrameBasicPayload basic;
+                RawstorOSTFrameListPayload list_payload;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
-                    &stream_failed
+                    stream, &list_payload, sizeof(list_payload), fd,
+                    "request payload", &stream_failed
                 );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                _list(weak, head, basic);
+                _list(weak, head, list_payload);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -884,15 +992,18 @@ Client::_close_current_object(std::weak_ptr<Client> weak) {
 
 rawstd::DetachedTask Client::_list(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicPayload payload
+    RawstorOSTFrameListPayload payload
 ) {
     std::shared_ptr<Client> client = co_await _close_current_object(weak);
     if (client == nullptr) {
         co_return;
     }
 
-    RawstorPaginationToken token;
-    memcpy(token.bytes, payload.object_id, sizeof(payload.object_id));
+    RawstorPaginationToken token{};
+    std::string encoded_token = encode_pagination_token(
+        payload.token_id, payload.token_chunk_offset, payload.token_snap_id
+    );
+    memcpy(token.bytes, encoded_token.data(), encoded_token.size());
 
     RawstorStringList* targets;
     int result = 0;
@@ -900,7 +1011,7 @@ rawstd::DetachedTask Client::_list(
         std::string location = rawstd::URI::uris(client->_server.locations());
         rawstd::CallbackAwaitable<void> awaiter;
         int res = rawstor_location_list(
-            client->_queue, location.c_str(), payload.val, &targets, &token,
+            client->_queue, location.c_str(), payload.limit, &targets, &token,
             result_trampoline, &awaiter
         );
         if (res < 0) {
@@ -932,23 +1043,23 @@ rawstd::DetachedTask Client::_list(
     bool send_failed = false;
     try {
         std::vector<unsigned char> data(
-            sizeof(RawstdUUID) * (rawstor_string_list_size(targets) + 1)
+            sizeof(RawstorOSTFrameListEntry) *
+            (rawstor_string_list_size(targets) + 1)
         );
-        RawstdUUID* out_it =
-            static_cast<RawstdUUID*>(static_cast<void*>(data.data()));
+        RawstorOSTFrameListEntry* out_it =
+            static_cast<RawstorOSTFrameListEntry*>(
+                static_cast<void*>(data.data())
+            );
         for (const char** in_it = rawstor_string_list_iter(targets);
              in_it != NULL; in_it = rawstor_string_list_next(in_it), ++out_it) {
-            rawstd::URI target(*in_it);
-            int res = rawstd_uuid_from_string(
-                out_it, target.path().filename().c_str()
-            );
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
-            }
+            *out_it = list_entry_from_target(*in_it);
         }
-        memcpy(out_it, &token, sizeof(token));
+        // The final entry is always the resume cursor, never a real
+        // result (RawstorOSTFrameListEntry's own doc comment, protocol.h).
+        *out_it = decode_pagination_token(token);
         co_await client->_send_response(
-            RAWSTOR_CMD_LIST, head.cid, data.size(), 0, data
+            RAWSTOR_CMD_LIST, head.cid, static_cast<int32_t>(data.size()), 0,
+            data
         );
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
@@ -972,7 +1083,8 @@ rawstd::DetachedTask Client::_allocate(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid);
+    std::vector<rawstd::URI> targets =
+        client->_targets(uuid, payload.chunk_offset);
 
     // Target::create() requires mirrors to exactly match the target's own
     // URI count -- here, that's this server's own locations(), not
@@ -982,6 +1094,11 @@ rawstd::DetachedTask Client::_allocate(
     RawstorObjectSpec spec{
         .size = payload.size,
         .mirrors = static_cast<unsigned int>(targets.size()),
+        .chunk_size = payload.chunk_size,
+        .stripe_width = payload.stripe_width,
+        .width = 0,
+        .failure_domain = payload.failure_domain,
+        .member_kind = static_cast<RawstorMemberKind>(payload.member_kind),
     };
 
     int result = 0;
@@ -1015,7 +1132,7 @@ rawstd::DetachedTask Client::_allocate(
 
 rawstd::DetachedTask Client::_release(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicPayload payload
+    RawstorOSTFrameSnapPayload payload
 ) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
@@ -1024,8 +1141,11 @@ rawstd::DetachedTask Client::_release(
 
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
+    RawstdUUID snap_id;
+    memcpy(snap_id.bytes, payload.snap_id, sizeof(payload.snap_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid);
+    std::vector<rawstd::URI> targets =
+        client->_targets(uuid, payload.offset, snap_id);
 
     int result = 0;
     try {
@@ -1056,6 +1176,61 @@ rawstd::DetachedTask Client::_release(
     }
 }
 
+// SNAPSHOT (docs/mds.md, "Snapshots"): forwarded to the same
+// rawstor_target_create_snapshot() this server's own local backend(s)
+// implement -- same shape as _release() above.
+rawstd::DetachedTask Client::_create_snapshot(
+    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+    RawstorOSTFrameSnapPayload payload
+) {
+    std::shared_ptr<Client> client = weak.lock();
+    if (client == nullptr) {
+        co_return;
+    }
+
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
+
+    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
+
+    int result = 0;
+    try {
+        std::string target = rawstd::URI::uris(targets);
+        rawstd::CallbackAwaitable<void> awaiter;
+        // payload.snap_id is always a concrete, already-chosen id off the
+        // wire (never nil -- a plain OST-local snapshot always names an
+        // exact version, client-generated like every object id).
+        RawstdUUID snap_id;
+        memcpy(snap_id.bytes, payload.snap_id, sizeof(payload.snap_id));
+        RawstdUUIDString snap_string;
+        rawstd_uuid_to_string(&snap_id, &snap_string);
+        char buf[sizeof(RawstdUUIDString)];
+        int res = rawstor_target_create_snapshot(
+            client->_queue, target.c_str(), snap_string, buf, sizeof(buf),
+            result_trampoline, &awaiter
+        );
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        co_await awaiter;
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    }
+
+    bool send_failed = false;
+    try {
+        co_await client->_send_response(
+            RAWSTOR_CMD_SNAPSHOT, head.cid, result, 0
+        );
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        send_failed = true;
+    }
+    if (send_failed) {
+        co_await client->_server.del_client(client->_fd);
+    }
+}
+
 // Cheap path: SPEC only ever needs the object's own size, so it goes
 // through rawstor_target_spec() (its own failover, no mirror-
 // consistency-state lookup at all) rather than rawstor_target_meta() --
@@ -1073,7 +1248,7 @@ rawstd::DetachedTask Client::_spec(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid);
+    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
 
     RawstorObjectSpec spec{};
     int result = 0;
@@ -1131,7 +1306,7 @@ rawstd::DetachedTask Client::_meta(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid);
+    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
 
     // rawstor_target_meta() now reports one entry per URI (a URI that
     // didn't answer is zero-filled, RawstorObjectSyncStateValue's own doc
@@ -1184,6 +1359,10 @@ rawstd::DetachedTask Client::_meta(
                 .sync_id_history = {},
                 .state =
                     static_cast<RawstorOSTSyncStateType>(meta.sync_state.state),
+                .member_kind = (uint8_t)meta.spec.member_kind,
+                .width = (uint8_t)meta.spec.mirrors,
+                .reserved = 0,
+                .chunk_size = meta.spec.chunk_size,
             };
             memcpy(
                 body_out.sync_id_history, meta.sync_state.sync_id_history,
@@ -1216,7 +1395,8 @@ rawstd::DetachedTask Client::_set_state(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid);
+    std::vector<rawstd::URI> targets =
+        client->_targets(uuid, payload.chunk_offset);
 
     RawstorObjectSyncState sync_state{};
     sync_state.epoch = payload.epoch;
@@ -1304,10 +1484,10 @@ Client::_info(std::weak_ptr<Client> weak, RawstorOSTFrameHead head) {
 
 rawstd::DetachedTask Client::_set_object(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicPayload payload
+    RawstorOSTFrameSnapPayload payload
 ) {
     RawIOQueue* queue;
-    std::string target;
+    std::vector<rawstd::URI> targets;
     {
         std::shared_ptr<Client> client = co_await _close_current_object(weak);
         if (client == nullptr) {
@@ -1317,13 +1497,17 @@ rawstd::DetachedTask Client::_set_object(
 
         RawstdUUID uuid;
         memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-        target = rawstd::URI::uris(client->_targets(uuid));
+        // snap_id is the bound version -- nil for live, or a previously
+        // snapshotted id (docs/mds.md, "Snapshots").
+        RawstdUUID snap_id;
+        memcpy(snap_id.bytes, payload.snap_id, sizeof(payload.snap_id));
+        targets = client->_targets(uuid, payload.offset, snap_id);
     }
 
     RawstorObject* object = nullptr;
     int error = 0;
     try {
-        object = co_await co_target_open(queue, target);
+        object = co_await co_target_open(queue, targets);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1721,14 +1905,32 @@ rawstd::DetachedTask Client::_write_zeroes(
     }
 }
 
-std::vector<rawstd::URI> Client::_targets(const RawstdUUID& uuid) {
+std::vector<rawstd::URI> Client::_targets(
+    const RawstdUUID& uuid, uint64_t chunk_offset, const RawstdUUID& snap_id
+) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
+
+    bool has_snap = !rawstd_uuid_is_nil(&snap_id);
+    std::ostringstream filename;
+    filename << uuid_string;
+    // The offset segment is mandatory once a snapshot segment follows it
+    // (Target::Path's own doc comment, target.hpp) -- otherwise a bare
+    // "<uuid>/<snap_id>" would be indistinguishable from "<uuid>/<offset>"
+    // with no snapshot at all.
+    if (chunk_offset != 0 || has_snap) {
+        filename << "/" << chunk_offset;
+    }
+    if (has_snap) {
+        RawstdUUIDString snap_string;
+        rawstd_uuid_to_string(&snap_id, &snap_string);
+        filename << "/" << snap_string;
+    }
 
     std::vector<rawstd::URI> ret;
     ret.reserve(_server.locations().size());
     for (const auto& location : _server.locations()) {
-        ret.emplace_back(location, uuid_string);
+        ret.emplace_back(location, filename.str());
     }
 
     return ret;

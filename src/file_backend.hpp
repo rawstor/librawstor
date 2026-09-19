@@ -20,33 +20,44 @@ namespace file {
 
 class Backend final : public rawstor::blk::Backend {
 private:
-    rawstd::Task<int> _open(const RawstdUUID& id) override;
+    rawstd::Task<int> _open(
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+    ) override;
 
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     rawstd::Task<void> list(
-        unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+        unsigned int limit, std::vector<Target>& targets, ListedObject& token
     ) override;
 
-    rawstd::Task<void>
-    create(const RawstdUUID& id, const RawstorObjectSpec& sp) override;
+    rawstd::Task<void> create(
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+    ) override;
 
-    rawstd::Task<void> remove(const RawstdUUID& id) override;
+    rawstd::Task<void> remove(
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
+    ) override;
 
-    rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) override;
+    rawstd::Task<RawstorObjectSpec>
+    spec(const RawstdUUID& id, uint64_t chunk_offset) override;
 
-    // Mirror consistency metadata lives in a companion "<uuid>.meta" file
-    // next to the object's data file (see docs/mirroring.md) -- unlike
+    // Mirror consistency metadata lives in a companion "meta" file next
+    // to the object's own "data" file, both inside the same
+    // "<uuid>/<offset>[/<snap_id>]" directory (get_target_dir()'s own
+    // doc comment, file_backend.cpp; see docs/mirroring.md) -- unlike
     // spec(), which is always derived straight from the data file's own
     // size, there is nowhere on a plain regular file to carve out space
-    // for this without touching object data. A copy with no ".meta" file
-    // (created before this existed) is not trusted as legacy-CLEAN: meta()
-    // fails ENOENT rather than fabricating a state.
-    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) override;
+    // for this without touching object data. A copy with no "meta" file
+    // (created before this existed) is not trusted as legacy-CLEAN:
+    // meta() fails ENOENT rather than fabricating a state.
+    rawstd::Task<RawstorObjectMeta>
+    meta(const RawstdUUID& id, uint64_t chunk_offset) override;
 
     rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstorObjectSyncState& sync_state
     ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;

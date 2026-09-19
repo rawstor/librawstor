@@ -1,4 +1,4 @@
-#include "connection.hpp"
+#include "slot.hpp"
 
 #include "backend.hpp"
 #include "opts.h"
@@ -27,7 +27,7 @@
 
 namespace {
 
-// Delay (ms) Connection::_with_retry() waits before its `attempt`'th
+// Delay (ms) Slot::_with_retry() waits before its `attempt`'th
 // retry (1-based: `attempt` is the attempt that just failed) -- `base`
 // doubles once per already-failed attempt, capped at `max_delay`, then
 // `jitter_pct` percent of that value is randomized: 0 is a plain,
@@ -64,19 +64,24 @@ unsigned int backoff_delay_ms(
 
 // A rejection retrying can never turn into success: the target object
 // doesn't exist (ENOENT), already exists where create() needs it not to
-// (EEXIST), or the request itself is malformed (EINVAL).
+// (EEXIST), the request itself is malformed (EINVAL), or the backend
+// permanently lacks a capability (ENOTSUP -- e.g. create_snapshot()/a
+// non-nil snap_id to remove() on file:// or classic LVM, docs/mds.md's
+// "Snapshots": no retry will ever make a backend grow native CoW support
+// it doesn't have).
 // Anything else defaults to retryable -- safer to spend a few pointless
 // retries on a genuinely transient rejection we don't recognize than to
 // silently give up on one that would have gone away on its own (e.g.
 // EBUSY, ENOSPC, EIO).
 bool is_permanent_backend_error(int error) {
-    return error == ENOENT || error == EEXIST || error == EINVAL;
+    return error == ENOENT || error == EEXIST || error == EINVAL ||
+           error == ENOTSUP;
 }
 
 // Retries `attempt()` up to rawstor_opts_io_attempts() times, sharing the
 // same "log and retry, or log and rethrow on the last one" shape across
 // every bounded-retry loop in this file that doesn't need the
-// EBUSY-vs-reconnect policy: Connection::create()'s backend-pool
+// EBUSY-vs-reconnect policy: Slot::create()'s backend-pool
 // (re-)connect and invalidate_backend()'s single-backend replacement.
 // `attempt()` returns a Task<T> that this coroutine itself co_await's, so
 // retrying composes as an ordinary suspension/resumption instead of a
@@ -139,23 +144,23 @@ auto retry_n_async(const char* func_name, rawio::Queue& queue, F&& attempt)
 
 namespace rawstor {
 
-Connection::Connection(Private, rawio::Queue& queue) :
+Slot::Slot(Private, rawio::Queue& queue) :
     _queue(queue),
     _id(std::nullopt),
     _backend_index(0),
     _transparent_retry(true) {
 }
 
-void Connection::set_transparent_retry(bool enabled) noexcept {
+void Slot::set_transparent_retry(bool enabled) noexcept {
     _transparent_retry = enabled;
 }
 
-rawstd::Task<std::unique_ptr<Connection>> Connection::create(
+rawstd::Task<std::unique_ptr<Slot>> Slot::create(
     rawio::Queue& queue, const rawstd::URI& location, size_t nbackends
 ) {
     // A single attempt, same as Backend::create() -- retrying a broken
     // connect (or a set_object() done afterwards by a caller, e.g.
-    // Object's constructor) is each caller's own job, not this one's.
+    // Chunk's constructor) is each caller's own job, not this one's.
     //
     // Task<T> starts eagerly, right up to its first real suspension
     // point -- building the whole vector before handing it to gather()
@@ -170,19 +175,18 @@ rawstd::Task<std::unique_ptr<Connection>> Connection::create(
     std::vector<std::shared_ptr<Backend>> backends =
         co_await rawstd::gather(std::move(creates));
 
-    std::unique_ptr<Connection> cn =
-        std::make_unique<Connection>(Private(), queue);
-    cn->_backends = std::move(backends);
-    co_return cn;
+    std::unique_ptr<Slot> slot = std::make_unique<Slot>(Private(), queue);
+    slot->_backends = std::move(backends);
+    co_return slot;
 }
 
-void Connection::_finish(rawstor::telemetry::TimePoint t_call) {
+void Slot::_finish(rawstor::telemetry::TimePoint t_call) {
     rawstor::telemetry::TimePoint lat = rawstor::telemetry::now() - t_call;
     rawstor::telemetry::record_lat(lat);
 }
 
 template <typename T, typename... Args>
-rawstd::Task<T> Connection::_with_retry(
+rawstd::Task<T> Slot::_with_retry(
     const char* func_name, rawstd::TraceEvent& trace_event,
     rawstd::Task<T> (Backend::*method)(Args...),
     std::type_identity_t<Args>... args
@@ -365,7 +369,7 @@ rawstd::Task<T> Connection::_with_retry(
     }
 }
 
-std::shared_ptr<Backend> Connection::get_next_backend() {
+std::shared_ptr<Backend> Slot::get_next_backend() {
     if (_backends.empty()) {
         throw std::runtime_error("Empty backends list");
     }
@@ -379,7 +383,7 @@ std::shared_ptr<Backend> Connection::get_next_backend() {
 }
 
 rawstd::Task<void>
-Connection::invalidate_backend(const std::shared_ptr<Backend>& be) {
+Slot::invalidate_backend(const std::shared_ptr<Backend>& be) {
     typename std::vector<std::shared_ptr<Backend>>::iterator it =
         std::find(_backends.begin(), _backends.end(), be);
 
@@ -390,7 +394,7 @@ Connection::invalidate_backend(const std::shared_ptr<Backend>& be) {
 
     // Two concurrent callers can both observe the exact same broken
     // backend here: e.g. two pwrite()s in flight against the sole backend
-    // of a single-backend Connection both fail once it drops, and both
+    // of a single-backend Slot both fail once it drops, and both
     // reach this same point before either has had a chance to replace it
     // (this is now a real suspension point, not the old fully-blocking
     // call that accidentally serialized these). Without deduplication
@@ -414,16 +418,16 @@ Connection::invalidate_backend(const std::shared_ptr<Backend>& be) {
         // its own retries below), leave the broken-but-present backend
         // in place rather than erasing it first and never getting a
         // replacement -- an empty _backends permanently breaks every
-        // future op on this Connection (get_next_backend() throws), while
+        // future op on this Slot (get_next_backend() throws), while
         // leaving the stale entry just means the next op that picks it up
         // retries invalidate_backend() again instead of failing forever.
         std::shared_ptr<Backend> new_backend = co_await retry_n_async(
-            "Connection::invalidate_backend", _queue,
+            "Slot::invalidate_backend", _queue,
             [&]() -> rawstd::Task<std::shared_ptr<Backend>> {
                 std::shared_ptr<Backend> backend =
                     co_await Backend::create(_queue, be->location());
                 // _id is only set once open() has run (see its own doc
-                // comment) -- a Connection used purely for metadata
+                // comment) -- a Slot used purely for metadata
                 // (list/create/remove/spec/info) never calls open(), so
                 // _id stays unset and there's no id to set_object() this
                 // replacement backend to in the first place. Metadata
@@ -438,14 +442,16 @@ Connection::invalidate_backend(const std::shared_ptr<Backend>& be) {
                     // outside the handler.
                     std::exception_ptr eptr;
                     try {
-                        co_await backend->set_object(*_id);
+                        co_await backend->set_object(
+                            *_id, _chunk_offset, _snap_id
+                        );
                         // The result is unused -- nothing here needs it
                         // -- this is purely to keep the same SET_OBJECT+
                         // META wire round trip every set_object() caller
                         // gets (see Backend::set_object()'s own doc
                         // comment on why that's two separate calls now,
                         // not one that folds meta() in on its own).
-                        co_await backend->meta(*_id);
+                        co_await backend->meta(*_id, _chunk_offset);
                     } catch (...) {
                         eptr = std::current_exception();
                     }
@@ -454,7 +460,7 @@ Connection::invalidate_backend(const std::shared_ptr<Backend>& be) {
                             co_await backend->close();
                         } catch (const std::exception& e) {
                             rawstd_warning(
-                                "Connection::invalidate_backend(): close "
+                                "Slot::invalidate_backend(): close "
                                 "after failed set_object(): %s\n",
                                 e.what()
                             );
@@ -486,7 +492,7 @@ Connection::invalidate_backend(const std::shared_ptr<Backend>& be) {
                 co_await old_backend->close();
             } catch (const std::exception& e) {
                 rawstd_warning(
-                    "Connection::invalidate_backend(): close on replaced "
+                    "Slot::invalidate_backend(): close on replaced "
                     "backend: %s\n",
                     e.what()
                 );
@@ -506,7 +512,7 @@ Connection::invalidate_backend(const std::shared_ptr<Backend>& be) {
                 co_await new_backend->close();
             } catch (const std::exception& e) {
                 rawstd_warning(
-                    "Connection::invalidate_backend(): close on redundant "
+                    "Slot::invalidate_backend(): close on redundant "
                     "replacement backend: %s\n",
                     e.what()
                 );
@@ -518,7 +524,7 @@ Connection::invalidate_backend(const std::shared_ptr<Backend>& be) {
     }
 }
 
-const rawstd::URI* Connection::location() const noexcept {
+const rawstd::URI* Slot::location() const noexcept {
     if (_backends.empty()) {
         return nullptr;
     }
@@ -526,8 +532,8 @@ const rawstd::URI* Connection::location() const noexcept {
     return &_backends.front()->location();
 }
 
-rawstd::Task<void> Connection::list(
-    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+rawstd::Task<void> Slot::list(
+    unsigned int limit, std::vector<Target>& objects, ListedObject& token
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -536,7 +542,27 @@ rawstd::Task<void> Connection::list(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::list, limit, targets, token
+            func_name, trace_event, &Backend::list, limit, objects, token
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void> Slot::create_snapshot(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::create_snapshot, id, chunk_offset,
+            snap_id
         );
         _finish(t_call);
     } catch (...) {
@@ -546,14 +572,16 @@ rawstd::Task<void> Connection::list(
 }
 
 rawstd::Task<void>
-Connection::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+Slot::resize(const RawstdUUID& id, uint64_t chunk_offset, uint64_t new_size) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        co_await _with_retry(func_name, trace_event, &Backend::create, id, sp);
+        co_await _with_retry(
+            func_name, trace_event, &Backend::resize, id, chunk_offset, new_size
+        );
         _finish(t_call);
     } catch (...) {
         _finish(t_call);
@@ -561,14 +589,18 @@ Connection::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     }
 }
 
-rawstd::Task<void> Connection::remove(const RawstdUUID& id) {
+rawstd::Task<void> Slot::create(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        co_await _with_retry(func_name, trace_event, &Backend::remove, id);
+        co_await _with_retry(
+            func_name, trace_event, &Backend::create, id, chunk_offset, sp
+        );
         _finish(t_call);
     } catch (...) {
         _finish(t_call);
@@ -576,15 +608,36 @@ rawstd::Task<void> Connection::remove(const RawstdUUID& id) {
     }
 }
 
-rawstd::Task<RawstorObjectSpec> Connection::spec(const RawstdUUID& id) {
+rawstd::Task<void> Slot::remove(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        RawstorObjectSpec result =
-            co_await _with_retry(func_name, trace_event, &Backend::spec, id);
+        co_await _with_retry(
+            func_name, trace_event, &Backend::remove, id, chunk_offset, snap_id
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<RawstorObjectSpec>
+Slot::spec(const RawstdUUID& id, uint64_t chunk_offset) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        RawstorObjectSpec result = co_await _with_retry(
+            func_name, trace_event, &Backend::spec, id, chunk_offset
+        );
         _finish(t_call);
         co_return result;
     } catch (...) {
@@ -593,7 +646,7 @@ rawstd::Task<RawstorObjectSpec> Connection::spec(const RawstdUUID& id) {
     }
 }
 
-rawstd::Task<RawstorLocationInfo> Connection::info() {
+rawstd::Task<RawstorLocationInfo> Slot::info() {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -610,18 +663,22 @@ rawstd::Task<RawstorLocationInfo> Connection::info() {
     }
 }
 
-rawstd::Task<RawstorObjectMeta> Connection::open(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectMeta> Slot::open(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+) {
     // Set before any of the set_object() calls below: on failure,
     // invalidate_backend() reconnects and set_object()s the replacement
-    // itself, using this same member.
+    // itself, using these same members.
     _id = id;
+    _chunk_offset = chunk_offset;
+    _snap_id = snap_id;
 
     // Every backend's SET_OBJECT goes out up front, so they run
     // concurrently.
     std::vector<rawstd::Task<void>> set_objects;
     set_objects.reserve(_backends.size());
     for (std::shared_ptr<Backend>& be : _backends) {
-        set_objects.push_back(be->set_object(id));
+        set_objects.push_back(be->set_object(id, chunk_offset, snap_id));
     }
 
     // co_await isn't allowed inside a catch block, so the failure is only
@@ -633,7 +690,7 @@ rawstd::Task<RawstorObjectMeta> Connection::open(const RawstdUUID& id) {
     } catch (const std::system_error& e) {
         failed = true;
         rawstd_warning(
-            "Connection::open(): %s; reconnecting every backend\n", e.what()
+            "Slot::open(): %s; reconnecting every backend\n", e.what()
         );
     }
 
@@ -655,10 +712,10 @@ rawstd::Task<RawstorObjectMeta> Connection::open(const RawstdUUID& id) {
     // location, so any one of them answers the same as the rest --
     // set_object() itself doesn't return it (see its own doc comment),
     // so this is always its own separate call, win or lose above.
-    co_return co_await meta(id);
+    co_return co_await meta(id, chunk_offset);
 }
 
-rawstd::Task<void> Connection::close() {
+rawstd::Task<void> Slot::close() {
     // Every backend's close goes out up front, so they run concurrently
     // instead of one at a time.
     std::vector<rawstd::Task<void>> closes;
@@ -673,14 +730,14 @@ rawstd::Task<void> Connection::close() {
         // Best-effort teardown -- gather() only surfaces the first
         // backend's failure, not which one, but that's fine here: this
         // is diagnostic only, nothing a caller could retry on.
-        rawstd_error("Connection::close(): %s\n", e.what());
+        rawstd_error("Slot::close(): %s\n", e.what());
     }
 
     _backends.clear();
     _id = std::nullopt;
 }
 
-rawstd::Task<size_t> Connection::pread(void* buf, size_t size, off_t offset) {
+rawstd::Task<size_t> Slot::pread(void* buf, size_t size, off_t offset) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
@@ -701,7 +758,7 @@ rawstd::Task<size_t> Connection::pread(void* buf, size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Connection::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
+Slot::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
@@ -722,7 +779,7 @@ Connection::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Connection::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
+Slot::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
@@ -742,7 +799,7 @@ Connection::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
     }
 }
 
-rawstd::Task<size_t> Connection::pwritev(
+rawstd::Task<size_t> Slot::pwritev(
     const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
 ) {
     const char* func_name = __FUNCTION__;
@@ -765,7 +822,7 @@ rawstd::Task<size_t> Connection::pwritev(
     }
 }
 
-rawstd::Task<size_t> Connection::discard(size_t size, off_t offset) {
+rawstd::Task<size_t> Slot::discard(size_t size, off_t offset) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
@@ -786,7 +843,7 @@ rawstd::Task<size_t> Connection::discard(size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Connection::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
+Slot::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %jd, unmap = %d, sync = %d\n",
@@ -807,15 +864,17 @@ Connection::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
     }
 }
 
-rawstd::Task<RawstorObjectMeta> Connection::meta(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectMeta>
+Slot::meta(const RawstdUUID& id, uint64_t chunk_offset) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        RawstorObjectMeta result =
-            co_await _with_retry(func_name, trace_event, &Backend::meta, id);
+        RawstorObjectMeta result = co_await _with_retry(
+            func_name, trace_event, &Backend::meta, id, chunk_offset
+        );
         _finish(t_call);
         co_return result;
     } catch (...) {
@@ -824,8 +883,9 @@ rawstd::Task<RawstorObjectMeta> Connection::meta(const RawstdUUID& id) {
     }
 }
 
-rawstd::Task<void> Connection::set_sync_state(
-    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+rawstd::Task<void> Slot::set_sync_state(
+    const RawstdUUID& id, uint64_t chunk_offset,
+    const RawstorObjectSyncState& sync_state
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -834,7 +894,8 @@ rawstd::Task<void> Connection::set_sync_state(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::set_sync_state, id, sync_state
+            func_name, trace_event, &Backend::set_sync_state, id, chunk_offset,
+            sync_state
         );
         _finish(t_call);
     } catch (...) {
@@ -843,7 +904,7 @@ rawstd::Task<void> Connection::set_sync_state(
     }
 }
 
-rawstd::Task<void> Connection::flush() {
+rawstd::Task<void> Slot::flush() {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);

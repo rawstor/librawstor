@@ -169,10 +169,10 @@ public:
 
     void drop(size_t i) const { fs::remove_all(_dirs[i]); }
 
-    // file::Backend keeps one data file per object, named after the UUID
-    // alone (see get_target_path() in src/file_backend.cpp) -- no .dat/.spec
-    // split.
-    fs::path dat(size_t i) const { return _dirs[i] / _uuid; }
+    // file::Backend keeps one `data` file per object, under a directory
+    // named after the UUID and the (here, always 0) chunk_offset (see
+    // get_target_dir() in src/file_backend.cpp) -- no .dat/.spec split.
+    fs::path dat(size_t i) const { return _dirs[i] / _uuid / "0" / "data"; }
 };
 
 std::string read_file(const fs::path& path) {
@@ -230,7 +230,7 @@ void object_read(
 
 // The single rawstor_object_close() now performs a clean close for a
 // mirrored, DIRTY object (flush + durable CLEAN mark) -- see
-// Object::close()'s own doc comment; there's no separate "_async"
+// Chunk::close()'s own doc comment; there's no separate "_async"
 // variant to reach for anymore.
 void object_close_clean(Queue& queue, RawstorObject* object) {
     ssize_t res = object_close(queue, object);
@@ -282,7 +282,15 @@ TEST(MirrorQuorumTest, open_refused_without_quorum_n2) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a0");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 2};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .mirrors = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     members.drop(1);
@@ -308,7 +316,15 @@ TEST(MirrorQuorumTest, all_mirrors_down_at_open_refused) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000a9");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 3};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .mirrors = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     members.drop(0);
@@ -325,7 +341,15 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000a1");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 3};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .mirrors = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     members.drop(2);
@@ -364,7 +388,15 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a2");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 2};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .mirrors = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* Member 0 is one sync set ahead of member 1. */
@@ -416,7 +448,15 @@ TEST(MirrorQuorumTest, split_brain_refused) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a3");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 2};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .mirrors = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* Disjoint histories sharing only a common ancestor. */
@@ -444,7 +484,15 @@ TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a4");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 2};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .mirrors = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* Unclean shutdown: every copy DIRTY within the same sync set. */
@@ -477,7 +525,15 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a5");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 2};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .mirrors = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     RawstorObjectSyncState established{};
@@ -524,7 +580,15 @@ TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000aa");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 2};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .mirrors = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* An established sync set on both members: a freshly created (sync_id
@@ -582,7 +646,15 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     Members members(2, "00000000-0000-7000-8000-0000000000a7");
 
     const uint64_t size = 8ull << 20;
-    RawstorObjectSpec spec{.size = size, .mirrors = 2};
+    RawstorObjectSpec spec{
+        .size = size,
+        .mirrors = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     RawstorObjectSyncState fresh{};
@@ -640,7 +712,15 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000a8");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 3};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .mirrors = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* The third member is lost entirely (disk gone). */
@@ -653,7 +733,15 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     object_write(queue, object, ping.data(), ping.size(), 0, 0);
 
     /* The member is reprovisioned empty; the probe picks it up and resyncs. */
-    RawstorObjectSpec member_spec{.size = 1ull << 20, .mirrors = 1};
+    RawstorObjectSpec member_spec{
+        .size = 1ull << 20,
+        .mirrors = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     ASSERT_EQ(target_create(queue, members.target(2), member_spec), 0);
 
     EXPECT_TRUE(
@@ -681,7 +769,15 @@ TEST(MirrorQuorumTest, clean_close_stable_identity) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a6");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 2};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .mirrors = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* First session establishes the sync set. */
@@ -727,6 +823,10 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+        .width = 1,
+        .reserved = 0,
+        .chunk_size = 0,
     };
 
     /*
@@ -742,7 +842,7 @@ TEST(MirrorOstTest, read_failover_and_repair) {
     // happens to answer with -- Target::open() always overwrites it
     // with uris.size() regardless (see its own comment), so the value
     // scripted below isn't load-bearing. Both members still go through
-    // Connection::open()'s own combined SET_OBJECT+META step (see its
+    // Slot::open()'s own combined SET_OBJECT+META step (see its
     // own comment), concurrently, once every spec() has answered. Every
     // later low-level reconnect (invalidate_backend()) goes through
     // Backend::set_object() only, no SPEC of its own (invalidate_backend()
@@ -814,6 +914,10 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+        .width = 1,
+        .reserved = 0,
+        .chunk_size = 0,
     };
 
     // Target::open() fetches spec() from every reachable connection
@@ -823,7 +927,7 @@ TEST(MirrorOstTest, degrade_and_continue) {
     // answer with -- Target::open() always overwrites it with
     // uris.size() regardless (see its own comment), so the value
     // scripted below isn't load-bearing. Both members still go through
-    // Connection::open()'s own combined SET_OBJECT+META step (see its
+    // Slot::open()'s own combined SET_OBJECT+META step (see its
     // own comment), concurrently, once every spec() has answered.
     {
         rawstor::tests::Session s(server1);
@@ -847,7 +951,7 @@ TEST(MirrorOstTest, degrade_and_continue) {
         /* Subsequent writes go to the survivor only. */
         s.cmd_write(RAWSTOR_MAGIC, 6, 4);
         /*
-         * object_close() below is a clean close (see Object::close()'s own
+         * object_close() below is a clean close (see Chunk::close()'s own
          * doc comment): flush, then a durable CLEAN mark on the sole
          * survivor.
          */
@@ -869,16 +973,16 @@ TEST(MirrorOstTest, degrade_and_continue) {
  * F3 (docs/mirroring.md): open() succeeds while every member is still
  * reachable, but the first write's dirty barrier fans SET_SYNC_STATE out
  * to an empty set once both have already gone stale -- see
- * Object::_run_dirty_barrier()'s own `survivors == 0` check. The write
+ * Chunk::_run_dirty_barrier()'s own `survivors == 0` check. The write
  * reports -EIO, matching the doc's own summary line ("writes ... with no
  * member left fail with -EIO") rather than F3's row (which conflates this
  * with the open()-time case -- see MirrorQuorumTest.
  * all_mirrors_down_at_open_refused above). A second write fails the same
- * way without even touching the wire: Object::_run_meta_fan_out() throws
+ * way without even touching the wire: Chunk::_run_meta_fan_out() throws
  * -EIO immediately once it finds no IN_SYNC member to fan out to at all.
  *
  * The dirty-barrier failure is scripted as -EINVAL rather than -EIO:
- * Connection::_with_retry() treats -EIO as a transient, retryable failure
+ * Slot::_with_retry() treats -EIO as a transient, retryable failure
  * (reconnect + up to rawstor_opts_io_attempts() attempts, 3 under this
  * suite's own test override -- see tests/main.cpp), which would need 3
  * scripted reconnect sessions per member just to reach the same end
@@ -901,6 +1005,10 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+        .width = 1,
+        .reserved = 0,
+        .chunk_size = 0,
     };
 
     {
@@ -937,7 +1045,7 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
  * undetectable from metadata alone, so the conservative rule is to treat
  * any such member as STALE, even though this test's member0 answers every
  * attempt with a plain transport-class error (-EIO) rather than actually
- * restarting; Object::_read()'s own comment (case F6) draws the same
+ * restarting; Chunk::_read()'s own comment (case F6) draws the same
  * distinction this test exercises: an EIO (transport-class) failure while
  * DIRTY degrades the member durably, unlike an EPROTO (payload) failure,
  * which only triggers a read-repair of that one region.
@@ -945,9 +1053,9 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
  * A single scripted failure is enough here, unlike
  * MirrorOstTest.read_failover_and_repair's own (CLEAN-object) member0
  * script, which needs 3 reconnect rounds to exhaust
- * Connection::_with_retry()'s transparent-retry budget:
- * Object::_run_dirty_barrier() turns transparent retry off for every
- * member the moment the object goes DIRTY (src/object.cpp, case F6's own
+ * Slot::_with_retry()'s transparent-retry budget:
+ * Chunk::_run_dirty_barrier() turns transparent retry off for every
+ * member the moment the object goes DIRTY (src/chunk.cpp, case F6's own
  * comment there), specifically so a transport failure surfaces
  * immediately instead of being silently retried once acknowledged writes
  * are on the line.
@@ -966,6 +1074,10 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+        .width = 1,
+        .reserved = 0,
+        .chunk_size = 0,
     };
 
     {
@@ -992,7 +1104,7 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         /* The degrade barrier bumps epoch/sync_id on the survivor -- member0
          * is excluded durably even though it never lost this read. */
         s.cmd_set_state(RAWSTOR_MAGIC, 6, 0);
-        /* Object::close(): flush + final CLEAN mark, now on the sole
+        /* Chunk::close(): flush + final CLEAN mark, now on the sole
          * survivor. */
         s.cmd_flush(RAWSTOR_MAGIC, 7, 0);
         s.cmd_set_state(RAWSTOR_MAGIC, 8, 0);

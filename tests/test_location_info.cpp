@@ -20,9 +20,9 @@
 
 namespace {
 
-// file::Backend pairs each object's data file with a fixed-size .meta
+// file::Backend pairs each object's data file with a fixed-size `meta`
 // file (blk_backend.hpp's META_MAX_SIZE) that "used" now accounts for too.
-constexpr uint64_t META_FILE_SIZE = 256;
+constexpr uint64_t META_FILE_SIZE = 400;
 
 ssize_t location_info(
     rawio::Queue& queue, const std::string& location, RawstorLocationInfo* info
@@ -66,7 +66,15 @@ TEST(FileLocationInfoTest, empty_then_used) {
     EXPECT_EQ(info.used, (uint64_t)0);
     EXPECT_GT(info.total, (uint64_t)0);
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 1};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .mirrors = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
 
@@ -100,11 +108,27 @@ TEST(FileLocationInfoTest, multi_location_aggregation) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstorObjectSpec spec_a{.size = 1ull << 20, .mirrors = 1};
+    RawstorObjectSpec spec_a{
+        .size = 1ull << 20,
+        .mirrors = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     ssize_t res = target_create(*queue, target_a, spec_a);
     EXPECT_EQ(res, 0);
 
-    RawstorObjectSpec spec_b{.size = 3ull << 20, .mirrors = 1};
+    RawstorObjectSpec spec_b{
+        .size = 3ull << 20,
+        .mirrors = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+    };
     res = target_create(*queue, target_b, spec_b);
     EXPECT_EQ(res, 0);
 

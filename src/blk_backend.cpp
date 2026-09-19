@@ -7,6 +7,7 @@
 #include <rawstd/gcc.h>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
+#include <rawstd/uuid.h>
 
 #include <sys/ioctl.h>
 #include <sys/stat.h>
@@ -22,6 +23,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 #if defined(RAWSTD_ON_LINUX)
 #include <linux/falloc.h>
@@ -166,18 +168,21 @@ rawstd::Task<void> Backend::close() {
     co_await _queue.close(f);
 }
 
-rawstd::Task<void> Backend::set_object(const RawstdUUID& id) {
+rawstd::Task<void> Backend::set_object(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
 
-    int fd = co_await _open(id);
+    int fd = co_await _open(id, chunk_offset, snap_id);
     set_fd(fd);
 }
 
-rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectSpec>
+Backend::spec(const RawstdUUID& id, uint64_t chunk_offset) {
 #if defined(RAWSTD_ON_LINUX)
-    int f = co_await _open(id);
+    int f = co_await _open(id, chunk_offset, RawstdUUID{});
 
     uint64_t size = 0;
     if (ioctl(f, BLKGETSIZE64, &size) == -1) {
@@ -189,46 +194,63 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
 
     co_await _queue.close(f);
 
-    co_return RawstorObjectSpec{size, 1};
+    RawstorObjectSpec ret{};
+    ret.size = size;
+    ret.mirrors = 1;
+    co_return ret;
 #else
     (void)id;
+    (void)chunk_offset;
     RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
 #endif
 }
 
-std::string Backend::meta_encode(const RawstorObjectSyncState& sync_state) {
+std::string Backend::meta_encode(
+    const RawstorObjectSyncState& sync_state, const ChunkIdentity& identity
+) {
     char buf[META_MAX_SIZE];
     snprintf(
         buf, sizeof(buf),
         "version=%u:state=%u:epoch=%" PRIx64 ":sync_id=%" PRIx64 ":h0=%" PRIx64
-        ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64,
+        ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64
+        ":member_kind=%u:width=%u:chunk_size=%" PRIx64,
         META_FORMAT_VERSION, (unsigned int)sync_state.state, sync_state.epoch,
         sync_state.sync_id, sync_state.sync_id_history[0],
         sync_state.sync_id_history[1], sync_state.sync_id_history[2],
-        sync_state.sync_id_history[3]
+        sync_state.sync_id_history[3], (unsigned int)identity.member_kind,
+        (unsigned int)identity.width, identity.chunk_size
     );
     return std::string(buf);
 }
 
-RawstorObjectSyncState Backend::meta_decode(const std::string& value) {
-    RawstorObjectSyncState sync_state{};
+void Backend::meta_decode(
+    const std::string& value, RawstorObjectSyncState* sync_state,
+    ChunkIdentity* identity
+) {
+    *sync_state = RawstorObjectSyncState{};
+    *identity = ChunkIdentity{};
     unsigned int version = 0;
     unsigned int state = 0;
+    unsigned int member_kind = 0;
+    unsigned int width = 0;
 
     int n = sscanf(
         trim(value).c_str(),
         "version=%u:state=%u:epoch=%" SCNx64 ":sync_id=%" SCNx64 ":h0=%" SCNx64
-        ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64,
-        &version, &state, &sync_state.epoch, &sync_state.sync_id,
-        &sync_state.sync_id_history[0], &sync_state.sync_id_history[1],
-        &sync_state.sync_id_history[2], &sync_state.sync_id_history[3]
+        ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64
+        ":member_kind=%u:width=%u:chunk_size=%" SCNx64,
+        &version, &state, &sync_state->epoch, &sync_state->sync_id,
+        &sync_state->sync_id_history[0], &sync_state->sync_id_history[1],
+        &sync_state->sync_id_history[2], &sync_state->sync_id_history[3],
+        &member_kind, &width, &identity->chunk_size
     );
-    if (n != 8 || version != META_FORMAT_VERSION) {
+    if (n != 11 || version != META_FORMAT_VERSION) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
 
-    sync_state.state = static_cast<RawstorObjectSyncStateValue>(state);
-    return sync_state;
+    sync_state->state = static_cast<RawstorObjectSyncStateValue>(state);
+    identity->member_kind = static_cast<RawstorMemberKind>(member_kind);
+    identity->width = static_cast<uint8_t>(width);
 }
 
 rawstd::Task<size_t> Backend::pread(void* buf, size_t size, off_t offset) {

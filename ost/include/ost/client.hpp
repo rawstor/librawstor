@@ -80,15 +80,21 @@ private:
 
     static rawstd::DetachedTask _list(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
+        RawstorOSTFrameListPayload payload
     );
     static rawstd::DetachedTask _allocate(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameAllocatePayload payload
     );
+    // `payload.snap_id` nil for the live version, non-nil for one
+    // previously snapshotted (protocol.h's own doc comment on RELEASE).
     static rawstd::DetachedTask _release(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
+        RawstorOSTFrameSnapPayload payload
+    );
+    static rawstd::DetachedTask _create_snapshot(
+        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+        RawstorOSTFrameSnapPayload payload
     );
     static rawstd::DetachedTask _spec(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
@@ -102,7 +108,7 @@ private:
     _info(std::weak_ptr<Client> weak, RawstorOSTFrameHead head);
     static rawstd::DetachedTask _set_object(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
+        RawstorOSTFrameSnapPayload payload
     );
     static rawstd::DetachedTask _read(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
@@ -134,7 +140,16 @@ private:
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameSyncStatePayload payload
     );
-    std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
+    // Every configured location's own URI for `uuid`, with `chunk_offset`/
+    // `snap_id` folded into each one's own path as
+    // "<uuid>[/<chunk_offset>[/<snap_id>]]" (Target::Path's own doc
+    // comment, src/target.hpp) -- the same self-describing name every
+    // backend on the receiving end already expects (docs/mds.md, "Chunk
+    // identity").
+    std::vector<rawstd::URI> _targets(
+        const RawstdUUID& uuid, uint64_t chunk_offset = 0,
+        const RawstdUUID& snap_id = {}
+    );
 
     // Sends a response frame and awaits its actual completion (not just
     // submission) -- unlike every other rawio_*() bridge in the .cpp,

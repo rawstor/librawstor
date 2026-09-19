@@ -9,36 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `--write-cache=on|off` for `rawstor-vhost` and `rawstor-vhost-qemu` (default `off`, write-through): advertises `VIRTIO_BLK_F_CONFIG_WCE` and honors the guest live-toggling it via `SET_CONFIG`. With write-cache off, every write is made durable (`sync=true`) since the guest treats a completed write as already durable and won't issue a `FLUSH`.
-- [Mirroring design](docs/mirroring.md): failure model, quorum rules and
-  online resync for N-way mirrors.
-- Per-copy object metadata (state/epoch/sync_id/history) via new
-  `SPEC`/`META`/`SET_SYNC_STATE`/`FLUSH` OST protocol commands and the
-  public `rawstor_target_spec()`/`rawstor_target_meta()`/
-  `rawstor_target_set_sync_state()` (`<rawstor/target.h>`) API. Setting
-  mirror consistency state by hand is a sharp tool, not meant for routine
-  application use.
-- Every backend now persists per-copy metadata durably: a companion
-  `.meta` file for `file://`, native transactional storage for `lvm://`
-  (an LVM tag) and `zfs://` (a ZFS user property).
-- `rawstor_target_create()`/`rawstor_location_create()` reject `-EINVAL`
-  unless `RawstorObjectSpec.mirrors` matches the target/location string's
-  URI count.
-- Mirrored objects now tolerate member loss: quorum-gated open
-  (`-ENOTCONN`/`-ENOTRECOVERABLE` otherwise), degrade-and-continue writes,
-  read failover, and automatic online resync of a stale or reconnected
-  member while the object stays live.
-- `-m`/`--mirrors N` for `rawstor create` and `pyrawstor`'s `ObjectSpec`/
-  `Target.create()`/`Location.create()`; `-v`/`--verbose` for `rawstor show`
-  (labeling each mirror `mirror[N]`, its position in the target's own
-  comma-separated order) and pyrawstor's new `Target.meta()` (returning one
-  `ObjectMeta`, or `None` for a mirror that didn't answer, per mirror)
-  print every mirror's own consistency state (not just one).
-- `rawstor resolve TARGET --winner=N[,N...]` for manual split-brain
-  recovery (docs/mirroring.md, case F9): declares one or more mirrors
-  (same index `rawstor show -v` labels) jointly authoritative, and every
-  mirror not listed gets a full online resync on the next open.
+- [Mirroring design](docs/mirroring.md): failure model, quorum rules and online resync for N-way mirrors.
+- Per-copy object metadata (state/epoch/sync_id/history) via new `SPEC`/`META`/`SET_SYNC_STATE`/`FLUSH` OST protocol commands and the public `rawstor_target_spec()`/`rawstor_target_meta()`/`rawstor_target_set_sync_state()` (`<rawstor/target.h>`) API. Setting mirror consistency state by hand is a sharp tool, not meant for routine application use.
+- Every backend now persists per-copy metadata durably: a companion `meta` file alongside `file://`'s own `data` file, native transactional storage for `lvm://` (an LVM tag) and `zfs://` (a ZFS user property).
+- `rawstor_target_create()`/`rawstor_location_create()` reject `-EINVAL` unless `RawstorObjectSpec.mirrors` matches the target/location string's URI count.
+- Mirrored objects now tolerate member loss: quorum-gated open (`-ENOTCONN`/`-ENOTRECOVERABLE` otherwise), degrade-and-continue writes, read failover, and automatic online resync of a stale or reconnected member while the object stays live.
+- `-m`/`--mirrors N` for `rawstor create` and `pyrawstor`'s `ObjectSpec`/`Target.create()`/`Location.create()`; `-v`/`--verbose` for `rawstor show` (labeling each mirror `mirror[N]`, its position in the target's own comma-separated order) and pyrawstor's new `Target.meta()` (returning one `ObjectMeta`, or `None` for a mirror that didn't answer, per mirror) print every mirror's own consistency state (not just one).
+- `rawstor resolve TARGET --winner=N[,N...]` for manual split-brain recovery (docs/mirroring.md, case F9): declares one or more mirrors (same index `rawstor show -v` labels) jointly authoritative, and every mirror not listed gets a full online resync on the next open.
+- [MDS design](docs/mds.md) and a new `rawstor-mds` metadata server (`--without-sqlite3` to skip building it), enabling `mds://host:port/<id>` objects: a logical object split into fixed-size chunks, each independently placed (and optionally mirrored) across a static OST topology, opened/read/written through the same `rawstor_target_*()`/`rawstor` CLI surface as a plain object -- usable as-is as a `rawstor-vhost`/`rawstor-vhost-qemu`/`rawstor-vduse` `TARGET`. New `OBJ_CREATE`/`OBJ_OPEN`/`OBJ_RESIZE`/`OBJ_REMOVE`/`OBJ_SNAP_*` wire commands; `rawstor-mds --reconstruct` rebuilds the chunk map from a `LIST`+`META` scan of every OST in the topology, for recovering from a lost or corrupted MDS database.
+- `rawstor create`'s target/location form gained `--chunk-size`/`--width`/`--failure-domain`/`--stripe-width` to set an `mds://` object's chunk size, copies per chunk, placement failure domain, and striping policy (ignored for a plain object).
+- `rawstor resize TARGET -s SIZE` (`rawstor_target_resize()`) grows an `mds://` object, materializing whatever new chunks the larger size needs on their OSTs; shrinking is not supported.
+- `rawstor snapshot TARGET` / `rawstor snap-remove TARGET -s ID` (`rawstor_target_create_snapshot()`/`rawstor_target_snapshot_remove()`, unified with the plain-target native CoW path via a client-generated `snap_id` UUID, like every other object id): MDS-orchestrated native CoW snapshots of an `mds://` object's chunks. `zfs://` chunk members only in this version; `file://`/classic LVM members answer `-ENOTSUP` (no fallback copies made behind the caller's back).
+- `rawstor-mds` now ships as its own deb/rpm package (`rawstor-mds.service` systemd unit included), alongside the existing `rawstor-ost`/`rawstor-vhost`/`rawstor-vduse` packages.
+- `rawstor_target_meta()`/`_set_sync_state()` now work on an `mds://` target too, answering a synthetic single-entry record (the object's own size, a "legacy copy" `CLEAN` state) instead of `-EINVAL` -- the real per-chunk consistency state is tracked one level down, inside the object, and isn't exposed at this level.
 
 ### Changed
+- A target string's internal chunk offset/snapshot version are now path segments instead of filename suffixes: `<uuid>/<snap_id>` (a plain target's own bound snapshot -- no offset segment, implied 0) or `<uuid>/<offset>/<snap_id>` (one chunk of a larger `mds://` object, offset always explicit) instead of `<uuid>:<offset>@<snap_id>`; `file://`'s own on-disk layout changed to match (`<uuid>/<offset>/data`, or `.../<snap_id>/data` for a bound snapshot), replacing the flat `<uuid>[:<offset>]` file it used to keep. Neither form was ever meant for manual entry (docs/locations_and_targets.md).
+- `rawstor_target_remove()` now also removes a target's own bound snapshot, if its target string names one, the same way `rawstor_target_open()` already opened one -- `rawstor_target_snapshot_remove()` is unchanged but is now just a convenience over it. The OST wire protocol's own `RAWSTOR_CMD_RELEASE` merged what used to be a separate `RAWSTOR_CMD_SNAP_REMOVE` command the same way (nil `snap_id` for the live version); `RAWSTOR_CMD_SNAP_REMOVE` is retired.
 - The packaged `rawstor-vhost@.service` systemd unit now defaults `RAWSTOR_WRITE_CACHE` to `on` instead of `off`: forcing a journal commit on every write (write-cache off) was measured to stall write round-trip times into the tens of seconds under concurrent load on a host whose backing filesystem commits slowly, while any modern guest kernel already issues an explicit flush when it needs durability.
 - `rawstor_object_pwrite()`/`rawstor_object_pwritev()` gained a `sync` parameter — when true, the write is durable on stable storage by the time the callback reports success. Breaking C API change; existing callers need to pass a `sync` argument (`false` preserves the old behavior).
 - `rawstor_object_spec()`/`_list()`/`_create()`/`_create_at()`/`_remove()`/`_open()`/`_id()`/`_location()` dropped in favor of the async `rawstor_target_spec()`/`_create()`/`_remove()`/`_open()`/`_id()`/`_location()` (`<rawstor/target.h>`) and `rawstor_location_list()`/`_create()` (`<rawstor/location.h>`) API, and `rawstor_object_close()` is now async too (queues and returns immediately, reporting completion via a new callback parameter that no longer carries the redundant `RawstorObject* object`). Breaking C API change; `<rawstor.h>` still pulls in every header.
@@ -52,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `rawstor-ost` now answers `-ENOSYS` for a command it doesn't recognize instead of just dropping the connection, so a newer client can tell "unsupported" apart from a transport failure.
+- The `rawstor-vduse` deb package (present since 0.2.10) was never actually built or published: CI's packaging job never copied its `.install`/`.postinst`/`.prerm` files into place, so its `.deb` was silently absent from every release despite `rawstor-vduse` being a real, working binary.
 
 ## [0.2.12] - Unreleased
 

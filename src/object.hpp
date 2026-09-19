@@ -1,383 +1,183 @@
 #ifndef RAWSTOR_OBJECT_HPP
 #define RAWSTOR_OBJECT_HPP
 
-#include "target.hpp"
-
 #include <rawstor/object.h>
+#include <rawstor/target.h>
 
 #include <rawio/queue.hpp>
 
 #include <rawstd/coro.hpp>
 #include <rawstd/uri.hpp>
 
-#include <functional>
 #include <memory>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include <cstddef>
 #include <cstdint>
 
-struct RawstorObject {};
+// Thin polymorphic base behind the opaque C handle: rawstor::Object (a
+// client-facing entity made of one or more Chunks, docs/mds.md: "Object
+// = group of chunks") is its sole implementation. Every
+// rawstor_object_*() C API function in object.cpp dispatches through
+// this vtable rather than a fixed static_cast<Object*>, so object.cpp's
+// own C ABI adapters don't need Object's full definition.
+struct RawstorObject {
+    virtual ~RawstorObject() = default;
+
+    virtual rawstd::Task<size_t>
+    pread(void* buf, size_t size, off_t offset) = 0;
+    virtual rawstd::Task<size_t>
+    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) = 0;
+    virtual rawstd::Task<size_t>
+    pwrite(const void* buf, size_t size, off_t offset, bool sync) = 0;
+    virtual rawstd::Task<size_t> pwritev(
+        const iovec* iov, unsigned int niov, size_t size, off_t offset,
+        bool sync
+    ) = 0;
+    virtual rawstd::Task<size_t> discard(size_t size, off_t offset) = 0;
+    virtual rawstd::Task<size_t>
+    write_zeroes(size_t size, off_t offset, bool unmap, bool sync) = 0;
+    virtual rawstd::Task<void> flush() = 0;
+    virtual rawstd::Task<void> close() = 0;
+};
 
 namespace rawstor {
 
-class Connection;
+class Target;
 
+// Forward-declared rather than #include "chunk.hpp": Object only ever
+// names Chunk by pointer here (ChunkEntry::chunk, _chunk()'s return
+// type), never needs its complete definition in this header, and
+// chunk.hpp itself #includes <rawstor/object.h> for RawstorObjectMeta/
+// RawstorObjectSyncState. object.cpp includes "chunk.hpp" directly for
+// the complete type its own method bodies need.
+class Chunk;
+
+/*
+ * The client-facing entity a target addresses (rawstor_docs/
+ * Architecture.md: "Object = group of chunks"): routes I/O onto one or
+ * more lazily opened, per-chunk (possibly mirrored) Chunks. Built only
+ * by Target::open() (a friend, the same relationship Chunk itself used
+ * to have) -- a plain, non-mds:// target (e.g. ost://a,ost://b/<uuid>)
+ * becomes a single-chunk Object; an mds://host:port/<volume_id> one is
+ * opened by mds::Backend building the same multi-chunk Target string
+ * this class already knows how to open (see target.hpp) and handing the
+ * resulting Object straight back -- this class itself never needs to
+ * know anything about MDS or WireMap.
+ */
 class Object final : public RawstorObject {
 private:
-    struct ResyncState;
+    // One I/O segment after splitting a request at chunk boundaries.
+    // Offsets are chunk-local.
+    struct VolumeSegment {
+        uint32_t index;     /* logical chunk */
+        off_t chunk_offset; /* offset within the chunk object */
+        size_t size;
+        size_t buf_offset; /* offset within the caller's buffer */
+    };
 
-    // IN_SYNC - the member carries every acknowledged write; serves I/O.
-    // STALE   - the member is excluded (unreachable, degraded or behind).
-    // SYNCING - an online resync onto the member is in progress: it receives
-    //           client writes but serves no reads yet.
-    enum class MemberState { IN_SYNC, STALE, SYNCING };
+    // Maps a logical offset/size onto one or more VolumeSegments --
+    // virtualized instead of an `if (_chunks.size() == 1)` fast path
+    // inside every one of pread/pwrite/... below: the degenerate
+    // single-chunk case (a plain, non-mds:// target -- the overwhelming
+    // majority of objects) never allocates more than one segment and
+    // never computes a division/remainder against a chunk size it
+    // doesn't otherwise need.
+    struct ChunkMap {
+        virtual ~ChunkMap() = default;
+        virtual std::vector<VolumeSegment>
+        segments(off_t offset, size_t size) const = 0;
+    };
+    struct SingleChunkMap final : ChunkMap {
+        std::vector<VolumeSegment>
+        segments(off_t offset, size_t size) const override;
+    };
+    struct MultiChunkMap final : ChunkMap {
+        uint64_t chunk_size;
 
-    // One slot per configured member, in target-list order, kept even while
-    // unreachable (reachable == false) so the reconnect probe can bring it
-    // back -- unlike before online resync, where an unreachable member had
-    // no slot at all.
-    struct Member {
-        std::unique_ptr<rawstor::Connection> cn;
-        rawstd::URI target;
-        MemberState state;
-        RawstorObjectMeta meta;
-        bool reachable;
+        explicit MultiChunkMap(uint64_t chunk_size) noexcept :
+            chunk_size(chunk_size) {}
+
+        std::vector<VolumeSegment>
+        segments(off_t offset, size_t size) const override;
+    };
+
+    // Bookkeeping around one logical chunk's lazily opened Chunk --
+    // named apart from the top-level rawstor::Chunk it wraps (`chunk`
+    // below) rather than reusing that name for a nested type, which
+    // would otherwise shadow it within Object's own scope.
+    struct ChunkEntry {
+        std::vector<rawstd::URI> targets;
+        std::unique_ptr<Chunk> chunk;
+        // Single-flight lazy open: concurrent I/O touching the same
+        // not-yet-open chunk must not each open it independently. begin()
+        // when the first touch starts opening it, end() once it lands
+        // (chunk set, or _open_errno on failure); every other touch
+        // co_awaits settle() instead of racing its own open.
+        rawstd::Gate gate;
+        int open_errno = 0;
     };
 
     rawio::Queue& _queue;
-    Target _target;
-
-    // The spec() fetched at open() time (see Target::open()'s own
-    // comment) -- kept around for any future caller that needs it.
-    // _spec.mirrors is the configured mirror width N (the target's own
-    // URI count).
-    RawstorObjectSpec _spec;
-    std::vector<Member> _members;
-
-    // Logical object size, adopted from the in-sync metadata at open --
-    // the resync chunk bitmap is sized off this.
     uint64_t _size;
+    std::unique_ptr<ChunkMap> _map;
+    std::vector<ChunkEntry> _chunks;
 
-    // DIRTY has been durably recorded on the in-sync members.
-    bool _dirty;
-
-    // Survivors dropped to <= N/2 (N >= 3): writes fail until recovery.
-    bool _writes_frozen;
-
-    // Tracks whether a metadata barrier (dirty gate or degrade) is in
-    // flight -- co_await _meta_gate.settle() parks a coroutine that
-    // depends on the recorded state (returning immediately if nothing is
-    // running) and resumes it once the barrier settles.
-    rawstd::Gate _meta_gate;
-
-    // Members marked STALE whose exclusion is not yet durably recorded.
-    size_t _unrecorded_stale;
-
-    // Current sync-set identity adopted at open / last barrier.
-    uint64_t _epoch;
-    uint64_t _sync_id;
-    uint64_t _sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
-
-    // Expires on destruction. Detached background work (read-repair,
-    // resync, the reconnect probe, the degrade barriers they may trigger)
-    // checks it before touching the object: unlike caller I/O (covered by
-    // the _writes_issued/_flush_barrier drain below), such work is not
-    // waited for at close.
-    std::shared_ptr<void> _alive;
-
-    // Mirrored writes currently in flight -- resync drain bookkeeping
-    // (_write_settled() below), separate from _writes_issued/
-    // _flush_barrier's own flush-barrier accounting.
-    size_t _writes_in_flight;
-
-    // Active online resync, one member at a time (nullptr when none is in
-    // progress).
-    std::unique_ptr<ResyncState> _resync;
-
-    // Bumped every time a new ResyncState is created. Chunk-copy
-    // completions capture the generation they were issued under: a
-    // completion whose generation no longer matches _resync's (the resync
-    // it belonged to was aborted and possibly replaced by a new one) must
-    // not touch the current _resync, even though _resync itself is
-    // non-null again.
-    size_t _resync_generation;
-
-    // Periodic reconnect probe for unreachable members
-    // (mirror_probe_interval), driven by _queue.timeout_multishot() in
-    // _probe_watch() -- a no-op for a single-target object.
-    // _probe_pending guards against a second _probe_tick() firing while a
-    // reconnect attempt it started is still in flight.
-    bool _probe_pending;
-
-    // Ticket dispenser: each pwrite()/pwritev()/write_zeroes() call takes
-    // the next one at entry (unsigned int ticket = _writes_issued++;) and
-    // hands it to _write_finished() at its own completion, success or
-    // failure. flush() snapshots this as its own target and waits for
-    // _flush_barrier to reach it -- not a live in-flight gauge,
-    // deliberately: waiting for "currently outstanding == 0" instead
-    // would starve flush() forever under a continuous write stream, where
-    // a new write can always slip into a slot a completing one just freed
-    // before the count ever touches zero. A fixed target, snapshotted
-    // once, isn't affected by writes issued after flush() was called --
-    // same as fsync() never covering a write that hasn't happened yet.
-    // This is *not* a backpressure mechanism -- pwrite()/pwritev() never
-    // suspend because of it -- concurrency limiting
-    // (rawstor_opts_write_throttle_limit()/write_backlog_capacity()) stays
-    // blk::Backend's own job (see blk_backend.hpp's _throttle_acquire()),
-    // one level down.
-    unsigned int _writes_issued;
-    // Tickets that settled before their own turn -- see _write_finished()'s
-    // own doc comment for why a plain completion count can't stand in for
-    // _flush_barrier here: it can't tell flush() apart from a write it was
-    // never promised to wait for (one issued after its own call) finishing
-    // early instead of the one it actually means.
-    std::unordered_set<unsigned int> _early_write_completions;
-    // flush() suspends here when its target (a snapshot of _writes_issued)
-    // is greater than the barrier's own count -- .value() is the
-    // contiguous "every ticket below this has genuinely completed"
-    // watermark _write_finished() maintains, not a raw tally of how many
-    // completions have happened (see flush()).
-    rawstd::Barrier _flush_barrier;
-    // Set once a pwrite()/pwritev() call *succeeds*, cleared once flush()
-    // actually dispatches a durability op that covers it -- lets flush()
-    // (and close(), which calls it) skip that dispatch entirely when
-    // nothing written since the last flush needs it: a never-written or
-    // already-flushed object, or one whose only writes so far all failed
-    // (nothing to flush() failed writes -- there's no data to make
-    // durable), shouldn't pay for a round trip that would be a pure no-op.
-    // Named apart from the mirror-consistency _dirty above -- this one
-    // tracks local flush-barrier state, not the persisted DIRTY/CLEAN/
-    // SYNCING protocol state.
-    bool _unflushed;
-
-    // Called once the pwrite()/pwritev()/write_zeroes() call that took
-    // `ticket` (see _writes_issued above) finishes, success or failure.
-    // Advances _flush_barrier only if `ticket` is exactly the next one due
-    // -- otherwise this settled ahead of its turn (a later write finishing
-    // before an earlier, still in-flight one -- nothing here orders
-    // completions to match issue order), so it's parked in
-    // _early_write_completions instead. Either way, once the barrier does
-    // advance past `ticket`, it keeps draining _early_write_completions for
-    // as long as the next ticket due is already sitting there, so a run of
-    // early arrivals doesn't each wait for its own individual turn once the
-    // one actually blocking them finally lands.
-    void _write_finished(unsigned int ticket) noexcept;
-
-    size_t _in_sync_count() const noexcept;
-
-    // Below-quorum writes freeze for N >= 3 only: with N = 2 a single
-    // survivor may continue, because auto-open requires both members, so the
-    // abandoned peer can never auto-start alone (docs/mirroring.md,
-    // quorum rules).
-    bool _below_write_quorum(size_t survivors) const noexcept;
-
-    // Metadata comparison at open (docs/mirroring.md, "Comparison rules"):
-    // excludes SYNCING/stale members from _members, picks the newest
-    // sync_id, refuses a split brain -- demoting members as needed, and
-    // deriving this object's own sync-set identity (_epoch/_size/
-    // _sync_id/_sync_id_history) from whichever end up IN_SYNC. Called
-    // by the constructor below, for every mirrors >= 2 open (mirrors ==
-    // 1 skips it -- see the constructor's own comment) -- a throw here
-    // (quorum lost, split brain, no trusted member left) aborts
-    // construction, same as Connection::create()'s own all-or-nothing
-    // gather() over Backend::create(): whichever Connections _members
-    // already holds by then are simply dropped, not gracefully
-    // co_await-closed (a constructor can't co_await) -- each one's own
-    // destructor still tears down its sockets/registrations safely on
-    // its own, the same safety net Backend's own destructor already is
-    // for a Connection torn down this way instead of via close().
-    void _reconcile_sync_set();
-
-    // Runs cont(0) once DIRTY is durably recorded on the in-sync members; the
-    // first write (or read-repair) of a mirrored object passes through
-    // here before anything is acknowledged.
-    rawstd::Task<void> _with_dirty();
-    rawstd::Task<void> _run_dirty_barrier();
-
-    // Excludes members from the mirror set (docs/mirroring.md, case F1/F6).
-    rawstd::Task<void> _degrade(std::vector<size_t> idxs);
-    rawstd::Task<void> _run_degrade_barrier();
-
-    // Persists `sync_state` on every in-sync member; members that fail the
-    // update are marked STALE. Never throws -- the caller re-checks
-    // _in_sync_count()/_below_write_quorum() itself afterward.
-    rawstd::Task<void> _run_meta_fan_out(RawstorObjectSyncState sync_state);
-    rawstd::Task<void>
-    _set_sync_state_one(size_t idx, RawstorObjectSyncState sync_state);
-
-    // Mirrored write fan-out shared by pwrite()/pwritev()/discard()/
-    // write_zeroes()/flush(): `issue` is co_await-ed against every
-    // in-sync member concurrently; the result is acknowledged only after it
-    // completed on every one of them, or after the failed ones were
-    // durably excluded (_degrade()) and it completed on all survivors.
-    // `offset`/`size` (0/0 for flush(), which has no chunk semantics)
-    // drive the online-resync interaction below: a write overlapping the
-    // chunk the sweeper is copying right now parks until the copy
-    // completes (the copy would otherwise overwrite the fresher client
-    // data), and one that reaches the SYNCING member's chunk clears its
-    // needs-copy bit.
-    struct FanOutWriteState;
-    rawstd::Task<size_t> _fan_out_write(
-        off_t offset, size_t size,
-        std::function<rawstd::Task<size_t>(Connection&)> issue
-    );
-    rawstd::Task<void> _fan_out_write_one(
-        size_t idx, std::function<rawstd::Task<size_t>(Connection&)> issue,
-        std::shared_ptr<FanOutWriteState> st
-    );
-    rawstd::Task<void> _fan_out_write_syncing_one(
-        size_t idx, size_t expected_size,
-        std::function<rawstd::Task<size_t>(Connection&)> issue,
-        std::shared_ptr<FanOutWriteState> st
+    // `chunk_targets` is one entry per logical chunk, in index order;
+    // Target::open() fills in whichever entries it already eagerly
+    // opened (index 0, and the last one for a multi-chunk target --
+    // see its own comment) directly into `_chunks` right after
+    // construction, before handing the Object back to its own caller.
+    Object(
+        rawio::Queue& queue, uint64_t size, std::unique_ptr<ChunkMap> map,
+        std::vector<std::vector<rawstd::URI>> chunk_targets
     );
 
-    // Called once a mirrored write's fan-out (_fan_out_write() above) has
-    // fully settled (every member's own completion, including the SYNCING
-    // one if any, has been accounted for) -- advances whichever resync
-    // phase is waiting on the in-flight count reaching zero, or the
-    // sweeper's own per-chunk block.
-    void _write_settled() noexcept;
+    // Returns the chunk's already-open (or freshly opened) Chunk. A
+    // pointer, not a reference: rawstd::Task<T> stores T in a
+    // std::variant, which requires an object type.
+    rawstd::Task<Chunk*> _chunk(uint32_t index);
 
-    // Online resync of one member (docs/mirroring.md, resync algorithm): a
-    // needs-copy bitmap over RESYNC_CHUNK-sized chunks, client writes
-    // duplicated onto the SYNCING member (_fan_out_write() above), and a
-    // sweeper copying one chunk at a time from an in-sync source, mutually
-    // exclusive with client writes to that chunk. Picks the first STALE,
-    // reachable member with no resync already running; a no-op otherwise
-    // (single target, no stale-but-reachable member, or already resyncing).
-    // Detached: driven entirely by its own continuations (the SYNCING
-    // mark's completion, _write_settled() above, each sweep step), not by
-    // a caller awaiting it.
-    rawstd::DetachedTask _resync_maybe_start();
-    // One sweep step: copies the next needs-copy chunk with no client
-    // write in flight on it (parking as _resync->sweep_blocked if every
-    // dirty chunk currently has one; _write_settled() resumes it), or
-    // moves on to FINISH_DRAIN once every chunk is copied.
-    rawstd::DetachedTask _resync_sweep();
-    // Every chunk copied and no client write in flight: durably adopts
-    // the current sync-set identity on the member, then lets it serve reads.
-    rawstd::DetachedTask _resync_finish();
-    // Marks the resync's member STALE (unreachable, so the probe retries
-    // later) and wakes every writer parked on a chunk overlap. Synchronous
-    // -- safe to call from anywhere already holding _resync, including
-    // mid-fan-out bookkeeping.
-    void _resync_abort(const char* reason) noexcept;
-
-    // Launches _probe_watch() as a detached loop, for as long as the
-    // object is alive (a no-op for a single-target object). _probe_watch()
-    // ticks every mirror_probe_interval via _queue.timeout_multishot() and
-    // calls _probe_tick() on every wakeup; _probe_tick() reconnects the
-    // first STALE, unreachable member found and kicks off its resync on
-    // success.
-    void _probe_setup();
-    rawstd::DetachedTask _probe_watch(std::weak_ptr<void> alive);
-    rawstd::DetachedTask _probe_tick();
-
-    // Read failover across in-sync members, in target-list order; a payload
-    // error (EPROTO) triggers a detached read-repair of the region
-    // through the dirty gate once another member served the data, a
-    // transport error durably excludes the member if the object is DIRTY.
-    // `issue`/`copy_to` are pread()/preadv()'s own doing -- see their own
-    // call sites -- so this function itself never needs to know whether
-    // it's serving a flat buffer or an iovec array.
-    rawstd::Task<size_t> _read(
-        off_t offset, std::function<rawstd::Task<size_t>(Connection&)> issue,
-        std::function<void(std::vector<char>&, size_t)> copy_to
+    // Runs one coroutine per segment concurrently (rawstd::gather()),
+    // each co_awaiting the owning chunk's pread/pwrite -- aggregated into
+    // the total byte count, or the first exception hit (gather()'s own
+    // all-succeed-or-throw semantics).
+    rawstd::Task<size_t> _rw_segments(
+        const std::vector<VolumeSegment>& segments, bool write, bool sync,
+        void* buf
     );
-    rawstd::DetachedTask _read_repair(
-        size_t idx, off_t offset, std::vector<char> data,
-        std::weak_ptr<void> alive
-    );
-    rawstd::DetachedTask
-    _degrade_detached(std::vector<size_t> idxs, std::weak_ptr<void> alive);
-
-    // Adapts Connection::flush() (Task<void>) to _fan_out_write()'s own
-    // Task<size_t> issue signature -- a named coroutine, not a lambda one:
-    // an immediately-invoked lambda coroutine would dangle its own
-    // closure (see co_target_open()'s doc comment in ost/src/client.cpp
-    // for the general hazard).
-    rawstd::Task<size_t> _flush_one(Connection& cn);
-
-    // Object is final -- unlike Backend::Private (which every backend
-    // subclass's own constructor also needs to name), only Target::open()
-    // (a friend, since it's the one place that actually builds an Object)
-    // ever needs this, so it stays private rather than protected.
-    struct Private {
-        explicit Private() = default;
-    };
 
     friend class Target;
 
 public:
-    // Built once Target::open() has connected every reachable URI,
-    // fetched a real spec(), and SET_OBJECT+meta()-ed every connected
-    // member (`spec`/`members`, taken already at that point -- see
-    // Target::open()'s own comment) -- deciding whether the result is
-    // actually trustworthy enough to serve from is this constructor's
-    // own job from here: mirrors == 1 trusts its one member outright;
-    // mirrors >= 2 runs _reconcile_sync_set() (which may refuse the
-    // open -- see its own comment on why that's safe to let unwind
-    // through here). Only once that succeeds does it start the object's
-    // own background maintenance (the reconnect probe, an online resync
-    // if one is already due) -- Target::open()'s only remaining friend
-    // access to Object is this one constructor call, not a stream of
-    // direct edits to an already-constructed Object's own internals.
-    Object(
-        Private, rawio::Queue& queue, const Target& target,
-        RawstorObjectSpec spec, std::vector<Member> members
-    );
     Object(const Object&) = delete;
     Object(Object&&) = delete;
-    ~Object();
+    ~Object() override;
+
     Object& operator=(const Object&) = delete;
     Object& operator=(Object&&) = delete;
 
-    // This Object's own target -- the same Target it was built from.
-    inline const Target& target() const noexcept { return _target; }
-
-    rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset);
+    rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;
 
     rawstd::Task<size_t>
-    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset);
+    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) override;
 
     rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, off_t offset, bool sync);
+    pwrite(const void* buf, size_t size, off_t offset, bool sync) override;
 
     rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, off_t offset,
         bool sync
-    );
+    ) override;
 
-    rawstd::Task<size_t> discard(size_t size, off_t offset);
+    rawstd::Task<size_t> discard(size_t size, off_t offset) override;
 
     rawstd::Task<size_t>
-    write_zeroes(size_t size, off_t offset, bool unmap, bool sync);
+    write_zeroes(size_t size, off_t offset, bool unmap, bool sync) override;
 
-    // Waits for every pwrite()/pwritev() issued before this call to
-    // complete (see _flush_barrier above), then flushes every in-sync
-    // member -- without the wait, a flush() racing an in-flight write
-    // could report success before that write's data is actually durable.
-    rawstd::Task<void> flush();
+    rawstd::Task<void> flush() override;
 
-    // flush()es (see above); for a mirrored object that is DIRTY, also
-    // durably marks the in-sync members CLEAN with the current epoch/sync_id
-    // before co_awaiting every Connection's close() concurrently -- a
-    // clean close, so the next open() doesn't pay for a spurious dirty
-    // gate. Clears _members so ~Object() (which still runs once the
-    // caller deletes this Object after the returned Task completes) has
-    // nothing left to close -- the async counterpart to ~Object()'s own
-    // run()-pumped connection cleanup.
-    rawstd::Task<void> close();
-
-    // For tests/ to verify flush()'s wait for in-flight writes (see
-    // _writes_issued/_flush_barrier above) without depending on real
-    // storage-completion timing.
-    inline unsigned int writes_in_flight() const noexcept {
-        return _writes_issued - _flush_barrier.value();
-    }
+    rawstd::Task<void> close() override;
 };
 
 } // namespace rawstor

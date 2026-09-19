@@ -3,11 +3,13 @@
 #include "config.h"
 #include "file_backend.hpp"
 #include "lvm_backend.hpp"
+#include "mds_backend.hpp"
 #include "ost_backend.hpp"
 #include "zfs_backend.hpp"
 
 #include <rawstd/logging.h>
 #include <rawstd/uri.hpp>
+#include <rawstd/uuid.h>
 
 #include <sstream>
 #include <stdexcept>
@@ -65,6 +67,9 @@ Backend::create(rawio::Queue& queue, const rawstd::URI& location) {
     } else if (location.scheme() == "zfs") {
         backend =
             std::make_shared<rawstor::zfs::Backend>(Private(), queue, location);
+    } else if (location.scheme() == "mds") {
+        backend =
+            std::make_shared<rawstor::mds::Backend>(Private(), queue, location);
     } else {
         rawstd_error("Unexpected URI scheme: %s\n", location.str().c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -75,6 +80,15 @@ Backend::create(rawio::Queue& queue, const rawstd::URI& location) {
     rawstd_debug("%s: Connected\n", backend->str().c_str());
 
     co_return backend;
+}
+
+rawstd::Task<void>
+Backend::create_snapshot(const RawstdUUID&, uint64_t, const RawstdUUID&) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
+rawstd::Task<void> Backend::resize(const RawstdUUID&, uint64_t, uint64_t) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
 std::string Backend::str() const {

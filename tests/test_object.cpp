@@ -1,438 +1,415 @@
-#include "object.hpp"
-#include "opts.h"
-#include "server.hpp"
-#include "session.hpp"
-#include "target.hpp"
-#include "tmp_dir.hpp"
+// mds::Backend::create_snapshot()/remove() (docs/mds.md, "Snapshots
+// (stage 2)"), exercised against a real rawstor::mds::Server +
+// rawstor::ostserver::Server pair (object_env.hpp) -- the actual wire
+// path a `mds://` target goes through, not a hand-scripted mock of it.
+// The OST's only backend is file://, which has no native CoW, so every
+// case here is a negative-path/error-propagation test: the positive CoW
+// path needs a live zfs pool and isn't reachable from a portable test
+// (see object_env.hpp's own doc comment).
+#include "object_env.hpp"
+#include "rawio_sync.hpp"
 
 #include <rawio/queue.hpp>
 
-#include <rawstd/gpp.hpp>
 #include <rawstd/uri.hpp>
-#include <rawstd/uuid.h>
 
-#include <rawstor/object.h>
-#include <rawstor/protocol.h>
-#include <rawstor/rawstor.h>
+#include <rawstor/target.h>
 
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
+#include <sstream>
 #include <string>
-#include <thread>
-#include <vector>
+
+#include <cerrno>
 
 namespace {
 
-// Duplicate of object.cpp's own `run()` -- see that one's doc comment for
-// why it isn't shared.
-template <typename T>
-T run(rawio::Queue& q, rawstd::Task<T> t) {
-    while (!t.done()) {
-        q.wait_timeout(rawstor_opts_tcp_user_timeout());
-    }
-    return t.get();
+// A plain file:// target -- no MDS, no OST, nothing to connect to except
+// the local filesystem -- for the tests below that verify Backend::
+// resize()/create_snapshot()'s own ENOTSUP default is what a non-mds://
+// target actually gets, not a scheme-specific rejection.
+std::string file_target(const char* name, const char* uuid) {
+    std::filesystem::path location_path =
+        std::filesystem::temp_directory_path() / name;
+    std::filesystem::create_directories(location_path);
+    std::ostringstream oss;
+    oss << "file://" << location_path.string();
+    return rawstd::URI(rawstd::URI(oss.str()), uuid).str();
 }
 
-// Duplicate of test_blk_backend.cpp's own ThrottleOptsOverride -- see that
-// one's doc comment for why it isn't shared.
-class ThrottleOptsOverride final {
-public:
-    ThrottleOptsOverride(
-        unsigned int write_throttle_limit, unsigned int write_backlog_capacity
-    ) {
-        RawstorOpts opts{};
-        opts.write_throttle_limit = write_throttle_limit;
-        opts.write_backlog_capacity = write_backlog_capacity;
-        rawstor_opts_initialize(&opts);
-    }
-    ThrottleOptsOverride(const ThrottleOptsOverride&) = delete;
-    ThrottleOptsOverride(ThrottleOptsOverride&&) = delete;
-
-    ~ThrottleOptsOverride() { rawstor_opts_initialize(nullptr); }
-
-    ThrottleOptsOverride& operator=(const ThrottleOptsOverride&) = delete;
-    ThrottleOptsOverride& operator=(ThrottleOptsOverride&&) = delete;
-};
-
-// Waits for a value set on rawstor::tests::Server's own background thread
-// (server.hpp) -- unlike write_task.done()/flush_task.done(), nothing
-// about that thread's progress is itself a completion on `queue`. But
-// `queue` still needs pumping here regardless: Queue::wait_timeout()'s own
-// io_uring_submit_and_wait_timeout() call is what actually flushes a
-// previously-queued op's SQE to the kernel (see uring_queue.cpp) -- without
-// it, a write issued right before this call never leaves the socket for
-// the Server thread to read in the first place. A short timeout, its
-// (expected -- there's nothing of the client's own left to complete while
-// only the Server thread is still working) ETIME swallowed, keeps this
-// from blocking for `value`'s full budget on each spin.
-void wait_for_nonzero(rawio::Queue& queue, const std::atomic<uint16_t>& value) {
-    for (int i = 0; i < 5000 && value.load() == 0; ++i) {
-        try {
-            queue.wait_timeout(1);
-        } catch (const std::exception&) {
-        }
-    }
-    ASSERT_NE(value.load(), 0);
+ssize_t target_create(
+    rawio::Queue& queue, const std::string& target,
+    const RawstorObjectSpec& spec
+) {
+    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_create(&queue, target.c_str(), &spec, cb, data);
+    });
 }
 
-// Stands up a real file:// object for the test to drive Object::pwrite()/
-// flush() directly -- and inspect writes_in_flight()/flush()'s wait for it.
-std::unique_ptr<rawstor::Object>
-open_object(rawio::Queue& queue, const rawstd::URI& location) {
-    RawstdUUID id;
-    if (rawstd_uuid7_init(&id) != 0) {
-        throw std::runtime_error("rawstd_uuid7_init() failed");
+ssize_t target_spec(
+    rawio::Queue& queue, const std::string& target, RawstorObjectSpec* spec
+) {
+    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_spec(&queue, target.c_str(), spec, cb, data);
+    });
+}
+
+ssize_t target_remove(rawio::Queue& queue, const std::string& target) {
+    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_remove(&queue, target.c_str(), cb, data);
+    });
+}
+
+// `snap_id`: NULL to have the call generate a fresh version id itself
+// (written into `out_snap_id`, if given, before this returns -- the same
+// synchronous-buffer convention as rawstor_target_id()), or an explicit
+// UUID string (including the nil one, "00000000-0000-0000-0000-
+// 000000000000", reserved for "live").
+ssize_t object_create_snapshot(
+    rawio::Queue& queue, const std::string& target, const char* snap_id,
+    std::string* out_snap_id = nullptr
+) {
+    char buf[64] = {};
+    ssize_t res = rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_create_snapshot(
+            &queue, target.c_str(), snap_id, buf, sizeof(buf), cb, data
+        );
+    });
+    if (out_snap_id != nullptr) {
+        *out_snap_id = buf;
     }
-    RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&id, &uuid_string);
+    return res;
+}
 
-    rawstor::Target target({rawstd::URI(location, uuid_string)});
+ssize_t object_snapshot_remove(
+    rawio::Queue& queue, const std::string& target, const char* snap_id
+) {
+    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_snapshot_remove(
+            &queue, target.c_str(), snap_id, cb, data
+        );
+    });
+}
 
-    RawstorObjectSpec spec{.size = 1u << 20, .mirrors = 1};
-    run(queue, target.create(queue, spec));
+ssize_t object_resize(
+    rawio::Queue& queue, const std::string& target, uint64_t new_size
+) {
+    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_resize(
+            &queue, target.c_str(), new_size, cb, data
+        );
+    });
+}
 
-    return run(queue, target.open(queue));
+ssize_t target_meta(
+    rawio::Queue& queue, const std::string& target, RawstorObjectMeta* metas,
+    size_t count
+) {
+    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_meta(
+            &queue, target.c_str(), metas, count, cb, data
+        );
+    });
+}
+
+ssize_t target_set_sync_state(
+    rawio::Queue& queue, const std::string& target,
+    const RawstorObjectSyncState& sync_state
+) {
+    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_set_sync_state(
+            &queue, target.c_str(), &sync_state, cb, data
+        );
+    });
+}
+
+std::string
+object_target(const rawstor::tests::ObjectEnv& env, const char* uuid) {
+    rawstd::URI location_uri(env.location());
+    return rawstd::URI(location_uri, uuid).str();
+}
+
+RawstorObjectSpec one_chunk_spec() {
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    spec.mirrors = 1;
+    return spec;
 }
 
 } // namespace
 
-// flush() must not report success while a write issued before it is still
-// outstanding -- otherwise a caller relying on flush() for durability could
-// observe success before that write's data is actually durable. See
-// object.hpp's _writes_issued/_writes_completed/_flush_waiters.
-TEST(ObjectTest, flush_waits_for_writes_issued_before_it) {
-    rawstor::tests::TmpDir dir;
-    rawstd::URI location(dir.uri());
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
+// An object backed by a file:// chunk member has no native CoW -- the
+// snapshot attempt reaches the real OST, gets a real -ENOTSUP from
+// file::Backend::create_snapshot(), and Object::create_snapshot()
+// surfaces that specific error (not a generic failure) since the chunk
+// had exactly one member and it's the one that failed. `snap_id` is left
+// NULL: the version id is generated by this very call (the single point
+// every snapshot id is generated at, by analogy with a fresh object id
+// -- rawstor_location_create()) and written into `buf` synchronously,
+// before any I/O -- still true even though the create itself goes on to
+// fail.
+TEST(ObjectSnapshotTest, snapshot_on_file_backend_returns_enotsup) {
+    rawstor::tests::ObjectEnv env(8770, 8771);
+    std::string target =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000001");
 
-    std::unique_ptr<rawstor::Object> object = open_object(*queue, location);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
-    std::string payload = "durable-me";
-    rawstd::Task<size_t> write_task =
-        object->pwrite(payload.data(), payload.size(), 0, false);
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
 
-    // Task<T> starts eagerly -- pwrite() has already run up to its first
-    // suspension point (a real io_uring op), so writes_in_flight() is
-    // already 1 even though nothing has pumped the queue yet.
-    ASSERT_EQ(object->writes_in_flight(), 1u);
-    ASSERT_FALSE(write_task.done());
+    std::string generated_snap_id;
+    ssize_t res =
+        object_create_snapshot(*queue, target, nullptr, &generated_snap_id);
+    EXPECT_EQ(res, -ENOTSUP);
+    EXPECT_EQ(generated_snap_id.size(), 36u);
 
-    rawstd::Task<void> flush_task = object->flush();
-
-    while (!write_task.done()) {
-        // The write issued before flush() hasn't completed yet -- flush()
-        // must still be waiting for it, not racing ahead to report success.
-        ASSERT_FALSE(flush_task.done());
-        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
-    }
-
-    while (!flush_task.done()) {
-        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
-    }
-
-    EXPECT_EQ(write_task.get(), payload.size());
-    flush_task.get();
+    EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-// flush() must not wait for writes issued *after* it either -- otherwise,
-// under a continuous write stream (a new write always dispatched before an
-// older one completes), the "everything outstanding has drained" condition
-// could never actually occur and flush() would starve forever. Issuing a
-// large batch of writes strictly after flush() and confirming most of them
-// are still outstanding once flush() resolves demonstrates flush() is
-// waiting for its own fixed snapshot (see object.hpp), not for the backlog
-// to empty out.
-//
-// A throttle limit of 1 is what keeps this deterministic rather than a
-// timing race: with it, write #2 onward cannot even be *dispatched* until
-// its predecessor completes (see blk_backend.hpp's _throttle_acquire()),
-// so draining all of them takes extra_writes strictly sequential round
-// trips -- while flush() only ever needs write_task's single completion
-// plus its own durability op, a handful at most. Without the throttle, a
-// backend fast enough (observed on CI, against a tmpfs-backed file) can
-// race every extra write to completion before flush() is even checked
-// again, making the assertion below flaky.
-TEST(ObjectTest, flush_does_not_wait_for_writes_issued_after_it) {
-    constexpr unsigned int throttle_limit = 1;
-    constexpr unsigned int extra_writes = 500;
-    std::string payload = "durable-me";
-    ThrottleOptsOverride opts_override(
-        throttle_limit,
-        static_cast<unsigned int>(payload.size() * (extra_writes + 1))
-    );
+// A snapshot attempt that never reaches OBJ_SNAP_COMMIT (every chunk
+// member failed the backend CoW) must leave the object exactly as
+// before -- spec() still answers normally, the failed attempt left no
+// visible trace on the live map.
+TEST(ObjectSnapshotTest, failed_snapshot_leaves_object_intact) {
+    rawstor::tests::ObjectEnv env(8772, 8773);
+    std::string target =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000002");
 
-    rawstor::tests::TmpDir dir;
-    rawstd::URI location(dir.uri());
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
-    std::unique_ptr<rawstor::Object> object = open_object(*queue, location);
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
 
-    rawstd::Task<size_t> write_task =
-        object->pwrite(payload.data(), payload.size(), 0, false);
+    ASSERT_EQ(object_create_snapshot(*queue, target, nullptr), -ENOTSUP);
 
-    rawstd::Task<void> flush_task = object->flush();
+    RawstorObjectSpec read_spec{};
+    ASSERT_EQ(target_spec(*queue, target, &read_spec), 0);
+    EXPECT_EQ(read_spec.size, spec.size);
 
-    std::vector<rawstd::Task<size_t>> extra;
-    extra.reserve(extra_writes);
-    for (unsigned int i = 0; i < extra_writes; ++i) {
-        extra.push_back(object->pwrite(
-            payload.data(), payload.size(), (i + 1) * payload.size(), false
-        ));
-    }
-
-    while (!flush_task.done()) {
-        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
-    }
-    flush_task.get();
-    EXPECT_EQ(write_task.get(), payload.size());
-
-    unsigned int extra_done = 0;
-    for (const auto& t : extra) {
-        if (t.done()) {
-            ++extra_done;
-        }
-    }
-    // If flush() had (incorrectly) waited for the backlog to empty out
-    // instead of just the write issued before it, every one of these would
-    // already be done by the time flush() resolved.
-    EXPECT_LT(extra_done, extra_writes);
-
-    for (auto& t : extra) {
-        while (!t.done()) {
-            queue->wait_timeout(rawstor_opts_tcp_user_timeout());
-        }
-        EXPECT_EQ(t.get(), payload.size());
-    }
+    EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-// Multiple flush() calls in flight at once (e.g. two independent callers,
-// or a caller that didn't wait for its own previous flush() before issuing
-// another) must each resolve correctly, independent of one another --
-// _flush_waiters holds one (target, handle) entry per call, so this isn't
-// a single shared piece of state that a second flush() could stomp on.
-TEST(ObjectTest, concurrent_flush_calls_all_resolve) {
-    rawstor::tests::TmpDir dir;
-    rawstd::URI location(dir.uri());
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
+// snap_remove() on an id nothing ever committed fails cleanly with
+// -ENOENT (the MDS's own rejection), not a hang or a crash -- this is
+// the same case a crash mid-fan-out (before OBJ_SNAP_COMMIT) leaves
+// behind (docs/mds.md: reconciled by the reconstruct scan, never by
+// snapshot_remove()).
+TEST(ObjectSnapshotTest, snapshot_remove_uncommitted_returns_enoent) {
+    rawstor::tests::ObjectEnv env(8774, 8775);
+    std::string target =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000003");
 
-    std::unique_ptr<rawstor::Object> object = open_object(*queue, location);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
-    std::string payload = "durable-me";
-    rawstd::Task<size_t> write1 =
-        object->pwrite(payload.data(), payload.size(), 0, false);
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
 
-    // Two flush() calls sharing the same target -- no write issued between
-    // them -- both must resolve once write1 completes.
-    rawstd::Task<void> flush1 = object->flush();
-    rawstd::Task<void> flush2 = object->flush();
+    EXPECT_EQ(
+        object_snapshot_remove(
+            *queue, target, "018f4e2a-3000-7000-8000-0000000000ff"
+        ),
+        -ENOENT
+    );
 
-    // A write issued after both flush() calls -- neither should wait for
-    // it (see flush_does_not_wait_for_writes_issued_after_it above).
-    rawstd::Task<size_t> write2 =
-        object->pwrite(payload.data(), payload.size(), payload.size(), false);
-
-    while (!flush1.done() || !flush2.done()) {
-        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
-    }
-    flush1.get();
-    flush2.get();
-    EXPECT_EQ(write1.get(), payload.size());
-
-    while (!write2.done()) {
-        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
-    }
-    EXPECT_EQ(write2.get(), payload.size());
+    EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-// close() must not proceed to close a connection while a write issued
-// before it is still outstanding -- otherwise that write's own I/O could
-// race the connection/fd being torn down under it. See Object::close()'s
-// own doc comment (it calls flush(), which already has this wait).
-TEST(ObjectTest, close_waits_for_writes_issued_before_it) {
-    rawstor::tests::TmpDir dir;
-    rawstd::URI location(dir.uri());
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
+// The nil UUID means "live" everywhere (docs/mds.md, "version in chunk
+// identity") -- rawstor_target_snapshot_remove() rejects it before any
+// network round trip (removing "the snapshot with id nil" is
+// nonsensical; nil is reserved for the live version).
+TEST(ObjectSnapshotTest, snapshot_remove_nil_id_is_einval) {
+    rawstor::tests::ObjectEnv env(8776, 8777);
+    std::string target =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000004");
 
-    std::unique_ptr<rawstor::Object> object = open_object(*queue, location);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
-    std::string payload = "durable-me";
-    rawstd::Task<size_t> write_task =
-        object->pwrite(payload.data(), payload.size(), 0, false);
-    ASSERT_FALSE(write_task.done());
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
 
-    rawstd::Task<void> close_task = object->close();
+    EXPECT_EQ(
+        object_snapshot_remove(
+            *queue, target, "00000000-0000-0000-0000-000000000000"
+        ),
+        -EINVAL
+    );
 
-    while (!write_task.done()) {
-        // The write hasn't completed yet -- close() must still be
-        // waiting for it, not racing ahead to tear down its connection.
-        ASSERT_FALSE(close_task.done());
-        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
-    }
-
-    while (!close_task.done()) {
-        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
-    }
-
-    EXPECT_EQ(write_task.get(), payload.size());
-    close_task.get();
+    EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-// Regression for the bug _write_finished()'s own doc comment describes:
-// flush() must keep waiting for the specific write it was promised
-// (write A, issued before it), not resolve just because *some* write
-// completed. A plain completion count can't tell those apart; only a
-// real network connection can produce genuine out-of-order completion
-// deterministically enough to test it (real file:// I/O timing can't be
-// controlled this precisely) -- so this drives an ost:// object over a
-// scripted rawstor::tests::Server connection and answers write B's
-// (issued after flush()) wire request before write A's, exactly as a
-// real OST server answering out of cid order could.
-TEST(ObjectTest, flush_does_not_resolve_on_write_completing_out_of_order) {
-    rawstor::tests::Server server(8753, 256);
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
-
-    RawstdUUID id;
-    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
-    RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&id, &uuid_string);
-    rawstd::URI location("ost://127.0.0.1:8753");
-    rawstor::Target target({rawstd::URI(location, uuid_string)});
-
-    RawstorOSTFrameMetaPayload clean_meta = {
-        .size = 1ull << 20,
-        .epoch = 0,
-        .sync_id = 0,
-        .sync_id_history = {},
-        .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
-    };
-
-    // Left open for the whole test -- see server.hpp's Session::~Session()
-    // doc comment; closing it early would drop the connection Object is
-    // about to hold onto for its writes/flush below.
-    rawstor::tests::Session s(server);
-    s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
-    s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-    s.cmd_meta(RAWSTOR_MAGIC, 2, 0, clean_meta);
-
-    std::unique_ptr<rawstor::Object> object = run(*queue, target.open(*queue));
-
-    std::string payload_a = "write-a-";
-    std::string payload_b = "write-b-";
-
-    rawstd::Task<size_t> write_a =
-        object->pwrite(payload_a.data(), payload_a.size(), 0, false);
-    ASSERT_FALSE(write_a.done());
-
-    rawstd::Task<void> flush_task = object->flush();
-
-    rawstd::Task<size_t> write_b = object->pwrite(
-        payload_b.data(), payload_b.size(), payload_a.size(), false
-    );
-    ASSERT_FALSE(write_b.done());
-
-    // Read each WRITE request's own cid straight off the wire instead of
-    // predicting it -- it's whatever Backend::_cid_counter happens to be
-    // at that point (see ost_backend.hpp), not something this test needs
-    // to (or should) hardcode. atomic because these are written on the
-    // Server's own background thread (server.hpp) and polled from this
-    // one below.
-    std::atomic<uint16_t> cid_a{0};
-    std::atomic<uint16_t> cid_b{0};
-    server.read(
-        "WRITE A head <<<", sizeof(RawstorOSTFrameHead),
-        [&cid_a](const void* buf) {
-            cid_a = static_cast<const RawstorOSTFrameHead*>(buf)->cid;
-        }
-    );
-    server.read(
-        "WRITE A rest <<<",
-        sizeof(RawstorOSTFrameIO) - sizeof(RawstorOSTFrameHead) +
-            payload_a.size(),
-        [](const void*) {}
-    );
-    server.read(
-        "WRITE B head <<<", sizeof(RawstorOSTFrameHead),
-        [&cid_b](const void* buf) {
-            cid_b = static_cast<const RawstorOSTFrameHead*>(buf)->cid;
-        }
-    );
-    server.read(
-        "WRITE B rest <<<",
-        sizeof(RawstorOSTFrameIO) - sizeof(RawstorOSTFrameHead) +
-            payload_b.size(),
-        [](const void*) {}
+// A plain (non-"mds://") target has no MDS orchestration at all --
+// rawstor_target_create_snapshot() no longer special-cases the scheme
+// client-side (target.cpp unifies every target through the same
+// Target::create_snapshot(), mds:// included, always against a real,
+// already-known id -- there is no more "assign" mode to dispatch on): a
+// plain target's own backend (file::Backend here) simply has no override
+// for create_snapshot(), so Backend::create_snapshot()'s own ENOTSUP
+// default is what comes back, the same shape of rejection as
+// snapshot_on_file_backend_returns_enotsup above, just one layer down
+// (no MDS/chunk fan-out in between).
+TEST(ObjectSnapshotTest, create_snapshot_on_plain_target_returns_enotsup) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    std::string target = file_target(
+        "test_object_snap_assign_enotsup",
+        "018f4e2a-3000-7000-8000-000000000005"
     );
 
-    wait_for_nonzero(*queue, cid_b);
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
 
-    // Answer write B -- the one flush() was never promised to wait for --
-    // before write A, forcing the exact out-of-order completion a real
-    // cid-matched OST response could produce on the wire.
-    RawstorOSTFrameResponse write_b_response = {
-        .head{.magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_WRITE, .cid = cid_b},
-        .body = {.hash = 0, .res = static_cast<int32_t>(payload_b.size())},
-    };
-    server.write(
-        "RAWSTOR_CMD_WRITE (B) >>>", &write_b_response, sizeof(write_b_response)
+    EXPECT_EQ(object_create_snapshot(*queue, target, nullptr), -ENOTSUP);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
+// The nil UUID is reserved for "live" against an mds:// target too --
+// mds::Backend::create_snapshot() rejects it with -EINVAL itself,
+// unconditionally, before ever touching the MDS (see mds_backend.cpp),
+// so this needs a real, reachable MDS only to get the object created in
+// the first place.
+TEST(ObjectSnapshotTest, create_snapshot_nil_id_on_object_target_is_einval) {
+    rawstor::tests::ObjectEnv env(8784, 8785);
+    std::string target =
+        object_target(env, "018f4e2a-3000-7000-8000-00000000000a");
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
+
+    EXPECT_EQ(
+        object_create_snapshot(
+            *queue, target, "00000000-0000-0000-0000-000000000000"
+        ),
+        -EINVAL
     );
 
-    while (!write_b.done()) {
-        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
-    }
-    EXPECT_EQ(write_b.get(), payload_b.size());
+    EXPECT_EQ(target_remove(*queue, target), 0);
+}
 
-    // B completing early must not be mistaken for A's completion: with
-    // the old plain-count tracking, this is exactly where flush() would
-    // have (incorrectly) already resolved.
-    EXPECT_FALSE(flush_task.done());
+// rawstor_target_meta()/_set_sync_state() used to reject an mds:// target
+// client-side (docs/mirroring.md doesn't apply to a whole object, many
+// chunks each with their own slots) -- now that mds:// is an ordinary
+// Backend, both succeed instead, with mds::Backend's own synthetic
+// answer (spec.size = the object's logical size, sync_state = a "legacy
+// copy" CLEAN/epoch-0/sync_id-0 -- see mds_backend.cpp's own doc
+// comment): the real per-chunk DIRTY/CLEAN state is honestly tracked one
+// level down, by each chunk's own (possibly mirrored) Chunk, not exposed
+// through the object-level target at all.
+TEST(ObjectMetaTest, meta_on_object_target_is_synthetic) {
+    rawstor::tests::ObjectEnv env(8786, 8787);
+    std::string target =
+        object_target(env, "018f4e2a-3000-7000-8000-00000000000b");
 
-    wait_for_nonzero(*queue, cid_a);
-    RawstorOSTFrameResponse write_a_response = {
-        .head{.magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_WRITE, .cid = cid_a},
-        .body = {.hash = 0, .res = static_cast<int32_t>(payload_a.size())},
-    };
-    server.write(
-        "RAWSTOR_CMD_WRITE (A) >>>", &write_a_response, sizeof(write_a_response)
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
+
+    RawstorObjectMeta meta{};
+    ASSERT_EQ(target_meta(*queue, target, &meta, 1), 1);
+    EXPECT_EQ(meta.spec.size, spec.size);
+    EXPECT_EQ(meta.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(meta.sync_state.sync_id, 0u);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
+TEST(ObjectMetaTest, set_sync_state_on_object_target_is_noop) {
+    rawstor::tests::ObjectEnv env(8788, 8789);
+    std::string target =
+        object_target(env, "018f4e2a-3000-7000-8000-00000000000c");
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
+
+    RawstorObjectSyncState sync_state{};
+    EXPECT_EQ(target_set_sync_state(*queue, target, sync_state), 0);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
+// Growing a multi-chunk object reserves placement for the new chunks on
+// the MDS and materializes exactly those on the OST -- spec() reflects
+// the new size, and the object stays fully readable/writable across the
+// old/new chunk boundary afterward.
+TEST(ObjectResizeTest, grows_and_creates_new_chunks) {
+    rawstor::tests::ObjectEnv env(8778, 8779);
+    std::string target =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000006");
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec{};
+    spec.size = 512ull << 10; /* 512 KiB, one chunk */
+    spec.mirrors = 1;
+    spec.chunk_size = 512ull << 10;
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
+
+    ASSERT_EQ(object_resize(*queue, target, 2ull << 20 /* 2 MiB */), 0);
+
+    RawstorObjectSpec read_spec{};
+    ASSERT_EQ(target_spec(*queue, target, &read_spec), 0);
+    EXPECT_EQ(read_spec.size, 2ull << 20);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
+// Grow-only: the MDS itself rejects a smaller new_size.
+TEST(ObjectResizeTest, shrink_is_einval) {
+    rawstor::tests::ObjectEnv env(8780, 8781);
+    std::string target =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000007");
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
+
+    EXPECT_EQ(object_resize(*queue, target, spec.size / 2), -EINVAL);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
+// new_size 0 is rejected client-side before any round trip.
+TEST(ObjectResizeTest, zero_is_einval) {
+    rawstor::tests::ObjectEnv env(8782, 8783);
+    std::string target =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000008");
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
+
+    EXPECT_EQ(object_resize(*queue, target, 0), -EINVAL);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
+// resize() makes no sense against a plain (non-"mds://") target -- no
+// MDS to reserve placement with. Unified dispatch (target.cpp) no longer
+// rejects this client-side by scheme -- it reaches the target's own
+// backend (file::Backend here) and gets Backend::resize()'s own ENOTSUP
+// default, the same real-backend-error shape as
+// create_snapshot_on_plain_target_returns_enotsup above.
+TEST(ObjectResizeTest, non_mds_target_returns_enotsup) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    std::string target = file_target(
+        "test_object_resize_enotsup", "018f4e2a-3000-7000-8000-000000000009"
     );
 
-    while (!write_a.done()) {
-        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
-    }
-    EXPECT_EQ(write_a.get(), payload_a.size());
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
 
-    // Only now should flush() have moved on to its own wire-level FLUSH
-    // (see Object::flush()'s own comment: it waits for the barrier first).
-    std::atomic<uint16_t> cid_flush{0};
-    server.read(
-        "FLUSH head <<<", sizeof(RawstorOSTFrameHead),
-        [&cid_flush](const void* buf) {
-            cid_flush = static_cast<const RawstorOSTFrameHead*>(buf)->cid;
-        }
-    );
-    server.read(
-        "FLUSH rest <<<",
-        sizeof(RawstorOSTFrameBasic) - sizeof(RawstorOSTFrameHead),
-        [](const void*) {}
-    );
+    EXPECT_EQ(object_resize(*queue, target, 1ull << 20), -ENOTSUP);
 
-    wait_for_nonzero(*queue, cid_flush);
-
-    RawstorOSTFrameResponse flush_response = {
-        .head{
-            .magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_FLUSH, .cid = cid_flush
-        },
-        .body = {.hash = 0, .res = 0},
-    };
-    server.write(
-        "RAWSTOR_CMD_FLUSH >>>", &flush_response, sizeof(flush_response)
-    );
-
-    while (!flush_task.done()) {
-        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
-    }
-    flush_task.get();
+    EXPECT_EQ(target_remove(*queue, target), 0);
 }

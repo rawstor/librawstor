@@ -66,7 +66,17 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, uint32_t mirrors) {
                 .cmd = RAWSTOR_CMD_ALLOCATE,
                 .cid = cid,
             },
-        .payload = {.object_id = {}, .size = size, .mirrors = mirrors},
+        .payload = {
+            .object_id = {},
+            .chunk_offset = 0,
+            .size = size,
+            .mirrors = mirrors,
+            .chunk_size = 0,
+            .stripe_width = 0,
+            .failure_domain = 0,
+            .member_kind = 0, /* RAWSTOR_MEMBER_DATA, <rawstor/target.h> */
+            .reserved = 0,
+        },
     };
     std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));
     send_all(_fd, &frame, sizeof(frame));
@@ -75,14 +85,14 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, uint32_t mirrors) {
 
 uint16_t Client::send_set_object(const RawstdUUID& id) {
     uint16_t cid = _next_cid++;
-    RawstorOSTFrameBasic frame = {
+    RawstorOSTFrameSnap frame = {
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
                 .cmd = RAWSTOR_CMD_SET_OBJECT,
                 .cid = cid,
             },
-        .payload = {.object_id = {}, .offset = 0, .val = 0},
+        .payload = {.object_id = {}, .offset = 0, .snap_id = {}},
     };
     std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));
     send_all(_fd, &frame, sizeof(frame));

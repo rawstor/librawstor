@@ -46,11 +46,20 @@ private:
     template <typename T = char>
     rawstd::Task<std::vector<T>> _basic_request(
         RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
-        uint64_t val
+        uint64_t chunk_offset, uint64_t val
+    );
+    // Same shape as _basic_request() above, for the handful of commands
+    // that need a UUID snap_id instead of a plain uint64_t val
+    // (RawstorOSTFrameSnapPayload, protocol.h): SET_OBJECT, SNAPSHOT,
+    // SNAP_REMOVE.
+    template <typename T = char>
+    rawstd::Task<std::vector<T>> _snap_request(
+        RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
+        uint64_t chunk_offset, const RawstdUUID& snap_id
     );
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
-    // response can legitimately race with Connection::_op() already having
+    // response can legitimately race with Slot::_op() already having
     // failed and retried that same op on a different backend (e.g. after a
     // send-side error on this connection), in which case the cid was
     // already unregistered and the response is stale, not a corrupted
@@ -79,25 +88,47 @@ public:
     rawstd::Task<void> close() override;
 
     rawstd::Task<void> list(
-        unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+        unsigned int limit, std::vector<Target>& targets, ListedObject& token
     ) override;
 
-    rawstd::Task<void>
-    create(const RawstdUUID& id, const RawstorObjectSpec& sp) override;
+    rawstd::Task<void> create(
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+    ) override;
 
-    rawstd::Task<void> remove(const RawstdUUID& id) override;
+    // `snap_id` nil for the live version, non-nil for a previously
+    // snapshotted one -- relayed over the wire as one RAWSTOR_CMD_RELEASE
+    // request either way (Backend::remove()'s own doc comment; protocol.h
+    // widened this command's own payload for exactly this merge, same as
+    // SET_OBJECT/OBJ_OPEN's own nil-means-live convention).
+    rawstd::Task<void> remove(
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
+    ) override;
 
-    rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) override;
+    rawstd::Task<RawstorObjectSpec>
+    spec(const RawstdUUID& id, uint64_t chunk_offset) override;
 
-    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) override;
+    rawstd::Task<RawstorObjectMeta>
+    meta(const RawstdUUID& id, uint64_t chunk_offset) override;
 
     rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstorObjectSyncState& sync_state
     ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
-    rawstd::Task<void> set_object(const RawstdUUID& id) override;
+    rawstd::Task<void> set_object(
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
+    ) override;
+
+    // Relays RAWSTOR_CMD_SNAPSHOT over the wire -- the remote rawstor-ost
+    // forwards to its own local backend the same way (docs/mds.md,
+    // "Snapshots").
+    rawstd::Task<void> create_snapshot(
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+    ) override;
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;
 

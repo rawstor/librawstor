@@ -1,6 +1,7 @@
-#ifndef RAWSTOR_CONNECTION_HPP
-#define RAWSTOR_CONNECTION_HPP
+#ifndef RAWSTOR_SLOT_HPP
+#define RAWSTOR_SLOT_HPP
 
+#include "backend.hpp"
 #include "telemetry.hpp"
 
 #include <rawstor/location.h>
@@ -23,16 +24,22 @@
 
 namespace rawstor {
 
-class Backend;
-
-class Connection final {
+class Slot final {
 private:
     rawio::Queue& _queue;
 
     // Set by open() (see its own doc comment) -- unset means this
-    // Connection is only ever used for metadata (list/create/remove/
+    // Slot is only ever used for metadata (list/create/remove/
     // spec/info), which needs no SET_OBJECT step of its own.
     std::optional<RawstdUUID> _id;
+    // The chunk offset/version open() bound _id to -- 0/0 (whole object,
+    // live) unless open() was called otherwise (docs/mds.md, "Chunk
+    // identity"/"Snapshots"). Meaningless while _id is unset; carried
+    // alongside it so a reconnected backend's own set_object()
+    // (invalidate_backend()) rebinds to the same chunk/version, not
+    // silently back to the whole object's own live one.
+    uint64_t _chunk_offset = 0;
+    RawstdUUID _snap_id{};
 
     std::vector<std::shared_ptr<Backend>> _backends;
     size_t _backend_index;
@@ -45,7 +52,7 @@ private:
 
     // When false, a retryable failure is not retried through
     // invalidate_backend(): it surfaces to the caller immediately, same as
-    // a permanent rejection. A mirrored Object disables this once it is
+    // a permanent rejection. A mirrored Chunk disables this once it is
     // DIRTY -- a reconnected backend may be talking to a restarted server
     // that lost acknowledged writes, so the caller must degrade the mirror
     // arm instead of silently retrying through it (docs/mirroring.md, case
@@ -56,7 +63,7 @@ private:
     // failure -- runs through here exactly once; records the cross-retry
     // call-to-completion latency. Per-attempt telemetry, including the
     // top-N slowest-requests sample, lives in ost::BackendOp::_dispatch()
-    // instead -- Connection is transport-agnostic and has nothing else to
+    // instead -- Slot is transport-agnostic and has nothing else to
     // report here.
     void _finish(rawstor::telemetry::TimePoint t_call);
 
@@ -93,7 +100,7 @@ private:
         std::type_identity_t<Args>... args
     );
 
-    // Connection is final -- unlike Backend::Private (which every
+    // Slot is final -- unlike Backend::Private (which every
     // backend subclass's own constructor also needs to name), nothing
     // but create() itself ever needs this, so it stays private rather
     // than protected.
@@ -103,17 +110,17 @@ private:
 
 public:
     // Creates and connects `nbackends` Backends against `location`
-    // concurrently -- the returned Connection's backend pool is ready for
+    // concurrently -- the returned Slot's backend pool is ready for
     // get_next_backend()-based use (metadata methods, or open() to
     // additionally set_object() the whole pool for the data-path
     // methods) but nothing has been set_object()ed yet.
-    static rawstd::Task<std::unique_ptr<Connection>>
+    static rawstd::Task<std::unique_ptr<Slot>>
     create(rawio::Queue& queue, const rawstd::URI& location, size_t nbackends);
 
-    Connection(Private, rawio::Queue& queue);
-    Connection(const Connection&) = delete;
+    Slot(Private, rawio::Queue& queue);
+    Slot(const Slot&) = delete;
 
-    Connection& operator=(const Connection&) = delete;
+    Slot& operator=(const Slot&) = delete;
 
     std::shared_ptr<Backend> get_next_backend();
     rawstd::Task<void> invalidate_backend(const std::shared_ptr<Backend>& be);
@@ -125,22 +132,36 @@ public:
     // Metadata operations, routed through the same backend pool and
     // retry-with-invalidate-backend machinery (_with_retry()) as the
     // data-path methods below -- same shape as the matching Backend
-    // methods they wrap, since a connect()ed Connection is (like a
+    // methods they wrap, since a connect()ed Slot is (like a
     // Backend) already bound to one location.
     rawstd::Task<void>
-    list(unsigned int limit, std::vector<RawstdUUID>& uuids, RawstdUUID& token);
+    list(unsigned int limit, std::vector<Target>& objects, ListedObject& token);
+
+    rawstd::Task<void> create_snapshot(
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+    );
 
     rawstd::Task<void>
-    create(const RawstdUUID& id, const RawstorObjectSpec& sp);
+    resize(const RawstdUUID& id, uint64_t chunk_offset, uint64_t new_size);
 
-    rawstd::Task<void> remove(const RawstdUUID& id);
+    rawstd::Task<void> create(
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+    );
 
-    rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id);
+    rawstd::Task<void> remove(
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
+    );
 
-    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id);
+    rawstd::Task<RawstorObjectSpec>
+    spec(const RawstdUUID& id, uint64_t chunk_offset);
+
+    rawstd::Task<RawstorObjectMeta>
+    meta(const RawstdUUID& id, uint64_t chunk_offset);
 
     rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstorObjectSyncState& sync_state
     );
 
     rawstd::Task<RawstorLocationInfo> info();
@@ -156,9 +177,12 @@ public:
     // against whichever backend the pool now has (set_object() itself
     // doesn't return it, see its own doc comment) -- spec.mirrors on it
     // is this copy's own local share, not the target-wide count.
-    rawstd::Task<RawstorObjectMeta> open(const RawstdUUID& id);
+    rawstd::Task<RawstorObjectMeta> open(
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& snap_id = {}
+    );
 
-    // Not called implicitly by ~Connection() (a coroutine can't run in a
+    // Not called implicitly by ~Slot() (a coroutine can't run in a
     // destructor, and there's no other synchronous fallback here beyond
     // each Backend's own -- see Backend::close()'s doc comment) --
     // callers that want a graceful async teardown must co_await this
@@ -188,4 +212,4 @@ public:
 
 } // namespace rawstor
 
-#endif // RAWSTOR_CONNECTION_HPP
+#endif // RAWSTOR_SLOT_HPP
