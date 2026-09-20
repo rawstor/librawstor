@@ -107,7 +107,7 @@ public:
     // comment -- so nothing before this call genuinely proves the
     // object exists; an ost:// one's is a real wire round trip either
     // way), so a caller that also needs this copy's own meta() (e.g.
-    // Connection::open(), see its own doc comment) calls it separately,
+    // Slot::open(), see its own doc comment) calls it separately,
     // afterward.
     virtual rawstd::Task<void> set_object(const RawstdUUID& id) = 0;
 

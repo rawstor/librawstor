@@ -21,8 +21,8 @@ namespace rawstor {
 // A Location addresses a backend store (or set of stores, for mirroring/
 // data locality) by URI, with no UUID -- see docs/locations_and_targets.md.
 // Lightweight, like Target: holds only `_uris`, and never keeps a
-// Connection between calls -- info()/list() fan a Connection per URI out
-// and back down within the one call (same as Object::info()/list() used
+// Slot between calls -- info()/list() fan a Slot per URI out
+// and back down within the one call (same as Chunk::info()/list() used
 // to), and create() hands the actual per-URI CREATE off to a fresh Target
 // rather than doing it itself.
 class Location final {

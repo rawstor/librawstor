@@ -230,7 +230,7 @@ void object_read(
 
 // The single rawstor_object_close() now performs a clean close for a
 // mirrored, DIRTY object (flush + durable CLEAN mark) -- see
-// Object::close()'s own doc comment; there's no separate "_async"
+// Chunk::close()'s own doc comment; there's no separate "_async"
 // variant to reach for anymore.
 void object_close_clean(Queue& queue, RawstorObject* object) {
     ssize_t res = object_close(queue, object);
@@ -730,19 +730,19 @@ TEST(MirrorOstTest, read_failover_and_repair) {
     };
 
     /*
-     * The object is CLEAN, so the connection layer still retries reads
+     * The object is CLEAN, so the slot layer still retries reads
      * transparently: the member serves the error on the initial session and
      * on two reopened ones before the read fails over to the second member.
      * The repair then lands on the last reopened session.
      */
-    // Target::open() fetches spec() from every reachable connection
+    // Target::open() fetches spec() from every reachable slot
     // concurrently (see its own comment) -- both server1's and server2's
     // own first session get their own SPEC ahead of their SET_OBJECT+
     // META. mirrors on the wire here is whatever this mock server
     // happens to answer with -- Target::open() always overwrites it
     // with uris.size() regardless (see its own comment), so the value
     // scripted below isn't load-bearing. Both members still go through
-    // Connection::open()'s own combined SET_OBJECT+META step (see its
+    // Slot::open()'s own combined SET_OBJECT+META step (see its
     // own comment), concurrently, once every spec() has answered. Every
     // later low-level reconnect (invalidate_backend()) goes through
     // Backend::set_object() only, no SPEC of its own (invalidate_backend()
@@ -816,14 +816,14 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
     };
 
-    // Target::open() fetches spec() from every reachable connection
+    // Target::open() fetches spec() from every reachable slot
     // concurrently (see its own comment) -- both server1's and server2's
     // own session get their own SPEC ahead of their SET_OBJECT+META.
     // mirrors on the wire here is whatever this mock server happens to
     // answer with -- Target::open() always overwrites it with
     // uris.size() regardless (see its own comment), so the value
     // scripted below isn't load-bearing. Both members still go through
-    // Connection::open()'s own combined SET_OBJECT+META step (see its
+    // Slot::open()'s own combined SET_OBJECT+META step (see its
     // own comment), concurrently, once every spec() has answered.
     {
         rawstor::tests::Session s(server1);
@@ -847,7 +847,7 @@ TEST(MirrorOstTest, degrade_and_continue) {
         /* Subsequent writes go to the survivor only. */
         s.cmd_write(RAWSTOR_MAGIC, 6, 4);
         /*
-         * object_close() below is a clean close (see Object::close()'s own
+         * object_close() below is a clean close (see Chunk::close()'s own
          * doc comment): flush, then a durable CLEAN mark on the sole
          * survivor.
          */
@@ -869,20 +869,20 @@ TEST(MirrorOstTest, degrade_and_continue) {
  * F3 (docs/mirroring.md): open() succeeds while every member is still
  * reachable, but the first write's dirty barrier fans SET_SYNC_STATE out
  * to an empty set once both have already gone stale -- see
- * Object::_run_dirty_barrier()'s own `survivors == 0` check. The write
+ * Chunk::_run_dirty_barrier()'s own `survivors == 0` check. The write
  * reports -EIO, matching the doc's own summary line ("writes ... with no
  * member left fail with -EIO") rather than F3's row (which conflates this
  * with the open()-time case -- see MirrorQuorumTest.
  * all_mirrors_down_at_open_refused above). A second write fails the same
- * way without even touching the wire: Object::_run_meta_fan_out() throws
+ * way without even touching the wire: Chunk::_run_meta_fan_out() throws
  * -EIO immediately once it finds no IN_SYNC member to fan out to at all.
  *
  * The dirty-barrier failure is scripted as -EINVAL rather than -EIO:
- * Connection::_with_retry() treats -EIO as a transient, retryable failure
+ * Slot::_with_retry() treats -EIO as a transient, retryable failure
  * (reconnect + up to rawstor_opts_io_attempts() attempts, 3 under this
  * suite's own test override -- see tests/main.cpp), which would need 3
  * scripted reconnect sessions per member just to reach the same end
- * state. is_permanent_backend_error() (src/connection.cpp) treats
+ * state. is_permanent_backend_error() (src/slot.cpp) treats
  * -EINVAL as non-retryable instead, so a single scripted response is
  * enough to reach "member excluded" -- the class of error is what this
  * test cares about, not this specific one.
@@ -937,7 +937,7 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
  * undetectable from metadata alone, so the conservative rule is to treat
  * any such member as STALE, even though this test's member0 answers every
  * attempt with a plain transport-class error (-EIO) rather than actually
- * restarting; Object::_read()'s own comment (case F6) draws the same
+ * restarting; Chunk::_read()'s own comment (case F6) draws the same
  * distinction this test exercises: an EIO (transport-class) failure while
  * DIRTY degrades the member durably, unlike an EPROTO (payload) failure,
  * which only triggers a read-repair of that one region.
@@ -945,9 +945,9 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
  * A single scripted failure is enough here, unlike
  * MirrorOstTest.read_failover_and_repair's own (CLEAN-object) member0
  * script, which needs 3 reconnect rounds to exhaust
- * Connection::_with_retry()'s transparent-retry budget:
- * Object::_run_dirty_barrier() turns transparent retry off for every
- * member the moment the object goes DIRTY (src/object.cpp, case F6's own
+ * Slot::_with_retry()'s transparent-retry budget:
+ * Chunk::_run_dirty_barrier() turns transparent retry off for every
+ * member the moment the object goes DIRTY (src/chunk.cpp, case F6's own
  * comment there), specifically so a transport failure surfaces
  * immediately instead of being silently retried once acknowledged writes
  * are on the line.
@@ -992,7 +992,7 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         /* The degrade barrier bumps epoch/sync_id on the survivor -- member0
          * is excluded durably even though it never lost this read. */
         s.cmd_set_state(RAWSTOR_MAGIC, 6, 0);
-        /* Object::close(): flush + final CLEAN mark, now on the sole
+        /* Chunk::close(): flush + final CLEAN mark, now on the sole
          * survivor. */
         s.cmd_flush(RAWSTOR_MAGIC, 7, 0);
         s.cmd_set_state(RAWSTOR_MAGIC, 8, 0);
