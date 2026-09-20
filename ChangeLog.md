@@ -21,14 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.meta` file for `file://`, native transactional storage for `lvm://`
   (an LVM tag) and `zfs://` (a ZFS user property).
 - `rawstor_target_create()`/`rawstor_location_create()` reject `-EINVAL`
-  unless `RawstorObjectSpec.mirrors` matches the target/location string's
+  unless `RawstorObjectSpec.width` matches the target/location string's
   URI count.
 - Mirrored objects now tolerate member loss: quorum-gated open
   (`-ENOTCONN`/`-ENOTRECOVERABLE` otherwise), degrade-and-continue writes,
   read failover, and automatic online resync of a stale or reconnected
   member while the object stays live.
-- `-m`/`--mirrors N` for `rawstor create` and `pyrawstor`'s `ObjectSpec`/
-  `Target.create()`/`Location.create()`; `-v`/`--verbose` for `rawstor show`
+- `-m`/`--mirrors N` (required) for `rawstor create`, and the matching `width`
+  field on `pyrawstor`'s `ObjectSpec`/`Target.create()`/`Location.create()`
+  (also required, no default); `-v`/`--verbose` for `rawstor show`
   (labeling each mirror `mirror[N]`, its position in the target's own
   comma-separated order) and pyrawstor's new `Target.meta()` (returning one
   `ObjectMeta`, or `None` for a mirror that didn't answer, per mirror)

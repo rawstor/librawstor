@@ -332,13 +332,13 @@ jobs:
     - name: test-rawstor-ost
       run: |
         rawstor-ost --version
-        rawstor create --size=1M ost://127.0.0.1:7777
+        rawstor create --size=1M --mirrors=1 ost://127.0.0.1:7777
         rawstor list ost://127.0.0.1:7777
     - name: install-rawstor-vhost
       run: sudo apt install -y ./librawstor.deb/rawstor-vhost_*.deb
     - name: test-rawstor-vhost
       run: |
-        TARGET=$(rawstor create --size=1M ost://127.0.0.1:7777)
+        TARGET=$(rawstor create --size=1M --mirrors=1 ost://127.0.0.1:7777)
         UUID=${TARGET##*/}
         sudo systemctl enable --now rawstor-vhost@${UUID}.service
         sleep 1
@@ -522,7 +522,7 @@ jobs:
         rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor &
         OST_PID=$!
         sleep 10
-        rawstor create --size=1M ost://127.0.0.1:7777
+        rawstor create --size=1M --mirrors=1 ost://127.0.0.1:7777
         rawstor list ost://127.0.0.1:7777
         kill ${OST_PID}
     - name: install-rawstor-vhost

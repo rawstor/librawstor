@@ -254,8 +254,7 @@ void Session::cmd_spec_request() {
 }
 
 void Session::cmd_spec_response(
-    uint32_t magic, uint16_t cid, int32_t res, uint64_t size,
-    unsigned int mirrors
+    uint32_t magic, uint16_t cid, int32_t res, uint64_t size, unsigned int width
 ) {
     // Unlike the no-payload commands (WRITE/DISCARD/FLUSH/SET_SYNC_STATE),
     // where body.res is a plain 0-on-success/-errno-on-failure result,
@@ -283,7 +282,7 @@ void Session::cmd_spec_response(
 
     RawstorOSTFrameSpecPayload spec = {
         .size = size,
-        .mirrors = static_cast<uint32_t>(mirrors),
+        .width = static_cast<uint32_t>(width),
     };
     RawstorOSTFrameResponse response = {
         .head{
@@ -310,11 +309,10 @@ void Session::cmd_spec_response(
 }
 
 void Session::cmd_spec(
-    uint32_t magic, uint16_t cid, int32_t res, uint64_t size,
-    unsigned int mirrors
+    uint32_t magic, uint16_t cid, int32_t res, uint64_t size, unsigned int width
 ) {
     cmd_spec_request();
-    cmd_spec_response(magic, cid, res, size, mirrors);
+    cmd_spec_response(magic, cid, res, size, width);
 }
 
 void Session::cmd_meta_request() {

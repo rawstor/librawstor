@@ -70,7 +70,7 @@ jobs:
         sleep 10
     - name: create object
       run: |
-        target=$(rawstor create ${{ matrix.location }} --size=1G)
+        target=$(rawstor create ${{ matrix.location }} --size=1G --mirrors=1)
         echo "TARGET=${target}" >> $GITHUB_ENV
         rawstor list ${{ matrix.location }}
         rawstor testio ${target} --block-size=4K --io-depth=1 --count=1

@@ -154,7 +154,7 @@ public:
     // (retrying against another on failure) rather than target every
     // backend the way this needs to. Returns a separate meta() read
     // against whichever backend the pool now has (set_object() itself
-    // doesn't return it, see its own doc comment) -- spec.mirrors on it
+    // doesn't return it, see its own doc comment) -- spec.width on it
     // is this copy's own local share, not the target-wide count.
     rawstd::Task<RawstorObjectMeta> open(const RawstdUUID& id);
 

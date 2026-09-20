@@ -974,14 +974,14 @@ rawstd::DetachedTask Client::_allocate(
 
     std::vector<rawstd::URI> targets = client->_targets(uuid);
 
-    // Target::create() requires mirrors to exactly match the target's own
+    // Target::create() requires width to exactly match the target's own
     // URI count -- here, that's this server's own locations(), not
-    // whatever the incoming request's payload.mirrors happens to be (the
+    // whatever the incoming request's payload.width happens to be (the
     // caller's target-wide URI count, which has no reason to match this
     // server's own location count for a relay/multi-location rawstor-ost).
     RawstorObjectSpec spec{
         .size = payload.size,
-        .mirrors = static_cast<unsigned int>(targets.size()),
+        .width = static_cast<unsigned int>(targets.size()),
     };
 
     int result = 0;
@@ -1100,7 +1100,7 @@ rawstd::DetachedTask Client::_spec(
         } else {
             RawstorOSTFrameSpecPayload body_out{
                 .size = spec.size,
-                .mirrors = (uint32_t)spec.mirrors,
+                .width = (uint32_t)spec.width,
             };
             std::vector<unsigned char> data(sizeof(body_out));
             memcpy(data.data(), &body_out, sizeof(body_out));

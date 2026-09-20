@@ -102,7 +102,7 @@ public:
         try {
             RawstorObjectSpec spec{};
             spec.size = size;
-            spec.mirrors = 1;
+            spec.width = 1;
             Result result;
             res = rawstor_target_create(
                 queue, _target.c_str(), &spec, result_cb, &result

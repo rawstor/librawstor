@@ -18,7 +18,7 @@ static void log_spec(FILE* output, const struct RawstorObjectSpec* spec) {
     rawstd_bytes_to_size(spec->size, buf, sizeof(buf));
 
     fprintf(output, "  size: %s\n", buf);
-    fprintf(output, "  mirrors: %u\n", spec->mirrors);
+    fprintf(output, "  mirrors: %u\n", spec->width);
 }
 
 int rawstor_cli_create(
@@ -26,7 +26,7 @@ int rawstor_cli_create(
 ) {
     struct RawstorObjectSpec spec = {
         .size = size,
-        .mirrors = mirrors,
+        .width = mirrors,
     };
 
     fprintf(stderr, "Creating object with specification:\n");
@@ -62,7 +62,7 @@ int rawstor_cli_create_at(
 ) {
     struct RawstorObjectSpec spec = {
         .size = size,
-        .mirrors = mirrors,
+        .width = mirrors,
     };
 
     fprintf(stderr, "Creating object with specification:\n");

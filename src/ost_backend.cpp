@@ -801,7 +801,7 @@ public:
 };
 
 // ALLOCATE's request carries the object's own size and its caller's
-// mirrors intent as a RawstorOSTFrameAllocatePayload (not just object_id/
+// width intent as a RawstorOSTFrameAllocatePayload (not just object_id/
 // offset/val like BackendOpBasic below), so it needs its own request shape
 // -- the response is otherwise the same no-payload acknowledgement as
 // BackendOpFlush above.
@@ -826,7 +826,7 @@ public:
             .payload = {
                 .object_id = {},
                 .size = sp.size,
-                .mirrors = (uint32_t)sp.mirrors,
+                .width = (uint32_t)sp.width,
             },
         }) {
         memcpy(
@@ -1239,7 +1239,7 @@ rawstd::Task<void> Backend::list(
 }
 
 // sp is forwarded on the wire unchanged (see BackendOpAllocate); the
-// remote rawstor-ost's own Client::_allocate() ignores payload.mirrors
+// remote rawstor-ost's own Client::_allocate() ignores payload.width
 // and validates/fills it in against its own locally configured location
 // count instead (see its own comment) -- this slot is still one
 // copy from its caller's point of view, same as every other backend.
@@ -1300,10 +1300,10 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
         // Same as every other backend's own spec() (blk::Backend::spec(),
         // file::Backend::spec()): always 1, unconditionally -- if this one
         // slot fails, exactly one replica is lost, regardless of how
-        // many copies might sit behind it on the far end. mirrors is never
+        // many copies might sit behind it on the far end. width is never
         // a per-backend property; whatever the remote server's own
-        // payload.mirrors says here never actually reaches anyone.
-        ret.mirrors = 1;
+        // payload.width says here never actually reaches anyone.
+        ret.width = 1;
     } catch (const std::system_error&) {
         throw;
     } catch (...) {

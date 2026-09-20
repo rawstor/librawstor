@@ -31,7 +31,7 @@ protected:
     inline void set_fd(int fd) noexcept { _fd = fd; }
 
     // Every Backend maps one URI to exactly one copy -- Target::create()
-    // (the only place mirrors is validated against the target's own URI
+    // (the only place width is validated against the target's own URI
     // count, see its own comment) always passes 1 down to each URI's own
     // create(). Throws EINVAL otherwise. Shared by every concrete
     // Backend's own create(), including ost::Backend's (a relay

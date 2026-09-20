@@ -57,7 +57,7 @@ Client::~Client() {
 }
 
 uint16_t
-Client::send_allocate(const RawstdUUID& id, uint64_t size, uint32_t mirrors) {
+Client::send_allocate(const RawstdUUID& id, uint64_t size, uint32_t width) {
     uint16_t cid = _next_cid++;
     RawstorOSTFrameAllocate frame = {
         .head =
@@ -66,7 +66,7 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, uint32_t mirrors) {
                 .cmd = RAWSTOR_CMD_ALLOCATE,
                 .cid = cid,
             },
-        .payload = {.object_id = {}, .size = size, .mirrors = mirrors},
+        .payload = {.object_id = {}, .size = size, .width = width},
     };
     std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));
     send_all(_fd, &frame, sizeof(frame));

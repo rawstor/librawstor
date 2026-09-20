@@ -27,7 +27,7 @@ rawstor-ost \
 ##
 # Client
 #
-OBJECT_TARGET=$(rawstor create ost://${OST_ADDR} --size=1G)
+OBJECT_TARGET=$(rawstor create ost://${OST_ADDR} --size=1G --mirrors=1)
 
 VHOST_RUNDIR=${PREFIX}/var/run/rawstor
 

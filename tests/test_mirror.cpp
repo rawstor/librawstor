@@ -282,7 +282,7 @@ TEST(MirrorQuorumTest, open_refused_without_quorum_n2) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a0");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 2};
+    RawstorObjectSpec spec{.size = 1ull << 20, .width = 2};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     members.drop(1);
@@ -308,7 +308,7 @@ TEST(MirrorQuorumTest, all_mirrors_down_at_open_refused) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000a9");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 3};
+    RawstorObjectSpec spec{.size = 1ull << 20, .width = 3};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     members.drop(0);
@@ -325,7 +325,7 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000a1");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 3};
+    RawstorObjectSpec spec{.size = 1ull << 20, .width = 3};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     members.drop(2);
@@ -364,7 +364,7 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a2");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 2};
+    RawstorObjectSpec spec{.size = 1ull << 20, .width = 2};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* Member 0 is one sync set ahead of member 1. */
@@ -416,7 +416,7 @@ TEST(MirrorQuorumTest, split_brain_refused) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a3");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 2};
+    RawstorObjectSpec spec{.size = 1ull << 20, .width = 2};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* Disjoint histories sharing only a common ancestor. */
@@ -444,7 +444,7 @@ TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a4");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 2};
+    RawstorObjectSpec spec{.size = 1ull << 20, .width = 2};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* Unclean shutdown: every copy DIRTY within the same sync set. */
@@ -477,7 +477,7 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a5");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 2};
+    RawstorObjectSpec spec{.size = 1ull << 20, .width = 2};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     RawstorObjectSyncState established{};
@@ -524,7 +524,7 @@ TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000aa");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 2};
+    RawstorObjectSpec spec{.size = 1ull << 20, .width = 2};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* An established sync set on both members: a freshly created (sync_id
@@ -582,7 +582,7 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     Members members(2, "00000000-0000-7000-8000-0000000000a7");
 
     const uint64_t size = 8ull << 20;
-    RawstorObjectSpec spec{.size = size, .mirrors = 2};
+    RawstorObjectSpec spec{.size = size, .width = 2};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     RawstorObjectSyncState fresh{};
@@ -640,7 +640,7 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000a8");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 3};
+    RawstorObjectSpec spec{.size = 1ull << 20, .width = 3};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* The third member is lost entirely (disk gone). */
@@ -653,7 +653,7 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     object_write(queue, object, ping.data(), ping.size(), 0, 0);
 
     /* The member is reprovisioned empty; the probe picks it up and resyncs. */
-    RawstorObjectSpec member_spec{.size = 1ull << 20, .mirrors = 1};
+    RawstorObjectSpec member_spec{.size = 1ull << 20, .width = 1};
     ASSERT_EQ(target_create(queue, members.target(2), member_spec), 0);
 
     EXPECT_TRUE(
@@ -681,7 +681,7 @@ TEST(MirrorQuorumTest, clean_close_stable_identity) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a6");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 2};
+    RawstorObjectSpec spec{.size = 1ull << 20, .width = 2};
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* First session establishes the sync set. */
@@ -738,7 +738,7 @@ TEST(MirrorOstTest, read_failover_and_repair) {
     // Target::open() fetches spec() from every reachable slot
     // concurrently (see its own comment) -- both server1's and server2's
     // own first session get their own SPEC ahead of their SET_OBJECT+
-    // META. mirrors on the wire here is whatever this mock server
+    // META. width on the wire here is whatever this mock server
     // happens to answer with -- Target::open() always overwrites it
     // with uris.size() regardless (see its own comment), so the value
     // scripted below isn't load-bearing. Both members still go through
@@ -819,7 +819,7 @@ TEST(MirrorOstTest, degrade_and_continue) {
     // Target::open() fetches spec() from every reachable slot
     // concurrently (see its own comment) -- both server1's and server2's
     // own session get their own SPEC ahead of their SET_OBJECT+META.
-    // mirrors on the wire here is whatever this mock server happens to
+    // width on the wire here is whatever this mock server happens to
     // answer with -- Target::open() always overwrites it with
     // uris.size() regardless (see its own comment), so the value
     // scripted below isn't load-bearing. Both members still go through
