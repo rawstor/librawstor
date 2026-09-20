@@ -1,0 +1,41 @@
+[Unit]
+Description=Rawstor MDS server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rawstor
+Group=rawstor
+WorkingDirectory=/var/lib/rawstor-mds
+StateDirectory=rawstor-mds
+ConfigurationDirectory=rawstor-mds
+Environment=BIND_ADDR=0.0.0.0:7778
+# rawstor-mds's own --queue-size (see its --help); override in
+# /etc/rawstor-mds.conf below rather than editing this file.
+Environment=QUEUE_SIZE=256
+# SQLite database file (created if missing). Override in
+# /etc/rawstor-mds.conf below.
+Environment=DB_PATH=/var/lib/rawstor-mds/mds.db
+# Static topology config (docs/mds.md) -- the admin must author this file
+# (the OSTs and placement domains for this cluster) before the first
+# start; ConfigurationDirectory above creates /etc/rawstor-mds for it.
+Environment=TOPOLOGY_PATH=/etc/rawstor-mds/topology.conf
+EnvironmentFile=-/etc/rawstor-mds.conf
+ExecStart=/usr/bin/rawstor-mds --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --db=${DB_PATH} --topology=${TOPOLOGY_PATH}
+Restart=always
+RestartSec=10
+# sysexits.h codes rawstor-mds exits with when retrying won't help:
+# EX_NOINPUT (66) e.g. a missing topology file and EX_NOPERM (77)
+# permission denied. Leave the unit failed instead of restart-looping.
+RestartPreventExitStatus=66 77
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
