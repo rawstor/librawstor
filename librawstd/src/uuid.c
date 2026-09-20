@@ -216,3 +216,8 @@ int rawstd_uuid_cmp(
 ) {
     return memcmp(lhs->bytes, rhs->bytes, sizeof(lhs->bytes));
 }
+
+int rawstd_uuid_is_nil(const struct RawstdUUID* uuid) {
+    static const struct RawstdUUID nil = {0};
+    return memcmp(uuid->bytes, nil.bytes, sizeof(nil.bytes)) == 0;
+}

@@ -581,6 +581,26 @@ rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t offset) {
     }
 }
 
+rawstd::Task<void> Slot::remove_snapshot(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::remove_snapshot, id, offset,
+            snap_id
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
 rawstd::Task<RawstorLocationInfo> Slot::info() {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -592,6 +612,26 @@ rawstd::Task<RawstorLocationInfo> Slot::info() {
             co_await _with_retry(func_name, trace_event, &Backend::info);
         _finish(t_call);
         co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void> Slot::create_snapshot(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::create_snapshot, id, offset,
+            snap_id
+        );
+        _finish(t_call);
     } catch (...) {
         _finish(t_call);
         throw;

@@ -19,11 +19,21 @@ extern "C" {
 
 #define RAWSTOR_MAGIC 0x72737472 // "rstr" as ascii
 
+/*
+ * Binds the connection to an object/chunk -- or, if `snap_id` is
+ * non-nil, one previously snapshotted version of it instead (nil-means-
+ * live) -- rides RawstorOSTFrameSnapPayload.
+ */
 #define RAWSTOR_CMD_SET_OBJECT 0
 #define RAWSTOR_CMD_READ 1
 #define RAWSTOR_CMD_WRITE 2
 #define RAWSTOR_CMD_DISCARD 3
 #define RAWSTOR_CMD_ALLOCATE 4
+/*
+ * Removes an object/chunk -- or, if `snap_id` is non-nil, one previously
+ * snapshotted version of it instead (nil-means-live, same convention as
+ * SET_OBJECT) -- rides RawstorOSTFrameSnapPayload.
+ */
 #define RAWSTOR_CMD_RELEASE 5
 #define RAWSTOR_CMD_LIST 6
 #define RAWSTOR_CMD_LOCATION_INFO 8
@@ -31,6 +41,16 @@ extern "C" {
 #define RAWSTOR_CMD_WRITE_ZEROES 10
 #define RAWSTOR_CMD_SET_SYNC_STATE 11
 #define RAWSTOR_CMD_META 12
+
+/*
+ * Native CoW snapshot of one stored object version -- rides
+ * RawstorOSTFrameSnapPayload, snap_id is the caller's own already-
+ * generated version id (like every object id, client-generated -- never
+ * nil, nil is reserved for the live version). -ENOTSUP on backends
+ * without CoW (file://, classic LVM).
+ */
+#define RAWSTOR_CMD_SNAPSHOT 0x23
+
 typedef uint16_t RawstorOSTCommandType;
 
 // Wire representation of enum RawstorObjectSyncStateValue
@@ -53,8 +73,8 @@ struct RawstorOSTFrameHead {
 /*
  * Minimalistic protocol frame. `offset` is the chunk_offset of the
  * object/chunk `object_id` names (0 for a plain, non-chunked object) for
- * SET_OBJECT/RELEASE/META; unused (0) for LIST/LOCATION_INFO/FLUSH.
- * `val` is command-specific (e.g. LIST's own page limit).
+ * META; unused (0) for LIST/LOCATION_INFO/FLUSH. `val` is
+ * command-specific (e.g. LIST's own page limit).
  */
 struct RawstorOSTFrameBasicPayload {
     uint8_t object_id[16];
@@ -65,6 +85,25 @@ struct RawstorOSTFrameBasicPayload {
 struct RawstorOSTFrameBasic {
     struct RawstorOSTFrameHead head;
     struct RawstorOSTFrameBasicPayload payload;
+} RAWSTOR_PACKED;
+
+/*
+ * Same shape as RawstorOSTFrameBasicPayload, for the handful of commands
+ * that need a UUID snap_id alongside object_id/offset instead of a plain
+ * uint64_t val: SET_OBJECT, RELEASE, SNAPSHOT (each command's own doc
+ * comment above says which). snap_id nil means "the live version" where
+ * that's a meaningful state for the command (SET_OBJECT, RELEASE);
+ * SNAPSHOT always carries a real, non-nil version.
+ */
+struct RawstorOSTFrameSnapPayload {
+    uint8_t object_id[16];
+    uint64_t offset;
+    uint8_t snap_id[16];
+} RAWSTOR_PACKED;
+
+struct RawstorOSTFrameSnap {
+    struct RawstorOSTFrameHead head;
+    struct RawstorOSTFrameSnapPayload payload;
 } RAWSTOR_PACKED;
 
 // Shared by READ/WRITE/DISCARD/WRITE_ZEROES: `hash` is only meaningful for

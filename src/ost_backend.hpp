@@ -48,6 +48,15 @@ private:
         RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
         uint64_t offset, uint64_t val
     );
+    // Same shape as _basic_request() above, for the handful of commands
+    // that need a UUID snap_id instead of a plain uint64_t val
+    // (RawstorOSTFrameSnapPayload, protocol.h): SET_OBJECT, RELEASE,
+    // SNAPSHOT.
+    template <typename T = char>
+    rawstd::Task<std::vector<T>> _snap_request(
+        RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& snap_id
+    );
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
     // response can legitimately race with Slot::_op() already having
@@ -86,7 +95,16 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
     ) override;
 
+    // Both relayed over the wire as a RAWSTOR_CMD_RELEASE request, nil vs.
+    // non-nil `snap_id` (protocol.h widened this command's own payload for
+    // exactly this, same as SET_OBJECT's own nil-means-live convention)
+    // -- the split here mirrors Backend::remove()/remove_snapshot()'s own
+    // C++-level distinction, not a second wire command.
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset) override;
+
+    rawstd::Task<void> remove_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+    ) override;
 
     rawstd::Task<RawstorObjectMeta>
     meta(const RawstdUUID& id, uint64_t offset) override;
@@ -98,8 +116,15 @@ public:
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
-    rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t offset) override;
+    rawstd::Task<void> set_object(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id = {}
+    ) override;
+
+    // Relays RAWSTOR_CMD_SNAPSHOT over the wire -- the remote rawstor-ost
+    // forwards to its own local backend the same way.
+    rawstd::Task<void> create_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+    ) override;
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;
 

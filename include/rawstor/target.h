@@ -359,12 +359,19 @@ int rawstor_target_create(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously remove an object from the storage system.
+ * @brief Asynchronously remove an object -- or one of its snapshots --
+ *        from the storage system.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
  * this function deletes the specified object from all backends listed in the
  * target. If the target contains multiple URIs (mirroring or locality),
  * the object is removed from every backend in the list.
+ *
+ * A @p target that carries a bound snapshot version (its own trailing
+ * "/<snap_id>" path segment, see rawstor_target_snap_id()) instead destroys
+ * that one version, exactly like rawstor_target_snapshot_remove() -- there
+ * is no separate function for it: which identity gets removed is already
+ * whatever @p target itself names, live object or a specific snapshot.
  *
  * This function returns immediately; the actual result is reported via
  * @p cb once the operation completes.
@@ -495,6 +502,109 @@ int rawstor_target_open(
  */
 int rawstor_target_id(
     const char* target, char* buf, size_t size
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Retrieve the snapshot version bound to a target string.
+ *
+ * Given a target string (as defined in the Rawstor location/target syntax),
+ * this function reads the trailing snapshot path segment (if any) off
+ * @p target's own path (`<uuid>/<snap_id>`). This is purely a syntactic
+ * operation on @p target -- no backend is contacted, and the target need
+ * not exist.
+ *
+ * @param target   Target string, e.g.:
+ *                 - "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00"
+ *                 -
+ * "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00/019cbfad-..."
+ * @param buf      Output buffer for the bound version's UUID string, or an
+ *                 empty string if @p target carries no bound snapshot
+ *                 (the live version). Same truncation convention as
+ *                 rawstor_target_id().
+ * @param size     Size of the output buffer in bytes (including space for the
+ *                 terminating null byte). If size is 0, no data is written,
+ *                 but the required length is still returned.
+ *
+ * @return On success, the number of characters that would have been written
+ *         to buf (excluding the terminating null byte; 0 for the live
+ *         version). A negative errno if @p target is not valid target
+ *         syntax.
+ *
+ * @see rawstor_target_create_snapshot
+ * @see rawstor_target_snapshot_remove
+ */
+int rawstor_target_snap_id(
+    const char* target, char* buf, size_t size
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously take a snapshot of a target under a fresh or
+ *        caller-chosen version id.
+ *
+ * Every version id is client-generated, like every object id (see
+ * rawstor_location_create()). This takes a plain native CoW snapshot as
+ * that exact version on every URI in @p target (every URI is still
+ * attempted even if an earlier one fails, and the first error encountered
+ * is reported); the caller owns crash consistency -- all acknowledged
+ * writes must be flushed before this call.
+ *
+ * @param queue    Queue used to drive the asynchronous snapshot.
+ * @param target   Target string, see rawstor_target_spec().
+ * @param snap_id  The version id's UUID string, or NULL to have this call
+ *                 generate a fresh one itself (rawstd_uuid7_init(), the
+ *                 same single point of generation a fresh object id comes
+ *                 from -- rawstor_location_create()).
+ * @param buf      Output buffer for the version id actually used (whether
+ *                 generated here or supplied in @p snap_id), written
+ *                 synchronously before this call returns -- same
+ *                 truncation convention as rawstor_target_id().
+ * @param size     Size of @p buf in bytes (including space for the
+ *                 terminating null byte).
+ * @param cb       Callback invoked on completion.
+ *                 - @p result is zero on success, or a negative errno on
+ *                   failure (@c -ENOTSUP if a backend has no CoW --
+ *                   file://, classic LVM -- no fallback copies are made
+ *                   behind the caller's back).
+ *                 - @p data is the same pointer passed as @p data below.
+ * @param data     User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return The number of characters written to @p buf (see
+ *         rawstor_target_id()) if the snapshot was successfully queued;
+ *         negative errno on immediate failure (in which case @p cb is
+ *         never invoked).
+ *
+ * @see rawstor_target_snapshot_remove
+ */
+int rawstor_target_create_snapshot(
+    RawIOQueue* queue, const char* target, const char* snap_id, char* buf,
+    size_t size, int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously destroy snapshot version @p snap_id of a target.
+ *
+ * A convenience over rawstor_target_remove() for a caller that already
+ * has @p target and @p snap_id as two separate strings (@p snap_id came
+ * back from a prior rawstor_target_create_snapshot(), @p target did not):
+ * it appends @p snap_id, as a bound-snapshot path segment, to every URI in
+ * @p target itself (@see rawstor_target_snap_id) and hands the result to
+ * rawstor_target_remove() -- there is no separate removal path. Every URI
+ * is attempted, the first error is reported.
+ *
+ * @param snap_id  The version id's UUID string -- always the caller's own,
+ *                 never generated here (there is nothing left to report
+ *                 back: the caller already knows which snapshot it means
+ *                 to remove).
+ *
+ * @return 0 if the removal was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked).
+ *
+ * @see rawstor_target_create_snapshot
+ * @see rawstor_target_remove
+ */
+int rawstor_target_snapshot_remove(
+    RawIOQueue* queue, const char* target, const char* snap_id,
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**

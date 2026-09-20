@@ -88,7 +88,14 @@ private:
     );
     static rawstd::DetachedTask _release(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
+        RawstorOSTFrameSnapPayload payload
+    );
+    // SNAPSHOT: forwarded to the same rawstor_target_create_snapshot()
+    // this server's own local backend(s) implement -- same shape as
+    // _release() above.
+    static rawstd::DetachedTask _create_snapshot(
+        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+        RawstorOSTFrameSnapPayload payload
     );
     static rawstd::DetachedTask _meta(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
@@ -98,7 +105,7 @@ private:
     _info(std::weak_ptr<Client> weak, RawstorOSTFrameHead head);
     static rawstd::DetachedTask _set_object(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
+        RawstorOSTFrameSnapPayload payload
     );
     static rawstd::DetachedTask _read(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
@@ -130,7 +137,12 @@ private:
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameSyncStatePayload payload
     );
-    std::vector<rawstd::URI> _targets(const RawstdUUID& uuid, uint64_t offset);
+    // Builds this server's own local target string for `uuid`/`offset`,
+    // with `snap_id` appended as a bound-snapshot path segment when
+    // non-nil (nil, the default, addresses the live version).
+    std::vector<rawstd::URI> _targets(
+        const RawstdUUID& uuid, uint64_t offset, const RawstdUUID& snap_id = {}
+    );
 
     // Sends a response frame and awaits its actual completion (not just
     // submission) -- unlike every other rawio_*() bridge in the .cpp,

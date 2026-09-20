@@ -140,6 +140,12 @@ public:
 
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset);
 
+    // Removes one version previously registered via create_snapshot()
+    // below (`snap_id`, never nil).
+    rawstd::Task<void> remove_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+    );
+
     rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id, uint64_t offset);
 
     rawstd::Task<void> set_sync_state(
@@ -148,6 +154,12 @@ public:
     );
 
     rawstd::Task<RawstorLocationInfo> info();
+
+    // Native CoW snapshot of the live version as `snap_id` (never nil).
+    // ENOTSUP on a backend without native CoW (file://, classic LVM).
+    rawstd::Task<void> create_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+    );
 
     // set_object()s every backend in the pool create() populated --
     // must be called (at most once) after create(), before any data-path
