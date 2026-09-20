@@ -42,10 +42,10 @@ class Target:
             return NotImplemented
         return self._uri == other._uri
 
-    def create(self, *, size: int, mirrors: int) -> None:
+    def create(self, *, size: int, width: int) -> None:
         librawstor.object_create(
             self._uri,
-            librawstor.ObjectSpec(size=size, mirrors=mirrors))
+            librawstor.ObjectSpec(size=size, width=width))
 
     def spec(self) -> librawstor.ObjectSpec:
         return librawstor.object_spec(self._uri)

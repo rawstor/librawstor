@@ -114,7 +114,7 @@ struct RawstorOSTFrameSyncState {
 } RAWSTOR_PACKED;
 
 /*
- * ALLOCATE's request: the object to create's size and mirrors. Unlike
+ * ALLOCATE's request: the object to create's size and width. Unlike
  * SPEC's response (RawstorOSTFrameSpecPayload below), this does need
  * object_id -- it isn't wrapped in a RawstorOSTFrameBasicPayload of its
  * own, so object_id here is the only way the server learns which object
@@ -123,7 +123,7 @@ struct RawstorOSTFrameSyncState {
 struct RawstorOSTFrameAllocatePayload {
     uint8_t object_id[16];
     uint64_t size;
-    uint32_t mirrors;
+    uint32_t width;
 } RAWSTOR_PACKED;
 
 /* ALLOCATE request */
@@ -149,7 +149,7 @@ struct RawstorOSTFrameResponse {
  * Full per-copy metadata: size plus the mirror consistency state (see
  * docs/mirroring.md). sync_id_history length must match
  * RAWSTOR_OBJECT_SYNC_ID_HISTORY. META response payload only -- SPEC's is
- * RawstorOSTFrameSpecPayload (size + mirrors, cheaper), SET_SYNC_STATE's
+ * RawstorOSTFrameSpecPayload (size + width, cheaper), SET_SYNC_STATE's
  * request is RawstorOSTFrameSyncStatePayload (settable fields only, no
  * size). No object_id: this is only ever a response, correlated to its
  * request via RawstorOSTFrameHead::cid -- the caller already knows which
@@ -169,7 +169,7 @@ struct RawstorOSTFrameMetaPayload {
 } RAWSTOR_PACKED;
 
 /*
- * SPEC's response: an object's size and mirrors, cheaper than META's since
+ * SPEC's response: an object's size and width, cheaper than META's since
  * it carries no consistency state. No object_id, same reasoning as
  * RawstorOSTFrameMetaPayload above -- correlated via
  * RawstorOSTFrameHead::cid, the caller already knows which object it asked
@@ -182,7 +182,7 @@ struct RawstorOSTFrameMetaPayload {
  */
 struct RawstorOSTFrameSpecPayload {
     uint64_t size;
-    uint32_t mirrors;
+    uint32_t width;
 } RAWSTOR_PACKED;
 
 #ifdef __cplusplus

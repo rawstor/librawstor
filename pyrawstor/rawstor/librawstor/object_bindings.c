@@ -17,7 +17,7 @@ static void set_os_error(int error) {
 
 typedef struct {
     PyObject_HEAD unsigned long long size;
-    unsigned int mirrors;
+    unsigned int width;
 } PyObjectSpec;
 
 // ObjectSpec is Py_TPFLAGS_BASETYPE (subclassable from Python), and a
@@ -41,18 +41,18 @@ static PyObject* PyObjectSpec_new(
     PyObjectSpec* self = (PyObjectSpec*)alloc_func(type, 0);
     if (self != NULL) {
         self->size = 0;
-        self->mirrors = 0;
+        self->width = 0;
     }
     return (PyObject*)self;
 }
 
 static int
 PyObjectSpec_init(PyObjectSpec* self, PyObject* args, PyObject* kwargs) {
-    long long size = 0;
-    unsigned int mirrors = 1;
-    static char* kwlist[] = {"size", "mirrors", NULL};
+    long long size;
+    unsigned int width;
+    static char* kwlist[] = {"size", "width", NULL};
     if (!PyArg_ParseTupleAndKeywords(
-            args, kwargs, "|LI", kwlist, &size, &mirrors
+            args, kwargs, "LI", kwlist, &size, &width
         )) {
         return -1;
     }
@@ -61,13 +61,13 @@ PyObjectSpec_init(PyObjectSpec* self, PyObject* args, PyObject* kwargs) {
         return -1;
     }
     self->size = (unsigned long long)size;
-    self->mirrors = mirrors;
+    self->width = width;
     return 0;
 }
 
 static PyObject* PyObjectSpec_repr(PyObjectSpec* self) {
     return PyUnicode_FromFormat(
-        "ObjectSpec(size=%llu, mirrors=%u)", self->size, self->mirrors
+        "ObjectSpec(size=%llu, width=%u)", self->size, self->width
     );
 }
 
@@ -93,31 +93,31 @@ static int PyObjectSpec_set_size(
 }
 
 static PyObject*
-PyObjectSpec_get_mirrors(PyObjectSpec* self, void* Py_UNUSED(closure)) {
-    return PyLong_FromUnsignedLong(self->mirrors);
+PyObjectSpec_get_width(PyObjectSpec* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLong(self->width);
 }
 
-static int PyObjectSpec_set_mirrors(
+static int PyObjectSpec_set_width(
     PyObjectSpec* self, PyObject* value, void* Py_UNUSED(closure)
 ) {
     if (value == NULL) {
-        PyErr_SetString(PyExc_TypeError, "Cannot delete mirrors attribute");
+        PyErr_SetString(PyExc_TypeError, "Cannot delete width attribute");
         return -1;
     }
 
-    unsigned long new_mirrors = PyLong_AsUnsignedLong(value);
+    unsigned long new_width = PyLong_AsUnsignedLong(value);
     if (PyErr_Occurred()) {
         return -1;
     }
-    self->mirrors = (unsigned int)new_mirrors;
+    self->width = (unsigned int)new_width;
     return 0;
 }
 
 static PyGetSetDef PyObjectSpec_getset[] = {
     {"size", (getter)PyObjectSpec_get_size, (setter)PyObjectSpec_set_size, NULL,
      NULL},
-    {"mirrors", (getter)PyObjectSpec_get_mirrors,
-     (setter)PyObjectSpec_set_mirrors, NULL, NULL},
+    {"width", (getter)PyObjectSpec_get_width, (setter)PyObjectSpec_set_width,
+     NULL, NULL},
     {NULL, NULL, NULL, NULL, NULL}
 };
 
@@ -435,7 +435,7 @@ PyTypeObject* PyObjectSyncStateType = NULL;
 // ObjectSyncState instead, the settable subset of these same fields.
 typedef struct {
     PyObject_HEAD unsigned long long size;
-    unsigned int mirrors;
+    unsigned int width;
     int state;
     unsigned long long epoch;
     unsigned long long sync_id;
@@ -451,9 +451,9 @@ static void PyObjectMeta_dealloc(PyObjectMeta* self) {
 
 static PyObject* PyObjectMeta_repr(PyObjectMeta* self) {
     return PyUnicode_FromFormat(
-        "ObjectMeta(size=%llu, mirrors=%u, state=%d, epoch=%llu, "
+        "ObjectMeta(size=%llu, width=%u, state=%d, epoch=%llu, "
         "sync_id=%llu)",
-        self->size, self->mirrors, self->state, self->epoch, self->sync_id
+        self->size, self->width, self->state, self->epoch, self->sync_id
     );
 }
 
@@ -463,8 +463,8 @@ PyObjectMeta_get_size(PyObjectMeta* self, void* Py_UNUSED(closure)) {
 }
 
 static PyObject*
-PyObjectMeta_get_mirrors(PyObjectMeta* self, void* Py_UNUSED(closure)) {
-    return PyLong_FromUnsignedLong(self->mirrors);
+PyObjectMeta_get_width(PyObjectMeta* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLong(self->width);
 }
 
 static PyObject*
@@ -503,7 +503,7 @@ PyObjectMeta_get_sync_id_history(PyObjectMeta* self, void* Py_UNUSED(closure)) {
 
 static PyGetSetDef PyObjectMeta_getset[] = {
     {"size", (getter)PyObjectMeta_get_size, NULL, NULL, NULL},
-    {"mirrors", (getter)PyObjectMeta_get_mirrors, NULL, NULL, NULL},
+    {"width", (getter)PyObjectMeta_get_width, NULL, NULL, NULL},
     {"state", (getter)PyObjectMeta_get_state, NULL, NULL, NULL},
     {"epoch", (getter)PyObjectMeta_get_epoch, NULL, NULL, NULL},
     {"sync_id", (getter)PyObjectMeta_get_sync_id, NULL, NULL, NULL},
@@ -704,7 +704,7 @@ PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
 
     PyObjectSpec* py_spec = (PyObjectSpec*)spec_obj;
     spec.size = py_spec->size;
-    spec.mirrors = py_spec->mirrors;
+    spec.width = py_spec->width;
 
     RawstorSyncOp op;
     int ires = rawstor_sync_op_init(&op);
@@ -740,7 +740,7 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
     PyObjectSpec* py_spec = (PyObjectSpec*)py_spec_obj;
     struct RawstorObjectSpec spec = {
         .size = py_spec->size,
-        .mirrors = py_spec->mirrors,
+        .width = py_spec->width,
     };
 
     char target[65536];
@@ -803,7 +803,7 @@ PyObject* py_rawstor_object_spec(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
     py_spec->size = spec.size;
-    py_spec->mirrors = spec.mirrors;
+    py_spec->width = spec.width;
 
     return (PyObject*)py_spec;
 }
@@ -821,7 +821,7 @@ static PyObject* build_mirror_meta(const struct RawstorObjectMeta* meta) {
         return NULL;
     }
     py_meta->size = meta->spec.size;
-    py_meta->mirrors = meta->spec.mirrors;
+    py_meta->width = meta->spec.width;
     py_meta->state = (int)meta->sync_state.state;
     py_meta->epoch = meta->sync_state.epoch;
     py_meta->sync_id = meta->sync_state.sync_id;
@@ -838,7 +838,7 @@ PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
     }
 
     /* Same ','-separated URI count rawstor_target_create()'s own doc
-     * comment describes deriving mirrors from -- rawstor_target_meta()
+     * comment describes deriving width from -- rawstor_target_meta()
      * requires its own `count` to equal this exactly. */
     size_t count = 1;
     for (const char* p = target; *p != '\0'; p++) {

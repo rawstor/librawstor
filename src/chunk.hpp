@@ -53,7 +53,7 @@ private:
 
     // The spec() fetched at open() time (see Target::open()'s own
     // comment) -- kept around for any future caller that needs it.
-    // _spec.mirrors is the configured mirror width N (the target's own
+    // _spec.width is the configured mirror width N (the target's own
     // URI count).
     RawstorObjectSpec _spec;
     std::vector<Member> _members;
@@ -180,7 +180,7 @@ private:
     // sync_id, refuses a split brain -- demoting members as needed, and
     // deriving this object's own sync-set identity (_epoch/_size/
     // _sync_id/_sync_id_history) from whichever end up IN_SYNC. Called
-    // by the constructor below, for every mirrors >= 2 open (mirrors ==
+    // by the constructor below, for every width >= 2 open (width ==
     // 1 skips it -- see the constructor's own comment) -- a throw here
     // (quorum lost, split brain, no trusted member left) aborts
     // construction, same as Slot::create()'s own all-or-nothing
@@ -323,7 +323,7 @@ public:
     // wins), SET_OBJECT+meta()-s every connected member, then builds the
     // Chunk itself -- deciding whether the result is actually
     // trustworthy enough to serve from is the constructor's own job from
-    // there: mirrors == 1 trusts its one member outright; mirrors >= 2
+    // there: width == 1 trusts its one member outright; width >= 2
     // runs _reconcile_sync_set() (which may refuse the open -- see its
     // own comment on why that's safe to let unwind through here). Only
     // once that succeeds does it start the object's own background

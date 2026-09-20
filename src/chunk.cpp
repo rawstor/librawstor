@@ -82,7 +82,7 @@ namespace rawstor {
 // place that actually constructs a Chunk (by analogy with
 // Slot(Private, queue)): a constructor can't co_await, so none of
 // that can live here. Deciding whether the result is trustworthy enough
-// to open from (_reconcile_sync_set(), or the mirrors == 1 shortcut)
+// to open from (_reconcile_sync_set(), or the width == 1 shortcut)
 // CAN safely live here instead, now that `spec`/`members` already
 // reflect a completed connect+spec+open round -- same as
 // _reconcile_sync_set()'s own doc comment on why a refusal here is
@@ -108,7 +108,7 @@ Chunk::Chunk(
     _probe_pending(false),
     _writes_issued(0),
     _unflushed(false) {
-    if (_spec.mirrors == 1) {
+    if (_spec.width == 1) {
         _members.front().state = MemberState::IN_SYNC;
     } else {
         _reconcile_sync_set();
@@ -252,7 +252,7 @@ Chunk::create(rawio::Queue& queue, const Target& target) {
     // Awaiting every task here, in order, sidesteps that entirely: by
     // the time any slot is reused below, its own spec() task --
     // win or lose -- has already fully settled. Every backend's own
-    // spec() always answers mirrors = 1, unconditionally (see e.g.
+    // spec() always answers width = 1, unconditionally (see e.g.
     // ost::Backend::spec()'s own comment: if this one slot fails,
     // exactly one replica is lost, regardless of what might sit behind
     // it) -- so, same as Target::spec() itself, that's overwritten with
@@ -306,7 +306,7 @@ Chunk::create(rawio::Queue& queue, const Target& target) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
 
-    spec.mirrors = static_cast<unsigned int>(uris.size());
+    spec.width = static_cast<unsigned int>(uris.size());
 
     // The combined open (SET_OBJECT + this copy's own meta, see
     // Slot::open()'s own comment) is the one operation guaranteed
@@ -370,7 +370,7 @@ Chunk::create(rawio::Queue& queue, const Target& target) {
     members.reserve(uris.size());
     reachable = 0;
     for (size_t i = 0; i < uris.size(); ++i) {
-        // Chunk's own constructor (_reconcile_sync_set(), for mirrors
+        // Chunk's own constructor (_reconcile_sync_set(), for width
         // >= 2) only ever downgrades a member (e.g. an interrupted
         // resync makes it STALE) -- it never upgrades one from the
         // STALE default, so a successfully opened member is marked
@@ -390,7 +390,7 @@ Chunk::create(rawio::Queue& queue, const Target& target) {
     // reachable == 0 (not just below quorum) is the one precondition
     // Chunk's own constructor can't check itself: a member with no
     // Slot at all is meaningless to it even for the trivial
-    // mirrors == 1 case (there's nothing there to trust), unlike a real
+    // width == 1 case (there's nothing there to trust), unlike a real
     // quorum shortfall, which _reconcile_sync_set() already checks on
     // its own -- see it, and the constructor's own comment, for why a
     // refusal there is safe to let unwind through it rather than
@@ -400,7 +400,7 @@ Chunk::create(rawio::Queue& queue, const Target& target) {
     }
 
     // Everything the constructor needs is gathered -- deciding whether
-    // it's actually trustworthy enough to open from (the mirrors == 1
+    // it's actually trustworthy enough to open from (the width == 1
     // shortcut, or _reconcile_sync_set()'s own quorum/split-brain/no-
     // trusted-member analysis) is its own job from here.
     co_return std::make_unique<Chunk>(
@@ -439,7 +439,7 @@ size_t Chunk::_in_sync_count() const noexcept {
 }
 
 bool Chunk::_below_write_quorum(size_t survivors) const noexcept {
-    return _spec.mirrors >= 3 && survivors * 2 <= _spec.mirrors;
+    return _spec.width >= 3 && survivors * 2 <= _spec.width;
 }
 
 /*
@@ -463,10 +463,10 @@ void Chunk::_reconcile_sync_set() {
         }
     }
 
-    if (reachable * 2 <= _spec.mirrors) {
+    if (reachable * 2 <= _spec.width) {
         rawstd_error(
             "Mirror quorum not met: %zu of %zu members reachable\n", reachable,
-            (size_t)_spec.mirrors
+            (size_t)_spec.width
         );
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
@@ -611,7 +611,7 @@ RawstorObjectSyncState Chunk::_bump_sync_state() const {
 }
 
 rawstd::Task<void> Chunk::_with_dirty() {
-    if (_spec.mirrors == 1) {
+    if (_spec.width == 1) {
         co_return;
     }
 
@@ -647,7 +647,7 @@ rawstd::Task<void> Chunk::_run_dirty_barrier() {
         // recorded, instead of discarding a concurrent increment.
         size_t recorded_stale = _unrecorded_stale;
 
-        bool bump = _in_sync_count() != _spec.mirrors || _sync_id == 0 ||
+        bool bump = _in_sync_count() != _spec.width || _sync_id == 0 ||
                     _unrecorded_stale > 0;
 
         RawstorObjectSyncState m{};
@@ -1103,7 +1103,7 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
     try {
         std::weak_ptr<void> alive = _alive;
 
-        if (_spec.mirrors == 1 || _resync != nullptr || _size == 0) {
+        if (_spec.width == 1 || _resync != nullptr || _size == 0) {
             co_return;
         }
 
@@ -1394,7 +1394,7 @@ void Chunk::_resync_abort(const char* reason) noexcept {
 
 // Launches _probe_watch() (a no-op for a single-target object).
 void Chunk::_probe_setup() {
-    if (_spec.mirrors == 1) {
+    if (_spec.width == 1) {
         return;
     }
 
@@ -1873,7 +1873,7 @@ rawstd::Task<void> Chunk::close() {
     // a clean close, so the next open() doesn't pay for a spurious dirty
     // gate (docs/mirroring.md). Left DIRTY (the safe direction) on any
     // error here; the object is destroyed anyway.
-    if (_spec.mirrors > 1 && _dirty && !flush_failed) {
+    if (_spec.width > 1 && _dirty && !flush_failed) {
         if (_in_sync_count() > 0) {
             _meta_gate.begin();
             try {

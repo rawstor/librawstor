@@ -162,7 +162,7 @@ TEST(FileLifecycleTest, create_spec_list_remove) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 1};
+    RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
     ssize_t res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
 
@@ -206,7 +206,7 @@ TEST(FileLifecycleTest, create_twice_preserves_existing) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 1};
+    RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
     ssize_t res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
 
@@ -236,7 +236,7 @@ TEST(FileLifecycleTest, remove_already_removed_target_fails_with_enoent) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 1};
+    RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
     ssize_t res = target_create(*queue, target, spec);
     ASSERT_EQ(res, 0);
 
@@ -264,7 +264,7 @@ TEST(FileLifecycleTest, create_is_zero_filled) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     constexpr size_t size = 1u << 20;
-    RawstorObjectSpec spec{.size = size, .mirrors = 1};
+    RawstorObjectSpec spec{.size = size, .width = 1};
     ssize_t res = target_create(*queue, target, spec);
     ASSERT_EQ(res, 0);
 
@@ -294,7 +294,7 @@ TEST(FileLifecycleTest, create_at_default_spec_list_remove) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 1};
+    RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
     ssize_t res = location_create(
         *queue, location, nullptr, spec, target.data(), target.size()
     );
@@ -340,7 +340,7 @@ TEST(FileLifecycleTest, create_at_spec_list_remove) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 1};
+    RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
     ssize_t res = location_create(
         *queue, location, uuid.c_str(), spec, target.data(), target.size()
     );
@@ -386,7 +386,7 @@ TEST(FileLifecycleTest, meta_set_state) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 1};
+    RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
     ssize_t res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
 
@@ -465,7 +465,7 @@ TEST(OstLifecycleTest, create_spec_remove) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     {
-        RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 1};
+        RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
 
         ssize_t res = target_create(*queue, target, spec);
         EXPECT_EQ(res, 0);
@@ -529,7 +529,7 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     {
-        RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 1};
+        RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
 
         ssize_t res = location_create(
             *queue, location, nullptr, spec, target.data(), target.size()
@@ -578,7 +578,7 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     {
-        RawstorObjectSpec spec{.size = 1ull << 20, .mirrors = 1};
+        RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
 
         ssize_t res = location_create(
             *queue, location, uuid.c_str(), spec, target.data(), target.size()

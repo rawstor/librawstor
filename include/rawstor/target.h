@@ -28,7 +28,7 @@ extern "C" {
  * when creating a new object (via rawstor_target_create()).
  *
  * When used with rawstor_target_create(), the size field must be set to the
- * desired size of the object to be created, and mirrors must equal the
+ * desired size of the object to be created, and width must equal the
  * number of URIs in the target string being created -- mandatory, not a
  * convenience the caller can opt out of (mismatch, including leaving it 0,
  * fails the create with -EINVAL): a caller that doesn't already know the
@@ -43,8 +43,8 @@ extern "C" {
  * @see rawstor_target_create
  */
 struct RawstorObjectSpec {
-    uint64_t size;        /**< Size of the object in bytes. */
-    unsigned int mirrors; /**< Number of URIs configured for the target. */
+    uint64_t size;      /**< Size of the object in bytes. */
+    unsigned int width; /**< Number of URIs configured for the target. */
 };
 
 /**
@@ -101,11 +101,11 @@ struct RawstorObjectSyncState {
  * this record -- unlike a RawstorObjectSpec obtained through
  * rawstor_target_spec()/_create(), which is used both ways) plus this
  * copy's mirror consistency identity (sync_state, the part
- * rawstor_target_set_sync_state() can actually change). `spec.mirrors`
+ * rawstor_target_set_sync_state() can actually change). `spec.width`
  * is filled in by rawstor_target_meta() itself the same way
  * rawstor_target_spec() fills its own -- the number of URIs in the
  * target string, computed locally -- not by the backend that answered:
- * mirrors isn't a property of any single copy.
+ * width isn't a property of any single copy.
  *
  * @see rawstor_target_meta
  * @see rawstor_target_set_sync_state
@@ -121,7 +121,7 @@ struct RawstorObjectMeta {
  * Given a target string (as defined in the Rawstor location/target syntax),
  * this function fills a RawstorObjectSpec structure with information about
  * the object: its size, and the number of URIs configured for it
- * (mirrors -- computed locally from @p target, no backend involved).
+ * (width -- computed locally from @p target, no backend involved).
  *
  * The target may be a single location‑UUID pair or a comma‑separated list of
  * such pairs (mirroring / data locality). All UUIDs in a list must be
@@ -178,7 +178,7 @@ int rawstor_target_spec(
  * ENOENT, ...) gets an entry with `sync_state.state ==
  * RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE` rather than failing the whole
  * call or being left out -- the entry's own position in @p metas is what
- * ties it back to that URI, so skipping it would lose that. `spec.mirrors`
+ * ties it back to that URI, so skipping it would lose that. `spec.width`
  * in every entry that did answer is filled in the same way
  * rawstor_target_spec() fills its own -- the number of URIs in @p target,
  * computed locally -- not whatever the answering copy's own backend
@@ -300,7 +300,7 @@ int rawstor_target_set_sync_state(
  *                  NULL and must be a valid target as per the library's format.
  * @param spec      Pointer to a RawstorObjectSpec structure containing the
  *                  desired object shape. The size field must be set to the
- *                  expected size of the object. mirrors is mandatory
+ *                  expected size of the object. width is mandatory
  *                  and must equal the number of URIs in @p target (@c
  *                  -EINVAL otherwise, including when left 0). Only read
  *                  while this call is being queued -- need not stay valid
@@ -308,7 +308,7 @@ int rawstor_target_set_sync_state(
  * @param cb        Callback invoked on completion.
  *                  - @p result is zero on success, or a negative errno on
  *                    failure (e.g. @c -EINVAL for invalid target or spec,
- *                    or a mirrors value that doesn't match @p target's own
+ *                    or a width value that doesn't match @p target's own
  *                    URI count; @c -ENOMEM, @c -EIO, etc; implementation‑
  *                    defined beyond that).
  *                  - @p data is the same pointer passed as @p data below.

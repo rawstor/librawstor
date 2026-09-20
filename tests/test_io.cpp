@@ -131,7 +131,7 @@ public:
         _queue(queue),
         _target(target),
         _object(nullptr) {
-        RawstorObjectSpec spec{.size = size, .mirrors = 1};
+        RawstorObjectSpec spec{.size = size, .width = 1};
         ssize_t res =
             rawstor::tests::sync_run(_queue, [&](auto cb, void* data) {
                 return rawstor_target_create(
@@ -1105,7 +1105,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     );
     RawstorOSTFrameSpecPayload spec_payload = {
         .size = 1ull << 20,
-        .mirrors = 1,
+        .width = 1,
     };
     RawstorOSTFrameResponse spec_response = {
         .head{
@@ -1378,7 +1378,7 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
     );
     RawstorOSTFrameSpecPayload spec_payload = {
         .size = 1ull << 20,
-        .mirrors = 1,
+        .width = 1,
     };
     RawstorOSTFrameResponse spec_response = {
         .head{

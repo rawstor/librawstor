@@ -385,19 +385,19 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     // wider than intended. Each URI's own backend separately validates
     // its own share is exactly 1 (Backend::_validate_spec()) -- this
     // check is about the caller's stated *total* matching reality.
-    if (sp.mirrors != _uris.size()) {
+    if (sp.width != _uris.size()) {
         rawstd_error(
-            "Spec mirrors (%u) does not match target's URI count (%zu)\n",
-            sp.mirrors, _uris.size()
+            "Spec width (%u) does not match target's URI count (%zu)\n",
+            sp.width, _uris.size()
         );
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    // Every URI is one copy: each one's own create() gets mirrors == 1
+    // Every URI is one copy: each one's own create() gets width == 1
     // (which every Backend::create() now validates, see
-    // Backend::_validate_spec()), not sp.mirrors itself (the target-wide
+    // Backend::_validate_spec()), not sp.width itself (the target-wide
     // URI count just validated above).
-    RawstorObjectSpec uri_sp{.size = sp.size, .mirrors = 1};
+    RawstorObjectSpec uri_sp{.size = sp.size, .width = 1};
 
     // Every URI's CREATE goes out concurrently instead of one at a time.
     // This can't just gather() them, though: on failure, only the URIs
@@ -446,8 +446,8 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     }
 }
 
-// mirrors is just the URI count -- computed locally from `target`, no
-// backend involved (a backend's own spec()-reported mirrors, its local
+// width is just the URI count -- computed locally from `target`, no
+// backend involved (a backend's own spec()-reported width, its local
 // share, is not summed here). `size` is identical on every copy, so this
 // only needs one to answer: URIs are tried in order, first reachable
 // wins, same fail-over tolerance as meta() below.
@@ -456,7 +456,7 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
     for (const auto& uri : _uris) {
         try {
             RawstorObjectSpec ret = co_await spec_one(queue, uri);
-            ret.mirrors = static_cast<unsigned int>(_uris.size());
+            ret.width = static_cast<unsigned int>(_uris.size());
             co_return ret;
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unreachable: %s\n", e.what());
@@ -481,7 +481,7 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
 // must not erase what the others answered). A URI that doesn't answer
 // gets a zero-filled entry rather than being left out: the result's own
 // index is what ties an entry back to its URI (`_uris[i]`), and dropping
-// entries would lose that correspondence. spec.mirrors is overwritten
+// entries would lose that correspondence. spec.width is overwritten
 // with the local URI count on the way out for every entry that did
 // answer, same as spec() above -- the answering backend has no idea what
 // the target's own URI count is, so whatever it put there (if anything)
@@ -499,7 +499,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Target::meta(rawio::Queue& queue) {
         RawstorObjectMeta m{};
         try {
             m = co_await tasks[i];
-            m.spec.mirrors = static_cast<unsigned int>(_uris.size());
+            m.spec.width = static_cast<unsigned int>(_uris.size());
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unreachable: %s\n", e.what());
         }

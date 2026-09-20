@@ -87,14 +87,12 @@ static void command_create_usage(void) {
         "\n"
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
-        "  -m, --mirrors N       Expected number of mirrors (total copy "
-        "count, N > 0).\n"
-        "                        Default 1. Creation fails unless this "
-        "matches the\n"
-        "                        number of comma-separated LOCATION/TARGET "
-        "entries --\n"
-        "                        pass it explicitly when creating a "
-        "mirrored object.\n"
+        "  -m, --mirrors N       Number of mirrors (copies per chunk, N > "
+        "0). Required.\n"
+        "                        For a comma-separated LOCATION/TARGET with "
+        "more than\n"
+        "                        one entry, must equal the entry count "
+        "exactly.\n"
         "  -s, --size SIZE       Object size with unit suffix (B, K, M, G, "
         "T, P, E).\n"
         "                        Examples: 10G, 5M, 2T.\n"
@@ -169,6 +167,11 @@ static int command_create(int argc, char** argv) {
         return EX_USAGE;
     }
 
+    if (mirrors_arg == NULL) {
+        fprintf(stderr, "mirrors required\n");
+        return EX_USAGE;
+    }
+
     if (location_arg != NULL && target_arg != NULL) {
         fprintf(stderr, "location and target are mutually exclusive\n");
         return EX_USAGE;
@@ -199,8 +202,8 @@ static int command_create(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    unsigned int mirrors = 1;
-    if (mirrors_arg != NULL) {
+    unsigned int mirrors;
+    {
         char* endptr = NULL;
         errno = 0;
         unsigned long parsed_mirrors = strtoul(mirrors_arg, &endptr, 10);

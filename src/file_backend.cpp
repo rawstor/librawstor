@@ -351,7 +351,7 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
 
     RawstorObjectSpec ret{
         .size = static_cast<uint64_t>(st.st_size),
-        .mirrors = 1,
+        .width = 1,
     };
 
     co_return ret;
