@@ -95,7 +95,7 @@ open_object(rawio::Queue& queue, const rawstd::URI& location) {
     RawstorObjectSpec spec{.size = 1u << 20, .width = 1};
     run(queue, target.create(queue, spec));
 
-    return run(queue, rawstor::Chunk::create(queue, target));
+    return run(queue, rawstor::Chunk::create(queue, id, 0, target.uris()));
 }
 
 } // namespace
@@ -319,7 +319,7 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     s.cmd_meta(RAWSTOR_MAGIC, 2, 0, clean_meta);
 
     std::unique_ptr<rawstor::Chunk> object =
-        run(*queue, rawstor::Chunk::create(*queue, target));
+        run(*queue, rawstor::Chunk::create(*queue, id, 0, target.uris()));
 
     std::string payload_a = "write-a-";
     std::string payload_b = "write-b-";

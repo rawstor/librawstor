@@ -1,14 +1,14 @@
 #ifndef RAWSTOR_CHUNK_HPP
 #define RAWSTOR_CHUNK_HPP
 
-#include "target.hpp"
-
 #include <rawstor/object.h>
+#include <rawstor/target.h>
 
 #include <rawio/queue.hpp>
 
 #include <rawstd/coro.hpp>
 #include <rawstd/uri.hpp>
+#include <rawstd/uuid.h>
 
 #include <functional>
 #include <memory>
@@ -49,12 +49,16 @@ private:
     };
 
     rawio::Queue& _queue;
-    Target _target;
+    RawstdUUID _id;
+    // The chunk's own offset within its object (0 for a plain,
+    // non-chunked object) -- self-describing, together with `_id`: every
+    // wire/backend call this Chunk makes states both, rather than
+    // needing a Target of its own to derive them from.
+    uint64_t _offset;
 
-    // The spec() fetched at open() time (see Target::open()'s own
-    // comment) -- kept around for any future caller that needs it.
-    // _spec.width is the configured mirror width N (the target's own
-    // URI count).
+    // The spec() fetched at open() time (see create()'s own comment) --
+    // kept around for any future caller that needs it. _spec.width is
+    // the configured mirror width N (the group's own URI count).
     RawstorObjectSpec _spec;
     std::vector<Member> _members;
 
@@ -318,23 +322,27 @@ private:
     };
 
 public:
-    // Connects every reachable URI in `target` into a Slot
-    // (Slot::create()), fetches a real spec() (first reachable answer
-    // wins), SET_OBJECT+meta()-s every connected member, then builds the
-    // Chunk itself -- deciding whether the result is actually
-    // trustworthy enough to serve from is the constructor's own job from
-    // there: width == 1 trusts its one member outright; width >= 2
-    // runs _reconcile_sync_set() (which may refuse the open -- see its
-    // own comment on why that's safe to let unwind through here). Only
-    // once that succeeds does it start the object's own background
+    // Connects every reachable URI in `uris` (all mirrors of the one
+    // chunk `id`/`chunk_offset` names) into a Slot (Slot::create()),
+    // fetches a real spec() (first reachable answer wins), SET_OBJECT+
+    // meta()-s every connected member, then builds the Chunk itself --
+    // deciding whether the result is actually trustworthy enough to
+    // serve from is the constructor's own job from there: width == 1
+    // trusts its one member outright; width >= 2 runs
+    // _reconcile_sync_set() (which may refuse the open -- see its own
+    // comment on why that's safe to let unwind through here). Only once
+    // that succeeds does it start the object's own background
     // maintenance (the reconnect probe, an online resync if one is
     // already due).
-    static rawstd::Task<std::unique_ptr<Chunk>>
-    create(rawio::Queue& queue, const Target& target);
+    static rawstd::Task<std::unique_ptr<Chunk>> create(
+        rawio::Queue& queue, const RawstdUUID& id, uint64_t chunk_offset,
+        const std::vector<rawstd::URI>& uris
+    );
 
     Chunk(
-        Private, rawio::Queue& queue, const Target& target,
-        RawstorObjectSpec spec, std::vector<Member> members
+        Private, rawio::Queue& queue, const RawstdUUID& id,
+        uint64_t chunk_offset, RawstorObjectSpec spec,
+        std::vector<Member> members
     );
     Chunk(const Chunk&) = delete;
     Chunk(Chunk&&) = delete;
@@ -342,8 +350,10 @@ public:
     Chunk& operator=(const Chunk&) = delete;
     Chunk& operator=(Chunk&&) = delete;
 
-    // This Chunk's own target -- the same Target it was built from.
-    inline const Target& target() const noexcept { return _target; }
+    // This Chunk's own identity -- the same id/chunk_offset it was
+    // built from.
+    inline const RawstdUUID& id() const noexcept { return _id; }
+    inline uint64_t offset() const noexcept { return _offset; }
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset);
 

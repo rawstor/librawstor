@@ -30,14 +30,47 @@
 
 namespace {
 
-std::string get_target_meta_path(
-    const std::string& location_path, const RawstdUUIDString& uuid
+// One chunk's own directory: <location>/<uuid>/<chunk_offset> --
+// self-describing: `uuid` is the same id every chunk of that id carries,
+// `chunk_offset` (0 for a plain object) disambiguates which chunk of that
+// id this is. Two files live directly under this directory: `data` (the
+// object's own bytes) and `meta` (get_target_meta_path() below).
+std::string get_target_dir(
+    const std::string& location_path, const RawstdUUIDString& uuid,
+    uint64_t chunk_offset
 ) {
     std::ostringstream oss;
 
-    oss << location_path << "/" << uuid << ".meta";
+    oss << location_path << "/" << uuid << "/" << chunk_offset;
 
     return oss.str();
+}
+
+std::string get_target_path(
+    const std::string& location_path, const RawstdUUIDString& uuid,
+    uint64_t chunk_offset
+) {
+    return get_target_dir(location_path, uuid, chunk_offset) + "/data";
+}
+
+std::string get_target_meta_path(
+    const std::string& location_path, const RawstdUUIDString& uuid,
+    uint64_t chunk_offset
+) {
+    return get_target_dir(location_path, uuid, chunk_offset) + "/meta";
+}
+
+// Creates `path` if it doesn't already exist -- shared by create()'s own
+// chain of nested directories (<location>/<uuid>/<chunk_offset>), each
+// level possibly already made by an earlier chunk of the same id.
+void mkdir_or_exist(const std::string& path) {
+    if (mkdir(path.c_str(), 0755) == -1) {
+        if (errno == EEXIST) {
+            errno = 0;
+        } else {
+            RAWSTD_THROW_ERRNO();
+        }
+    }
 }
 
 std::string get_location_path(const rawstd::URI& location) {
@@ -52,16 +85,6 @@ std::string get_location_path(const rawstd::URI& location) {
     return location.path().str();
 }
 
-std::string get_target_path(
-    const std::string& location_path, const RawstdUUIDString& uuid
-) {
-    std::ostringstream oss;
-
-    oss << location_path << "/" << uuid;
-
-    return oss.str();
-}
-
 } // unnamed namespace
 
 namespace rawstor {
@@ -71,13 +94,14 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::blk::Backend(p, queue, location) {
 }
 
-rawstd::Task<int> Backend::_open(const RawstdUUID& id) {
+rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t chunk_offset) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString id_string;
     rawstd_uuid_to_string(&id, &id_string);
 
-    std::string target_path = get_target_path(location_path, id_string);
+    std::string target_path =
+        get_target_path(location_path, id_string, chunk_offset);
 
     // O_CLOEXEC: a file:// backend can be live in the same process as an
     // lvm:// or zfs:// one (Target::open() fans out across every URI of a
@@ -99,15 +123,20 @@ rawstd::Task<void> Backend::list(
     try {
         std::string location_path = get_location_path(location());
 
+        // One entry per id directory (<location>/<uuid>/), regardless of
+        // how many chunk_offset subdirectories it holds -- nothing today
+        // ever creates more than one offset under the same id, so this
+        // stays UUID-only (docs/mds.md's own multi-chunk listing is a
+        // later concern).
         for (const auto& entry :
              std::filesystem::directory_iterator(location_path)) {
-            if (!entry.path().extension().empty()) {
+            if (!entry.is_directory()) {
                 continue;
             }
-            std::string filename = entry.path().filename().string();
+            std::string dirname = entry.path().filename().string();
 
             RawstdUUID uuid;
-            int res = rawstd_uuid_from_string(&uuid, filename.c_str());
+            int res = rawstd_uuid_from_string(&uuid, dirname.c_str());
             if (res < 0) {
                 rawstd_warning(
                     "%s: %s\n", strerror(-res), entry.path().string().c_str()
@@ -158,23 +187,21 @@ rawstd::Task<void> Backend::list(
     co_return;
 }
 
-rawstd::Task<void>
-Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
-    _validate_spec(sp);
-
+rawstd::Task<void> Backend::create(
+    const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+) {
     std::string location_path = get_location_path(location());
-    if (mkdir(location_path.c_str(), 0755) == -1) {
-        if (errno == EEXIST) {
-            errno = 0;
-        } else {
-            RAWSTD_THROW_ERRNO();
-        }
-    }
+    mkdir_or_exist(location_path);
 
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
+    mkdir_or_exist(location_path + "/" + uuid_string);
 
-    std::string target_path = get_target_path(location_path, uuid_string);
+    std::string target_dir =
+        get_target_dir(location_path, uuid_string, chunk_offset);
+    mkdir_or_exist(target_dir);
+
+    std::string target_path = target_dir + "/data";
 
     int fd = ::open(
         target_path.c_str(), O_EXCL | O_CREAT | O_WRONLY | O_CLOEXEC,
@@ -260,13 +287,12 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
 
     // A fresh copy starts with sync_id 0: it has never been part of an
     // established sync set (see docs/mirroring.md). Written after the data
-    // file so a crash between the two never leaves a .meta file without
+    // file so a crash between the two never leaves a meta file without
     // its data file; set_sync_state()/meta() failing ENOENT on the reverse
-    // (data file present, no .meta yet) is exactly case F10.
+    // (data file present, no meta yet) is exactly case F10.
     std::exception_ptr meta_error;
     try {
-        std::string meta_path =
-            get_target_meta_path(location_path, uuid_string);
+        std::string meta_path = target_dir + "/meta";
 
         int meta_fd = co_await _queue.open(
             meta_path.c_str(), O_EXCL | O_CREAT | O_WRONLY | O_CLOEXEC,
@@ -319,51 +345,64 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     co_return;
 }
 
-rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
+rawstd::Task<void>
+Backend::remove(const RawstdUUID& id, uint64_t chunk_offset) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string target_path = get_target_path(location_path, uuid_string);
-    co_await _queue.unlink(target_path.c_str());
+    std::string target_dir =
+        get_target_dir(location_path, uuid_string, chunk_offset);
+    co_await _queue.unlink((target_dir + "/data").c_str());
 
-    std::string meta_path = get_target_meta_path(location_path, uuid_string);
     try {
-        co_await _queue.unlink(meta_path.c_str());
+        co_await _queue.unlink((target_dir + "/meta").c_str());
     } catch (const std::system_error& e) {
         if (e.code().value() != ENOENT) {
             throw;
         }
     }
+
+    // Best-effort cleanup of the now-empty directory chain -- rmdir()
+    // fails ENOTEMPTY, silently tolerated, the moment a sibling still
+    // lives there: another chunk_offset under the same uuid directory.
+    if (rmdir(target_dir.c_str()) == -1) {
+        errno = 0;
+    } else if (rmdir((location_path + "/" + uuid_string).c_str()) == -1) {
+        errno = 0;
+    }
 }
 
-rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectSpec>
+Backend::spec(const RawstdUUID& id, uint64_t chunk_offset) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string target_path = get_target_path(location_path, uuid_string);
+    std::string target_path =
+        get_target_path(location_path, uuid_string, chunk_offset);
 
     struct stat st;
     co_await _queue.stat(target_path.c_str(), &st);
 
-    RawstorObjectSpec ret{
-        .size = static_cast<uint64_t>(st.st_size),
-        .width = 1,
-    };
+    RawstorObjectSpec ret{};
+    ret.size = static_cast<uint64_t>(st.st_size);
+    ret.width = 1;
 
     co_return ret;
 }
 
-rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectMeta>
+Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string meta_path = get_target_meta_path(location_path, uuid_string);
+    std::string meta_path =
+        get_target_meta_path(location_path, uuid_string, chunk_offset);
 
     int fd = co_await _queue.open(meta_path.c_str(), O_RDONLY | O_CLOEXEC, 0);
 
@@ -391,26 +430,28 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
     }
 
     RawstorObjectMeta ret{};
-    ret.spec = co_await spec(id);
+    ret.spec = co_await spec(id, chunk_offset);
     ret.sync_state = sync_state;
 
     co_return ret;
 }
 
 rawstd::Task<void> Backend::set_sync_state(
-    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+    const RawstdUUID& id, uint64_t chunk_offset,
+    const RawstorObjectSyncState& sync_state
 ) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    std::string meta_path = get_target_meta_path(location_path, uuid_string);
+    std::string meta_path =
+        get_target_meta_path(location_path, uuid_string, chunk_offset);
 
     // O_TRUNC would be wrong here regardless of sync_state carrying no
     // size of its own: this file is fixed-size, and a short write must
     // not leave a truncated, unparseable record behind.
-    int fd = co_await _queue.open(meta_path.c_str(), O_WRONLY | O_CLOEXEC, 0);
+    int fd = co_await _queue.open(meta_path.c_str(), O_RDWR | O_CLOEXEC, 0);
 
     std::exception_ptr eptr;
     try {
@@ -452,9 +493,14 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
         // the event loop scanning this directory -- io_uring has no
         // readdir/getdents opcode to make that part async too, only
         // IORING_OP_STATX for the per-entry stat() below (already async
-        // via _queue.stat()).
+        // via _queue.stat()). Recursive now that each object's own
+        // `data`/`meta` live a directory deep (get_target_dir()'s own
+        // doc comment) rather than directly under location_path.
         for (const auto& entry :
-             std::filesystem::directory_iterator(location_path)) {
+             std::filesystem::recursive_directory_iterator(location_path)) {
+            if (!entry.is_regular_file()) {
+                continue;
+            }
             struct stat st;
             try {
                 co_await _queue.stat(entry.path().c_str(), &st);

@@ -96,8 +96,8 @@ void Backend::_throttle_release() noexcept {
 }
 
 rawstd::Task<void> Backend::_connect() {
-    // The fd is opened lazily, by _open(const RawstdUUID&), once
-    // set_object() knows which object id to open -- nothing to do
+    // The fd is opened lazily, by _open(const RawstdUUID&, uint64_t),
+    // once set_object() knows which object id to open -- nothing to do
     // upfront.
     co_return;
 }
@@ -166,18 +166,20 @@ rawstd::Task<void> Backend::close() {
     co_await _queue.close(f);
 }
 
-rawstd::Task<void> Backend::set_object(const RawstdUUID& id) {
+rawstd::Task<void>
+Backend::set_object(const RawstdUUID& id, uint64_t chunk_offset) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
 
-    int fd = co_await _open(id);
+    int fd = co_await _open(id, chunk_offset);
     set_fd(fd);
 }
 
-rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectSpec>
+Backend::spec(const RawstdUUID& id, uint64_t chunk_offset) {
 #if defined(RAWSTD_ON_LINUX)
-    int f = co_await _open(id);
+    int f = co_await _open(id, chunk_offset);
 
     uint64_t size = 0;
     if (ioctl(f, BLKGETSIZE64, &size) == -1) {
@@ -192,6 +194,7 @@ rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
     co_return RawstorObjectSpec{size, 1};
 #else
     (void)id;
+    (void)chunk_offset;
     RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
 #endif
 }

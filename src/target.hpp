@@ -21,16 +21,49 @@ class Location;
 // header cycle; target.cpp includes "object.hpp"/"chunk.hpp" for those.
 class Object;
 
-// A Target addresses one specific object across every URI in `uris` (see
-// docs/locations_and_targets.md). Deliberately lightweight -- unlike
-// Chunk, it never holds a Slot between calls; create()/spec()/remove()
+// A Target addresses one specific object, made up of one or more chunk
+// groups -- URIs sharing one offset path segment are mirrors of the same
+// chunk; distinct chunks never share one (see docs/locations_and_targets.md
+// and parse_path()'s own doc comment in target.cpp). `_uris` is a flat,
+// offset-sorted list; the grouping itself is never stored, only ever
+// re-derived on demand (group_by_offset()/first_group() in target.cpp) --
+// nothing is gained by keeping every method reach through one extra
+// level of nesting just for the ordinary, single-group case every plain
+// target is. Deliberately lightweight -- unlike Chunk, it never holds a
+// Slot between calls; create()/spec()/remove()/meta()/set_sync_state()
 // each open a Slot per URI just for that one call and close it again
 // before returning, same as the code they replace used to do. open() is
 // the one exception that needs a Slot to survive past the call -- it
-// builds a Chunk (via Chunk::create(), by analogy with Slot::create()),
-// keeping one Slot per URI alive in the Chunk's own pool, then wraps it
-// in the Object it hands back.
+// builds one Chunk per chunk group (via Chunk::create(), by analogy with
+// Slot::create()), keeping one Slot per URI alive in each Chunk's own
+// pool, then wraps them in the Object it hands back.
 class Target final {
+public:
+    // One URI's own trailing path identity: `/<id>[/<offset>]` -- the
+    // offset segment is optional (implied 0) for the ordinary,
+    // single-chunk case every plain, non-mds:// target is; an internal
+    // builder that already knows it's addressing one chunk of a larger
+    // object (e.g. a future mds:// backend) always states it explicitly,
+    // even 0, since there's no ambiguity to avoid there. `segments` is
+    // how many trailing path segments this identity actually consumed
+    // (1 or 2) -- callers that need the URI with the identity stripped
+    // back off (to recover the plain Location it was built under) call
+    // URI::parent() this many times, not just once.
+    struct Path {
+        RawstdUUID id;
+        uint64_t offset;
+        unsigned int segments;
+    };
+
+    // Parses one URI's own trailing identity (see Path's own doc comment
+    // above). Throws EINVAL if the path's last segment (or the one
+    // before it, for the two-segment shape) isn't a valid UUID, or the
+    // offset segment isn't a valid decimal number. A static method, not
+    // an instance one -- by analogy with Chunk::create(), callers that
+    // don't (yet) have a Target instance to ask (Chunk::create() itself)
+    // can still parse a raw URI on their own.
+    static Path parse_path(const rawstd::URI& uri);
+
 private:
     std::vector<rawstd::URI> _uris;
 
@@ -44,16 +77,20 @@ public:
     // The UUID shared by every URI in `uris` -- parsed from the first one.
     RawstdUUID id() const;
 
-    // The Location `uris` was created under -- each URI with its UUID
-    // path segment stripped back off (the inverse of Location::create()).
+    // The Location `uris` was created under -- each URI with its own
+    // identity path segments stripped back off (the inverse of
+    // Location::create()).
     Location location() const;
 
+    // Works across every chunk group in `_uris` -- see each one's own
+    // comment in target.cpp for why create()/remove()/meta() do, but
+    // spec()/set_sync_state() only ever touch the first.
     rawstd::Task<void> create(rawio::Queue& queue, const RawstorObjectSpec& sp);
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue);
-    // One RawstorObjectMeta per URI in `_uris`, same order -- every URI is
-    // queried, not just the first reachable one; a URI that doesn't
-    // answer gets a zero-filled entry (see this method's own doc comment
-    // in target.cpp for why).
+    // One RawstorObjectMeta per URI in `_uris`, same order, across every
+    // chunk group -- every URI is queried, not just the first reachable
+    // one; a URI that doesn't answer gets a zero-filled entry (see this
+    // method's own doc comment in target.cpp for why).
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(rawio::Queue& queue);
     rawstd::Task<void> set_sync_state(
         rawio::Queue& queue, const RawstorObjectSyncState& sync_state

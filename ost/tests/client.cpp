@@ -66,7 +66,9 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, uint32_t width) {
                 .cmd = RAWSTOR_CMD_ALLOCATE,
                 .cid = cid,
             },
-        .payload = {.object_id = {}, .size = size, .width = width},
+        .payload = {
+            .object_id = {}, .chunk_offset = 0, .size = size, .width = width
+        },
     };
     std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));
     send_all(_fd, &frame, sizeof(frame));

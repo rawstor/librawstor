@@ -103,10 +103,10 @@ rawstor::blk::Backend* open_blk_backend(
     RawstorObjectSpec spec{.size = 1u << 20, .width = 1};
     run(queue, target.create(queue, spec));
 
-    object = run(queue, rawstor::Chunk::create(queue, target));
+    object = run(queue, rawstor::Chunk::create(queue, id, 0, target.uris()));
 
     slot = run(queue, rawstor::Slot::create(queue, location, 1));
-    run(queue, slot->open(id));
+    run(queue, slot->open(id, 0));
 
     return static_cast<rawstor::blk::Backend*>(slot->get_next_backend().get());
 }

@@ -972,7 +972,8 @@ rawstd::DetachedTask Client::_allocate(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid);
+    std::vector<rawstd::URI> targets =
+        client->_targets(uuid, payload.chunk_offset);
 
     // Target::create() requires width to exactly match the target's own
     // URI count -- here, that's this server's own locations(), not
@@ -1025,7 +1026,7 @@ rawstd::DetachedTask Client::_release(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid);
+    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
 
     int result = 0;
     try {
@@ -1073,7 +1074,7 @@ rawstd::DetachedTask Client::_spec(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid);
+    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
 
     RawstorObjectSpec spec{};
     int result = 0;
@@ -1131,7 +1132,7 @@ rawstd::DetachedTask Client::_meta(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid);
+    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
 
     // rawstor_target_meta() now reports one entry per URI (a URI that
     // didn't answer is zero-filled, RawstorObjectSyncStateValue's own doc
@@ -1216,7 +1217,8 @@ rawstd::DetachedTask Client::_set_state(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid);
+    std::vector<rawstd::URI> targets =
+        client->_targets(uuid, payload.chunk_offset);
 
     RawstorObjectSyncState sync_state{};
     sync_state.epoch = payload.epoch;
@@ -1317,7 +1319,7 @@ rawstd::DetachedTask Client::_set_object(
 
         RawstdUUID uuid;
         memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-        target = rawstd::URI::uris(client->_targets(uuid));
+        target = rawstd::URI::uris(client->_targets(uuid, payload.offset));
     }
 
     RawstorObject* object = nullptr;
@@ -1721,14 +1723,21 @@ rawstd::DetachedTask Client::_write_zeroes(
     }
 }
 
-std::vector<rawstd::URI> Client::_targets(const RawstdUUID& uuid) {
+std::vector<rawstd::URI>
+Client::_targets(const RawstdUUID& uuid, uint64_t chunk_offset) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
+
+    // Self-describing (Target::Path's own doc comment, target.hpp): the
+    // offset segment is always stated explicitly here, even 0, since
+    // this is an internal builder, not something a caller types by hand.
+    std::string child =
+        std::string(uuid_string) + "/" + std::to_string(chunk_offset);
 
     std::vector<rawstd::URI> ret;
     ret.reserve(_server.locations().size());
     for (const auto& location : _server.locations()) {
-        ret.emplace_back(location, uuid_string);
+        ret.emplace_back(location, child);
     }
 
     return ret;

@@ -51,10 +51,13 @@ struct RawstorOSTFrameHead {
 
 /* request frames */
 
-/* Minimalistic protocol frame */
+/*
+ * Minimalistic protocol frame. `offset` is the chunk_offset of the
+ * object/chunk `object_id` names (0 for a plain, non-chunked object) for
+ * SET_OBJECT/RELEASE/SPEC/META; unused (0) for LIST/LOCATION_INFO/FLUSH.
+ * `val` is command-specific (e.g. LIST's own page limit).
+ */
 struct RawstorOSTFrameBasicPayload {
-    // var is for minimal commands only,
-    // will be overridden in other command structs
     uint8_t object_id[16];
     uint64_t offset;
     uint64_t val;
@@ -96,11 +99,13 @@ struct RawstorOSTFrameIO {
 /*
  * Settable mirror consistency state only -- no size, nothing here changes
  * it. SET_SYNC_STATE's request: unlike SPEC/META, it isn't wrapped in a
- * RawstorOSTFrameBasicPayload of its own, so object_id here is the only way the
- * server learns which object this applies to.
+ * RawstorOSTFrameBasicPayload of its own, so object_id/chunk_offset here
+ * are the only way the server learns which object (and which of its
+ * chunks) this applies to.
  */
 struct RawstorOSTFrameSyncStatePayload {
     uint8_t object_id[16];
+    uint64_t chunk_offset;
     uint64_t epoch;
     uint64_t sync_id;
     uint64_t sync_id_history[4];
@@ -117,11 +122,12 @@ struct RawstorOSTFrameSyncState {
  * ALLOCATE's request: the object to create's size and width. Unlike
  * SPEC's response (RawstorOSTFrameSpecPayload below), this does need
  * object_id -- it isn't wrapped in a RawstorOSTFrameBasicPayload of its
- * own, so object_id here is the only way the server learns which object
- * to create.
+ * own, so object_id/chunk_offset here are the only way the server learns
+ * which object (and which of its chunks) to create.
  */
 struct RawstorOSTFrameAllocatePayload {
     uint8_t object_id[16];
+    uint64_t chunk_offset;
     uint64_t size;
     uint32_t width;
 } RAWSTOR_PACKED;

@@ -46,7 +46,7 @@ private:
     template <typename T = char>
     rawstd::Task<std::vector<T>> _basic_request(
         RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
-        uint64_t val
+        uint64_t chunk_offset, uint64_t val
     );
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
@@ -82,22 +82,28 @@ public:
         unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
     ) override;
 
+    rawstd::Task<void> create(
+        const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+    ) override;
+
     rawstd::Task<void>
-    create(const RawstdUUID& id, const RawstorObjectSpec& sp) override;
+    remove(const RawstdUUID& id, uint64_t chunk_offset) override;
 
-    rawstd::Task<void> remove(const RawstdUUID& id) override;
+    rawstd::Task<RawstorObjectSpec>
+    spec(const RawstdUUID& id, uint64_t chunk_offset) override;
 
-    rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) override;
-
-    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) override;
+    rawstd::Task<RawstorObjectMeta>
+    meta(const RawstdUUID& id, uint64_t chunk_offset) override;
 
     rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstorObjectSyncState& sync_state
     ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
-    rawstd::Task<void> set_object(const RawstdUUID& id) override;
+    rawstd::Task<void>
+    set_object(const RawstdUUID& id, uint64_t chunk_offset) override;
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;
 

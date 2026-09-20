@@ -88,11 +88,12 @@ namespace rawstor {
 // _reconcile_sync_set()'s own doc comment on why a refusal here is
 // safe to let unwind through a throwing constructor.
 Chunk::Chunk(
-    Private, rawio::Queue& queue, const Target& target, RawstorObjectSpec spec,
-    std::vector<Member> members
+    Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t chunk_offset,
+    RawstorObjectSpec spec, std::vector<Member> members
 ) :
     _queue(queue),
-    _target(target),
+    _id(id),
+    _offset(chunk_offset),
     _spec(spec),
     _members(std::move(members)),
     _size(0),
@@ -150,24 +151,28 @@ Chunk::~Chunk() {
 // Slot::create()'s own backend pool.
 namespace {
 
+rawstd::URI strip_path(const rawstd::URI& uri) {
+    rawstor::Target::Path path = rawstor::Target::parse_path(uri);
+    rawstd::URI ret = uri;
+    for (unsigned int i = 0; i < path.segments; ++i) {
+        ret = ret.parent();
+    }
+    return ret;
+}
+
 rawstd::Task<std::unique_ptr<rawstor::Slot>>
 connect_one(rawio::Queue& queue, const rawstd::URI& uri) {
     co_return co_await rawstor::Slot::create(
-        queue, uri.parent(), rawstor_opts_sessions()
+        queue, strip_path(uri), rawstor_opts_sessions()
     );
 }
 
 } // namespace
 
-rawstd::Task<std::unique_ptr<Chunk>>
-Chunk::create(rawio::Queue& queue, const Target& target) {
-    // This coroutine suspends (co_await) below, so `target` must outlive
-    // that suspension -- Target::open() already satisfies this (it holds
-    // its own Target by value inside the same coroutine frame that calls
-    // this); tests/ that call this directly do the same.
-    RawstdUUID id = target.id();
-    const std::vector<rawstd::URI>& uris = target.uris();
-
+rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
+    rawio::Queue& queue, const RawstdUUID& id, uint64_t chunk_offset,
+    const std::vector<rawstd::URI>& uris
+) {
     // Every URI's Slot goes out concurrently instead of one at a
     // time -- just Slot::create(), kept in a plain local vector
     // (parallel to `uris`, not the eventual member list yet: that's
@@ -265,7 +270,7 @@ Chunk::create(rawio::Queue& queue, const Target& target) {
     spec_tasks.reserve(reachable);
     for (auto& slot : slots) {
         if (slot) {
-            spec_tasks.push_back(slot->spec(id));
+            spec_tasks.push_back(slot->spec(id, chunk_offset));
         }
     }
 
@@ -322,7 +327,7 @@ Chunk::create(rawio::Queue& queue, const Target& target) {
     );
     for (size_t i = 0; i < slots.size(); ++i) {
         if (slots[i]) {
-            open_tasks[i] = slots[i]->open(id);
+            open_tasks[i] = slots[i]->open(id, chunk_offset);
         }
     }
 
@@ -404,7 +409,7 @@ Chunk::create(rawio::Queue& queue, const Target& target) {
     // shortcut, or _reconcile_sync_set()'s own quorum/split-brain/no-
     // trusted-member analysis) is its own job from here.
     co_return std::make_unique<Chunk>(
-        Private(), queue, target, std::move(spec), std::move(members)
+        Private(), queue, id, chunk_offset, std::move(spec), std::move(members)
     );
 }
 
@@ -845,7 +850,7 @@ rawstd::Task<void> Chunk::_run_meta_fan_out(RawstorObjectSyncState sync_state) {
 rawstd::Task<void>
 Chunk::_set_sync_state_one(size_t idx, RawstorObjectSyncState sync_state) {
     try {
-        co_await _members[idx].slot->set_sync_state(_target.id(), sync_state);
+        co_await _members[idx].slot->set_sync_state(_id, _offset, sync_state);
     } catch (const std::system_error& e) {
         int error = e.code().value();
         if (error == ENOSYS) {
@@ -1142,7 +1147,7 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
 
         int error = 0;
         try {
-            co_await _members[idx].slot->set_sync_state(_target.id(), m);
+            co_await _members[idx].slot->set_sync_state(_id, _offset, m);
         } catch (const std::system_error& e) {
             error = e.code().value();
         }
@@ -1343,7 +1348,7 @@ rawstd::DetachedTask Chunk::_resync_finish() {
 
     int error = 0;
     try {
-        co_await _members[idx].slot->set_sync_state(_target.id(), m);
+        co_await _members[idx].slot->set_sync_state(_id, _offset, m);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1465,7 +1470,7 @@ rawstd::DetachedTask Chunk::_probe_tick() {
         slot = co_await Slot::create(
             _queue, _members[idx].target.parent(), rawstor_opts_sessions()
         );
-        co_await slot->open(_target.id());
+        co_await slot->open(_id, _offset);
     } catch (const std::system_error& e) {
         error = e.code().value();
     } catch (const std::exception& e) {

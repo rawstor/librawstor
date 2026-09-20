@@ -134,7 +134,8 @@ private:
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameSyncStatePayload payload
     );
-    std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
+    std::vector<rawstd::URI>
+    _targets(const RawstdUUID& uuid, uint64_t chunk_offset);
 
     // Sends a response frame and awaits its actual completion (not just
     // submission) -- unlike every other rawio_*() bridge in the .cpp,
