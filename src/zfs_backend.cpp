@@ -213,7 +213,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // create() must behave like open(O_EXCL): retrying it against an id
     // a previous, unacknowledged attempt already fully created needs to
     // fail fast with EEXIST -- already classified as permanent, never
-    // retried, by Connection::_with_retry()'s is_permanent_backend_error(),
+    // retried, by Slot::_with_retry()'s is_permanent_backend_error(),
     // and the same convention file::Backend's own O_EXCL create() already
     // follows -- instead of "zfs create" rejecting an already-existing
     // dataset with a generic, retried-pointlessly EIO.
@@ -262,7 +262,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
 rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
     // Matches file::Backend::remove()'s own convention: a nonexistent
     // zvol is ENOENT specifically (permanent -- never retried by
-    // Connection::_with_retry()'s is_permanent_backend_error()), not the
+    // Slot::_with_retry()'s is_permanent_backend_error()), not the
     // generic, retryable EIO "zfs destroy" itself would produce for the
     // same case.
     std::string device_path = _device_path(id);

@@ -2,9 +2,9 @@
 #include "session.hpp"
 #include "tmp_dir.hpp"
 
-#include "connection.hpp"
 #include "opts.h"
 #include "rawio_sync.hpp"
+#include "slot.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -26,7 +26,7 @@
 
 namespace {
 
-// Duplicate of object.cpp's own `run()` -- see that one's doc comment for
+// Duplicate of chunk.cpp's own `run()` -- see that one's doc comment for
 // why it isn't shared.
 template <typename T>
 T run(rawio::Queue& q, rawstd::Task<T> t) {
@@ -254,8 +254,8 @@ TEST(ListTest, pagination) {
 }
 
 // Location::list()/create() and Target::create()/remove()/spec() all use
-// a Connection::create()-only, never-open()-ed Connection for their
-// metadata work -- unlike a data-path Connection, _id stays unset on
+// a Slot::create()-only, never-open()-ed Slot for their
+// metadata work -- unlike a data-path Slot, _id stays unset on
 // one of these for its whole lifetime. invalidate_backend()'s reconnect
 // path used to call the replacement backend's set_object(*_id)
 // unconditionally regardless -- dereferencing an unset
@@ -267,11 +267,11 @@ TEST(ListTest, invalidate_backend_on_metadata_only_connection) {
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
-    std::unique_ptr<rawstor::Connection> cn =
-        run(*queue, rawstor::Connection::create(*queue, location, 1));
-    std::shared_ptr<rawstor::Backend> be = cn->get_next_backend();
+    std::unique_ptr<rawstor::Slot> slot =
+        run(*queue, rawstor::Slot::create(*queue, location, 1));
+    std::shared_ptr<rawstor::Backend> be = slot->get_next_backend();
 
-    EXPECT_NO_THROW(run(*queue, cn->invalidate_backend(be)));
+    EXPECT_NO_THROW(run(*queue, slot->invalidate_backend(be)));
 }
 
 } // unnamed namespace

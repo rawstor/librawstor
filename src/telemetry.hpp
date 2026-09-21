@@ -15,7 +15,7 @@ namespace telemetry {
 
 // A raw nanosecond count -- both a timestamp (now()) and a duration
 // (a difference of two timestamps) -- plain enough that call sites
-// (BackendOp, Connection::_op) can stamp every op unconditionally without
+// (BackendOp, Slot::_op) can stamp every op unconditionally without
 // an #ifdef, and (unlike a double) exact under subtraction no matter how
 // long the process has been up.
 using TimePoint = int64_t;

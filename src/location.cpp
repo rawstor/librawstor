@@ -1,7 +1,7 @@
 #include "location.hpp"
 
-#include "connection.hpp"
 #include "opts.h"
+#include "slot.hpp"
 #include "target.hpp"
 
 #include <rawstor/list.h>
@@ -56,15 +56,15 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
 }
 
 // One URI's worth of Location::info() work: connect a single-session
-// Connection just for this call, do the one metadata op, close it again.
+// Slot just for this call, do the one metadata op, close it again.
 // Factored out so info()/list() can fan these out across every URI via
 // rawstd::gather() instead of awaiting them one at a time.
 rawstd::Task<RawstorLocationInfo>
 info_one(rawio::Queue& queue, const rawstd::URI& location) {
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, location, 1);
-    RawstorLocationInfo ret = co_await cn->info();
-    co_await cn->close();
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, location, 1);
+    RawstorLocationInfo ret = co_await slot->info();
+    co_await slot->close();
     co_return ret;
 }
 
@@ -80,10 +80,10 @@ rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>> list_one(
 ) {
     std::pair<std::vector<RawstdUUID>, RawstdUUID> ret;
     ret.second = token_uuid;
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, location, 1);
-    co_await cn->list(limit, ret.first, ret.second);
-    co_await cn->close();
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, location, 1);
+    co_await slot->list(limit, ret.first, ret.second);
+    co_await slot->close();
     co_return ret;
 }
 
