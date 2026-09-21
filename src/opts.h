@@ -42,7 +42,7 @@ unsigned int rawstor_opts_write_throttle_limit(void);
 
 unsigned int rawstor_opts_write_backlog_capacity(void);
 
-// Base delay (ms) of the exponential backoff Connection::_with_retry()
+// Base delay (ms) of the exponential backoff Slot::_with_retry()
 // waits between retry attempts -- doubled once per already-failed
 // attempt, capped at rawstor_opts_io_retry_backoff_max().
 unsigned int rawstor_opts_io_retry_backoff_base(void);

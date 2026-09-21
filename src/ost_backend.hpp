@@ -50,9 +50,9 @@ private:
     );
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
-    // response can legitimately race with Connection::_op() already having
+    // response can legitimately race with Slot::_op() already having
     // failed and retried that same op on a different backend (e.g. after a
-    // send-side error on this connection), in which case the cid was
+    // send-side error on this slot), in which case the cid was
     // already unregistered and the response is stale, not a corrupted
     // stream.
     BackendOp* _find_op(uint16_t cid);
@@ -91,7 +91,7 @@ public:
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
-    rawstd::Task<void> set_object(Object* object) override;
+    rawstd::Task<void> set_object(Chunk* chunk) override;
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;
 
