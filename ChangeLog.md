@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `rawstor info` against a `file://` location reported `total` as the whole filesystem's capacity (`statvfs`'s `f_blocks * f_frsize`) rather than space accounted for by rawstor, so `available` (derived as `total - used`) could include space taken by unrelated data on the same filesystem. `total` is now `used` (rawstor's own files) plus the filesystem's actually-free space (`f_bavail * f_frsize`), matching the `lvm://`/`zfs://` backends' `total = used + available` semantics.
+- The `rawstor-vduse` deb/rpm packages (present since 0.2.10) were never actually built or published: CI's packaging jobs never copied its install scriptlets into place, so its `.deb`/`.rpm` were silently absent from every release despite `rawstor-vduse` being a real, working binary.
 
 ## [0.2.11] - 2026-09-15
 
