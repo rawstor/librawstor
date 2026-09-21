@@ -31,10 +31,14 @@ namespace {
 // single-URI target) -- see Target::open()'s own comment.
 const RawstorOSTFrameMetaPayload clean_meta_1mb = {
     .size = 1ull << 20,
+    .reserved1 = 0,
     .epoch = 0,
     .sync_id = 0,
     .sync_id_history = {0, 0, 0, 0},
     .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+    .width = 1,
+    .reserved2 = 0,
+    .reserved3 = 0,
 };
 
 int callback(size_t result, int error, void* data) {
@@ -131,7 +135,10 @@ public:
         _queue(queue),
         _target(target),
         _object(nullptr) {
-        RawstorObjectSpec spec{.size = size, .width = 1};
+        RawstorObjectSpec spec{
+            .size = size,
+            .width = 1,
+        };
         ssize_t res =
             rawstor::tests::sync_run(_queue, [&](auto cb, void* data) {
                 return rawstor_target_create(

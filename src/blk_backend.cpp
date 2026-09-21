@@ -191,7 +191,9 @@ Backend::spec(const RawstdUUID& id, uint64_t chunk_offset) {
 
     co_await _queue.close(f);
 
-    co_return RawstorObjectSpec{size, 1};
+    RawstorObjectSpec ret{};
+    ret.size = size;
+    co_return ret;
 #else
     (void)id;
     (void)chunk_offset;
@@ -199,39 +201,46 @@ Backend::spec(const RawstdUUID& id, uint64_t chunk_offset) {
 #endif
 }
 
-std::string Backend::meta_encode(const RawstorObjectSyncState& sync_state) {
+std::string Backend::meta_encode(
+    const RawstorObjectSyncState& sync_state, const ChunkIdentity& identity
+) {
     char buf[META_MAX_SIZE];
     snprintf(
         buf, sizeof(buf),
         "version=%u:state=%u:epoch=%" PRIx64 ":sync_id=%" PRIx64 ":h0=%" PRIx64
-        ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64,
+        ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64 ":width=%u",
         META_FORMAT_VERSION, (unsigned int)sync_state.state, sync_state.epoch,
         sync_state.sync_id, sync_state.sync_id_history[0],
         sync_state.sync_id_history[1], sync_state.sync_id_history[2],
-        sync_state.sync_id_history[3]
+        sync_state.sync_id_history[3], (unsigned int)identity.width
     );
     return std::string(buf);
 }
 
-RawstorObjectSyncState Backend::meta_decode(const std::string& value) {
-    RawstorObjectSyncState sync_state{};
+void Backend::meta_decode(
+    const std::string& value, RawstorObjectSyncState* sync_state,
+    ChunkIdentity* identity
+) {
+    *sync_state = RawstorObjectSyncState{};
+    *identity = ChunkIdentity{};
     unsigned int version = 0;
     unsigned int state = 0;
+    unsigned int width = 0;
 
     int n = sscanf(
         trim(value).c_str(),
         "version=%u:state=%u:epoch=%" SCNx64 ":sync_id=%" SCNx64 ":h0=%" SCNx64
-        ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64,
-        &version, &state, &sync_state.epoch, &sync_state.sync_id,
-        &sync_state.sync_id_history[0], &sync_state.sync_id_history[1],
-        &sync_state.sync_id_history[2], &sync_state.sync_id_history[3]
+        ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64 ":width=%u",
+        &version, &state, &sync_state->epoch, &sync_state->sync_id,
+        &sync_state->sync_id_history[0], &sync_state->sync_id_history[1],
+        &sync_state->sync_id_history[2], &sync_state->sync_id_history[3], &width
     );
-    if (n != 8 || version != META_FORMAT_VERSION) {
+    if (n != 9 || version != META_FORMAT_VERSION) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
 
-    sync_state.state = static_cast<RawstorObjectSyncStateValue>(state);
-    return sync_state;
+    sync_state->state = static_cast<RawstorObjectSyncStateValue>(state);
+    identity->width = static_cast<uint8_t>(width);
 }
 
 rawstd::Task<size_t> Backend::pread(void* buf, size_t size, off_t offset) {

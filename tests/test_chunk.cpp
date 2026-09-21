@@ -92,7 +92,10 @@ open_object(rawio::Queue& queue, const rawstd::URI& location) {
 
     rawstor::Target target({rawstd::URI(location, uuid_string)});
 
-    RawstorObjectSpec spec{.size = 1u << 20, .width = 1};
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .width = 1,
+    };
     run(queue, target.create(queue, spec));
 
     return run(queue, rawstor::Chunk::create(queue, id, 0, target.uris()));
@@ -304,10 +307,14 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
 
     RawstorOSTFrameMetaPayload clean_meta = {
         .size = 1ull << 20,
+        .reserved1 = 0,
         .epoch = 0,
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .width = 1,
+        .reserved2 = 0,
+        .reserved3 = 0,
     };
 
     // Left open for the whole test -- see server.hpp's Session::~Session()

@@ -423,7 +423,10 @@ rawstd::Task<void> Backend::create(
     // window -- staged or revealed -- where the LV exists without one.
     RawstorObjectSyncState sync_state{};
     sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    std::string tag = std::string(rawstor_tag_prefix) + meta_encode(sync_state);
+    ChunkIdentity identity{};
+    identity.width = static_cast<uint8_t>(sp.width);
+    std::string tag =
+        std::string(rawstor_tag_prefix) + meta_encode(sync_state, identity);
 
     rawstd_info(
         "lvm: creating LV %s in VG %s, size %s\n", uuid_str, _vg_name.c_str(),
@@ -645,8 +648,9 @@ Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
     // CLEAN -- the caller treats any error here as "member stale, needs a
     // resync" (docs/mirroring.md, case F10).
     RawstorObjectSyncState sync_state;
+    ChunkIdentity identity{};
     try {
-        sync_state = meta_decode(tag);
+        meta_decode(tag, &sync_state, &identity);
     } catch (const std::system_error&) {
         rawstd_error("lvm: no recorded mirror state on %s\n", path.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
@@ -658,6 +662,7 @@ Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
     // outside rawstor.
     RawstorObjectMeta ret{};
     ret.spec = co_await spec(id, chunk_offset);
+    ret.spec.width = identity.width;
     ret.sync_state = sync_state;
 
     co_return ret;
@@ -668,11 +673,24 @@ rawstd::Task<void> Backend::set_sync_state(
     const RawstorObjectSyncState& sync_state
 ) {
     std::string path = _device_path(id, chunk_offset);
-    std::string new_tag =
-        std::string(rawstor_tag_prefix) + meta_encode(sync_state);
 
     std::string tags = co_await _lv_tags(path);
     std::string old_tag = find_tag(tags, rawstor_tag_prefix);
+
+    // identity is stamped once at create() and never changed again --
+    // preserve it across this rewrite. An LV that predates this feature
+    // (no tag, or one meta_decode() can't parse) has no identity to
+    // preserve; it degenerates to the all-zero default.
+    ChunkIdentity identity{};
+    RawstorObjectSyncState old_sync_state{};
+    try {
+        meta_decode(old_tag, &old_sync_state, &identity);
+    } catch (const std::system_error&) {
+        identity = ChunkIdentity{};
+    }
+
+    std::string new_tag =
+        std::string(rawstor_tag_prefix) + meta_encode(sync_state, identity);
 
     std::vector<std::string> argv = {"lvchange", "--config", lvm_config};
     if (!old_tag.empty()) {

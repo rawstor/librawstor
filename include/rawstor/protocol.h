@@ -124,12 +124,21 @@ struct RawstorOSTFrameSyncState {
  * object_id -- it isn't wrapped in a RawstorOSTFrameBasicPayload of its
  * own, so object_id/chunk_offset here are the only way the server learns
  * which object (and which of its chunks) to create.
+ *
+ * reserved1..4 are unused wire space -- room for whatever the upcoming
+ * MDS chunk-placement model (docs/mds.md, chunk_meta) ends up needing,
+ * reserved now so adding it later doesn't grow this payload or shift any
+ * other field's offset.
  */
 struct RawstorOSTFrameAllocatePayload {
     uint8_t object_id[16];
     uint64_t chunk_offset;
     uint64_t size;
-    uint32_t width;
+    uint64_t reserved1;
+    uint8_t width; /* redundancy: copies per chunk */
+    uint8_t reserved2;
+    uint16_t reserved3;
+    uint32_t reserved4;
 } RAWSTOR_PACKED;
 
 /* ALLOCATE request */
@@ -168,10 +177,16 @@ struct RawstorOSTFrameResponse {
  */
 struct RawstorOSTFrameMetaPayload {
     uint64_t size;
+    uint64_t reserved1; /* placement identity, docs/mds.md, chunk_meta --
+                            not acted on by anything yet, reserved for the
+                            upcoming MDS chunk-placement model. */
     uint64_t epoch;
     uint64_t sync_id;
     uint64_t sync_id_history[4];
     RawstorOSTSyncStateType state;
+    uint8_t width; /* redundancy: copies per chunk */
+    uint16_t reserved2;
+    uint32_t reserved3;
 } RAWSTOR_PACKED;
 
 /*
@@ -188,7 +203,7 @@ struct RawstorOSTFrameMetaPayload {
  */
 struct RawstorOSTFrameSpecPayload {
     uint64_t size;
-    uint32_t width;
+    uint8_t width; /* redundancy: copies per chunk */
 } RAWSTOR_PACKED;
 
 #ifdef __cplusplus

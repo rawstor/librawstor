@@ -57,7 +57,7 @@ Client::~Client() {
 }
 
 uint16_t
-Client::send_allocate(const RawstdUUID& id, uint64_t size, uint32_t width) {
+Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
     uint16_t cid = _next_cid++;
     RawstorOSTFrameAllocate frame = {
         .head =
@@ -67,7 +67,14 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, uint32_t width) {
                 .cid = cid,
             },
         .payload = {
-            .object_id = {}, .chunk_offset = 0, .size = size, .width = width
+            .object_id = {},
+            .chunk_offset = 0,
+            .size = size,
+            .reserved1 = 0,
+            .width = static_cast<uint8_t>(width),
+            .reserved2 = 0,
+            .reserved3 = 0,
+            .reserved4 = 0,
         },
     };
     std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));

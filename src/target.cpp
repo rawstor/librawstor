@@ -542,7 +542,10 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
     // (which every Backend::create() now validates, see
     // Backend::_validate_spec()), not sp.width itself (the group's own
     // width just validated above).
-    RawstorObjectSpec uri_sp{.size = sp.size, .width = 1};
+    RawstorObjectSpec uri_sp{
+        .size = sp.size,
+        .width = 1,
+    };
 
     // Every URI's CREATE goes out concurrently instead of one at a time.
     // This can't just gather() them, though: on failure, only the URIs

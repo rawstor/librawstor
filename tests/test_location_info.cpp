@@ -66,7 +66,10 @@ TEST(FileLocationInfoTest, empty_then_used) {
     EXPECT_EQ(info.used, (uint64_t)0);
     EXPECT_GT(info.total, (uint64_t)0);
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 1,
+    };
     res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
 
@@ -100,11 +103,17 @@ TEST(FileLocationInfoTest, multi_location_aggregation) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstorObjectSpec spec_a{.size = 1ull << 20, .width = 1};
+    RawstorObjectSpec spec_a{
+        .size = 1ull << 20,
+        .width = 1,
+    };
     ssize_t res = target_create(*queue, target_a, spec_a);
     EXPECT_EQ(res, 0);
 
-    RawstorObjectSpec spec_b{.size = 3ull << 20, .width = 1};
+    RawstorObjectSpec spec_b{
+        .size = 3ull << 20,
+        .width = 1,
+    };
     res = target_create(*queue, target_b, spec_b);
     EXPECT_EQ(res, 0);
 

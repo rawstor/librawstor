@@ -829,7 +829,11 @@ public:
                 .object_id = {},
                 .chunk_offset = chunk_offset,
                 .size = sp.size,
-                .width = (uint32_t)sp.width,
+                .reserved1 = 0,
+                .width = (uint8_t)sp.width,
+                .reserved2 = 0,
+                .reserved3 = 0,
+                .reserved4 = 0,
             },
         }) {
         memcpy(
@@ -1308,12 +1312,10 @@ Backend::spec(const RawstdUUID& id, uint64_t chunk_offset) {
             );
         ret.size = payload.size;
         // Same as every other backend's own spec() (blk::Backend::spec(),
-        // file::Backend::spec()): always 1, unconditionally -- if this one
-        // slot fails, exactly one replica is lost, regardless of how
-        // many copies might sit behind it on the far end. width is never
-        // a per-backend property; whatever the remote server's own
-        // payload.width says here never actually reaches anyone.
-        ret.width = 1;
+        // file::Backend::spec()): width is never a per-backend property,
+        // so it's left unset here -- Target::spec() overwrites it with
+        // the group's own URI count regardless of whatever the remote
+        // server's own payload.width says.
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -1340,6 +1342,7 @@ Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
                 static_cast<const void*>(response.data())
             );
         ret.spec.size = payload.size;
+        ret.spec.width = payload.width;
         ret.sync_state.epoch = payload.epoch;
         ret.sync_state.sync_id = payload.sync_id;
         memcpy(

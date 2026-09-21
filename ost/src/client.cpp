@@ -1101,7 +1101,7 @@ rawstd::DetachedTask Client::_spec(
         } else {
             RawstorOSTFrameSpecPayload body_out{
                 .size = spec.size,
-                .width = (uint32_t)spec.width,
+                .width = (uint8_t)spec.width,
             };
             std::vector<unsigned char> data(sizeof(body_out));
             memcpy(data.data(), &body_out, sizeof(body_out));
@@ -1180,11 +1180,15 @@ rawstd::DetachedTask Client::_meta(
         } else {
             RawstorOSTFrameMetaPayload body_out{
                 .size = meta.spec.size,
+                .reserved1 = 0,
                 .epoch = meta.sync_state.epoch,
                 .sync_id = meta.sync_state.sync_id,
                 .sync_id_history = {},
                 .state =
                     static_cast<RawstorOSTSyncStateType>(meta.sync_state.state),
+                .width = static_cast<uint8_t>(meta.spec.width),
+                .reserved2 = 0,
+                .reserved3 = 0,
             };
             memcpy(
                 body_out.sync_id_history, meta.sync_state.sync_id_history,

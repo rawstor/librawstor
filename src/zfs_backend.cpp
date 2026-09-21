@@ -258,8 +258,10 @@ rawstd::Task<void> Backend::create(
     // the zvol exists without one.
     RawstorObjectSyncState sync_state{};
     sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    ChunkIdentity identity{};
+    identity.width = static_cast<uint8_t>(sp.width);
     std::string prop =
-        std::string(rawstor_property) + "=" + meta_encode(sync_state);
+        std::string(rawstor_property) + "=" + meta_encode(sync_state, identity);
 
     rawstd_info(
         "zfs: creating zvol %s, size %s bytes\n", dataset.c_str(), size_buf
@@ -382,8 +384,9 @@ Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
     // trusted as CLEAN -- the caller treats any error here as "member
     // stale, needs a resync" (docs/mirroring.md, case F10).
     RawstorObjectSyncState sync_state;
+    ChunkIdentity identity{};
     try {
-        sync_state = meta_decode(output);
+        meta_decode(output, &sync_state, &identity);
     } catch (const std::system_error&) {
         rawstd_error("zfs: no recorded mirror state on %s\n", dataset.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
@@ -395,6 +398,7 @@ Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
     // outside rawstor.
     RawstorObjectMeta ret{};
     ret.spec = co_await spec(id, chunk_offset);
+    ret.spec.width = identity.width;
     ret.sync_state = sync_state;
 
     co_return ret;
@@ -405,8 +409,31 @@ rawstd::Task<void> Backend::set_sync_state(
     const RawstorObjectSyncState& sync_state
 ) {
     std::string dataset = _dataset(id, chunk_offset);
+
+    // identity is stamped once at create() and never changed again --
+    // read the existing property first so overwriting sync_state here
+    // doesn't clobber it. A zvol that predates this feature (property
+    // never set, or unparseable) has no identity to preserve; it
+    // degenerates to the all-zero default.
+    std::vector<std::string> get_argv = {"zfs",  "get",   "-H",
+                                         "-o",   "value", rawstor_property,
+                                         dataset};
+    ChunkIdentity identity{};
+    try {
+        std::string old_output =
+            co_await rawstor::run_command_capture(_queue, std::move(get_argv));
+        while (!old_output.empty() &&
+               (old_output.back() == '\n' || old_output.back() == '\r')) {
+            old_output.pop_back();
+        }
+        RawstorObjectSyncState old_sync_state{};
+        meta_decode(old_output, &old_sync_state, &identity);
+    } catch (const std::system_error&) {
+        identity = ChunkIdentity{};
+    }
+
     std::string prop =
-        std::string(rawstor_property) + "=" + meta_encode(sync_state);
+        std::string(rawstor_property) + "=" + meta_encode(sync_state, identity);
 
     std::vector<std::string> argv = {"zfs", "set", prop, dataset};
     try {

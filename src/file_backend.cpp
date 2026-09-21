@@ -304,12 +304,15 @@ rawstd::Task<void> Backend::create(
             RawstorObjectSyncState sync_state{};
             sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
 
+            ChunkIdentity identity{};
+            identity.width = static_cast<uint8_t>(sp.width);
+
             // meta_encode()'s own (shorter, variable-length) return value
             // is NUL-padded out to a fixed META_MAX_SIZE bytes here,
             // rather than written at its own length, so this file's own
             // byte length stays fixed across every rewrite -- see
             // set_sync_state() below for why that matters.
-            std::string encoded = meta_encode(sync_state);
+            std::string encoded = meta_encode(sync_state, identity);
             std::array<char, META_MAX_SIZE> disk{};
             memcpy(disk.data(), encoded.data(), encoded.size());
 
@@ -389,7 +392,6 @@ Backend::spec(const RawstdUUID& id, uint64_t chunk_offset) {
 
     RawstorObjectSpec ret{};
     ret.size = static_cast<uint64_t>(st.st_size);
-    ret.width = 1;
 
     co_return ret;
 }
@@ -407,6 +409,7 @@ Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
     int fd = co_await _queue.open(meta_path.c_str(), O_RDONLY | O_CLOEXEC, 0);
 
     RawstorObjectSyncState sync_state{};
+    ChunkIdentity identity{};
     std::exception_ptr eptr;
     try {
         std::array<char, META_MAX_SIZE> disk{};
@@ -416,7 +419,7 @@ Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
         try {
-            sync_state = meta_decode(std::string(disk.data()));
+            meta_decode(std::string(disk.data()), &sync_state, &identity);
         } catch (const std::system_error&) {
             rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
             throw;
@@ -431,6 +434,7 @@ Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
 
     RawstorObjectMeta ret{};
     ret.spec = co_await spec(id, chunk_offset);
+    ret.spec.width = identity.width;
     ret.sync_state = sync_state;
 
     co_return ret;
@@ -455,11 +459,25 @@ rawstd::Task<void> Backend::set_sync_state(
 
     std::exception_ptr eptr;
     try {
+        // identity is stamped once at create() and never changed again --
+        // read the existing record first so overwriting sync_state here
+        // doesn't clobber it.
+        std::array<char, META_MAX_SIZE> old_disk{};
+        size_t old_rval =
+            co_await _queue.pread(fd, old_disk.data(), old_disk.size(), 0);
+        if (old_rval != old_disk.size()) {
+            rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        RawstorObjectSyncState old_sync_state{};
+        ChunkIdentity identity{};
+        meta_decode(std::string(old_disk.data()), &old_sync_state, &identity);
+
         // See create()'s own comment: NUL-padded out to a fixed
         // META_MAX_SIZE bytes so this file's own byte length stays fixed
         // across every rewrite -- required here specifically, since this
         // is an in-place overwrite without O_TRUNC (see above).
-        std::string encoded = meta_encode(sync_state);
+        std::string encoded = meta_encode(sync_state, identity);
         std::array<char, META_MAX_SIZE> disk{};
         memcpy(disk.data(), encoded.data(), encoded.size());
 

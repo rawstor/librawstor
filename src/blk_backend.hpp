@@ -32,7 +32,10 @@ private:
     // comment below) rather than left for a caller to track separately,
     // so every subclass rejects a record from an incompatible version
     // the same way. Private: only meta_encode()/meta_decode()'s own
-    // implementation ever needs it.
+    // implementation ever needs it. Still 1 despite the width field
+    // added below -- this whole format is itself part of the unreleased
+    // 0.3.0 line (no live installation has ever written one), so there's
+    // nothing to stay compatible with yet.
     static constexpr unsigned int META_FORMAT_VERSION = 1;
 
     // Writes dispatched to the io queue whose completion hasn't arrived
@@ -113,6 +116,17 @@ protected:
     static constexpr size_t META_MAX_SIZE = 256;
 
 public:
+    // A chunk's own placement identity (docs/mds.md, chunk_meta): stamped
+    // at create, immutable afterwards, persisted alongside the mirror
+    // consistency state by meta_encode()/meta_decode() below -- width is
+    // the only field so far; the rest of chunk_meta (chunk_size,
+    // member_kind, ...) is reserved wire space until the upcoming MDS
+    // chunk-placement model actually needs it (see
+    // RawstorOSTFrameAllocatePayload/MetaPayload's own doc comments).
+    struct ChunkIdentity {
+        uint8_t width;
+    };
+
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     rawstd::Task<void> close() override final;
@@ -126,16 +140,18 @@ public:
     rawstd::Task<RawstorObjectSpec>
     spec(const RawstdUUID& id, uint64_t chunk_offset) override;
 
-    // Encodes/decodes a RawstorObjectSyncState as a compact
+    // Encodes/decodes a RawstorObjectSyncState plus a ChunkIdentity (the
+    // latter stamped at create and never changed again) as a compact
     // colon-separated string of hex fields, e.g.
-    // "version=1:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0" -- shared
-    // by every blk-backed subclass's own native per-copy metadata
-    // storage: lvm::Backend's LVM tag, zfs::Backend's ZFS user property,
-    // and file::Backend's own on-disk .meta file (NUL-padded out to
-    // META_MAX_SIZE bytes -- see its own doc comment for why). Only
-    // characters valid in all three are used (no comma, no whitespace).
-    // Public (not protected) so tests/ can exercise them directly
-    // without a real lvm/zfs/file backend of their own.
+    // "version=1:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:
+    // width=0" -- shared by every blk-backed
+    // subclass's own native per-copy metadata storage: lvm::Backend's LVM
+    // tag, zfs::Backend's ZFS user property, and file::Backend's own
+    // on-disk .meta file (NUL-padded out to META_MAX_SIZE bytes -- see
+    // its own doc comment for why). Only characters valid in all three
+    // are used (no comma, no whitespace). Public (not protected) so
+    // tests/ can exercise them directly without a real lvm/zfs/file
+    // backend of their own.
     //
     // meta_decode() reverses meta_encode(), throwing EPROTO if value is
     // not a well-formed encoding of the current META_FORMAT_VERSION
@@ -143,8 +159,13 @@ public:
     // was ever recorded" for a valid record, and a record from a
     // different format version, which this repo will never write again
     // once it's bumped).
-    static std::string meta_encode(const RawstorObjectSyncState& sync_state);
-    static RawstorObjectSyncState meta_decode(const std::string& value);
+    static std::string meta_encode(
+        const RawstorObjectSyncState& sync_state, const ChunkIdentity& identity
+    );
+    static void meta_decode(
+        const std::string& value, RawstorObjectSyncState* sync_state,
+        ChunkIdentity* identity
+    );
 
     // No universal answer for a raw block device -- left pure virtual
     // (inherited from rawstor::Backend) rather than given a default here,
