@@ -72,7 +72,7 @@ constexpr long staging_min_age_seconds = 300;
 
 // Guards Backend::_cleanup_staging_lvs() so the orphan sweep for a given
 // VG runs at most once per process, regardless of how many Backend
-// instances end up connected to it over time (one per Connection pool
+// instances end up connected to it over time (one per Slot pool
 // slot, plus reconnects) -- listing/removing the same (already-gone,
 // after the first sweep) orphans repeatedly would be pure waste.
 std::mutex swept_vgs_mutex;
@@ -298,7 +298,7 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     // + zero-fill + lvrename all succeeded, but the response never made
     // it back to the caller) needs to fail fast with EEXIST -- already
     // classified as permanent, never retried, by
-    // Connection::_with_retry()'s is_permanent_backend_error(), and the
+    // Slot::_with_retry()'s is_permanent_backend_error(), and the
     // same convention file::Backend's own O_EXCL create() already
     // follows -- instead of redoing the whole lvcreate + zero-fill cycle
     // only to fail later at the rename step with a generic, retried-
@@ -444,7 +444,7 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
 
     // Matches file::Backend::remove()'s own convention: a nonexistent LV
     // is ENOENT specifically (permanent -- never retried by
-    // Connection::_with_retry()'s is_permanent_backend_error()), not the
+    // Slot::_with_retry()'s is_permanent_backend_error()), not the
     // generic, retryable EIO lvremove itself would produce for the same
     // case.
     if (!co_await _exists(path)) {

@@ -487,7 +487,7 @@ Client::~Client() noexcept {
         // Fire-and-forget: the close's own Task<> is driven by `_queue`
         // (owned by Server, outliving every Client), not by this Client,
         // so it completes fine whether or not this destructor's caller
-        // sticks around to see it -- same as ~Object()'s own connection
+        // sticks around to see it -- same as ~Chunk()'s own connection
         // cleanup doesn't need Client to still exist either.
         int res = rawstor_object_close2(_object, ignore_close_result, nullptr);
         if (res < 0) {

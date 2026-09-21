@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_BACKEND_HPP
 #define RAWSTOR_BACKEND_HPP
 
-#include "object.hpp"
+#include "chunk.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -78,7 +78,7 @@ public:
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 
-    virtual rawstd::Task<void> set_object(Object* object) = 0;
+    virtual rawstd::Task<void> set_object(Chunk* chunk) = 0;
 
     virtual rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) = 0;
