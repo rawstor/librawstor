@@ -1,9 +1,9 @@
 #include "target.hpp"
 
-#include "connection.hpp"
+#include "chunk.hpp"
 #include "location.hpp"
 #include "object.hpp"
-#include "opts.h"
+#include "slot.hpp"
 
 #include <rawstor/target.h>
 
@@ -72,7 +72,7 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
     }
 }
 
-// A connect()ed Connection's metadata methods take a bare id (like the
+// A connect()ed Slot's metadata methods take a bare id (like the
 // Backend methods they wrap) rather than a full target -- extract it once
 // here instead of in every one of this file's own call sites.
 RawstdUUID uuid_from_target(const rawstd::URI& target) {
@@ -85,7 +85,7 @@ RawstdUUID uuid_from_target(const rawstd::URI& target) {
 }
 
 // One URI's worth of Target::create()/remove() work: connect a
-// single-backend Connection just for this call, do the one metadata op,
+// single-backend Slot just for this call, do the one metadata op,
 // close it again. Factored out so create()/remove() can fan these out
 // across every URI via rawstd::gather() instead of awaiting them one at a
 // time.
@@ -93,18 +93,18 @@ rawstd::Task<void> create_one(
     rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectSpec& sp
 ) {
     RawstdUUID id = uuid_from_target(target);
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, target.parent(), 1);
-    co_await cn->create(id, sp);
-    co_await cn->close();
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, target.parent(), 1);
+    co_await slot->create(id, sp);
+    co_await slot->close();
 }
 
 rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, target.parent(), 1);
-    co_await cn->remove(id);
-    co_await cn->close();
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, target.parent(), 1);
+    co_await slot->remove(id);
+    co_await slot->close();
 }
 
 // Shared by Target::remove() and the rollback path in Target::create():
@@ -117,21 +117,6 @@ remove_many(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
         tasks.push_back(remove_one(queue, target));
     }
     co_await rawstd::gather(std::move(tasks));
-}
-
-// One URI's worth of Target::open() work: stand up a Connection (its own
-// backend pool) against it and open() it against `object`. Factored out
-// so open() can fan these out across every URI via gather()-like
-// concurrency instead of awaiting them one at a time, by analogy with
-// Connection::create()'s own backend pool.
-rawstd::Task<std::unique_ptr<rawstor::Connection>>
-open_one(rawio::Queue& queue, const rawstd::URI& uri, rawstor::Object* object) {
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(
-            queue, uri.parent(), rawstor_opts_sessions()
-        );
-    co_await cn->open(object);
-    co_return cn;
 }
 
 // C ABI adapter for rawstor_target_open(): mirrors the rest of the
@@ -380,10 +365,10 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
     validate_same_uuid(_uris);
 
     RawstdUUID id = uuid_from_target(_uris.front());
-    std::unique_ptr<rawstor::Connection> cn =
-        co_await rawstor::Connection::create(queue, _uris.front().parent(), 1);
-    RawstorObjectSpec ret = co_await cn->spec(id);
-    co_await cn->close();
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, _uris.front().parent(), 1);
+    RawstorObjectSpec ret = co_await slot->spec(id);
+    co_await slot->close();
     co_return ret;
 }
 
@@ -404,62 +389,10 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
     validate_different_uris(_uris);
     validate_same_uuid(_uris);
 
-    // Object's constructor is Private-gated -- Target is a friend (see
-    // object.hpp's own doc comment on why), so this is the one place
-    // that actually builds one, by analogy with Connection::create():
-    // the heavy async work (standing up a Connection per URI and
-    // open()ing it) lives here, not in the constructor itself.
-    std::unique_ptr<Object> obj =
-        std::make_unique<Object>(Object::Private(), queue, *this);
-
-    // Every URI's Connection goes out concurrently instead of one at a
-    // time.
-    std::vector<rawstd::Task<std::unique_ptr<Connection>>> tasks;
-    tasks.reserve(_uris.size());
-    for (const auto& uri : _uris) {
-        tasks.push_back(open_one(queue, uri, obj.get()));
-    }
-
-    // co_await isn't allowed inside a catch block, so each task's own
-    // failure is only recorded here; rolling back the ones that DID
-    // succeed happens just below, outside the handler -- same shape as
-    // create()'s own rollback above.
-    std::vector<std::unique_ptr<Connection>> cns;
-    cns.reserve(_uris.size());
-    std::exception_ptr eptr;
-    for (auto& task : tasks) {
-        try {
-            cns.push_back(co_await task);
-        } catch (...) {
-            if (!eptr) {
-                eptr = std::current_exception();
-            }
-        }
-    }
-
-    if (eptr) {
-        // Close every Connection that DID succeed gracefully via
-        // co_await right here, rather than leaving it for ~Object()'s
-        // own run()-pumped synchronous cleanup: this coroutine can
-        // itself be driven by an outer synchronous run() pump (e.g.
-        // tests/test_blk_backend.cpp's own direct run()-pumped call
-        // into us), and ~Object() reentering that same dispatch loop
-        // via a *nested* run() is undefined behavior (same hazard
-        // blk::Backend::close()'s own doc comment describes) --
-        // obj->_cns never gets populated in this path, so ~Object()
-        // has nothing left to do anyway.
-        for (auto& cn : cns) {
-            try {
-                co_await cn->close();
-            } catch (const std::exception& e) {
-                rawstd_warning("Target::open(): %s\n", e.what());
-            }
-        }
-        std::rethrow_exception(eptr);
-    }
-
-    obj->_cns = std::move(cns);
-    co_return obj;
+    // The heavy connect/open work itself lives in Chunk::create() --
+    // Object here is just the thin wrapper handed back around it.
+    std::unique_ptr<Chunk> chunk = co_await Chunk::create(queue, *this);
+    co_return std::make_unique<Object>(Object::Private(), std::move(chunk));
 }
 
 } // namespace rawstor

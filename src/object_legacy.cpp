@@ -1,7 +1,12 @@
 #include "object.hpp"
+
+#include "target.hpp"
+
 #include <rawstor/location.h>
 #include <rawstor/object.h>
 #include <rawstor/target.h>
+
+#include <rawio/queue.hpp>
 
 #include <rawstd/logging.h>
 #include <rawstd/uri.hpp>

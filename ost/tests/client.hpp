@@ -17,7 +17,7 @@ namespace tests {
 // the other end handed directly to ostserver::Client::create() -- no real
 // Server, no TCP) -- deliberately not librawstor's own async client, so a
 // test controls exactly what bytes go out and when, independent of
-// Connection/Backend's own pipelining and retry behavior.
+// Slot/Backend's own pipelining and retry behavior.
 class Client final {
 private:
     int _fd;

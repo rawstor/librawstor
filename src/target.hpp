@@ -16,20 +16,20 @@ namespace rawstor {
 
 class Location;
 // Only named here as std::unique_ptr<Object>'s pointee (open()'s return
-// type) -- Object itself needs Target's full definition (it holds one as
-// a member), so this stays a forward declaration to avoid a header
-// cycle; target.cpp includes "object.hpp" for the definition.
+// type) -- Object itself needs the complete definition of Chunk to hold
+// one, not Target's, so this stays a forward declaration to avoid a
+// header cycle; target.cpp includes "object.hpp"/"chunk.hpp" for those.
 class Object;
 
 // A Target addresses one specific object across every URI in `uris` (see
 // docs/locations_and_targets.md). Deliberately lightweight -- unlike
-// Object, it never holds a Connection between calls; create()/spec()/
-// remove() each open a Connection per URI just for that one call and
-// close it again before returning, same as the code they replace used to
-// do. open() is the one exception that needs a Connection to survive past
-// the call -- it builds the returned Object itself (a friend of Object,
-// by analogy with Connection::create()), keeping one Connection per URI
-// alive in the Object's own pool.
+// Chunk, it never holds a Slot between calls; create()/spec()/remove()
+// each open a Slot per URI just for that one call and close it again
+// before returning, same as the code they replace used to do. open() is
+// the one exception that needs a Slot to survive past the call -- it
+// builds a Chunk (via Chunk::create(), by analogy with Slot::create()),
+// keeping one Slot per URI alive in the Chunk's own pool, then wraps it
+// in the Object it hands back.
 class Target final {
 private:
     std::vector<rawstd::URI> _uris;

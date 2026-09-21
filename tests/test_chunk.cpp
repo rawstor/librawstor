@@ -1,4 +1,4 @@
-#include "object.hpp"
+#include "chunk.hpp"
 #include "opts.h"
 #include "server.hpp"
 #include "session.hpp"
@@ -26,7 +26,7 @@
 
 namespace {
 
-// Duplicate of object.cpp's own `run()` -- see that one's doc comment for
+// Duplicate of chunk.cpp's own `run()` -- see that one's doc comment for
 // why it isn't shared.
 template <typename T>
 T run(rawio::Queue& q, rawstd::Task<T> t) {
@@ -57,9 +57,9 @@ public:
     ThrottleOptsOverride& operator=(ThrottleOptsOverride&&) = delete;
 };
 
-// Stands up a real file:// object for the test to drive Object::pwrite()/
+// Stands up a real file:// object for the test to drive Chunk::pwrite()/
 // flush() directly -- and inspect writes_in_flight()/flush()'s wait for it.
-std::unique_ptr<rawstor::Object>
+std::unique_ptr<rawstor::Chunk>
 open_object(rawio::Queue& queue, const rawstd::URI& location) {
     RawstdUUID id;
     if (rawstd_uuid7_init(&id) != 0) {
@@ -73,7 +73,7 @@ open_object(rawio::Queue& queue, const rawstd::URI& location) {
     RawstorObjectSpec spec{.size = 1u << 20};
     run(queue, target.create(queue, spec));
 
-    return run(queue, target.open(queue));
+    return run(queue, rawstor::Chunk::create(queue, target));
 }
 
 // Waits for a value set on rawstor::tests::Server's own background thread
@@ -102,13 +102,13 @@ void wait_for_nonzero(rawio::Queue& queue, const std::atomic<uint16_t>& value) {
 // flush() must not report success while a write issued before it is still
 // outstanding -- otherwise a caller relying on flush() for durability could
 // observe success before that write's data is actually durable. See
-// object.hpp's _writes_issued/_writes_completed/_flush_waiters.
-TEST(ObjectTest, flush_waits_for_writes_issued_before_it) {
+// chunk.hpp's _writes_issued/_writes_completed/_flush_waiters.
+TEST(ChunkTest, flush_waits_for_writes_issued_before_it) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
-    std::unique_ptr<rawstor::Object> object = open_object(*queue, location);
+    std::unique_ptr<rawstor::Chunk> object = open_object(*queue, location);
 
     std::string payload = "durable-me";
     rawstd::Task<size_t> write_task =
@@ -143,7 +143,7 @@ TEST(ObjectTest, flush_waits_for_writes_issued_before_it) {
 // could never actually occur and flush() would starve forever. Issuing a
 // large batch of writes strictly after flush() and confirming most of them
 // are still outstanding once flush() resolves demonstrates flush() is
-// waiting for its own fixed snapshot (see object.hpp), not for the backlog
+// waiting for its own fixed snapshot (see chunk.hpp), not for the backlog
 // to empty out.
 //
 // A throttle limit of 1 is what keeps this deterministic rather than a
@@ -155,7 +155,7 @@ TEST(ObjectTest, flush_waits_for_writes_issued_before_it) {
 // backend fast enough (observed on CI, against a tmpfs-backed file) can
 // race every extra write to completion before flush() is even checked
 // again, making the assertion below flaky.
-TEST(ObjectTest, flush_does_not_wait_for_writes_issued_after_it) {
+TEST(ChunkTest, flush_does_not_wait_for_writes_issued_after_it) {
     constexpr unsigned int throttle_limit = 1;
     constexpr unsigned int extra_writes = 500;
     std::string payload = "durable-me";
@@ -168,7 +168,7 @@ TEST(ObjectTest, flush_does_not_wait_for_writes_issued_after_it) {
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
-    std::unique_ptr<rawstor::Object> object = open_object(*queue, location);
+    std::unique_ptr<rawstor::Chunk> object = open_object(*queue, location);
 
     rawstd::Task<size_t> write_task =
         object->pwrite(payload.data(), payload.size(), 0, false);
@@ -213,12 +213,12 @@ TEST(ObjectTest, flush_does_not_wait_for_writes_issued_after_it) {
 // another) must each resolve correctly, independent of one another --
 // _flush_waiters holds one (target, handle) entry per call, so this isn't
 // a single shared piece of state that a second flush() could stomp on.
-TEST(ObjectTest, concurrent_flush_calls_all_resolve) {
+TEST(ChunkTest, concurrent_flush_calls_all_resolve) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
-    std::unique_ptr<rawstor::Object> object = open_object(*queue, location);
+    std::unique_ptr<rawstor::Chunk> object = open_object(*queue, location);
 
     std::string payload = "durable-me";
     rawstd::Task<size_t> write1 =
@@ -249,14 +249,14 @@ TEST(ObjectTest, concurrent_flush_calls_all_resolve) {
 
 // close() must not proceed to close a connection while a write issued
 // before it is still outstanding -- otherwise that write's own I/O could
-// race the connection/fd being torn down under it. See Object::close()'s
+// race the connection/fd being torn down under it. See Chunk::close()'s
 // own doc comment (it calls flush(), which already has this wait).
-TEST(ObjectTest, close_waits_for_writes_issued_before_it) {
+TEST(ChunkTest, close_waits_for_writes_issued_before_it) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
-    std::unique_ptr<rawstor::Object> object = open_object(*queue, location);
+    std::unique_ptr<rawstor::Chunk> object = open_object(*queue, location);
 
     std::string payload = "durable-me";
     rawstd::Task<size_t> write_task =
@@ -290,7 +290,7 @@ TEST(ObjectTest, close_waits_for_writes_issued_before_it) {
 // scripted rawstor::tests::Server connection and answers write B's
 // (issued after flush()) wire request before write A's, exactly as a
 // real OST server answering out of cid order could.
-TEST(ObjectTest, flush_does_not_resolve_on_write_completing_out_of_order) {
+TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     rawstor::tests::Server server(8753, 256);
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
@@ -310,12 +310,13 @@ TEST(ObjectTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     run(*queue, target.create(*queue, spec));
 
     // Left open for the whole test -- see server.hpp's Session::~Session()
-    // doc comment; closing it early would drop the connection Object is
+    // doc comment; closing it early would drop the connection Chunk is
     // about to hold onto for its writes/flush below.
     rawstor::tests::Session s(server);
     s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
 
-    std::unique_ptr<rawstor::Object> object = run(*queue, target.open(*queue));
+    std::unique_ptr<rawstor::Chunk> object =
+        run(*queue, rawstor::Chunk::create(*queue, target));
 
     std::string payload_a = "write-a-";
     std::string payload_b = "write-b-";
@@ -400,7 +401,7 @@ TEST(ObjectTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     EXPECT_EQ(write_a.get(), payload_a.size());
 
     // Only now should flush() have moved on to its own wire-level FLUSH
-    // (see Object::flush()'s own comment: it waits for the barrier first).
+    // (see Chunk::flush()'s own comment: it waits for the barrier first).
     std::atomic<uint16_t> cid_flush{0};
     server.read(
         "FLUSH head <<<", sizeof(RawstorOSTFrameHead),

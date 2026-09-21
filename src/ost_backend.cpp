@@ -58,11 +58,11 @@ int validate_result(size_t size, size_t result) noexcept {
     return EAGAIN;
 }
 
-// Connection::_with_retry() no longer distinguishes a well-formed
+// Slot::_with_retry() no longer distinguishes a well-formed
 // rejection from the backend (response->body.res < 0) from a broken/
 // malformed wire -- every failure here just reconnects and retries, up
 // to the same rawstor_opts_io_attempts() budget, unless it's one
-// is_permanent_backend_error() (see connection.cpp) already knows can
+// is_permanent_backend_error() (see slot.cpp) already knows can
 // never succeed on retry. EBADMSG is one such body.res value: the OST
 // server sends it (see ost/src/client.cpp) only when the payload it just
 // received doesn't hash to what the client declared, meaning the client
@@ -141,7 +141,7 @@ private:
 
     // telemetry: request_cb() stamps _t_send_done once the request is
     // fully on the wire; _t_created (below, stamped at construction --
-    // effectively the moment Connection::_op() dispatched this attempt)
+    // effectively the moment Slot::_op() dispatched this attempt)
     // to _t_send_done is slat, _t_send_done to the moment a response is
     // ready is rtt, and the co_await resolving is clat. 0 (never a real
     // timestamp, see telemetry::now()) marks "never sent", so _dispatch()
@@ -173,7 +173,7 @@ protected:
     // Backend::_ops's own copy of it (e.g. a still-pending send/sendmsg
     // completion keeps a BackendOp alive independently, via its own
     // captured shared_ptr, even after the owning Backend is gone from
-    // Connection::_backends and its _ops member has been destroyed). This
+    // Slot::_backends and its _ops member has been destroyed). This
     // keeps the Backend itself alive for as long as any BackendOp -- in
     // _ops or floating in a pending completion closure -- still needs it.
     std::shared_ptr<rawstor::ost::Backend> _backend;
@@ -857,7 +857,7 @@ BackendOp* Backend::_find_op(uint16_t cid) {
 
 void Backend::_add_op(const std::shared_ptr<BackendOp>& op) {
     if (_read_event == nullptr) {
-        // _recv_pump has already exited (e.g. the connection died right
+        // _recv_pump has already exited (e.g. the slot died right
         // after a previous op's response, before this one was ever
         // issued -- _connect() itself and this op's own caller can both
         // legitimately run to completion in between, with nothing to
@@ -910,8 +910,8 @@ rawstd::Task<void> Backend::_connect() {
     // be fixed by retrying but is otherwise indistinguishable here from a
     // transient one -- means "couldn't establish this backend"; all of
     // them surface as a plain std::system_error, which
-    // Connection::_with_retry() reacts to by reconnecting and retrying
-    // (see connection.cpp).
+    // Slot::_with_retry() reacts to by reconnecting and retrying
+    // (see slot.cpp).
     if (!location().path().str().empty() && location().path().str() != "/") {
         rawstd_error("Empty path expected: %s\n", location().str().c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -1021,10 +1021,10 @@ rawstd::Task<void> Backend::close() {
     // left to clean up" and returns without touching _ops -- true when
     // close() is called once every op has already finished, but not when
     // a *sibling* op's own failure is what triggered this close() (e.g.
-    // via Connection::invalidate_backend(), reacting to any
-    // std::system_error one op's own Connection::_with_retry() caught --
-    // a dropped connection, but just as easily a well-formed error
-    // response for one op on an otherwise perfectly healthy connection,
+    // via Slot::invalidate_backend(), reacting to any
+    // std::system_error one op's own Slot::_with_retry() caught --
+    // a dropped slot, but just as easily a well-formed error
+    // response for one op on an otherwise perfectly healthy slot,
     // which _recv_pump has no way to notice on its own since nothing
     // about the wire ever looked wrong): this backend's other, already-
     // sent ops are still sitting in _ops purely waiting on a response
@@ -1187,14 +1187,14 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-rawstd::Task<void> Backend::set_object(Object* object) {
+rawstd::Task<void> Backend::set_object(Chunk* chunk) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
     assert(_read_event != nullptr);
 
     co_await _basic_request(
-        RAWSTOR_CMD_SET_OBJECT, "set_object", object->target().id(), 0
+        RAWSTOR_CMD_SET_OBJECT, "set_object", chunk->target().id(), 0
     );
 }
 
@@ -1237,8 +1237,8 @@ rawstd::DetachedTask Backend::_recv_pump(
 
             BackendOp* op = backend->_find_op(cid);
             if (op == nullptr) {
-                // A stray/late response for an op this connection
-                // already failed and that Connection::_op() has since
+                // A stray/late response for an op this slot
+                // already failed and that Slot::_op() has since
                 // retried on a different backend. We have no op to ask
                 // whether this response carries a body, so we can no
                 // longer trust where the next message starts either --
@@ -1249,7 +1249,7 @@ rawstd::DetachedTask Backend::_recv_pump(
             }
 
             // op->response_head_cb() synchronously resumes whatever is
-            // co_await-ing that op (Connection::_op()'s retry chain,
+            // co_await-ing that op (Slot::_op()'s retry chain,
             // eventually a detached C-ABI adapter rethrowing after its
             // callback signalled failure) -- but resuming a
             // rawstd::Task<T> never lets an exception escape back into

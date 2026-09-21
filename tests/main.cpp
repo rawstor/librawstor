@@ -10,7 +10,7 @@ int main(int argc, char** argv) {
     // Several regression tests here (e.g. OstIOTest.write_disconnect_
     // concurrent) script an in-process fake OST server around the exact,
     // deterministic sequence and timing of reconnect attempts
-    // Connection::_with_retry() makes with no backoff -- the real
+    // Slot::_with_retry() makes with no backoff -- the real
     // RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE default (a real, if small, sleep
     // between attempts) shifts that timing enough to desync the fake
     // server's fixed script from the client's actual attempts, wedging a

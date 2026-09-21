@@ -39,8 +39,8 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         backend.hpp \
                         blk_backend.cpp \
                         blk_backend.hpp \
-                        connection.cpp \
-                        connection.hpp \
+                        chunk.cpp \
+                        chunk.hpp \
                         file_backend.cpp \
                         file_backend.hpp \
                         list.c \
@@ -55,6 +55,8 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         ost_backend.hpp \
                         opts.c \
                         opts.h \
+                        slot.cpp \
+                        slot.hpp \
                         subprocess.cpp \
                         subprocess.hpp \
                         rawstor.cpp \

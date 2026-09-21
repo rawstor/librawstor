@@ -46,7 +46,7 @@ private:
     // fires opportunistically on whichever this Backend's caller happens
     // to invoke first (e.g. a process that only ever lists/queries a VG,
     // never creating anything itself, still gets orphans swept), rather
-    // than once per Backend instance (one gets constructed per Connection
+    // than once per Backend instance (one gets constructed per Slot
     // pool slot, plus reconnects).
     rawstd::Task<void> _cleanup_staging_lvs();
 

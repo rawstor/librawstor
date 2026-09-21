@@ -157,12 +157,12 @@ rawstd::Task<void> Backend::close() {
     co_await _queue.close(f);
 }
 
-rawstd::Task<void> Backend::set_object(Object* object) {
+rawstd::Task<void> Backend::set_object(Chunk* chunk) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
 
-    int fd = co_await _open(object->target().id());
+    int fd = co_await _open(chunk->target().id());
     set_fd(fd);
 }
 
