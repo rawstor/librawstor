@@ -197,6 +197,9 @@ jobs:
         cp deb/librawstor/rawstor-vhost.install debian
         cp deb/librawstor/rawstor-vhost.postinst debian
         cp deb/librawstor/rawstor-vhost.prerm debian
+        cp deb/librawstor/rawstor-vduse.install debian
+        cp deb/librawstor/rawstor-vduse.postinst debian
+        cp deb/librawstor/rawstor-vduse.prerm debian
         cp deb/librawstor/rules debian
         cp systemd/rawstor-ost.service debian
         cp COPYING debian/copyright
@@ -209,7 +212,7 @@ jobs:
         echo '```' >> $GITHUB_STEP_SUMMARY
     - name: ls
       run: |
-        for i in librawstor_*.deb librawstor-dev_*.deb rawstor-ost_*.deb rawstor-vhost_*.deb *.ddeb; do \
+        for i in librawstor_*.deb librawstor-dev_*.deb rawstor-ost_*.deb rawstor-vhost_*.deb rawstor-vduse_*.deb *.ddeb; do \
           [ -e "$i" ] || continue; \
           echo "# $i" >> $GITHUB_STEP_SUMMARY; \
           echo '```' >> $GITHUB_STEP_SUMMARY
@@ -224,6 +227,7 @@ jobs:
           librawstor-dev_*.deb
           rawstor-ost_*.deb
           rawstor-vhost_*.deb
+          rawstor-vduse_*.deb
           *.ddeb
         if-no-files-found: error
 
@@ -341,6 +345,14 @@ jobs:
         systemctl is-active rawstor-vhost@${UUID}.service
         test -S /run/rawstor/${UUID}.sock
         sudo systemctl disable --now rawstor-vhost@${UUID}.service
+    - name: install-rawstor-vduse
+      # No vduse kernel module on GitHub-hosted runners -- same reasoning
+      # as rawstor-vhost's own confirm-it-runs-only test above, one step
+      # further: not even the module load is guaranteed here, so this
+      # only confirms the package installs and the binary runs.
+      run: sudo apt install -y ./librawstor.deb/rawstor-vduse_*.deb
+    - name: test-rawstor-vduse
+      run: rawstor-vduse --version
     - name: install-python3-rawstor
       run: sudo apt install -y ./python3-rawstor-${{ matrix.os }}.deb/python*-rawstor_*.deb
     - name: test-python3-rawstor
@@ -519,6 +531,12 @@ jobs:
       # containers have no systemd/PID 1, so the @-instance unit cannot be
       # started via systemctl here -- just confirm the binary is installed.
       run: rawstor-vhost --version
+    - name: install-rawstor-vduse
+      run: dnf -y install ./librawstor.rpm/rawstor-vduse-[0-9]*.rpm
+    - name: test-rawstor-vduse
+      # no vduse kernel module in this container either -- same
+      # confirm-it-runs-only reasoning as rawstor-vhost above.
+      run: rawstor-vduse --version
     - name: install-python3-rawstor
       run: dnf -y install ./python3-rawstor-${{ matrix.os }}.rpm/python3*-rawstor-[0-9]*.rpm
     - name: test-python3-rawstor
