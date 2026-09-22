@@ -36,7 +36,9 @@ class Object;
 // the one exception that needs a Slot to survive past the call -- it
 // builds one Chunk per chunk group (via Chunk::create(), by analogy with
 // Slot::create()), keeping one Slot per URI alive in each Chunk's own
-// pool, then wraps them in the Object it hands back.
+// pool, then wraps them all in the single Object it hands back (Object's
+// own ChunkMap routes each I/O request onto whichever chunk(s) it
+// touches).
 class Target final {
 public:
     // One URI's own trailing path identity: `/<id>[/<offset>]` -- the
@@ -96,6 +98,11 @@ public:
         rawio::Queue& queue, const RawstorObjectSyncState& sync_state
     );
     rawstd::Task<void> remove(rawio::Queue& queue);
+    // Opens every chunk group into a single Object that routes each I/O
+    // request onto whichever chunk(s) it touches (see this method's own
+    // comment in target.cpp for how a multi-chunk-group target learns
+    // its own chunk_size/total size without a dedicated wire field for
+    // either).
     rawstd::Task<std::unique_ptr<Object>> open(rawio::Queue& queue);
 };
 

@@ -286,6 +286,7 @@ TEST(MirrorQuorumTest, open_refused_without_quorum_n2) {
     RawstorObjectSpec spec{
         .size = 1ull << 20,
         .width = 2,
+        .chunk_size = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -315,6 +316,7 @@ TEST(MirrorQuorumTest, all_mirrors_down_at_open_refused) {
     RawstorObjectSpec spec{
         .size = 1ull << 20,
         .width = 3,
+        .chunk_size = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -335,6 +337,7 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
     RawstorObjectSpec spec{
         .size = 1ull << 20,
         .width = 3,
+        .chunk_size = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -377,6 +380,7 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
     RawstorObjectSpec spec{
         .size = 1ull << 20,
         .width = 2,
+        .chunk_size = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -432,6 +436,7 @@ TEST(MirrorQuorumTest, split_brain_refused) {
     RawstorObjectSpec spec{
         .size = 1ull << 20,
         .width = 2,
+        .chunk_size = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -463,6 +468,7 @@ TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
     RawstorObjectSpec spec{
         .size = 1ull << 20,
         .width = 2,
+        .chunk_size = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -499,6 +505,7 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
     RawstorObjectSpec spec{
         .size = 1ull << 20,
         .width = 2,
+        .chunk_size = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -549,6 +556,7 @@ TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
     RawstorObjectSpec spec{
         .size = 1ull << 20,
         .width = 2,
+        .chunk_size = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -610,6 +618,7 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     RawstorObjectSpec spec{
         .size = size,
         .width = 2,
+        .chunk_size = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -671,6 +680,7 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     RawstorObjectSpec spec{
         .size = 1ull << 20,
         .width = 3,
+        .chunk_size = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -687,6 +697,7 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     RawstorObjectSpec member_spec{
         .size = 1ull << 20,
         .width = 1,
+        .chunk_size = 0,
     };
     ASSERT_EQ(target_create(queue, members.target(2), member_spec), 0);
 
@@ -718,6 +729,7 @@ TEST(MirrorQuorumTest, clean_close_stable_identity) {
     RawstorObjectSpec spec{
         .size = 1ull << 20,
         .width = 2,
+        .chunk_size = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -760,14 +772,14 @@ TEST(MirrorOstTest, read_failover_and_repair) {
 
     RawstorOSTFrameMetaPayload legacy = {
         .size = 1ull << 20,
-        .reserved1 = 0,
         .epoch = 0,
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
         .width = 1,
+        .reserved1 = 0,
         .reserved2 = 0,
-        .reserved3 = 0,
     };
 
     /*
@@ -851,14 +863,14 @@ TEST(MirrorOstTest, degrade_and_continue) {
 
     RawstorOSTFrameMetaPayload legacy = {
         .size = 1ull << 20,
-        .reserved1 = 0,
         .epoch = 0,
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
         .width = 1,
+        .reserved1 = 0,
         .reserved2 = 0,
-        .reserved3 = 0,
     };
 
     // Target::open() fetches spec() from every reachable slot
@@ -942,14 +954,14 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
 
     RawstorOSTFrameMetaPayload legacy = {
         .size = 1ull << 20,
-        .reserved1 = 0,
         .epoch = 0,
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
         .width = 1,
+        .reserved1 = 0,
         .reserved2 = 0,
-        .reserved3 = 0,
     };
 
     {
@@ -1011,14 +1023,14 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
 
     RawstorOSTFrameMetaPayload legacy = {
         .size = 1ull << 20,
-        .reserved1 = 0,
         .epoch = 0,
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
         .width = 1,
+        .reserved1 = 0,
         .reserved2 = 0,
-        .reserved3 = 0,
     };
 
     {

@@ -119,9 +119,11 @@ public:
     // A chunk's own placement identity (docs/mds.md, chunk_meta): stamped
     // at create, immutable afterwards, persisted alongside the mirror
     // consistency state by meta_encode()/meta_decode() below -- width is
-    // the only field so far; the rest of chunk_meta (chunk_size,
-    // member_kind, ...) is reserved wire space until the upcoming MDS
-    // chunk-placement model actually needs it (see
+    // the only field so far. chunk_shift (RawstorOSTFrameAllocatePayload's
+    // own doc comment on why a shift, not the full chunk_size) is now
+    // carried over the wire but this backend doesn't persist it; the rest
+    // of chunk_meta (member_kind, ...) remains reserved wire space until
+    // the upcoming MDS chunk-placement model actually needs it (see
     // RawstorOSTFrameAllocatePayload/MetaPayload's own doc comments).
     struct ChunkIdentity {
         uint8_t width;

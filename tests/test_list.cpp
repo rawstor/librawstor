@@ -91,6 +91,7 @@ TEST(ListTest, merge) {
     RawstorObjectSpec spec{
         .size = 1ull << 20,
         .width = 1,
+        .chunk_size = 0,
     };
     res = create(target11, spec);
     ASSERT_EQ(res, 0);
@@ -186,6 +187,7 @@ TEST(ListTest, pagination) {
         RawstorObjectSpec spec{
             .size = 1ull << 10,
             .width = 1,
+            .chunk_size = 0,
         };
 
         char target[65536];

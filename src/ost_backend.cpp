@@ -110,6 +110,18 @@ int validate_hash(uint64_t hash, uint64_t expected) noexcept {
     return EPROTO;
 }
 
+// RawstorOSTFrameAllocatePayload::chunk_shift's own doc comment on why a
+// shift, not the full value -- `chunk_size` is always a power of two
+// (RawstorObjectSpec's own doc comment, target.h), 0 meaning no chunking.
+uint8_t chunk_size_to_shift(uint64_t chunk_size) noexcept {
+    return chunk_size == 0 ? 0
+                           : static_cast<uint8_t>(__builtin_ctzll(chunk_size));
+}
+
+uint64_t chunk_shift_to_size(uint8_t chunk_shift) noexcept {
+    return chunk_shift == 0 ? 0 : (1ull << chunk_shift);
+}
+
 } // namespace
 
 namespace {
@@ -829,11 +841,10 @@ public:
                 .object_id = {},
                 .chunk_offset = chunk_offset,
                 .size = sp.size,
-                .reserved1 = 0,
+                .chunk_shift = chunk_size_to_shift(sp.chunk_size),
                 .width = (uint8_t)sp.width,
                 .reserved2 = 0,
                 .reserved3 = 0,
-                .reserved4 = 0,
             },
         }) {
         memcpy(
@@ -1343,6 +1354,7 @@ Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
             );
         ret.spec.size = payload.size;
         ret.spec.width = payload.width;
+        ret.spec.chunk_size = chunk_shift_to_size(payload.chunk_shift);
         ret.sync_state.epoch = payload.epoch;
         ret.sync_state.sync_id = payload.sync_id;
         memcpy(

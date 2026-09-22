@@ -69,6 +69,7 @@ TEST(FileLocationInfoTest, empty_then_used) {
     RawstorObjectSpec spec{
         .size = 1ull << 20,
         .width = 1,
+        .chunk_size = 0,
     };
     res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
@@ -106,6 +107,7 @@ TEST(FileLocationInfoTest, multi_location_aggregation) {
     RawstorObjectSpec spec_a{
         .size = 1ull << 20,
         .width = 1,
+        .chunk_size = 0,
     };
     ssize_t res = target_create(*queue, target_a, spec_a);
     EXPECT_EQ(res, 0);
@@ -113,6 +115,7 @@ TEST(FileLocationInfoTest, multi_location_aggregation) {
     RawstorObjectSpec spec_b{
         .size = 3ull << 20,
         .width = 1,
+        .chunk_size = 0,
     };
     res = target_create(*queue, target_b, spec_b);
     EXPECT_EQ(res, 0);

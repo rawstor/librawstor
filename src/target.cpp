@@ -538,45 +538,65 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
         }
     }
 
-    // Every URI is one copy: each one's own create() gets width == 1
-    // (which every Backend::create() now validates, see
-    // Backend::_validate_spec()), not sp.width itself (the group's own
-    // width just validated above).
-    RawstorObjectSpec uri_sp{
-        .size = sp.size,
-        .width = 1,
-    };
-
-    // Every URI's CREATE goes out concurrently instead of one at a time.
-    // This can't just gather() them, though: on failure, only the URIs
-    // THIS call actually created may be rolled back -- e.g.
-    // test_create_twice creating an already-existing target fails with
-    // EEXIST, and rolling back every URI regardless (as if remove()-ing
-    // an uncreated one were always harmless) would delete the
-    // pre-existing object a completely unrelated, earlier call created.
-    // So each task's own success/failure is tracked here instead of going
-    // through gather()'s single pass/fail-the-whole-batch result.
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(_uris.size());
-    for (const auto& target : _uris) {
-        tasks.push_back(create_one(queue, target, uri_sp));
-    }
-
+    // Every URI actually created so far, across every chunk group --
+    // rolled back as one flat list on any later failure (below), so a
+    // chunk that fails partway through still gets its own already-
+    // created mirrors undone alongside every earlier chunk's.
     std::vector<rawstd::URI> created;
-    created.reserve(_uris.size());
-
-    // co_await isn't allowed inside a catch block, so the failure is only
-    // recorded here; rolling back happens just below, outside the
-    // handler.
     std::exception_ptr eptr;
-    for (size_t i = 0; i < _uris.size(); ++i) {
-        try {
-            co_await tasks[i];
-            created.push_back(_uris[i]);
-        } catch (...) {
-            if (!eptr) {
-                eptr = std::current_exception();
+
+    for (const std::vector<rawstd::URI>& uris : chunks) {
+        // A single chunk group (the ordinary case) gets `sp.size`
+        // unmodified; only a genuine multi-chunk-group target splits
+        // it, sp.size then being the whole object's own total size and
+        // this chunk's own share being `sp.chunk_size` starting at its
+        // own offset (extract_offset(), already stamped on its own
+        // URIs) -- smaller for the last, short chunk.
+        RawstorObjectSpec chunk_sp = sp;
+        // Every URI is one copy: each one's own create() gets width ==
+        // 1 (which every Backend::create() now validates, see
+        // Backend::_validate_spec()), not sp.width itself (the group's
+        // own width just validated above).
+        chunk_sp.width = 1;
+        if (chunks.size() > 1) {
+            uint64_t offset = extract_offset(uris.front());
+            chunk_sp.size = std::min(sp.chunk_size, sp.size - offset);
+        }
+
+        // Every URI's CREATE goes out concurrently instead of one at a
+        // time. This can't just gather() them, though: on failure, only
+        // the URIs THIS call actually created may be rolled back -- e.g.
+        // test_create_twice creating an already-existing target fails
+        // with EEXIST, and rolling back every URI regardless (as if
+        // remove()-ing an uncreated one were always harmless) would
+        // delete the pre-existing object a completely unrelated, earlier
+        // call created. So each task's own success/failure is tracked
+        // here instead of going through gather()'s single pass/fail-the-
+        // whole-batch result.
+        std::vector<rawstd::Task<void>> tasks;
+        tasks.reserve(uris.size());
+        for (const auto& target : uris) {
+            tasks.push_back(create_one(queue, target, chunk_sp));
+        }
+
+        // co_await isn't allowed inside a catch block, so the failure is
+        // only recorded here; rolling back happens just below, outside
+        // the handler.
+        for (size_t i = 0; i < uris.size(); ++i) {
+            try {
+                co_await tasks[i];
+                created.push_back(uris[i]);
+            } catch (...) {
+                if (!eptr) {
+                    eptr = std::current_exception();
+                }
             }
+        }
+
+        if (eptr) {
+            // A later chunk's own mirrors were never even attempted --
+            // nothing of theirs to roll back.
+            break;
         }
     }
 
@@ -698,23 +718,53 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) {
     co_await remove_many(queue, _uris);
 }
 
-// Only ever opens the target's own first chunk group: routing I/O across
-// more than one chunk needs to know where a logical offset stops
-// belonging to one chunk and starts belonging to the next (a volume's
-// own chunk_size), which no plain target has any concept of -- the
-// bucket that introduces multi-chunk objects is also the one that
-// carries that policy (docs/mds.md), and Object grows the machinery to
-// route across chunks with it, not before.
+// Opens the object this target addresses. A single chunk group
+// ('chunks.size() == 1', the ordinary case) becomes a single-chunk
+// Object, whose size is simply whatever Chunk::create() itself reports
+// (spec().size) -- no chunking above the single Chunk at all. More than
+// one chunk group opens chunk 0 and the last chunk eagerly instead of
+// inventing a new non-URI syntax for chunk_size/the object's total size:
+// chunk_size is chunk 0's own spec().size (every chunk but the last is
+// exactly chunk_size, same convention Object::MultiChunkMap assumes),
+// and the total size is chunk_size * (N - 1) plus the last chunk's own
+// (possibly smaller) spec().size. Both already-opened Chunks are handed
+// straight into the Object's own matching entries below --
+// Object::_chunk() never reopens them.
 rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
-    std::vector<rawstd::URI> uris = first_group(_uris);
-    RawstdUUID id = uuid_from_target(uris.front());
-    uint64_t offset = extract_offset(uris.front());
+    std::vector<std::vector<rawstd::URI>> chunks = group_by_offset(_uris);
 
-    // The heavy connect/spec/open work itself lives in Chunk::create()
-    // -- Object here is just the thin wrapper handed back around it.
-    std::unique_ptr<Chunk> chunk =
-        co_await Chunk::create(queue, id, offset, uris);
-    co_return std::make_unique<Object>(Object::Private(), std::move(chunk));
+    if (chunks.size() == 1) {
+        RawstdUUID id = uuid_from_target(chunks.front().front());
+        uint64_t offset = extract_offset(chunks.front().front());
+        std::unique_ptr<Chunk> chunk =
+            co_await Chunk::create(queue, id, offset, chunks.front());
+        uint64_t size = chunk->spec().size;
+        std::unique_ptr<Object> obj(new Object(
+            queue, size, std::make_unique<Object::SingleChunkMap>(), chunks
+        ));
+        obj->_chunks.front().chunk = std::move(chunk);
+        co_return obj;
+    }
+
+    RawstdUUID first_id = uuid_from_target(chunks.front().front());
+    uint64_t first_offset = extract_offset(chunks.front().front());
+    std::unique_ptr<Chunk> first =
+        co_await Chunk::create(queue, first_id, first_offset, chunks.front());
+
+    RawstdUUID last_id = uuid_from_target(chunks.back().front());
+    uint64_t last_offset = extract_offset(chunks.back().front());
+    std::unique_ptr<Chunk> last =
+        co_await Chunk::create(queue, last_id, last_offset, chunks.back());
+
+    uint64_t chunk_size = first->spec().size;
+    uint64_t size = chunk_size * (chunks.size() - 1) + last->spec().size;
+
+    std::unique_ptr<Object> obj(new Object(
+        queue, size, std::make_unique<Object::MultiChunkMap>(chunk_size), chunks
+    ));
+    obj->_chunks.front().chunk = std::move(first);
+    obj->_chunks.back().chunk = std::move(last);
+    co_return obj;
 }
 
 } // namespace rawstor

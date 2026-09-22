@@ -50,6 +50,18 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
     return EIO;
 }
 
+// RawstorOSTFrameAllocatePayload::chunk_shift's own doc comment on why a
+// shift, not the full value -- `chunk_size` is always a power of two
+// (RawstorObjectSpec's own doc comment, target.h), 0 meaning no chunking.
+uint8_t chunk_size_to_shift(uint64_t chunk_size) noexcept {
+    return chunk_size == 0 ? 0
+                           : static_cast<uint8_t>(__builtin_ctzll(chunk_size));
+}
+
+uint64_t chunk_shift_to_size(uint8_t chunk_shift) noexcept {
+    return chunk_shift == 0 ? 0 : (1ull << chunk_shift);
+}
+
 // ---------------------------------------------------------------------
 // rawstd::CallbackAwaitable<T> bridge over the async rawstor/{object,
 // target}.h C API: each co_object_*()/co_target_open() wrapper submits
@@ -983,6 +995,7 @@ rawstd::DetachedTask Client::_allocate(
     RawstorObjectSpec spec{
         .size = payload.size,
         .width = static_cast<unsigned int>(targets.size()),
+        .chunk_size = chunk_shift_to_size(payload.chunk_shift),
     };
 
     int result = 0;
@@ -1101,6 +1114,7 @@ rawstd::DetachedTask Client::_spec(
         } else {
             RawstorOSTFrameSpecPayload body_out{
                 .size = spec.size,
+                .chunk_shift = chunk_size_to_shift(spec.chunk_size),
                 .width = (uint8_t)spec.width,
             };
             std::vector<unsigned char> data(sizeof(body_out));
@@ -1180,15 +1194,15 @@ rawstd::DetachedTask Client::_meta(
         } else {
             RawstorOSTFrameMetaPayload body_out{
                 .size = meta.spec.size,
-                .reserved1 = 0,
                 .epoch = meta.sync_state.epoch,
                 .sync_id = meta.sync_state.sync_id,
                 .sync_id_history = {},
                 .state =
                     static_cast<RawstorOSTSyncStateType>(meta.sync_state.state),
+                .chunk_shift = chunk_size_to_shift(meta.spec.chunk_size),
                 .width = static_cast<uint8_t>(meta.spec.width),
+                .reserved1 = 0,
                 .reserved2 = 0,
-                .reserved3 = 0,
             };
             memcpy(
                 body_out.sync_id_history, meta.sync_state.sync_id_history,

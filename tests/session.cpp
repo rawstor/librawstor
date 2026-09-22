@@ -282,6 +282,7 @@ void Session::cmd_spec_response(
 
     RawstorOSTFrameSpecPayload spec = {
         .size = size,
+        .chunk_shift = 0,
         .width = static_cast<uint8_t>(width),
     };
     RawstorOSTFrameResponse response = {

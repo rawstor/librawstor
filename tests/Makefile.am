@@ -28,6 +28,7 @@ test_all_SOURCES = main.cpp \
                    test_list.cpp \
                    test_location_info.cpp \
                    test_mirror.cpp \
+                   test_multichunk.cpp \
                    test_pagination_token.cpp
 test_all_LDADD = $(top_builddir)/src/librawstor.la
 

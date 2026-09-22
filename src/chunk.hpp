@@ -355,6 +355,12 @@ public:
     inline const RawstdUUID& id() const noexcept { return _id; }
     inline uint64_t offset() const noexcept { return _offset; }
 
+    // The spec() fetched at create() time (see create()'s own comment)
+    // -- Target::open() reads spec().size off the first/last chunk of a
+    // multi-chunk target to learn chunk_size/the object's total size
+    // without a separate wire round trip.
+    inline const RawstorObjectSpec& spec() const noexcept { return _spec; }
+
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset);
 
     rawstd::Task<size_t>

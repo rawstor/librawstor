@@ -125,20 +125,26 @@ struct RawstorOSTFrameSyncState {
  * own, so object_id/chunk_offset here are the only way the server learns
  * which object (and which of its chunks) to create.
  *
- * reserved1..4 are unused wire space -- room for whatever the upcoming
- * MDS chunk-placement model (docs/mds.md, chunk_meta) ends up needing,
- * reserved now so adding it later doesn't grow this payload or shift any
- * other field's offset.
+ * chunk_shift (RawstorObjectSpec.chunk_size, target.h, is always a power of
+ * two, so its own log2 is carried here instead -- cheaper than the full
+ * value, and there's no non-power-of-two value to ever reject on receipt;
+ * 0 means no chunking, same meaning as chunk_size == 0) is carried here so
+ * a relay OST server (this payload's own receiver, re-issuing its own
+ * Target::create() over its own locations) doesn't lose the caller's
+ * chunking policy when relaying -- not acted on by the plain file/blk/
+ * lvm/zfs backends yet. reserved2..4 are unused wire space -- room for
+ * whatever the upcoming MDS chunk-placement model (docs/mds.md,
+ * chunk_meta) ends up needing, reserved now so adding it later doesn't
+ * grow this payload or shift any other field's offset.
  */
 struct RawstorOSTFrameAllocatePayload {
     uint8_t object_id[16];
     uint64_t chunk_offset;
     uint64_t size;
-    uint64_t reserved1;
+    uint8_t chunk_shift;
     uint8_t width; /* redundancy: copies per chunk */
-    uint8_t reserved2;
-    uint16_t reserved3;
-    uint32_t reserved4;
+    uint16_t reserved2;
+    uint32_t reserved3;
 } RAWSTOR_PACKED;
 
 /* ALLOCATE request */
@@ -161,48 +167,52 @@ struct RawstorOSTFrameResponse {
 } RAWSTOR_PACKED;
 
 /*
- * Full per-copy metadata: size plus the mirror consistency state (see
- * docs/mirroring.md). sync_id_history length must match
- * RAWSTOR_OBJECT_SYNC_ID_HISTORY. META response payload only -- SPEC's is
- * RawstorOSTFrameSpecPayload (size + width, cheaper), SET_SYNC_STATE's
- * request is RawstorOSTFrameSyncStatePayload (settable fields only, no
- * size). No object_id: this is only ever a response, correlated to its
- * request via RawstorOSTFrameHead::cid -- the caller already knows which
- * object it asked about. Sent as a RawstorOSTFrameResponse (body.res =
- * sizeof(this), body.hash covering it) immediately followed by this
- * payload -- no combined frame struct, since every actual sender/receiver
- * already handles header and payload as two separate pieces (a fixed-size
- * header read, then a body.res-sized payload read, or a two-part iovec
- * write).
+ * Full per-copy metadata: size, chunk_shift (RawstorOSTFrameAllocate-
+ * Payload's own doc comment on why a shift, not the full chunk_size) and
+ * the mirror consistency state (see docs/mirroring.md) -- RawstorObjectMeta
+ * (target.h) is spec plus sync_state, so this is the one wire round trip
+ * that reports everything a caller could want about one copy, instead of
+ * making it combine a separate SPEC/META answer itself. sync_id_history
+ * length must match RAWSTOR_OBJECT_SYNC_ID_HISTORY. META response payload
+ * only -- SPEC's is RawstorOSTFrameSpecPayload (size + chunk_shift +
+ * width, cheaper), SET_SYNC_STATE's request is RawstorOSTFrameSyncState-
+ * Payload (settable fields only, no size). No object_id: this is only
+ * ever a response, correlated to its request via RawstorOSTFrameHead::cid
+ * -- the caller already knows which object it asked about. Sent as a
+ * RawstorOSTFrameResponse (body.res = sizeof(this), body.hash covering
+ * it) immediately followed by this payload -- no combined frame struct,
+ * since every actual sender/receiver already handles header and payload
+ * as two separate pieces (a fixed-size header read, then a body.res-sized
+ * payload read, or a two-part iovec write).
  */
 struct RawstorOSTFrameMetaPayload {
     uint64_t size;
-    uint64_t reserved1; /* placement identity, docs/mds.md, chunk_meta --
-                            not acted on by anything yet, reserved for the
-                            upcoming MDS chunk-placement model. */
     uint64_t epoch;
     uint64_t sync_id;
     uint64_t sync_id_history[4];
     RawstorOSTSyncStateType state;
+    uint8_t chunk_shift;
     uint8_t width; /* redundancy: copies per chunk */
-    uint16_t reserved2;
-    uint32_t reserved3;
+    uint8_t reserved1;
+    uint32_t reserved2;
 } RAWSTOR_PACKED;
 
 /*
- * SPEC's response: an object's size and width, cheaper than META's since
- * it carries no consistency state. No object_id, same reasoning as
- * RawstorOSTFrameMetaPayload above -- correlated via
- * RawstorOSTFrameHead::cid, the caller already knows which object it asked
- * about. Sent as a RawstorOSTFrameResponse (body.res = sizeof(this),
- * body.hash covering it) immediately followed by this payload -- no
- * combined response frame struct, since every actual sender/receiver
- * already handles header and payload as two separate pieces (a fixed-size
- * header read, then a body.res-sized payload read, or a two-part iovec
- * write).
+ * SPEC's response: an object's size, chunk_shift (RawstorOSTFrameAllocate-
+ * Payload's own doc comment on why a shift, not the full chunk_size) and
+ * width, cheaper than META's since it carries no consistency state. No
+ * object_id, same reasoning as RawstorOSTFrameMetaPayload above --
+ * correlated via RawstorOSTFrameHead::cid, the caller already knows which
+ * object it asked about. Sent as a RawstorOSTFrameResponse (body.res =
+ * sizeof(this), body.hash covering it) immediately followed by this
+ * payload -- no combined response frame struct, since every actual
+ * sender/receiver already handles header and payload as two separate
+ * pieces (a fixed-size header read, then a body.res-sized payload read,
+ * or a two-part iovec write).
  */
 struct RawstorOSTFrameSpecPayload {
     uint64_t size;
+    uint8_t chunk_shift;
     uint8_t width; /* redundancy: copies per chunk */
 } RAWSTOR_PACKED;
 

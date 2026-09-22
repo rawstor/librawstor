@@ -103,6 +103,7 @@ rawstor::blk::Backend* open_blk_backend(
     RawstorObjectSpec spec{
         .size = 1u << 20,
         .width = 1,
+        .chunk_size = 0,
     };
     run(queue, target.create(queue, spec));
 

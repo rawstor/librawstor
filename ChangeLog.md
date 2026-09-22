@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recovery (docs/mirroring.md, case F9): declares one or more mirrors
   (same index `rawstor show -v` labels) jointly authoritative, and every
   mirror not listed gets a full online resync on the next open.
+- `RawstorObjectSpec` gains `chunk_size`: a target string naming more than
+  one chunk group is now a real, usable multi-chunk object -- `rawstor_target_create()`
+  splits its own size across every group, and `rawstor_target_open()`
+  returns a single object whose reads/writes are routed across all of
+  them. Building such a target string by hand is still the only way to
+  reach this (nothing yet allocates or advertises chunk placement).
+
 ### Changed
 - The packaged `rawstor-vhost@.service` systemd unit now defaults `RAWSTOR_WRITE_CACHE` to `on` instead of `off`: forcing a journal commit on every write (write-cache off) was measured to stall write round-trip times into the tens of seconds under concurrent load on a host whose backing filesystem commits slowly, while any modern guest kernel already issues an explicit flush when it needs durability.
 - `rawstor_object_pwrite()`/`rawstor_object_pwritev()` gained a `sync` parameter — when true, the write is durable on stable storage by the time the callback reports success. Breaking C API change; existing callers need to pass a `sync` argument (`false` preserves the old behavior).
