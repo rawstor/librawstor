@@ -473,7 +473,7 @@ Target::Target(const std::vector<rawstd::URI>& uris) {
     // so the very first one (before grouping/sorting reorders anything)
     // is as good as any other; validate_same_uuid() below then checks
     // every URI in every group actually agrees.
-    RawstdUUID id = uuid_from_target(uris.front());
+    _id = uuid_from_target(uris.front());
 
     std::map<uint64_t, std::vector<rawstd::URI>> groups;
     for (const rawstd::URI& uri : uris) {
@@ -483,15 +483,15 @@ Target::Target(const std::vector<rawstd::URI>& uris) {
     _uris.reserve(uris.size());
     for (auto& [offset, group] : groups) {
         validate_different_uris(group);
-        validate_same_uuid(group, id);
+        validate_same_uuid(group, _id);
         for (const rawstd::URI& uri : group) {
             _uris.push_back(uri);
         }
     }
 }
 
-RawstdUUID Target::id() const {
-    return uuid_from_target(_uris.front());
+const RawstdUUID& Target::id() const {
+    return _id;
 }
 
 Location Target::location() const {
@@ -512,7 +512,7 @@ Location Target::location() const {
 }
 
 rawstd::Task<void>
-Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
+Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     std::vector<std::vector<rawstd::URI>> chunks = group_by_offset(_uris);
 
     // No implicit width, ever: the caller must always state it, checked
@@ -623,7 +623,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) {
 // not summed here). `size` is identical on every copy in the group, so
 // this only needs one to answer: URIs are tried in order, first
 // reachable wins, same fail-over tolerance as meta() below.
-rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
+rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
     std::vector<rawstd::URI> uris = first_group(_uris);
     int first_error = 0;
     for (const auto& uri : uris) {
@@ -660,7 +660,8 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) {
 // answer, same as spec() above -- the answering backend has no idea what
 // its own group's URI count is, so whatever it put there (if anything)
 // isn't meaningful.
-rawstd::Task<std::vector<RawstorObjectMeta>> Target::meta(rawio::Queue& queue) {
+rawstd::Task<std::vector<RawstorObjectMeta>>
+Target::meta(rawio::Queue& queue) const {
     std::vector<std::vector<rawstd::URI>> chunks = group_by_offset(_uris);
 
     std::vector<rawstd::Task<RawstorObjectMeta>> tasks;
@@ -699,7 +700,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Target::meta(rawio::Queue& queue) {
 // as many copies updated as possible rather than none.
 rawstd::Task<void> Target::set_sync_state(
     rawio::Queue& queue, const RawstorObjectSyncState& sync_state
-) {
+) const {
     std::vector<rawstd::URI> uris = first_group(_uris);
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(uris.size());
@@ -709,7 +710,7 @@ rawstd::Task<void> Target::set_sync_state(
     co_await rawstd::gather(std::move(tasks));
 }
 
-rawstd::Task<void> Target::remove(rawio::Queue& queue) {
+rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
     // Every URI's REMOVE goes out concurrently instead of one at a time,
     // across every chunk group -- every one is still attempted
     // regardless of an earlier failure (gather() never abandons a task
@@ -730,7 +731,7 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) {
 // (possibly smaller) spec().size. Both already-opened Chunks are handed
 // straight into the Object's own matching entries below --
 // Object::_chunk() never reopens them.
-rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) {
+rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) const {
     std::vector<std::vector<rawstd::URI>> chunks = group_by_offset(_uris);
 
     if (chunks.size() == 1) {

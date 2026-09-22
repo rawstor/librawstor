@@ -69,6 +69,12 @@ public:
 private:
     std::vector<rawstd::URI> _uris;
 
+    // The target's own identity -- the same for every URI in `_uris`
+    // (validated once, at construction: the constructor's own comment,
+    // target.cpp). Computed once there rather than re-parsed on every
+    // id() call.
+    RawstdUUID _id;
+
 public:
     explicit Target(const std::vector<rawstd::URI>& uris);
 
@@ -77,7 +83,7 @@ public:
     }
 
     // The UUID shared by every URI in `uris` -- parsed from the first one.
-    RawstdUUID id() const;
+    const RawstdUUID& id() const;
 
     // The Location `uris` was created under -- each URI with its own
     // identity path segments stripped back off (the inverse of
@@ -87,23 +93,25 @@ public:
     // Works across every chunk group in `_uris` -- see each one's own
     // comment in target.cpp for why create()/remove()/meta() do, but
     // spec()/set_sync_state() only ever touch the first.
-    rawstd::Task<void> create(rawio::Queue& queue, const RawstorObjectSpec& sp);
-    rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue);
+    rawstd::Task<void>
+    create(rawio::Queue& queue, const RawstorObjectSpec& sp) const;
+    rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue) const;
     // One RawstorObjectMeta per URI in `_uris`, same order, across every
     // chunk group -- every URI is queried, not just the first reachable
     // one; a URI that doesn't answer gets a zero-filled entry (see this
     // method's own doc comment in target.cpp for why).
-    rawstd::Task<std::vector<RawstorObjectMeta>> meta(rawio::Queue& queue);
+    rawstd::Task<std::vector<RawstorObjectMeta>>
+    meta(rawio::Queue& queue) const;
     rawstd::Task<void> set_sync_state(
         rawio::Queue& queue, const RawstorObjectSyncState& sync_state
-    );
-    rawstd::Task<void> remove(rawio::Queue& queue);
+    ) const;
+    rawstd::Task<void> remove(rawio::Queue& queue) const;
     // Opens every chunk group into a single Object that routes each I/O
     // request onto whichever chunk(s) it touches (see this method's own
     // comment in target.cpp for how a multi-chunk-group target learns
     // its own chunk_size/total size without a dedicated wire field for
     // either).
-    rawstd::Task<std::unique_ptr<Object>> open(rawio::Queue& queue);
+    rawstd::Task<std::unique_ptr<Object>> open(rawio::Queue& queue) const;
 };
 
 } // namespace rawstor
