@@ -520,9 +520,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     // before any I/O at all. A chunk with more than one URI is
     // unambiguously an ordinary mirror set and must match sp.width
     // exactly; a lone URI's own width is the caller's chosen redundancy
-    // (never 0). Each URI's own backend separately validates its own
-    // share is exactly 1 (Backend::_validate_spec()) -- this check is
-    // about the caller's stated *total* matching reality.
+    // (never 0).
     for (const std::vector<rawstd::URI>& chunk_uris : chunks) {
         if (chunk_uris.size() > 1) {
             if (sp.width != chunk_uris.size()) {
@@ -554,11 +552,6 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
         // (extract_offset(), already stamped on its own URIs) --
         // smaller for the last, short chunk.
         RawstorObjectSpec chunk_sp = sp;
-        // Every URI is one copy: each one's own create() gets width ==
-        // 1 (which every Backend::create() now validates, see
-        // Backend::_validate_spec()), not sp.width itself (the chunk's
-        // own width just validated above).
-        chunk_sp.width = 1;
         if (chunks.size() > 1) {
             uint64_t offset = extract_offset(uris.front());
             chunk_sp.size = std::min(sp.chunk_size, sp.size - offset);
@@ -618,19 +611,25 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
 // Only ever touches the target's own first chunk (Target's own class doc
 // comment) -- a multi-chunk target's later chunks may have a different
 // width, but spec() has room for exactly one answer, so it can't
-// generalize across chunks the way meta() below does. width is just the
-// chunk's own URI count -- computed locally, no backend involved (a
-// backend's own spec()-reported width, its local share, is not summed
-// here). `size` is identical on every copy of the chunk, so this only
-// needs one to answer: URIs are tried in order, first reachable wins,
-// same fail-over tolerance as meta() below.
+// generalize across chunks the way meta() below does. width is the
+// chunk's own per-copy count: the chunk's own URI count when it has more
+// than one (an ordinary mirror set can only ever be that -- no single
+// URI in it is self-aware enough to say otherwise), or whatever the sole
+// backend itself reported for a single-URI chunk (the caller's own
+// chosen redundancy, never derivable by counting) -- falling back to 1
+// only if that answer was itself 0 (a plain, single-URI object that was
+// never given one). `size` is identical on every copy of the chunk, so
+// this only needs one to answer: URIs are tried in order, first
+// reachable wins, same fail-over tolerance as meta() below.
 rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
     std::vector<rawstd::URI> uris = first_chunk_uris(_uris);
     int first_error = 0;
     for (const auto& uri : uris) {
         try {
             RawstorObjectSpec ret = co_await spec_one(queue, uri);
-            ret.width = static_cast<unsigned int>(uris.size());
+            if (uris.size() > 1 || ret.width == 0) {
+                ret.width = static_cast<unsigned int>(uris.size());
+            }
             co_return ret;
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unreachable: %s\n", e.what());
@@ -656,35 +655,25 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
 // erase what the others answered). A URI that doesn't answer gets a
 // zero-filled entry rather than being left out: the result's own index
 // is what ties an entry back to its URI (`_uris[i]`), and dropping
-// entries would lose that correspondence. spec.width is overwritten with
-// its own chunk's URI count on the way out for every entry that did
-// answer, same as spec() above -- the answering backend has no idea what
-// its own chunk's URI count is, so whatever it put there (if anything)
-// isn't meaningful.
+// entries would lose that correspondence. Every answering entry's own
+// spec.width is trusted verbatim, no override: Target::create() already
+// guarantees it's persisted correctly on every member (exactly the
+// chunk's own URI count for an ordinary multi-URI mirror set, or a real,
+// always non-zero value otherwise -- its own comment).
 rawstd::Task<std::vector<RawstorObjectMeta>>
 Target::meta(rawio::Queue& queue) const {
-    std::vector<std::vector<rawstd::URI>> chunks = chunk_uris_by_offset(_uris);
-
     std::vector<rawstd::Task<RawstorObjectMeta>> tasks;
-    std::vector<unsigned int> chunk_widths;
     tasks.reserve(_uris.size());
-    chunk_widths.reserve(_uris.size());
-    for (const std::vector<rawstd::URI>& chunk_uris : chunks) {
-        for (const auto& uri : chunk_uris) {
-            tasks.push_back(meta_one(queue, uri));
-            chunk_widths.push_back(
-                static_cast<unsigned int>(chunk_uris.size())
-            );
-        }
+    for (const auto& uri : _uris) {
+        tasks.push_back(meta_one(queue, uri));
     }
 
     std::vector<RawstorObjectMeta> ret;
-    ret.reserve(tasks.size());
+    ret.reserve(_uris.size());
     for (size_t i = 0; i < tasks.size(); ++i) {
         RawstorObjectMeta m{};
         try {
             m = co_await tasks[i];
-            m.spec.width = chunk_widths[i];
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unreachable: %s\n", e.what());
         }

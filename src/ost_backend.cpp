@@ -1257,16 +1257,13 @@ rawstd::Task<void> Backend::list(
     co_return;
 }
 
-// sp is forwarded on the wire unchanged (see BackendOpAllocate); the
-// remote rawstor-ost's own Client::_allocate() ignores payload.width
-// and validates/fills it in against its own locally configured location
-// count instead (see its own comment) -- this slot is still one
-// copy from its caller's point of view, same as every other backend.
+// sp is forwarded on the wire unchanged (see BackendOpAllocate), width
+// included -- the remote rawstor-ost's own Client::_allocate() ignores
+// payload.width and fills in its own instead, from its own locally
+// configured location count (see its own comment).
 rawstd::Task<void> Backend::create(
     const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
 ) {
-    _validate_spec(sp);
-
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('c', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpAllocate> op = std::make_shared<BackendOpAllocate>(

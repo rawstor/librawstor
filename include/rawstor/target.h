@@ -111,9 +111,11 @@ struct RawstorObjectSyncState {
  * copy's mirror consistency identity (sync_state, the part
  * rawstor_target_set_sync_state() can actually change). `spec.width`
  * is filled in by rawstor_target_meta() itself the same way
- * rawstor_target_spec() fills its own -- the number of URIs in the
- * target string, computed locally -- not by the backend that answered:
- * width isn't a property of any single copy.
+ * rawstor_target_spec() fills its own -- the target's own per-chunk
+ * copy count: computed locally (the number of URIs in the target
+ * string) for an ordinary multi-URI mirror set, or trusted from
+ * whichever copy answered for a single-URI target (its own configured
+ * redundancy, which no URI count could reveal).
  *
  * @see rawstor_target_meta
  * @see rawstor_target_set_sync_state
@@ -128,8 +130,10 @@ struct RawstorObjectMeta {
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
  * this function fills a RawstorObjectSpec structure with information about
- * the object: its size, and the number of URIs configured for it
- * (width -- computed locally from @p target, no backend involved).
+ * the object: its size, and the number of copies configured for it
+ * (width -- computed locally from @p target's own URI count for an
+ * ordinary multi-URI mirror set, or the object's own configured
+ * redundancy, trusted from the answering copy, for a single-URI target).
  *
  * The target may be a single location‑UUID pair or a comma‑separated list of
  * such pairs (mirroring / data locality). All UUIDs in a list must be
@@ -188,9 +192,10 @@ int rawstor_target_spec(
  * call or being left out -- the entry's own position in @p metas is what
  * ties it back to that URI, so skipping it would lose that. `spec.width`
  * in every entry that did answer is filled in the same way
- * rawstor_target_spec() fills its own -- the number of URIs in @p target,
- * computed locally -- not whatever the answering copy's own backend
- * happened to report.
+ * rawstor_target_spec() fills its own -- the target's own per-chunk
+ * copy count, computed locally (for an ordinary multi-URI mirror set,
+ * simply the number of URIs in it) or trusted from the answering copy
+ * itself for a single-URI target.
  *
  * Legacy copies created before metadata support report size only, with
  * state CLEAN, epoch 0 and sync_id 0 -- distinguishable from a URI that
