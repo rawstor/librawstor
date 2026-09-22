@@ -30,13 +30,13 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
     return t.get();
 }
 
-// Builds a target string naming two chunk groups of one object by hand
-// (docs/locations_and_targets.md): "<location>/<uuid>/0" and
+// Builds a target string naming two chunks' own uris of one object by
+// hand (docs/locations_and_targets.md): "<location>/<uuid>/0" and
 // "<location>/<uuid>/<chunk_size>" -- the same flat, offset-sorted URI
 // list a real chunk-placement caller (rawstor-mds, in a later bucket)
 // would build, just typed out here instead. Nothing about Target/Object
-// requires that caller to exist; group_by_offset()/Target::open()'s own
-// multi-chunk machinery only ever looks at the URIs themselves.
+// requires that caller to exist; chunk_uris_by_offset()/Target::open()'s
+// own multi-chunk machinery only ever looks at the URIs themselves.
 std::vector<rawstd::URI> two_chunk_uris(
     const rawstd::URI& location, const std::string& uuid_string,
     uint64_t chunk_size
@@ -50,7 +50,7 @@ std::vector<rawstd::URI> two_chunk_uris(
 
 } // namespace
 
-// An object spanning two chunk groups: create() splits its own size at
+// An object spanning two chunks: create() splits its own size at
 // the chunk_size boundary (one full-size chunk plus one short, final
 // chunk), and open() builds a single Object routing reads/writes across
 // both, entirely from the target string's own two offset-tagged URIs --

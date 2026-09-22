@@ -25,14 +25,14 @@ class Chunk;
 /*
  * The client-facing entity a target addresses: routes I/O onto one or
  * more lazily opened, per-chunk (possibly mirrored) Chunks -- a plain,
- * single-chunk-group target (e.g. ost://a,ost://b/<uuid>) is the
- * overwhelming majority case and stays a single Chunk, mirrored across
- * however many URIs it names; a target string naming more than one
- * chunk group (docs/locations_and_targets.md) splits every I/O request
- * at chunk boundaries and dispatches each piece to its own Chunk. Built
- * only by Target::open() (a friend, since it's the one place that
- * actually parses a target string into chunk groups and builds Chunks
- * from them).
+ * single-chunk target (e.g. ost://a,ost://b/<uuid>) is the overwhelming
+ * majority case and stays a single Chunk, mirrored across however many
+ * URIs it names; a target string naming more than one chunk's own uris
+ * (docs/locations_and_targets.md) splits every I/O request at chunk
+ * boundaries and dispatches each piece to its own Chunk. Built only by
+ * Target::open() (a friend, since it's the one place that actually
+ * parses a target string into per-chunk uris and builds Chunks from
+ * them).
  */
 class Object final : public RawstorObject {
 private:
@@ -48,7 +48,7 @@ private:
     // Maps a logical offset/size onto one or more VolumeSegments --
     // virtualized instead of an `if (_chunks.size() == 1)` fast path
     // inside every one of pread/pwrite/... below: the degenerate
-    // single-chunk case (a plain, single-chunk-group target -- the
+    // single-chunk case (a plain, single-chunk target -- the
     // overwhelming majority of objects) never allocates more than one
     // segment and never computes a division/remainder against a chunk
     // size it doesn't otherwise need.
@@ -93,13 +93,13 @@ private:
     std::vector<ChunkEntry> _chunks;
 
     // Object is only ever built by Target::open() (a friend, since it's
-    // the one place that actually parses a target string into chunk
-    // groups and builds Chunks from them). `chunk_targets` is one entry
+    // the one place that actually parses a target string into per-chunk
+    // uris and builds Chunks from them). `chunk_targets` is one entry
     // per logical chunk, in index order; Target::open() fills in
     // whichever entries it already eagerly opened (index 0, and the
-    // last one for a multi-chunk-group target -- see its own comment)
-    // directly into `_chunks` right after construction, before handing
-    // the Object back to its own caller.
+    // last one for a multi-chunk target -- see its own comment) directly
+    // into `_chunks` right after construction, before handing the Object
+    // back to its own caller.
     Object(
         rawio::Queue& queue, uint64_t size, std::unique_ptr<ChunkMap> map,
         std::vector<std::vector<rawstd::URI>> chunk_targets

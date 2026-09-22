@@ -58,7 +58,7 @@ private:
 
     // The spec() fetched at open() time (see create()'s own comment) --
     // kept around for any future caller that needs it. _spec.width is
-    // the configured mirror width N (the group's own URI count).
+    // the configured mirror width N (the chunk's own URI count).
     RawstorObjectSpec _spec;
     std::vector<Member> _members;
 

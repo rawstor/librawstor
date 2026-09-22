@@ -34,15 +34,15 @@ extern "C" {
  * fails the create with -EINVAL): a caller that doesn't already know the
  * count can derive it by counting the ','-separated entries in its own
  * target/location string. chunk_size only matters for a target string
- * naming more than one chunk group (see docs/locations_and_targets.md):
+ * naming more than one chunk's own uris (see docs/locations_and_targets.md):
  * it is the whole object's own per-chunk share, every chunk exactly that
  * size except the last (whatever remains of size); ignored (and 0 is a
- * valid, if meaningless, value) for the ordinary single-chunk-group case.
+ * valid, if meaningless, value) for the ordinary single-chunk case.
  *
  * When used with rawstor_target_spec(), both fields are filled with the
  * actual shape of the existing object: its size in bytes and the number of
  * URIs configured for it. chunk_size is left unset (0) -- rawstor_target_spec()
- * never touches more than the target's own first chunk group, so it has
+ * never touches more than the target's own first chunk, so it has
  * nothing to report a chunking policy from.
  *
  * @see rawstor_target_spec
@@ -51,7 +51,7 @@ extern "C" {
 struct RawstorObjectSpec {
     uint64_t size;      /**< Size of the object in bytes. */
     unsigned int width; /**< Number of URIs configured for the target. */
-    /** Per-chunk share of a multi-chunk-group target; see above. */
+    /** Per-chunk share of a multi-chunk target; see above. */
     uint64_t chunk_size;
 };
 

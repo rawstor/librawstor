@@ -1325,7 +1325,7 @@ Backend::spec(const RawstdUUID& id, uint64_t chunk_offset) {
         // Same as every other backend's own spec() (blk::Backend::spec(),
         // file::Backend::spec()): width is never a per-backend property,
         // so it's left unset here -- Target::spec() overwrites it with
-        // the group's own URI count regardless of whatever the remote
+        // the chunk's own URI count regardless of whatever the remote
         // server's own payload.width says.
     } catch (const std::system_error&) {
         throw;
