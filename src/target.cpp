@@ -700,51 +700,36 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
     co_await remove_many(queue, _uris);
 }
 
-// Opens the object this target addresses. A single chunk
-// ('chunks.size() == 1', the ordinary case) becomes a single-chunk
-// Object, whose size is simply whatever Chunk::create() itself reports
-// (spec().size) -- no chunking above the single Chunk at all. More than
-// one chunk opens chunk 0 and the last chunk eagerly instead of
-// inventing a new non-URI syntax for chunk_size/the object's total size:
-// chunk_size is chunk 0's own spec().size (every chunk but the last is
-// exactly chunk_size, same convention Object::MultiChunkMap assumes),
-// and the total size is chunk_size * (N - 1) plus the last chunk's own
-// (possibly smaller) spec().size. Both already-opened Chunks are handed
-// straight into the Object's own matching entries below --
-// Object::_chunk() never reopens them.
+// Opens the object this target addresses. Only the last chunk is opened
+// eagerly -- its own spec() already reports chunk_size (every chunk but
+// the last is exactly that size, same convention Object::MultiChunkMap
+// assumes) and its own (possibly smaller) size, so the object's total
+// size is derivable without a separate look at chunk 0. Works
+// unconditionally, even for the ordinary 'chunks.size() == 1' case
+// (chunk_size is then irrelevant, multiplied by zero). The already-opened
+// Chunk is handed straight into the Object's own matching entry below --
+// Object::_chunk() never reopens it.
 rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) const {
     std::vector<std::vector<rawstd::URI>> chunks = chunk_uris_by_offset(_uris);
-
-    if (chunks.size() == 1) {
-        RawstdUUID id = uuid_from_target(chunks.front().front());
-        uint64_t offset = extract_offset(chunks.front().front());
-        std::unique_ptr<Chunk> chunk =
-            co_await Chunk::create(queue, id, offset, chunks.front());
-        uint64_t size = chunk->spec().size;
-        std::unique_ptr<Object> obj(new Object(
-            queue, size, std::make_unique<Object::SingleChunkMap>(), chunks
-        ));
-        obj->_chunks.front().chunk = std::move(chunk);
-        co_return obj;
-    }
-
-    RawstdUUID first_id = uuid_from_target(chunks.front().front());
-    uint64_t first_offset = extract_offset(chunks.front().front());
-    std::unique_ptr<Chunk> first =
-        co_await Chunk::create(queue, first_id, first_offset, chunks.front());
 
     RawstdUUID last_id = uuid_from_target(chunks.back().front());
     uint64_t last_offset = extract_offset(chunks.back().front());
     std::unique_ptr<Chunk> last =
         co_await Chunk::create(queue, last_id, last_offset, chunks.back());
 
-    uint64_t chunk_size = first->spec().size;
+    uint64_t chunk_size = last->spec().chunk_size;
     uint64_t size = chunk_size * (chunks.size() - 1) + last->spec().size;
 
-    std::unique_ptr<Object> obj(new Object(
-        queue, size, std::make_unique<Object::MultiChunkMap>(chunk_size), chunks
-    ));
-    obj->_chunks.front().chunk = std::move(first);
+    std::unique_ptr<Object::ChunkMap> map;
+    if (chunks.size() == 1) {
+        map = std::make_unique<Object::SingleChunkMap>();
+    } else {
+        map = std::make_unique<Object::MultiChunkMap>(chunk_size);
+    }
+
+    std::unique_ptr<Object> obj(
+        new Object(queue, size, std::move(map), chunks)
+    );
     obj->_chunks.back().chunk = std::move(last);
     co_return obj;
 }
