@@ -77,8 +77,7 @@ private:
     void _throttle_release() noexcept;
 
 protected:
-    virtual rawstd::Task<int>
-    _open(const RawstdUUID& id, uint64_t chunk_offset) = 0;
+    virtual rawstd::Task<int> _open(const RawstdUUID& id, uint64_t offset) = 0;
 
     // A blk-backed backend has no upfront connection step: the fd is
     // opened lazily, by _open(const RawstdUUID&) above, once
@@ -134,13 +133,13 @@ public:
     rawstd::Task<void> close() override final;
 
     rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t chunk_offset) override final;
+    set_object(const RawstdUUID& id, uint64_t offset) override final;
 
     // Default spec() for a backend whose object id maps to a real block
     // device (BLKGETSIZE64) -- file::Backend overrides this instead, since
     // its objects are plain regular files.
     rawstd::Task<RawstorObjectSpec>
-    spec(const RawstdUUID& id, uint64_t chunk_offset) override;
+    spec(const RawstdUUID& id, uint64_t offset) override;
 
     // Encodes/decodes a RawstorObjectSyncState plus a ChunkIdentity (the
     // latter stamped at create and never changed again) as a compact

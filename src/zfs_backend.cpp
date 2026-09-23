@@ -51,18 +51,16 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     _parent_dataset(parse_parent_dataset(location)) {
 }
 
-std::string
-Backend::_device_path(const RawstdUUID& id, uint64_t chunk_offset) const {
-    return "/dev/zvol/" + _dataset(id, chunk_offset);
+std::string Backend::_device_path(const RawstdUUID& id, uint64_t offset) const {
+    return "/dev/zvol/" + _dataset(id, offset);
 }
 
-std::string
-Backend::_dataset(const RawstdUUID& id, uint64_t chunk_offset) const {
+std::string Backend::_dataset(const RawstdUUID& id, uint64_t offset) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
     std::string name = uuid_str;
-    if (chunk_offset != 0) {
-        name += ":" + std::to_string(chunk_offset);
+    if (offset != 0) {
+        name += ":" + std::to_string(offset);
     }
     return _parent_dataset + "/" + name;
 }
@@ -95,8 +93,8 @@ rawstd::Task<void> Backend::_wait_for_blockdev(
     RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
 }
 
-rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t chunk_offset) {
-    std::string path = _device_path(id, chunk_offset);
+rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t offset) {
+    std::string path = _device_path(id, offset);
 
     // No O_NONBLOCK: opening a ZFS zvol with it caused cache-miss reads to
     // return -EAGAIN, which io_uring could not properly handle for
@@ -150,7 +148,7 @@ rawstd::Task<void> Backend::list(
         // A UUID's own string form is always exactly 36 characters
         // (RawstdUUIDString) -- a fixed prefix, since the UUID itself
         // already embeds dashes, unlike this backend's own
-        // ":<chunk_offset>" suffix, which can't be told apart from those
+        // ":<offset>" suffix, which can't be told apart from those
         // by splitting on the last '-' alone.
         if (name.size() < 36) {
             continue;
@@ -173,7 +171,7 @@ rawstd::Task<void> Backend::list(
             return rawstd_uuid_cmp(&lhs, &rhs) < 0;
         }
     );
-    // One entry per id, regardless of how many chunk_offset zvols it has
+    // One entry per id, regardless of how many offset zvols it has
     // -- nothing today ever creates more than one offset under the same
     // id.
     targets.erase(
@@ -210,7 +208,7 @@ rawstd::Task<void> Backend::list(
 }
 
 rawstd::Task<void> Backend::create(
-    const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
 ) {
     // zfs-create(8) rejects volume sizes that are not a multiple of
     // volblocksize (16 KiB by default, 8 KiB on older OpenZFS), so round
@@ -231,7 +229,7 @@ rawstd::Task<void> Backend::create(
         );
     }
 
-    std::string device_path = _device_path(id, chunk_offset);
+    std::string device_path = _device_path(id, offset);
 
     // create() must behave like open(O_EXCL): retrying it against an id
     // a previous, unacknowledged attempt already fully created needs to
@@ -245,7 +243,7 @@ rawstd::Task<void> Backend::create(
         RAWSTD_THROW_SYSTEM_ERROR(EEXIST);
     }
 
-    std::string dataset = _dataset(id, chunk_offset);
+    std::string dataset = _dataset(id, offset);
 
     char size_buf[32];
     snprintf(size_buf, sizeof(size_buf), "%" PRIu64, size);
@@ -274,7 +272,7 @@ rawstd::Task<void> Backend::create(
     try {
         co_await rawstor::run_command(_queue, std::move(argv));
         co_await _wait_for_blockdev(
-            _device_path(id, chunk_offset), /*want_present=*/true
+            _device_path(id, offset), /*want_present=*/true
         );
     } catch (const std::system_error& e) {
         rawstd_error(
@@ -286,20 +284,19 @@ rawstd::Task<void> Backend::create(
     co_return;
 }
 
-rawstd::Task<void>
-Backend::remove(const RawstdUUID& id, uint64_t chunk_offset) {
+rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
     // Matches file::Backend::remove()'s own convention: a nonexistent
     // zvol is ENOENT specifically (permanent -- never retried by
     // Slot::_with_retry()'s is_permanent_backend_error()), not the
     // generic, retryable EIO "zfs destroy" itself would produce for the
     // same case.
-    std::string device_path = _device_path(id, chunk_offset);
+    std::string device_path = _device_path(id, offset);
     if (!co_await _exists(device_path)) {
         rawstd_error("zfs: zvol %s does not exist\n", device_path.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
 
-    std::string dataset = _dataset(id, chunk_offset);
+    std::string dataset = _dataset(id, offset);
 
     rawstd_info("zfs: destroying zvol %s\n", dataset.c_str());
 
@@ -307,7 +304,7 @@ Backend::remove(const RawstdUUID& id, uint64_t chunk_offset) {
     try {
         co_await rawstor::run_command(_queue, std::move(argv));
         co_await _wait_for_blockdev(
-            _device_path(id, chunk_offset), /*want_present=*/false
+            _device_path(id, offset), /*want_present=*/false
         );
     } catch (const std::system_error& e) {
         rawstd_error(
@@ -355,8 +352,8 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
 }
 
 rawstd::Task<RawstorObjectMeta>
-Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
-    std::string dataset = _dataset(id, chunk_offset);
+Backend::meta(const RawstdUUID& id, uint64_t offset) {
+    std::string dataset = _dataset(id, offset);
 
     std::vector<std::string> argv = {"zfs",  "get",   "-H",
                                      "-o",   "value", rawstor_property,
@@ -395,7 +392,7 @@ Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
     // than trust a value that could go stale if the zvol were ever resized
     // outside rawstor.
     RawstorObjectMeta ret{};
-    ret.spec = co_await spec(id, chunk_offset);
+    ret.spec = co_await spec(id, offset);
     ret.spec.width = identity.width;
     ret.sync_state = sync_state;
 
@@ -403,10 +400,10 @@ Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
 }
 
 rawstd::Task<void> Backend::set_sync_state(
-    const RawstdUUID& id, uint64_t chunk_offset,
+    const RawstdUUID& id, uint64_t offset,
     const RawstorObjectSyncState& sync_state
 ) {
-    std::string dataset = _dataset(id, chunk_offset);
+    std::string dataset = _dataset(id, offset);
 
     // identity is stamped once at create() and never changed again --
     // read the existing property first so overwriting sync_state here

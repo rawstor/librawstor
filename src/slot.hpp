@@ -37,7 +37,7 @@ private:
     // unset; carried alongside it so invalidate_backend()'s own
     // reconnect-and-set_object() replay (below) doesn't need open()'s
     // caller to hand it back in a second time.
-    uint64_t _chunk_offset;
+    uint64_t _offset;
 
     std::vector<std::shared_ptr<Backend>> _backends;
     size_t _backend_index;
@@ -135,20 +135,17 @@ public:
     rawstd::Task<void>
     list(unsigned int limit, std::vector<RawstdUUID>& uuids, RawstdUUID& token);
 
-    rawstd::Task<void> create(
-        const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
-    );
+    rawstd::Task<void>
+    create(const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp);
 
-    rawstd::Task<void> remove(const RawstdUUID& id, uint64_t chunk_offset);
+    rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset);
 
-    rawstd::Task<RawstorObjectSpec>
-    spec(const RawstdUUID& id, uint64_t chunk_offset);
+    rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id, uint64_t offset);
 
-    rawstd::Task<RawstorObjectMeta>
-    meta(const RawstdUUID& id, uint64_t chunk_offset);
+    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id, uint64_t offset);
 
     rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& id, uint64_t offset,
         const RawstorObjectSyncState& sync_state
     );
 
@@ -165,8 +162,7 @@ public:
     // against whichever backend the pool now has (set_object() itself
     // doesn't return it, see its own doc comment) -- spec.width on it
     // is this copy's own local share, not the target-wide count.
-    rawstd::Task<RawstorObjectMeta>
-    open(const RawstdUUID& id, uint64_t chunk_offset);
+    rawstd::Task<RawstorObjectMeta> open(const RawstdUUID& id, uint64_t offset);
 
     // Not called implicitly by ~Slot() (a coroutine can't run in a
     // destructor, and there's no other synchronous fallback here beyond

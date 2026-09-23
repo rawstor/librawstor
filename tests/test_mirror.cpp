@@ -170,9 +170,9 @@ public:
     void drop(size_t i) const { fs::remove_all(_dirs[i]); }
 
     // file::Backend keeps one chunk directory per object,
-    // <uuid>/<chunk_offset>/, holding a "data" file and a "meta" file
+    // <uuid>/<offset>/, holding a "data" file and a "meta" file
     // (see get_target_dir() in src/file_backend.cpp) -- every target
-    // here is a plain, non-chunked object, chunk_offset 0.
+    // here is a plain, non-chunked object, offset 0.
     fs::path dat(size_t i) const { return _dirs[i] / _uuid / "0" / "data"; }
 };
 

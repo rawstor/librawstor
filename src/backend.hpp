@@ -68,14 +68,14 @@ public:
     ) = 0;
 
     virtual rawstd::Task<void> create(
-        const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
     ) = 0;
 
     virtual rawstd::Task<void>
-    remove(const RawstdUUID& id, uint64_t chunk_offset) = 0;
+    remove(const RawstdUUID& id, uint64_t offset) = 0;
 
     virtual rawstd::Task<RawstorObjectSpec>
-    spec(const RawstdUUID& id, uint64_t chunk_offset) = 0;
+    spec(const RawstdUUID& id, uint64_t offset) = 0;
 
     // Mirror consistency identity for one copy (state/epoch/sync_id and its
     // ancestry, see docs/mirroring.md) -- independent of spec() above,
@@ -86,16 +86,16 @@ public:
     // blk::Backend's own doc comment on why this stays pure virtual there
     // too).
     virtual rawstd::Task<RawstorObjectMeta>
-    meta(const RawstdUUID& id, uint64_t chunk_offset) = 0;
+    meta(const RawstdUUID& id, uint64_t offset) = 0;
 
     virtual rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& id, uint64_t offset,
         const RawstorObjectSyncState& sync_state
     ) = 0;
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 
-    // Binds this Backend to `id`/`chunk_offset` -- data-path methods
+    // Binds this Backend to `id`/`offset` -- data-path methods
     // below need this done first. Also the one operation that actually
     // touches the real store for every backend kind (a blk-backed one's
     // own _open(const RawstdUUID&, uint64_t) is lazy -- see
@@ -105,7 +105,7 @@ public:
     // own meta() (e.g. Slot::open(), see its own doc comment) calls it
     // separately, afterward.
     virtual rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t chunk_offset) = 0;
+    set_object(const RawstdUUID& id, uint64_t offset) = 0;
 
     virtual rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) = 0;

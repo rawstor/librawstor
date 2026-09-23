@@ -20,8 +20,7 @@ namespace file {
 
 class Backend final : public rawstor::blk::Backend {
 private:
-    rawstd::Task<int>
-    _open(const RawstdUUID& id, uint64_t chunk_offset) override;
+    rawstd::Task<int> _open(const RawstdUUID& id, uint64_t offset) override;
 
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
@@ -31,18 +30,17 @@ public:
     ) override;
 
     rawstd::Task<void> create(
-        const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
     ) override;
 
-    rawstd::Task<void>
-    remove(const RawstdUUID& id, uint64_t chunk_offset) override;
+    rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset) override;
 
     rawstd::Task<RawstorObjectSpec>
-    spec(const RawstdUUID& id, uint64_t chunk_offset) override;
+    spec(const RawstdUUID& id, uint64_t offset) override;
 
     // Mirror consistency metadata lives in a companion "meta" file next
     // to the object's own "data" file, both inside the same
-    // "<uuid>/<chunk_offset>" directory (get_target_dir()'s own doc
+    // "<uuid>/<offset>" directory (get_target_dir()'s own doc
     // comment, file_backend.cpp; see docs/mirroring.md) -- unlike
     // spec(), which is always derived straight from the data file's own
     // size, there is nowhere on a plain regular file to carve out space
@@ -50,10 +48,10 @@ public:
     // (created before this existed) is not trusted as legacy-CLEAN:
     // meta() fails ENOENT rather than fabricating a state.
     rawstd::Task<RawstorObjectMeta>
-    meta(const RawstdUUID& id, uint64_t chunk_offset) override;
+    meta(const RawstdUUID& id, uint64_t offset) override;
 
     rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& id, uint64_t offset,
         const RawstorObjectSyncState& sync_state
     ) override;
 

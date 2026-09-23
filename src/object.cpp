@@ -20,7 +20,7 @@ namespace {
 // any -- see Target::Path's own doc comment in target.hpp. Deliberately
 // calling Target's own parse_path() (a static method, not tied to an
 // instance) rather than duplicating the parsing logic here a third time:
-// Chunk::create() takes `chunk_offset` as a plain scalar, so
+// Chunk::create() takes `offset` as a plain scalar, so
 // Object::_chunk() below (like Target::open()) extracts it from its own
 // already-validated URI group once here, rather than Chunk::create()
 // re-parsing it out of every URI itself.

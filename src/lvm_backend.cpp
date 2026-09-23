@@ -152,19 +152,18 @@ std::string Backend::_device_path_for_name(const std::string& name) const {
     return oss.str();
 }
 
-std::string
-Backend::_device_path(const RawstdUUID& id, uint64_t chunk_offset) const {
+std::string Backend::_device_path(const RawstdUUID& id, uint64_t offset) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
     std::string name = uuid_str;
-    if (chunk_offset != 0) {
-        name += "-" + std::to_string(chunk_offset);
+    if (offset != 0) {
+        name += "-" + std::to_string(offset);
     }
     return _device_path_for_name(name);
 }
 
-rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t chunk_offset) {
-    std::string path = _device_path(id, chunk_offset);
+rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t offset) {
+    std::string path = _device_path(id, offset);
 
     // No O_NONBLOCK: io_uring does not need the fd to be non-blocking --
     // it handles blocking operations internally via io_wq worker threads.
@@ -212,7 +211,7 @@ rawstd::Task<void> Backend::list(
             // A UUID's own string form is always exactly 36 characters
             // (RawstdUUIDString) -- a fixed prefix, since the UUID itself
             // already embeds dashes, unlike this backend's own
-            // "-<chunk_offset>" suffix, which can't be told apart from
+            // "-<offset>" suffix, which can't be told apart from
             // those by splitting on the last '-' alone.
             if (name.size() < 36) {
                 continue;
@@ -242,7 +241,7 @@ rawstd::Task<void> Backend::list(
             return rawstd_uuid_cmp(&lhs, &rhs) < 0;
         }
     );
-    // One entry per id, regardless of how many chunk_offset LVs it has --
+    // One entry per id, regardless of how many offset LVs it has --
     // nothing today ever creates more than one offset under the same id.
     targets.erase(
         std::unique(
@@ -353,7 +352,7 @@ rawstd::Task<void> Backend::_cleanup_staging_lvs() {
 }
 
 rawstd::Task<void> Backend::create(
-    const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
 ) {
     if (sp.size == 0) {
         rawstd_error("lvm: object size must be positive\n");
@@ -363,10 +362,10 @@ rawstd::Task<void> Backend::create(
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
     std::string real_name = uuid_str;
-    if (chunk_offset != 0) {
-        real_name += "-" + std::to_string(chunk_offset);
+    if (offset != 0) {
+        real_name += "-" + std::to_string(offset);
     }
-    std::string real_path = _device_path(id, chunk_offset);
+    std::string real_path = _device_path(id, offset);
 
     // create() must behave like open(O_EXCL): retrying it against an id
     // a previous, unacknowledged attempt already fully created (lvcreate
@@ -523,11 +522,10 @@ rawstd::Task<void> Backend::create(
     co_return;
 }
 
-rawstd::Task<void>
-Backend::remove(const RawstdUUID& id, uint64_t chunk_offset) {
+rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
     co_await _cleanup_staging_lvs();
 
-    std::string path = _device_path(id, chunk_offset);
+    std::string path = _device_path(id, offset);
 
     // Matches file::Backend::remove()'s own convention: a nonexistent LV
     // is ENOENT specifically (permanent -- never retried by
@@ -636,8 +634,8 @@ rawstd::Task<std::string> Backend::_lv_tags(const std::string& path) {
 }
 
 rawstd::Task<RawstorObjectMeta>
-Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
-    std::string path = _device_path(id, chunk_offset);
+Backend::meta(const RawstdUUID& id, uint64_t offset) {
+    std::string path = _device_path(id, offset);
     std::string tags = co_await _lv_tags(path);
     std::string tag = find_tag(tags, rawstor_tag_prefix);
 
@@ -659,7 +657,7 @@ Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
     // trust a value that could go stale if the LV were ever resized
     // outside rawstor.
     RawstorObjectMeta ret{};
-    ret.spec = co_await spec(id, chunk_offset);
+    ret.spec = co_await spec(id, offset);
     ret.spec.width = identity.width;
     ret.sync_state = sync_state;
 
@@ -667,10 +665,10 @@ Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
 }
 
 rawstd::Task<void> Backend::set_sync_state(
-    const RawstdUUID& id, uint64_t chunk_offset,
+    const RawstdUUID& id, uint64_t offset,
     const RawstorObjectSyncState& sync_state
 ) {
-    std::string path = _device_path(id, chunk_offset);
+    std::string path = _device_path(id, offset);
 
     std::string tags = co_await _lv_tags(path);
     std::string old_tag = find_tag(tags, rawstor_tag_prefix);

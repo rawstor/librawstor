@@ -88,12 +88,12 @@ namespace rawstor {
 // _reconcile_sync_set()'s own doc comment on why a refusal here is
 // safe to let unwind through a throwing constructor.
 Chunk::Chunk(
-    Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t chunk_offset,
+    Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
     RawstorObjectSpec spec, std::vector<Member> members
 ) :
     _queue(queue),
     _id(id),
-    _offset(chunk_offset),
+    _offset(offset),
     _spec(spec),
     _members(std::move(members)),
     _size(0),
@@ -170,7 +170,7 @@ connect_one(rawio::Queue& queue, const rawstd::URI& uri) {
 } // namespace
 
 rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
-    rawio::Queue& queue, const RawstdUUID& id, uint64_t chunk_offset,
+    rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
     const std::vector<rawstd::URI>& uris
 ) {
     // Every URI's Slot goes out concurrently instead of one at a
@@ -270,7 +270,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     spec_tasks.reserve(reachable);
     for (auto& slot : slots) {
         if (slot) {
-            spec_tasks.push_back(slot->spec(id, chunk_offset));
+            spec_tasks.push_back(slot->spec(id, offset));
         }
     }
 
@@ -327,7 +327,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     );
     for (size_t i = 0; i < slots.size(); ++i) {
         if (slots[i]) {
-            open_tasks[i] = slots[i]->open(id, chunk_offset);
+            open_tasks[i] = slots[i]->open(id, offset);
         }
     }
 
@@ -409,7 +409,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // shortcut, or _reconcile_sync_set()'s own quorum/split-brain/no-
     // trusted-member analysis) is its own job from here.
     co_return std::make_unique<Chunk>(
-        Private(), queue, id, chunk_offset, std::move(spec), std::move(members)
+        Private(), queue, id, offset, std::move(spec), std::move(members)
     );
 }
 

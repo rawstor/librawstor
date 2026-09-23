@@ -26,9 +26,9 @@ namespace lvm {
  *
  * Each object is a Logical Volume named after its UUID inside the Volume
  * Group -- self-describing: `id` is the same id every chunk of that id
- * carries, `chunk_offset` disambiguates which one, as a
- * "-<chunk_offset>" LV-name suffix (omitted when 0) -- LVM's own naming
- * forbids ':'. Device path: /dev/<vg>/<uuid>[-<chunk_offset>].
+ * carries, `offset` disambiguates which one, as a
+ * "-<offset>" LV-name suffix (omitted when 0) -- LVM's own naming
+ * forbids ':'. Device path: /dev/<vg>/<uuid>[-<offset>].
  *
  * Requires lvcreate/lvremove/lvs/vgs to be available in PATH and sufficient
  * privileges.
@@ -37,11 +37,10 @@ class Backend final : public rawstor::blk::Backend {
 private:
     std::string _vg_name;
 
-    std::string _device_path(const RawstdUUID& id, uint64_t chunk_offset) const;
+    std::string _device_path(const RawstdUUID& id, uint64_t offset) const;
     std::string _device_path_for_name(const std::string& name) const;
 
-    rawstd::Task<int>
-    _open(const RawstdUUID& id, uint64_t chunk_offset) override;
+    rawstd::Task<int> _open(const RawstdUUID& id, uint64_t offset) override;
 
     // Removes any leftover "<uuid>.creating" staging LVs in this VG (see
     // create()'s own doc comment for why they can exist). Runs at most
@@ -66,21 +65,20 @@ public:
     ) override;
 
     rawstd::Task<void> create(
-        const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
     ) override;
 
-    rawstd::Task<void>
-    remove(const RawstdUUID& id, uint64_t chunk_offset) override;
+    rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
     // Native per-copy mirror metadata, stored in the LV's own
     // "rawstor.meta=..." tag -- see blk::Backend::meta_encode().
     rawstd::Task<RawstorObjectMeta>
-    meta(const RawstdUUID& id, uint64_t chunk_offset) override;
+    meta(const RawstdUUID& id, uint64_t offset) override;
 
     rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& id, uint64_t offset,
         const RawstorObjectSyncState& sync_state
     ) override;
 };

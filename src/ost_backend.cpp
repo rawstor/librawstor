@@ -1208,13 +1208,13 @@ rawstd::Task<void> Backend::close() {
 template <typename T>
 rawstd::Task<std::vector<T>> Backend::_basic_request(
     RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
-    uint64_t chunk_offset, uint64_t val
+    uint64_t offset, uint64_t val
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", op_name);
 
     std::shared_ptr<BackendOpBasic<T>> op = std::make_shared<BackendOpBasic<T>>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        cmd, op_name, id, chunk_offset, val, trace_event
+        cmd, op_name, id, offset, val, trace_event
     );
     _add_op(op);
 
@@ -1262,13 +1262,13 @@ rawstd::Task<void> Backend::list(
 // payload.width and fills in its own instead, from its own locally
 // configured location count (see its own comment).
 rawstd::Task<void> Backend::create(
-    const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('c', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpAllocate> op = std::make_shared<BackendOpAllocate>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        id, chunk_offset, sp, trace_event
+        id, offset, sp, trace_event
     );
     _add_op(op);
 
@@ -1287,12 +1287,9 @@ rawstd::Task<void> Backend::create(
     co_await *op;
 }
 
-rawstd::Task<void>
-Backend::remove(const RawstdUUID& id, uint64_t chunk_offset) {
+rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
     try {
-        co_await _basic_request(
-            RAWSTOR_CMD_RELEASE, "remove", id, chunk_offset, 0
-        );
+        co_await _basic_request(RAWSTOR_CMD_RELEASE, "remove", id, offset, 0);
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -1302,15 +1299,14 @@ Backend::remove(const RawstdUUID& id, uint64_t chunk_offset) {
 }
 
 rawstd::Task<RawstorObjectSpec>
-Backend::spec(const RawstdUUID& id, uint64_t chunk_offset) {
+Backend::spec(const RawstdUUID& id, uint64_t offset) {
     // A dedicated, cheaper wire round trip than meta() below -- doesn't
     // touch the server's own mirror consistency state lookup at all (see
     // RAWSTOR_CMD_META's own doc comment in protocol.h).
     RawstorObjectSpec ret = {};
     try {
-        std::vector<char> response = co_await _basic_request(
-            RAWSTOR_CMD_SPEC, "spec", id, chunk_offset, 0
-        );
+        std::vector<char> response =
+            co_await _basic_request(RAWSTOR_CMD_SPEC, "spec", id, offset, 0);
         if (response.size() != sizeof(RawstorOSTFrameSpecPayload)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
@@ -1334,14 +1330,13 @@ Backend::spec(const RawstdUUID& id, uint64_t chunk_offset) {
 }
 
 rawstd::Task<RawstorObjectMeta>
-Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
+Backend::meta(const RawstdUUID& id, uint64_t offset) {
     rawstd_info("%s: Reading object metadata...\n", str().c_str());
 
     RawstorObjectMeta ret = {};
     try {
-        std::vector<char> response = co_await _basic_request(
-            RAWSTOR_CMD_META, "meta", id, chunk_offset, 0
-        );
+        std::vector<char> response =
+            co_await _basic_request(RAWSTOR_CMD_META, "meta", id, offset, 0);
         if (response.size() != sizeof(RawstorOSTFrameMetaPayload)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
@@ -1372,14 +1367,14 @@ Backend::meta(const RawstdUUID& id, uint64_t chunk_offset) {
 }
 
 rawstd::Task<void> Backend::set_sync_state(
-    const RawstdUUID& id, uint64_t chunk_offset,
+    const RawstdUUID& id, uint64_t offset,
     const RawstorObjectSyncState& sync_state
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpSetState> op = std::make_shared<BackendOpSetState>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        id, chunk_offset, sync_state, trace_event
+        id, offset, sync_state, trace_event
     );
     _add_op(op);
 
@@ -1424,15 +1419,14 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-rawstd::Task<void>
-Backend::set_object(const RawstdUUID& id, uint64_t chunk_offset) {
+rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t offset) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
     assert(_read_event != nullptr);
 
     co_await _basic_request(
-        RAWSTOR_CMD_SET_OBJECT, "set_object", id, chunk_offset, 0
+        RAWSTOR_CMD_SET_OBJECT, "set_object", id, offset, 0
     );
 }
 

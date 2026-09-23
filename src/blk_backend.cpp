@@ -166,20 +166,19 @@ rawstd::Task<void> Backend::close() {
     co_await _queue.close(f);
 }
 
-rawstd::Task<void>
-Backend::set_object(const RawstdUUID& id, uint64_t chunk_offset) {
+rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t offset) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
 
-    int fd = co_await _open(id, chunk_offset);
+    int fd = co_await _open(id, offset);
     set_fd(fd);
 }
 
 rawstd::Task<RawstorObjectSpec>
-Backend::spec(const RawstdUUID& id, uint64_t chunk_offset) {
+Backend::spec(const RawstdUUID& id, uint64_t offset) {
 #if defined(RAWSTD_ON_LINUX)
-    int f = co_await _open(id, chunk_offset);
+    int f = co_await _open(id, offset);
 
     uint64_t size = 0;
     if (ioctl(f, BLKGETSIZE64, &size) == -1) {
@@ -196,7 +195,7 @@ Backend::spec(const RawstdUUID& id, uint64_t chunk_offset) {
     co_return ret;
 #else
     (void)id;
-    (void)chunk_offset;
+    (void)offset;
     RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
 #endif
 }

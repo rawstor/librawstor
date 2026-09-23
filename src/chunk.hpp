@@ -323,7 +323,7 @@ private:
 
 public:
     // Connects every reachable URI in `uris` (all mirrors of the one
-    // chunk `id`/`chunk_offset` names) into a Slot (Slot::create()),
+    // chunk `id`/`offset` names) into a Slot (Slot::create()),
     // fetches a real spec() (first reachable answer wins), SET_OBJECT+
     // meta()-s every connected member, then builds the Chunk itself --
     // deciding whether the result is actually trustworthy enough to
@@ -335,14 +335,13 @@ public:
     // maintenance (the reconnect probe, an online resync if one is
     // already due).
     static rawstd::Task<std::unique_ptr<Chunk>> create(
-        rawio::Queue& queue, const RawstdUUID& id, uint64_t chunk_offset,
+        rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
         const std::vector<rawstd::URI>& uris
     );
 
     Chunk(
-        Private, rawio::Queue& queue, const RawstdUUID& id,
-        uint64_t chunk_offset, RawstorObjectSpec spec,
-        std::vector<Member> members
+        Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
+        RawstorObjectSpec spec, std::vector<Member> members
     );
     Chunk(const Chunk&) = delete;
     Chunk(Chunk&&) = delete;
@@ -350,7 +349,7 @@ public:
     Chunk& operator=(const Chunk&) = delete;
     Chunk& operator=(Chunk&&) = delete;
 
-    // This Chunk's own identity -- the same id/chunk_offset it was
+    // This Chunk's own identity -- the same id/offset it was
     // built from.
     inline const RawstdUUID& id() const noexcept { return _id; }
     inline uint64_t offset() const noexcept { return _offset; }

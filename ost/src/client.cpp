@@ -1742,15 +1742,14 @@ rawstd::DetachedTask Client::_write_zeroes(
 }
 
 std::vector<rawstd::URI>
-Client::_targets(const RawstdUUID& uuid, uint64_t chunk_offset) {
+Client::_targets(const RawstdUUID& uuid, uint64_t offset) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
 
     // Self-describing (Target::Path's own doc comment, target.hpp): the
     // offset segment is always stated explicitly here, even 0, since
     // this is an internal builder, not something a caller types by hand.
-    std::string child =
-        std::string(uuid_string) + "/" + std::to_string(chunk_offset);
+    std::string child = std::string(uuid_string) + "/" + std::to_string(offset);
 
     std::vector<rawstd::URI> ret;
     ret.reserve(_server.locations().size());
