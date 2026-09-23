@@ -7,6 +7,7 @@
 #include <rawstd/exitcode.h>
 #include <rawstd/units.h>
 
+#include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,10 +47,14 @@ static void print_sync_id_history(
 
 /* rawstor_target_meta()'s own buffer capacity, not the number of URIs in
  * `target` -- a `result` greater than this means the CLI itself can't
- * display that many mirrors, not that the call failed (see its own doc
+ * display that many slots, not that the call failed (see its own doc
  * comment: same truncation convention as rawstor_target_id()/
- * _location()). */
-enum { MAX_MIRRORS = 256 };
+ * _location()). One slot per URI (docs/locations_and_targets.md) -- a
+ * multi-chunk target names one per chunk, not just one per mirror copy,
+ * so this has to cover an object with many chunks, not just a wide
+ * mirror set. Large enough that the backing array below is heap-, not
+ * stack-allocated. */
+enum { MAX_SLOTS = 65536 };
 
 static int show_meta(const char* target) {
     RawstorCliOp op;
@@ -59,24 +64,31 @@ static int show_meta(const char* target) {
         return rawstd_exitcode_for_errno(-res);
     }
 
-    struct RawstorObjectMeta metas[MAX_MIRRORS];
+    struct RawstorObjectMeta* metas = calloc(MAX_SLOTS, sizeof(*metas));
+    if (metas == NULL) {
+        fprintf(stderr, "calloc() failed: %s\n", strerror(errno));
+        rawstor_cli_op_destroy(&op);
+        return rawstd_exitcode_for_errno(errno);
+    }
+
     int mres = rawstor_target_meta(
-        op.queue, target, metas, MAX_MIRRORS, rawstor_cli_op_cb, &op
+        op.queue, target, metas, MAX_SLOTS, rawstor_cli_op_cb, &op
     );
     ssize_t result = rawstor_cli_op_wait(&op, mres);
     rawstor_cli_op_destroy(&op);
     if (result < 0) {
-        fprintf(
-            stderr, "rawstor_target_meta() failed: %s\n", strerror((int)-result)
-        );
-        return rawstd_exitcode_for_errno((int)-result);
+        int err = (int)-result;
+        free(metas);
+        fprintf(stderr, "rawstor_target_meta() failed: %s\n", strerror(err));
+        return rawstd_exitcode_for_errno(err);
     }
-    if (result > MAX_MIRRORS) {
+    if (result > MAX_SLOTS) {
+        free(metas);
         fprintf(
             stderr,
-            "rawstor show -v: %zd mirrors, more than this CLI can display "
+            "rawstor show -v: %zd slots, more than this CLI can display "
             "(%d)\n",
-            result, MAX_MIRRORS
+            result, MAX_SLOTS
         );
         return EXIT_FAILURE;
     }
@@ -85,8 +97,11 @@ static int show_meta(const char* target) {
         const struct RawstorObjectMeta* meta = &metas[i];
         /* Index, not the URI itself -- the same index `rawstor resolve`'s
          * own --winner takes, and target's own comma-separated order, not
-         * a value this command has to re-parse target to print. */
-        printf("mirror[%zd]:\n", i);
+         * a value this command has to re-parse target to print. One slot
+         * per URI, not per mirror copy -- a multi-chunk target's own
+         * slots are different chunks, not different copies of the same
+         * one, so "mirror" would misname most of them. */
+        printf("slot[%zd]:\n", i);
         if (meta->sync_state.state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             printf("  unreachable\n");
         } else {
@@ -106,6 +121,7 @@ static int show_meta(const char* target) {
         }
     }
 
+    free(metas);
     return EXIT_SUCCESS;
 }
 

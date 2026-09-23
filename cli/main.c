@@ -545,7 +545,7 @@ static void command_resolve_usage(void) {
         "targets.\n"
         "  --winner N[,N...]      TARGET's N-th mirror(s) (0-based, same "
         "order\n"
-        "                        `rawstor show -v` labels mirror[N]): the "
+        "                        `rawstor show -v` labels slot[N]): the "
         "copies to\n"
         "                        keep.\n"
         "\n"

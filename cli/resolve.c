@@ -15,7 +15,7 @@
 #include <time.h>
 #include <unistd.h>
 
-/* Same buffer-capacity convention as cli/show.c's own MAX_MIRRORS. */
+/* Same buffer-capacity convention as cli/show.c's own MAX_SLOTS. */
 enum { MAX_MIRRORS = 256 };
 
 /* /dev/urandom rather than arc4random() -- the latter isn't declared
