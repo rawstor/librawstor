@@ -124,16 +124,12 @@ protected:
     static constexpr size_t META_MAX_SIZE = 256;
 
 public:
-    // A chunk's own placement identity (docs/mds.md, chunk_meta): stamped
-    // at create, immutable afterwards, persisted alongside the mirror
-    // consistency state by meta_encode()/meta_decode() below. chunk_size
-    // here is always the full byte value -- RawstorOSTFrameAllocate-
-    // Payload's own chunk_shift is only a wire-transfer encoding (its own
-    // doc comment on why), already converted back to bytes before
-    // reaching this local record. The rest of chunk_meta (member_kind,
-    // ...) remains reserved wire space until the upcoming MDS
-    // chunk-placement model actually needs it (see
-    // RawstorOSTFrameAllocatePayload/MetaPayload's own doc comments).
+    // A chunk's own placement identity: stamped at create, immutable
+    // afterwards, persisted alongside the mirror consistency state by
+    // meta_encode()/meta_decode() below. chunk_size here is always the
+    // full byte value -- RawstorOSTFrameAllocatePayload's own chunk_shift
+    // is only a wire-transfer encoding (its own doc comment on why),
+    // already converted back to bytes before reaching this local record.
     struct ChunkIdentity {
         uint8_t width;
         uint64_t chunk_size;

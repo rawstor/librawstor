@@ -125,8 +125,7 @@ rawstd::Task<void> Backend::list(
         // One entry per id directory (<location>/<uuid>/), regardless of
         // how many offset subdirectories it holds -- nothing today
         // ever creates more than one offset under the same id, so this
-        // stays UUID-only (docs/mds.md's own multi-chunk listing is a
-        // later concern).
+        // stays UUID-only (multi-chunk listing is a later concern).
         for (const auto& entry :
              std::filesystem::directory_iterator(location_path)) {
             if (!entry.is_directory()) {
@@ -449,9 +448,8 @@ rawstd::Task<void> Backend::set_sync_state(
 
     std::exception_ptr eptr;
     try {
-        // identity is stamped once at create() and never changed again --
-        // read the existing record first so overwriting sync_state here
-        // doesn't clobber it.
+        // Read the existing record first so overwriting sync_state here
+        // doesn't clobber its own identity.
         std::array<char, META_MAX_SIZE> old_disk{};
         size_t old_rval =
             co_await _queue.pread(fd, old_disk.data(), old_disk.size(), 0);
@@ -459,9 +457,20 @@ rawstd::Task<void> Backend::set_sync_state(
             rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
+        // identity is stamped once at create() and never changed again --
+        // preserve it across this rewrite. A record meta_decode() can't
+        // parse (an earlier format version) has no identity to preserve;
+        // it degenerates to the all-zero default, same as
+        // lvm::Backend::set_sync_state()'s own equivalent fallback.
         RawstorObjectSyncState old_sync_state{};
         ChunkIdentity identity{};
-        meta_decode(std::string(old_disk.data()), &old_sync_state, &identity);
+        try {
+            meta_decode(
+                std::string(old_disk.data()), &old_sync_state, &identity
+            );
+        } catch (const std::system_error&) {
+            identity = ChunkIdentity{};
+        }
 
         // See create()'s own comment: NUL-padded out to a fixed
         // META_MAX_SIZE bytes so this file's own byte length stays fixed
