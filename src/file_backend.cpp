@@ -199,7 +199,8 @@ rawstd::Task<void> Backend::create(
     std::string target_dir = get_target_dir(location_path, uuid_string, offset);
     mkdir_or_exist(target_dir);
 
-    std::string target_path = target_dir + "/data";
+    std::string target_path =
+        get_target_path(location_path, uuid_string, offset);
 
     int fd = ::open(
         target_path.c_str(), O_EXCL | O_CREAT | O_WRONLY | O_CLOEXEC,
@@ -290,7 +291,8 @@ rawstd::Task<void> Backend::create(
     // (data file present, no meta yet) is exactly case F10.
     std::exception_ptr meta_error;
     try {
-        std::string meta_path = target_dir + "/meta";
+        std::string meta_path =
+            get_target_meta_path(location_path, uuid_string, offset);
 
         int meta_fd = co_await _queue.open(
             meta_path.c_str(), O_EXCL | O_CREAT | O_WRONLY | O_CLOEXEC,
@@ -354,10 +356,14 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
     rawstd_uuid_to_string(&id, &uuid_string);
 
     std::string target_dir = get_target_dir(location_path, uuid_string, offset);
-    co_await _queue.unlink((target_dir + "/data").c_str());
+    co_await _queue.unlink(
+        get_target_path(location_path, uuid_string, offset).c_str()
+    );
 
     try {
-        co_await _queue.unlink((target_dir + "/meta").c_str());
+        co_await _queue.unlink(
+            get_target_meta_path(location_path, uuid_string, offset).c_str()
+        );
     } catch (const std::system_error& e) {
         if (e.code().value() != ENOENT) {
             throw;
