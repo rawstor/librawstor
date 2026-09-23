@@ -333,23 +333,25 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // Born degraded: this chunk's own membership (`locations`, the
     // caller's own mirror set) already has fewer slots than the
     // target's own configured redundancy -- checked once, here, against
-    // whichever member's own META happened to answer with a real
-    // (non-zero) persisted width (every member of the same chunk agrees
-    // on it by construction, so the first one found is enough). A plain
-    // target with no such policy (every member answers 0) has nothing
-    // to check against. Unlike `spec.width` itself, this is purely a
-    // warning: the constructor's own quorum/shortcut logic below is
-    // keyed off `_members.size()`, not `spec.width`, so a caller opening
-    // fewer locations than the configured policy still gets a working
-    // Chunk, just a degraded one.
-    for (const RawstorObjectMeta& m : metas) {
-        if (m.spec.width == 0) {
+    // the first reachable member's own META answer (every member of the
+    // same chunk agrees on it by construction, so one answer is
+    // enough). An unreachable member's own meta is zero-filled, not a
+    // real answer, so it's skipped by its own `reachable` flag rather
+    // than inferred from a width of 0 -- Target::create() never
+    // persists that for a real target, width is always the caller's
+    // own explicit, non-zero choice. Unlike `spec.width` itself, this
+    // is purely a warning: the constructor's own quorum/shortcut logic
+    // below is keyed off `_members.size()`, not `spec.width`, so a
+    // caller opening fewer locations than the configured policy still
+    // gets a working Chunk, just a degraded one.
+    for (const Member& m : members) {
+        if (!m.reachable) {
             continue;
         }
-        if (members.size() < m.spec.width) {
+        if (members.size() < m.meta.spec.width) {
             rawstd_warning(
                 "Chunk opened degraded: %zu of %u slots\n", members.size(),
-                m.spec.width
+                m.meta.spec.width
             );
         }
         break;
