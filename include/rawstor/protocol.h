@@ -132,9 +132,9 @@ struct RawstorOSTFrameSyncState {
  * Target::create() over its own locations) doesn't lose the caller's
  * chunking policy when relaying -- not acted on by the plain file/blk/
  * lvm/zfs backends yet. reserved2..4 are unused wire space -- room for
- * whatever the upcoming MDS chunk-placement model (docs/mds.md,
- * chunk_meta) ends up needing, reserved now so adding it later doesn't
- * grow this payload or shift any other field's offset.
+ * whatever a future chunk-placement model ends up needing, reserved now
+ * so adding it later doesn't grow this payload or shift any other
+ * field's offset.
  */
 struct RawstorOSTFrameAllocatePayload {
     uint8_t object_id[16];

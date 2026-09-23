@@ -118,7 +118,16 @@ uint8_t chunk_size_to_shift(uint64_t chunk_size) noexcept {
                            : static_cast<uint8_t>(__builtin_ctzll(chunk_size));
 }
 
-uint64_t chunk_shift_to_size(uint8_t chunk_shift) noexcept {
+// chunk_shift comes straight off the wire, from a peer this end doesn't
+// control -- 1ull << chunk_shift is undefined behavior once chunk_shift
+// reaches 64, so that (and anything past it, since chunk_shift's own
+// uint8_t range goes to 255) is rejected outright rather than silently
+// misinterpreted.
+uint64_t chunk_shift_to_size(uint8_t chunk_shift) {
+    if (chunk_shift >= 64) {
+        rawstd_error("Invalid chunk_shift: %u\n", chunk_shift);
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
     return chunk_shift == 0 ? 0 : (1ull << chunk_shift);
 }
 

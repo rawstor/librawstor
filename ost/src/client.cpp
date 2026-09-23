@@ -58,7 +58,16 @@ uint8_t chunk_size_to_shift(uint64_t chunk_size) noexcept {
                            : static_cast<uint8_t>(__builtin_ctzll(chunk_size));
 }
 
-uint64_t chunk_shift_to_size(uint8_t chunk_shift) noexcept {
+// chunk_shift comes straight off the wire, from a peer this end doesn't
+// control -- 1ull << chunk_shift is undefined behavior once chunk_shift
+// reaches 64, so that (and anything past it, since chunk_shift's own
+// uint8_t range goes to 255) is rejected outright rather than silently
+// misinterpreted.
+uint64_t chunk_shift_to_size(uint8_t chunk_shift) {
+    if (chunk_shift >= 64) {
+        rawstd_error("Invalid chunk_shift: %u\n", chunk_shift);
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
     return chunk_shift == 0 ? 0 : (1ull << chunk_shift);
 }
 
@@ -973,19 +982,21 @@ rawstd::DetachedTask Client::_allocate(
     std::vector<rawstd::URI> targets =
         client->_targets(uuid, payload.chunk_offset);
 
-    // Target::create() requires width to exactly match the target's own
-    // URI count -- here, that's this server's own locations(), not
-    // whatever the incoming request's payload.width happens to be (the
-    // caller's target-wide URI count, which has no reason to match this
-    // server's own location count for a relay/multi-location rawstor-ost).
-    RawstorObjectSpec spec{
-        .size = payload.size,
-        .width = static_cast<unsigned int>(targets.size()),
-        .chunk_size = chunk_shift_to_size(payload.chunk_shift),
-    };
-
     int result = 0;
     try {
+        // Target::create() requires width to exactly match the target's
+        // own URI count -- here, that's this server's own locations(),
+        // not whatever the incoming request's payload.width happens to
+        // be (the caller's target-wide URI count, which has no reason to
+        // match this server's own location count for a relay/multi-
+        // location rawstor-ost). chunk_shift_to_size() can throw on a
+        // malformed chunk_shift, so it needs to run inside this try too.
+        RawstorObjectSpec spec{
+            .size = payload.size,
+            .width = static_cast<unsigned int>(targets.size()),
+            .chunk_size = chunk_shift_to_size(payload.chunk_shift),
+        };
+
         std::string target = rawstd::URI::uris(targets);
         rawstd::CallbackAwaitable<void> awaiter;
         int res = rawstor_target_create(
