@@ -152,14 +152,14 @@ std::string Backend::_device_path_for_name(const std::string& name) const {
     return oss.str();
 }
 
-std::string Backend::_device_path(const RawstdUUID& id, uint64_t offset) const {
+std::string Backend::_lv_name(const RawstdUUID& id, uint64_t offset) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
-    std::string name = uuid_str;
-    if (offset != 0) {
-        name += "-" + std::to_string(offset);
-    }
-    return _device_path_for_name(name);
+    return std::string(uuid_str) + "-" + std::to_string(offset);
+}
+
+std::string Backend::_device_path(const RawstdUUID& id, uint64_t offset) const {
+    return _device_path_for_name(_lv_name(id, offset));
 }
 
 rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t offset) {
@@ -361,11 +361,8 @@ rawstd::Task<void> Backend::create(
 
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
-    std::string real_name = uuid_str;
-    if (offset != 0) {
-        real_name += "-" + std::to_string(offset);
-    }
-    std::string real_path = _device_path(id, offset);
+    std::string real_name = _lv_name(id, offset);
+    std::string real_path = _device_path_for_name(real_name);
 
     // create() must behave like open(O_EXCL): retrying it against an id
     // a previous, unacknowledged attempt already fully created (lvcreate

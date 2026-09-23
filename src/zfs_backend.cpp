@@ -58,10 +58,7 @@ std::string Backend::_device_path(const RawstdUUID& id, uint64_t offset) const {
 std::string Backend::_dataset(const RawstdUUID& id, uint64_t offset) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
-    std::string name = uuid_str;
-    if (offset != 0) {
-        name += ":" + std::to_string(offset);
-    }
+    std::string name = std::string(uuid_str) + ":" + std::to_string(offset);
     return _parent_dataset + "/" + name;
 }
 
