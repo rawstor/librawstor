@@ -714,8 +714,13 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) const {
 
     RawstdUUID last_id = uuid_from_target(chunks.back().front());
     uint64_t last_offset = extract_offset(chunks.back().front());
+    std::vector<rawstd::URI> last_locations;
+    last_locations.reserve(chunks.back().size());
+    for (const auto& uri : chunks.back()) {
+        last_locations.push_back(strip_path(uri));
+    }
     std::unique_ptr<Chunk> last =
-        co_await Chunk::create(queue, last_id, last_offset, chunks.back());
+        co_await Chunk::create(last_locations, queue, last_id, last_offset);
 
     uint64_t chunk_size = last->spec().chunk_size;
     uint64_t size = chunk_size * (chunks.size() - 1) + last->spec().size;

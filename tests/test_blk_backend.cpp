@@ -107,7 +107,7 @@ rawstor::blk::Backend* open_blk_backend(
     };
     run(queue, target.create(queue, spec));
 
-    object = run(queue, rawstor::Chunk::create(queue, id, 0, target.uris()));
+    object = run(queue, rawstor::Chunk::create({location}, queue, id, 0));
 
     slot = run(queue, rawstor::Slot::create(queue, location, 1));
     run(queue, slot->open(id, 0));

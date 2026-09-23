@@ -28,6 +28,21 @@ uint64_t extract_offset(const rawstd::URI& uri) {
     return rawstor::Target::parse_path(uri).offset;
 }
 
+// The bound URI with its own identity path segments stripped back off --
+// the bare location Chunk::create() itself expects, now that it no
+// longer takes `id`/`offset` embedded in its own URI list (both are
+// already separate parameters there). Calls URI::parent() once per
+// identity segment, not just once, since the identity doesn't always
+// fit in a single trailing one.
+rawstd::URI strip_path(const rawstd::URI& uri) {
+    rawstor::Target::Path path = rawstor::Target::parse_path(uri);
+    rawstd::URI ret = uri;
+    for (unsigned int i = 0; i < path.segments; ++i) {
+        ret = ret.parent();
+    }
+    return ret;
+}
+
 } // namespace
 
 namespace rawstor {
@@ -105,9 +120,13 @@ rawstd::Task<Chunk*> Object::_chunk(uint32_t index) {
     std::exception_ptr error;
     try {
         RawstdUUID id = Target::parse_path(entry.targets.front()).id;
-        entry.chunk = co_await Chunk::create(
-            _queue, id, extract_offset(entry.targets.front()), entry.targets
-        );
+        uint64_t offset = extract_offset(entry.targets.front());
+        std::vector<rawstd::URI> locations;
+        locations.reserve(entry.targets.size());
+        for (const auto& target : entry.targets) {
+            locations.push_back(strip_path(target));
+        }
+        entry.chunk = co_await Chunk::create(locations, _queue, id, offset);
     } catch (const std::system_error& e) {
         entry.open_errno = e.code().value();
         error = std::current_exception();

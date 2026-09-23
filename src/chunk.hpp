@@ -42,7 +42,7 @@ private:
     // no slot at all.
     struct Member {
         std::unique_ptr<rawstor::Slot> slot;
-        rawstd::URI target;
+        rawstd::URI location;
         MemberState state;
         RawstorObjectMeta meta;
         bool reachable;
@@ -322,22 +322,24 @@ private:
     };
 
 public:
-    // Connects every reachable URI in `uris` (all mirrors of the one
-    // chunk `id`/`offset` names) into a Slot (Slot::create()),
-    // SET_OBJECT+meta()-s every connected member, then builds the Chunk
-    // itself -- deciding whether the result is actually trustworthy
-    // enough to serve from is the constructor's own job from there:
-    // width == 1 trusts its one member outright; width >= 2 runs
-    // _reconcile_sync_set() (which may refuse the open -- see its own
-    // comment on why that's safe to let unwind through here). This
-    // factory's own overall spec (handed to the constructor) is
-    // whichever reachable member's own META answered first. Only once
-    // construction succeeds does it start the object's own background
-    // maintenance (the reconnect probe, an online resync if one is
-    // already due).
+    // Connects every reachable backend in `locations` (all mirrors of the
+    // one chunk `id`/`offset` names -- bare addresses, with no identity
+    // of their own: the caller already knows `id`/`offset`, so there's
+    // nothing left for a location to carry that isn't already a
+    // parameter here) into a Slot (Slot::create()), SET_OBJECT+meta()-s
+    // every connected member, then builds the Chunk itself -- deciding
+    // whether the result is actually trustworthy enough to serve from is
+    // the constructor's own job from there: width == 1 trusts its one
+    // member outright; width >= 2 runs _reconcile_sync_set() (which may
+    // refuse the open -- see its own comment on why that's safe to let
+    // unwind through here). This factory's own overall spec (handed to
+    // the constructor) is whichever reachable member's own META answered
+    // first. Only once construction succeeds does it start the object's
+    // own background maintenance (the reconnect probe, an online resync
+    // if one is already due).
     static rawstd::Task<std::unique_ptr<Chunk>> create(
-        rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
-        const std::vector<rawstd::URI>& uris
+        const std::vector<rawstd::URI>& locations, rawio::Queue& queue,
+        const RawstdUUID& id, uint64_t offset
     );
 
     Chunk(
