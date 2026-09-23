@@ -28,16 +28,19 @@ extern "C" {
  * when creating a new object (via rawstor_target_create()).
  *
  * When used with rawstor_target_create(), the size field must be set to the
- * desired size of the object to be created, and width must equal the
- * number of URIs in the target string being created -- mandatory, not a
- * convenience the caller can opt out of (mismatch, including leaving it 0,
- * fails the create with -EINVAL): a caller that doesn't already know the
- * count can derive it by counting the ','-separated entries in its own
- * target/location string. chunk_size only matters for a target string
- * naming more than one chunk's own uris (see docs/locations_and_targets.md):
- * it is the whole object's own per-chunk share, every chunk exactly that
- * size except the last (whatever remains of size); ignored (and 0 is a
- * valid, if meaningless, value) for the ordinary single-chunk case.
+ * desired size of the object to be created. width is mandatory, never a
+ * convenience the caller can opt out of (leaving it 0 always fails the
+ * create with -EINVAL): for a target string naming more than one URI, it
+ * must equal that count exactly (a caller that doesn't already know it can
+ * derive it by counting the ','-separated entries in its own target/
+ * location string); for a lone URI, any nonzero value is accepted as the
+ * caller's own chosen redundancy for that one copy, not required to equal
+ * 1. chunk_size only matters for a target string naming more than one
+ * chunk's own uris (see docs/locations_and_targets.md): it must be a
+ * nonzero power of two, the whole object's own per-chunk share, every
+ * chunk exactly that size except the last (whatever remains of size);
+ * ignored (and 0 is a valid, if meaningless, value) for the ordinary
+ * single-chunk case.
  *
  * When used with rawstor_target_spec(), all three fields are filled with
  * the actual shape of the existing object: its size in bytes, the number

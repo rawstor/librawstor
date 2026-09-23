@@ -61,21 +61,6 @@ void validate_same_uuid(
     }
 }
 
-void validate_different_uris(const std::vector<rawstd::URI>& uris) {
-    if (uris.empty()) {
-        return;
-    }
-
-    std::set<rawstd::URI> seen;
-    for (const auto& uri : uris) {
-        if (seen.find(uri) != seen.end()) {
-            rawstd_error("Different uris expected\n");
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-        seen.insert(uri);
-    }
-}
-
 // A connect()ed Slot's metadata methods take a bare id (like the
 // Backend methods they wrap) rather than a full target -- extract it once
 // here instead of in every one of this file's own call sites.
@@ -103,6 +88,27 @@ rawstd::URI strip_path(const rawstd::URI& uri) {
         ret = ret.parent();
     }
     return ret;
+}
+
+// Compared on each URI's own stripped location, not the raw URI string:
+// two spellings of the same chunk mirror (e.g. "<uuid>" and "<uuid>/0",
+// both offset 0 -- already guaranteed equal within one chunk's own uris
+// by the constructor's own grouping) would otherwise pass as "different"
+// and end up as two Members sharing one physical copy.
+void validate_different_uris(const std::vector<rawstd::URI>& uris) {
+    if (uris.empty()) {
+        return;
+    }
+
+    std::set<rawstd::URI> seen;
+    for (const auto& uri : uris) {
+        rawstd::URI location = strip_path(uri);
+        if (seen.find(location) != seen.end()) {
+            rawstd_error("Different uris expected\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        seen.insert(location);
+    }
 }
 
 // The maximal prefix of `uris` sharing its own first element's offset
@@ -169,6 +175,27 @@ meta_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstorObjectMeta ret = co_await slot->meta(id, offset);
     co_await slot->close();
     co_return ret;
+}
+
+// One chunk's own uris, tried in order until one answers -- Target::
+// spec()'s own fail-over (first reachable wins), factored out since it
+// now needs to run against two different chunks (the first and, for a
+// genuine multi-chunk target, the last).
+rawstd::Task<RawstorObjectMeta> first_reachable_meta(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& uris
+) {
+    int first_error = 0;
+    for (const auto& uri : uris) {
+        try {
+            co_return co_await meta_one(queue, uri);
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            if (first_error == 0) {
+                first_error = e.code().value();
+            }
+        }
+    }
+    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
 }
 
 rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
@@ -526,6 +553,22 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
         }
     }
 
+    // sp.chunk_size backs a wire chunk_shift (RawstorOSTFrameAllocate-
+    // Payload's own doc comment, protocol.h) that can only represent a
+    // power of two -- checked once, here, rather than letting a
+    // non-power-of-two policy silently round down (__builtin_ctzll()) at
+    // the OST relay boundary. Only meaningful once there's more than one
+    // chunk to size at all (target.h: 0 is a valid, if meaningless, value
+    // for the ordinary single-chunk case).
+    if (chunks.size() > 1 &&
+        (sp.chunk_size == 0 || (sp.chunk_size & (sp.chunk_size - 1)) != 0)) {
+        rawstd_error(
+            "Spec chunk_size must be a nonzero power of two for a "
+            "multi-chunk target\n"
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     // Every URI actually created so far, across every chunk -- rolled
     // back as one flat list on any later failure (below), so a chunk
     // that fails partway through still gets its own already-created
@@ -543,6 +586,14 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
         RawstorObjectSpec chunk_sp = sp;
         if (chunks.size() > 1) {
             uint64_t offset = extract_offset(uris.front());
+            if (offset >= sp.size) {
+                rawstd_error(
+                    "Chunk offset (%llu) is past the object's own size "
+                    "(%llu)\n",
+                    (unsigned long long)offset, (unsigned long long)sp.size
+                );
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
             chunk_sp.size = std::min(sp.chunk_size, sp.size - offset);
         }
 
@@ -597,38 +648,41 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     }
 }
 
-// Only ever touches the target's own first chunk (Target's own class doc
-// comment) -- a multi-chunk target's later chunks may have a different
-// width, but spec() has room for exactly one answer, so it can't
-// generalize across chunks the way meta() below does. width is the
+// width only ever comes from the target's own first chunk (Target's own
+// class doc comment) -- a multi-chunk target's later chunks may have a
+// different width, but spec() has room for exactly one answer, so it
+// can't generalize across chunks the way meta() below does. It is the
 // chunk's own per-copy count: the chunk's own URI count when it has more
 // than one (an ordinary mirror set can only ever be that -- no single
 // URI in it is self-aware enough to say otherwise), or whatever the sole
 // backend itself reported for a single-URI chunk (the caller's own
 // chosen redundancy, never derivable by counting) -- falling back to 1
 // only if that answer was itself 0 (a plain, single-URI object that was
-// never given one). `size` is identical on every copy of the chunk, so
-// this only needs one to answer: URIs are tried in order, first
-// reachable wins, same fail-over tolerance as meta() below.
+// never given one).
+//
+// size, unlike width, does generalize: it's the whole object's own
+// total, the same derivation Target::open() uses (its own comment) --
+// chunk_size times every chunk but the last, plus the last chunk's own
+// (possibly smaller) size, both learned with the same per-chunk
+// fail-over as the first chunk's own width/chunk_size answer above. For
+// the ordinary single-chunk case that's just chunk_size * 0 plus the one
+// chunk's own answer, so no second round trip is needed.
 rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
-    std::vector<rawstd::URI> uris = first_chunk_uris(_uris);
-    int first_error = 0;
-    for (const auto& uri : uris) {
-        try {
-            RawstorObjectSpec ret = (co_await meta_one(queue, uri)).spec;
-            if (uris.size() > 1 || ret.width == 0) {
-                ret.width = static_cast<unsigned int>(uris.size());
-            }
-            co_return ret;
-        } catch (const std::system_error& e) {
-            rawstd_warning("Mirror member unreachable: %s\n", e.what());
-            if (first_error == 0) {
-                first_error = e.code().value();
-            }
-        }
+    std::vector<std::vector<rawstd::URI>> chunks = chunk_uris_by_offset(_uris);
+    const std::vector<rawstd::URI>& uris = chunks.front();
+
+    RawstorObjectSpec ret = (co_await first_reachable_meta(queue, uris)).spec;
+    if (uris.size() > 1 || ret.width == 0) {
+        ret.width = static_cast<unsigned int>(uris.size());
     }
 
-    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
+    if (chunks.size() > 1) {
+        uint64_t last_size =
+            (co_await first_reachable_meta(queue, chunks.back())).spec.size;
+        ret.size = ret.chunk_size * (chunks.size() - 1) + last_size;
+    }
+
+    co_return ret;
 }
 
 // Unlike spec() above, every URI is queried, not just the first
@@ -724,6 +778,25 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) const {
 
     uint64_t chunk_size = last->spec().chunk_size;
     uint64_t size = chunk_size * (chunks.size() - 1) + last->spec().size;
+
+    // MultiChunkObject routes I/O purely positionally (chunk index =
+    // logical offset / chunk_size) -- verify every chunk but the last
+    // actually sits where that scheme expects before trusting it, so a
+    // target string whose own offsets don't land on exact chunk_size
+    // multiples fails here instead of silently addressing the wrong
+    // physical chunk on the next read/write.
+    for (size_t i = 0; i + 1 < chunks.size(); ++i) {
+        uint64_t expected = chunk_size * i;
+        uint64_t actual = extract_offset(chunks[i].front());
+        if (actual != expected) {
+            rawstd_error(
+                "Chunk %zu offset (%llu) does not match its expected "
+                "position (%llu)\n",
+                i, (unsigned long long)actual, (unsigned long long)expected
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
 
     if (chunks.size() == 1) {
         co_return std::unique_ptr<Object>(
