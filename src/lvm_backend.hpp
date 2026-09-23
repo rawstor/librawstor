@@ -28,8 +28,9 @@ namespace lvm {
  * Group -- self-describing: `id` is the same id every chunk of that id
  * carries, `offset` disambiguates which one, as an explicit
  * "-<offset>" LV-name suffix (0 for a plain object, same as every other
- * chunk) -- LVM's own naming forbids ':'. Device path:
- * /dev/<vg>/<uuid>-<offset>.
+ * chunk) -- LVM's own naming forbids ':'; hex, like every other offset
+ * this codebase carries in a physical name or a target URI's own path
+ * segment. Device path: /dev/<vg>/<uuid>-<offset>.
  *
  * Requires lvcreate/lvremove/lvs/vgs to be available in PATH and sufficient
  * privileges.

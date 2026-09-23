@@ -28,8 +28,10 @@ namespace zfs {
  * UUID -- self-describing: `id` is the same id every chunk of that id
  * carries, `offset` disambiguates which one, as an explicit
  * ":<offset>" dataset-name suffix (0 for a plain object, same as every
- * other chunk). Zvol dataset: <parent_dataset>/<uuid>:<offset>. Device
- * path: /dev/zvol/<parent_dataset>/<uuid>:<offset>.
+ * other chunk; hex, like every other offset this codebase carries in a
+ * physical name or a target URI's own path segment). Zvol dataset:
+ * <parent_dataset>/<uuid>:<offset>. Device path:
+ * /dev/zvol/<parent_dataset>/<uuid>:<offset>.
  *
  * Requires the 'zfs' CLI to be available in PATH and sufficient privileges
  * (typically root or CAP_SYS_ADMIN + ZFS delegation).

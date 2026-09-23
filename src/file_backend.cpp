@@ -34,14 +34,18 @@ namespace {
 // self-describing: `uuid` is the same id every chunk of that id carries,
 // `offset` (0 for a plain object) disambiguates which chunk of that
 // id this is. Two files live directly under this directory: `data` (the
-// object's own bytes) and `meta` (get_target_meta_path() below).
+// object's own bytes) and `meta` (get_target_meta_path() below). `offset`
+// is hex, not decimal -- same base as the target URI's own offset path
+// segment (Target::parse_path()'s own doc comment) and every numeric
+// field meta_encode() persists alongside it, so a directory listing and
+// its own meta record read the same way.
 std::string get_target_dir(
     const std::string& location_path, const RawstdUUIDString& uuid,
     uint64_t offset
 ) {
     std::ostringstream oss;
 
-    oss << location_path << "/" << uuid << "/" << offset;
+    oss << location_path << "/" << uuid << "/" << std::hex << offset;
 
     return oss.str();
 }

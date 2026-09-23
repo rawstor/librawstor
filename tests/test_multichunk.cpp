@@ -16,7 +16,9 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cinttypes>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -34,10 +36,18 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
     return t.get();
 }
 
+// A URI's own offset path segment is hex (Target::parse_path()'s own doc
+// comment, target.cpp), not decimal.
+std::string hex_offset(uint64_t offset) {
+    char buf[17];
+    snprintf(buf, sizeof(buf), "%" PRIx64, offset);
+    return std::string(buf);
+}
+
 // Builds a target string naming two chunks' own uris of one object by
 // hand (docs/locations_and_targets.md): "<location>/<uuid>/0" and
-// "<location>/<uuid>/<chunk_size>" -- the same flat, offset-sorted URI
-// list a real chunk-placement caller (rawstor-mds, in a later bucket)
+// "<location>/<uuid>/<chunk_size in hex>" -- the same flat, offset-sorted
+// URI list a real chunk-placement caller (rawstor-mds, in a later bucket)
 // would build, just typed out here instead. Nothing about Target/Object
 // requires that caller to exist; chunk_uris_by_offset()/Target::open()'s
 // own multi-chunk machinery only ever looks at the URIs themselves.
@@ -48,7 +58,7 @@ std::vector<rawstd::URI> two_chunk_uris(
     rawstd::URI id_uri(location, uuid_string);
     return {
         rawstd::URI(id_uri, "0"),
-        rawstd::URI(id_uri, std::to_string(chunk_size)),
+        rawstd::URI(id_uri, hex_offset(chunk_size)),
     };
 }
 

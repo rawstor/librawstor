@@ -60,7 +60,7 @@ public:
     // Parses one URI's own trailing identity (see Path's own doc comment
     // above). Throws EINVAL if the path's last segment (or the one
     // before it, for the two-segment shape) isn't a valid UUID, or the
-    // offset segment isn't a valid decimal number. A static method, not
+    // offset segment isn't a valid hexadecimal number. A static method, not
     // an instance one -- by analogy with Chunk::create(), callers that
     // don't (yet) have a Target instance to ask (Chunk::create() itself)
     // can still parse a raw URI on their own.

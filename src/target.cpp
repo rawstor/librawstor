@@ -439,9 +439,14 @@ namespace rawstor {
 // be found by counting segments from the front -- only by reading from
 // the *end*. If the last segment is a valid UUID, that's the id and
 // there's no offset segment (the ordinary, single-chunk shape every
-// plain target uses). Otherwise the last segment must be a valid decimal
-// chunk offset, with the segment right before it being the id instead;
-// anything else is malformed.
+// plain target uses). Otherwise the last segment must be a valid
+// hexadecimal chunk offset, with the segment right before it being the id
+// instead; anything else is malformed. Hex, not decimal: every other
+// numeric field this codebase persists or transmits alongside a chunk's
+// own identity (meta_encode()'s own chunk_size, epoch, sync_id, ...) is
+// already hex, so a human reading a target string, a backend's own
+// physical path, or a persisted meta record side by side sees the same
+// base everywhere instead of having to remember which fields are which.
 Target::Path Target::parse_path(const rawstd::URI& uri) {
     const std::string& filename = uri.path().filename();
 
@@ -454,7 +459,7 @@ Target::Path Target::parse_path(const rawstd::URI& uri) {
 
     char* endptr = nullptr;
     errno = 0;
-    unsigned long long parsed = strtoull(filename.c_str(), &endptr, 10);
+    unsigned long long parsed = strtoull(filename.c_str(), &endptr, 16);
     if (errno != 0 || endptr == filename.c_str() || *endptr != '\0') {
         rawstd_error("Valid UUID expected\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);

@@ -58,7 +58,12 @@ std::string Backend::_device_path(const RawstdUUID& id, uint64_t offset) const {
 std::string Backend::_dataset(const RawstdUUID& id, uint64_t offset) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
-    std::string name = std::string(uuid_str) + ":" + std::to_string(offset);
+    // Hex, not decimal -- see Target::parse_path()'s own doc comment
+    // (target.cpp) for why every physical, offset-carrying name in this
+    // codebase agrees on one base.
+    char offset_str[17];
+    snprintf(offset_str, sizeof(offset_str), "%" PRIx64, offset);
+    std::string name = std::string(uuid_str) + ":" + offset_str;
     return _parent_dataset + "/" + name;
 }
 
