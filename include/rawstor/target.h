@@ -39,11 +39,13 @@ extern "C" {
  * size except the last (whatever remains of size); ignored (and 0 is a
  * valid, if meaningless, value) for the ordinary single-chunk case.
  *
- * When used with rawstor_target_spec(), both fields are filled with the
- * actual shape of the existing object: its size in bytes and the number of
- * URIs configured for it. chunk_size is left unset (0) -- rawstor_target_spec()
- * never touches more than the target's own first chunk, so it has
- * nothing to report a chunking policy from.
+ * When used with rawstor_target_spec(), all three fields are filled with
+ * the actual shape of the existing object: its size in bytes, the number
+ * of URIs configured for it, and the per-chunk share it was created
+ * with (0 for the ordinary single-chunk case) -- rawstor_target_spec()
+ * only ever touches the target's own first chunk, but chunk_size is the
+ * whole object's own chunking policy, persisted identically on every
+ * chunk at create() time, so any one of them answers it correctly.
  *
  * @see rawstor_target_spec
  * @see rawstor_target_create

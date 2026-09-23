@@ -304,6 +304,7 @@ rawstd::Task<void> Backend::create(
 
             ChunkIdentity identity{};
             identity.width = static_cast<uint8_t>(sp.width);
+            identity.chunk_size = sp.chunk_size;
 
             // meta_encode()'s own (shorter, variable-length) return value
             // is NUL-padded out to a fixed META_MAX_SIZE bytes here,
@@ -417,6 +418,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     RawstorObjectMeta ret{};
     ret.spec.size = static_cast<uint64_t>(st.st_size);
     ret.spec.width = identity.width;
+    ret.spec.chunk_size = identity.chunk_size;
     ret.sync_state = sync_state;
 
     co_return ret;

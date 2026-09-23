@@ -31,10 +31,10 @@ private:
     // comment below) rather than left for a caller to track separately,
     // so every subclass rejects a record from an incompatible version
     // the same way. Private: only meta_encode()/meta_decode()'s own
-    // implementation ever needs it. Still 1 despite the width field
-    // added below -- this whole format is itself part of the unreleased
-    // 0.3.0 line (no live installation has ever written one), so there's
-    // nothing to stay compatible with yet.
+    // implementation ever needs it. Still 1 despite the width/chunk_size
+    // fields added below -- this whole format is itself part of the
+    // unreleased 0.3.0 line (no live installation has ever written one),
+    // so there's nothing to stay compatible with yet.
     static constexpr unsigned int META_FORMAT_VERSION = 1;
 
     // Writes dispatched to the io queue whose completion hasn't arrived
@@ -126,15 +126,17 @@ protected:
 public:
     // A chunk's own placement identity (docs/mds.md, chunk_meta): stamped
     // at create, immutable afterwards, persisted alongside the mirror
-    // consistency state by meta_encode()/meta_decode() below -- width is
-    // the only field so far. chunk_shift (RawstorOSTFrameAllocatePayload's
-    // own doc comment on why a shift, not the full chunk_size) is now
-    // carried over the wire but this backend doesn't persist it; the rest
-    // of chunk_meta (member_kind, ...) remains reserved wire space until
-    // the upcoming MDS chunk-placement model actually needs it (see
+    // consistency state by meta_encode()/meta_decode() below. chunk_size
+    // here is always the full byte value -- RawstorOSTFrameAllocate-
+    // Payload's own chunk_shift is only a wire-transfer encoding (its own
+    // doc comment on why), already converted back to bytes before
+    // reaching this local record. The rest of chunk_meta (member_kind,
+    // ...) remains reserved wire space until the upcoming MDS
+    // chunk-placement model actually needs it (see
     // RawstorOSTFrameAllocatePayload/MetaPayload's own doc comments).
     struct ChunkIdentity {
         uint8_t width;
+        uint64_t chunk_size;
     };
 
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
@@ -148,7 +150,7 @@ public:
     // latter stamped at create and never changed again) as a compact
     // colon-separated string of hex fields, e.g.
     // "version=1:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:
-    // width=0" -- shared by every blk-backed
+    // width=0:chunk_size=0" -- shared by every blk-backed
     // subclass's own native per-copy metadata storage: lvm::Backend's LVM
     // tag, zfs::Backend's ZFS user property, and file::Backend's own
     // on-disk .meta file (NUL-padded out to META_MAX_SIZE bytes -- see

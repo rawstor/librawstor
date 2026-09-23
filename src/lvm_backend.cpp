@@ -422,6 +422,7 @@ rawstd::Task<void> Backend::create(
     sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     ChunkIdentity identity{};
     identity.width = static_cast<uint8_t>(sp.width);
+    identity.chunk_size = sp.chunk_size;
     std::string tag =
         std::string(rawstor_tag_prefix) + meta_encode(sync_state, identity);
 
@@ -659,6 +660,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     RawstorObjectMeta ret{};
     ret.spec.size = co_await _blk_size(id, offset);
     ret.spec.width = identity.width;
+    ret.spec.chunk_size = identity.chunk_size;
     ret.sync_state = sync_state;
 
     co_return ret;
