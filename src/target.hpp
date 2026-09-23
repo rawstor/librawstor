@@ -37,9 +37,8 @@ class Object;
 // one exception that needs a Slot to survive past the call -- it builds
 // one Chunk per chunk (via Chunk::create(), by analogy with
 // Slot::create()), keeping one Slot per URI alive in each Chunk's own
-// pool, then wraps them all in the single Object it hands back (Object's
-// own ChunkMap routes each I/O request onto whichever chunk(s) it
-// touches).
+// pool, then wraps them all in a SingleChunkObject or MultiChunkObject
+// (object.hpp), depending on how many chunks the target names.
 class Target final {
 public:
     // One URI's own trailing path identity: `/<id>[/<offset>]` -- the

@@ -21,9 +21,9 @@ namespace {
 // calling Target's own parse_path() (a static method, not tied to an
 // instance) rather than duplicating the parsing logic here a third time:
 // Chunk::create() takes `offset` as a plain scalar, so
-// Object::_chunk() below (like Target::open()) extracts it from its own
-// already-validated URI group once here, rather than Chunk::create()
-// re-parsing it out of every URI itself.
+// MultiChunkObject::_chunk() below (like Target::open()) extracts it
+// from its own already-validated URI group once here, rather than
+// Chunk::create() re-parsing it out of every URI itself.
 uint64_t extract_offset(const rawstd::URI& uri) {
     return rawstor::Target::parse_path(uri).offset;
 }
@@ -47,59 +47,80 @@ rawstd::URI strip_path(const rawstd::URI& uri) {
 
 namespace rawstor {
 
-std::vector<Object::VolumeSegment>
-Object::SingleChunkMap::segments(off_t offset, size_t size) const {
-    return {VolumeSegment{0, offset, size, 0}};
+SingleChunkObject::SingleChunkObject(
+    rawio::Queue& queue, uint64_t size, std::unique_ptr<Chunk> chunk
+) noexcept :
+    Object(queue, size),
+    _chunk(std::move(chunk)) {
 }
 
-std::vector<Object::VolumeSegment>
-Object::MultiChunkMap::segments(off_t offset, size_t size) const {
-    std::vector<VolumeSegment> ret;
+SingleChunkObject::~SingleChunkObject() = default;
 
-    uint64_t at = static_cast<uint64_t>(offset);
-    size_t left = size;
-    size_t buf_offset = 0;
-
-    while (left > 0) {
-        uint64_t index = at / chunk_size;
-        uint64_t chunk_offset = at % chunk_size;
-        size_t take = static_cast<size_t>(
-            std::min<uint64_t>(left, chunk_size - chunk_offset)
-        );
-
-        ret.push_back(
-            VolumeSegment{
-                static_cast<uint32_t>(index),
-                static_cast<off_t>(chunk_offset),
-                take,
-                buf_offset,
-            }
-        );
-
-        at += take;
-        buf_offset += take;
-        left -= take;
-    }
-
-    return ret;
+rawstd::Task<size_t>
+SingleChunkObject::pread(void* buf, size_t size, off_t offset) {
+    _check_range(offset, size);
+    co_return co_await _chunk->pread(buf, size, offset);
 }
 
-Object::Object(
-    rawio::Queue& queue, uint64_t size, std::unique_ptr<ChunkMap> map,
-    std::vector<std::vector<rawstd::URI>> chunk_targets
+rawstd::Task<size_t> SingleChunkObject::preadv(
+    iovec* iov, unsigned int niov, size_t size, off_t offset
+) {
+    _check_range(offset, size);
+    co_return co_await _chunk->preadv(iov, niov, size, offset);
+}
+
+rawstd::Task<size_t> SingleChunkObject::pwrite(
+    const void* buf, size_t size, off_t offset, bool sync
+) {
+    _check_range(offset, size);
+    co_return co_await _chunk->pwrite(buf, size, offset, sync);
+}
+
+rawstd::Task<size_t> SingleChunkObject::pwritev(
+    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
+) {
+    _check_range(offset, size);
+    co_return co_await _chunk->pwritev(iov, niov, size, offset, sync);
+}
+
+rawstd::Task<size_t> SingleChunkObject::discard(size_t size, off_t offset) {
+    _check_range(offset, size);
+    co_return co_await _chunk->discard(size, offset);
+}
+
+rawstd::Task<size_t> SingleChunkObject::write_zeroes(
+    size_t size, off_t offset, bool unmap, bool sync
+) {
+    _check_range(offset, size);
+    co_return co_await _chunk->write_zeroes(size, offset, unmap, sync);
+}
+
+rawstd::Task<void> SingleChunkObject::flush() {
+    co_await _chunk->flush();
+}
+
+rawstd::Task<void> SingleChunkObject::close() {
+    co_await _chunk->close();
+    _chunk.reset();
+}
+
+MultiChunkObject::MultiChunkObject(
+    rawio::Queue& queue, uint64_t size, uint64_t chunk_size,
+    std::vector<std::vector<rawstd::URI>> chunk_targets,
+    std::unique_ptr<Chunk> last_chunk
 ) :
-    _queue(queue),
-    _size(size),
-    _map(std::move(map)) {
+    Object(queue, size),
+    _chunk_size(chunk_size) {
     _chunks.resize(chunk_targets.size());
     for (size_t i = 0; i < chunk_targets.size(); ++i) {
         _chunks[i].targets = std::move(chunk_targets[i]);
     }
+    _chunks.back().chunk = std::move(last_chunk);
 }
 
-Object::~Object() = default;
+MultiChunkObject::~MultiChunkObject() = default;
 
-rawstd::Task<Chunk*> Object::_chunk(uint32_t index) {
+rawstd::Task<Chunk*> MultiChunkObject::_chunk(uint32_t index) {
     ChunkEntry& entry = _chunks.at(index);
 
     if (entry.chunk != nullptr) {
@@ -142,7 +163,53 @@ rawstd::Task<Chunk*> Object::_chunk(uint32_t index) {
     co_return entry.chunk.get();
 }
 
-rawstd::Task<size_t> Object::_rw_segments(
+std::vector<MultiChunkObject::VolumeSegment>
+MultiChunkObject::_segments(off_t offset, size_t size) const {
+    std::vector<VolumeSegment> ret;
+
+    uint64_t at = static_cast<uint64_t>(offset);
+    size_t left = size;
+    size_t buf_offset = 0;
+
+    while (left > 0) {
+        uint64_t index = at / _chunk_size;
+        uint64_t chunk_offset = at % _chunk_size;
+        size_t take = static_cast<size_t>(
+            std::min<uint64_t>(left, _chunk_size - chunk_offset)
+        );
+
+        ret.push_back(
+            VolumeSegment{
+                static_cast<uint32_t>(index),
+                static_cast<off_t>(chunk_offset),
+                take,
+                buf_offset,
+            }
+        );
+
+        at += take;
+        buf_offset += take;
+        left -= take;
+    }
+
+    return ret;
+}
+
+bool MultiChunkObject::_single_segment(
+    off_t offset, size_t size, uint32_t& index, off_t& chunk_offset
+) const noexcept {
+    uint64_t at = static_cast<uint64_t>(offset);
+    uint64_t idx = at / _chunk_size;
+    uint64_t co = at % _chunk_size;
+    if (co + size > _chunk_size) {
+        return false;
+    }
+    index = static_cast<uint32_t>(idx);
+    chunk_offset = static_cast<off_t>(co);
+    return true;
+}
+
+rawstd::Task<size_t> MultiChunkObject::_rw_segments(
     const std::vector<VolumeSegment>& segments, bool write, bool sync, void* buf
 ) {
     auto rw_one = [this, write, sync,
@@ -170,73 +237,127 @@ rawstd::Task<size_t> Object::_rw_segments(
     co_return total;
 }
 
-rawstd::Task<size_t> Object::pread(void* buf, size_t size, off_t offset) {
-    if (static_cast<uint64_t>(offset) + size > _size) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+rawstd::Task<size_t> MultiChunkObject::_rwv_segments(
+    const std::vector<VolumeSegment>& segments, bool write, bool sync,
+    const iovec* iov, unsigned int niov, size_t total_size
+) {
+    auto rwv_one = [this, write, sync, iov, niov,
+                    total_size](VolumeSegment segment) -> rawstd::Task<size_t> {
+        Chunk* chunk = co_await _chunk(segment.index);
+
+        // A private, per-segment copy of the iovec metadata (not the
+        // data it points to): discard_front()/_back() below mutate it
+        // in place to carve out just this segment's own byte range,
+        // still pointing straight into the caller's original buffers --
+        // no I/O data ever moves between buffers to make this split
+        // possible.
+        std::vector<iovec> seg_iov(iov, iov + niov);
+        iovec* p = seg_iov.data();
+        unsigned int n = static_cast<unsigned int>(seg_iov.size());
+        rawstd_iovec_discard_front(&p, &n, segment.buf_offset);
+        rawstd_iovec_discard_back(
+            &p, &n, total_size - segment.buf_offset - segment.size
+        );
+
+        if (write) {
+            co_return co_await chunk->pwritev(
+                p, n, segment.size, segment.chunk_offset, sync
+            );
+        }
+        co_return co_await chunk->preadv(
+            p, n, segment.size, segment.chunk_offset
+        );
+    };
+
+    std::vector<rawstd::Task<size_t>> tasks;
+    tasks.reserve(segments.size());
+    for (const VolumeSegment& segment : segments) {
+        tasks.push_back(rwv_one(segment));
     }
-    std::vector<VolumeSegment> segments = _map->segments(offset, size);
-    co_return co_await _rw_segments(segments, false, /*sync=*/false, buf);
+    std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
+    size_t total = 0;
+    for (size_t r : results) {
+        total += r;
+    }
+    co_return total;
 }
 
 rawstd::Task<size_t>
-Object::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
-    if (static_cast<uint64_t>(offset) + size > _size) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+MultiChunkObject::pread(void* buf, size_t size, off_t offset) {
+    _check_range(offset, size);
+
+    uint32_t index;
+    off_t chunk_offset;
+    if (_single_segment(offset, size, index, chunk_offset)) {
+        Chunk* chunk = co_await _chunk(index);
+        co_return co_await chunk->pread(buf, size, chunk_offset);
     }
-    std::vector<VolumeSegment> segments = _map->segments(offset, size);
+
+    std::vector<VolumeSegment> segments = _segments(offset, size);
+    co_return co_await _rw_segments(segments, false, /*sync=*/false, buf);
+}
+
+rawstd::Task<size_t> MultiChunkObject::pwrite(
+    const void* buf, size_t size, off_t offset, bool sync
+) {
+    _check_range(offset, size);
+
+    uint32_t index;
+    off_t chunk_offset;
+    if (_single_segment(offset, size, index, chunk_offset)) {
+        Chunk* chunk = co_await _chunk(index);
+        co_return co_await chunk->pwrite(buf, size, chunk_offset, sync);
+    }
+
+    std::vector<VolumeSegment> segments = _segments(offset, size);
     co_return co_await _rw_segments(
         segments, true, sync, const_cast<void*>(buf)
     );
 }
 
-rawstd::Task<size_t>
-Object::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
-    if (static_cast<uint64_t>(offset) + size > _size) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    std::vector<VolumeSegment> segments = _map->segments(offset, size);
+rawstd::Task<size_t> MultiChunkObject::preadv(
+    iovec* iov, unsigned int niov, size_t size, off_t offset
+) {
+    _check_range(offset, size);
 
-    if (segments.size() == 1) {
-        const VolumeSegment& segment = segments.front();
-        Chunk* chunk = co_await _chunk(segment.index);
-        co_return co_await chunk->preadv(iov, niov, size, segment.chunk_offset);
+    uint32_t index;
+    off_t chunk_offset;
+    if (_single_segment(offset, size, index, chunk_offset)) {
+        Chunk* chunk = co_await _chunk(index);
+        co_return co_await chunk->preadv(iov, niov, size, chunk_offset);
     }
 
-    /* Cross-chunk vectored I/O bounces through a flat buffer (rare). */
-    std::vector<char> bounce(size);
-    size_t result =
-        co_await _rw_segments(segments, false, false, bounce.data());
-    iovec src = {bounce.data(), size};
-    rawstd_iovec_to_iovec(&src, 1, 0, iov, niov);
-    co_return result;
+    std::vector<VolumeSegment> segments = _segments(offset, size);
+    co_return co_await _rwv_segments(segments, false, false, iov, niov, size);
 }
 
-rawstd::Task<size_t> Object::pwritev(
+rawstd::Task<size_t> MultiChunkObject::pwritev(
     const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
 ) {
-    if (static_cast<uint64_t>(offset) + size > _size) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    std::vector<VolumeSegment> segments = _map->segments(offset, size);
+    _check_range(offset, size);
 
-    if (segments.size() == 1) {
-        const VolumeSegment& segment = segments.front();
-        Chunk* chunk = co_await _chunk(segment.index);
-        co_return co_await chunk->pwritev(
-            iov, niov, size, segment.chunk_offset, sync
-        );
+    uint32_t index;
+    off_t chunk_offset;
+    if (_single_segment(offset, size, index, chunk_offset)) {
+        Chunk* chunk = co_await _chunk(index);
+        co_return co_await chunk->pwritev(iov, niov, size, chunk_offset, sync);
     }
 
-    std::vector<char> bounce(size);
-    rawstd_iovec_to_buf(iov, niov, 0, bounce.data(), size);
-    co_return co_await _rw_segments(segments, true, sync, bounce.data());
+    std::vector<VolumeSegment> segments = _segments(offset, size);
+    co_return co_await _rwv_segments(segments, true, sync, iov, niov, size);
 }
 
-rawstd::Task<size_t> Object::discard(size_t size, off_t offset) {
-    if (static_cast<uint64_t>(offset) + size > _size) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+rawstd::Task<size_t> MultiChunkObject::discard(size_t size, off_t offset) {
+    _check_range(offset, size);
+
+    uint32_t index;
+    off_t chunk_offset;
+    if (_single_segment(offset, size, index, chunk_offset)) {
+        Chunk* chunk = co_await _chunk(index);
+        co_return co_await chunk->discard(size, chunk_offset);
     }
-    std::vector<VolumeSegment> segments = _map->segments(offset, size);
+
+    std::vector<VolumeSegment> segments = _segments(offset, size);
 
     auto discard_one = [this](VolumeSegment s) -> rawstd::Task<size_t> {
         Chunk* chunk = co_await _chunk(s.index);
@@ -256,12 +377,19 @@ rawstd::Task<size_t> Object::discard(size_t size, off_t offset) {
     co_return total;
 }
 
-rawstd::Task<size_t>
-Object::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
-    if (static_cast<uint64_t>(offset) + size > _size) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+rawstd::Task<size_t> MultiChunkObject::write_zeroes(
+    size_t size, off_t offset, bool unmap, bool sync
+) {
+    _check_range(offset, size);
+
+    uint32_t index;
+    off_t chunk_offset;
+    if (_single_segment(offset, size, index, chunk_offset)) {
+        Chunk* chunk = co_await _chunk(index);
+        co_return co_await chunk->write_zeroes(size, chunk_offset, unmap, sync);
     }
-    std::vector<VolumeSegment> segments = _map->segments(offset, size);
+
+    std::vector<VolumeSegment> segments = _segments(offset, size);
 
     auto write_zeroes_one = [this, unmap,
                              sync](VolumeSegment s) -> rawstd::Task<size_t> {
@@ -284,7 +412,7 @@ Object::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
     co_return total;
 }
 
-rawstd::Task<void> Object::flush() {
+rawstd::Task<void> MultiChunkObject::flush() {
     std::vector<rawstd::Task<void>> tasks;
     for (ChunkEntry& entry : _chunks) {
         if (entry.chunk != nullptr) {
@@ -294,7 +422,7 @@ rawstd::Task<void> Object::flush() {
     co_await rawstd::gather(std::move(tasks));
 }
 
-rawstd::Task<void> Object::close() {
+rawstd::Task<void> MultiChunkObject::close() {
     std::vector<rawstd::Task<void>> tasks;
     for (ChunkEntry& entry : _chunks) {
         if (entry.chunk != nullptr) {

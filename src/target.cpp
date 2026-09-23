@@ -702,13 +702,13 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
 
 // Opens the object this target addresses. Only the last chunk is opened
 // eagerly -- its own spec() already reports chunk_size (every chunk but
-// the last is exactly that size, same convention Object::MultiChunkMap
+// the last is exactly that size, same convention MultiChunkObject
 // assumes) and its own (possibly smaller) size, so the object's total
 // size is derivable without a separate look at chunk 0. Works
 // unconditionally, even for the ordinary 'chunks.size() == 1' case
-// (chunk_size is then irrelevant, multiplied by zero). The already-opened
-// Chunk is handed straight into the Object's own matching entry below --
-// Object::_chunk() never reopens it.
+// (chunk_size is then irrelevant, multiplied by zero) -- that's also
+// exactly the eagerly-opened Chunk a SingleChunkObject needs, so a
+// plain, single-chunk target never pays for a second, separate open.
 rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) const {
     std::vector<std::vector<rawstd::URI>> chunks = chunk_uris_by_offset(_uris);
 
@@ -725,18 +725,15 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) const {
     uint64_t chunk_size = last->spec().chunk_size;
     uint64_t size = chunk_size * (chunks.size() - 1) + last->spec().size;
 
-    std::unique_ptr<Object::ChunkMap> map;
     if (chunks.size() == 1) {
-        map = std::make_unique<Object::SingleChunkMap>();
-    } else {
-        map = std::make_unique<Object::MultiChunkMap>(chunk_size);
+        co_return std::unique_ptr<Object>(
+            new SingleChunkObject(queue, size, std::move(last))
+        );
     }
 
-    std::unique_ptr<Object> obj(
-        new Object(queue, size, std::move(map), chunks)
-    );
-    obj->_chunks.back().chunk = std::move(last);
-    co_return obj;
+    co_return std::unique_ptr<Object>(new MultiChunkObject(
+        queue, size, chunk_size, std::move(chunks), std::move(last)
+    ));
 }
 
 } // namespace rawstor
