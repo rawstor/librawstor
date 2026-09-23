@@ -476,7 +476,7 @@ TEST(OstLifecycleTest, create_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, meta_body.size, 1);
+        s.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta_body);
     }
 
     {
@@ -554,7 +554,18 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+        RawstorOSTFrameMetaPayload meta_body = {
+            .size = 1ull << 20,
+            .epoch = 0,
+            .sync_id = 0,
+            .sync_id_history = {},
+            .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+            .chunk_shift = 0,
+            .width = 1,
+            .reserved1 = 0,
+            .reserved2 = 0,
+        };
+        s.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta_body);
     }
 
     {
@@ -607,7 +618,18 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+        RawstorOSTFrameMetaPayload meta_body = {
+            .size = 1ull << 20,
+            .epoch = 0,
+            .sync_id = 0,
+            .sync_id_history = {},
+            .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+            .chunk_shift = 0,
+            .width = 1,
+            .reserved1 = 0,
+            .reserved2 = 0,
+        };
+        s.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta_body);
     }
 
     {

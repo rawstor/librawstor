@@ -74,17 +74,12 @@ public:
     virtual rawstd::Task<void>
     remove(const RawstdUUID& id, uint64_t offset) = 0;
 
-    virtual rawstd::Task<RawstorObjectSpec>
-    spec(const RawstdUUID& id, uint64_t offset) = 0;
-
-    // Mirror consistency identity for one copy (state/epoch/sync_id and its
-    // ancestry, see docs/mirroring.md) -- independent of spec() above,
-    // which only ever reports size. meta() reads it (returned alongside the
-    // copy's own current size); set_sync_state() persists a
-    // caller-supplied one durably before returning. Every concrete Backend
-    // must implement both -- no universal default exists (see
-    // blk::Backend's own doc comment on why this stays pure virtual there
-    // too).
+    // The full creation-time shape (size/width/chunk_size) plus this
+    // copy's own mirror consistency identity (state/epoch/sync_id and its
+    // ancestry, see docs/mirroring.md) -- the one metadata round trip
+    // every concrete Backend implements, no separate cheaper variant that
+    // only reports a subset. set_sync_state() persists a caller-supplied
+    // sync identity durably before returning.
     virtual rawstd::Task<RawstorObjectMeta>
     meta(const RawstdUUID& id, uint64_t offset) = 0;
 

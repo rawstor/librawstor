@@ -21,10 +21,9 @@ namespace blk {
 // Base for any Backend backed by a plain fd read/written via the io queue
 // (rawio::Queue::pread()/pwrite()/...). Concrete backends only need to
 // implement how to get from an object id to an open fd (_open()) plus
-// the metadata operations (list()/create()/remove()/info()) that stay
-// backend-specific; spec() has a default (BLKGETSIZE64) for backends whose
-// objects are real block devices, overridden by file::Backend since its
-// objects are plain regular files instead.
+// the metadata operations (list()/create()/remove()/meta()/info()) that
+// stay backend-specific; _blk_size() below shares the one thing that
+// doesn't, for the two subclasses whose objects are real block devices.
 class Backend : public rawstor::Backend {
 private:
     // Bumped whenever meta_encode()'s own field set changes -- carried as
@@ -105,6 +104,16 @@ protected:
     // retryable EIO.
     rawstd::Task<bool> _exists(const std::string& path);
 
+    // Real, current size of the block device `id`/`offset` maps to
+    // (BLKGETSIZE64) -- shared by lvm::Backend/zfs::Backend's own meta()
+    // below: their own native tag/property storage never carries size
+    // (see meta_encode()'s own doc comment), so this is always the
+    // up-to-date source of truth for it, even if the device were ever
+    // resized outside rawstor. file::Backend needs no equivalent -- its
+    // own meta() already gets size straight from its data file's own
+    // stat().
+    rawstd::Task<uint64_t> _blk_size(const RawstdUUID& id, uint64_t offset);
+
     // Upper bound on meta_encode()'s own return value, comfortably
     // covering every field at its widest (a full 16 hex digits for each
     // uint64_t one). Protected (not private): file::Backend, the only
@@ -134,12 +143,6 @@ public:
 
     rawstd::Task<void>
     set_object(const RawstdUUID& id, uint64_t offset) override final;
-
-    // Default spec() for a backend whose object id maps to a real block
-    // device (BLKGETSIZE64) -- file::Backend overrides this instead, since
-    // its objects are plain regular files.
-    rawstd::Task<RawstorObjectSpec>
-    spec(const RawstdUUID& id, uint64_t offset) override;
 
     // Encodes/decodes a RawstorObjectSyncState plus a ChunkIdentity (the
     // latter stamped at create and never changed again) as a compact

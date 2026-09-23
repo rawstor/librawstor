@@ -788,26 +788,18 @@ TEST(MirrorOstTest, read_failover_and_repair) {
      * on two reopened ones before the read fails over to the second member.
      * The repair then lands on the last reopened session.
      */
-    // Target::open() fetches spec() from every reachable slot
-    // concurrently (see its own comment) -- both server1's and server2's
-    // own first session get their own SPEC ahead of their SET_OBJECT+
-    // META. width on the wire here is whatever this mock server
-    // happens to answer with -- Target::open() always overwrites it
-    // with uris.size() regardless (see its own comment), so the value
-    // scripted below isn't load-bearing. Both members still go through
-    // Slot::open()'s own combined SET_OBJECT+META step (see its
-    // own comment), concurrently, once every spec() has answered. Every
-    // later low-level reconnect (invalidate_backend()) goes through
-    // Backend::set_object() only, no SPEC of its own (invalidate_backend()
-    // only set_object()s -- see its own comment) -- but it always folds
-    // its own META fetch in on success, so each reopened session below
-    // still gets its own SET_OBJECT+META pair.
+    // Chunk::create() opens every reachable slot concurrently (see its
+    // own comment) -- both server1's and server2's own first session
+    // get their own combined SET_OBJECT+META (Slot::open()'s own
+    // comment). Every later low-level reconnect (invalidate_backend())
+    // goes through Backend::set_object() too, folding its own META
+    // fetch in on success, so each reopened session below still gets
+    // its own SET_OBJECT+META pair.
     {
         rawstor::tests::Session s(server1);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_read_error(RAWSTOR_MAGIC, 3, -EIO);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_read_error(RAWSTOR_MAGIC, 2, -EIO);
     }
     {
         rawstor::tests::Session s(server1);
@@ -826,11 +818,10 @@ TEST(MirrorOstTest, read_failover_and_repair) {
 
     {
         rawstor::tests::Session s(server2);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_read(RAWSTOR_MAGIC, 3, "pong", 4);
-        s.cmd_set_state(RAWSTOR_MAGIC, 4, 0);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_read(RAWSTOR_MAGIC, 2, "pong", 4);
+        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
     }
 
     RawstorObject* object = nullptr;
@@ -873,43 +864,35 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .reserved2 = 0,
     };
 
-    // Target::open() fetches spec() from every reachable slot
-    // concurrently (see its own comment) -- both server1's and server2's
-    // own session get their own SPEC ahead of their SET_OBJECT+META.
-    // width on the wire here is whatever this mock server happens to
-    // answer with -- Target::open() always overwrites it with
-    // uris.size() regardless (see its own comment), so the value
-    // scripted below isn't load-bearing. Both members still go through
-    // Slot::open()'s own combined SET_OBJECT+META step (see its
-    // own comment), concurrently, once every spec() has answered.
+    // Chunk::create() opens every reachable slot concurrently (see its
+    // own comment) -- both server1's and server2's own session get
+    // their own combined SET_OBJECT+META (Slot::open()'s own comment).
     {
         rawstor::tests::Session s(server1);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
         s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 4, -EIO);
+        s.cmd_write_response(RAWSTOR_MAGIC, 3, -EIO);
     }
 
     {
         rawstor::tests::Session s(server2);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 4, 4);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
         /* Degrade barrier: the exclusion is recorded on the survivor. */
-        s.cmd_set_state(RAWSTOR_MAGIC, 5, 0);
+        s.cmd_set_state(RAWSTOR_MAGIC, 4, 0);
         /* Subsequent writes go to the survivor only. */
-        s.cmd_write(RAWSTOR_MAGIC, 6, 4);
+        s.cmd_write(RAWSTOR_MAGIC, 5, 4);
         /*
          * object_close() below is a clean close (see Chunk::close()'s own
          * doc comment): flush, then a durable CLEAN mark on the sole
          * survivor.
          */
-        s.cmd_flush(RAWSTOR_MAGIC, 7, 0);
-        s.cmd_set_state(RAWSTOR_MAGIC, 8, 0);
+        s.cmd_flush(RAWSTOR_MAGIC, 6, 0);
+        s.cmd_set_state(RAWSTOR_MAGIC, 7, 0);
     }
 
     RawstorObject* object = nullptr;
@@ -966,18 +949,16 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
 
     {
         rawstor::tests::Session s(server1);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
         /* Both members reject the first write's dirty-barrier update. */
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, -EINVAL);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, -EINVAL);
     }
     {
         rawstor::tests::Session s(server2);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, -EINVAL);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, -EINVAL);
     }
 
     RawstorObject* object = nullptr;
@@ -1035,32 +1016,30 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
 
     {
         rawstor::tests::Session s(server1);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 4, 4);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
         /* member0's session is "lost" (a transport-class error, not a
          * payload one) right while the object is DIRTY; transparent retry
          * is already off by this point, so _read() moves on to member1
          * after this one failure. */
-        s.cmd_read_error(RAWSTOR_MAGIC, 5, -EIO);
+        s.cmd_read_error(RAWSTOR_MAGIC, 4, -EIO);
     }
     {
         rawstor::tests::Session s(server2);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 4, 4);
-        s.cmd_read(RAWSTOR_MAGIC, 5, "ping", 4);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
+        s.cmd_read(RAWSTOR_MAGIC, 4, "ping", 4);
         /* The degrade barrier bumps epoch/sync_id on the survivor -- member0
          * is excluded durably even though it never lost this read. */
-        s.cmd_set_state(RAWSTOR_MAGIC, 6, 0);
+        s.cmd_set_state(RAWSTOR_MAGIC, 5, 0);
         /* Chunk::close(): flush + final CLEAN mark, now on the sole
          * survivor. */
-        s.cmd_flush(RAWSTOR_MAGIC, 7, 0);
-        s.cmd_set_state(RAWSTOR_MAGIC, 8, 0);
+        s.cmd_flush(RAWSTOR_MAGIC, 6, 0);
+        s.cmd_set_state(RAWSTOR_MAGIC, 7, 0);
     }
 
     RawstorObject* object = nullptr;

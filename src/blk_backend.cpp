@@ -175,8 +175,8 @@ rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t offset) {
     set_fd(fd);
 }
 
-rawstd::Task<RawstorObjectSpec>
-Backend::spec(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<uint64_t>
+Backend::_blk_size(const RawstdUUID& id, uint64_t offset) {
 #if defined(RAWSTD_ON_LINUX)
     int f = co_await _open(id, offset);
 
@@ -189,10 +189,7 @@ Backend::spec(const RawstdUUID& id, uint64_t offset) {
     }
 
     co_await _queue.close(f);
-
-    RawstorObjectSpec ret{};
-    ret.size = size;
-    co_return ret;
+    co_return size;
 #else
     (void)id;
     (void)offset;

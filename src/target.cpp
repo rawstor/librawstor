@@ -160,17 +160,6 @@ rawstd::Task<void> create_one(
     co_await slot->close();
 }
 
-rawstd::Task<RawstorObjectSpec>
-spec_one(rawio::Queue& queue, const rawstd::URI& target) {
-    RawstdUUID id = uuid_from_target(target);
-    uint64_t offset = extract_offset(target);
-    std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, strip_path(target), 1);
-    RawstorObjectSpec ret = co_await slot->spec(id, offset);
-    co_await slot->close();
-    co_return ret;
-}
-
 rawstd::Task<RawstorObjectMeta>
 meta_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
@@ -626,7 +615,7 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
     int first_error = 0;
     for (const auto& uri : uris) {
         try {
-            RawstorObjectSpec ret = co_await spec_one(queue, uri);
+            RawstorObjectSpec ret = (co_await meta_one(queue, uri)).spec;
             if (uris.size() > 1 || ret.width == 0) {
                 ret.width = static_cast<unsigned int>(uris.size());
             }

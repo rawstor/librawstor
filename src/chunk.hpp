@@ -324,14 +324,15 @@ private:
 public:
     // Connects every reachable URI in `uris` (all mirrors of the one
     // chunk `id`/`offset` names) into a Slot (Slot::create()),
-    // fetches a real spec() (first reachable answer wins), SET_OBJECT+
-    // meta()-s every connected member, then builds the Chunk itself --
-    // deciding whether the result is actually trustworthy enough to
-    // serve from is the constructor's own job from there: width == 1
-    // trusts its one member outright; width >= 2 runs
+    // SET_OBJECT+meta()-s every connected member, then builds the Chunk
+    // itself -- deciding whether the result is actually trustworthy
+    // enough to serve from is the constructor's own job from there:
+    // width == 1 trusts its one member outright; width >= 2 runs
     // _reconcile_sync_set() (which may refuse the open -- see its own
-    // comment on why that's safe to let unwind through here). Only once
-    // that succeeds does it start the object's own background
+    // comment on why that's safe to let unwind through here). This
+    // factory's own overall spec (handed to the constructor) is
+    // whichever reachable member's own META answered first. Only once
+    // construction succeeds does it start the object's own background
     // maintenance (the reconnect probe, an online resync if one is
     // already due).
     static rawstd::Task<std::unique_ptr<Chunk>> create(

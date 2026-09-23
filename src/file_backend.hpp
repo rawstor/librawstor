@@ -35,18 +35,15 @@ public:
 
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset) override;
 
-    rawstd::Task<RawstorObjectSpec>
-    spec(const RawstdUUID& id, uint64_t offset) override;
-
-    // Mirror consistency metadata lives in a companion "meta" file next
-    // to the object's own "data" file, both inside the same
-    // "<uuid>/<offset>" directory (get_target_dir()'s own doc
-    // comment, file_backend.cpp; see docs/mirroring.md) -- unlike
-    // spec(), which is always derived straight from the data file's own
-    // size, there is nowhere on a plain regular file to carve out space
-    // for this without touching object data. A copy with no "meta" file
-    // (created before this existed) is not trusted as legacy-CLEAN:
-    // meta() fails ENOENT rather than fabricating a state.
+    // size comes straight from the object's own "data" file (stat());
+    // the rest (width, plus the mirror consistency state) lives in a
+    // companion "meta" file next to it, both inside the same
+    // "<uuid>/<offset>" directory (get_target_dir()'s own doc comment,
+    // file_backend.cpp; see docs/mirroring.md) -- there is nowhere on a
+    // plain regular file to carve out space for this without touching
+    // object data. A copy with no "meta" file (created before this
+    // existed) is not trusted as legacy-CLEAN: meta() fails ENOENT
+    // rather than fabricating a state.
     rawstd::Task<RawstorObjectMeta>
     meta(const RawstdUUID& id, uint64_t offset) override;
 

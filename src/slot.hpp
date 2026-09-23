@@ -31,7 +31,7 @@ private:
 
     // Set by open() (see its own doc comment) -- unset means this
     // Slot is only ever used for metadata (list/create/remove/
-    // spec/info), which needs no SET_OBJECT step of its own.
+    // meta/info), which needs no SET_OBJECT step of its own.
     std::optional<RawstdUUID> _id;
     // The chunk offset open() bound _id to -- meaningless while _id is
     // unset; carried alongside it so invalidate_backend()'s own
@@ -139,8 +139,6 @@ public:
     create(const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp);
 
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset);
-
-    rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id, uint64_t offset);
 
     rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id, uint64_t offset);
 

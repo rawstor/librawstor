@@ -322,9 +322,8 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     // doc comment; closing it early would drop the connection Chunk is
     // about to hold onto for its writes/flush below.
     rawstor::tests::Session s(server);
-    s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
-    s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-    s.cmd_meta(RAWSTOR_MAGIC, 2, 0, clean_meta);
+    s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+    s.cmd_meta(RAWSTOR_MAGIC, 1, 0, clean_meta);
 
     std::unique_ptr<rawstor::Chunk> object =
         run(*queue, rawstor::Chunk::create(*queue, id, 0, target.uris()));

@@ -119,8 +119,7 @@ bounded by the barrier latency.
 ## Protocol and code changes
 
 - **`include/rawstor/protocol.h`** — new opcodes:
-  - `SPEC` — read just the object's size; the cheap, always-fail-over-safe path;
-  - `META` — read full per-copy metadata (size + state/epoch/sync_id/history); a separate, more expensive opcode so a plain `spec()` over `ost://` doesn't pay for the server's mirror-consistency-state lookup (which can shell out, e.g. `zfs get`/`lvs`, if the server itself sits on `lvm://`/`zfs://`);
+  - `META` — read full per-copy metadata (size + state/epoch/sync_id/history); an initial separate, cheaper `SPEC` opcode (size only) was folded into this one before release -- no backend ever answered it with more than a subset of a real per-copy identity anyway;
   - `SET_SYNC_STATE` — write mirror consistency state only (no `size` — nothing on this path ever changes it), fsynced on the server;
   - `FLUSH` — fdatasync of object data; needed for clean close and so that `rawstor-vhost`/QEMU can forward guest flushes.
   - An old server receiving an unknown opcode must answer `-ENOSYS`. There is no wire version field — acceptable before 1.0.

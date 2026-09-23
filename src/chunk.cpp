@@ -240,79 +240,6 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         std::rethrow_exception(eptr);
     }
 
-    // A real spec() answer, from whichever connected URI answers first --
-    // every reachable slot's own spec() goes out concurrently
-    // (submitted here, into a plain vector, same pattern as the connect
-    // phase above), rather than trying slots one at a time until
-    // one answers. Deliberately NOT rawstd::any(): its losing tasks are
-    // driven to completion by a *detached* background watcher (see its
-    // own doc comment), decoupled from this coroutine -- fine when a
-    // loser's resource is discarded afterward, but every slot
-    // here, winner or loser, is reused immediately below for its own
-    // SET_OBJECT+META -- a loser's own retry (e.g. invalidate_backend()
-    // reconnecting after a transient failure) could then still be
-    // running on that same Slot at the same time as the open-phase
-    // call below, a real, confirmed use-after-free once the loser's
-    // watcher and this coroutine's own cleanup raced to tear it down.
-    // Awaiting every task here, in order, sidesteps that entirely: by
-    // the time any slot is reused below, its own spec() task --
-    // win or lose -- has already fully settled. Every backend's own
-    // spec() always answers width = 1, unconditionally (see e.g.
-    // ost::Backend::spec()'s own comment: if this one slot fails,
-    // exactly one replica is lost, regardless of what might sit behind
-    // it) -- so, same as Target::spec() itself, that's overwritten with
-    // uris.size() below: today, the only source of truth this Chunk
-    // has for its own mirror count is its own URI list (a future
-    // mds:// scheme would change what Target::spec() itself does here,
-    // and this would follow it automatically once it does, rather than
-    // a second, independent copy of that logic).
-    std::vector<rawstd::Task<RawstorObjectSpec>> spec_tasks;
-    spec_tasks.reserve(reachable);
-    for (auto& slot : slots) {
-        if (slot) {
-            spec_tasks.push_back(slot->spec(id, offset));
-        }
-    }
-
-    RawstorObjectSpec spec{};
-    bool got_spec = false;
-    for (auto& t : spec_tasks) {
-        try {
-            // A compiler ICE ("no suspend point info", see
-            // launch_open_op_coro()'s own comment in target.cpp for the
-            // same class of issue) hits when a fresh named local is
-            // direct-initialized from co_await inside a try block --
-            // assigning into the already-declared `spec` (or, once it's
-            // already set, discarding the co_await'd temporary outright)
-            // sidesteps it.
-            if (got_spec) {
-                co_await t;
-            } else {
-                spec = co_await t;
-                got_spec = true;
-            }
-        } catch (const std::system_error& e) {
-            rawstd_warning("Mirror member spec unavailable: %s\n", e.what());
-        }
-    }
-
-    if (!got_spec) {
-        rawstd_error("No mirror member answered spec()\n");
-        for (auto& slot : slots) {
-            if (!slot) {
-                continue;
-            }
-            try {
-                co_await slot->close();
-            } catch (const std::exception& e) {
-                rawstd_warning("Chunk::create(): %s\n", e.what());
-            }
-        }
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
-    }
-
-    spec.width = static_cast<unsigned int>(uris.size());
-
     // The combined open (SET_OBJECT + this copy's own meta, see
     // Slot::open()'s own comment) is the one operation guaranteed
     // to actually touch the real store for every backend kind -- a
@@ -362,18 +289,23 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         slots[i].reset();
     }
 
-    // Members are assembled only now, with connect/spec/open all already
+    // Members are assembled only now, with connect/open all already
     // settled -- one slot per URI (the only member identity this
-    // codebase knows today; see the spec() comment above on why that
-    // isn't necessarily the whole story forever). A local vector, not
-    // Chunk's own _members: no Chunk exists yet to hold it -- see the
-    // constructor's own doc comment on why that's now deferred to the
-    // very end. Slot indices must stay stable from here on (the
-    // reconnect probe addresses members by index): no reallocation after
-    // handing it to Chunk below.
+    // codebase knows today). A local vector, not Chunk's own _members:
+    // no Chunk exists yet to hold it -- see the constructor's own doc
+    // comment on why that's now deferred to the very end. Slot indices
+    // must stay stable from here on (the reconnect probe addresses
+    // members by index): no reallocation after handing it to Chunk
+    // below. This factory's own overall spec (handed to Chunk's own
+    // constructor below) is whichever reachable member's own META
+    // answered first, in `uris`' own order -- every member of the same
+    // chunk agrees on it by construction, so there's no separate
+    // spec-fetch round trip to run first; metas[] already has it.
     std::vector<Chunk::Member> members;
     members.reserve(uris.size());
     reachable = 0;
+    RawstorObjectSpec spec{};
+    bool got_spec = false;
     for (size_t i = 0; i < uris.size(); ++i) {
         // Chunk's own constructor (_reconcile_sync_set(), for width
         // >= 2) only ever downgrades a member (e.g. an interrupted
@@ -389,6 +321,10 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         );
         if (opened[i]) {
             ++reachable;
+            if (!got_spec) {
+                spec = metas[i].spec;
+                got_spec = true;
+            }
         }
     }
 
@@ -403,6 +339,15 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     if (reachable == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
+
+    // `uris` is this chunk's own full configured membership -- always
+    // authoritative for the copy count, overwriting whatever an
+    // individual member's own meta() answered: Target::create() already
+    // guarantees the two agree for a real multi-URI chunk (its own
+    // width-matches-URI-count check), so this only matters for a target
+    // string naming a single URI (a caller-chosen redundancy meta()
+    // itself can't derive by counting).
+    spec.width = static_cast<unsigned int>(uris.size());
 
     // Everything the constructor needs is gathered -- deciding whether
     // it's actually trustworthy enough to open from (the width == 1

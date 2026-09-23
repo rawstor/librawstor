@@ -1298,37 +1298,6 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
     co_return;
 }
 
-rawstd::Task<RawstorObjectSpec>
-Backend::spec(const RawstdUUID& id, uint64_t offset) {
-    // A dedicated, cheaper wire round trip than meta() below -- doesn't
-    // touch the server's own mirror consistency state lookup at all (see
-    // RAWSTOR_CMD_META's own doc comment in protocol.h).
-    RawstorObjectSpec ret = {};
-    try {
-        std::vector<char> response =
-            co_await _basic_request(RAWSTOR_CMD_SPEC, "spec", id, offset, 0);
-        if (response.size() != sizeof(RawstorOSTFrameSpecPayload)) {
-            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-        }
-        const RawstorOSTFrameSpecPayload& payload =
-            *static_cast<const RawstorOSTFrameSpecPayload*>(
-                static_cast<const void*>(response.data())
-            );
-        ret.size = payload.size;
-        // Same as every other backend's own spec() (blk::Backend::spec(),
-        // file::Backend::spec()): width is never a per-backend property,
-        // so it's left unset here -- Target::spec() overwrites it with
-        // the chunk's own URI count regardless of whatever the remote
-        // server's own payload.width says.
-    } catch (const std::system_error&) {
-        throw;
-    } catch (...) {
-        RAWSTD_THROW_SYSTEM_ERROR(EIO);
-    }
-
-    co_return ret;
-}
-
 rawstd::Task<RawstorObjectMeta>
 Backend::meta(const RawstdUUID& id, uint64_t offset) {
     rawstd_info("%s: Reading object metadata...\n", str().c_str());

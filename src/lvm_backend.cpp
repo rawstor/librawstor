@@ -652,12 +652,12 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
 
-    // The tag never carries size (see meta_encode()): merge in the
-    // LV's real, current size the same way spec() reports it, rather than
-    // trust a value that could go stale if the LV were ever resized
-    // outside rawstor.
+    // The tag never carries size (see meta_encode()): merge in the LV's
+    // real, current size (_blk_size(), blk_backend.cpp) rather than trust
+    // a value that could go stale if the LV were ever resized outside
+    // rawstor.
     RawstorObjectMeta ret{};
-    ret.spec = co_await spec(id, offset);
+    ret.spec.size = co_await _blk_size(id, offset);
     ret.spec.width = identity.width;
     ret.sync_state = sync_state;
 

@@ -653,20 +653,6 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
-            case RAWSTOR_CMD_SPEC: {
-                RawstorOSTFrameBasicPayload basic;
-                co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
-                    &stream_failed
-                );
-                client = weak.lock();
-                if (client == nullptr) {
-                    co_return;
-                }
-                _spec(weak, head, basic);
-                rawstd::DetachedTask::rethrow_if_pending();
-                break;
-            }
             case RAWSTOR_CMD_META: {
                 RawstorOSTFrameBasicPayload basic;
                 co_await recv_frame(
@@ -1070,70 +1056,8 @@ rawstd::DetachedTask Client::_release(
     }
 }
 
-// Cheap path: SPEC only ever needs the object's own size, so it goes
-// through rawstor_target_spec() (its own failover, no mirror-
-// consistency-state lookup at all) rather than rawstor_target_meta() --
-// see RAWSTOR_CMD_META's own doc comment in protocol.h for why these two
-// are separate wire commands instead of one shared one.
-rawstd::DetachedTask Client::_spec(
-    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicPayload payload
-) {
-    std::shared_ptr<Client> client = weak.lock();
-    if (client == nullptr) {
-        co_return;
-    }
-
-    RawstdUUID uuid;
-    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-
-    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
-
-    RawstorObjectSpec spec{};
-    int result = 0;
-    try {
-        std::string target = rawstd::URI::uris(targets);
-        rawstd::CallbackAwaitable<void> awaiter;
-        int res = rawstor_target_spec(
-            client->_queue, target.c_str(), &spec, result_trampoline, &awaiter
-        );
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-        co_await awaiter;
-    } catch (const std::system_error& e) {
-        result = -e.code().value();
-    }
-
-    bool send_failed = false;
-    try {
-        if (result < 0) {
-            co_await client->_send_response(
-                RAWSTOR_CMD_SPEC, head.cid, result, 0
-            );
-        } else {
-            RawstorOSTFrameSpecPayload body_out{
-                .size = spec.size,
-                .chunk_shift = chunk_size_to_shift(spec.chunk_size),
-                .width = (uint8_t)spec.width,
-            };
-            std::vector<unsigned char> data(sizeof(body_out));
-            memcpy(data.data(), &body_out, sizeof(body_out));
-            co_await client->_send_response(
-                RAWSTOR_CMD_SPEC, head.cid, data.size(), 0, data
-            );
-        }
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        send_failed = true;
-    }
-    if (send_failed) {
-        co_await client->_server.del_client(client->_fd);
-    }
-}
-
-// Heavier path: the full per-copy mirror consistency record. Same shape
-// as _spec() above, one command number over.
+// The full per-copy mirror consistency record: size/width/chunk_size plus
+// state/epoch/sync_id, via rawstor_target_meta().
 rawstd::DetachedTask Client::_meta(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
     RawstorOSTFrameBasicPayload payload

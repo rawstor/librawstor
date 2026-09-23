@@ -88,9 +88,6 @@ public:
 
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset) override;
 
-    rawstd::Task<RawstorObjectSpec>
-    spec(const RawstdUUID& id, uint64_t offset) override;
-
     rawstd::Task<RawstorObjectMeta>
     meta(const RawstdUUID& id, uint64_t offset) override;
 

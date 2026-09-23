@@ -373,25 +373,6 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
     }
 }
 
-rawstd::Task<RawstorObjectSpec>
-Backend::spec(const RawstdUUID& id, uint64_t offset) {
-    std::string location_path = get_location_path(location());
-
-    RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&id, &uuid_string);
-
-    std::string target_path =
-        get_target_path(location_path, uuid_string, offset);
-
-    struct stat st;
-    co_await _queue.stat(target_path.c_str(), &st);
-
-    RawstorObjectSpec ret{};
-    ret.size = static_cast<uint64_t>(st.st_size);
-
-    co_return ret;
-}
-
 rawstd::Task<RawstorObjectMeta>
 Backend::meta(const RawstdUUID& id, uint64_t offset) {
     std::string location_path = get_location_path(location());
@@ -399,8 +380,13 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
+    std::string target_path =
+        get_target_path(location_path, uuid_string, offset);
     std::string meta_path =
         get_target_meta_path(location_path, uuid_string, offset);
+
+    struct stat st;
+    co_await _queue.stat(target_path.c_str(), &st);
 
     int fd = co_await _queue.open(meta_path.c_str(), O_RDONLY | O_CLOEXEC, 0);
 
@@ -429,7 +415,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     }
 
     RawstorObjectMeta ret{};
-    ret.spec = co_await spec(id, offset);
+    ret.spec.size = static_cast<uint64_t>(st.st_size);
     ret.spec.width = identity.width;
     ret.sync_state = sync_state;
 
