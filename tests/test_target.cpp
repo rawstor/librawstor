@@ -40,7 +40,7 @@ TEST(TargetParsePathTest, bare_id_has_no_offset_or_snapshot) {
 
 TEST(TargetParsePathTest, physical_live_shape_has_offset_no_snapshot) {
     rawstor::Target::Path path = rawstor::Target::parse_path(
-        rawstd::URI("file:///data/" + id_str + "/42")
+        rawstd::URI("file:///data/" + id_str + "/2a")
     );
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
@@ -62,7 +62,7 @@ TEST(TargetParsePathTest, logical_shape_has_snapshot_no_offset) {
 
 TEST(TargetParsePathTest, physical_shape_with_snapshot_has_both) {
     rawstor::Target::Path path = rawstor::Target::parse_path(
-        rawstd::URI("file:///data/" + id_str + "/42/" + snap_str)
+        rawstd::URI("file:///data/" + id_str + "/2a/" + snap_str)
     );
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
@@ -73,7 +73,7 @@ TEST(TargetParsePathTest, physical_shape_with_snapshot_has_both) {
 
 TEST(TargetParsePathTest, deep_location_prefix_does_not_confuse_parsing) {
     rawstor::Target::Path path = rawstor::Target::parse_path(
-        rawstd::URI("file:///a/b/c/" + id_str + "/42/" + snap_str)
+        rawstd::URI("file:///a/b/c/" + id_str + "/2a/" + snap_str)
     );
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
