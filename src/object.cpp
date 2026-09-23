@@ -163,9 +163,9 @@ rawstd::Task<Chunk*> MultiChunkObject::_chunk(uint32_t index) {
     co_return entry.chunk.get();
 }
 
-std::vector<MultiChunkObject::VolumeSegment>
+std::vector<MultiChunkObject::ObjectSegment>
 MultiChunkObject::_segments(off_t offset, size_t size) const {
-    std::vector<VolumeSegment> ret;
+    std::vector<ObjectSegment> ret;
 
     uint64_t at = static_cast<uint64_t>(offset);
     size_t left = size;
@@ -179,7 +179,7 @@ MultiChunkObject::_segments(off_t offset, size_t size) const {
         );
 
         ret.push_back(
-            VolumeSegment{
+            ObjectSegment{
                 static_cast<uint32_t>(index),
                 static_cast<off_t>(chunk_offset),
                 take,
@@ -198,6 +198,16 @@ MultiChunkObject::_segments(off_t offset, size_t size) const {
 bool MultiChunkObject::_single_segment(
     off_t offset, size_t size, uint32_t& index, off_t& chunk_offset
 ) const noexcept {
+    // A zero-length request at an exact chunk boundary (e.g. offset ==
+    // the object's own total size, itself a multiple of _chunk_size)
+    // would otherwise compute an out-of-range chunk index -- routing it
+    // through _segments()/_rw_segments() instead, whose own while
+    // (left > 0) loop already handles size == 0 correctly (no segments,
+    // no chunk ever touched, a plain 0 returned).
+    if (size == 0) {
+        return false;
+    }
+
     uint64_t at = static_cast<uint64_t>(offset);
     uint64_t idx = at / _chunk_size;
     uint64_t co = at % _chunk_size;
@@ -210,10 +220,10 @@ bool MultiChunkObject::_single_segment(
 }
 
 rawstd::Task<size_t> MultiChunkObject::_rw_segments(
-    const std::vector<VolumeSegment>& segments, bool write, bool sync, void* buf
+    const std::vector<ObjectSegment>& segments, bool write, bool sync, void* buf
 ) {
     auto rw_one = [this, write, sync,
-                   buf](VolumeSegment segment) -> rawstd::Task<size_t> {
+                   buf](ObjectSegment segment) -> rawstd::Task<size_t> {
         Chunk* chunk = co_await _chunk(segment.index);
         char* at = static_cast<char*>(buf) + segment.buf_offset;
         if (write) {
@@ -226,7 +236,7 @@ rawstd::Task<size_t> MultiChunkObject::_rw_segments(
 
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(segments.size());
-    for (const VolumeSegment& segment : segments) {
+    for (const ObjectSegment& segment : segments) {
         tasks.push_back(rw_one(segment));
     }
     std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
@@ -238,11 +248,11 @@ rawstd::Task<size_t> MultiChunkObject::_rw_segments(
 }
 
 rawstd::Task<size_t> MultiChunkObject::_rwv_segments(
-    const std::vector<VolumeSegment>& segments, bool write, bool sync,
+    const std::vector<ObjectSegment>& segments, bool write, bool sync,
     const iovec* iov, unsigned int niov, size_t total_size
 ) {
     auto rwv_one = [this, write, sync, iov, niov,
-                    total_size](VolumeSegment segment) -> rawstd::Task<size_t> {
+                    total_size](ObjectSegment segment) -> rawstd::Task<size_t> {
         Chunk* chunk = co_await _chunk(segment.index);
 
         // A private, per-segment copy of the iovec metadata (not the
@@ -271,7 +281,7 @@ rawstd::Task<size_t> MultiChunkObject::_rwv_segments(
 
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(segments.size());
-    for (const VolumeSegment& segment : segments) {
+    for (const ObjectSegment& segment : segments) {
         tasks.push_back(rwv_one(segment));
     }
     std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
@@ -293,7 +303,7 @@ MultiChunkObject::pread(void* buf, size_t size, off_t offset) {
         co_return co_await chunk->pread(buf, size, chunk_offset);
     }
 
-    std::vector<VolumeSegment> segments = _segments(offset, size);
+    std::vector<ObjectSegment> segments = _segments(offset, size);
     co_return co_await _rw_segments(segments, false, /*sync=*/false, buf);
 }
 
@@ -309,7 +319,7 @@ rawstd::Task<size_t> MultiChunkObject::pwrite(
         co_return co_await chunk->pwrite(buf, size, chunk_offset, sync);
     }
 
-    std::vector<VolumeSegment> segments = _segments(offset, size);
+    std::vector<ObjectSegment> segments = _segments(offset, size);
     co_return co_await _rw_segments(
         segments, true, sync, const_cast<void*>(buf)
     );
@@ -327,7 +337,7 @@ rawstd::Task<size_t> MultiChunkObject::preadv(
         co_return co_await chunk->preadv(iov, niov, size, chunk_offset);
     }
 
-    std::vector<VolumeSegment> segments = _segments(offset, size);
+    std::vector<ObjectSegment> segments = _segments(offset, size);
     co_return co_await _rwv_segments(segments, false, false, iov, niov, size);
 }
 
@@ -343,7 +353,7 @@ rawstd::Task<size_t> MultiChunkObject::pwritev(
         co_return co_await chunk->pwritev(iov, niov, size, chunk_offset, sync);
     }
 
-    std::vector<VolumeSegment> segments = _segments(offset, size);
+    std::vector<ObjectSegment> segments = _segments(offset, size);
     co_return co_await _rwv_segments(segments, true, sync, iov, niov, size);
 }
 
@@ -357,16 +367,16 @@ rawstd::Task<size_t> MultiChunkObject::discard(size_t size, off_t offset) {
         co_return co_await chunk->discard(size, chunk_offset);
     }
 
-    std::vector<VolumeSegment> segments = _segments(offset, size);
+    std::vector<ObjectSegment> segments = _segments(offset, size);
 
-    auto discard_one = [this](VolumeSegment s) -> rawstd::Task<size_t> {
+    auto discard_one = [this](ObjectSegment s) -> rawstd::Task<size_t> {
         Chunk* chunk = co_await _chunk(s.index);
         co_return co_await chunk->discard(s.size, s.chunk_offset);
     };
 
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(segments.size());
-    for (const VolumeSegment& segment : segments) {
+    for (const ObjectSegment& segment : segments) {
         tasks.push_back(discard_one(segment));
     }
     std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
@@ -389,10 +399,10 @@ rawstd::Task<size_t> MultiChunkObject::write_zeroes(
         co_return co_await chunk->write_zeroes(size, chunk_offset, unmap, sync);
     }
 
-    std::vector<VolumeSegment> segments = _segments(offset, size);
+    std::vector<ObjectSegment> segments = _segments(offset, size);
 
     auto write_zeroes_one = [this, unmap,
-                             sync](VolumeSegment s) -> rawstd::Task<size_t> {
+                             sync](ObjectSegment s) -> rawstd::Task<size_t> {
         Chunk* chunk = co_await _chunk(s.index);
         co_return co_await chunk->write_zeroes(
             s.size, s.chunk_offset, unmap, sync
@@ -401,7 +411,7 @@ rawstd::Task<size_t> MultiChunkObject::write_zeroes(
 
     std::vector<rawstd::Task<size_t>> tasks;
     tasks.reserve(segments.size());
-    for (const VolumeSegment& segment : segments) {
+    for (const ObjectSegment& segment : segments) {
         tasks.push_back(write_zeroes_one(segment));
     }
     std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));

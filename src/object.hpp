@@ -95,7 +95,7 @@ public:
 // Target::open() always opens its one Chunk eagerly (its own doc
 // comment), so unlike MultiChunkObject there is nothing left to open
 // lazily here -- every I/O method below is a direct call into that one
-// Chunk, unsplit: no VolumeSegment, no per-call heap allocation, no
+// Chunk, unsplit: no ObjectSegment, no per-call heap allocation, no
 // chunk-index lookup.
 class SingleChunkObject final : public Object {
 private:
@@ -143,7 +143,7 @@ class MultiChunkObject final : public Object {
 private:
     // One I/O segment after splitting a request at chunk boundaries.
     // Offsets are chunk-local.
-    struct VolumeSegment {
+    struct ObjectSegment {
         uint32_t index;     /* logical chunk */
         off_t chunk_offset; /* offset within the chunk object */
         size_t size;
@@ -186,7 +186,7 @@ private:
     rawstd::Task<Chunk*> _chunk(uint32_t index);
 
     // Splits [offset, offset+size) at _chunk_size boundaries.
-    std::vector<VolumeSegment> _segments(off_t offset, size_t size) const;
+    std::vector<ObjectSegment> _segments(off_t offset, size_t size) const;
 
     // If [offset, offset+size) fits within a single chunk (the common
     // case: most I/O is small relative to chunk_size), returns true
@@ -203,7 +203,7 @@ private:
     // copy) -- aggregated into the total byte count, or the first
     // exception hit (gather()'s own all-succeed-or-throw semantics).
     rawstd::Task<size_t> _rw_segments(
-        const std::vector<VolumeSegment>& segments, bool write, bool sync,
+        const std::vector<ObjectSegment>& segments, bool write, bool sync,
         void* buf
     );
 
@@ -215,7 +215,7 @@ private:
     // caller's original buffers. No I/O data is ever copied between
     // buffers to make this split possible.
     rawstd::Task<size_t> _rwv_segments(
-        const std::vector<VolumeSegment>& segments, bool write, bool sync,
+        const std::vector<ObjectSegment>& segments, bool write, bool sync,
         const iovec* iov, unsigned int niov, size_t total_size
     );
 
