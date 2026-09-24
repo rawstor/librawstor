@@ -14,43 +14,13 @@
 #include <cerrno>
 #include <cstddef>
 
-namespace {
-
-// The chunk offset embedded in one URI's own trailing path segments, if
-// any -- see Target::Path's own doc comment in target.hpp. Deliberately
-// calling Target's own parse_path() (a static method, not tied to an
-// instance) rather than duplicating the parsing logic here a third time:
-// Chunk::create() takes `offset` as a plain scalar, so
-// MultiChunkObject::_chunk() below (like Target::open()) extracts it
-// from its own already-validated URI group once here, rather than
-// Chunk::create() re-parsing it out of every URI itself.
-uint64_t extract_offset(const rawstd::URI& uri) {
-    return rawstor::Target::parse_path(uri).offset;
-}
-
-// The bound URI with its own identity path segments stripped back off --
-// the bare location Chunk::create() itself expects, now that it no
-// longer takes `id`/`offset` embedded in its own URI list (both are
-// already separate parameters there). Calls URI::parent() once per
-// identity segment, not just once, since the identity doesn't always
-// fit in a single trailing one.
-rawstd::URI strip_path(const rawstd::URI& uri) {
-    rawstor::Target::Path path = rawstor::Target::parse_path(uri);
-    rawstd::URI ret = uri;
-    for (unsigned int i = 0; i < path.segments; ++i) {
-        ret = ret.parent();
-    }
-    return ret;
-}
-
-} // namespace
-
 namespace rawstor {
 
 SingleChunkObject::SingleChunkObject(
-    rawio::Queue& queue, uint64_t size, std::unique_ptr<Chunk> chunk
+    rawio::Queue& queue, const RawstdUUID& id, uint64_t size,
+    std::unique_ptr<Chunk> chunk
 ) noexcept :
-    Object(queue, size),
+    Object(queue, id, size),
     _chunk(std::move(chunk)) {
 }
 
@@ -105,16 +75,14 @@ rawstd::Task<void> SingleChunkObject::close() {
 }
 
 MultiChunkObject::MultiChunkObject(
-    rawio::Queue& queue, uint64_t size, uint64_t chunk_size,
-    std::vector<std::vector<rawstd::URI>> chunk_targets,
+    rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
+    const RawstdUUID& id, uint64_t size, uint64_t chunk_size,
     std::unique_ptr<Chunk> last_chunk
 ) :
-    Object(queue, size),
+    Object(queue, id, size),
+    _locations(locations),
     _chunk_size(chunk_size) {
-    _chunks.resize(chunk_targets.size());
-    for (size_t i = 0; i < chunk_targets.size(); ++i) {
-        _chunks[i].targets = std::move(chunk_targets[i]);
-    }
+    _chunks.resize((size + chunk_size - 1) / chunk_size);
     _chunks.back().chunk = std::move(last_chunk);
 }
 
@@ -140,14 +108,8 @@ rawstd::Task<Chunk*> MultiChunkObject::_chunk(uint32_t index) {
     entry.gate.begin();
     std::exception_ptr error;
     try {
-        RawstdUUID id = Target::parse_path(entry.targets.front()).id;
-        uint64_t offset = extract_offset(entry.targets.front());
-        std::vector<rawstd::URI> locations;
-        locations.reserve(entry.targets.size());
-        for (const auto& target : entry.targets) {
-            locations.push_back(strip_path(target));
-        }
-        entry.chunk = co_await Chunk::create(locations, _queue, id, offset);
+        uint64_t offset = static_cast<uint64_t>(index) * _chunk_size;
+        entry.chunk = co_await Chunk::create(_locations, _queue, _id, offset);
     } catch (const std::system_error& e) {
         entry.open_errno = e.code().value();
         error = std::current_exception();

@@ -785,11 +785,13 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) const {
     uint64_t size = chunk_size * (chunks.size() - 1) + last->spec().size;
 
     // MultiChunkObject routes I/O purely positionally (chunk index =
-    // logical offset / chunk_size) -- verify every chunk but the last
-    // actually sits where that scheme expects before trusting it, so a
-    // target string whose own offsets don't land on exact chunk_size
-    // multiples fails here instead of silently addressing the wrong
-    // physical chunk on the next read/write.
+    // logical offset / chunk_size, locations shared across every chunk)
+    // -- verify every chunk but the last actually sits where that scheme
+    // expects, and shares the last chunk's own locations, before
+    // trusting it, so a target string whose own offsets don't land on
+    // exact chunk_size multiples, or whose chunks don't all share one
+    // location set, fails here instead of silently addressing the wrong
+    // physical chunk (or the wrong backend) on the next read/write.
     for (size_t i = 0; i + 1 < chunks.size(); ++i) {
         uint64_t expected = chunk_size * i;
         uint64_t actual = extract_offset(chunks[i].front());
@@ -801,16 +803,34 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) const {
             );
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
+
+        if (chunks[i].size() != last_locations.size()) {
+            rawstd_error(
+                "Chunk %zu has %zu location(s), expected %zu\n", i,
+                chunks[i].size(), last_locations.size()
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        for (size_t j = 0; j < chunks[i].size(); ++j) {
+            if (strip_path(chunks[i][j]).str() != last_locations[j].str()) {
+                rawstd_error(
+                    "Chunk %zu's own locations do not match the last "
+                    "chunk's\n",
+                    i
+                );
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
+        }
     }
 
     if (chunks.size() == 1) {
         co_return std::unique_ptr<Object>(
-            new SingleChunkObject(queue, size, std::move(last))
+            new SingleChunkObject(queue, last_id, size, std::move(last))
         );
     }
 
     co_return std::unique_ptr<Object>(new MultiChunkObject(
-        queue, size, chunk_size, std::move(chunks), std::move(last)
+        queue, last_locations, last_id, size, chunk_size, std::move(last)
     ));
 }
 
