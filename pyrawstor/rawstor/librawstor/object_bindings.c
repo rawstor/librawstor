@@ -864,7 +864,8 @@ static PyObject* build_mirror_meta(const struct RawstorObjectMeta* meta) {
 
 PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
-    if (!PyArg_ParseTuple(args, "s", &target)) {
+    unsigned long long offset = 0;
+    if (!PyArg_ParseTuple(args, "s|K", &target, &offset)) {
         return NULL;
     }
 
@@ -892,7 +893,7 @@ PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
     int mres = rawstor_target_meta(
-        op.queue, target, metas, count, rawstor_sync_op_cb, &op
+        op.queue, target, offset, metas, count, rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, mres);
     rawstor_sync_op_destroy(&op);
@@ -924,7 +925,8 @@ PyObject*
 py_rawstor_object_set_sync_state(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
     PyObject* sync_state_obj;
-    if (!PyArg_ParseTuple(args, "sO", &target, &sync_state_obj)) {
+    unsigned long long offset = 0;
+    if (!PyArg_ParseTuple(args, "sO|K", &target, &sync_state_obj, &offset)) {
         return NULL;
     }
 
@@ -953,7 +955,7 @@ py_rawstor_object_set_sync_state(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
     int sres = rawstor_target_set_sync_state(
-        op.queue, target, &sync_state, rawstor_sync_op_cb, &op
+        op.queue, target, offset, &sync_state, rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);
     rawstor_sync_op_destroy(&op);

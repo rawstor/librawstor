@@ -15,7 +15,8 @@
 #include <time.h>
 #include <unistd.h>
 
-/* Same buffer-capacity convention as cli/show.c's own MAX_SLOTS. */
+/* Same buffer-capacity convention as cli/show.c's own MAX_MIRRORS -- one
+ * chunk's own mirror count, not the object's own chunk count. */
 enum { MAX_MIRRORS = 256 };
 
 /* /dev/urandom rather than arc4random() -- the latter isn't declared
@@ -92,8 +93,17 @@ static char* extract_member(const char* target, size_t idx) {
     return NULL;
 }
 
-int rawstor_cli_resolve(
-    const char* target, const size_t* winners, size_t num_winners
+/* Resolves exactly one chunk: `winners` are positions within that
+ * chunk's own mirror set (rawstor_target_meta()'s own per-chunk `result`,
+ * not target's own flat comma count); `member_base` is where that
+ * chunk's own mirrors start in target's own flat comma-separated list
+ * (chunk_index * spec.width -- every chunk created together shares one
+ * width, Target::create()'s own validation), so extract_member() below
+ * can still reach the right raw URI to hand rawstor_target_set_sync_state()
+ * one member at a time. */
+static int resolve_chunk(
+    const char* target, const size_t* winners, size_t num_winners,
+    uint64_t offset, size_t member_base
 ) {
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);
@@ -104,7 +114,7 @@ int rawstor_cli_resolve(
 
     struct RawstorObjectMeta metas[MAX_MIRRORS];
     int mres = rawstor_target_meta(
-        op.queue, target, metas, MAX_MIRRORS, rawstor_cli_op_cb, &op
+        op.queue, target, offset, metas, MAX_MIRRORS, rawstor_cli_op_cb, &op
     );
     ssize_t result = rawstor_cli_op_wait(&op, mres);
     rawstor_cli_op_destroy(&op);
@@ -117,9 +127,9 @@ int rawstor_cli_resolve(
     if (result > MAX_MIRRORS) {
         fprintf(
             stderr,
-            "rawstor resolve: %zd mirrors, more than this CLI can handle "
-            "(%d)\n",
-            result, MAX_MIRRORS
+            "rawstor resolve: chunk[%" PRIu64 "] has %zd mirrors, more "
+            "than this CLI can handle (%d)\n",
+            offset, result, MAX_MIRRORS
         );
         return EXIT_FAILURE;
     }
@@ -128,8 +138,9 @@ int rawstor_cli_resolve(
         if (winners[i] >= (size_t)result) {
             fprintf(
                 stderr,
-                "--winner %zu is out of range (target has %zd mirrors)\n",
-                winners[i], result
+                "--winner %zu is out of range (chunk[%" PRIu64
+                "] has %zd mirrors)\n",
+                winners[i], offset, result
             );
             return EX_USAGE;
         }
@@ -137,9 +148,10 @@ int rawstor_cli_resolve(
             RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             fprintf(
                 stderr,
-                "mirror[%zu] is unreachable; cannot resolve using it as a "
-                "winner\n",
-                winners[i]
+                "chunk[%" PRIu64
+                "]: mirror[%zu] is unreachable; cannot resolve using it "
+                "as a winner\n",
+                offset, winners[i]
             );
             return EXIT_FAILURE;
         }
@@ -182,10 +194,11 @@ int rawstor_cli_resolve(
     if (dropped > 0) {
         fprintf(
             stderr,
-            "warning: %d other mirror sync_id(s) didn't fit in the new "
+            "warning: chunk[%" PRIu64
+            "]: %d other mirror sync_id(s) didn't fit in the new "
             "sync_id_history (capacity %d); those mirrors will still "
             "resync, just not via a recorded ancestry\n",
-            dropped, RAWSTOR_OBJECT_SYNC_ID_HISTORY
+            offset, dropped, RAWSTOR_OBJECT_SYNC_ID_HISTORY
         );
     }
 
@@ -204,7 +217,7 @@ int rawstor_cli_resolve(
      * failure leaves as many copies updated as possible" spirit as
      * Target::set_sync_state()'s own fan-out. */
     for (size_t i = 0; i < num_winners; i++) {
-        char* winner_target = extract_member(target, winners[i]);
+        char* winner_target = extract_member(target, member_base + winners[i]);
         if (winner_target == NULL) {
             fprintf(stderr, "Out of memory\n");
             return EXIT_FAILURE;
@@ -218,30 +231,86 @@ int rawstor_cli_resolve(
             return rawstd_exitcode_for_errno(-res);
         }
         int sres = rawstor_target_set_sync_state(
-            set_op.queue, winner_target, &new_state, rawstor_cli_op_cb, &set_op
+            set_op.queue, winner_target, offset, &new_state, rawstor_cli_op_cb,
+            &set_op
         );
         ssize_t sresult = rawstor_cli_op_wait(&set_op, sres);
         rawstor_cli_op_destroy(&set_op);
         if (sresult < 0) {
             fprintf(
                 stderr,
-                "mirror[%zu]: rawstor_target_set_sync_state() failed: %s\n",
-                winners[i], strerror((int)-sresult)
+                "chunk[%" PRIu64
+                "]: mirror[%zu]: rawstor_target_set_sync_state() failed: "
+                "%s\n",
+                offset, winners[i], strerror((int)-sresult)
             );
             free(winner_target);
             return rawstd_exitcode_for_errno((int)-sresult);
         }
 
         printf(
-            "mirror[%zu] (%s) is now authoritative: sync_id %" PRIu64
-            " -> %" PRIu64 ", epoch %" PRIu64 " -> %" PRIu64 "\n",
-            winners[i], winner_target, metas[winners[i]].sync_state.sync_id,
-            new_state.sync_id, metas[winners[i]].sync_state.epoch,
-            new_state.epoch
+            "chunk[%" PRIu64 "]: mirror[%zu] (%s) is now authoritative: "
+            "sync_id %" PRIu64 " -> %" PRIu64 ", epoch %" PRIu64 " -> %" PRIu64
+            "\n",
+            offset, winners[i], winner_target,
+            metas[winners[i]].sync_state.sync_id, new_state.sync_id,
+            metas[winners[i]].sync_state.epoch, new_state.epoch
         );
         free(winner_target);
     }
-    printf("Every other reachable mirror will resync on the next open.\n");
+    printf(
+        "chunk[%" PRIu64
+        "]: every other reachable mirror will resync on the next open.\n",
+        offset
+    );
 
+    return EXIT_SUCCESS;
+}
+
+int rawstor_cli_resolve(
+    const char* target, const size_t* winners, size_t num_winners,
+    int has_offset, uint64_t offset
+) {
+    RawstorCliOp op;
+    int res = rawstor_cli_op_init(&op);
+    if (res < 0) {
+        fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
+        return rawstd_exitcode_for_errno(-res);
+    }
+
+    struct RawstorObjectSpec spec;
+    int sres =
+        rawstor_target_spec(op.queue, target, &spec, rawstor_cli_op_cb, &op);
+    ssize_t result = rawstor_cli_op_wait(&op, sres);
+    rawstor_cli_op_destroy(&op);
+    if (result < 0) {
+        fprintf(
+            stderr, "rawstor_target_spec() failed: %s\n", strerror((int)-result)
+        );
+        return rawstd_exitcode_for_errno((int)-result);
+    }
+
+    if (has_offset) {
+        uint64_t chunk_index =
+            spec.chunk_size == 0 ? 0 : offset / spec.chunk_size;
+        return resolve_chunk(
+            target, winners, num_winners, offset,
+            (size_t)chunk_index * spec.width
+        );
+    }
+
+    uint64_t chunk_count =
+        spec.chunk_size == 0
+            ? 1
+            : (spec.size + spec.chunk_size - 1) / spec.chunk_size;
+    for (uint64_t i = 0; i < chunk_count; i++) {
+        int ret = resolve_chunk(
+            target, winners, num_winners, i * spec.chunk_size,
+            (size_t)i * spec.width
+        );
+        if (ret != EXIT_SUCCESS) {
+            return ret;
+        }
+    }
     return EXIT_SUCCESS;
 }

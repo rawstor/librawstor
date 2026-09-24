@@ -27,7 +27,7 @@ class Object;
 // docs/locations_and_targets.md and parse_path()'s own doc comment in
 // target.cpp). `_uris` is a flat, offset-sorted list; the split into
 // chunk uris is never stored, only ever re-derived on demand
-// (chunk_uris_by_offset()/first_chunk_uris() in target.cpp) -- nothing is
+// (chunk_uris_by_offset()/chunk_uris_at_offset() in target.cpp) -- nothing is
 // gained by keeping every method reach through one extra level of
 // nesting just for the ordinary, single-chunk case every plain target
 // is. Deliberately lightweight -- unlike Chunk, it never holds a Slot
@@ -90,20 +90,28 @@ public:
     // Location::create()).
     Location location() const;
 
-    // Works across every chunk in `_uris` -- see each one's own comment
-    // in target.cpp for why create()/remove()/meta() do, but
-    // spec()/set_sync_state() only ever touch the first.
+    // create()/remove() work across every chunk in `_uris` -- see each
+    // one's own comment in target.cpp. spec() only ever touches the
+    // first (its own comment there on why). meta()/set_sync_state()
+    // instead each touch exactly one chunk, the one named by their own
+    // `offset` parameter -- never "every chunk", since a caller wanting
+    // that loops over every chunk's own offset itself (spec()'s own
+    // size/chunk_size already tells it how many there are).
     rawstd::Task<void>
     create(rawio::Queue& queue, const RawstorObjectSpec& sp) const;
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue) const;
-    // One RawstorObjectMeta per URI in `_uris`, same order, across every
-    // chunk -- every URI is queried, not just the first reachable one; a
-    // URI that doesn't answer gets a zero-filled entry (see this
-    // method's own doc comment in target.cpp for why).
+    // One RawstorObjectMeta per URI of the chunk at `offset`, same order
+    // -- every URI of that chunk is queried, not just the first
+    // reachable one; a URI that doesn't answer gets a zero-filled entry
+    // (see this method's own doc comment in target.cpp for why). Throws
+    // ENOENT if no chunk in `_uris` sits at `offset`.
     rawstd::Task<std::vector<RawstorObjectMeta>>
-    meta(rawio::Queue& queue) const;
+    meta(rawio::Queue& queue, uint64_t offset) const;
+    // Throws ENOENT if no chunk in `_uris` sits at `offset` -- same as
+    // meta() above.
     rawstd::Task<void> set_sync_state(
-        rawio::Queue& queue, const RawstorObjectSyncState& sync_state
+        rawio::Queue& queue, uint64_t offset,
+        const RawstorObjectSyncState& sync_state
     ) const;
     rawstd::Task<void> remove(rawio::Queue& queue) const;
     // Opens every chunk into a single Object that routes each I/O

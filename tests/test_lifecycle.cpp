@@ -51,15 +51,18 @@ ssize_t target_remove(rawio::Queue& queue, const std::string& target) {
     });
 }
 
-// rawstor_target_meta() now takes an array (one entry per URI in
-// `target`) instead of a single out-parameter -- every call site here
-// queries a single-URI target, so this keeps their own signature (one
-// RawstorObjectMeta* out-parameter) by unwrapping that one entry.
+// rawstor_target_meta() now takes an array (one entry per URI of the
+// chunk at `offset`) instead of a single out-parameter -- every call
+// site here queries a single-URI, single-chunk target at offset 0, so
+// this keeps their own signature (one RawstorObjectMeta* out-parameter)
+// by unwrapping that one entry.
 ssize_t target_meta(
     rawio::Queue& queue, const std::string& target, RawstorObjectMeta* meta
 ) {
     ssize_t res = rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_target_meta(&queue, target.c_str(), meta, 1, cb, data);
+        return rawstor_target_meta(
+            &queue, target.c_str(), 0, meta, 1, cb, data
+        );
     });
     if (res < 0) {
         return res;
@@ -75,7 +78,7 @@ ssize_t target_set_sync_state(
 ) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
         return rawstor_target_set_sync_state(
-            &queue, target.c_str(), &sync_state, cb, data
+            &queue, target.c_str(), 0, &sync_state, cb, data
         );
     });
 }

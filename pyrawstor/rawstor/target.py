@@ -51,18 +51,21 @@ class Target:
     def spec(self) -> librawstor.ObjectSpec:
         return librawstor.object_spec(self._uri)
 
-    def meta(self) -> list[librawstor.ObjectMeta | None]:
-        """One entry per mirror in this target, in URI order: an
-        ObjectMeta, or None for a mirror that didn't answer."""
-        return librawstor.object_meta(self._uri)
+    def meta(self, offset: int = 0) -> list[librawstor.ObjectMeta | None]:
+        """One entry per mirror of the chunk at `offset` (0 for an
+        ordinary, single-chunk target), in URI order: an ObjectMeta, or
+        None for a mirror that didn't answer."""
+        return librawstor.object_meta(self._uri, offset)
 
-    def set_sync_state(self, sync_state: librawstor.ObjectSyncState) -> None:
-        """Write mirror consistency state to every mirror in this target.
-        A sharp tool: setting this by hand can desynchronize a target's
-        copies in ways the library's own quorum/reconciliation logic isn't
-        designed to recover from automatically -- not meant for routine
-        use."""
-        librawstor.object_set_sync_state(self._uri, sync_state)
+    def set_sync_state(
+            self, sync_state: librawstor.ObjectSyncState,
+            offset: int = 0) -> None:
+        """Write mirror consistency state to every mirror of the chunk at
+        `offset` (0 for an ordinary, single-chunk target). A sharp tool:
+        setting this by hand can desynchronize a target's copies in ways
+        the library's own quorum/reconciliation logic isn't designed to
+        recover from automatically -- not meant for routine use."""
+        librawstor.object_set_sync_state(self._uri, sync_state, offset)
 
     def remove(self) -> None:
         librawstor.object_remove(self._uri)

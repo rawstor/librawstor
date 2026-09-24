@@ -1097,8 +1097,8 @@ rawstd::DetachedTask Client::_meta(
         std::string target = rawstd::URI::uris(targets);
         rawstd::CallbackAwaitable<void> awaiter;
         int res = rawstor_target_meta(
-            client->_queue, target.c_str(), metas.data(), metas.size(),
-            result_trampoline, &awaiter
+            client->_queue, target.c_str(), payload.offset, metas.data(),
+            metas.size(), result_trampoline, &awaiter
         );
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -1187,8 +1187,8 @@ rawstd::DetachedTask Client::_set_state(
         std::string target = rawstd::URI::uris(targets);
         rawstd::CallbackAwaitable<void> awaiter;
         int res = rawstor_target_set_sync_state(
-            client->_queue, target.c_str(), &sync_state, result_trampoline,
-            &awaiter
+            client->_queue, target.c_str(), payload.chunk_offset, &sync_state,
+            result_trampoline, &awaiter
         );
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -1683,8 +1683,11 @@ Client::_targets(const RawstdUUID& uuid, uint64_t offset) {
 
     // Self-describing (Target::Path's own doc comment, target.hpp): the
     // offset segment is always stated explicitly here, even 0, since
-    // this is an internal builder, not something a caller types by hand.
-    std::string child = std::string(uuid_string) + "/" + std::to_string(offset);
+    // this is an internal builder, not something a caller types by hand;
+    // hex, like every offset segment Target::parse_path() accepts.
+    std::ostringstream offset_oss;
+    offset_oss << std::hex << offset;
+    std::string child = std::string(uuid_string) + "/" + offset_oss.str();
 
     std::vector<rawstd::URI> ret;
     ret.reserve(_server.locations().size());
