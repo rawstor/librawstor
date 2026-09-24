@@ -607,16 +607,16 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
             // --- read this request's frame payload and dispatch it ---
             switch (head.cmd) {
             case RAWSTOR_CMD_SET_OBJECT: {
-                RawstorOSTFrameSnapPayload snap;
+                RawstorOSTFrameBasicPayload basic;
                 co_await recv_frame(
-                    stream, &snap, sizeof(snap), fd, "request payload",
+                    stream, &basic, sizeof(basic), fd, "request payload",
                     &stream_failed
                 );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                _set_object(weak, head, snap);
+                _set_object(weak, head, basic);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -635,30 +635,30 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 break;
             }
             case RAWSTOR_CMD_RELEASE: {
-                RawstorOSTFrameSnapPayload snap;
+                RawstorOSTFrameBasicPayload basic;
                 co_await recv_frame(
-                    stream, &snap, sizeof(snap), fd, "request payload",
+                    stream, &basic, sizeof(basic), fd, "request payload",
                     &stream_failed
                 );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                _release(weak, head, snap);
+                _release(weak, head, basic);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
             case RAWSTOR_CMD_SNAPSHOT: {
-                RawstorOSTFrameSnapPayload snap;
+                RawstorOSTFrameBasicPayload basic;
                 co_await recv_frame(
-                    stream, &snap, sizeof(snap), fd, "request payload",
+                    stream, &basic, sizeof(basic), fd, "request payload",
                     &stream_failed
                 );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                _create_snapshot(weak, head, snap);
+                _create_snapshot(weak, head, basic);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -1040,7 +1040,7 @@ rawstd::DetachedTask Client::_allocate(
 
 rawstd::DetachedTask Client::_release(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameSnapPayload payload
+    RawstorOSTFrameBasicPayload payload
 ) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
@@ -1089,7 +1089,7 @@ rawstd::DetachedTask Client::_release(
 // above.
 rawstd::DetachedTask Client::_create_snapshot(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameSnapPayload payload
+    RawstorOSTFrameBasicPayload payload
 ) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
@@ -1333,7 +1333,7 @@ Client::_info(std::weak_ptr<Client> weak, RawstorOSTFrameHead head) {
 
 rawstd::DetachedTask Client::_set_object(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameSnapPayload payload
+    RawstorOSTFrameBasicPayload payload
 ) {
     RawIOQueue* queue;
     std::string target;

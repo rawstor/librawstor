@@ -22,7 +22,7 @@ extern "C" {
 /*
  * Binds the connection to an object/chunk -- or, if `snapshot_id` is
  * non-nil, one previously snapshotted version of it instead (nil-means-
- * live) -- rides RawstorOSTFrameSnapPayload.
+ * live) -- rides RawstorOSTFrameBasicPayload.
  */
 #define RAWSTOR_CMD_SET_OBJECT 0
 #define RAWSTOR_CMD_READ 1
@@ -32,7 +32,7 @@ extern "C" {
 /*
  * Removes an object/chunk -- or, if `snapshot_id` is non-nil, one previously
  * snapshotted version of it instead (nil-means-live, same convention as
- * SET_OBJECT) -- rides RawstorOSTFrameSnapPayload.
+ * SET_OBJECT) -- rides RawstorOSTFrameBasicPayload.
  */
 #define RAWSTOR_CMD_RELEASE 5
 #define RAWSTOR_CMD_LIST 6
@@ -44,7 +44,7 @@ extern "C" {
 
 /*
  * Native CoW snapshot of one stored object version -- rides
- * RawstorOSTFrameSnapPayload, snapshot_id is the caller's own already-
+ * RawstorOSTFrameBasicPayload, snapshot_id is the caller's own already-
  * generated version id (like every object id, client-generated -- never
  * nil, nil is reserved for the live version). -ENOTSUP on backends
  * without CoW (file://, classic LVM).
@@ -71,39 +71,34 @@ struct RawstorOSTFrameHead {
 /* request frames */
 
 /*
- * Minimalistic protocol frame. `offset` is the chunk_offset of the
- * object/chunk `object_id` names (0 for a plain, non-chunked object) for
- * META; unused (0) for LIST/LOCATION_INFO/FLUSH. `val` is
- * command-specific (e.g. LIST's own page limit).
+ * Minimalistic protocol frame, shared by every command that doesn't need
+ * one of the bigger, dedicated payloads further down (READ/WRITE/DISCARD/
+ * WRITE_ZEROES, SET_SYNC_STATE, ALLOCATE). `offset` is the chunk_offset of
+ * the object/chunk `object_id` names (0 for a plain, non-chunked object)
+ * for META; unused (0) for LIST/LOCATION_INFO/FLUSH. `snapshot_id` binds
+ * to a previously snapshotted version instead of the live one, for the
+ * handful of commands that use it (SET_OBJECT, RELEASE, SNAPSHOT -- each
+ * command's own doc comment above says which; nil means "the live
+ * version" where that's a meaningful state for the command, SET_OBJECT/
+ * RELEASE, while SNAPSHOT always carries a real, non-nil version); left
+ * nil (unused) by every other command. `val` is command-specific (e.g.
+ * LIST's own page limit); unused (0) for SET_OBJECT/RELEASE/SNAPSHOT.
+ * `snapshot_id` and `val` are never both meaningful on the same command,
+ * but living in one struct means every command that carries object_id/
+ * offset shares one wire shape and one C++-side request path
+ * (Backend::_basic_request(), ost_backend.cpp) instead of two nearly
+ * identical ones.
  */
 struct RawstorOSTFrameBasicPayload {
     uint8_t object_id[16];
     uint64_t offset;
+    uint8_t snapshot_id[16];
     uint64_t val;
 } RAWSTOR_PACKED;
 
 struct RawstorOSTFrameBasic {
     struct RawstorOSTFrameHead head;
     struct RawstorOSTFrameBasicPayload payload;
-} RAWSTOR_PACKED;
-
-/*
- * Same shape as RawstorOSTFrameBasicPayload, for the handful of commands
- * that need a UUID snapshot_id alongside object_id/offset instead of a plain
- * uint64_t val: SET_OBJECT, RELEASE, SNAPSHOT (each command's own doc
- * comment above says which). snapshot_id nil means "the live version" where
- * that's a meaningful state for the command (SET_OBJECT, RELEASE);
- * SNAPSHOT always carries a real, non-nil version.
- */
-struct RawstorOSTFrameSnapPayload {
-    uint8_t object_id[16];
-    uint64_t offset;
-    uint8_t snapshot_id[16];
-} RAWSTOR_PACKED;
-
-struct RawstorOSTFrameSnap {
-    struct RawstorOSTFrameHead head;
-    struct RawstorOSTFrameSnapPayload payload;
 } RAWSTOR_PACKED;
 
 // Shared by READ/WRITE/DISCARD/WRITE_ZEROES: `hash` is only meaningful for

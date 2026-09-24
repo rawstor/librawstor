@@ -727,6 +727,7 @@ public:
             .payload = {
                 .object_id = {},
                 .offset = 0,
+                .snapshot_id = {},
                 .val = 0,
             },
         }) {}
@@ -888,11 +889,15 @@ public:
 
 // The cid-dispatched counterpart of BackendOpRead/BackendOpWrite/
 // BackendOpFlush above, for the RawstorOSTFrameBasic-shaped commands
-// (list/remove/spec/info/set_object) -- these carry no hash and have
-// either no response body or a body of some number of T's, per
-// response.body.res. Routed through the same _recv_pump demultiplex
-// mechanism as every other op, now that the pump starts in
+// (list/remove/spec/info/set_object/set_snapshot/create_snapshot) -- these
+// carry no hash and have either no response body or a body of some number
+// of T's, per response.body.res. Routed through the same _recv_pump
+// demultiplex mechanism as every other op, now that the pump starts in
 // Backend::_connect() instead of after the first request round-trips.
+// `val`/`snapshot_id` are never both meaningful for the same command
+// (protocol.h's own doc comment on RawstorOSTFrameBasicPayload) but both
+// live in this one op regardless, so every such command shares one
+// request path rather than two nearly identical ones.
 template <typename T = char>
 class BackendOpBasic final : public BackendOp {
 private:
@@ -904,88 +909,7 @@ public:
     BackendOpBasic(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
-        uint64_t offset, uint64_t val, const rawstd::TraceEvent& trace_event
-    ) :
-        BackendOp(backend, cid, trace_event, op_name, 0, 0),
-        _cmd(cmd),
-        _request({
-            .head =
-                {
-                    .magic = RAWSTOR_MAGIC,
-                    .cmd = cmd,
-                    .cid = cid,
-                },
-            .payload = {
-                .object_id = {},
-                .offset = offset,
-                .val = val,
-            },
-        }) {
-        memcpy(
-            _request.payload.object_id, id.bytes,
-            sizeof(_request.payload.object_id)
-        );
-    }
-
-    const void* request_data() const noexcept { return &_request; }
-
-    size_t request_size() const noexcept override { return sizeof(_request); }
-
-    size_t response_head_cb(
-        const RawstorOSTFrameResponse* response, int error
-    ) override {
-        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
-
-        if (!error) {
-            error = validate_response(response);
-        }
-
-        if (!error) {
-            error = validate_cmd(response->head.cmd, _cmd);
-        }
-
-        if (!error && response->body.res > 0) {
-            // A malformed body size means we can no longer trust where
-            // the next frame starts either -- letting this throw (per
-            // response_head_cb()'s documented contract) fails every op
-            // still in flight on this backend instead of silently
-            // desyncing the stream.
-            if (response->body.res % sizeof(T) != 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-            }
-            return static_cast<size_t>(response->body.res);
-        }
-
-        _dispatch(0, error);
-        return 0;
-    }
-
-    void response_body_cb(
-        const iovec* iov, unsigned int niov, size_t result
-    ) override {
-        _response_data.resize(result / sizeof(T));
-        rawstd_iovec_to_buf(iov, niov, 0, _response_data.data(), result);
-        _dispatch(result, 0);
-    }
-
-    std::vector<T> take_response_data() { return std::move(_response_data); }
-};
-
-// Same shape as BackendOpBasic<T> above, for the handful of commands that
-// carry a UUID snapshot_id (RawstorOSTFrameSnapPayload, protocol.h) instead
-// of a plain uint64_t val: SET_OBJECT, RELEASE, SNAPSHOT.
-template <typename T = char>
-class BackendOpSnap final : public BackendOp {
-private:
-    RawstorOSTCommandType _cmd;
-    RawstorOSTFrameSnap _request;
-    std::vector<T> _response_data;
-
-public:
-    BackendOpSnap(
-        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
-        RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& snapshot_id,
+        uint64_t offset, uint64_t val, const RawstdUUID& snapshot_id,
         const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, op_name, 0, 0),
@@ -1001,6 +925,7 @@ public:
                 .object_id = {},
                 .offset = offset,
                 .snapshot_id = {},
+                .val = val,
             },
         }) {
         memcpy(
@@ -1031,6 +956,11 @@ public:
         }
 
         if (!error && response->body.res > 0) {
+            // A malformed body size means we can no longer trust where
+            // the next frame starts either -- letting this throw (per
+            // response_head_cb()'s documented contract) fails every op
+            // still in flight on this backend instead of silently
+            // desyncing the stream.
             if (response->body.res % sizeof(T) != 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
             }
@@ -1297,42 +1227,13 @@ rawstd::Task<void> Backend::close() {
 template <typename T>
 rawstd::Task<std::vector<T>> Backend::_basic_request(
     RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
-    uint64_t offset, uint64_t val
+    uint64_t offset, uint64_t val, const RawstdUUID& snapshot_id
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", op_name);
 
     std::shared_ptr<BackendOpBasic<T>> op = std::make_shared<BackendOpBasic<T>>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        cmd, op_name, id, offset, val, trace_event
-    );
-    _add_op(op);
-
-    try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
-        );
-        RAWSTD_TRACE_EVENT_MESSAGE(
-            trace_event, "%zu of %zu\n", result, op->request_size()
-        );
-        op->request_cb(validate_result(op->request_size(), result));
-    } catch (const std::system_error& e) {
-        op->request_cb(e.code().value());
-    }
-
-    co_await *op;
-    co_return op->take_response_data();
-}
-
-template <typename T>
-rawstd::Task<std::vector<T>> Backend::_snap_request(
-    RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
-    uint64_t offset, const RawstdUUID& snapshot_id
-) {
-    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", op_name);
-
-    std::shared_ptr<BackendOpSnap<T>> op = std::make_shared<BackendOpSnap<T>>(
-        std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        cmd, op_name, id, offset, snapshot_id, trace_event
+        cmd, op_name, id, offset, val, snapshot_id, trace_event
     );
     _add_op(op);
 
@@ -1407,9 +1308,7 @@ rawstd::Task<void> Backend::create(
 
 rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
     try {
-        co_await _snap_request(
-            RAWSTOR_CMD_RELEASE, "remove", id, offset, RawstdUUID{}
-        );
+        co_await _basic_request(RAWSTOR_CMD_RELEASE, "remove", id, offset);
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -1422,8 +1321,8 @@ rawstd::Task<void> Backend::remove_snapshot(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
     try {
-        co_await _snap_request(
-            RAWSTOR_CMD_RELEASE, "remove_snapshot", id, offset, snapshot_id
+        co_await _basic_request(
+            RAWSTOR_CMD_RELEASE, "remove_snapshot", id, offset, 0, snapshot_id
         );
     } catch (const std::system_error&) {
         throw;
@@ -1437,8 +1336,8 @@ rawstd::Task<void> Backend::create_snapshot(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
     try {
-        co_await _snap_request(
-            RAWSTOR_CMD_SNAPSHOT, "create_snapshot", id, offset, snapshot_id
+        co_await _basic_request(
+            RAWSTOR_CMD_SNAPSHOT, "create_snapshot", id, offset, 0, snapshot_id
         );
     } catch (const std::system_error&) {
         throw;
@@ -1544,9 +1443,7 @@ rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t offset) {
     // cid-dispatched request like list()/create()/....
     assert(_read_event != nullptr);
 
-    co_await _snap_request(
-        RAWSTOR_CMD_SET_OBJECT, "set_object", id, offset, RawstdUUID{}
-    );
+    co_await _basic_request(RAWSTOR_CMD_SET_OBJECT, "set_object", id, offset);
 }
 
 rawstd::Task<void> Backend::set_snapshot(
@@ -1554,8 +1451,9 @@ rawstd::Task<void> Backend::set_snapshot(
 ) {
     assert(_read_event != nullptr);
 
-    co_await _snap_request(
-        RAWSTOR_CMD_SET_OBJECT, "set_snapshot", object_id, offset, snapshot_id
+    co_await _basic_request(
+        RAWSTOR_CMD_SET_OBJECT, "set_snapshot", object_id, offset, 0,
+        snapshot_id
     );
 }
 

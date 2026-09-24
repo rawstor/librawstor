@@ -88,14 +88,14 @@ private:
     );
     static rawstd::DetachedTask _release(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameSnapPayload payload
+        RawstorOSTFrameBasicPayload payload
     );
     // SNAPSHOT: forwarded to the same rawstor_target_create_snapshot()
     // this server's own local backend(s) implement -- same shape as
     // _release() above.
     static rawstd::DetachedTask _create_snapshot(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameSnapPayload payload
+        RawstorOSTFrameBasicPayload payload
     );
     static rawstd::DetachedTask _meta(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
@@ -105,7 +105,7 @@ private:
     _info(std::weak_ptr<Client> weak, RawstorOSTFrameHead head);
     static rawstd::DetachedTask _set_object(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameSnapPayload payload
+        RawstorOSTFrameBasicPayload payload
     );
     static rawstd::DetachedTask _read(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,

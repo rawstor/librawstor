@@ -39,23 +39,17 @@ private:
     rawstd::Task<void> _connect() override;
     // The cid-dispatched counterpart of the old basic_request_async():
     // sends a RawstorOSTFrameBasic-shaped request (list/create/remove/
-    // spec/info/set_object all share this shape) and awaits its response
-    // through the same _ops demultiplex mechanism as every other op --
-    // requires _recv_pump to already be running, i.e. _connect() to have
-    // completed.
+    // spec/info/set_object/set_snapshot/create_snapshot all share this
+    // shape) and awaits its response through the same _ops demultiplex
+    // mechanism as every other op -- requires _recv_pump to already be
+    // running, i.e. _connect() to have completed. `val`/`snapshot_id` are
+    // never both meaningful for the same command (protocol.h's own doc
+    // comment on RawstorOSTFrameBasicPayload); a caller that only needs
+    // one leaves the other at its default (0/nil).
     template <typename T = char>
     rawstd::Task<std::vector<T>> _basic_request(
         RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
-        uint64_t offset, uint64_t val
-    );
-    // Same shape as _basic_request() above, for the handful of commands
-    // that need a UUID snapshot_id instead of a plain uint64_t val
-    // (RawstorOSTFrameSnapPayload, protocol.h): SET_OBJECT, RELEASE,
-    // SNAPSHOT.
-    template <typename T = char>
-    rawstd::Task<std::vector<T>> _snap_request(
-        RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& snapshot_id
+        uint64_t offset, uint64_t val = 0, const RawstdUUID& snapshot_id = {}
     );
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
