@@ -1,6 +1,7 @@
 #include "snapshot.h"
 
 #include "rawio_sync.h"
+#include "target_snapshot.h"
 
 #include <rawstor.h>
 
@@ -10,36 +11,49 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sysexits.h>
 
 int rawstor_cli_snapshot(const char* target) {
     fprintf(stderr, "Taking a snapshot of: %s\n", target);
 
+    struct RawstdUUID id;
+    int res = rawstd_uuid7_init(&id);
+    if (res < 0) {
+        fprintf(
+            stderr, "Failed to generate a snapshot id: %s\n", strerror(-res)
+        );
+        return rawstd_exitcode_for_errno(-res);
+    }
+    RawstdUUIDString snapshot_id;
+    rawstd_uuid_to_string(&id, &snapshot_id);
+
+    char bound_target[65536];
+    res = rawstor_cli_bind_snapshot_id(
+        target, snapshot_id, bound_target, sizeof(bound_target)
+    );
+    if (res < 0) {
+        fprintf(stderr, "Target too long: %s\n", strerror(-res));
+        return rawstd_exitcode_for_errno(-res);
+    }
+
     RawstorCliOp op;
-    int res = rawstor_cli_op_init(&op);
+    res = rawstor_cli_op_init(&op);
     if (res < 0) {
         fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
         return rawstd_exitcode_for_errno(-res);
     }
 
-    RawstdUUIDString snapshot_id;
-    int sres = rawstor_target_create_snapshot(
-        op.queue, target, NULL, snapshot_id, sizeof(snapshot_id),
-        rawstor_cli_op_cb, &op
+    /* NULL: spec is meaningless for a CoW snapshot. */
+    int sres = rawstor_target_create(
+        op.queue, bound_target, NULL, rawstor_cli_op_cb, &op
     );
     ssize_t result = rawstor_cli_op_wait(&op, sres);
     rawstor_cli_op_destroy(&op);
     if (result < 0) {
         fprintf(
-            stderr, "rawstor_target_create_snapshot() failed: %s\n",
+            stderr, "rawstor_target_create() failed: %s\n",
             strerror((int)-result)
         );
         return rawstd_exitcode_for_errno((int)-result);
-    }
-
-    if (sres >= (int)sizeof(snapshot_id)) {
-        fprintf(stderr, "rawstor_target_create_snapshot(): output truncated\n");
-        return EX_SOFTWARE;
     }
 
     fprintf(stderr, "Snapshot created\n");

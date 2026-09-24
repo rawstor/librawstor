@@ -117,13 +117,21 @@ public:
     // Location::create()).
     Location location() const;
 
-    // create()/remove() work across every chunk in `_uris` -- see each
-    // one's own comment in target.cpp. spec() only ever touches the
-    // first (its own comment there on why). meta()/set_sync_state()
-    // instead each touch exactly one chunk, the one named by their own
-    // `offset` parameter -- never "every chunk", since a caller wanting
-    // that loops over every chunk's own offset itself (spec()'s own
-    // size/chunk_size already tells it how many there are).
+    // A bound snapshot in the path (snapshot_id() above, non-nil) means
+    // this instead takes a native CoW snapshot of the live version as
+    // that exact version -- `sp` is then meaningless (the version's shape
+    // comes from the live object, not from a caller-supplied spec) and
+    // ignored outright; only the target's own first chunk is touched (see
+    // spec()'s own comment on why), and every URI in it is still
+    // attempted even if an earlier one fails, the first error encountered
+    // reported. ENOTSUP on a backend without native CoW (file://, classic
+    // LVM). Otherwise (no bound snapshot) creates every chunk, in order,
+    // per `sp` -- see this branch's own comment in target.cpp. remove()
+    // below works across every chunk too; meta()/set_sync_state() instead
+    // each touch exactly one chunk, the one named by their own `offset`
+    // parameter -- never "every chunk", since a caller wanting that loops
+    // over every chunk's own offset itself (spec()'s own size/chunk_size
+    // already tells it how many there are).
     rawstd::Task<void>
     create(rawio::Queue& queue, const RawstorObjectSpec& sp) const;
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue) const;
@@ -148,15 +156,6 @@ public:
     // no separate removal method for a snapshot: which identity gets
     // removed is already whatever this target itself names.
     rawstd::Task<void> remove(rawio::Queue& queue) const;
-
-    // Only ever touches the target's own first chunk (see spec()'s own
-    // comment on why) -- takes a native CoW snapshot of the live version
-    // as `snapshot_id` (never nil) on every URI in that chunk. Every URI is
-    // still attempted even if an earlier one fails; the first error
-    // encountered is reported. ENOTSUP on a backend without native CoW
-    // (file://, classic LVM).
-    rawstd::Task<void>
-    create_snapshot(rawio::Queue& queue, const RawstdUUID& snapshot_id) const;
 
     // Opens every chunk into a single Object that routes each I/O
     // request onto whichever chunk(s) it touches (see this method's own

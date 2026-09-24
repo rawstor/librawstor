@@ -28,6 +28,8 @@ rawstor_SOURCES = create.c \
                   snap_remove.h \
                   snapshot.c \
                   snapshot.h \
+                  target_snapshot.c \
+                  target_snapshot.h \
                   testio.c \
                   testio.h
 

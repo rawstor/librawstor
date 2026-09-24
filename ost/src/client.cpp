@@ -1084,9 +1084,11 @@ rawstd::DetachedTask Client::_release(
     }
 }
 
-// SNAPSHOT: forwarded to the same rawstor_target_create_snapshot() this
-// server's own local backend(s) implement -- same shape as _release()
-// above.
+// SNAPSHOT: forwarded to the same rawstor_target_create() this server's
+// own local backend(s) implement -- the bound snapshot_id baked into the
+// target's own path (_targets()'s own `snapshot_id` parameter) makes it
+// take a CoW snapshot instead of creating a fresh object, same shape as
+// _release() above.
 rawstd::DetachedTask Client::_create_snapshot(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
     RawstorOSTFrameBasicPayload payload
@@ -1098,26 +1100,24 @@ rawstd::DetachedTask Client::_create_snapshot(
 
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
+    // payload.snapshot_id is always a concrete, already-chosen id off the
+    // wire (never nil -- a plain OST-local snapshot always names an
+    // exact version, client-generated like every object id).
+    RawstdUUID snapshot_id;
+    memcpy(snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
+    std::vector<rawstd::URI> targets =
+        client->_targets(uuid, payload.offset, snapshot_id);
 
     int result = 0;
     try {
         std::string target = rawstd::URI::uris(targets);
         rawstd::CallbackAwaitable<void> awaiter;
-        // payload.snapshot_id is always a concrete, already-chosen id off the
-        // wire (never nil -- a plain OST-local snapshot always names an
-        // exact version, client-generated like every object id).
-        RawstdUUID snapshot_id;
-        memcpy(
-            snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id)
-        );
-        RawstdUUIDString snap_string;
-        rawstd_uuid_to_string(&snapshot_id, &snap_string);
-        char buf[sizeof(RawstdUUIDString)];
-        int res = rawstor_target_create_snapshot(
-            client->_queue, target.c_str(), snap_string, buf, sizeof(buf),
-            result_trampoline, &awaiter
+        // spec is meaningless for a CoW snapshot (the version's shape
+        // comes from the live object) -- NULL, per rawstor_target_
+        // create()'s own doc comment.
+        int res = rawstor_target_create(
+            client->_queue, target.c_str(), nullptr, result_trampoline, &awaiter
         );
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);

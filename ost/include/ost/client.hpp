@@ -90,9 +90,11 @@ private:
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameBasicPayload payload
     );
-    // SNAPSHOT: forwarded to the same rawstor_target_create_snapshot()
-    // this server's own local backend(s) implement -- same shape as
-    // _release() above.
+    // SNAPSHOT: forwarded to the same rawstor_target_create() this
+    // server's own local backend(s) implement -- the bound snapshot_id
+    // baked into the target's own path (_targets()'s own `snapshot_id`
+    // parameter) makes it take a CoW snapshot instead of creating a fresh
+    // object, same shape as _release() above.
     static rawstd::DetachedTask _create_snapshot(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameBasicPayload payload

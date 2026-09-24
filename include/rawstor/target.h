@@ -309,37 +309,57 @@ int rawstor_target_set_sync_state(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously create a new empty object at the specified target.
+ * @brief Asynchronously create a new empty object at the specified target
+ *        -- or, if @p target carries a bound snapshot version, instead
+ *        take a native CoW snapshot of the live version as that exact
+ *        version.
  *
- * This function creates an object at the exact target location given by the
- * @p target string. The object metadata (such as size) is provided via the
- * @p spec structure. The target string must follow the format described in the
- * Locations and Targets documentation (e.g., "ost://host:port/<uuid>" or any
- * other valid object identifier). The caller is responsible for ensuring that
- * the target is unique and that the backend can accept the requested location;
- * if the target already exists, the behaviour is implementation‑defined (likely
- * an error is returned).
+ * A plain @p target (no bound snapshot, see rawstor_target_snapshot_id())
+ * creates an object at the exact target location it names. The object
+ * metadata (such as size) is provided via the @p spec structure. The
+ * target string must follow the format described in the Locations and
+ * Targets documentation (e.g., "ost://host:port/<uuid>" or any other
+ * valid object identifier). The caller is responsible for ensuring that
+ * the target is unique and that the backend can accept the requested
+ * location; if the target already exists, the behaviour is
+ * implementation‑defined (likely an error is returned).
+ *
+ * A @p target that instead carries a bound snapshot version (its own
+ * trailing "/<snapshot_id>" path segment) takes a plain native CoW
+ * snapshot as that exact version on every URI in @p target (every URI is
+ * still attempted even if an earlier one fails, and the first error
+ * encountered is reported); the caller owns crash consistency there --
+ * all acknowledged writes must be flushed before this call. Every
+ * version id is client-generated, like every object id (see
+ * rawstor_location_create()) -- the caller picks the version id and
+ * embeds it in @p target itself before calling. @p spec is meaningless
+ * here (the version's shape and size come from the live object, not from
+ * a caller-supplied spec) and is ignored -- @p spec may be NULL.
  *
  * This function returns immediately; the actual result is reported via
  * @p cb once the operation completes.
  *
  * @param queue     Queue used to drive the asynchronous create.
- * @param target    Target string specifying the full identifier of the object
- *                  to be created (e.g., "ost://host:port/<uuid>"). Must not be
- *                  NULL and must be a valid target as per the library's format.
+ * @param target    Target string specifying the full identifier of the
+ *                  object (or bound snapshot version) to create, e.g.,
+ *                  "ost://host:port/<uuid>". Must not be NULL and must be
+ *                  a valid target as per the library's format.
  * @param spec      Pointer to a RawstorObjectSpec structure containing the
  *                  desired object shape. The size field must be set to the
  *                  expected size of the object. width is mandatory
  *                  and must equal the number of URIs in @p target (@c
  *                  -EINVAL otherwise, including when left 0). Only read
  *                  while this call is being queued -- need not stay valid
- *                  until @p cb runs.
+ *                  until @p cb runs. Ignored, and may be NULL, when @p
+ *                  target carries a bound snapshot version (see above).
  * @param cb        Callback invoked on completion.
  *                  - @p result is zero on success, or a negative errno on
  *                    failure (e.g. @c -EINVAL for invalid target or spec,
  *                    or a width value that doesn't match @p target's own
- *                    URI count; @c -ENOMEM, @c -EIO, etc; implementation‑
- *                    defined beyond that).
+ *                    URI count; @c -ENOTSUP if @p target names a snapshot
+ *                    version on a backend with no native CoW -- file://,
+ *                    classic LVM; @c -ENOMEM, @c -EIO, etc;
+ *                    implementation‑defined beyond that).
  *                  - @p data is the same pointer passed as @p data below.
  *                  - Return zero on success. A negative errno value signals
  *                    an error back into the I/O completion machinery.
@@ -350,6 +370,7 @@ int rawstor_target_set_sync_state(
  *         actual create result is delivered via @p cb.
  *
  * @see RawstorObjectSpec
+ * @see rawstor_target_snapshot_id
  * @see Locations and Targets:
  * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
  */
@@ -369,9 +390,9 @@ int rawstor_target_create(
  *
  * A @p target that carries a bound snapshot version (its own trailing
  * "/<snapshot_id>" path segment, see rawstor_target_snapshot_id()) instead
- * destroys that one version, exactly like rawstor_target_remove_snapshot() --
- * there is no separate function for it: which identity gets removed is already
- * whatever @p target itself names, live object or a specific snapshot.
+ * destroys that one version -- there is no separate function for it: which
+ * identity gets removed is already whatever @p target itself names, live
+ * object or a specific snapshot.
  *
  * This function returns immediately; the actual result is reported via
  * @p cb once the operation completes.
@@ -530,81 +551,11 @@ int rawstor_target_id(
  *         version). A negative errno if @p target is not valid target
  *         syntax.
  *
- * @see rawstor_target_create_snapshot
- * @see rawstor_target_remove_snapshot
+ * @see rawstor_target_create
+ * @see rawstor_target_remove
  */
 int rawstor_target_snapshot_id(
     const char* target, char* buf, size_t size
-) RAWSTOR_NOEXCEPT;
-
-/**
- * @brief Asynchronously take a snapshot of a target under a fresh or
- *        caller-chosen version id.
- *
- * Every version id is client-generated, like every object id (see
- * rawstor_location_create()). This takes a plain native CoW snapshot as
- * that exact version on every URI in @p target (every URI is still
- * attempted even if an earlier one fails, and the first error encountered
- * is reported); the caller owns crash consistency -- all acknowledged
- * writes must be flushed before this call.
- *
- * @param queue    Queue used to drive the asynchronous snapshot.
- * @param target   Target string, see rawstor_target_spec().
- * @param snapshot_id  The version id's UUID string, or NULL to have this call
- *                 generate a fresh one itself (rawstd_uuid7_init(), the
- *                 same single point of generation a fresh object id comes
- *                 from -- rawstor_location_create()).
- * @param buf      Output buffer for the version id actually used (whether
- *                 generated here or supplied in @p snapshot_id), written
- *                 synchronously before this call returns -- same
- *                 truncation convention as rawstor_target_id().
- * @param size     Size of @p buf in bytes (including space for the
- *                 terminating null byte).
- * @param cb       Callback invoked on completion.
- *                 - @p result is zero on success, or a negative errno on
- *                   failure (@c -ENOTSUP if a backend has no CoW --
- *                   file://, classic LVM -- no fallback copies are made
- *                   behind the caller's back).
- *                 - @p data is the same pointer passed as @p data below.
- * @param data     User-defined context pointer passed unchanged to @p cb.
- *
- * @return The number of characters written to @p buf (see
- *         rawstor_target_id()) if the snapshot was successfully queued;
- *         negative errno on immediate failure (in which case @p cb is
- *         never invoked).
- *
- * @see rawstor_target_remove_snapshot
- */
-int rawstor_target_create_snapshot(
-    RawIOQueue* queue, const char* target, const char* snapshot_id, char* buf,
-    size_t size, int (*cb)(ssize_t result, void* data), void* data
-) RAWSTOR_NOEXCEPT;
-
-/**
- * @brief Asynchronously destroy snapshot version @p snapshot_id of a target.
- *
- * A convenience over rawstor_target_remove() for a caller that already
- * has @p target and @p snapshot_id as two separate strings (@p snapshot_id came
- * back from a prior rawstor_target_create_snapshot(), @p target did not):
- * it appends @p snapshot_id, as a bound-snapshot path segment, to every URI in
- * @p target itself (@see rawstor_target_snapshot_id) and hands the result to
- * rawstor_target_remove() -- there is no separate removal path. Every URI
- * is attempted, the first error is reported.
- *
- * @param snapshot_id  The version id's UUID string -- always the caller's own,
- *                 never generated here (there is nothing left to report
- *                 back: the caller already knows which snapshot it means
- *                 to remove).
- *
- * @return 0 if the removal was successfully queued; negative errno on
- *         immediate failure (in which case @p cb is never invoked).
- *
- * @see rawstor_target_create_snapshot
- * @see rawstor_target_remove
- */
-int rawstor_target_remove_snapshot(
-    RawIOQueue* queue, const char* target, const char* snapshot_id,
-    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**

@@ -384,30 +384,6 @@ rawstd::DetachedTask launch_remove_op_coro(
     }
 }
 
-rawstd::DetachedTask launch_create_snapshot_op_coro(
-    rawstor::Target t, rawio::Queue* queue, RawstdUUID snapshot_id,
-    int (*cb)(ssize_t result, void* data), void* data
-) {
-    ssize_t result = 0;
-    try {
-        co_await t.create_snapshot(*queue, snapshot_id);
-    } catch (const std::system_error& e) {
-        result = -e.code().value();
-    } catch (const std::bad_alloc&) {
-        result = -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        result = -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        result = -EINVAL;
-    }
-    int res = cb(result, data);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-}
-
 // Same shape as launch_create_op_coro()/launch_remove_op_coro() above,
 // except the retrieved RawstorObjectSpec is delivered through `spec`, an
 // out-parameter written here immediately before `cb` runs (same
@@ -671,6 +647,25 @@ rawstd::Task<void>
 Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     std::vector<std::vector<rawstd::URI>> chunks = chunk_uris_by_offset(_uris);
 
+    RawstdUUID bound_snapshot_id = snapshot_id();
+    if (!rawstd_uuid_is_nil(&bound_snapshot_id)) {
+        // A bound snapshot in the path means a native CoW snapshot of the
+        // live version as that exact version, not a fresh object -- `sp`
+        // is ignored outright (this class's own doc comment on why); only
+        // the target's own first chunk is touched (spec()'s own comment
+        // on why). Every URI in it is still attempted even if an earlier
+        // one fails; the first error encountered is reported. ENOTSUP on
+        // a backend without native CoW (file://, classic LVM).
+        const std::vector<rawstd::URI>& uris = chunks.front();
+        std::vector<rawstd::Task<void>> tasks;
+        tasks.reserve(uris.size());
+        for (const auto& uri : uris) {
+            tasks.push_back(create_snapshot_one(queue, uri, bound_snapshot_id));
+        }
+        co_await rawstd::gather(std::move(tasks));
+        co_return;
+    }
+
     // No implicit width, ever: the caller must always state it, checked
     // before any I/O at all. A chunk with more than one URI is
     // unambiguously an ordinary mirror set and must match sp.width
@@ -903,23 +898,6 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
     co_await remove_many(queue, _uris);
 }
 
-// Only ever touches the target's own first chunk (see spec()'s own
-// comment on why). Every URI is still attempted even if an earlier one
-// fails; the first error encountered is reported.
-rawstd::Task<void> Target::create_snapshot(
-    rawio::Queue& queue, const RawstdUUID& snapshot_id
-) const {
-    std::vector<std::vector<rawstd::URI>> chunks = chunk_uris_by_offset(_uris);
-    const std::vector<rawstd::URI>& uris = chunks.front();
-
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(uris.size());
-    for (const auto& uri : uris) {
-        tasks.push_back(create_snapshot_one(queue, uri, snapshot_id));
-    }
-    co_await rawstd::gather(std::move(tasks));
-}
-
 // Opens the object this target addresses. Only the last chunk is opened
 // eagerly -- its own spec() already reports chunk_size (every chunk but
 // the last is exactly that size, same convention MultiChunkObject
@@ -1023,8 +1001,15 @@ int rawstor_target_create(
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
+        // NULL is only meaningful for a target that carries a bound
+        // snapshot version -- Target::create() ignores `sp` outright
+        // there. For a plain create, a NULL `spec` becomes a zeroed one,
+        // which the same width-must-be-stated check every real spec goes
+        // through below (Target::create()'s own comment) already rejects
+        // with -EINVAL, same as an explicit all-zero spec would.
+        RawstorObjectSpec sp = spec != nullptr ? *spec : RawstorObjectSpec{};
         launch_create_op_coro(
-            std::move(t), static_cast<rawio::Queue*>(queue), *spec, cb, data
+            std::move(t), static_cast<rawio::Queue*>(queue), sp, cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;
@@ -1229,89 +1214,6 @@ int rawstor_target_location(
             RAWSTD_THROW_ERRNO();
         }
         return res;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        return -EINVAL;
-    }
-}
-
-int rawstor_target_create_snapshot(
-    RawIOQueue* queue, const char* target, const char* snapshot_id, char* buf,
-    size_t size, int (*cb)(ssize_t result, void* data), void* data
-) noexcept {
-    try {
-        RawstdUUID snap;
-        int res;
-        if (snapshot_id == nullptr) {
-            res = rawstd_uuid7_init(&snap);
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
-            }
-        } else {
-            res = rawstd_uuid_from_string(&snap, snapshot_id);
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
-            }
-        }
-
-        RawstdUUIDString snap_string;
-        rawstd_uuid_to_string(&snap, &snap_string);
-
-        rawstor::Target t(rawstd::URI::uriv(target));
-
-        res = snprintf(buf, size, "%s", snap_string);
-        if (res < 0) {
-            return res;
-        }
-
-        launch_create_snapshot_op_coro(
-            std::move(t), static_cast<rawio::Queue*>(queue), snap, cb, data
-        );
-        rawstd::DetachedTask::rethrow_if_pending();
-        return res;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        return -EINVAL;
-    }
-}
-
-int rawstor_target_remove_snapshot(
-    RawIOQueue* queue, const char* target, const char* snapshot_id,
-    int (*cb)(ssize_t result, void* data), void* data
-) noexcept {
-    try {
-        RawstdUUID snap;
-        int res = rawstd_uuid_from_string(&snap, snapshot_id);
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-        RawstdUUIDString snap_string;
-        rawstd_uuid_to_string(&snap, &snap_string);
-
-        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
-        std::vector<rawstd::URI> bound;
-        bound.reserve(uris.size());
-        for (const auto& uri : uris) {
-            bound.emplace_back(uri, snap_string);
-        }
-
-        return rawstor_target_remove(
-            queue, rawstd::URI::uris(bound).c_str(), cb, data
-        );
     } catch (const std::system_error& e) {
         return -e.code().value();
     } catch (const std::bad_alloc& e) {
