@@ -548,13 +548,8 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     // No implicit width, ever: the caller must always state it, checked
     // before any I/O at all. A chunk with more than one URI is
     // unambiguously an ordinary mirror set and must match sp.width
-    // exactly. A lone URI's own width is the caller's chosen redundancy
-    // (never 0) -- accepted as any nonzero value only on a backend
-    // capable of its own internal redundancy (ost://, whose remote
-    // server may fan one member out across several backends of its own);
-    // any other single-URI backend (file://, an LV, a zvol) is exactly
-    // one physical copy, so anything but 1 would just claim a redundancy
-    // the object was never actually given (target.h's own doc comment).
+    // exactly; a lone URI's own width is the caller's chosen redundancy
+    // (never 0).
     for (const std::vector<rawstd::URI>& chunk_uris : chunks) {
         if (chunk_uris.size() > 1) {
             if (sp.width != chunk_uris.size()) {
@@ -567,13 +562,6 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
             }
         } else if (sp.width == 0) {
             rawstd_error("Spec width must be set (0 is not a valid width)\n");
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        } else if (sp.width != 1 && chunk_uris.front().scheme() != "ost") {
-            rawstd_error(
-                "Spec width (%u) is not 1, but %s:// cannot provide its "
-                "own internal redundancy\n",
-                sp.width, chunk_uris.front().scheme().c_str()
-            );
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
     }

@@ -33,14 +33,9 @@ extern "C" {
  * create with -EINVAL): for a target string naming more than one URI, it
  * must equal that count exactly (a caller that doesn't already know it can
  * derive it by counting the ','-separated entries in its own target/
- * location string); for a lone URI on a backend capable of its own
- * internal redundancy (ost://, whose remote server may fan one member
- * out across several backends of its own), any nonzero value is accepted
- * as the caller's own chosen redundancy for that one copy, not required
- * to equal 1 -- a lone URI on a backend that is itself exactly one
- * physical copy (file://, an LV, a zvol) only ever accepts 1, since
- * anything else would claim a redundancy the object was never actually
- * given. chunk_size only matters for a target string naming more than one
+ * location string); for a lone URI, any nonzero value is accepted as the
+ * caller's own chosen redundancy for that one copy, not required to equal
+ * 1. chunk_size only matters for a target string naming more than one
  * chunk's own uris (see docs/locations_and_targets.md): it must be a
  * nonzero power of two, the whole object's own per-chunk share, every
  * chunk exactly that size except the last (whatever remains of size);
