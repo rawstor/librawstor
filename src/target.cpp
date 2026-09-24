@@ -906,7 +906,8 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
 // fails; the first error encountered is reported.
 rawstd::Task<void>
 Target::create_snapshot(rawio::Queue& queue, const RawstdUUID& snap_id) const {
-    std::vector<rawstd::URI> uris = first_chunk_uris(_uris);
+    std::vector<std::vector<rawstd::URI>> chunks = chunk_uris_by_offset(_uris);
+    const std::vector<rawstd::URI>& uris = chunks.front();
 
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(uris.size());
