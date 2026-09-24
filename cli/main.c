@@ -553,7 +553,7 @@ static void command_resolve_usage(void) {
         "\n"
         "command options:\n"
         "  --offset OFFSET       The chunk to resolve, by its own byte "
-        "offset\n"
+        "offset, in hex\n"
         "                        (`rawstor show -v`'s own chunk[N]). "
         "Default:\n"
         "                        every chunk in the object.\n"
@@ -621,9 +621,12 @@ static int command_resolve(int argc, char** argv) {
     int has_offset = 0;
     uint64_t offset = 0;
     if (offset_arg != NULL) {
+        /* Hex, not decimal -- same base `rawstor show -v` labels
+         * chunk[N] in, so a value copied straight from its output means
+         * the same chunk here. */
         char* endptr = NULL;
         errno = 0;
-        offset = strtoull(offset_arg, &endptr, 10);
+        offset = strtoull(offset_arg, &endptr, 16);
         if (errno != 0 || endptr == offset_arg || *endptr != '\0') {
             fprintf(stderr, "Invalid --offset value: %s\n", offset_arg);
             return EX_USAGE;

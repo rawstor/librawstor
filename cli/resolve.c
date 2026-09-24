@@ -7,7 +7,6 @@
 #include <rawstd/exitcode.h>
 
 #include <fcntl.h>
-#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -127,9 +126,9 @@ static int resolve_chunk(
     if (result > MAX_MIRRORS) {
         fprintf(
             stderr,
-            "rawstor resolve: chunk[%" PRIu64 "] has %zd mirrors, more "
+            "rawstor resolve: chunk[%llx] has %zd mirrors, more "
             "than this CLI can handle (%d)\n",
-            offset, result, MAX_MIRRORS
+            (unsigned long long)offset, result, MAX_MIRRORS
         );
         return EXIT_FAILURE;
     }
@@ -138,9 +137,9 @@ static int resolve_chunk(
         if (winners[i] >= (size_t)result) {
             fprintf(
                 stderr,
-                "--winner %zu is out of range (chunk[%" PRIu64
-                "] has %zd mirrors)\n",
-                winners[i], offset, result
+                "--winner %zu is out of range (chunk[%llx] has %zd "
+                "mirrors)\n",
+                winners[i], (unsigned long long)offset, result
             );
             return EX_USAGE;
         }
@@ -148,10 +147,9 @@ static int resolve_chunk(
             RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             fprintf(
                 stderr,
-                "chunk[%" PRIu64
-                "]: mirror[%zu] is unreachable; cannot resolve using it "
-                "as a winner\n",
-                offset, winners[i]
+                "chunk[%llx]: mirror[%zu] is unreachable; cannot resolve "
+                "using it as a winner\n",
+                (unsigned long long)offset, winners[i]
             );
             return EXIT_FAILURE;
         }
@@ -194,11 +192,10 @@ static int resolve_chunk(
     if (dropped > 0) {
         fprintf(
             stderr,
-            "warning: chunk[%" PRIu64
-            "]: %d other mirror sync_id(s) didn't fit in the new "
-            "sync_id_history (capacity %d); those mirrors will still "
-            "resync, just not via a recorded ancestry\n",
-            offset, dropped, RAWSTOR_OBJECT_SYNC_ID_HISTORY
+            "warning: chunk[%llx]: %d other mirror sync_id(s) didn't fit "
+            "in the new sync_id_history (capacity %d); those mirrors "
+            "will still resync, just not via a recorded ancestry\n",
+            (unsigned long long)offset, dropped, RAWSTOR_OBJECT_SYNC_ID_HISTORY
         );
     }
 
@@ -239,29 +236,32 @@ static int resolve_chunk(
         if (sresult < 0) {
             fprintf(
                 stderr,
-                "chunk[%" PRIu64
-                "]: mirror[%zu]: rawstor_target_set_sync_state() failed: "
-                "%s\n",
-                offset, winners[i], strerror((int)-sresult)
+                "chunk[%llx]: mirror[%zu]: rawstor_target_set_sync_state() "
+                "failed: %s\n",
+                (unsigned long long)offset, winners[i], strerror((int)-sresult)
             );
             free(winner_target);
             return rawstd_exitcode_for_errno((int)-sresult);
         }
 
+        /* sync_id in hex, epoch in decimal -- same base each one is
+         * displayed in everywhere else (rawstor show -v, meta_encode()'s
+         * own on-disk encoding). */
         printf(
-            "chunk[%" PRIu64 "]: mirror[%zu] (%s) is now authoritative: "
-            "sync_id %" PRIu64 " -> %" PRIu64 ", epoch %" PRIu64 " -> %" PRIu64
-            "\n",
-            offset, winners[i], winner_target,
-            metas[winners[i]].sync_state.sync_id, new_state.sync_id,
-            metas[winners[i]].sync_state.epoch, new_state.epoch
+            "chunk[%llx]: mirror[%zu] (%s) is now authoritative: sync_id "
+            "%llx -> %llx, epoch %llu -> %llu\n",
+            (unsigned long long)offset, winners[i], winner_target,
+            (unsigned long long)metas[winners[i]].sync_state.sync_id,
+            (unsigned long long)new_state.sync_id,
+            (unsigned long long)metas[winners[i]].sync_state.epoch,
+            (unsigned long long)new_state.epoch
         );
         free(winner_target);
     }
     printf(
-        "chunk[%" PRIu64
-        "]: every other reachable mirror will resync on the next open.\n",
-        offset
+        "chunk[%llx]: every other reachable mirror will resync on the "
+        "next open.\n",
+        (unsigned long long)offset
     );
 
     return EXIT_SUCCESS;

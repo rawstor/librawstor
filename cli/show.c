@@ -8,7 +8,6 @@
 #include <rawstd/units.h>
 
 #include <errno.h>
-#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +26,9 @@ sync_state_to_string(enum RawstorObjectSyncStateValue state) {
     }
 }
 
+/* Hex, not decimal -- same base sync_id is printed in below, matching
+ * meta_encode()'s own on-disk encoding of both fields (blk_backend.cpp).
+ */
 static void print_sync_id_history(
     const char* indent, const uint64_t* history, size_t count
 ) {
@@ -36,7 +38,7 @@ static void print_sync_id_history(
         if (history[i] == 0) {
             continue;
         }
-        printf(" %" PRIu64, history[i]);
+        printf(" %llx", (unsigned long long)history[i]);
         any = 1;
     }
     if (!any) {
@@ -66,6 +68,12 @@ static uint64_t rawstor_cli_chunk_count(const struct RawstorObjectSpec* spec) {
 static int
 show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
     struct RawstorObjectMeta metas[MAX_MIRRORS];
+    /* op is shared across every chunk in show_meta()'s own loop below --
+     * reset before each reuse, same convention as cli/info.c's own
+     * multi-call loops, or rawstor_cli_op_wait() sees the previous
+     * chunk's own already-done flag and returns its stale result without
+     * actually waiting for this call's completion. */
+    op->done = 0;
     int mres = rawstor_target_meta(
         op->queue, target, offset, metas, MAX_MIRRORS, rawstor_cli_op_cb, op
     );
@@ -79,17 +87,19 @@ show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
     if (result > MAX_MIRRORS) {
         fprintf(
             stderr,
-            "rawstor show -v: chunk[%" PRIu64 "] has %zd mirrors, more "
+            "rawstor show -v: chunk[%llx] has %zd mirrors, more "
             "than this CLI can display (%d)\n",
-            offset, result, MAX_MIRRORS
+            (unsigned long long)offset, result, MAX_MIRRORS
         );
         return EXIT_FAILURE;
     }
 
     /* offset, not an index -- the same value `rawstor resolve`'s own
      * --offset takes, and target's own comma-separated order, not a
-     * value this command has to re-parse target to print. */
-    printf("chunk[%" PRIu64 "]:\n", offset);
+     * value this command has to re-parse target to print. Hex, not
+     * decimal -- same base the offset segment itself uses in a target
+     * string (Target::parse_path()'s own doc comment, target.hpp). */
+    printf("chunk[%llx]:\n", (unsigned long long)offset);
     for (ssize_t i = 0; i < result; i++) {
         const struct RawstorObjectMeta* meta = &metas[i];
         printf("  mirror[%zd]:\n", i);
@@ -103,8 +113,13 @@ show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
             printf(
                 "    state: %s\n", sync_state_to_string(meta->sync_state.state)
             );
-            printf("    epoch: %" PRIu64 "\n", meta->sync_state.epoch);
-            printf("    sync_id: %" PRIu64 "\n", meta->sync_state.sync_id);
+            printf(
+                "    epoch: %llu\n", (unsigned long long)meta->sync_state.epoch
+            );
+            printf(
+                "    sync_id: %llx\n",
+                (unsigned long long)meta->sync_state.sync_id
+            );
             print_sync_id_history(
                 "    ", meta->sync_state.sync_id_history,
                 RAWSTOR_OBJECT_SYNC_ID_HISTORY
