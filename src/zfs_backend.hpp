@@ -53,7 +53,10 @@ private:
         const RawstdUUID& snapshot_id = {}
     ) const;
 
-    rawstd::Task<int> _open(
+    rawstd::Task<int>
+    _open_object(const RawstdUUID& id, uint64_t offset) override;
+
+    rawstd::Task<int> _open_snapshot(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     ) override;
 

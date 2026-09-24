@@ -116,9 +116,16 @@ public:
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
-    rawstd::Task<void> set_object(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstdUUID& snapshot_id = {}
+    rawstd::Task<void>
+    set_object(const RawstdUUID& id, uint64_t offset) override;
+
+    // Both relayed over the wire as a RAWSTOR_CMD_SET_OBJECT request,
+    // nil vs. non-nil snapshot_id (protocol.h's own doc comment) -- the
+    // split here mirrors Backend::remove()/remove_snapshot()'s own
+    // C++-level distinction, not a second wire command.
+    rawstd::Task<void> set_snapshot(
+        const RawstdUUID& object_id, uint64_t offset,
+        const RawstdUUID& snapshot_id
     ) override;
 
     // Relays RAWSTOR_CMD_SNAPSHOT over the wire -- the remote rawstor-ost

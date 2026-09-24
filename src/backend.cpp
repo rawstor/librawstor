@@ -27,6 +27,11 @@ Backend::Backend(Private, rawio::Queue& queue, const rawstd::URI& location) :
 }
 
 rawstd::Task<void>
+Backend::set_snapshot(const RawstdUUID&, uint64_t, const RawstdUUID&) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
+rawstd::Task<void>
 Backend::create_snapshot(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }

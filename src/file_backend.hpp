@@ -20,9 +20,8 @@ namespace file {
 
 class Backend final : public rawstor::blk::Backend {
 private:
-    rawstd::Task<int> _open(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
-    ) override;
+    rawstd::Task<int>
+    _open_object(const RawstdUUID& id, uint64_t offset) override;
 
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);

@@ -233,7 +233,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // The combined open (SET_OBJECT + this copy's own meta, see
     // Slot::open()'s own comment) is the one operation guaranteed
     // to actually touch the real store for every backend kind -- a
-    // blk-backed one's own _open(const RawstdUUID&) is otherwise lazy
+    // blk-backed one's own _open_object() is otherwise lazy
     // (see blk::Backend::_connect()'s own comment), so nothing before
     // this genuinely proves a connected member's object actually exists.
     // Concurrent across every connected member; a failure here demotes

@@ -1538,18 +1538,24 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-rawstd::Task<void> Backend::set_object(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
-) {
+rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t offset) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
     assert(_read_event != nullptr);
 
-    // snapshot_id carries the bound version -- nil for live, or a previously
-    // snapshotted id.
     co_await _snap_request(
-        RAWSTOR_CMD_SET_OBJECT, "set_object", id, offset, snapshot_id
+        RAWSTOR_CMD_SET_OBJECT, "set_object", id, offset, RawstdUUID{}
+    );
+}
+
+rawstd::Task<void> Backend::set_snapshot(
+    const RawstdUUID& object_id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
+    assert(_read_event != nullptr);
+
+    co_await _snap_request(
+        RAWSTOR_CMD_SET_OBJECT, "set_snapshot", object_id, offset, snapshot_id
     );
 }
 

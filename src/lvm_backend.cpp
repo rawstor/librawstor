@@ -167,14 +167,7 @@ std::string Backend::_device_path(const RawstdUUID& id, uint64_t offset) const {
     return _device_path_for_name(_lv_name(id, offset));
 }
 
-rawstd::Task<int> Backend::_open(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
-) {
-    if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        /* Classic LVM has no thin CoW. */
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
-    }
-
+rawstd::Task<int> Backend::_open_object(const RawstdUUID& id, uint64_t offset) {
     std::string path = _device_path(id, offset);
 
     // No O_NONBLOCK: io_uring does not need the fd to be non-blocking --

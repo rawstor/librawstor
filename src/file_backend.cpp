@@ -98,14 +98,7 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::blk::Backend(p, queue, location) {
 }
 
-rawstd::Task<int> Backend::_open(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
-) {
-    if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        /* No native CoW. */
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
-    }
-
+rawstd::Task<int> Backend::_open_object(const RawstdUUID& id, uint64_t offset) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString id_string;

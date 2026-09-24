@@ -104,10 +104,8 @@ rawstd::Task<void> Backend::_wait_for_blockdev(
     RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
 }
 
-rawstd::Task<int> Backend::_open(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
-) {
-    std::string path = _device_path(id, offset, snapshot_id);
+rawstd::Task<int> Backend::_open_object(const RawstdUUID& id, uint64_t offset) {
+    std::string path = _device_path(id, offset);
 
     // No O_NONBLOCK: opening a ZFS zvol with it caused cache-miss reads to
     // return -EAGAIN, which io_uring could not properly handle for
@@ -115,14 +113,21 @@ rawstd::Task<int> Backend::_open(
     // caller -- io_uring handles blocking operations internally via its
     // io_wq worker threads and does not need the fd to be non-blocking.
     // O_CLOEXEC so this fd doesn't leak into the zfs create/destroy
-    // children forked by create()/remove() below. A snapshot device is
-    // read-only at the device level too -- O_RDONLY here, not O_RDWR, so
-    // a write against one fails as soon as the fd itself is wrong, before
-    // ever reaching pwrite().
-    int fd = co_await _queue.open(
-        path.c_str(),
-        (rawstd_uuid_is_nil(&snapshot_id) ? O_RDWR : O_RDONLY) | O_CLOEXEC, 0
-    );
+    // children forked by create()/remove() below.
+    int fd = co_await _queue.open(path.c_str(), O_RDWR | O_CLOEXEC, 0);
+    co_return fd;
+}
+
+rawstd::Task<int> Backend::_open_snapshot(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
+    std::string path = _device_path(id, offset, snapshot_id);
+
+    // O_RDONLY, not O_RDWR: a snapshot device is read-only at the device
+    // level too, so a write against one fails as soon as the fd itself is
+    // wrong, before ever reaching pwrite(). See _open_object() above for
+    // O_NONBLOCK/O_CLOEXEC's own reasoning, unchanged here.
+    int fd = co_await _queue.open(path.c_str(), O_RDONLY | O_CLOEXEC, 0);
     co_return fd;
 }
 

@@ -96,10 +96,15 @@ void Backend::_throttle_release() noexcept {
 }
 
 rawstd::Task<void> Backend::_connect() {
-    // The fd is opened lazily, by _open(const RawstdUUID&, uint64_t),
-    // once set_object() knows which object id to open -- nothing to do
-    // upfront.
+    // The fd is opened lazily, by _open_object()/_open_snapshot(), once
+    // set_object()/set_snapshot() knows which object id to open --
+    // nothing to do upfront.
     co_return;
+}
+
+rawstd::Task<int>
+Backend::_open_snapshot(const RawstdUUID&, uint64_t, const RawstdUUID&) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
 rawstd::Task<void>
@@ -166,21 +171,30 @@ rawstd::Task<void> Backend::close() {
     co_await _queue.close(f);
 }
 
-rawstd::Task<void> Backend::set_object(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t offset) {
+    if (fd() != -1) {
+        throw std::runtime_error("Object already set");
+    }
+
+    int fd = co_await _open_object(id, offset);
+    set_fd(fd);
+}
+
+rawstd::Task<void> Backend::set_snapshot(
+    const RawstdUUID& object_id, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
 
-    int fd = co_await _open(id, offset, snapshot_id);
+    int fd = co_await _open_snapshot(object_id, offset, snapshot_id);
     set_fd(fd);
 }
 
 rawstd::Task<uint64_t>
 Backend::_blk_size(const RawstdUUID& id, uint64_t offset) {
 #if defined(RAWSTD_ON_LINUX)
-    int f = co_await _open(id, offset, RawstdUUID{});
+    int f = co_await _open_object(id, offset);
 
     uint64_t size = 0;
     if (ioctl(f, BLKGETSIZE64, &size) == -1) {

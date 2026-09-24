@@ -102,22 +102,30 @@ public:
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 
-    // Binds this Backend to `id`/`offset` -- data-path methods
-    // below need this done first. Also the one operation that actually
-    // touches the real store for every backend kind (a blk-backed one's
-    // own _open(const RawstdUUID&, uint64_t, const RawstdUUID&) is lazy
-    // -- see blk::Backend's own doc comment -- so nothing before this
-    // call genuinely proves the object exists; an ost:// one's is a real
-    // wire round trip either way), so a caller that also needs this
+    // Binds this Backend to the live version of `id`/`offset` -- data-path
+    // methods below need this done first. Also the one operation that
+    // actually touches the real store for every backend kind (a
+    // blk-backed one's own _open_object(const RawstdUUID&, uint64_t) is
+    // lazy -- see blk::Backend's own doc comment -- so nothing before
+    // this call genuinely proves the object exists; an ost:// one's is a
+    // real wire round trip either way), so a caller that also needs this
     // copy's own meta() (e.g. Slot::open(), see its own doc comment)
-    // calls it separately, afterward. `snapshot_id` is nil for the live
-    // version, or a version id previously registered via
-    // create_snapshot() below -- ENOTSUP on a backend without native CoW
-    // (file://, classic LVM).
-    virtual rawstd::Task<void> set_object(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstdUUID& snapshot_id = {}
-    ) = 0;
+    // calls it separately, afterward. A previously snapshotted version is
+    // bound via set_snapshot() below instead.
+    virtual rawstd::Task<void>
+    set_object(const RawstdUUID& id, uint64_t offset) = 0;
+
+    // Same as set_object() above, but binds one previously snapshotted
+    // version of `object_id`/`offset` (`snapshot_id`, never nil -- see
+    // create_snapshot() below) instead of its live version. Default:
+    // ENOTSUP, covering file::Backend and lvm::Backend (classic LVM has
+    // no thin CoW) without each needing its own override; blk::Backend
+    // overrides this for its own subclasses capable of it (currently
+    // zfs::Backend only).
+    virtual rawstd::Task<void> set_snapshot(
+        const RawstdUUID& object_id, uint64_t offset,
+        const RawstdUUID& snapshot_id
+    );
 
     // Native CoW snapshot of the live version as `snapshot_id` (never nil --
     // nil is the live version; like every object id, the caller
