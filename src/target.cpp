@@ -548,8 +548,13 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     // No implicit width, ever: the caller must always state it, checked
     // before any I/O at all. A chunk with more than one URI is
     // unambiguously an ordinary mirror set and must match sp.width
-    // exactly; a lone URI's own width is the caller's chosen redundancy
-    // (never 0).
+    // exactly. A lone URI's own width is the caller's chosen redundancy
+    // (never 0) -- accepted as any nonzero value only on a backend
+    // capable of its own internal redundancy (ost://, whose remote
+    // server may fan one member out across several backends of its own);
+    // any other single-URI backend (file://, an LV, a zvol) is exactly
+    // one physical copy, so anything but 1 would just claim a redundancy
+    // the object was never actually given (target.h's own doc comment).
     for (const std::vector<rawstd::URI>& chunk_uris : chunks) {
         if (chunk_uris.size() > 1) {
             if (sp.width != chunk_uris.size()) {
@@ -562,6 +567,13 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
             }
         } else if (sp.width == 0) {
             rawstd_error("Spec width must be set (0 is not a valid width)\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        } else if (sp.width != 1 && chunk_uris.front().scheme() != "ost") {
+            rawstd_error(
+                "Spec width (%u) is not 1, but %s:// cannot provide its "
+                "own internal redundancy\n",
+                sp.width, chunk_uris.front().scheme().c_str()
+            );
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
     }
@@ -784,27 +796,53 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
 rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) const {
     std::vector<std::vector<rawstd::URI>> chunks = chunk_uris_by_offset(_uris);
 
+    // One location list per chunk, in the same order as `chunks` --
+    // nothing requires two chunks to share a backend (a multi-chunk
+    // target may place each chunk on its own backend, e.g. per-chunk
+    // tiering), so each chunk's own list is kept apart rather than
+    // collapsed into one shared list.
+    std::vector<std::vector<rawstd::URI>> chunk_locations;
+    chunk_locations.reserve(chunks.size());
+    for (const auto& chunk_uris : chunks) {
+        std::vector<rawstd::URI> locations;
+        locations.reserve(chunk_uris.size());
+        for (const auto& uri : chunk_uris) {
+            locations.push_back(strip_path(uri));
+        }
+        chunk_locations.push_back(std::move(locations));
+    }
+
     RawstdUUID last_id = uuid_from_target(chunks.back().front());
     uint64_t last_offset = extract_offset(chunks.back().front());
-    std::vector<rawstd::URI> last_locations;
-    last_locations.reserve(chunks.back().size());
-    for (const auto& uri : chunks.back()) {
-        last_locations.push_back(strip_path(uri));
-    }
-    std::unique_ptr<Chunk> last =
-        co_await Chunk::create(last_locations, queue, last_id, last_offset);
+    std::unique_ptr<Chunk> last = co_await Chunk::create(
+        chunk_locations.back(), queue, last_id, last_offset
+    );
 
     uint64_t chunk_size = last->spec().chunk_size;
     uint64_t size = chunk_size * (chunks.size() - 1) + last->spec().size;
 
     // MultiChunkObject routes I/O purely positionally (chunk index =
-    // logical offset / chunk_size, locations shared across every chunk)
-    // -- verify every chunk but the last actually sits where that scheme
-    // expects, and shares the last chunk's own locations, before
-    // trusting it, so a target string whose own offsets don't land on
-    // exact chunk_size multiples, or whose chunks don't all share one
-    // location set, fails here instead of silently addressing the wrong
-    // physical chunk (or the wrong backend) on the next read/write.
+    // logical offset / chunk_size) -- a real, multi-chunk target's own
+    // chunk_size must be a nonzero power of two for that division/shift
+    // to mean anything (create()'s own check, this call's own comment
+    // there), re-checked here since open() can address a target string
+    // create() never validated (e.g. one hand-assembled from raw URIs,
+    // or a record a backend's own set_sync_state() fell back to a zero
+    // identity for after failing to decode it).
+    if (chunks.size() > 1 &&
+        (chunk_size == 0 || (chunk_size & (chunk_size - 1)) != 0)) {
+        rawstd_error(
+            "chunk_size (%llu) is not a nonzero power of two\n",
+            (unsigned long long)chunk_size
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    // Verify every chunk but the last actually sits where that scheme
+    // expects, before trusting it, so a target string whose own offsets
+    // don't land on exact chunk_size multiples fails here instead of
+    // silently addressing the wrong physical chunk on the next
+    // read/write.
     for (size_t i = 0; i + 1 < chunks.size(); ++i) {
         uint64_t expected = chunk_size * i;
         uint64_t actual = extract_offset(chunks[i].front());
@@ -816,34 +854,17 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) const {
             );
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
-
-        if (chunks[i].size() != last_locations.size()) {
-            rawstd_error(
-                "Chunk %zu has %zu location(s), expected %zu\n", i,
-                chunks[i].size(), last_locations.size()
-            );
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-        for (size_t j = 0; j < chunks[i].size(); ++j) {
-            if (strip_path(chunks[i][j]).str() != last_locations[j].str()) {
-                rawstd_error(
-                    "Chunk %zu's own locations do not match the last "
-                    "chunk's\n",
-                    i
-                );
-                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-            }
-        }
     }
 
     if (chunks.size() == 1) {
-        co_return std::unique_ptr<Object>(new SingleChunkObject(
-            queue, last_locations, last_id, size, std::move(last)
-        ));
+        co_return std::unique_ptr<Object>(
+            new SingleChunkObject(queue, last_id, size, std::move(last))
+        );
     }
 
     co_return std::unique_ptr<Object>(new MultiChunkObject(
-        queue, last_locations, last_id, size, chunk_size, std::move(last)
+        queue, last_id, size, chunk_size, std::move(chunk_locations),
+        std::move(last)
     ));
 }
 

@@ -17,10 +17,10 @@
 namespace rawstor {
 
 SingleChunkObject::SingleChunkObject(
-    rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
-    const RawstdUUID& id, uint64_t size, std::unique_ptr<Chunk> chunk
+    rawio::Queue& queue, const RawstdUUID& id, uint64_t size,
+    std::unique_ptr<Chunk> chunk
 ) :
-    Object(queue, locations, id, size),
+    Object(queue, id, size),
     _chunk(std::move(chunk)) {
 }
 
@@ -75,13 +75,16 @@ rawstd::Task<void> SingleChunkObject::close() {
 }
 
 MultiChunkObject::MultiChunkObject(
-    rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
-    const RawstdUUID& id, uint64_t size, uint64_t chunk_size,
+    rawio::Queue& queue, const RawstdUUID& id, uint64_t size,
+    uint64_t chunk_size, std::vector<std::vector<rawstd::URI>> chunk_locations,
     std::unique_ptr<Chunk> last_chunk
 ) :
-    Object(queue, locations, id, size),
+    Object(queue, id, size),
     _chunk_size(chunk_size) {
-    _chunks.resize((size + chunk_size - 1) / chunk_size);
+    _chunks.resize(chunk_locations.size());
+    for (size_t i = 0; i < chunk_locations.size(); ++i) {
+        _chunks[i].locations = std::move(chunk_locations[i]);
+    }
     _chunks.back().chunk = std::move(last_chunk);
 }
 
@@ -108,7 +111,8 @@ rawstd::Task<Chunk*> MultiChunkObject::_chunk(uint32_t index) {
     std::exception_ptr error;
     try {
         uint64_t offset = static_cast<uint64_t>(index) * _chunk_size;
-        entry.chunk = co_await Chunk::create(_locations, _queue, _id, offset);
+        entry.chunk =
+            co_await Chunk::create(entry.locations, _queue, _id, offset);
     } catch (const std::system_error& e) {
         entry.open_errno = e.code().value();
         error = std::current_exception();

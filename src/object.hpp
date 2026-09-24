@@ -45,22 +45,17 @@ class Chunk;
 class Object : public RawstorObject {
 protected:
     rawio::Queue& _queue;
-    // Every chunk's own backend locations, and the object's own id --
-    // the same for every chunk (Target's own class doc comment,
-    // target.hpp), so they live here once rather than in either
-    // subclass, or every MultiChunkObject::ChunkEntry.
-    std::vector<rawstd::URI> _locations;
+    // The object's own id -- the same for every chunk (Target's own
+    // constructor already validates this), unlike a chunk's own
+    // backend locations, which nothing requires to match another
+    // chunk's own (a multi-chunk target may place each chunk on its own
+    // backend, e.g. per-chunk tiering) -- so locations live per chunk
+    // instead (MultiChunkObject::ChunkEntry), not here.
     RawstdUUID _id;
     uint64_t _size;
 
-    // Not noexcept, unlike the rest of this class's own construction --
-    // copying `locations` can allocate.
-    Object(
-        rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
-        const RawstdUUID& id, uint64_t size
-    ) :
+    Object(rawio::Queue& queue, const RawstdUUID& id, uint64_t size) noexcept :
         _queue(queue),
-        _locations(locations),
         _id(id),
         _size(size) {}
 
@@ -116,13 +111,12 @@ private:
     std::unique_ptr<Chunk> _chunk;
 
     // Object is only ever built by Target::open() (a friend), which has
-    // already opened `chunk` by the time it constructs this. `locations`
-    // is passed straight through to Object's own constructor, same as
-    // MultiChunkObject's -- unlike that one, this class never reopens a
-    // chunk on its own, so it never actually reads it back.
+    // already opened `chunk` by the time it constructs this -- unlike
+    // MultiChunkObject, this class never reopens a chunk on its own, so
+    // it never needs to remember its own locations past this call.
     SingleChunkObject(
-        rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
-        const RawstdUUID& id, uint64_t size, std::unique_ptr<Chunk> chunk
+        rawio::Queue& queue, const RawstdUUID& id, uint64_t size,
+        std::unique_ptr<Chunk> chunk
     );
 
     friend class Target;
@@ -171,13 +165,16 @@ private:
     // Bookkeeping around one logical chunk's lazily opened Chunk --
     // named apart from the top-level rawstor::Chunk it wraps (`chunk`
     // below) rather than reusing that name for a member, which would
-    // otherwise shadow it within this class's own scope. Neither the
-    // chunk's own locations (every chunk shares Object's own
-    // `_locations`) nor its own offset (`index * _chunk_size`,
-    // `_chunk()`'s own doc comment) needs to live here -- both are
-    // derivable from the index alone, so there's nothing chunk-specific
-    // to store ahead of time.
+    // otherwise shadow it within this class's own scope. `locations` is
+    // this chunk's own backend locations: nothing requires it to match
+    // another chunk's own (Target::open() only requires every chunk to
+    // sit at its expected positional offset, never that they share a
+    // backend), so it's stored here, per chunk, rather than once on
+    // Object. The chunk's own offset (`index * _chunk_size`, `_chunk()`'s
+    // own doc comment) still doesn't need to live here -- that part is
+    // derivable from the index alone.
     struct ChunkEntry {
+        std::vector<rawstd::URI> locations;
         std::unique_ptr<Chunk> chunk;
         // Single-flight lazy open: concurrent I/O touching the same
         // not-yet-open chunk must not each open it independently.
@@ -193,25 +190,26 @@ private:
 
     // Object is only ever built by Target::open() (a friend), which has
     // already validated the target string names every chunk of a
-    // `size`/`chunk_size`-shaped object, all sharing `locations`
-    // (Target's own constructor). `locations`/`id` are passed straight
-    // through to Object's own constructor. `_chunks` is sized from
-    // `size`/`chunk_size` alone (`_chunk()`'s own doc comment):
-    // `last_chunk`, the last one, already eagerly opened by
-    // Target::open() (its own doc comment), is placed straight into
-    // `_chunks.back()` here; every other entry starts unopened, lazily
-    // opened on first touch.
+    // `size`/`chunk_size`-shaped object, each sitting at its expected
+    // positional offset (Target::open()'s own comment). `chunk_locations`
+    // holds one entry per chunk, in order -- sized the same as `_chunks`
+    // below, so `_chunks[i].locations = chunk_locations[i]`. `id` is
+    // passed straight through to Object's own constructor. `last_chunk`,
+    // the last chunk, already eagerly opened by Target::open() (its own
+    // doc comment), is placed straight into `_chunks.back()` here; every
+    // other entry starts unopened, lazily opened on first touch.
     MultiChunkObject(
-        rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
-        const RawstdUUID& id, uint64_t size, uint64_t chunk_size,
+        rawio::Queue& queue, const RawstdUUID& id, uint64_t size,
+        uint64_t chunk_size,
+        std::vector<std::vector<rawstd::URI>> chunk_locations,
         std::unique_ptr<Chunk> last_chunk
     );
 
     // Returns the chunk's already-open (or freshly opened) Chunk. A
     // pointer, not a reference: rawstd::Task<T> stores T in a
     // std::variant, which requires an object type. A fresh open uses
-    // `_locations`/`_id` (shared, whole-object) and `index * _chunk_size`
-    // as this chunk's own offset -- the positional addressing scheme
+    // this entry's own `locations`, `_id`, and `index * _chunk_size` as
+    // this chunk's own offset -- the positional addressing scheme
     // Target::open() already validated the target string against before
     // ever constructing this object.
     rawstd::Task<Chunk*> _chunk(uint32_t index);
