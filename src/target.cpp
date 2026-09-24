@@ -824,9 +824,9 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) const {
     }
 
     if (chunks.size() == 1) {
-        co_return std::unique_ptr<Object>(
-            new SingleChunkObject(queue, last_id, size, std::move(last))
-        );
+        co_return std::unique_ptr<Object>(new SingleChunkObject(
+            queue, last_locations, last_id, size, std::move(last)
+        ));
     }
 
     co_return std::unique_ptr<Object>(new MultiChunkObject(

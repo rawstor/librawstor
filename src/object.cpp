@@ -17,10 +17,10 @@
 namespace rawstor {
 
 SingleChunkObject::SingleChunkObject(
-    rawio::Queue& queue, const RawstdUUID& id, uint64_t size,
-    std::unique_ptr<Chunk> chunk
-) noexcept :
-    Object(queue, id, size),
+    rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
+    const RawstdUUID& id, uint64_t size, std::unique_ptr<Chunk> chunk
+) :
+    Object(queue, locations, id, size),
     _chunk(std::move(chunk)) {
 }
 
@@ -79,8 +79,7 @@ MultiChunkObject::MultiChunkObject(
     const RawstdUUID& id, uint64_t size, uint64_t chunk_size,
     std::unique_ptr<Chunk> last_chunk
 ) :
-    Object(queue, id, size),
-    _locations(locations),
+    Object(queue, locations, id, size),
     _chunk_size(chunk_size) {
     _chunks.resize((size + chunk_size - 1) / chunk_size);
     _chunks.back().chunk = std::move(last_chunk);

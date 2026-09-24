@@ -45,14 +45,22 @@ class Chunk;
 class Object : public RawstorObject {
 protected:
     rawio::Queue& _queue;
-    // The object's own id -- the same for every chunk (Target's own
-    // class doc comment, target.hpp), so it lives here once rather than
-    // in either subclass, or every MultiChunkObject::ChunkEntry.
+    // Every chunk's own backend locations, and the object's own id --
+    // the same for every chunk (Target's own class doc comment,
+    // target.hpp), so they live here once rather than in either
+    // subclass, or every MultiChunkObject::ChunkEntry.
+    std::vector<rawstd::URI> _locations;
     RawstdUUID _id;
     uint64_t _size;
 
-    Object(rawio::Queue& queue, const RawstdUUID& id, uint64_t size) noexcept :
+    // Not noexcept, unlike the rest of this class's own construction --
+    // copying `locations` can allocate.
+    Object(
+        rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
+        const RawstdUUID& id, uint64_t size
+    ) :
         _queue(queue),
+        _locations(locations),
         _id(id),
         _size(size) {}
 
@@ -108,11 +116,14 @@ private:
     std::unique_ptr<Chunk> _chunk;
 
     // Object is only ever built by Target::open() (a friend), which has
-    // already opened `chunk` by the time it constructs this.
+    // already opened `chunk` by the time it constructs this. `locations`
+    // is passed straight through to Object's own constructor, same as
+    // MultiChunkObject's -- unlike that one, this class never reopens a
+    // chunk on its own, so it never actually reads it back.
     SingleChunkObject(
-        rawio::Queue& queue, const RawstdUUID& id, uint64_t size,
-        std::unique_ptr<Chunk> chunk
-    ) noexcept;
+        rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
+        const RawstdUUID& id, uint64_t size, std::unique_ptr<Chunk> chunk
+    );
 
     friend class Target;
 
@@ -161,10 +172,11 @@ private:
     // named apart from the top-level rawstor::Chunk it wraps (`chunk`
     // below) rather than reusing that name for a member, which would
     // otherwise shadow it within this class's own scope. Neither the
-    // chunk's own locations (every chunk shares `_locations` below) nor
-    // its own offset (`index * _chunk_size`, `_chunk()`'s own doc
-    // comment) needs to live here -- both are derivable from the index
-    // alone, so there's nothing chunk-specific to store ahead of time.
+    // chunk's own locations (every chunk shares Object's own
+    // `_locations`) nor its own offset (`index * _chunk_size`,
+    // `_chunk()`'s own doc comment) needs to live here -- both are
+    // derivable from the index alone, so there's nothing chunk-specific
+    // to store ahead of time.
     struct ChunkEntry {
         std::unique_ptr<Chunk> chunk;
         // Single-flight lazy open: concurrent I/O touching the same
@@ -176,21 +188,16 @@ private:
         int open_errno = 0;
     };
 
-    // Every chunk's own backend locations -- identical across every
-    // chunk (Target's own constructor validates the whole target string
-    // agrees on this, target.cpp), unlike offset, which tells them apart
-    // (`_chunk()`'s own doc comment).
-    std::vector<rawstd::URI> _locations;
     uint64_t _chunk_size;
     std::vector<ChunkEntry> _chunks;
 
     // Object is only ever built by Target::open() (a friend), which has
     // already validated the target string names every chunk of a
     // `size`/`chunk_size`-shaped object, all sharing `locations`
-    // (Target's own constructor). `id` is the whole object's own id --
-    // passed straight through to Object's own constructor. `_chunks` is
-    // sized from `size`/`chunk_size` alone (`_chunk()`'s own doc
-    // comment): `last_chunk`, the last one, already eagerly opened by
+    // (Target's own constructor). `locations`/`id` are passed straight
+    // through to Object's own constructor. `_chunks` is sized from
+    // `size`/`chunk_size` alone (`_chunk()`'s own doc comment):
+    // `last_chunk`, the last one, already eagerly opened by
     // Target::open() (its own doc comment), is placed straight into
     // `_chunks.back()` here; every other entry starts unopened, lazily
     // opened on first touch.
