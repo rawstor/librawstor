@@ -1049,11 +1049,11 @@ rawstd::DetachedTask Client::_release(
 
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-    RawstdUUID snap_id;
-    memcpy(snap_id.bytes, payload.snap_id, sizeof(payload.snap_id));
+    RawstdUUID snapshot_id;
+    memcpy(snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id));
 
     std::vector<rawstd::URI> targets =
-        client->_targets(uuid, payload.offset, snap_id);
+        client->_targets(uuid, payload.offset, snapshot_id);
 
     int result = 0;
     try {
@@ -1105,13 +1105,15 @@ rawstd::DetachedTask Client::_create_snapshot(
     try {
         std::string target = rawstd::URI::uris(targets);
         rawstd::CallbackAwaitable<void> awaiter;
-        // payload.snap_id is always a concrete, already-chosen id off the
+        // payload.snapshot_id is always a concrete, already-chosen id off the
         // wire (never nil -- a plain OST-local snapshot always names an
         // exact version, client-generated like every object id).
-        RawstdUUID snap_id;
-        memcpy(snap_id.bytes, payload.snap_id, sizeof(payload.snap_id));
+        RawstdUUID snapshot_id;
+        memcpy(
+            snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id)
+        );
         RawstdUUIDString snap_string;
-        rawstd_uuid_to_string(&snap_id, &snap_string);
+        rawstd_uuid_to_string(&snapshot_id, &snap_string);
         char buf[sizeof(RawstdUUIDString)];
         int res = rawstor_target_create_snapshot(
             client->_queue, target.c_str(), snap_string, buf, sizeof(buf),
@@ -1344,12 +1346,15 @@ rawstd::DetachedTask Client::_set_object(
 
         RawstdUUID uuid;
         memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-        // snap_id carries the bound version -- nil for live, or a
+        // snapshot_id carries the bound version -- nil for live, or a
         // previously snapshotted id.
-        RawstdUUID snap_id;
-        memcpy(snap_id.bytes, payload.snap_id, sizeof(payload.snap_id));
-        target =
-            rawstd::URI::uris(client->_targets(uuid, payload.offset, snap_id));
+        RawstdUUID snapshot_id;
+        memcpy(
+            snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id)
+        );
+        target = rawstd::URI::uris(
+            client->_targets(uuid, payload.offset, snapshot_id)
+        );
     }
 
     RawstorObject* object = nullptr;
@@ -1754,7 +1759,7 @@ rawstd::DetachedTask Client::_write_zeroes(
 }
 
 std::vector<rawstd::URI> Client::_targets(
-    const RawstdUUID& uuid, uint64_t offset, const RawstdUUID& snap_id
+    const RawstdUUID& uuid, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
@@ -1766,9 +1771,9 @@ std::vector<rawstd::URI> Client::_targets(
     std::ostringstream offset_oss;
     offset_oss << std::hex << offset;
     std::string child = std::string(uuid_string) + "/" + offset_oss.str();
-    if (!rawstd_uuid_is_nil(&snap_id)) {
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
         RawstdUUIDString snap_string;
-        rawstd_uuid_to_string(&snap_id, &snap_string);
+        rawstd_uuid_to_string(&snapshot_id, &snap_string);
         child += "/" + std::string(snap_string);
     }
 

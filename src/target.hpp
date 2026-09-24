@@ -42,13 +42,13 @@ class Object;
 class Target final {
 public:
     // One URI's own trailing path identity, in one of three shapes:
-    // - Physical, with a bound snapshot: `/<id>/<offset>/<snap_id>` --
+    // - Physical, with a bound snapshot: `/<id>/<offset>/<snapshot_id>` --
     //   offset always an explicit segment (even "0"), the convention
     //   every internal builder in this codebase uses whenever it
     //   addresses one chunk of a larger object.
     // - Physical, live: `/<id>/<offset>` -- same convention, no bound
     //   snapshot.
-    // - Logical: `/<id>[/<snap_id>]` -- no offset segment at all, implied
+    // - Logical: `/<id>[/<snapshot_id>]` -- no offset segment at all, implied
     //   0. This is the shape a caller types by hand to name a plain
     //   target's own bound snapshot -- there is no chunk-offset concept
     //   to name at that level. A bare `/<id>`, with no snapshot either,
@@ -60,7 +60,7 @@ public:
     // last segment isn't UUID-shaped, it must be a hexadecimal chunk offset
     // with a UUID id right before it -- the physical-live shape, no
     // snapshot. If the last segment IS UUID-shaped, it's tentatively a
-    // trailing snap_id; check what precedes it: another UUID right
+    // trailing snapshot_id; check what precedes it: another UUID right
     // before it makes this the logical shape (that UUID is the id, the
     // last segment its bound snapshot); a valid hexadecimal offset followed
     // by a UUID makes it the physical-with-snapshot shape instead. If
@@ -74,7 +74,7 @@ public:
     struct Path {
         RawstdUUID id;
         uint64_t offset;
-        RawstdUUID snap_id;
+        RawstdUUID snapshot_id;
         unsigned int segments;
     };
 
@@ -93,9 +93,9 @@ private:
     // The target's own identity -- the same for every URI in `_uris`
     // (validated once, at construction: the constructor's own comment,
     // target.cpp). Computed once there rather than re-parsed on every
-    // id()/snap_id() call.
+    // id()/snapshot_id() call.
     RawstdUUID _id;
-    RawstdUUID _snap_id;
+    RawstdUUID _snapshot_id;
 
 public:
     explicit Target(const std::vector<rawstd::URI>& uris);
@@ -110,7 +110,7 @@ public:
     // The bound snapshot version shared by every URI in `uris`, or nil
     // (live) if absent -- parsed from the first one, same convention as
     // id() above.
-    const RawstdUUID& snap_id() const;
+    const RawstdUUID& snapshot_id() const;
 
     // The Location `uris` was created under -- each URI with its own
     // identity path segments stripped back off (the inverse of
@@ -143,7 +143,7 @@ public:
 
     // Removes the live object (every URI in `_uris`, across every
     // chunk), or -- if this target itself carries a bound snapshot
-    // (snap_id() above) -- that one version instead, via
+    // (snapshot_id() above) -- that one version instead, via
     // Backend::remove_snapshot() rather than Backend::remove(). There is
     // no separate removal method for a snapshot: which identity gets
     // removed is already whatever this target itself names.
@@ -151,12 +151,12 @@ public:
 
     // Only ever touches the target's own first chunk (see spec()'s own
     // comment on why) -- takes a native CoW snapshot of the live version
-    // as `snap_id` (never nil) on every URI in that chunk. Every URI is
+    // as `snapshot_id` (never nil) on every URI in that chunk. Every URI is
     // still attempted even if an earlier one fails; the first error
     // encountered is reported. ENOTSUP on a backend without native CoW
     // (file://, classic LVM).
     rawstd::Task<void>
-    create_snapshot(rawio::Queue& queue, const RawstdUUID& snap_id) const;
+    create_snapshot(rawio::Queue& queue, const RawstdUUID& snapshot_id) const;
 
     // Opens every chunk into a single Object that routes each I/O
     // request onto whichever chunk(s) it touches (see this method's own

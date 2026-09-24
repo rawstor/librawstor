@@ -10,8 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-int rawstor_cli_snap_remove(const char* target, const char* snap_id) {
-    fprintf(stderr, "Removing snapshot %s of: %s\n", snap_id, target);
+int rawstor_cli_snap_remove(const char* target, const char* snapshot_id) {
+    fprintf(stderr, "Removing snapshot %s of: %s\n", snapshot_id, target);
 
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);
@@ -20,14 +20,14 @@ int rawstor_cli_snap_remove(const char* target, const char* snap_id) {
         return rawstd_exitcode_for_errno(-res);
     }
 
-    int sres = rawstor_target_snapshot_remove(
-        op.queue, target, snap_id, rawstor_cli_op_cb, &op
+    int sres = rawstor_target_remove_snapshot(
+        op.queue, target, snapshot_id, rawstor_cli_op_cb, &op
     );
     ssize_t result = rawstor_cli_op_wait(&op, sres);
     rawstor_cli_op_destroy(&op);
     if (result < 0) {
         fprintf(
-            stderr, "rawstor_target_snapshot_remove() failed: %s\n",
+            stderr, "rawstor_target_remove_snapshot() failed: %s\n",
             strerror((int)-result)
         );
         return rawstd_exitcode_for_errno((int)-result);

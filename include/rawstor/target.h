@@ -368,9 +368,9 @@ int rawstor_target_create(
  * the object is removed from every backend in the list.
  *
  * A @p target that carries a bound snapshot version (its own trailing
- * "/<snap_id>" path segment, see rawstor_target_snap_id()) instead destroys
- * that one version, exactly like rawstor_target_snapshot_remove() -- there
- * is no separate function for it: which identity gets removed is already
+ * "/<snapshot_id>" path segment, see rawstor_target_snapshot_id()) instead
+ * destroys that one version, exactly like rawstor_target_remove_snapshot() --
+ * there is no separate function for it: which identity gets removed is already
  * whatever @p target itself names, live object or a specific snapshot.
  *
  * This function returns immediately; the actual result is reported via
@@ -509,7 +509,7 @@ int rawstor_target_id(
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
  * this function reads the trailing snapshot path segment (if any) off
- * @p target's own path (`<uuid>/<snap_id>`). This is purely a syntactic
+ * @p target's own path (`<uuid>/<snapshot_id>`). This is purely a syntactic
  * operation on @p target -- no backend is contacted, and the target need
  * not exist.
  *
@@ -531,9 +531,9 @@ int rawstor_target_id(
  *         syntax.
  *
  * @see rawstor_target_create_snapshot
- * @see rawstor_target_snapshot_remove
+ * @see rawstor_target_remove_snapshot
  */
-int rawstor_target_snap_id(
+int rawstor_target_snapshot_id(
     const char* target, char* buf, size_t size
 ) RAWSTOR_NOEXCEPT;
 
@@ -550,12 +550,12 @@ int rawstor_target_snap_id(
  *
  * @param queue    Queue used to drive the asynchronous snapshot.
  * @param target   Target string, see rawstor_target_spec().
- * @param snap_id  The version id's UUID string, or NULL to have this call
+ * @param snapshot_id  The version id's UUID string, or NULL to have this call
  *                 generate a fresh one itself (rawstd_uuid7_init(), the
  *                 same single point of generation a fresh object id comes
  *                 from -- rawstor_location_create()).
  * @param buf      Output buffer for the version id actually used (whether
- *                 generated here or supplied in @p snap_id), written
+ *                 generated here or supplied in @p snapshot_id), written
  *                 synchronously before this call returns -- same
  *                 truncation convention as rawstor_target_id().
  * @param size     Size of @p buf in bytes (including space for the
@@ -573,25 +573,25 @@ int rawstor_target_snap_id(
  *         negative errno on immediate failure (in which case @p cb is
  *         never invoked).
  *
- * @see rawstor_target_snapshot_remove
+ * @see rawstor_target_remove_snapshot
  */
 int rawstor_target_create_snapshot(
-    RawIOQueue* queue, const char* target, const char* snap_id, char* buf,
+    RawIOQueue* queue, const char* target, const char* snapshot_id, char* buf,
     size_t size, int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously destroy snapshot version @p snap_id of a target.
+ * @brief Asynchronously destroy snapshot version @p snapshot_id of a target.
  *
  * A convenience over rawstor_target_remove() for a caller that already
- * has @p target and @p snap_id as two separate strings (@p snap_id came
+ * has @p target and @p snapshot_id as two separate strings (@p snapshot_id came
  * back from a prior rawstor_target_create_snapshot(), @p target did not):
- * it appends @p snap_id, as a bound-snapshot path segment, to every URI in
- * @p target itself (@see rawstor_target_snap_id) and hands the result to
+ * it appends @p snapshot_id, as a bound-snapshot path segment, to every URI in
+ * @p target itself (@see rawstor_target_snapshot_id) and hands the result to
  * rawstor_target_remove() -- there is no separate removal path. Every URI
  * is attempted, the first error is reported.
  *
- * @param snap_id  The version id's UUID string -- always the caller's own,
+ * @param snapshot_id  The version id's UUID string -- always the caller's own,
  *                 never generated here (there is nothing left to report
  *                 back: the caller already knows which snapshot it means
  *                 to remove).
@@ -602,8 +602,8 @@ int rawstor_target_create_snapshot(
  * @see rawstor_target_create_snapshot
  * @see rawstor_target_remove
  */
-int rawstor_target_snapshot_remove(
-    RawIOQueue* queue, const char* target, const char* snap_id,
+int rawstor_target_remove_snapshot(
+    RawIOQueue* queue, const char* target, const char* snapshot_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 

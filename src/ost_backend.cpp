@@ -972,7 +972,7 @@ public:
 };
 
 // Same shape as BackendOpBasic<T> above, for the handful of commands that
-// carry a UUID snap_id (RawstorOSTFrameSnapPayload, protocol.h) instead
+// carry a UUID snapshot_id (RawstorOSTFrameSnapPayload, protocol.h) instead
 // of a plain uint64_t val: SET_OBJECT, RELEASE, SNAPSHOT.
 template <typename T = char>
 class BackendOpSnap final : public BackendOp {
@@ -985,7 +985,7 @@ public:
     BackendOpSnap(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& snap_id,
+        uint64_t offset, const RawstdUUID& snapshot_id,
         const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, op_name, 0, 0),
@@ -1000,7 +1000,7 @@ public:
             .payload = {
                 .object_id = {},
                 .offset = offset,
-                .snap_id = {},
+                .snapshot_id = {},
             },
         }) {
         memcpy(
@@ -1008,8 +1008,8 @@ public:
             sizeof(_request.payload.object_id)
         );
         memcpy(
-            _request.payload.snap_id, snap_id.bytes,
-            sizeof(_request.payload.snap_id)
+            _request.payload.snapshot_id, snapshot_id.bytes,
+            sizeof(_request.payload.snapshot_id)
         );
     }
 
@@ -1326,13 +1326,13 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
 template <typename T>
 rawstd::Task<std::vector<T>> Backend::_snap_request(
     RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
-    uint64_t offset, const RawstdUUID& snap_id
+    uint64_t offset, const RawstdUUID& snapshot_id
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", op_name);
 
     std::shared_ptr<BackendOpSnap<T>> op = std::make_shared<BackendOpSnap<T>>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        cmd, op_name, id, offset, snap_id, trace_event
+        cmd, op_name, id, offset, snapshot_id, trace_event
     );
     _add_op(op);
 
@@ -1419,11 +1419,11 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
 }
 
 rawstd::Task<void> Backend::remove_snapshot(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
     try {
         co_await _snap_request(
-            RAWSTOR_CMD_RELEASE, "remove_snapshot", id, offset, snap_id
+            RAWSTOR_CMD_RELEASE, "remove_snapshot", id, offset, snapshot_id
         );
     } catch (const std::system_error&) {
         throw;
@@ -1434,11 +1434,11 @@ rawstd::Task<void> Backend::remove_snapshot(
 }
 
 rawstd::Task<void> Backend::create_snapshot(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
     try {
         co_await _snap_request(
-            RAWSTOR_CMD_SNAPSHOT, "create_snapshot", id, offset, snap_id
+            RAWSTOR_CMD_SNAPSHOT, "create_snapshot", id, offset, snapshot_id
         );
     } catch (const std::system_error&) {
         throw;
@@ -1539,17 +1539,17 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
 }
 
 rawstd::Task<void> Backend::set_object(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
     assert(_read_event != nullptr);
 
-    // snap_id carries the bound version -- nil for live, or a previously
+    // snapshot_id carries the bound version -- nil for live, or a previously
     // snapshotted id.
     co_await _snap_request(
-        RAWSTOR_CMD_SET_OBJECT, "set_object", id, offset, snap_id
+        RAWSTOR_CMD_SET_OBJECT, "set_object", id, offset, snapshot_id
     );
 }
 

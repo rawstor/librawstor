@@ -34,7 +34,7 @@ TEST(TargetParsePathTest, bare_id_has_no_offset_or_snapshot) {
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
     EXPECT_EQ(path.offset, 0u);
-    EXPECT_TRUE(rawstd_uuid_is_nil(&path.snap_id));
+    EXPECT_TRUE(rawstd_uuid_is_nil(&path.snapshot_id));
     EXPECT_EQ(path.segments, 1u);
 }
 
@@ -45,7 +45,7 @@ TEST(TargetParsePathTest, physical_live_shape_has_offset_no_snapshot) {
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
     EXPECT_EQ(path.offset, 42u);
-    EXPECT_TRUE(rawstd_uuid_is_nil(&path.snap_id));
+    EXPECT_TRUE(rawstd_uuid_is_nil(&path.snapshot_id));
     EXPECT_EQ(path.segments, 2u);
 }
 
@@ -56,7 +56,7 @@ TEST(TargetParsePathTest, logical_shape_has_snapshot_no_offset) {
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
     EXPECT_EQ(path.offset, 0u);
-    EXPECT_EQ(rawstd_uuid_cmp(&path.snap_id, &snap_uuid), 0);
+    EXPECT_EQ(rawstd_uuid_cmp(&path.snapshot_id, &snap_uuid), 0);
     EXPECT_EQ(path.segments, 2u);
 }
 
@@ -67,7 +67,7 @@ TEST(TargetParsePathTest, physical_shape_with_snapshot_has_both) {
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
     EXPECT_EQ(path.offset, 42u);
-    EXPECT_EQ(rawstd_uuid_cmp(&path.snap_id, &snap_uuid), 0);
+    EXPECT_EQ(rawstd_uuid_cmp(&path.snapshot_id, &snap_uuid), 0);
     EXPECT_EQ(path.segments, 3u);
 }
 
@@ -78,7 +78,7 @@ TEST(TargetParsePathTest, deep_location_prefix_does_not_confuse_parsing) {
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
     EXPECT_EQ(path.offset, 42u);
-    EXPECT_EQ(rawstd_uuid_cmp(&path.snap_id, &snap_uuid), 0);
+    EXPECT_EQ(rawstd_uuid_cmp(&path.snapshot_id, &snap_uuid), 0);
     EXPECT_EQ(path.segments, 3u);
 }
 

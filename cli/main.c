@@ -345,7 +345,7 @@ static void command_snap_remove_usage(void) {
     fprintf(
         stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
                 "\n"
-                "usage: rawstor [options] snap-remove TARGET SNAP_ID "
+                "usage: rawstor [options] snap-remove TARGET SNAPSHOT_ID "
                 "[command_options]\n"
                 "\n"
                 "command options:\n"
@@ -361,7 +361,7 @@ static int command_snap_remove(int argc, char** argv) {
     };
 
     char* target_arg = NULL;
-    char* snap_id_arg = NULL;
+    char* snapshot_id_arg = NULL;
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -385,7 +385,7 @@ static int command_snap_remove(int argc, char** argv) {
     }
 
     if (optind < argc) {
-        snap_id_arg = argv[optind];
+        snapshot_id_arg = argv[optind];
         optind++;
     }
 
@@ -399,12 +399,12 @@ static int command_snap_remove(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    if (snap_id_arg == NULL) {
-        fprintf(stderr, "snap_id required\n");
+    if (snapshot_id_arg == NULL) {
+        fprintf(stderr, "snapshot_id required\n");
         return EX_USAGE;
     }
 
-    return rawstor_cli_snap_remove(target_arg, snap_id_arg);
+    return rawstor_cli_snap_remove(target_arg, snapshot_id_arg);
 }
 
 static void command_list_usage(void) {

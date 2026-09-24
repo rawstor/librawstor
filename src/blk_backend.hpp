@@ -76,11 +76,12 @@ private:
     void _throttle_release() noexcept;
 
 protected:
-    // `snap_id` is nil for the live version, or a previously-snapshotted
+    // `snapshot_id` is nil for the live version, or a previously-snapshotted
     // version id (see create_snapshot() below) -- ENOTSUP on a subclass
     // without native CoW (file::Backend, lvm::Backend).
-    virtual rawstd::Task<int>
-    _open(const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id) = 0;
+    virtual rawstd::Task<int> _open(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    ) = 0;
 
     // A blk-backed backend has no upfront connection step: the fd is
     // opened lazily, by _open() above, once set_object() knows which
@@ -144,7 +145,8 @@ public:
     rawstd::Task<void> close() override final;
 
     rawstd::Task<void> set_object(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id = {}
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
     ) override final;
 
     // Encodes/decodes a RawstorObjectSyncState plus a ChunkIdentity (the

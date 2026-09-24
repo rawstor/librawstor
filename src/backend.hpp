@@ -78,12 +78,12 @@ public:
     remove(const RawstdUUID& id, uint64_t offset) = 0;
 
     // Removes one version previously registered via create_snapshot()
-    // below (`snap_id`, never nil -- nil is the live version, removed via
+    // below (`snapshot_id`, never nil -- nil is the live version, removed via
     // remove() above). Default: ENOTSUP, covering file::Backend and
     // lvm::Backend (classic LVM has no thin CoW) without each needing its
     // own override; zfs::Backend overrides this with the real thing.
     virtual rawstd::Task<void> remove_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     );
 
     // The full creation-time shape (size/width/chunk_size) plus this
@@ -110,23 +110,24 @@ public:
     // call genuinely proves the object exists; an ost:// one's is a real
     // wire round trip either way), so a caller that also needs this
     // copy's own meta() (e.g. Slot::open(), see its own doc comment)
-    // calls it separately, afterward. `snap_id` is nil for the live
+    // calls it separately, afterward. `snapshot_id` is nil for the live
     // version, or a version id previously registered via
     // create_snapshot() below -- ENOTSUP on a backend without native CoW
     // (file://, classic LVM).
     virtual rawstd::Task<void> set_object(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id = {}
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
     ) = 0;
 
-    // Native CoW snapshot of the live version as `snap_id` (never nil --
+    // Native CoW snapshot of the live version as `snapshot_id` (never nil --
     // nil is the live version; like every object id, the caller
     // generates it itself before calling). Its removal is
-    // remove_snapshot() above, called with this same `snap_id`. Default:
+    // remove_snapshot() above, called with this same `snapshot_id`. Default:
     // ENOTSUP, covering file::Backend and lvm::Backend (classic LVM has
     // no thin CoW) without each needing its own override;
     // zfs::Backend overrides this with the real thing.
     virtual rawstd::Task<void> create_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     );
 
     virtual rawstd::Task<size_t>

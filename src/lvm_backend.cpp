@@ -168,9 +168,9 @@ std::string Backend::_device_path(const RawstdUUID& id, uint64_t offset) const {
 }
 
 rawstd::Task<int> Backend::_open(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
-    if (!rawstd_uuid_is_nil(&snap_id)) {
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
         /* Classic LVM has no thin CoW. */
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }

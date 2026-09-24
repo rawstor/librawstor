@@ -582,7 +582,7 @@ rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t offset) {
 }
 
 rawstd::Task<void> Slot::remove_snapshot(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -592,7 +592,7 @@ rawstd::Task<void> Slot::remove_snapshot(
     try {
         co_await _with_retry(
             func_name, trace_event, &Backend::remove_snapshot, id, offset,
-            snap_id
+            snapshot_id
         );
         _finish(t_call);
     } catch (...) {
@@ -619,7 +619,7 @@ rawstd::Task<RawstorLocationInfo> Slot::info() {
 }
 
 rawstd::Task<void> Slot::create_snapshot(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -629,7 +629,7 @@ rawstd::Task<void> Slot::create_snapshot(
     try {
         co_await _with_retry(
             func_name, trace_event, &Backend::create_snapshot, id, offset,
-            snap_id
+            snapshot_id
         );
         _finish(t_call);
     } catch (...) {

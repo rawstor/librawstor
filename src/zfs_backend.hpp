@@ -33,8 +33,8 @@ namespace zfs {
  * <parent_dataset>/<uuid>:<offset>. Device path:
  * /dev/zvol/<parent_dataset>/<uuid>:<offset>.
  *
- * A non-nil `snap_id` names that version's own native snapshot:
- * <dataset>@s<snap_id> / /dev/zvol/.../<uuid>[:<offset>]@s<snap_id>
+ * A non-nil `snapshot_id` names that version's own native snapshot:
+ * <dataset>@s<snapshot_id> / /dev/zvol/.../<uuid>[:<offset>]@s<snapshot_id>
  * -- the "@s<id>" name is the version key itself, nothing stored twice.
  *
  * Requires the 'zfs' CLI to be available in PATH and sufficient privileges
@@ -45,14 +45,16 @@ private:
     std::string _parent_dataset;
 
     std::string _device_path(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id = {}
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
     ) const;
     std::string _dataset(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id = {}
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
     ) const;
 
     rawstd::Task<int> _open(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     ) override;
 
     // Polls for `path`'s existence-as-a-block-device to match
@@ -98,11 +100,11 @@ public:
     // (/dev/zvol/.../<uuid>@s<id>) is openable -- one mechanism, old
     // zvols included, rather than per-snapshot.
     rawstd::Task<void> create_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     ) override;
 
     rawstd::Task<void> remove_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     ) override;
 };
 

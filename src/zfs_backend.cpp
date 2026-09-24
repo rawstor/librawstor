@@ -52,13 +52,13 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
 }
 
 std::string Backend::_device_path(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) const {
-    return "/dev/zvol/" + _dataset(id, offset, snap_id);
+    return "/dev/zvol/" + _dataset(id, offset, snapshot_id);
 }
 
 std::string Backend::_dataset(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
@@ -68,9 +68,9 @@ std::string Backend::_dataset(
     char offset_str[17];
     snprintf(offset_str, sizeof(offset_str), "%" PRIx64, offset);
     std::string name = std::string(uuid_str) + ":" + offset_str;
-    if (!rawstd_uuid_is_nil(&snap_id)) {
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
         RawstdUUIDString snap_str;
-        rawstd_uuid_to_string(&snap_id, &snap_str);
+        rawstd_uuid_to_string(&snapshot_id, &snap_str);
         name += "@s" + std::string(snap_str);
     }
     return _parent_dataset + "/" + name;
@@ -105,9 +105,9 @@ rawstd::Task<void> Backend::_wait_for_blockdev(
 }
 
 rawstd::Task<int> Backend::_open(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
-    std::string path = _device_path(id, offset, snap_id);
+    std::string path = _device_path(id, offset, snapshot_id);
 
     // No O_NONBLOCK: opening a ZFS zvol with it caused cache-miss reads to
     // return -EAGAIN, which io_uring could not properly handle for
@@ -121,7 +121,7 @@ rawstd::Task<int> Backend::_open(
     // ever reaching pwrite().
     int fd = co_await _queue.open(
         path.c_str(),
-        (rawstd_uuid_is_nil(&snap_id) ? O_RDWR : O_RDONLY) | O_CLOEXEC, 0
+        (rawstd_uuid_is_nil(&snapshot_id) ? O_RDWR : O_RDONLY) | O_CLOEXEC, 0
     );
     co_return fd;
 }
@@ -466,15 +466,15 @@ rawstd::Task<void> Backend::set_sync_state(
 }
 
 rawstd::Task<void> Backend::create_snapshot(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
-    if (rawstd_uuid_is_nil(&snap_id)) {
+    if (rawstd_uuid_is_nil(&snapshot_id)) {
         /* nil is the live version, never a snapshot. */
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
     std::string dataset = _dataset(id, offset);
-    std::string snapshot = _dataset(id, offset, snap_id);
+    std::string snapshot = _dataset(id, offset, snapshot_id);
 
     rawstd_info("zfs: creating snapshot %s\n", snapshot.c_str());
 
@@ -513,9 +513,9 @@ rawstd::Task<void> Backend::create_snapshot(
 }
 
 rawstd::Task<void> Backend::remove_snapshot(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
-    std::string snapshot = _dataset(id, offset, snap_id);
+    std::string snapshot = _dataset(id, offset, snapshot_id);
 
     rawstd_info("zfs: destroying snapshot %s\n", snapshot.c_str());
 

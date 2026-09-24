@@ -64,12 +64,13 @@ void validate_same_uuid(
 // Same shape as validate_same_uuid() above, for the bound snapshot
 // version -- every URI in a target must agree on which version (live or
 // a specific snapshot) it addresses, not just which object.
-void validate_same_snap_id(
-    const std::vector<rawstd::URI>& uris, const RawstdUUID& snap_id
+void validate_same_snapshot_id(
+    const std::vector<rawstd::URI>& uris, const RawstdUUID& snapshot_id
 ) {
     for (const auto& uri : uris) {
-        RawstdUUID other_snap_id = rawstor::Target::parse_path(uri).snap_id;
-        if (rawstd_uuid_cmp(&snap_id, &other_snap_id) != 0) {
+        RawstdUUID other_snapshot_id =
+            rawstor::Target::parse_path(uri).snapshot_id;
+        if (rawstd_uuid_cmp(&snapshot_id, &other_snapshot_id) != 0) {
             rawstd_error("Equal snapshot version expected\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
@@ -92,8 +93,8 @@ uint64_t extract_offset(const rawstd::URI& uri) {
 
 // The bound snapshot version embedded in one URI's own trailing path
 // segments, if any -- nil (live) for the ordinary case.
-RawstdUUID extract_snap_id(const rawstd::URI& uri) {
-    return rawstor::Target::parse_path(uri).snap_id;
+RawstdUUID extract_snapshot_id(const rawstd::URI& uri) {
+    return rawstor::Target::parse_path(uri).snapshot_id;
 }
 
 // The bound URI with its own identity path segments stripped back off --
@@ -226,25 +227,26 @@ rawstd::Task<RawstorObjectMeta> first_reachable_meta(
 rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t offset = extract_offset(target);
-    RawstdUUID snap_id = extract_snap_id(target);
+    RawstdUUID snapshot_id = extract_snapshot_id(target);
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, strip_path(target), 1);
-    if (rawstd_uuid_is_nil(&snap_id)) {
+    if (rawstd_uuid_is_nil(&snapshot_id)) {
         co_await slot->remove(id, offset);
     } else {
-        co_await slot->remove_snapshot(id, offset, snap_id);
+        co_await slot->remove_snapshot(id, offset, snapshot_id);
     }
     co_await slot->close();
 }
 
 rawstd::Task<void> create_snapshot_one(
-    rawio::Queue& queue, const rawstd::URI& target, const RawstdUUID& snap_id
+    rawio::Queue& queue, const rawstd::URI& target,
+    const RawstdUUID& snapshot_id
 ) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, strip_path(target), 1);
-    co_await slot->create_snapshot(id, offset, snap_id);
+    co_await slot->create_snapshot(id, offset, snapshot_id);
     co_await slot->close();
 }
 
@@ -383,12 +385,12 @@ rawstd::DetachedTask launch_remove_op_coro(
 }
 
 rawstd::DetachedTask launch_create_snapshot_op_coro(
-    rawstor::Target t, rawio::Queue* queue, RawstdUUID snap_id,
+    rawstor::Target t, rawio::Queue* queue, RawstdUUID snapshot_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     try {
-        co_await t.create_snapshot(*queue, snap_id);
+        co_await t.create_snapshot(*queue, snapshot_id);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -503,7 +505,7 @@ namespace rawstor {
 
 // Whether `s` is a well-formed, non-negative hexadecimal number in full --
 // shared by parse_path()'s two offset checks below (the last segment for
-// the physical-live shape, the one before a trailing snap_id for the
+// the physical-live shape, the one before a trailing snapshot_id for the
 // physical-with-snapshot shape). Hex, not decimal: every other numeric
 // field this codebase persists or transmits alongside a chunk's own
 // identity (meta_encode()'s own chunk_size, epoch, sync_id, ...) is
@@ -528,7 +530,7 @@ bool parse_hex_offset(const std::string& s, uint64_t* out) {
 // the *end*. If the last segment isn't UUID-shaped, it must be a valid
 // hexadecimal chunk offset with a UUID id right before it -- the
 // physical-live shape, no snapshot. If the last segment IS UUID-shaped,
-// it's tentatively a trailing snap_id; another UUID right before it makes
+// it's tentatively a trailing snapshot_id; another UUID right before it makes
 // this the logical shape instead (that UUID is the real id, the last
 // segment its bound snapshot); a valid hexadecimal offset followed by a
 // UUID makes it the physical-with-snapshot shape. If neither precedes it,
@@ -549,10 +551,10 @@ Target::Path Target::parse_path(const rawstd::URI& uri) {
 
         RawstdUUID id2;
         if (rawstd_uuid_from_string(&id2, seg2.c_str()) == 0) {
-            // Logical shape: <id>/<snap_id>.
+            // Logical shape: <id>/<snapshot_id>.
             ret.id = id2;
             ret.offset = 0;
-            ret.snap_id = last_as_uuid;
+            ret.snapshot_id = last_as_uuid;
             ret.segments = 2;
             return ret;
         }
@@ -564,10 +566,10 @@ Target::Path Target::parse_path(const rawstd::URI& uri) {
             if (rawstd_uuid_from_string(&id3, dirname2.filename().c_str()) ==
                 0) {
                 // Physical shape with a bound snapshot:
-                // <id>/<offset>/<snap_id>.
+                // <id>/<offset>/<snapshot_id>.
                 ret.id = id3;
                 ret.offset = offset2;
-                ret.snap_id = last_as_uuid;
+                ret.snapshot_id = last_as_uuid;
                 ret.segments = 3;
                 return ret;
             }
@@ -619,10 +621,10 @@ Target::Target(const std::vector<rawstd::URI>& uris) {
     // The whole target's own identity -- any URI answers it identically,
     // so the very first one (before sorting into chunk uris reorders
     // anything) is as good as any other; validate_same_uuid()/
-    // validate_same_snap_id() below then check every URI of every chunk
+    // validate_same_snapshot_id() below then check every URI of every chunk
     // actually agrees.
     _id = uuid_from_target(uris.front());
-    _snap_id = extract_snap_id(uris.front());
+    _snapshot_id = extract_snapshot_id(uris.front());
 
     std::map<uint64_t, std::vector<rawstd::URI>> by_offset;
     for (const rawstd::URI& uri : uris) {
@@ -633,7 +635,7 @@ Target::Target(const std::vector<rawstd::URI>& uris) {
     for (auto& [offset, chunk_uris] : by_offset) {
         validate_different_uris(chunk_uris);
         validate_same_uuid(chunk_uris, _id);
-        validate_same_snap_id(chunk_uris, _snap_id);
+        validate_same_snapshot_id(chunk_uris, _snapshot_id);
         for (const rawstd::URI& uri : chunk_uris) {
             _uris.push_back(uri);
         }
@@ -644,8 +646,8 @@ const RawstdUUID& Target::id() const {
     return _id;
 }
 
-const RawstdUUID& Target::snap_id() const {
-    return _snap_id;
+const RawstdUUID& Target::snapshot_id() const {
+    return _snapshot_id;
 }
 
 Location Target::location() const {
@@ -897,22 +899,23 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
     // live object (Backend::remove()) or a bound snapshot
     // (Backend::remove_snapshot()) -- every URI in `_uris` agrees, since
     // the constructor already validated they share one identity,
-    // snap_id included.
+    // snapshot_id included.
     co_await remove_many(queue, _uris);
 }
 
 // Only ever touches the target's own first chunk (see spec()'s own
 // comment on why). Every URI is still attempted even if an earlier one
 // fails; the first error encountered is reported.
-rawstd::Task<void>
-Target::create_snapshot(rawio::Queue& queue, const RawstdUUID& snap_id) const {
+rawstd::Task<void> Target::create_snapshot(
+    rawio::Queue& queue, const RawstdUUID& snapshot_id
+) const {
     std::vector<std::vector<rawstd::URI>> chunks = chunk_uris_by_offset(_uris);
     const std::vector<rawstd::URI>& uris = chunks.front();
 
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(uris.size());
     for (const auto& uri : uris) {
-        tasks.push_back(create_snapshot_one(queue, uri, snap_id));
+        tasks.push_back(create_snapshot_one(queue, uri, snapshot_id));
     }
     co_await rawstd::gather(std::move(tasks));
 }
@@ -932,8 +935,8 @@ Target::create_snapshot(rawio::Queue& queue, const RawstdUUID& snap_id) const {
 // machinery Chunk::create() below doesn't have yet, so a snapshot-bound
 // target can't be opened this way today.
 rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) const {
-    RawstdUUID bound_snap_id = snap_id();
-    if (!rawstd_uuid_is_nil(&bound_snap_id)) {
+    RawstdUUID bound_snapshot_id = snapshot_id();
+    if (!rawstd_uuid_is_nil(&bound_snapshot_id)) {
         rawstd_error("Opening a bound snapshot is not supported yet\n");
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
@@ -1186,17 +1189,17 @@ int rawstor_target_id(const char* target, char* buf, size_t size) noexcept {
     }
 }
 
-int rawstor_target_snap_id(
+int rawstor_target_snapshot_id(
     const char* target, char* buf, size_t size
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        RawstdUUID snap_id = t.snap_id();
-        if (rawstd_uuid_is_nil(&snap_id)) {
+        RawstdUUID snapshot_id = t.snapshot_id();
+        if (rawstd_uuid_is_nil(&snapshot_id)) {
             return 0;
         }
         RawstdUUIDString uuid;
-        rawstd_uuid_to_string(&snap_id, &uuid);
+        rawstd_uuid_to_string(&snapshot_id, &uuid);
         int res = snprintf(buf, size, "%s", uuid);
         if (res < 0) {
             RAWSTD_THROW_ERRNO();
@@ -1240,19 +1243,19 @@ int rawstor_target_location(
 }
 
 int rawstor_target_create_snapshot(
-    RawIOQueue* queue, const char* target, const char* snap_id, char* buf,
+    RawIOQueue* queue, const char* target, const char* snapshot_id, char* buf,
     size_t size, int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         RawstdUUID snap;
         int res;
-        if (snap_id == nullptr) {
+        if (snapshot_id == nullptr) {
             res = rawstd_uuid7_init(&snap);
             if (res < 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
         } else {
-            res = rawstd_uuid_from_string(&snap, snap_id);
+            res = rawstd_uuid_from_string(&snap, snapshot_id);
             if (res < 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
@@ -1286,13 +1289,13 @@ int rawstor_target_create_snapshot(
     }
 }
 
-int rawstor_target_snapshot_remove(
-    RawIOQueue* queue, const char* target, const char* snap_id,
+int rawstor_target_remove_snapshot(
+    RawIOQueue* queue, const char* target, const char* snapshot_id,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         RawstdUUID snap;
-        int res = rawstd_uuid_from_string(&snap, snap_id);
+        int res = rawstd_uuid_from_string(&snap, snapshot_id);
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }

@@ -20,7 +20,7 @@ extern "C" {
 #define RAWSTOR_MAGIC 0x72737472 // "rstr" as ascii
 
 /*
- * Binds the connection to an object/chunk -- or, if `snap_id` is
+ * Binds the connection to an object/chunk -- or, if `snapshot_id` is
  * non-nil, one previously snapshotted version of it instead (nil-means-
  * live) -- rides RawstorOSTFrameSnapPayload.
  */
@@ -30,7 +30,7 @@ extern "C" {
 #define RAWSTOR_CMD_DISCARD 3
 #define RAWSTOR_CMD_ALLOCATE 4
 /*
- * Removes an object/chunk -- or, if `snap_id` is non-nil, one previously
+ * Removes an object/chunk -- or, if `snapshot_id` is non-nil, one previously
  * snapshotted version of it instead (nil-means-live, same convention as
  * SET_OBJECT) -- rides RawstorOSTFrameSnapPayload.
  */
@@ -44,7 +44,7 @@ extern "C" {
 
 /*
  * Native CoW snapshot of one stored object version -- rides
- * RawstorOSTFrameSnapPayload, snap_id is the caller's own already-
+ * RawstorOSTFrameSnapPayload, snapshot_id is the caller's own already-
  * generated version id (like every object id, client-generated -- never
  * nil, nil is reserved for the live version). -ENOTSUP on backends
  * without CoW (file://, classic LVM).
@@ -89,16 +89,16 @@ struct RawstorOSTFrameBasic {
 
 /*
  * Same shape as RawstorOSTFrameBasicPayload, for the handful of commands
- * that need a UUID snap_id alongside object_id/offset instead of a plain
+ * that need a UUID snapshot_id alongside object_id/offset instead of a plain
  * uint64_t val: SET_OBJECT, RELEASE, SNAPSHOT (each command's own doc
- * comment above says which). snap_id nil means "the live version" where
+ * comment above says which). snapshot_id nil means "the live version" where
  * that's a meaningful state for the command (SET_OBJECT, RELEASE);
  * SNAPSHOT always carries a real, non-nil version.
  */
 struct RawstorOSTFrameSnapPayload {
     uint8_t object_id[16];
     uint64_t offset;
-    uint8_t snap_id[16];
+    uint8_t snapshot_id[16];
 } RAWSTOR_PACKED;
 
 struct RawstorOSTFrameSnap {

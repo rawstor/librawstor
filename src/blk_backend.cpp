@@ -167,13 +167,13 @@ rawstd::Task<void> Backend::close() {
 }
 
 rawstd::Task<void> Backend::set_object(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snap_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
 
-    int fd = co_await _open(id, offset, snap_id);
+    int fd = co_await _open(id, offset, snapshot_id);
     set_fd(fd);
 }
 

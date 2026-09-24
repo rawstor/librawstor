@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-int rawstor_cli_snap_remove(const char* target, const char* snap_id);
+int rawstor_cli_snap_remove(const char* target, const char* snapshot_id);
 
 #ifdef __cplusplus
 }

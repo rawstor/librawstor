@@ -138,10 +138,11 @@ private:
         RawstorOSTFrameSyncStatePayload payload
     );
     // Builds this server's own local target string for `uuid`/`offset`,
-    // with `snap_id` appended as a bound-snapshot path segment when
+    // with `snapshot_id` appended as a bound-snapshot path segment when
     // non-nil (nil, the default, addresses the live version).
     std::vector<rawstd::URI> _targets(
-        const RawstdUUID& uuid, uint64_t offset, const RawstdUUID& snap_id = {}
+        const RawstdUUID& uuid, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
     );
 
     // Sends a response frame and awaits its actual completion (not just
