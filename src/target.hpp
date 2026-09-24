@@ -93,7 +93,7 @@ private:
     // The target's own identity -- the same for every URI in `_uris`
     // (validated once, at construction: the constructor's own comment,
     // target.cpp). Computed once there rather than re-parsed on every
-    // id()/snapshot_id() call.
+    // object_id()/snapshot_id() call.
     RawstdUUID _id;
     RawstdUUID _snapshot_id;
 
@@ -105,11 +105,11 @@ public:
     }
 
     // The UUID shared by every URI in `uris` -- parsed from the first one.
-    const RawstdUUID& id() const;
+    const RawstdUUID& object_id() const;
 
     // The bound snapshot version shared by every URI in `uris`, or nil
     // (live) if absent -- parsed from the first one, same convention as
-    // id() above.
+    // object_id() above.
     const RawstdUUID& snapshot_id() const;
 
     // The Location `uris` was created under -- each URI with its own

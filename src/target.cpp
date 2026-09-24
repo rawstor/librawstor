@@ -642,7 +642,7 @@ Target::Target(const std::vector<rawstd::URI>& uris) {
     }
 }
 
-const RawstdUUID& Target::id() const {
+const RawstdUUID& Target::object_id() const {
     return _id;
 }
 
@@ -1168,7 +1168,7 @@ int rawstor_target_open(
 int rawstor_target_id(const char* target, char* buf, size_t size) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        RawstdUUID id = t.id();
+        RawstdUUID id = t.object_id();
         RawstdUUIDString uuid;
         rawstd_uuid_to_string(&id, &uuid);
         int res = snprintf(buf, size, "%s", uuid);
