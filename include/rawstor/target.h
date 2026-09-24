@@ -28,16 +28,27 @@ extern "C" {
  * when creating a new object (via rawstor_target_create()).
  *
  * When used with rawstor_target_create(), the size field must be set to the
- * desired size of the object to be created, and width must equal the
- * number of URIs in the target string being created -- mandatory, not a
- * convenience the caller can opt out of (mismatch, including leaving it 0,
- * fails the create with -EINVAL): a caller that doesn't already know the
- * count can derive it by counting the ','-separated entries in its own
- * target/location string.
+ * desired size of the object to be created. width is mandatory, never a
+ * convenience the caller can opt out of (leaving it 0 always fails the
+ * create with -EINVAL): for a target string naming more than one URI, it
+ * must equal that count exactly (a caller that doesn't already know it can
+ * derive it by counting the ','-separated entries in its own target/
+ * location string); for a lone URI, any nonzero value is accepted as the
+ * caller's own chosen redundancy for that one copy, not required to equal
+ * 1. chunk_size only matters for a target string naming more than one
+ * chunk's own uris (see docs/locations_and_targets.md): it must be a
+ * nonzero power of two, the whole object's own per-chunk share, every
+ * chunk exactly that size except the last (whatever remains of size);
+ * ignored (and 0 is a valid, if meaningless, value) for the ordinary
+ * single-chunk case.
  *
- * When used with rawstor_target_spec(), both fields are filled with the
- * actual shape of the existing object: its size in bytes and the number of
- * URIs configured for it.
+ * When used with rawstor_target_spec(), all three fields are filled with
+ * the actual shape of the existing object: its size in bytes, the number
+ * of URIs configured for it, and the per-chunk share it was created
+ * with (0 for the ordinary single-chunk case) -- rawstor_target_spec()
+ * only ever touches the target's own first chunk, but chunk_size is the
+ * whole object's own chunking policy, persisted identically on every
+ * chunk at create() time, so any one of them answers it correctly.
  *
  * @see rawstor_target_spec
  * @see rawstor_target_create
@@ -45,6 +56,8 @@ extern "C" {
 struct RawstorObjectSpec {
     uint64_t size;      /**< Size of the object in bytes. */
     unsigned int width; /**< Number of URIs configured for the target. */
+    /** Per-chunk share of a multi-chunk target; see above. */
+    uint64_t chunk_size;
 };
 
 /**
@@ -103,9 +116,11 @@ struct RawstorObjectSyncState {
  * copy's mirror consistency identity (sync_state, the part
  * rawstor_target_set_sync_state() can actually change). `spec.width`
  * is filled in by rawstor_target_meta() itself the same way
- * rawstor_target_spec() fills its own -- the number of URIs in the
- * target string, computed locally -- not by the backend that answered:
- * width isn't a property of any single copy.
+ * rawstor_target_spec() fills its own -- the target's own per-chunk
+ * copy count: computed locally (the number of URIs in the target
+ * string) for an ordinary multi-URI mirror set, or trusted from
+ * whichever copy answered for a single-URI target (its own configured
+ * redundancy, which no URI count could reveal).
  *
  * @see rawstor_target_meta
  * @see rawstor_target_set_sync_state
@@ -120,8 +135,10 @@ struct RawstorObjectMeta {
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
  * this function fills a RawstorObjectSpec structure with information about
- * the object: its size, and the number of URIs configured for it
- * (width -- computed locally from @p target, no backend involved).
+ * the object: its size, and the number of copies configured for it
+ * (width -- computed locally from @p target's own URI count for an
+ * ordinary multi-URI mirror set, or the object's own configured
+ * redundancy, trusted from the answering copy, for a single-URI target).
  *
  * The target may be a single location‑UUID pair or a comma‑separated list of
  * such pairs (mirroring / data locality). All UUIDs in a list must be
@@ -168,21 +185,22 @@ int rawstor_target_spec(
 
 /**
  * @brief Asynchronously retrieve the full mirror consistency metadata of
- *        every copy of a target.
+ *        every copy of one chunk of a target.
  *
- * Like rawstor_target_spec(), but queries every URI in @p target
- * concurrently and fills one RawstorObjectMeta per URI, in @p target's
- * own order -- unlike rawstor_target_spec()'s single-answer fail-over
- * tolerance, this reports every copy's own state, not just one answer
- * standing in for the whole set. A URI that doesn't answer (unreachable,
- * ENOENT, ...) gets an entry with `sync_state.state ==
+ * Like rawstor_target_spec(), but queries every URI of the chunk at
+ * @p offset concurrently and fills one RawstorObjectMeta per URI, in
+ * that chunk's own order -- unlike rawstor_target_spec()'s single-answer
+ * fail-over tolerance, this reports every copy's own state, not just one
+ * answer standing in for the whole set. A URI that doesn't answer
+ * (unreachable, ENOENT, ...) gets an entry with `sync_state.state ==
  * RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE` rather than failing the whole
  * call or being left out -- the entry's own position in @p metas is what
  * ties it back to that URI, so skipping it would lose that. `spec.width`
  * in every entry that did answer is filled in the same way
- * rawstor_target_spec() fills its own -- the number of URIs in @p target,
- * computed locally -- not whatever the answering copy's own backend
- * happened to report.
+ * rawstor_target_spec() fills its own -- the chunk's own per-copy count,
+ * computed locally (for an ordinary multi-URI mirror set, simply the
+ * number of URIs in it) or trusted from the answering copy itself for a
+ * single-URI chunk.
  *
  * Legacy copies created before metadata support report size only, with
  * state CLEAN, epoch 0 and sync_id 0 -- distinguishable from a URI that
@@ -194,22 +212,28 @@ int rawstor_target_spec(
  *
  * @param queue   Queue used to drive the asynchronous lookup.
  * @param target  Target string, see rawstor_target_spec().
+ * @param offset  The chunk's own byte offset within @p target (0 for an
+ *                ordinary, single-chunk target -- rawstor_target_spec()'s
+ *                own `size`/`chunk_size` tell a caller managing a real
+ *                multi-chunk object every offset it has). @c -ENOENT if
+ *                no chunk in @p target sits at this offset.
  * @param metas   Out-parameter: an array of @p count entries. Filled with
- *                one entry per URI in @p target (in order), up to
+ *                one entry per URI of that chunk (in order), up to
  *                @p count of them, immediately before @p cb is invoked.
  *                Left untouched on error, and never written at all if
  *                the lookup is never queued (see the return value
  *                below).
  * @param count   Capacity of @p metas.
  * @param cb      Callback invoked on completion.
- *                - @p result is the number of URIs in @p target on
- *                  success -- same truncation convention as
- *                  rawstor_target_id()/_location(): if it is greater than
- *                  @p count, only the first @p count entries were
- *                  actually written to @p metas, and the caller should
- *                  retry with a bigger buffer rather than treat this as
- *                  an error -- or a negative errno on failure (@c
- *                  -EINVAL for invalid target syntax, @c -ENOMEM).
+ *                - @p result is that chunk's own URI count on success --
+ *                  same truncation convention as rawstor_target_id()/
+ *                  _location(): if it is greater than @p count, only the
+ *                  first @p count entries were actually written to
+ *                  @p metas, and the caller should retry with a bigger
+ *                  buffer rather than treat this as an error -- or a
+ *                  negative errno on failure (@c -EINVAL for invalid
+ *                  target syntax, @c -ENOENT for no chunk at @p offset,
+ *                  @c -ENOMEM).
  *                - @p data is the same pointer passed as @p data below.
  *                - Return zero on success. A negative errno value signals
  *                  an error back into the I/O completion machinery.
@@ -223,20 +247,22 @@ int rawstor_target_spec(
  * @see rawstor_target_spec
  */
 int rawstor_target_meta(
-    RawIOQueue* queue, const char* target, struct RawstorObjectMeta* metas,
-    size_t count, int (*cb)(ssize_t result, void* data), void* data
+    RawIOQueue* queue, const char* target, uint64_t offset,
+    struct RawstorObjectMeta* metas, size_t count,
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
  * @brief Asynchronously write the mirror consistency identity of every
- *        copy of a target.
+ *        copy of one chunk of a target.
  *
  * Unlike rawstor_target_spec()/rawstor_target_meta(), this writes rather
- * than reads: it sets @p sync_state on every URI in @p target
- * concurrently (fsynced on the backend before it is acknowledged, per
- * docs/mirroring.md's durability rule) -- every URI is still attempted
- * even if an earlier one fails, so a partial failure leaves as many
- * copies updated as possible rather than none.
+ * than reads: it sets @p sync_state on every URI of the chunk at
+ * @p offset concurrently (fsynced on the backend before it is
+ * acknowledged, per docs/mirroring.md's durability rule) -- every URI of
+ * that chunk is still attempted even if an earlier one fails, so a
+ * partial failure leaves as many copies updated as possible rather than
+ * none.
  *
  * @warning Setting mirror consistency state by hand can desynchronize a
  * target's copies in ways the library's own quorum/reconciliation logic
@@ -251,14 +277,17 @@ int rawstor_target_meta(
  *
  * @param queue       Queue used to drive the asynchronous write.
  * @param target      Target string, see rawstor_target_spec().
+ * @param offset      The chunk's own byte offset within @p target, see
+ *                    rawstor_target_meta().
  * @param sync_state  The mirror consistency identity to write to every
- *                    copy. Only read while this call is being queued --
- *                    need not stay valid until @p cb runs.
+ *                    copy of that chunk. Only read while this call is
+ *                    being queued -- need not stay valid until @p cb
+ *                    runs.
  * @param cb          Callback invoked on completion.
  *                    - @p result is zero on success, or a negative errno
  *                      on failure (@c -EINVAL for invalid target syntax,
- *                      or the first error any URI's own write failed
- *                      with).
+ *                      @c -ENOENT for no chunk at @p offset, or the
+ *                      first error any URI's own write failed with).
  *                    - @p data is the same pointer passed as @p data
  *                      below.
  *                    - Return zero on success. A negative errno value
@@ -274,7 +303,7 @@ int rawstor_target_meta(
  * @see rawstor_target_meta
  */
 int rawstor_target_set_sync_state(
-    RawIOQueue* queue, const char* target,
+    RawIOQueue* queue, const char* target, uint64_t offset,
     const struct RawstorObjectSyncState* sync_state,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;

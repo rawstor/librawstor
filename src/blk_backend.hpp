@@ -21,10 +21,9 @@ namespace blk {
 // Base for any Backend backed by a plain fd read/written via the io queue
 // (rawio::Queue::pread()/pwrite()/...). Concrete backends only need to
 // implement how to get from an object id to an open fd (_open()) plus
-// the metadata operations (list()/create()/remove()/info()) that stay
-// backend-specific; spec() has a default (BLKGETSIZE64) for backends whose
-// objects are real block devices, overridden by file::Backend since its
-// objects are plain regular files instead.
+// the metadata operations (list()/create()/remove()/meta()/info()) that
+// stay backend-specific; _blk_size() below shares the one thing that
+// doesn't, for the two subclasses whose objects are real block devices.
 class Backend : public rawstor::Backend {
 private:
     // Bumped whenever meta_encode()'s own field set changes -- carried as
@@ -32,7 +31,10 @@ private:
     // comment below) rather than left for a caller to track separately,
     // so every subclass rejects a record from an incompatible version
     // the same way. Private: only meta_encode()/meta_decode()'s own
-    // implementation ever needs it.
+    // implementation ever needs it. Still 1 despite the width/chunk_size
+    // fields added below -- this whole format is itself part of the
+    // unreleased 0.3.0 line (no live installation has ever written one),
+    // so there's nothing to stay compatible with yet.
     static constexpr unsigned int META_FORMAT_VERSION = 1;
 
     // Writes dispatched to the io queue whose completion hasn't arrived
@@ -74,7 +76,7 @@ private:
     void _throttle_release() noexcept;
 
 protected:
-    virtual rawstd::Task<int> _open(const RawstdUUID& id) = 0;
+    virtual rawstd::Task<int> _open(const RawstdUUID& id, uint64_t offset) = 0;
 
     // A blk-backed backend has no upfront connection step: the fd is
     // opened lazily, by _open(const RawstdUUID&) above, once
@@ -102,6 +104,16 @@ protected:
     // retryable EIO.
     rawstd::Task<bool> _exists(const std::string& path);
 
+    // Real, current size of the block device `id`/`offset` maps to
+    // (BLKGETSIZE64) -- shared by lvm::Backend/zfs::Backend's own meta()
+    // below: their own native tag/property storage never carries size
+    // (see meta_encode()'s own doc comment), so this is always the
+    // up-to-date source of truth for it, even if the device were ever
+    // resized outside rawstor. file::Backend needs no equivalent -- its
+    // own meta() already gets size straight from its data file's own
+    // stat().
+    rawstd::Task<uint64_t> _blk_size(const RawstdUUID& id, uint64_t offset);
+
     // Upper bound on meta_encode()'s own return value, comfortably
     // covering every field at its widest (a full 16 hex digits for each
     // uint64_t one). Protected (not private): file::Backend, the only
@@ -112,27 +124,36 @@ protected:
     static constexpr size_t META_MAX_SIZE = 256;
 
 public:
+    // A chunk's own placement identity: stamped at create, immutable
+    // afterwards, persisted alongside the mirror consistency state by
+    // meta_encode()/meta_decode() below. chunk_size here is always the
+    // full byte value -- RawstorOSTFrameAllocatePayload's own chunk_shift
+    // is only a wire-transfer encoding (its own doc comment on why),
+    // already converted back to bytes before reaching this local record.
+    struct ChunkIdentity {
+        uint8_t width;
+        uint64_t chunk_size;
+    };
+
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     rawstd::Task<void> close() override final;
 
-    rawstd::Task<void> set_object(const RawstdUUID& id) override final;
+    rawstd::Task<void>
+    set_object(const RawstdUUID& id, uint64_t offset) override final;
 
-    // Default spec() for a backend whose object id maps to a real block
-    // device (BLKGETSIZE64) -- file::Backend overrides this instead, since
-    // its objects are plain regular files.
-    rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) override;
-
-    // Encodes/decodes a RawstorObjectSyncState as a compact
+    // Encodes/decodes a RawstorObjectSyncState plus a ChunkIdentity (the
+    // latter stamped at create and never changed again) as a compact
     // colon-separated string of hex fields, e.g.
-    // "version=1:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0" -- shared
-    // by every blk-backed subclass's own native per-copy metadata
-    // storage: lvm::Backend's LVM tag, zfs::Backend's ZFS user property,
-    // and file::Backend's own on-disk .meta file (NUL-padded out to
-    // META_MAX_SIZE bytes -- see its own doc comment for why). Only
-    // characters valid in all three are used (no comma, no whitespace).
-    // Public (not protected) so tests/ can exercise them directly
-    // without a real lvm/zfs/file backend of their own.
+    // "version=1:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:
+    // width=0:chunk_size=0" -- shared by every blk-backed
+    // subclass's own native per-copy metadata storage: lvm::Backend's LVM
+    // tag, zfs::Backend's ZFS user property, and file::Backend's own
+    // on-disk .meta file (NUL-padded out to META_MAX_SIZE bytes -- see
+    // its own doc comment for why). Only characters valid in all three
+    // are used (no comma, no whitespace). Public (not protected) so
+    // tests/ can exercise them directly without a real lvm/zfs/file
+    // backend of their own.
     //
     // meta_decode() reverses meta_encode(), throwing EPROTO if value is
     // not a well-formed encoding of the current META_FORMAT_VERSION
@@ -140,8 +161,13 @@ public:
     // was ever recorded" for a valid record, and a record from a
     // different format version, which this repo will never write again
     // once it's bumped).
-    static std::string meta_encode(const RawstorObjectSyncState& sync_state);
-    static RawstorObjectSyncState meta_decode(const std::string& value);
+    static std::string meta_encode(
+        const RawstorObjectSyncState& sync_state, const ChunkIdentity& identity
+    );
+    static void meta_decode(
+        const std::string& value, RawstorObjectSyncState* sync_state,
+        ChunkIdentity* identity
+    );
 
     // No universal answer for a raw block device -- left pure virtual
     // (inherited from rawstor::Backend) rather than given a default here,

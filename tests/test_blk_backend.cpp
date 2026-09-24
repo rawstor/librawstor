@@ -100,13 +100,17 @@ rawstor::blk::Backend* open_blk_backend(
 
     rawstor::Target target({rawstd::URI(location, uuid_string)});
 
-    RawstorObjectSpec spec{.size = 1u << 20, .width = 1};
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .width = 1,
+        .chunk_size = 0,
+    };
     run(queue, target.create(queue, spec));
 
-    object = run(queue, rawstor::Chunk::create(queue, target));
+    object = run(queue, rawstor::Chunk::create({location}, queue, id, 0));
 
     slot = run(queue, rawstor::Slot::create(queue, location, 1));
-    run(queue, slot->open(id));
+    run(queue, slot->open(id, 0));
 
     return static_cast<rawstor::blk::Backend*>(slot->get_next_backend().get());
 }
@@ -364,34 +368,64 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     sync_state.sync_id_history[2] = 2;
     sync_state.sync_id_history[3] = 3;
 
-    std::string encoded = rawstor::blk::Backend::meta_encode(sync_state);
+    rawstor::blk::Backend::ChunkIdentity identity{};
+    identity.width = 3;
 
-    RawstorObjectSyncState decoded =
-        rawstor::blk::Backend::meta_decode(encoded);
-    EXPECT_EQ(decoded.state, sync_state.state);
-    EXPECT_EQ(decoded.epoch, sync_state.epoch);
-    EXPECT_EQ(decoded.sync_id, sync_state.sync_id);
-    EXPECT_EQ(decoded.sync_id_history[0], sync_state.sync_id_history[0]);
-    EXPECT_EQ(decoded.sync_id_history[1], sync_state.sync_id_history[1]);
-    EXPECT_EQ(decoded.sync_id_history[2], sync_state.sync_id_history[2]);
-    EXPECT_EQ(decoded.sync_id_history[3], sync_state.sync_id_history[3]);
+    std::string encoded =
+        rawstor::blk::Backend::meta_encode(sync_state, identity);
+
+    RawstorObjectSyncState decoded_sync_state{};
+    rawstor::blk::Backend::ChunkIdentity decoded_identity{};
+    rawstor::blk::Backend::meta_decode(
+        encoded, &decoded_sync_state, &decoded_identity
+    );
+    EXPECT_EQ(decoded_sync_state.state, sync_state.state);
+    EXPECT_EQ(decoded_sync_state.epoch, sync_state.epoch);
+    EXPECT_EQ(decoded_sync_state.sync_id, sync_state.sync_id);
+    EXPECT_EQ(
+        decoded_sync_state.sync_id_history[0], sync_state.sync_id_history[0]
+    );
+    EXPECT_EQ(
+        decoded_sync_state.sync_id_history[1], sync_state.sync_id_history[1]
+    );
+    EXPECT_EQ(
+        decoded_sync_state.sync_id_history[2], sync_state.sync_id_history[2]
+    );
+    EXPECT_EQ(
+        decoded_sync_state.sync_id_history[3], sync_state.sync_id_history[3]
+    );
+    EXPECT_EQ(decoded_identity.width, identity.width);
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_empty_string) {
     /* A missing property/tag/record must never be mistaken for a valid
      * one. */
-    EXPECT_THROW(rawstor::blk::Backend::meta_decode(""), std::system_error);
+    RawstorObjectSyncState sync_state{};
+    rawstor::blk::Backend::ChunkIdentity identity{};
+    EXPECT_THROW(
+        rawstor::blk::Backend::meta_decode("", &sync_state, &identity),
+        std::system_error
+    );
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_dash) {
     /* ZFS's own "property never set" marker -- must not be mistaken for a
      * valid record either. */
-    EXPECT_THROW(rawstor::blk::Backend::meta_decode("-"), std::system_error);
+    RawstorObjectSyncState sync_state{};
+    rawstor::blk::Backend::ChunkIdentity identity{};
+    EXPECT_THROW(
+        rawstor::blk::Backend::meta_decode("-", &sync_state, &identity),
+        std::system_error
+    );
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_malformed_string) {
+    RawstorObjectSyncState sync_state{};
+    rawstor::blk::Backend::ChunkIdentity identity{};
     EXPECT_THROW(
-        rawstor::blk::Backend::meta_decode("not the right format"),
+        rawstor::blk::Backend::meta_decode(
+            "not the right format", &sync_state, &identity
+        ),
         std::system_error
     );
 }
@@ -399,9 +433,13 @@ TEST(BlkBackendTest, meta_decode_rejects_malformed_string) {
 TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
     /* A record from a format version this build no longer understands (or
      * ever wrote) must not be mistaken for a valid one. */
+    RawstorObjectSyncState sync_state{};
+    rawstor::blk::Backend::ChunkIdentity identity{};
     EXPECT_THROW(
         rawstor::blk::Backend::meta_decode(
-            "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0"
+            "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
+            "width=0",
+            &sync_state, &identity
         ),
         std::system_error
     );

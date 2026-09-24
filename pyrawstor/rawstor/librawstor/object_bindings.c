@@ -18,6 +18,7 @@ static void set_os_error(int error) {
 typedef struct {
     PyObject_HEAD unsigned long long size;
     unsigned int width;
+    unsigned long long chunk_size;
 } PyObjectSpec;
 
 // ObjectSpec is Py_TPFLAGS_BASETYPE (subclassable from Python), and a
@@ -42,6 +43,7 @@ static PyObject* PyObjectSpec_new(
     if (self != NULL) {
         self->size = 0;
         self->width = 0;
+        self->chunk_size = 0;
     }
     return (PyObject*)self;
 }
@@ -50,9 +52,10 @@ static int
 PyObjectSpec_init(PyObjectSpec* self, PyObject* args, PyObject* kwargs) {
     long long size;
     unsigned int width;
-    static char* kwlist[] = {"size", "width", NULL};
+    unsigned long long chunk_size = 0;
+    static char* kwlist[] = {"size", "width", "chunk_size", NULL};
     if (!PyArg_ParseTupleAndKeywords(
-            args, kwargs, "LI", kwlist, &size, &width
+            args, kwargs, "LI|K", kwlist, &size, &width, &chunk_size
         )) {
         return -1;
     }
@@ -62,12 +65,14 @@ PyObjectSpec_init(PyObjectSpec* self, PyObject* args, PyObject* kwargs) {
     }
     self->size = (unsigned long long)size;
     self->width = width;
+    self->chunk_size = chunk_size;
     return 0;
 }
 
 static PyObject* PyObjectSpec_repr(PyObjectSpec* self) {
     return PyUnicode_FromFormat(
-        "ObjectSpec(size=%llu, width=%u)", self->size, self->width
+        "ObjectSpec(size=%llu, width=%u, chunk_size=%llu)", self->size,
+        self->width, self->chunk_size
     );
 }
 
@@ -113,11 +118,34 @@ static int PyObjectSpec_set_width(
     return 0;
 }
 
+static PyObject*
+PyObjectSpec_get_chunk_size(PyObjectSpec* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLongLong(self->chunk_size);
+}
+
+static int PyObjectSpec_set_chunk_size(
+    PyObjectSpec* self, PyObject* value, void* Py_UNUSED(closure)
+) {
+    if (value == NULL) {
+        PyErr_SetString(PyExc_TypeError, "Cannot delete chunk_size attribute");
+        return -1;
+    }
+
+    unsigned long long new_chunk_size = PyLong_AsUnsignedLongLong(value);
+    if (PyErr_Occurred()) {
+        return -1;
+    }
+    self->chunk_size = new_chunk_size;
+    return 0;
+}
+
 static PyGetSetDef PyObjectSpec_getset[] = {
     {"size", (getter)PyObjectSpec_get_size, (setter)PyObjectSpec_set_size, NULL,
      NULL},
     {"width", (getter)PyObjectSpec_get_width, (setter)PyObjectSpec_set_width,
      NULL, NULL},
+    {"chunk_size", (getter)PyObjectSpec_get_chunk_size,
+     (setter)PyObjectSpec_set_chunk_size, NULL, NULL},
     {NULL, NULL, NULL, NULL, NULL}
 };
 
@@ -691,7 +719,6 @@ error:
 PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
     PyObject* spec_obj;
-    struct RawstorObjectSpec spec;
 
     if (!PyArg_ParseTuple(args, "sO", &target, &spec_obj)) {
         return NULL;
@@ -703,8 +730,11 @@ PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
     }
 
     PyObjectSpec* py_spec = (PyObjectSpec*)spec_obj;
-    spec.size = py_spec->size;
-    spec.width = py_spec->width;
+    struct RawstorObjectSpec spec = {
+        .size = py_spec->size,
+        .width = py_spec->width,
+        .chunk_size = py_spec->chunk_size,
+    };
 
     RawstorSyncOp op;
     int ires = rawstor_sync_op_init(&op);
@@ -741,6 +771,7 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
     struct RawstorObjectSpec spec = {
         .size = py_spec->size,
         .width = py_spec->width,
+        .chunk_size = py_spec->chunk_size,
     };
 
     char target[65536];
@@ -833,7 +864,8 @@ static PyObject* build_mirror_meta(const struct RawstorObjectMeta* meta) {
 
 PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
-    if (!PyArg_ParseTuple(args, "s", &target)) {
+    unsigned long long offset = 0;
+    if (!PyArg_ParseTuple(args, "s|K", &target, &offset)) {
         return NULL;
     }
 
@@ -861,7 +893,7 @@ PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
     int mres = rawstor_target_meta(
-        op.queue, target, metas, count, rawstor_sync_op_cb, &op
+        op.queue, target, offset, metas, count, rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, mres);
     rawstor_sync_op_destroy(&op);
@@ -893,7 +925,8 @@ PyObject*
 py_rawstor_object_set_sync_state(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
     PyObject* sync_state_obj;
-    if (!PyArg_ParseTuple(args, "sO", &target, &sync_state_obj)) {
+    unsigned long long offset = 0;
+    if (!PyArg_ParseTuple(args, "sO|K", &target, &sync_state_obj, &offset)) {
         return NULL;
     }
 
@@ -922,7 +955,7 @@ py_rawstor_object_set_sync_state(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
     int sres = rawstor_target_set_sync_state(
-        op.queue, target, &sync_state, rawstor_sync_op_cb, &op
+        op.queue, target, offset, &sync_state, rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);
     rawstor_sync_op_destroy(&op);

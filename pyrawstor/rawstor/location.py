@@ -46,12 +46,14 @@ class Location:
         return self._uri == other._uri
 
     def create(
-        self, *, size: int, width: int, uuid: str | None = None
+        self, *, size: int, width: int, chunk_size: int = 0,
+        uuid: str | None = None
     ) -> Target:
         return Target(
             librawstor.object_create_at(
                 self._uri, uuid,
-                librawstor.ObjectSpec(size=size, width=width)))
+                librawstor.ObjectSpec(
+                    size=size, width=width, chunk_size=chunk_size)))
 
     def info(self) -> librawstor.LocationInfo:
         return librawstor.location_info(self._uri)

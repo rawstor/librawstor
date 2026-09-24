@@ -30,16 +30,6 @@ protected:
 
     inline void set_fd(int fd) noexcept { _fd = fd; }
 
-    // Every Backend maps one URI to exactly one copy -- Target::create()
-    // (the only place width is validated against the target's own URI
-    // count, see its own comment) always passes 1 down to each URI's own
-    // create(). Throws EINVAL otherwise. Shared by every concrete
-    // Backend's own create(), including ost::Backend's (a relay
-    // connection is still one copy from its caller's point of view; what
-    // the remote server does with its own locations is a separate
-    // Target::create() on its own end).
-    static void _validate_spec(const RawstorObjectSpec& sp);
-
     // Establishes whatever this backend needs before any other call
     // below is usable (e.g. the OST backend's TCP connect + the start of
     // its response demultiplex pump). Called exactly once by create(),
@@ -77,39 +67,40 @@ public:
         unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
     ) = 0;
 
+    virtual rawstd::Task<void> create(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
+    ) = 0;
+
     virtual rawstd::Task<void>
-    create(const RawstdUUID& id, const RawstorObjectSpec& sp) = 0;
+    remove(const RawstdUUID& id, uint64_t offset) = 0;
 
-    virtual rawstd::Task<void> remove(const RawstdUUID& id) = 0;
-
-    virtual rawstd::Task<RawstorObjectSpec> spec(const RawstdUUID& id) = 0;
-
-    // Mirror consistency identity for one copy (state/epoch/sync_id and its
-    // ancestry, see docs/mirroring.md) -- independent of spec() above,
-    // which only ever reports size. meta() reads it (returned alongside the
-    // copy's own current size); set_sync_state() persists a
-    // caller-supplied one durably before returning. Every concrete Backend
-    // must implement both -- no universal default exists (see
-    // blk::Backend's own doc comment on why this stays pure virtual there
-    // too).
-    virtual rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) = 0;
+    // The full creation-time shape (size/width/chunk_size) plus this
+    // copy's own mirror consistency identity (state/epoch/sync_id and its
+    // ancestry, see docs/mirroring.md) -- the one metadata round trip
+    // every concrete Backend implements, no separate cheaper variant that
+    // only reports a subset. set_sync_state() persists a caller-supplied
+    // sync identity durably before returning.
+    virtual rawstd::Task<RawstorObjectMeta>
+    meta(const RawstdUUID& id, uint64_t offset) = 0;
 
     virtual rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectSyncState& sync_state
     ) = 0;
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 
-    // Binds this Backend to `id` -- data-path methods below need this
-    // done first. Also the one operation that actually touches the real
-    // store for every backend kind (a blk-backed one's own
-    // _open(const RawstdUUID&) is lazy -- see blk::Backend's own doc
-    // comment -- so nothing before this call genuinely proves the
-    // object exists; an ost:// one's is a real wire round trip either
-    // way), so a caller that also needs this copy's own meta() (e.g.
-    // Slot::open(), see its own doc comment) calls it separately,
-    // afterward.
-    virtual rawstd::Task<void> set_object(const RawstdUUID& id) = 0;
+    // Binds this Backend to `id`/`offset` -- data-path methods
+    // below need this done first. Also the one operation that actually
+    // touches the real store for every backend kind (a blk-backed one's
+    // own _open(const RawstdUUID&, uint64_t) is lazy -- see
+    // blk::Backend's own doc comment -- so nothing before this call
+    // genuinely proves the object exists; an ost:// one's is a real wire
+    // round trip either way), so a caller that also needs this copy's
+    // own meta() (e.g. Slot::open(), see its own doc comment) calls it
+    // separately, afterward.
+    virtual rawstd::Task<void>
+    set_object(const RawstdUUID& id, uint64_t offset) = 0;
 
     virtual rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) = 0;

@@ -90,10 +90,6 @@ private:
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameBasicPayload payload
     );
-    static rawstd::DetachedTask _spec(
-        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
-    );
     static rawstd::DetachedTask _meta(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameBasicPayload payload
@@ -134,7 +130,7 @@ private:
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameSyncStatePayload payload
     );
-    std::vector<rawstd::URI> _targets(const RawstdUUID& uuid);
+    std::vector<rawstd::URI> _targets(const RawstdUUID& uuid, uint64_t offset);
 
     // Sends a response frame and awaits its actual completion (not just
     // submission) -- unlike every other rawio_*() bridge in the .cpp,

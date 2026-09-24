@@ -142,6 +142,7 @@ namespace rawstor {
 Slot::Slot(Private, rawio::Queue& queue) :
     _queue(queue),
     _id(std::nullopt),
+    _offset(0),
     _backend_index(0),
     _transparent_retry(true) {
 }
@@ -437,14 +438,14 @@ Slot::invalidate_backend(const std::shared_ptr<Backend>& be) {
                     // outside the handler.
                     std::exception_ptr eptr;
                     try {
-                        co_await backend->set_object(*_id);
+                        co_await backend->set_object(*_id, _offset);
                         // The result is unused -- nothing here needs it
                         // -- this is purely to keep the same SET_OBJECT+
                         // META wire round trip every set_object() caller
                         // gets (see Backend::set_object()'s own doc
                         // comment on why that's two separate calls now,
                         // not one that folds meta() in on its own).
-                        co_await backend->meta(*_id);
+                        co_await backend->meta(*_id, _offset);
                     } catch (...) {
                         eptr = std::current_exception();
                     }
@@ -544,15 +545,18 @@ rawstd::Task<void> Slot::list(
     }
 }
 
-rawstd::Task<void>
-Slot::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
+rawstd::Task<void> Slot::create(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
+) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        co_await _with_retry(func_name, trace_event, &Backend::create, id, sp);
+        co_await _with_retry(
+            func_name, trace_event, &Backend::create, id, offset, sp
+        );
         _finish(t_call);
     } catch (...) {
         _finish(t_call);
@@ -560,32 +564,17 @@ Slot::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     }
 }
 
-rawstd::Task<void> Slot::remove(const RawstdUUID& id) {
+rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t offset) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        co_await _with_retry(func_name, trace_event, &Backend::remove, id);
+        co_await _with_retry(
+            func_name, trace_event, &Backend::remove, id, offset
+        );
         _finish(t_call);
-    } catch (...) {
-        _finish(t_call);
-        throw;
-    }
-}
-
-rawstd::Task<RawstorObjectSpec> Slot::spec(const RawstdUUID& id) {
-    const char* func_name = __FUNCTION__;
-    rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
-    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
-
-    try {
-        RawstorObjectSpec result =
-            co_await _with_retry(func_name, trace_event, &Backend::spec, id);
-        _finish(t_call);
-        co_return result;
     } catch (...) {
         _finish(t_call);
         throw;
@@ -609,18 +598,20 @@ rawstd::Task<RawstorLocationInfo> Slot::info() {
     }
 }
 
-rawstd::Task<RawstorObjectMeta> Slot::open(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectMeta>
+Slot::open(const RawstdUUID& id, uint64_t offset) {
     // Set before any of the set_object() calls below: on failure,
     // invalidate_backend() reconnects and set_object()s the replacement
-    // itself, using this same member.
+    // itself, using these same members.
     _id = id;
+    _offset = offset;
 
     // Every backend's SET_OBJECT goes out up front, so they run
     // concurrently.
     std::vector<rawstd::Task<void>> set_objects;
     set_objects.reserve(_backends.size());
     for (std::shared_ptr<Backend>& be : _backends) {
-        set_objects.push_back(be->set_object(id));
+        set_objects.push_back(be->set_object(id, offset));
     }
 
     // co_await isn't allowed inside a catch block, so the failure is only
@@ -654,7 +645,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(const RawstdUUID& id) {
     // location, so any one of them answers the same as the rest --
     // set_object() itself doesn't return it (see its own doc comment),
     // so this is always its own separate call, win or lose above.
-    co_return co_await meta(id);
+    co_return co_await meta(id, offset);
 }
 
 rawstd::Task<void> Slot::close() {
@@ -806,15 +797,17 @@ Slot::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
     }
 }
 
-rawstd::Task<RawstorObjectMeta> Slot::meta(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectMeta>
+Slot::meta(const RawstdUUID& id, uint64_t offset) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        RawstorObjectMeta result =
-            co_await _with_retry(func_name, trace_event, &Backend::meta, id);
+        RawstorObjectMeta result = co_await _with_retry(
+            func_name, trace_event, &Backend::meta, id, offset
+        );
         _finish(t_call);
         co_return result;
     } catch (...) {
@@ -824,7 +817,8 @@ rawstd::Task<RawstorObjectMeta> Slot::meta(const RawstdUUID& id) {
 }
 
 rawstd::Task<void> Slot::set_sync_state(
-    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+    const RawstdUUID& id, uint64_t offset,
+    const RawstorObjectSyncState& sync_state
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -833,7 +827,8 @@ rawstd::Task<void> Slot::set_sync_state(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::set_sync_state, id, sync_state
+            func_name, trace_event, &Backend::set_sync_state, id, offset,
+            sync_state
         );
         _finish(t_call);
     } catch (...) {

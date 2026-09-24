@@ -90,14 +90,15 @@ target_open(Queue& queue, const std::string& target, RawstorObject** object) {
     });
 }
 
-// rawstor_target_meta() now takes an array (one entry per URI in
-// `target`) instead of a single out-parameter -- every call site here
-// queries a single-URI target, so this keeps their own signature (one
-// RawstorObjectMeta* out-parameter) by unwrapping that one entry.
+// rawstor_target_meta() now takes an array (one entry per URI of the
+// chunk at `offset`) instead of a single out-parameter -- every call
+// site here queries a single-URI, single-chunk target at offset 0, so
+// this keeps their own signature (one RawstorObjectMeta* out-parameter)
+// by unwrapping that one entry.
 ssize_t
 target_meta(Queue& queue, const std::string& target, RawstorObjectMeta* meta) {
     ssize_t res = rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
-        return rawstor_target_meta(queue, target.c_str(), meta, 1, cb, data);
+        return rawstor_target_meta(queue, target.c_str(), 0, meta, 1, cb, data);
     });
     if (res < 0) {
         return res;
@@ -113,7 +114,7 @@ ssize_t target_set_sync_state(
 ) {
     return rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
         return rawstor_target_set_sync_state(
-            queue, target.c_str(), &sync_state, cb, data
+            queue, target.c_str(), 0, &sync_state, cb, data
         );
     });
 }
@@ -169,10 +170,11 @@ public:
 
     void drop(size_t i) const { fs::remove_all(_dirs[i]); }
 
-    // file::Backend keeps one data file per object, named after the UUID
-    // alone (see get_target_path() in src/file_backend.cpp) -- no .dat/.spec
-    // split.
-    fs::path dat(size_t i) const { return _dirs[i] / _uuid; }
+    // file::Backend keeps one chunk directory per object,
+    // <uuid>/<offset>/, holding a "data" file and a "meta" file
+    // (see get_target_dir() in src/file_backend.cpp) -- every target
+    // here is a plain, non-chunked object, offset 0.
+    fs::path dat(size_t i) const { return _dirs[i] / _uuid / "0" / "data"; }
 };
 
 std::string read_file(const fs::path& path) {
@@ -282,7 +284,11 @@ TEST(MirrorQuorumTest, open_refused_without_quorum_n2) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a0");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 2};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     members.drop(1);
@@ -308,7 +314,11 @@ TEST(MirrorQuorumTest, all_mirrors_down_at_open_refused) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000a9");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 3};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     members.drop(0);
@@ -325,7 +335,11 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000a1");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 3};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     members.drop(2);
@@ -364,7 +378,11 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a2");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 2};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* Member 0 is one sync set ahead of member 1. */
@@ -416,7 +434,11 @@ TEST(MirrorQuorumTest, split_brain_refused) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a3");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 2};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* Disjoint histories sharing only a common ancestor. */
@@ -444,7 +466,11 @@ TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a4");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 2};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* Unclean shutdown: every copy DIRTY within the same sync set. */
@@ -477,7 +503,11 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a5");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 2};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     RawstorObjectSyncState established{};
@@ -524,7 +554,11 @@ TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000aa");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 2};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* An established sync set on both members: a freshly created (sync_id
@@ -582,7 +616,11 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     Members members(2, "00000000-0000-7000-8000-0000000000a7");
 
     const uint64_t size = 8ull << 20;
-    RawstorObjectSpec spec{.size = size, .width = 2};
+    RawstorObjectSpec spec{
+        .size = size,
+        .width = 2,
+        .chunk_size = 0,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     RawstorObjectSyncState fresh{};
@@ -640,7 +678,11 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000a8");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 3};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* The third member is lost entirely (disk gone). */
@@ -653,7 +695,11 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     object_write(queue, object, ping.data(), ping.size(), 0, 0);
 
     /* The member is reprovisioned empty; the probe picks it up and resyncs. */
-    RawstorObjectSpec member_spec{.size = 1ull << 20, .width = 1};
+    RawstorObjectSpec member_spec{
+        .size = 1ull << 20,
+        .width = 1,
+        .chunk_size = 0,
+    };
     ASSERT_EQ(target_create(queue, members.target(2), member_spec), 0);
 
     EXPECT_TRUE(
@@ -681,7 +727,11 @@ TEST(MirrorQuorumTest, clean_close_stable_identity) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a6");
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 2};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+    };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     /* First session establishes the sync set. */
@@ -727,6 +777,10 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
+        .width = 1,
+        .reserved1 = 0,
+        .reserved2 = 0,
     };
 
     /*
@@ -735,26 +789,18 @@ TEST(MirrorOstTest, read_failover_and_repair) {
      * on two reopened ones before the read fails over to the second member.
      * The repair then lands on the last reopened session.
      */
-    // Target::open() fetches spec() from every reachable slot
-    // concurrently (see its own comment) -- both server1's and server2's
-    // own first session get their own SPEC ahead of their SET_OBJECT+
-    // META. width on the wire here is whatever this mock server
-    // happens to answer with -- Target::open() always overwrites it
-    // with uris.size() regardless (see its own comment), so the value
-    // scripted below isn't load-bearing. Both members still go through
-    // Slot::open()'s own combined SET_OBJECT+META step (see its
-    // own comment), concurrently, once every spec() has answered. Every
-    // later low-level reconnect (invalidate_backend()) goes through
-    // Backend::set_object() only, no SPEC of its own (invalidate_backend()
-    // only set_object()s -- see its own comment) -- but it always folds
-    // its own META fetch in on success, so each reopened session below
-    // still gets its own SET_OBJECT+META pair.
+    // Chunk::create() opens every reachable slot concurrently (see its
+    // own comment) -- both server1's and server2's own first session
+    // get their own combined SET_OBJECT+META (Slot::open()'s own
+    // comment). Every later low-level reconnect (invalidate_backend())
+    // goes through Backend::set_object() too, folding its own META
+    // fetch in on success, so each reopened session below still gets
+    // its own SET_OBJECT+META pair.
     {
         rawstor::tests::Session s(server1);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_read_error(RAWSTOR_MAGIC, 3, -EIO);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_read_error(RAWSTOR_MAGIC, 2, -EIO);
     }
     {
         rawstor::tests::Session s(server1);
@@ -773,11 +819,10 @@ TEST(MirrorOstTest, read_failover_and_repair) {
 
     {
         rawstor::tests::Session s(server2);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_read(RAWSTOR_MAGIC, 3, "pong", 4);
-        s.cmd_set_state(RAWSTOR_MAGIC, 4, 0);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_read(RAWSTOR_MAGIC, 2, "pong", 4);
+        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
     }
 
     RawstorObject* object = nullptr;
@@ -814,45 +859,41 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
+        .width = 1,
+        .reserved1 = 0,
+        .reserved2 = 0,
     };
 
-    // Target::open() fetches spec() from every reachable slot
-    // concurrently (see its own comment) -- both server1's and server2's
-    // own session get their own SPEC ahead of their SET_OBJECT+META.
-    // width on the wire here is whatever this mock server happens to
-    // answer with -- Target::open() always overwrites it with
-    // uris.size() regardless (see its own comment), so the value
-    // scripted below isn't load-bearing. Both members still go through
-    // Slot::open()'s own combined SET_OBJECT+META step (see its
-    // own comment), concurrently, once every spec() has answered.
+    // Chunk::create() opens every reachable slot concurrently (see its
+    // own comment) -- both server1's and server2's own session get
+    // their own combined SET_OBJECT+META (Slot::open()'s own comment).
     {
         rawstor::tests::Session s(server1);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
         s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 4, -EIO);
+        s.cmd_write_response(RAWSTOR_MAGIC, 3, -EIO);
     }
 
     {
         rawstor::tests::Session s(server2);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 4, 4);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
         /* Degrade barrier: the exclusion is recorded on the survivor. */
-        s.cmd_set_state(RAWSTOR_MAGIC, 5, 0);
+        s.cmd_set_state(RAWSTOR_MAGIC, 4, 0);
         /* Subsequent writes go to the survivor only. */
-        s.cmd_write(RAWSTOR_MAGIC, 6, 4);
+        s.cmd_write(RAWSTOR_MAGIC, 5, 4);
         /*
          * object_close() below is a clean close (see Chunk::close()'s own
          * doc comment): flush, then a durable CLEAN mark on the sole
          * survivor.
          */
-        s.cmd_flush(RAWSTOR_MAGIC, 7, 0);
-        s.cmd_set_state(RAWSTOR_MAGIC, 8, 0);
+        s.cmd_flush(RAWSTOR_MAGIC, 6, 0);
+        s.cmd_set_state(RAWSTOR_MAGIC, 7, 0);
     }
 
     RawstorObject* object = nullptr;
@@ -901,22 +942,24 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
+        .width = 1,
+        .reserved1 = 0,
+        .reserved2 = 0,
     };
 
     {
         rawstor::tests::Session s(server1);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
         /* Both members reject the first write's dirty-barrier update. */
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, -EINVAL);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, -EINVAL);
     }
     {
         rawstor::tests::Session s(server2);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, -EINVAL);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, -EINVAL);
     }
 
     RawstorObject* object = nullptr;
@@ -966,36 +1009,38 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
+        .width = 1,
+        .reserved1 = 0,
+        .reserved2 = 0,
     };
 
     {
         rawstor::tests::Session s(server1);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 4, 4);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
         /* member0's session is "lost" (a transport-class error, not a
          * payload one) right while the object is DIRTY; transparent retry
          * is already off by this point, so _read() moves on to member1
          * after this one failure. */
-        s.cmd_read_error(RAWSTOR_MAGIC, 5, -EIO);
+        s.cmd_read_error(RAWSTOR_MAGIC, 4, -EIO);
     }
     {
         rawstor::tests::Session s(server2);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 2);
-        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 4, 4);
-        s.cmd_read(RAWSTOR_MAGIC, 5, "ping", 4);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
+        s.cmd_read(RAWSTOR_MAGIC, 4, "ping", 4);
         /* The degrade barrier bumps epoch/sync_id on the survivor -- member0
          * is excluded durably even though it never lost this read. */
-        s.cmd_set_state(RAWSTOR_MAGIC, 6, 0);
+        s.cmd_set_state(RAWSTOR_MAGIC, 5, 0);
         /* Chunk::close(): flush + final CLEAN mark, now on the sole
          * survivor. */
-        s.cmd_flush(RAWSTOR_MAGIC, 7, 0);
-        s.cmd_set_state(RAWSTOR_MAGIC, 8, 0);
+        s.cmd_flush(RAWSTOR_MAGIC, 6, 0);
+        s.cmd_set_state(RAWSTOR_MAGIC, 7, 0);
     }
 
     RawstorObject* object = nullptr;

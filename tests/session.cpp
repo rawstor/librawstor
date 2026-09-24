@@ -247,74 +247,6 @@ void Session::cmd_write(uint32_t magic, uint16_t cid, int32_t res) {
     cmd_write_response(magic, cid, res);
 }
 
-void Session::cmd_spec_request() {
-    _server.read(
-        "RAWSTOR_CMD_SPEC <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
-    );
-}
-
-void Session::cmd_spec_response(
-    uint32_t magic, uint16_t cid, int32_t res, uint64_t size, unsigned int width
-) {
-    // Unlike the no-payload commands (WRITE/DISCARD/FLUSH/SET_SYNC_STATE),
-    // where body.res is a plain 0-on-success/-errno-on-failure result,
-    // SPEC's response carries a payload: body.res is instead the payload
-    // byte count on success (what the client's generic _basic_request()
-    // reads next), and only negative on failure -- `res` here is only
-    // ever meaningful as a caller-supplied negative errno; 0 (every
-    // current test caller's "success") is not a valid payload size and
-    // is replaced with sizeof(spec).
-    if (res < 0) {
-        RawstorOSTFrameResponse response = {
-            .head{
-                .magic = magic,
-                .cmd = RAWSTOR_CMD_SPEC,
-                .cid = cid,
-            },
-            .body = {
-                .hash = 0,
-                .res = res,
-            },
-        };
-        _server.write("RAWSTOR_CMD_SPEC >>>", &response, sizeof(response));
-        return;
-    }
-
-    RawstorOSTFrameSpecPayload spec = {
-        .size = size,
-        .width = static_cast<uint32_t>(width),
-    };
-    RawstorOSTFrameResponse response = {
-        .head{
-            .magic = magic,
-            .cmd = RAWSTOR_CMD_SPEC,
-            .cid = cid,
-        },
-        .body = {
-            .hash = rawstd_hash_scalar(&spec, sizeof(spec)),
-            .res = static_cast<int32_t>(sizeof(spec)),
-        },
-    };
-    iovec iov[2] = {
-        {
-            .iov_base = &response,
-            .iov_len = sizeof(response),
-        },
-        {
-            .iov_base = &spec,
-            .iov_len = sizeof(spec),
-        },
-    };
-    _server.writev("RAWSTOR_CMD_SPEC >>>", iov, sizeof(iov) / sizeof(iov[0]));
-}
-
-void Session::cmd_spec(
-    uint32_t magic, uint16_t cid, int32_t res, uint64_t size, unsigned int width
-) {
-    cmd_spec_request();
-    cmd_spec_response(magic, cid, res, size, width);
-}
-
 void Session::cmd_meta_request() {
     _server.read(
         "RAWSTOR_CMD_META <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
@@ -325,7 +257,14 @@ void Session::cmd_meta_response(
     uint32_t magic, uint16_t cid, int32_t res,
     const RawstorOSTFrameMetaPayload& meta
 ) {
-    // Same res/payload-size convention as cmd_spec_response() above.
+    // Unlike the no-payload commands (WRITE/DISCARD/FLUSH/SET_SYNC_STATE),
+    // where body.res is a plain 0-on-success/-errno-on-failure result,
+    // META's response carries a payload: body.res is instead the payload
+    // byte count on success (what the client's generic _basic_request()
+    // reads next), and only negative on failure -- `res` here is only
+    // ever meaningful as a caller-supplied negative errno; 0 (every
+    // current test caller's "success") is not a valid payload size and
+    // is replaced with sizeof(meta) below.
     if (res < 0) {
         RawstorOSTFrameResponse response = {
             .head{

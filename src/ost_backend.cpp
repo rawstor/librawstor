@@ -110,6 +110,27 @@ int validate_hash(uint64_t hash, uint64_t expected) noexcept {
     return EPROTO;
 }
 
+// RawstorOSTFrameAllocatePayload::chunk_shift's own doc comment on why a
+// shift, not the full value -- `chunk_size` is always a power of two
+// (RawstorObjectSpec's own doc comment, target.h), 0 meaning no chunking.
+uint8_t chunk_size_to_shift(uint64_t chunk_size) noexcept {
+    return chunk_size == 0 ? 0
+                           : static_cast<uint8_t>(__builtin_ctzll(chunk_size));
+}
+
+// chunk_shift comes straight off the wire, from a peer this end doesn't
+// control -- 1ull << chunk_shift is undefined behavior once chunk_shift
+// reaches 64, so that (and anything past it, since chunk_shift's own
+// uint8_t range goes to 255) is rejected outright rather than silently
+// misinterpreted.
+uint64_t chunk_shift_to_size(uint8_t chunk_shift) {
+    if (chunk_shift >= 64) {
+        rawstd_error("Invalid chunk_shift: %u\n", chunk_shift);
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+    return chunk_shift == 0 ? 0 : (1ull << chunk_shift);
+}
+
 } // namespace
 
 namespace {
@@ -745,7 +766,8 @@ private:
 public:
     BackendOpSetState(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
-        const RawstdUUID& id, const RawstorObjectSyncState& sync_state,
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstorObjectSyncState& sync_state,
         const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "set_sync_state", 0, 0),
@@ -758,6 +780,7 @@ public:
                 },
             .payload = {
                 .object_id = {},
+                .chunk_offset = chunk_offset,
                 .epoch = sync_state.epoch,
                 .sync_id = sync_state.sync_id,
                 .sync_id_history = {},
@@ -812,8 +835,8 @@ private:
 public:
     BackendOpAllocate(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
-        const RawstdUUID& id, const RawstorObjectSpec& sp,
-        const rawstd::TraceEvent& trace_event
+        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstorObjectSpec& sp, const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "create", 0, 0),
         _request({
@@ -825,8 +848,12 @@ public:
                 },
             .payload = {
                 .object_id = {},
+                .chunk_offset = chunk_offset,
                 .size = sp.size,
-                .width = (uint32_t)sp.width,
+                .chunk_shift = chunk_size_to_shift(sp.chunk_size),
+                .width = (uint8_t)sp.width,
+                .reserved2 = 0,
+                .reserved3 = 0,
             },
         }) {
         memcpy(
@@ -877,7 +904,8 @@ public:
     BackendOpBasic(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
-        uint64_t val, const rawstd::TraceEvent& trace_event
+        uint64_t chunk_offset, uint64_t val,
+        const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, op_name, 0, 0),
         _cmd(cmd),
@@ -890,7 +918,7 @@ public:
                 },
             .payload = {
                 .object_id = {},
-                .offset = 0,
+                .offset = chunk_offset,
                 .val = val,
             },
         }) {
@@ -1189,13 +1217,13 @@ rawstd::Task<void> Backend::close() {
 template <typename T>
 rawstd::Task<std::vector<T>> Backend::_basic_request(
     RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
-    uint64_t val
+    uint64_t offset, uint64_t val
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", op_name);
 
     std::shared_ptr<BackendOpBasic<T>> op = std::make_shared<BackendOpBasic<T>>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        cmd, op_name, id, val, trace_event
+        cmd, op_name, id, offset, val, trace_event
     );
     _add_op(op);
 
@@ -1221,7 +1249,7 @@ rawstd::Task<void> Backend::list(
     RawstdUUID input_token = token;
     try {
         targets = co_await _basic_request<RawstdUUID>(
-            RAWSTOR_CMD_LIST, "list", input_token, limit
+            RAWSTOR_CMD_LIST, "list", input_token, 0, limit
         );
     } catch (const std::system_error&) {
         throw;
@@ -1238,20 +1266,18 @@ rawstd::Task<void> Backend::list(
     co_return;
 }
 
-// sp is forwarded on the wire unchanged (see BackendOpAllocate); the
-// remote rawstor-ost's own Client::_allocate() ignores payload.width
-// and validates/fills it in against its own locally configured location
-// count instead (see its own comment) -- this slot is still one
-// copy from its caller's point of view, same as every other backend.
-rawstd::Task<void>
-Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
-    _validate_spec(sp);
-
+// sp is forwarded on the wire unchanged (see BackendOpAllocate), width
+// included -- the remote rawstor-ost's own Client::_allocate() ignores
+// payload.width and fills in its own instead, from its own locally
+// configured location count (see its own comment).
+rawstd::Task<void> Backend::create(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
+) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('c', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpAllocate> op = std::make_shared<BackendOpAllocate>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        id, sp, trace_event
+        id, offset, sp, trace_event
     );
     _add_op(op);
 
@@ -1270,9 +1296,9 @@ Backend::create(const RawstdUUID& id, const RawstorObjectSpec& sp) {
     co_await *op;
 }
 
-rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
+rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
     try {
-        co_await _basic_request(RAWSTOR_CMD_RELEASE, "remove", id, 0);
+        co_await _basic_request(RAWSTOR_CMD_RELEASE, "remove", id, offset, 0);
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -1281,45 +1307,14 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id) {
     co_return;
 }
 
-rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id) {
-    // A dedicated, cheaper wire round trip than meta() below -- doesn't
-    // touch the server's own mirror consistency state lookup at all (see
-    // RAWSTOR_CMD_META's own doc comment in protocol.h).
-    RawstorObjectSpec ret = {};
-    try {
-        std::vector<char> response =
-            co_await _basic_request(RAWSTOR_CMD_SPEC, "spec", id, 0);
-        if (response.size() != sizeof(RawstorOSTFrameSpecPayload)) {
-            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-        }
-        const RawstorOSTFrameSpecPayload& payload =
-            *static_cast<const RawstorOSTFrameSpecPayload*>(
-                static_cast<const void*>(response.data())
-            );
-        ret.size = payload.size;
-        // Same as every other backend's own spec() (blk::Backend::spec(),
-        // file::Backend::spec()): always 1, unconditionally -- if this one
-        // slot fails, exactly one replica is lost, regardless of how
-        // many copies might sit behind it on the far end. width is never
-        // a per-backend property; whatever the remote server's own
-        // payload.width says here never actually reaches anyone.
-        ret.width = 1;
-    } catch (const std::system_error&) {
-        throw;
-    } catch (...) {
-        RAWSTD_THROW_SYSTEM_ERROR(EIO);
-    }
-
-    co_return ret;
-}
-
-rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
+rawstd::Task<RawstorObjectMeta>
+Backend::meta(const RawstdUUID& id, uint64_t offset) {
     rawstd_info("%s: Reading object metadata...\n", str().c_str());
 
     RawstorObjectMeta ret = {};
     try {
         std::vector<char> response =
-            co_await _basic_request(RAWSTOR_CMD_META, "meta", id, 0);
+            co_await _basic_request(RAWSTOR_CMD_META, "meta", id, offset, 0);
         if (response.size() != sizeof(RawstorOSTFrameMetaPayload)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
@@ -1328,6 +1323,8 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
                 static_cast<const void*>(response.data())
             );
         ret.spec.size = payload.size;
+        ret.spec.width = payload.width;
+        ret.spec.chunk_size = chunk_shift_to_size(payload.chunk_shift);
         ret.sync_state.epoch = payload.epoch;
         ret.sync_state.sync_id = payload.sync_id;
         memcpy(
@@ -1348,13 +1345,14 @@ rawstd::Task<RawstorObjectMeta> Backend::meta(const RawstdUUID& id) {
 }
 
 rawstd::Task<void> Backend::set_sync_state(
-    const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+    const RawstdUUID& id, uint64_t offset,
+    const RawstorObjectSyncState& sync_state
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpSetState> op = std::make_shared<BackendOpSetState>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        id, sync_state, trace_event
+        id, offset, sync_state, trace_event
     );
     _add_op(op);
 
@@ -1380,7 +1378,7 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     try {
         RawstdUUID unused_id = {};
         std::vector<char> response = co_await _basic_request(
-            RAWSTOR_CMD_LOCATION_INFO, "info", unused_id, 0
+            RAWSTOR_CMD_LOCATION_INFO, "info", unused_id, 0, 0
         );
         if (response.size() != sizeof(ret)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
@@ -1399,13 +1397,15 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-rawstd::Task<void> Backend::set_object(const RawstdUUID& id) {
+rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t offset) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
     assert(_read_event != nullptr);
 
-    co_await _basic_request(RAWSTOR_CMD_SET_OBJECT, "set_object", id, 0);
+    co_await _basic_request(
+        RAWSTOR_CMD_SET_OBJECT, "set_object", id, offset, 0
+    );
 }
 
 // See ost_backend.hpp's doc comment on why `weak`, not a strong

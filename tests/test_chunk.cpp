@@ -92,10 +92,14 @@ open_object(rawio::Queue& queue, const rawstd::URI& location) {
 
     rawstor::Target target({rawstd::URI(location, uuid_string)});
 
-    RawstorObjectSpec spec{.size = 1u << 20, .width = 1};
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .width = 1,
+        .chunk_size = 0,
+    };
     run(queue, target.create(queue, spec));
 
-    return run(queue, rawstor::Chunk::create(queue, target));
+    return run(queue, rawstor::Chunk::create({location}, queue, id, 0));
 }
 
 } // namespace
@@ -297,10 +301,7 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
 
     RawstdUUID id;
     ASSERT_EQ(rawstd_uuid7_init(&id), 0);
-    RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&id, &uuid_string);
     rawstd::URI location("ost://127.0.0.1:8753");
-    rawstor::Target target({rawstd::URI(location, uuid_string)});
 
     RawstorOSTFrameMetaPayload clean_meta = {
         .size = 1ull << 20,
@@ -308,18 +309,21 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
         .sync_id = 0,
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
+        .width = 1,
+        .reserved1 = 0,
+        .reserved2 = 0,
     };
 
     // Left open for the whole test -- see server.hpp's Session::~Session()
     // doc comment; closing it early would drop the connection Chunk is
     // about to hold onto for its writes/flush below.
     rawstor::tests::Session s(server);
-    s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
-    s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
-    s.cmd_meta(RAWSTOR_MAGIC, 2, 0, clean_meta);
+    s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+    s.cmd_meta(RAWSTOR_MAGIC, 1, 0, clean_meta);
 
     std::unique_ptr<rawstor::Chunk> object =
-        run(*queue, rawstor::Chunk::create(*queue, target));
+        run(*queue, rawstor::Chunk::create({location}, *queue, id, 0));
 
     std::string payload_a = "write-a-";
     std::string payload_b = "write-b-";

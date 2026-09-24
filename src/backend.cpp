@@ -26,16 +26,6 @@ Backend::Backend(Private, rawio::Queue& queue, const rawstd::URI& location) :
     _queue(queue) {
 }
 
-void Backend::_validate_spec(const RawstorObjectSpec& sp) {
-    if (sp.width != 1) {
-        rawstd_error(
-            "Backend can only create objects with width == 1, got %u\n",
-            sp.width
-        );
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-}
-
 Backend::~Backend() {
     if (_fd != -1) {
         rawstd_debug("fd %d: Close\n", _fd);

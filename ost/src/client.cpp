@@ -50,6 +50,27 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
     return EIO;
 }
 
+// RawstorOSTFrameAllocatePayload::chunk_shift's own doc comment on why a
+// shift, not the full value -- `chunk_size` is always a power of two
+// (RawstorObjectSpec's own doc comment, target.h), 0 meaning no chunking.
+uint8_t chunk_size_to_shift(uint64_t chunk_size) noexcept {
+    return chunk_size == 0 ? 0
+                           : static_cast<uint8_t>(__builtin_ctzll(chunk_size));
+}
+
+// chunk_shift comes straight off the wire, from a peer this end doesn't
+// control -- 1ull << chunk_shift is undefined behavior once chunk_shift
+// reaches 64, so that (and anything past it, since chunk_shift's own
+// uint8_t range goes to 255) is rejected outright rather than silently
+// misinterpreted.
+uint64_t chunk_shift_to_size(uint8_t chunk_shift) {
+    if (chunk_shift >= 64) {
+        rawstd_error("Invalid chunk_shift: %u\n", chunk_shift);
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+    return chunk_shift == 0 ? 0 : (1ull << chunk_shift);
+}
+
 // ---------------------------------------------------------------------
 // rawstd::CallbackAwaitable<T> bridge over the async rawstor/{object,
 // target}.h C API: each co_object_*()/co_target_open() wrapper submits
@@ -641,20 +662,6 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
-            case RAWSTOR_CMD_SPEC: {
-                RawstorOSTFrameBasicPayload basic;
-                co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
-                    &stream_failed
-                );
-                client = weak.lock();
-                if (client == nullptr) {
-                    co_return;
-                }
-                _spec(weak, head, basic);
-                rawstd::DetachedTask::rethrow_if_pending();
-                break;
-            }
             case RAWSTOR_CMD_META: {
                 RawstorOSTFrameBasicPayload basic;
                 co_await recv_frame(
@@ -972,20 +979,24 @@ rawstd::DetachedTask Client::_allocate(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid);
-
-    // Target::create() requires width to exactly match the target's own
-    // URI count -- here, that's this server's own locations(), not
-    // whatever the incoming request's payload.width happens to be (the
-    // caller's target-wide URI count, which has no reason to match this
-    // server's own location count for a relay/multi-location rawstor-ost).
-    RawstorObjectSpec spec{
-        .size = payload.size,
-        .width = static_cast<unsigned int>(targets.size()),
-    };
+    std::vector<rawstd::URI> targets =
+        client->_targets(uuid, payload.chunk_offset);
 
     int result = 0;
     try {
+        // Target::create() requires width to exactly match the target's
+        // own URI count -- here, that's this server's own locations(),
+        // not whatever the incoming request's payload.width happens to
+        // be (the caller's target-wide URI count, which has no reason to
+        // match this server's own location count for a relay/multi-
+        // location rawstor-ost). chunk_shift_to_size() can throw on a
+        // malformed chunk_shift, so it needs to run inside this try too.
+        RawstorObjectSpec spec{
+            .size = payload.size,
+            .width = static_cast<unsigned int>(targets.size()),
+            .chunk_size = chunk_shift_to_size(payload.chunk_shift),
+        };
+
         std::string target = rawstd::URI::uris(targets);
         rawstd::CallbackAwaitable<void> awaiter;
         int res = rawstor_target_create(
@@ -1025,7 +1036,7 @@ rawstd::DetachedTask Client::_release(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid);
+    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
 
     int result = 0;
     try {
@@ -1056,69 +1067,8 @@ rawstd::DetachedTask Client::_release(
     }
 }
 
-// Cheap path: SPEC only ever needs the object's own size, so it goes
-// through rawstor_target_spec() (its own failover, no mirror-
-// consistency-state lookup at all) rather than rawstor_target_meta() --
-// see RAWSTOR_CMD_META's own doc comment in protocol.h for why these two
-// are separate wire commands instead of one shared one.
-rawstd::DetachedTask Client::_spec(
-    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicPayload payload
-) {
-    std::shared_ptr<Client> client = weak.lock();
-    if (client == nullptr) {
-        co_return;
-    }
-
-    RawstdUUID uuid;
-    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-
-    std::vector<rawstd::URI> targets = client->_targets(uuid);
-
-    RawstorObjectSpec spec{};
-    int result = 0;
-    try {
-        std::string target = rawstd::URI::uris(targets);
-        rawstd::CallbackAwaitable<void> awaiter;
-        int res = rawstor_target_spec(
-            client->_queue, target.c_str(), &spec, result_trampoline, &awaiter
-        );
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-        co_await awaiter;
-    } catch (const std::system_error& e) {
-        result = -e.code().value();
-    }
-
-    bool send_failed = false;
-    try {
-        if (result < 0) {
-            co_await client->_send_response(
-                RAWSTOR_CMD_SPEC, head.cid, result, 0
-            );
-        } else {
-            RawstorOSTFrameSpecPayload body_out{
-                .size = spec.size,
-                .width = (uint32_t)spec.width,
-            };
-            std::vector<unsigned char> data(sizeof(body_out));
-            memcpy(data.data(), &body_out, sizeof(body_out));
-            co_await client->_send_response(
-                RAWSTOR_CMD_SPEC, head.cid, data.size(), 0, data
-            );
-        }
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        send_failed = true;
-    }
-    if (send_failed) {
-        co_await client->_server.del_client(client->_fd);
-    }
-}
-
-// Heavier path: the full per-copy mirror consistency record. Same shape
-// as _spec() above, one command number over.
+// The full per-copy mirror consistency record: size/width/chunk_size plus
+// state/epoch/sync_id, via rawstor_target_meta().
 rawstd::DetachedTask Client::_meta(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
     RawstorOSTFrameBasicPayload payload
@@ -1131,7 +1081,7 @@ rawstd::DetachedTask Client::_meta(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid);
+    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
 
     // rawstor_target_meta() now reports one entry per URI (a URI that
     // didn't answer is zero-filled, RawstorObjectSyncStateValue's own doc
@@ -1147,8 +1097,8 @@ rawstd::DetachedTask Client::_meta(
         std::string target = rawstd::URI::uris(targets);
         rawstd::CallbackAwaitable<void> awaiter;
         int res = rawstor_target_meta(
-            client->_queue, target.c_str(), metas.data(), metas.size(),
-            result_trampoline, &awaiter
+            client->_queue, target.c_str(), payload.offset, metas.data(),
+            metas.size(), result_trampoline, &awaiter
         );
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -1184,6 +1134,10 @@ rawstd::DetachedTask Client::_meta(
                 .sync_id_history = {},
                 .state =
                     static_cast<RawstorOSTSyncStateType>(meta.sync_state.state),
+                .chunk_shift = chunk_size_to_shift(meta.spec.chunk_size),
+                .width = static_cast<uint8_t>(meta.spec.width),
+                .reserved1 = 0,
+                .reserved2 = 0,
             };
             memcpy(
                 body_out.sync_id_history, meta.sync_state.sync_id_history,
@@ -1216,7 +1170,8 @@ rawstd::DetachedTask Client::_set_state(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid);
+    std::vector<rawstd::URI> targets =
+        client->_targets(uuid, payload.chunk_offset);
 
     RawstorObjectSyncState sync_state{};
     sync_state.epoch = payload.epoch;
@@ -1232,8 +1187,8 @@ rawstd::DetachedTask Client::_set_state(
         std::string target = rawstd::URI::uris(targets);
         rawstd::CallbackAwaitable<void> awaiter;
         int res = rawstor_target_set_sync_state(
-            client->_queue, target.c_str(), &sync_state, result_trampoline,
-            &awaiter
+            client->_queue, target.c_str(), payload.chunk_offset, &sync_state,
+            result_trampoline, &awaiter
         );
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -1317,7 +1272,7 @@ rawstd::DetachedTask Client::_set_object(
 
         RawstdUUID uuid;
         memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-        target = rawstd::URI::uris(client->_targets(uuid));
+        target = rawstd::URI::uris(client->_targets(uuid, payload.offset));
     }
 
     RawstorObject* object = nullptr;
@@ -1721,14 +1676,23 @@ rawstd::DetachedTask Client::_write_zeroes(
     }
 }
 
-std::vector<rawstd::URI> Client::_targets(const RawstdUUID& uuid) {
+std::vector<rawstd::URI>
+Client::_targets(const RawstdUUID& uuid, uint64_t offset) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
+
+    // Self-describing (Target::Path's own doc comment, target.hpp): the
+    // offset segment is always stated explicitly here, even 0, since
+    // this is an internal builder, not something a caller types by hand;
+    // hex, like every offset segment Target::parse_path() accepts.
+    std::ostringstream offset_oss;
+    offset_oss << std::hex << offset;
+    std::string child = std::string(uuid_string) + "/" + offset_oss.str();
 
     std::vector<rawstd::URI> ret;
     ret.reserve(_server.locations().size());
     for (const auto& location : _server.locations()) {
-        ret.emplace_back(location, uuid_string);
+        ret.emplace_back(location, child);
     }
 
     return ret;

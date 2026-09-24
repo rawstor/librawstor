@@ -25,7 +25,12 @@ namespace lvm {
  *   Example:    lvm://rawstor_vg
  *
  * Each object is a Logical Volume named after its UUID inside the Volume
- * Group. Device path: /dev/<vg>/<uuid>.
+ * Group -- self-describing: `id` is the same id every chunk of that id
+ * carries, `offset` disambiguates which one, as an explicit
+ * "-<offset>" LV-name suffix (0 for a plain object, same as every other
+ * chunk) -- LVM's own naming forbids ':'; hex, like every other offset
+ * this codebase carries in a physical name or a target URI's own path
+ * segment. Device path: /dev/<vg>/<uuid>-<offset>.
  *
  * Requires lvcreate/lvremove/lvs/vgs to be available in PATH and sufficient
  * privileges.
@@ -34,10 +39,11 @@ class Backend final : public rawstor::blk::Backend {
 private:
     std::string _vg_name;
 
-    std::string _device_path(const RawstdUUID& id) const;
+    std::string _lv_name(const RawstdUUID& id, uint64_t offset) const;
+    std::string _device_path(const RawstdUUID& id, uint64_t offset) const;
     std::string _device_path_for_name(const std::string& name) const;
 
-    rawstd::Task<int> _open(const RawstdUUID& id) override;
+    rawstd::Task<int> _open(const RawstdUUID& id, uint64_t offset) override;
 
     // Removes any leftover "<uuid>.creating" staging LVs in this VG (see
     // create()'s own doc comment for why they can exist). Runs at most
@@ -61,19 +67,22 @@ public:
         unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
     ) override;
 
-    rawstd::Task<void>
-    create(const RawstdUUID& id, const RawstorObjectSpec& sp) override;
+    rawstd::Task<void> create(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
+    ) override;
 
-    rawstd::Task<void> remove(const RawstdUUID& id) override;
+    rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
     // Native per-copy mirror metadata, stored in the LV's own
     // "rawstor.meta=..." tag -- see blk::Backend::meta_encode().
-    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id) override;
+    rawstd::Task<RawstorObjectMeta>
+    meta(const RawstdUUID& id, uint64_t offset) override;
 
     rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, const RawstorObjectSyncState& sync_state
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectSyncState& sync_state
     ) override;
 };
 

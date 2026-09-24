@@ -51,15 +51,18 @@ ssize_t target_remove(rawio::Queue& queue, const std::string& target) {
     });
 }
 
-// rawstor_target_meta() now takes an array (one entry per URI in
-// `target`) instead of a single out-parameter -- every call site here
-// queries a single-URI target, so this keeps their own signature (one
-// RawstorObjectMeta* out-parameter) by unwrapping that one entry.
+// rawstor_target_meta() now takes an array (one entry per URI of the
+// chunk at `offset`) instead of a single out-parameter -- every call
+// site here queries a single-URI, single-chunk target at offset 0, so
+// this keeps their own signature (one RawstorObjectMeta* out-parameter)
+// by unwrapping that one entry.
 ssize_t target_meta(
     rawio::Queue& queue, const std::string& target, RawstorObjectMeta* meta
 ) {
     ssize_t res = rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_target_meta(&queue, target.c_str(), meta, 1, cb, data);
+        return rawstor_target_meta(
+            &queue, target.c_str(), 0, meta, 1, cb, data
+        );
     });
     if (res < 0) {
         return res;
@@ -75,7 +78,7 @@ ssize_t target_set_sync_state(
 ) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
         return rawstor_target_set_sync_state(
-            &queue, target.c_str(), &sync_state, cb, data
+            &queue, target.c_str(), 0, &sync_state, cb, data
         );
     });
 }
@@ -162,7 +165,11 @@ TEST(FileLifecycleTest, create_spec_list_remove) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 1,
+        .chunk_size = 0,
+    };
     ssize_t res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
 
@@ -206,7 +213,11 @@ TEST(FileLifecycleTest, create_twice_preserves_existing) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 1,
+        .chunk_size = 0,
+    };
     ssize_t res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
 
@@ -236,7 +247,11 @@ TEST(FileLifecycleTest, remove_already_removed_target_fails_with_enoent) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 1,
+        .chunk_size = 0,
+    };
     ssize_t res = target_create(*queue, target, spec);
     ASSERT_EQ(res, 0);
 
@@ -264,7 +279,11 @@ TEST(FileLifecycleTest, create_is_zero_filled) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     constexpr size_t size = 1u << 20;
-    RawstorObjectSpec spec{.size = size, .width = 1};
+    RawstorObjectSpec spec{
+        .size = size,
+        .width = 1,
+        .chunk_size = 0,
+    };
     ssize_t res = target_create(*queue, target, spec);
     ASSERT_EQ(res, 0);
 
@@ -294,7 +313,11 @@ TEST(FileLifecycleTest, create_at_default_spec_list_remove) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 1,
+        .chunk_size = 0,
+    };
     ssize_t res = location_create(
         *queue, location, nullptr, spec, target.data(), target.size()
     );
@@ -340,7 +363,11 @@ TEST(FileLifecycleTest, create_at_spec_list_remove) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 1,
+        .chunk_size = 0,
+    };
     ssize_t res = location_create(
         *queue, location, uuid.c_str(), spec, target.data(), target.size()
     );
@@ -386,7 +413,11 @@ TEST(FileLifecycleTest, meta_set_state) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 1,
+        .chunk_size = 0,
+    };
     ssize_t res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
 
@@ -435,6 +466,10 @@ TEST(OstLifecycleTest, create_spec_remove) {
         .sync_id = 0x1122334455667788ull,
         .sync_id_history = {0xaabbccddeeff0011ull, 0, 0, 0},
         .state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
+        .chunk_shift = 0,
+        .width = 1,
+        .reserved1 = 0,
+        .reserved2 = 0,
     };
 
     {
@@ -444,7 +479,7 @@ TEST(OstLifecycleTest, create_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, meta_body.size, 1);
+        s.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta_body);
     }
 
     {
@@ -465,7 +500,11 @@ TEST(OstLifecycleTest, create_spec_remove) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     {
-        RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
+        RawstorObjectSpec spec{
+            .size = 1ull << 20,
+            .width = 1,
+            .chunk_size = 0,
+        };
 
         ssize_t res = target_create(*queue, target, spec);
         EXPECT_EQ(res, 0);
@@ -518,7 +557,18 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+        RawstorOSTFrameMetaPayload meta_body = {
+            .size = 1ull << 20,
+            .epoch = 0,
+            .sync_id = 0,
+            .sync_id_history = {},
+            .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+            .chunk_shift = 0,
+            .width = 1,
+            .reserved1 = 0,
+            .reserved2 = 0,
+        };
+        s.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta_body);
     }
 
     {
@@ -529,7 +579,11 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     {
-        RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
+        RawstorObjectSpec spec{
+            .size = 1ull << 20,
+            .width = 1,
+            .chunk_size = 0,
+        };
 
         ssize_t res = location_create(
             *queue, location, nullptr, spec, target.data(), target.size()
@@ -567,7 +621,18 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_spec(RAWSTOR_MAGIC, 0, 0, 1ull << 20, 1);
+        RawstorOSTFrameMetaPayload meta_body = {
+            .size = 1ull << 20,
+            .epoch = 0,
+            .sync_id = 0,
+            .sync_id_history = {},
+            .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+            .chunk_shift = 0,
+            .width = 1,
+            .reserved1 = 0,
+            .reserved2 = 0,
+        };
+        s.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta_body);
     }
 
     {
@@ -578,7 +643,11 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     {
-        RawstorObjectSpec spec{.size = 1ull << 20, .width = 1};
+        RawstorObjectSpec spec{
+            .size = 1ull << 20,
+            .width = 1,
+            .chunk_size = 0,
+        };
 
         ssize_t res = location_create(
             *queue, location, uuid.c_str(), spec, target.data(), target.size()

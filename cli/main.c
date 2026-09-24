@@ -543,13 +543,20 @@ static void command_resolve_usage(void) {
         "\n"
         "  TARGET                 Comma-separated list of rawstor backend "
         "targets.\n"
-        "  --winner N[,N...]      TARGET's N-th mirror(s) (0-based, same "
-        "order\n"
-        "                        `rawstor show -v` labels mirror[N]): the "
+        "  --winner N[,N...]      The targeted chunk's own N-th mirror(s) "
+        "(0-based,\n"
+        "                        same order `rawstor show -v` labels "
+        "mirror[N]\n"
+        "                        under that chunk's own chunk[N]): the "
         "copies to\n"
         "                        keep.\n"
         "\n"
         "command options:\n"
+        "  --offset OFFSET       The chunk to resolve, by its own byte "
+        "offset, in hex\n"
+        "                        (`rawstor show -v`'s own chunk[N]). "
+        "Default:\n"
+        "                        every chunk in the object.\n"
         "  -h, --help            Show this help message and exit\n"
     );
 };
@@ -559,11 +566,13 @@ static int command_resolve(int argc, char** argv) {
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"winner", required_argument, NULL, 'w'},
+        {"offset", required_argument, NULL, 'o'},
         {},
     };
 
     char* target_arg = NULL;
     const char* winner_arg = NULL;
+    const char* offset_arg = NULL;
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -578,6 +587,10 @@ static int command_resolve(int argc, char** argv) {
 
         case 'w':
             winner_arg = optarg;
+            break;
+
+        case 'o':
+            offset_arg = optarg;
             break;
 
         default:
@@ -603,6 +616,22 @@ static int command_resolve(int argc, char** argv) {
     if (winner_arg == NULL) {
         fprintf(stderr, "--winner required\n");
         return EX_USAGE;
+    }
+
+    int has_offset = 0;
+    uint64_t offset = 0;
+    if (offset_arg != NULL) {
+        /* Hex, not decimal -- same base `rawstor show -v` labels
+         * chunk[N] in, so a value copied straight from its output means
+         * the same chunk here. */
+        char* endptr = NULL;
+        errno = 0;
+        offset = strtoull(offset_arg, &endptr, 16);
+        if (errno != 0 || endptr == offset_arg || *endptr != '\0') {
+            fprintf(stderr, "Invalid --offset value: %s\n", offset_arg);
+            return EX_USAGE;
+        }
+        has_offset = 1;
     }
 
     /* Same buffer-capacity convention as cli/resolve.c's own
@@ -644,7 +673,9 @@ static int command_resolve(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_resolve(target_arg, winners, num_winners);
+    return rawstor_cli_resolve(
+        target_arg, winners, num_winners, has_offset, offset
+    );
 }
 
 static void command_testio_usage(void) {
