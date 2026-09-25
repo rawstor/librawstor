@@ -34,7 +34,7 @@ namespace zfs {
  * /dev/zvol/<parent_dataset>/<uuid>:<offset>.
  *
  * A non-nil `snapshot_id` names that version's own native snapshot:
- * <dataset>@s<snapshot_id> / /dev/zvol/.../<uuid>[:<offset>]@s<snapshot_id>
+ * <dataset>@s<snapshot_id> / /dev/zvol/.../<uuid>:<offset>@s<snapshot_id>
  * -- the "@s<id>" name is the version key itself, nothing stored twice.
  *
  * Requires the 'zfs' CLI to be available in PATH and sufficient privileges
