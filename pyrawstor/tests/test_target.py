@@ -45,42 +45,6 @@ class TestTarget(unittest.TestCase):
 
             target.remove()
 
-    def test_open_write_read(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            target = rawstor.Target(
-                f"file://{temp_dir}/00000000-0000-0000-0000-000000000007")
-            target.create(size=1 << 20, width=1)
-
-            with target.open() as obj:
-                self.assertEqual(obj.pwrite(b"ping", 0), 4)
-                self.assertEqual(obj.pread(4, 0), b"ping")
-
-            target.remove()
-
-    def test_open_readonly_rejects_write(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            target = rawstor.Target(
-                f"file://{temp_dir}/00000000-0000-0000-0000-000000000008")
-            target.create(size=1 << 20, width=1)
-
-            with target.open(rawstor.READONLY) as obj:
-                self.assertEqual(obj.pread(4, 0), b"\0\0\0\0")
-                with self.assertRaises(OSError) as cm:
-                    obj.pwrite(b"ping", 0)
-                self.assertEqual(cm.exception.errno, errno.EROFS)
-
-            target.remove()
-
-    def test_open_snapshot_requires_readonly(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            target = rawstor.Target(
-                f"file://{temp_dir}/00000000-0000-0000-0000-000000000009/"
-                "00000000-0000-0000-0000-00000000000a")
-
-            with self.assertRaises(OSError) as cm:
-                target.open()
-            self.assertEqual(cm.exception.errno, errno.EINVAL)
-
     # file:// has no native CoW (OSError/ENOTSUP once the attempt actually
     # reaches the backend), so these only exercise create_snapshot()'s own
     # version id resolution (all three modes -- see its own docstring) --

@@ -33,14 +33,6 @@ PyObject* py_rawstor_object_set_sync_state(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_remove(PyObject* self, PyObject* args);
 
-PyObject* py_rawstor_object_open(PyObject* self, PyObject* args);
-
-PyObject* py_rawstor_object_pread(PyObject* self, PyObject* args);
-
-PyObject* py_rawstor_object_pwrite(PyObject* self, PyObject* args);
-
-PyObject* py_rawstor_object_close(PyObject* self, PyObject* args);
-
 PyObject* py_rawstor_location_info(PyObject* self, PyObject* args);
 
 #ifdef __cplusplus

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from . import librawstor
-from .object import Object
 
 
 class Target:
@@ -66,14 +65,6 @@ class Target:
           already carries its own bound version raises OSError (EINVAL).
         """
         return Target(librawstor.object_create_snapshot(self._uri, uuid))
-
-    def open(self, flags: int = 0) -> Object:
-        """Open this (existing) target. `flags` is 0 or
-        rawstor.READONLY: a target naming a bound snapshot version can
-        only be opened READONLY (OSError/EINVAL otherwise); READONLY also
-        lets a mirrored object open without a write quorum, and every
-        write to the result fails with OSError/EROFS."""
-        return Object(librawstor.object_open(self._uri, flags))
 
     def spec(self) -> librawstor.ObjectSpec:
         return librawstor.object_spec(self._uri)

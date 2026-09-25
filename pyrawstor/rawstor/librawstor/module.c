@@ -4,7 +4,6 @@
 #include "object_bindings.h"
 
 #include <rawstor/rawstor.h>
-#include <rawstor/target.h>
 
 #include <string.h>
 
@@ -19,10 +18,6 @@ static PyMethodDef librawstor_methods[] = {
     {"object_set_sync_state", py_rawstor_object_set_sync_state, METH_VARARGS,
      NULL},
     {"object_remove", py_rawstor_object_remove, METH_VARARGS, NULL},
-    {"object_open", py_rawstor_object_open, METH_VARARGS, NULL},
-    {"object_pread", py_rawstor_object_pread, METH_VARARGS, NULL},
-    {"object_pwrite", py_rawstor_object_pwrite, METH_VARARGS, NULL},
-    {"object_close", py_rawstor_object_close, METH_VARARGS, NULL},
     {"location_info", py_rawstor_location_info, METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL}
 };
@@ -59,8 +54,7 @@ PyMODINIT_FUNC PyInit_librawstor() {
         return NULL;
     }
 
-    if (py_rawstor_types_init(module) < 0 ||
-        PyModule_AddIntConstant(module, "READONLY", RAWSTOR_READONLY) < 0) {
+    if (py_rawstor_types_init(module) < 0) {
         Py_DECREF(module);
         rawstor_terminate();
         return NULL;
