@@ -274,6 +274,28 @@ TEST(FileLifecycleTest, remove_already_removed_target_fails_with_enoent) {
     EXPECT_EQ(res, -ENOENT);
 }
 
+// create() is only ever for a fresh object -- taking a snapshot of an
+// existing one is create_snapshot()'s own job (rawstor_target_create_
+// snapshot()), never create()'s.
+TEST(FileLifecycleTest, create_on_already_bound_target_is_einval) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
+    std::string uuid = "00000000-0000-7000-8000-000000000006";
+    std::string snapshot_id = "00000000-0000-7000-8000-000000000007";
+    std::string target =
+        rawstd::URI(rawstd::URI(location_uri, uuid), snapshot_id).str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 1,
+        .chunk_size = 0,
+    };
+    ssize_t res = target_create(*queue, target, spec);
+    EXPECT_EQ(res, -EINVAL);
+}
+
 // A freshly created object must read back as all zeros, even though
 // nothing has ever been written to it -- file::Backend relies on a sparse
 // regular file's own guarantee that an unwritten byte range always reads

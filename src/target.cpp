@@ -406,25 +406,23 @@ rawstd::DetachedTask launch_remove_op_coro(
 }
 
 // C ABI adapter for rawstor_target_create_snapshot()'s actual CoW-snapshot
-// step, once `t` is already the exact target to create (rawstor_target_
+// step, once `t` is already the exact target to snapshot (rawstor_target_
 // create_snapshot() itself resolves the version id and, unless `t` was
 // already bound, splices it onto every URI -- so `t` here is always
-// already bound, and this can just run create()'s own bound-snapshot
-// branch directly, the same way rawstor_location_create() below builds
-// its own fresh Target and calls t.create(queue, spec) directly rather
-// than going through Location::create()). `length` is threaded through
-// as the success result -- rawstor_target_create_snapshot() keeps its
-// snprintf()-style contract (the resulting target string's length,
-// always < the buffer size on success) even though the actual snapshot
-// is asynchronous, same shape as location.cpp's own launch_create_op_coro()
-// for rawstor_location_create().
+// already bound, and t.create_snapshot(queue) below always takes its own
+// already-bound branch). `length` is threaded through as the success
+// result -- rawstor_target_create_snapshot() keeps its snprintf()-style
+// contract (the resulting target string's length, always < the buffer
+// size on success) even though the actual snapshot is asynchronous, same
+// shape as location.cpp's own launch_create_op_coro() for
+// rawstor_location_create().
 rawstd::DetachedTask launch_create_snapshot_op_coro(
     rawstor::Target t, rawio::Queue* queue, ssize_t length,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = length;
     try {
-        co_await t.create(*queue, RawstorObjectSpec{});
+        co_await t.create_snapshot(*queue);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -685,26 +683,14 @@ Location Target::location() const {
 
 rawstd::Task<void>
 Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
-    std::vector<std::vector<rawstd::URI>> chunks = chunk_uris_by_offset(_uris);
-
-    RawstdUUID bound_snapshot_id = snapshot_id();
-    if (!rawstd_uuid_is_nil(&bound_snapshot_id)) {
-        // A bound snapshot in the path means a native CoW snapshot of the
-        // live version as that exact version, not a fresh object -- `sp`
-        // is ignored outright (this class's own doc comment on why); only
-        // the target's own first chunk is touched (spec()'s own comment
-        // on why). Every URI in it is still attempted even if an earlier
-        // one fails; the first error encountered is reported. ENOTSUP on
-        // a backend without native CoW (file://, classic LVM).
-        const std::vector<rawstd::URI>& uris = chunks.front();
-        std::vector<rawstd::Task<void>> tasks;
-        tasks.reserve(uris.size());
-        for (const auto& uri : uris) {
-            tasks.push_back(create_snapshot_one(queue, uri, bound_snapshot_id));
-        }
-        co_await rawstd::gather(std::move(tasks));
-        co_return;
+    if (!rawstd_uuid_is_nil(&_snapshot_id)) {
+        // create() is only ever for a fresh object -- taking a snapshot
+        // of an existing one is create_snapshot()'s own job (this class's
+        // own doc comment), never this method's.
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
+
+    std::vector<std::vector<rawstd::URI>> chunks = chunk_uris_by_offset(_uris);
 
     // No implicit width, ever: the caller must always state it, checked
     // before any I/O at all. A chunk with more than one URI is
@@ -825,9 +811,20 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
 rawstd::Task<RawstdUUID> Target::create_snapshot(rawio::Queue& queue) const {
     if (!rawstd_uuid_is_nil(&_snapshot_id)) {
         // `this` already names a specific version -- nothing to generate;
-        // take the CoW snapshot as that exact version (create()'s own
-        // bound-snapshot branch).
-        co_await create(queue, RawstorObjectSpec{});
+        // take the CoW snapshot as that exact version directly. Only the
+        // target's own first chunk is touched (spec()'s own comment on
+        // why); every URI in it is still attempted even if an earlier one
+        // fails, the first error encountered reported. ENOTSUP on a
+        // backend without native CoW (file://, classic LVM).
+        std::vector<std::vector<rawstd::URI>> chunks =
+            chunk_uris_by_offset(_uris);
+        const std::vector<rawstd::URI>& uris = chunks.front();
+        std::vector<rawstd::Task<void>> tasks;
+        tasks.reserve(uris.size());
+        for (const auto& uri : uris) {
+            tasks.push_back(create_snapshot_one(queue, uri, _snapshot_id));
+        }
+        co_await rawstd::gather(std::move(tasks));
         co_return _snapshot_id;
     }
 
@@ -858,7 +855,7 @@ rawstd::Task<void> Target::create_snapshot(
     }
 
     Target snap_target(uris);
-    co_await snap_target.create(queue, RawstorObjectSpec{});
+    co_await snap_target.create_snapshot(queue);
 }
 
 // width only ever comes from the target's own first chunk (Target's own
@@ -1080,12 +1077,10 @@ int rawstor_target_create(
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        // NULL is only meaningful for a target that carries a bound
-        // snapshot version -- Target::create() ignores `sp` outright
-        // there. For a plain create, a NULL `spec` becomes a zeroed one,
-        // which the same width-must-be-stated check every real spec goes
-        // through below (Target::create()'s own comment) already rejects
-        // with -EINVAL, same as an explicit all-zero spec would.
+        // A NULL `spec` becomes a zeroed one, which the width-must-be-
+        // stated check every real spec goes through (Target::create()'s
+        // own comment) already rejects with -EINVAL, same as an explicit
+        // all-zero spec would.
         RawstorObjectSpec sp = spec != nullptr ? *spec : RawstorObjectSpec{};
         launch_create_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), sp, cb, data
