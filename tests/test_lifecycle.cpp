@@ -467,10 +467,10 @@ TEST(FileLifecycleTest, meta_set_state) {
 
 // file:// has no native CoW (-ENOTSUP once the attempt actually reaches the
 // backend), so these only exercise rawstor_target_create_snapshot()'s own
-// version id resolution (all three modes -- see its own doc comment,
-// target.h) -- the id is resolved and written to `buf` synchronously,
-// before the doomed backend attempt, so that part is fully testable
-// without a CoW-capable backend at all.
+// version id resolution and resulting target string (all three modes --
+// see its own doc comment, target.h) -- both are resolved and written to
+// `buf` synchronously, before the doomed backend attempt, so that part is
+// fully testable without a CoW-capable backend at all.
 TEST(FileCreateSnapshotTest, generates_fresh_id_for_plain_target) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location_uri(dir.uri());
@@ -479,13 +479,20 @@ TEST(FileCreateSnapshotTest, generates_fresh_id_for_plain_target) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstdUUIDString buf;
+    char buf[65536];
     ssize_t res =
         target_create_snapshot(*queue, target, nullptr, buf, sizeof(buf));
     EXPECT_EQ(res, -ENOTSUP);
 
+    std::string snapshot_target = buf;
+    ASSERT_EQ(snapshot_target.rfind(target + "/", 0), 0u);
     RawstdUUID parsed;
-    EXPECT_EQ(rawstd_uuid_from_string(&parsed, buf), 0);
+    EXPECT_EQ(
+        rawstd_uuid_from_string(
+            &parsed, snapshot_target.substr(target.size() + 1).c_str()
+        ),
+        0
+    );
     EXPECT_FALSE(rawstd_uuid_is_nil(&parsed));
 }
 
@@ -499,11 +506,11 @@ TEST(FileCreateSnapshotTest, uses_id_already_bound_in_target) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstdUUIDString buf;
+    char buf[65536];
     ssize_t res =
         target_create_snapshot(*queue, target, nullptr, buf, sizeof(buf));
     EXPECT_EQ(res, -ENOTSUP);
-    EXPECT_EQ(snapshot_id, buf);
+    EXPECT_EQ(target, buf);
 }
 
 TEST(FileCreateSnapshotTest, uses_explicit_id_for_plain_target) {
@@ -515,16 +522,16 @@ TEST(FileCreateSnapshotTest, uses_explicit_id_for_plain_target) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstdUUIDString buf;
+    char buf[65536];
     ssize_t res = target_create_snapshot(
         *queue, target, snapshot_id.c_str(), buf, sizeof(buf)
     );
     EXPECT_EQ(res, -ENOTSUP);
-    EXPECT_EQ(snapshot_id, buf);
+    EXPECT_EQ(rawstd::URI(rawstd::URI(target), snapshot_id).str(), buf);
 }
 
 // Combining an already-bound target with an explicit snapshot_id is
-// ambiguous -- Target::create_snapshot(queue, id)'s own guard.
+// ambiguous -- rawstor_target_create_snapshot()'s own guard.
 TEST(FileCreateSnapshotTest, explicit_id_on_already_bound_target_is_einval) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location_uri(dir.uri());
@@ -536,7 +543,7 @@ TEST(FileCreateSnapshotTest, explicit_id_on_already_bound_target_is_einval) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstdUUIDString buf;
+    char buf[65536];
     ssize_t res = target_create_snapshot(
         *queue, target, other_id.c_str(), buf, sizeof(buf)
     );

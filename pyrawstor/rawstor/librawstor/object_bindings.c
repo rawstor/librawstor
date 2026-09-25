@@ -809,7 +809,9 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
 // `snapshot_id` NULL (Python None): the version id is either already bound
 // in `target`'s own path, a caller-chosen one, or a freshly generated one
 // -- see rawstor_target_create_snapshot()'s own doc comment for the three
-// ways this resolves. Returns the version id actually used.
+// ways this resolves. Returns the snapshot's own target string (`target`
+// itself when already bound, or `target` with the id actually used spliced
+// onto it otherwise) -- same shape as object_create_at() above.
 PyObject*
 py_rawstor_object_create_snapshot(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
@@ -818,7 +820,7 @@ py_rawstor_object_create_snapshot(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
 
-    char id[64];
+    char snapshot_target[65536];
 
     RawstorSyncOp op;
     int ires = rawstor_sync_op_init(&op);
@@ -827,7 +829,8 @@ py_rawstor_object_create_snapshot(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
     int sres = rawstor_target_create_snapshot(
-        op.queue, target, snapshot_id, id, sizeof(id), rawstor_sync_op_cb, &op
+        op.queue, target, snapshot_id, snapshot_target, sizeof(snapshot_target),
+        rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);
     rawstor_sync_op_destroy(&op);
@@ -835,7 +838,7 @@ py_rawstor_object_create_snapshot(PyObject* Py_UNUSED(self), PyObject* args) {
         set_os_error((int)-res);
         return NULL;
     }
-    if ((size_t)res >= sizeof(id)) {
+    if ((size_t)res >= sizeof(snapshot_target)) {
         PyErr_SetString(
             PyExc_ValueError,
             "rawstor_target_create_snapshot(): output truncated"
@@ -843,7 +846,7 @@ py_rawstor_object_create_snapshot(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
 
-    return PyUnicode_FromString(id);
+    return PyUnicode_FromString(snapshot_target);
 }
 
 PyObject* py_rawstor_object_spec(PyObject* Py_UNUSED(self), PyObject* args) {

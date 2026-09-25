@@ -406,34 +406,25 @@ rawstd::DetachedTask launch_remove_op_coro(
 }
 
 // C ABI adapter for rawstor_target_create_snapshot()'s actual CoW-snapshot
-// step, once the snapshot_id string is already known to fit the caller's
-// buffer (see rawstor_target_create_snapshot() itself for the
-// synchronous, no-I/O-needed length computation and the too-small case,
-// which never reaches this at all). `length` is threaded through as the
-// success result -- rawstor_target_create_snapshot() keeps its
-// snprintf()-style contract (the id string's length, always < the buffer
-// size on success) even though the actual snapshot is asynchronous, same
-// shape as location.cpp's own launch_create_op_coro() for
-// rawstor_location_create(). `explicit_id` is true iff the caller passed
-// a non-NULL snapshot_id of their own (rawstor_target_create_snapshot()'s
-// own mode 3) -- in that case `t` must go through the explicit-id
-// overload even if it's already bound (so its own guard against that
-// combination actually fires); only an unbound-caller (`snapshot_id` here
-// is one this call resolved on `t`'s own behalf, mode 1 or 2) skips
-// straight to create() when `t` is already bound, since splicing a second
-// copy of the very id `t` already carries would be pointless.
+// step, once `t` is already the exact target to create (rawstor_target_
+// create_snapshot() itself resolves the version id and, unless `t` was
+// already bound, splices it onto every URI -- so `t` here is always
+// already bound, and this can just run create()'s own bound-snapshot
+// branch directly, the same way rawstor_location_create() below builds
+// its own fresh Target and calls t.create(queue, spec) directly rather
+// than going through Location::create()). `length` is threaded through
+// as the success result -- rawstor_target_create_snapshot() keeps its
+// snprintf()-style contract (the resulting target string's length,
+// always < the buffer size on success) even though the actual snapshot
+// is asynchronous, same shape as location.cpp's own launch_create_op_coro()
+// for rawstor_location_create().
 rawstd::DetachedTask launch_create_snapshot_op_coro(
-    rawstor::Target t, rawio::Queue* queue, RawstdUUID snapshot_id,
-    bool explicit_id, ssize_t length, int (*cb)(ssize_t result, void* data),
-    void* data
+    rawstor::Target t, rawio::Queue* queue, ssize_t length,
+    int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = length;
     try {
-        if (!explicit_id && !rawstd_uuid_is_nil(&t.snapshot_id())) {
-            co_await t.create(*queue, RawstorObjectSpec{});
-        } else {
-            co_await t.create_snapshot(*queue, snapshot_id);
-        }
+        co_await t.create(*queue, RawstorObjectSpec{});
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -1292,36 +1283,37 @@ int rawstor_target_snapshot_id(
 }
 
 // Three ways the version id actually used is picked, all resolved
-// synchronously (no I/O needed for any of them) before `buf` is written:
+// synchronously (no I/O needed for any of them) before `snapshot_target` is
+// written:
 // - `target` already names a specific version of its own (its own path
 //   carries a trailing snapshot_id, e.g. as printed back by a previous
 //   rawstor_target_create_snapshot()/read by rawstor_target_snapshot_id())
-//   and `snapshot_id` here is NULL: that bound version IS the one used.
+//   and `snapshot_id` here is NULL: that bound version IS the one used --
+//   `target` itself is already the target to create.
 // - `target` names a plain object and `snapshot_id` here is NULL: a fresh
-//   one is generated (the single point every snapshot id is generated at,
+//   id is generated (the single point every snapshot id is generated at,
 //   by analogy with how a fresh object id is generated in Location::
 //   create()/rawstor_location_create() -- rawstd_uuid7_init(), same
-//   function, same reasoning).
-// - `snapshot_id` here is non-NULL: that caller-chosen version id is used
-//   verbatim -- but only if `target` names a plain object; combining it
-//   with a `target` that already carries its own bound version would be
-//   ambiguous, so that combination fails with -EINVAL instead (Target::
-//   create_snapshot(queue, id)'s own guard -- explicit_id below routes
-//   this case to that same overload even though `target` is bound, so the
-//   guard actually runs once the operation is queued -- see
-//   launch_create_snapshot_op_coro()).
-// Either way, the id actually used is written into `buf`/`size`
-// synchronously, before any I/O, same convention as rawstor_location_
-// create()'s own `target`/`size`.
+//   function, same reasoning), then spliced onto every one of `target`'s
+//   own URIs.
+// - `snapshot_id` here is non-NULL: that caller-chosen version id is
+//   spliced on the same way -- but only if `target` names a plain object;
+//   combining it with a `target` that already carries its own bound
+//   version would be ambiguous, so that combination fails with -EINVAL
+//   instead.
+// Either way, the resulting target string is written into
+// `snapshot_target`/`size` synchronously, before any I/O, same convention
+// as rawstor_location_create()'s own `target`/`size`.
 int rawstor_target_create_snapshot(
-    RawIOQueue* queue, const char* target, const char* snapshot_id, char* buf,
-    size_t size, int (*cb)(ssize_t result, void* data), void* data
+    RawIOQueue* queue, const char* target, const char* snapshot_id,
+    char* snapshot_target, size_t size, int (*cb)(ssize_t result, void* data),
+    void* data
 ) noexcept {
     try {
-        // Validates `target` before resolving/writing the version to
-        // `buf` below -- an immediate failure (malformed target) must
-        // leave `buf` untouched, same as every other immediate-failure
-        // case here.
+        // Validates `target` before resolving/writing anything to
+        // `snapshot_target` below -- an immediate failure (malformed
+        // target) must leave it untouched, same as every other
+        // immediate-failure case here.
         rawstor::Target t(rawstd::URI::uriv(target));
 
         RawstdUUID id;
@@ -1332,6 +1324,9 @@ int rawstor_target_create_snapshot(
             if (res < 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
+            if (!rawstd_uuid_is_nil(&t.snapshot_id())) {
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
         } else if (!rawstd_uuid_is_nil(&t.snapshot_id())) {
             id = t.snapshot_id();
         } else {
@@ -1341,15 +1336,34 @@ int rawstor_target_create_snapshot(
             }
         }
 
-        RawstdUUIDString uuid_string;
-        rawstd_uuid_to_string(&id, &uuid_string);
-        res = snprintf(buf, size, "%s", uuid_string);
+        // `t` already bound (its own trailing path names this exact
+        // version) means `t` itself is already the target to create;
+        // otherwise splice `id` onto every one of `t`'s own URIs to build
+        // that target fresh -- the same way rawstor_location_create()
+        // below builds a fresh Target under a caller-or-freshly-generated
+        // id, rather than going through Location::create().
+        rawstor::Target snap_target = t;
+        if (rawstd_uuid_is_nil(&t.snapshot_id())) {
+            RawstdUUIDString uuid_string;
+            rawstd_uuid_to_string(&id, &uuid_string);
+            std::vector<rawstd::URI> uris;
+            uris.reserve(t.uris().size());
+            for (const auto& uri : t.uris()) {
+                uris.emplace_back(uri, std::string(uuid_string));
+            }
+            snap_target = rawstor::Target(uris);
+        }
+
+        res = snprintf(
+            snapshot_target, size, "%s",
+            rawstd::URI::uris(snap_target.uris()).c_str()
+        );
         if (res < 0) {
             return res;
         }
 
         if (static_cast<size_t>(res) >= size) {
-            // Buffer too small -- nothing was queued (the id string is
+            // Buffer too small -- nothing was queued (the target string is
             // fully known without any I/O), same convention as
             // rawstor_location_create()'s own too-small-buffer case.
             int cbres = cb(res, data);
@@ -1360,8 +1374,8 @@ int rawstor_target_create_snapshot(
         }
 
         launch_create_snapshot_op_coro(
-            std::move(t), static_cast<rawio::Queue*>(queue), id, explicit_id,
-            res, cb, data
+            std::move(snap_target), static_cast<rawio::Queue*>(queue), res, cb,
+            data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;

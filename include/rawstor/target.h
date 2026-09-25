@@ -560,7 +560,8 @@ int rawstor_target_snapshot_id(
 
 /**
  * @brief Asynchronously take a snapshot of a target, under whichever
- *        version id @p target/@p snapshot_id together resolve to.
+ *        version id @p target/@p snapshot_id together resolve to, and
+ *        return the resulting target string.
  *
  * Every version id is client-generated, like every object id (see
  * rawstor_location_create()). Three ways the id actually used is picked,
@@ -568,8 +569,9 @@ int rawstor_target_snapshot_id(
  * - @p target already names a specific version of its own (its own path
  *   carries a trailing snapshot_id -- e.g. as read back by
  *   rawstor_target_snapshot_id(), or as this same function itself already
- *   printed into a previous @p buf) and @p snapshot_id here is NULL: that
- *   bound version IS the one taken.
+ *   printed into a previous @p snapshot_target) and @p snapshot_id here is
+ *   NULL: that bound version IS the one taken -- @p target itself is
+ *   already the snapshot's own target string.
  * - @p target names a plain object and @p snapshot_id here is NULL: a
  *   fresh id is generated (rawstd_uuid7_init(), the same single point of
  *   generation a fresh object id comes from -- rawstor_location_create()).
@@ -582,16 +584,24 @@ int rawstor_target_snapshot_id(
  * every URI in @p target (every URI is still attempted even if an earlier
  * one fails, and the first error encountered is reported); the caller
  * owns crash consistency -- all acknowledged writes must be flushed
- * before this call.
+ * before this call. The resulting target string -- @p target itself when
+ * already bound, or @p target with the id actually used spliced onto every
+ * URI otherwise, i.e. exactly what rawstor_target_snapshot_id() would read
+ * back off it -- is written into @p snapshot_target, the same synchronous,
+ * before-any-I/O, snprintf()-style convention as rawstor_location_create()'s
+ * own @p target/@p size.
  *
  * @param queue    Queue used to drive the asynchronous snapshot.
  * @param target   Target string, see rawstor_target_spec().
  * @param snapshot_id  The version id's UUID string, or NULL -- see above.
- * @param buf      Output buffer for the version id actually used, written
- *                 synchronously before this call returns -- same
- *                 truncation convention as rawstor_target_id().
- * @param size     Size of @p buf in bytes (including space for the
- *                 terminating null byte).
+ * @param snapshot_target  Output buffer for the snapshot's own target
+ *                 string, written synchronously before this call returns
+ *                 -- same truncation convention as
+ *                 rawstor_location_create()'s own @p target (size it the
+ *                 same way, e.g. 65536 bytes, not rawstor_target_id()'s
+ *                 much smaller UUID-sized buffer).
+ * @param size     Size of @p snapshot_target in bytes (including space for
+ *                 the terminating null byte).
  * @param cb       Callback invoked on completion.
  *                 - @p result is zero on success, or a negative errno on
  *                   failure (@c -EINVAL if @p target already names its own
@@ -602,17 +612,18 @@ int rawstor_target_snapshot_id(
  *                 - @p data is the same pointer passed as @p data below.
  * @param data     User-defined context pointer passed unchanged to @p cb.
  *
- * @return The number of characters written to @p buf (see
- *         rawstor_target_id()) if the snapshot was successfully queued;
- *         negative errno on immediate failure (in which case @p cb is
- *         never invoked).
+ * @return The number of characters written to @p snapshot_target (see
+ *         rawstor_location_create()) if the snapshot was successfully
+ *         queued; negative errno on immediate failure (in which case
+ *         @p cb is never invoked).
  *
  * @see rawstor_target_create
  * @see rawstor_target_remove
  */
 int rawstor_target_create_snapshot(
-    RawIOQueue* queue, const char* target, const char* snapshot_id, char* buf,
-    size_t size, int (*cb)(ssize_t result, void* data), void* data
+    RawIOQueue* queue, const char* target, const char* snapshot_id,
+    char* snapshot_target, size_t size, int (*cb)(ssize_t result, void* data),
+    void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
