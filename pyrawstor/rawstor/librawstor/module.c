@@ -11,6 +11,8 @@ static PyMethodDef librawstor_methods[] = {
     {"object_list", py_rawstor_object_list, METH_VARARGS, NULL},
     {"object_create", py_rawstor_object_create, METH_VARARGS, NULL},
     {"object_create_at", py_rawstor_object_create_at, METH_VARARGS, NULL},
+    {"object_create_snapshot", py_rawstor_object_create_snapshot, METH_VARARGS,
+     NULL},
     {"object_spec", py_rawstor_object_spec, METH_VARARGS, NULL},
     {"object_meta", py_rawstor_object_meta, METH_VARARGS, NULL},
     {"object_set_sync_state", py_rawstor_object_set_sync_state, METH_VARARGS,
