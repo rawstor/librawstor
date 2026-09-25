@@ -37,7 +37,7 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
 }
 
 // A URI's own offset path segment is hex (parse_target_path()'s own doc
-// comment, target_path.cpp), not decimal.
+// comment, target.cpp), not decimal.
 std::string hex_offset(uint64_t offset) {
     char buf[17];
     snprintf(buf, sizeof(buf), "%" PRIx64, offset);

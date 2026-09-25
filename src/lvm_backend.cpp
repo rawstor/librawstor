@@ -156,8 +156,8 @@ std::string Backend::_lv_name(const RawstdUUID& id, uint64_t offset) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
     // Hex, not decimal -- see parse_target_path()'s own doc comment
-    // (target_path.cpp) for why every physical, offset-carrying name in
-    // this codebase agrees on one base.
+    // (target.cpp) for why every physical, offset-carrying name in this
+    // codebase agrees on one base.
     char offset_str[17];
     snprintf(offset_str, sizeof(offset_str), "%" PRIx64, offset);
     return std::string(uuid_str) + "-" + offset_str;
