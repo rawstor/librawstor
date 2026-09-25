@@ -1046,7 +1046,7 @@ namespace vhost {
 
 Device::Device(
     unsigned int queue_size, unsigned int num_queues, const std::string& target,
-    int fd, bool write_cache_enabled, int wake_fd
+    int fd, bool write_cache_enabled, bool readonly, int wake_fd
 ) :
     _fd(fd),
     _queue(nullptr),
@@ -1060,11 +1060,13 @@ Device::Device(
         1ull << VIRTIO_BLK_F_CONFIG_WCE | 1ull << VIRTIO_BLK_F_DISCARD |
         1ull << VIRTIO_BLK_F_WRITE_ZEROES | 1ull << VIRTIO_F_VERSION_1 |
         1ull << VIRTIO_RING_F_INDIRECT_DESC | 1ull << VIRTIO_RING_F_EVENT_IDX |
-        1ull << VHOST_USER_F_PROTOCOL_FEATURES
+        1ull << VHOST_USER_F_PROTOCOL_FEATURES |
+        (readonly ? 1ull << VIRTIO_BLK_F_RO : 0)
     ),
     _protocol_features(0),
     _config{},
     _wce_enabled(write_cache_enabled),
+    _readonly(readonly),
     _postcopy_listening(false),
     _wake_fd(wake_fd) {
     _regions.reserve(VHOST_USER_MAX_RAM_SLOTS);
@@ -1141,7 +1143,7 @@ Device::Device(
         // through leaves only the earlier ones running, which the catch
         // below stops before rethrowing.
         for (auto& vq : _vqs) {
-            vq.start(target, queue_size);
+            vq.start(target, queue_size, readonly);
         }
     } catch (...) {
         for (auto& vq : _vqs) {

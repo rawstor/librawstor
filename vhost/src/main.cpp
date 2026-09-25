@@ -67,6 +67,10 @@ void usage() {
               << "                        "
                  "issuing an explicit flush"
               << std::endl
+              << "  --readonly            "
+                 "Export the object read-only (VIRTIO_BLK_F_RO); "
+                 "required for a snapshot target"
+              << std::endl
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl
               << "required arguments:" << std::endl
@@ -102,11 +106,12 @@ void sact_handler(int) {
 
 void server(
     unsigned int queue_size, unsigned int num_queues, const std::string& target,
-    const std::string& socket_path, bool write_cache_enabled, int wake_fd
+    const std::string& socket_path, bool write_cache_enabled, bool readonly,
+    int wake_fd
 ) {
     rawstor::vhost::Server s(
         queue_size, num_queues, target, socket_path, write_cache_enabled,
-        wake_fd
+        readonly, wake_fd
     );
     // Not any earlier: rawstd_info() needs the logging mutex
     // rawstor_initialize() sets up, and that only happens inside Server's
@@ -123,6 +128,7 @@ int main(int argc, char** argv) {
         {"help", no_argument, nullptr, 'h'},
         {"num-queues", required_argument, nullptr, 'n'},
         {"queue-size", required_argument, nullptr, 'q'},
+        {"readonly", no_argument, nullptr, 'r'},
         {"socket-path", required_argument, nullptr, 's'},
         {"version", no_argument, nullptr, 'v'},
         {"write-cache", required_argument, nullptr, 'w'},
@@ -134,6 +140,7 @@ int main(int argc, char** argv) {
     const char* socket_path_arg = nullptr;
     const char* target_arg = nullptr;
     const char* write_cache_arg = nullptr;
+    bool readonly = false;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, nullptr);
         if (c == -1) {
@@ -151,6 +158,10 @@ int main(int argc, char** argv) {
 
         case 'q':
             queue_size_arg = optarg;
+            break;
+
+        case 'r':
+            readonly = true;
             break;
 
         case 's':
@@ -261,7 +272,7 @@ int main(int argc, char** argv) {
 
         server(
             queue_size, num_queues, target_arg, socket_path_arg,
-            write_cache_enabled, wake_pipe.read_fd()
+            write_cache_enabled, readonly, wake_pipe.read_fd()
         );
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;

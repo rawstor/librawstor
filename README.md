@@ -131,7 +131,7 @@ multiple in-flight requests on a virtqueue may complete out of order.
 
 ### Usage
 
-`rawstor-vhost [-h] -s SOCKET_PATH TARGET [--queue-size SIZE] [--num-queues N] [--write-cache on|off] [-v]`
+`rawstor-vhost [-h] -s SOCKET_PATH TARGET [--queue-size SIZE] [--num-queues N] [--write-cache on|off] [--readonly] [-v]`
 
 ### Options
 
@@ -143,6 +143,7 @@ multiple in-flight requests on a virtqueue may complete out of order.
 | `--queue-size SIZE` | RawIO queue (`io_uring`) depth of each virtqueue's own queue. Default: `256`. |
 | `--num-queues N` | Number of virtqueues advertised to the guest, each serviced by its own thread and its own connection to `TARGET`. The guest picks how many of these it actually uses (typically up to its vCPU count) via QEMU's own `num-queues=`. Default: `4`. |
 | `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest; write-through makes every write durable on completion, writeback relies on the guest issuing an explicit flush. |
+| `--readonly` | Export the object read-only: advertises `VIRTIO_BLK_F_RO` to the guest and opens `TARGET` with `RAWSTOR_READONLY` (no mirror write quorum needed; writes fail). Required to export a snapshot target. |
 | `-v, --version` | Print version and exit. |
 
 ### Example
@@ -262,7 +263,7 @@ vhost-user.
 
 ### Usage
 
-`rawstor-vduse [-h] TARGET [--queue-size SIZE] [--num-queues N] [--write-cache on|off] [-v]`
+`rawstor-vduse [-h] TARGET [--queue-size SIZE] [--num-queues N] [--write-cache on|off] [--readonly] [-v]`
 
 ### Options
 
@@ -273,6 +274,7 @@ vhost-user.
 | `--queue-size SIZE` | Virtqueue size, a power of two, of each virtqueue's own queue. Default: `256`, max `1024`. |
 | `--num-queues N` | Number of virtqueues advertised to the guest, each serviced by its own thread and its own connection to `TARGET`. Default: `16`. |
 | `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest. |
+| `--readonly` | Export the object read-only: advertises `VIRTIO_BLK_F_RO` to the guest and opens `TARGET` with `RAWSTOR_READONLY` (no mirror write quorum needed; writes fail). Required to export a snapshot target. |
 | `-v, --version` | Print version and exit. |
 
 ### Example
