@@ -104,7 +104,8 @@ rawstd::Task<void> Backend::_wait_for_blockdev(
     RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
 }
 
-rawstd::Task<int> Backend::_open_object(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<int>
+Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
     std::string path = _device_path(id, offset);
 
     // No O_NONBLOCK: opening a ZFS zvol with it caused cache-miss reads to
@@ -114,7 +115,10 @@ rawstd::Task<int> Backend::_open_object(const RawstdUUID& id, uint64_t offset) {
     // io_wq worker threads and does not need the fd to be non-blocking.
     // O_CLOEXEC so this fd doesn't leak into the zfs create/destroy
     // children forked by create()/remove() below.
-    int fd = co_await _queue.open(path.c_str(), O_RDWR | O_CLOEXEC, 0);
+    int fd = co_await _queue.open(
+        path.c_str(),
+        ((flags & RAWSTOR_READONLY) != 0 ? O_RDONLY : O_RDWR) | O_CLOEXEC, 0
+    );
     co_return fd;
 }
 

@@ -152,7 +152,7 @@ public:
             ssize_t ores =
                 rawstor::tests::sync_run(_queue, [&](auto cb, void* data) {
                     return rawstor_target_open(
-                        _queue, _target.c_str(), &_object, cb, data
+                        _queue, _target.c_str(), 0, &_object, cb, data
                     );
                 });
             if (ores < 0) {

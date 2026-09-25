@@ -191,7 +191,14 @@ public:
     // request onto whichever chunk(s) it touches (see this method's own
     // comment in target.cpp for how a multi-chunk target learns its own
     // chunk_size/total size without a dedicated wire field for either).
-    rawstd::Task<std::unique_ptr<Object>> open(rawio::Queue& queue) const;
+    //
+    // `flags` is RAWSTOR_READONLY or 0 (<rawstor/target.h>) -- a target
+    // naming a bound snapshot version can only be opened with
+    // RAWSTOR_READONLY (EINVAL otherwise), which is then threaded through
+    // every layer down to the final open (Chunk::create(), Slot::open(),
+    // Backend::set_object()/set_snapshot()).
+    rawstd::Task<std::unique_ptr<Object>>
+    open(rawio::Queue& queue, int flags) const;
 };
 
 } // namespace rawstor

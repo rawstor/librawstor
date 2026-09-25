@@ -62,6 +62,12 @@ private:
     RawstorObjectSpec _spec;
     std::vector<Member> _members;
 
+    // Opened RAWSTOR_READONLY (create()'s `flags`): no write quorum is
+    // required, and nothing that would write is ever done -- no DIRTY
+    // barrier, no read-repair, no reconnect probe/resync -- every write
+    // fails with EROFS instead.
+    bool _readonly;
+
     // Logical object size, adopted from the in-sync metadata at open --
     // the resync chunk bitmap is sized off this.
     uint64_t _size;
@@ -336,15 +342,21 @@ public:
     // the constructor) is whichever reachable member's own META answered
     // first. Only once construction succeeds does it start the object's
     // own background maintenance (the reconnect probe, an online resync
-    // if one is already due).
+    // if one is already due). `flags` is RAWSTOR_READONLY or 0
+    // (<rawstor/target.h>): READONLY drops the quorum requirement (any
+    // one reachable member is enough) and all background maintenance,
+    // and makes every write fail with EROFS. `snapshot_id` non-nil binds
+    // every member to that previously snapshotted version instead of the
+    // live one (only ever with READONLY, Target::open()'s own check).
     static rawstd::Task<std::unique_ptr<Chunk>> create(
         const std::vector<rawstd::URI>& locations, rawio::Queue& queue,
-        const RawstdUUID& id, uint64_t offset
+        const RawstdUUID& id, uint64_t offset, int flags,
+        const RawstdUUID& snapshot_id
     );
 
     Chunk(
         Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
-        RawstorObjectSpec spec, std::vector<Member> members
+        bool readonly, RawstorObjectSpec spec, std::vector<Member> members
     );
     Chunk(const Chunk&) = delete;
     Chunk(Chunk&&) = delete;

@@ -22,7 +22,9 @@ extern "C" {
 /*
  * Binds the connection to an object/chunk -- or, if `snapshot_id` is
  * non-nil, one previously snapshotted version of it instead (nil-means-
- * live) -- rides RawstorOSTFrameBasicPayload.
+ * live) -- rides RawstorOSTFrameBasicPayload; `val` is the open flags
+ * (RAWSTOR_READONLY, <rawstor/target.h>, or 0), which a bound snapshot
+ * always carries.
  */
 #define RAWSTOR_CMD_SET_OBJECT 0
 #define RAWSTOR_CMD_READ 1

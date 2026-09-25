@@ -91,7 +91,8 @@ TEST(MultiChunkTest, create_open_read_write_across_chunk_boundary) {
     };
     run(*queue, target.create(*queue, spec));
 
-    std::unique_ptr<rawstor::Object> object = run(*queue, target.open(*queue));
+    std::unique_ptr<rawstor::Object> object =
+        run(*queue, target.open(*queue, 0));
 
     // A write straddling the chunk boundary must land split across both
     // chunks and read back whole.
@@ -170,7 +171,8 @@ TEST(MultiChunkTest, preadv_pwritev_across_chunk_boundary) {
     };
     run(*queue, target.create(*queue, spec));
 
-    std::unique_ptr<rawstor::Object> object = run(*queue, target.open(*queue));
+    std::unique_ptr<rawstor::Object> object =
+        run(*queue, target.open(*queue, 0));
 
     // 24 bytes straddling the boundary (8 land in chunk 0, 16 in chunk
     // 1), written as three 8-byte iovecs that don't line up with that

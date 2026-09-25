@@ -1437,13 +1437,18 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<void>
+Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
     assert(_read_event != nullptr);
 
-    co_await _basic_request(RAWSTOR_CMD_SET_OBJECT, "set_object", id, offset);
+    // `flags` rides `val` (protocol.h's own doc comment on SET_OBJECT).
+    co_await _basic_request(
+        RAWSTOR_CMD_SET_OBJECT, "set_object", id, offset,
+        static_cast<uint64_t>(flags)
+    );
 }
 
 rawstd::Task<void> Backend::set_snapshot(
@@ -1451,9 +1456,12 @@ rawstd::Task<void> Backend::set_snapshot(
 ) {
     assert(_read_event != nullptr);
 
+    // A snapshot is only ever opened read-only (Target::open()'s own
+    // check), which is exactly what the remote rawstor-ost's own
+    // rawstor_target_open() requires of a bound-snapshot target.
     co_await _basic_request(
-        RAWSTOR_CMD_SET_OBJECT, "set_snapshot", object_id, offset, 0,
-        snapshot_id
+        RAWSTOR_CMD_SET_OBJECT, "set_snapshot", object_id, offset,
+        RAWSTOR_READONLY, snapshot_id
     );
 }
 

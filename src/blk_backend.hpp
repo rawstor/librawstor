@@ -77,9 +77,10 @@ private:
 
 protected:
     // Opens the live version of `id`/`offset` -- every concrete subclass
-    // implements this.
+    // implements this. `flags` is RAWSTOR_READONLY or 0: READONLY opens
+    // O_RDONLY instead of O_RDWR.
     virtual rawstd::Task<int>
-    _open_object(const RawstdUUID& id, uint64_t offset) = 0;
+    _open_object(const RawstdUUID& id, uint64_t offset, int flags) = 0;
 
     // Opens one previously-snapshotted version of `id`/`offset`
     // (`snapshot_id`, never nil -- see create_snapshot() below). Default:
@@ -152,7 +153,7 @@ public:
     rawstd::Task<void> close() override final;
 
     rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t offset) override final;
+    set_object(const RawstdUUID& id, uint64_t offset, int flags) override final;
 
     rawstd::Task<void> set_snapshot(
         const RawstdUUID& object_id, uint64_t offset,

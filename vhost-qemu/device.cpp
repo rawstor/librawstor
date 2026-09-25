@@ -752,8 +752,9 @@ int result_cb(ssize_t result, void* data) {
 RawstorObject* open_object(RawIOQueue* queue, const std::string& target) {
     RawstorObject* object = nullptr;
     Result result;
-    int res =
-        rawstor_target_open(queue, target.c_str(), &object, result_cb, &result);
+    int res = rawstor_target_open(
+        queue, target.c_str(), 0, &object, result_cb, &result
+    );
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }

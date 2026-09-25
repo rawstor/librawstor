@@ -88,13 +88,14 @@ namespace rawstor {
 // safe to let unwind through a throwing constructor.
 Chunk::Chunk(
     Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
-    RawstorObjectSpec spec, std::vector<Member> members
+    bool readonly, RawstorObjectSpec spec, std::vector<Member> members
 ) :
     _queue(queue),
     _id(id),
     _offset(offset),
     _spec(spec),
     _members(std::move(members)),
+    _readonly(readonly),
     _size(0),
     _dirty(false),
     _writes_frozen(false),
@@ -119,8 +120,10 @@ Chunk::Chunk(
     // mirror_probe_interval) and, if one is already reachable but STALE,
     // starts resyncing it -- detached, driven by their own continuations
     // from here on.
-    _probe_setup();
-    _resync_maybe_start();
+    if (!_readonly) {
+        _probe_setup();
+        _resync_maybe_start();
+    }
 }
 
 Chunk::~Chunk() {
@@ -161,7 +164,8 @@ connect_one(rawio::Queue& queue, const rawstd::URI& location) {
 
 rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     const std::vector<rawstd::URI>& locations, rawio::Queue& queue,
-    const RawstdUUID& id, uint64_t offset
+    const RawstdUUID& id, uint64_t offset, int flags,
+    const RawstdUUID& snapshot_id
 ) {
     // Every location's Slot goes out concurrently instead of one at a
     // time -- just Slot::create(), kept in a plain local vector
@@ -244,7 +248,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     );
     for (size_t i = 0; i < slots.size(); ++i) {
         if (slots[i]) {
-            open_tasks[i] = slots[i]->open(id, offset);
+            open_tasks[i] = slots[i]->open(id, offset, flags, snapshot_id);
         }
     }
 
@@ -362,7 +366,8 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // shortcut, or _reconcile_sync_set()'s own quorum/split-brain/no-
     // trusted-member analysis) is its own job from here.
     co_return std::make_unique<Chunk>(
-        Private(), queue, id, offset, std::move(spec), std::move(members)
+        Private(), queue, id, offset, (flags & RAWSTOR_READONLY) != 0,
+        std::move(spec), std::move(members)
     );
 }
 
@@ -421,7 +426,9 @@ void Chunk::_reconcile_sync_set() {
         }
     }
 
-    if (reachable * 2 <= _members.size()) {
+    // READONLY reads from whatever is reachable: any one member is enough
+    // (create() already refused an open with none), so no quorum.
+    if (!_readonly && reachable * 2 <= _members.size()) {
         rawstd_error(
             "Mirror quorum not met: %zu of %zu members reachable\n", reachable,
             _members.size()
@@ -1423,7 +1430,9 @@ rawstd::DetachedTask Chunk::_probe_tick() {
         slot = co_await Slot::create(
             _queue, _members[idx].location, rawstor_opts_sessions()
         );
-        co_await slot->open(_id, _offset);
+        // The probe only ever runs for a writable, live chunk (READONLY
+        // never starts it, the constructor's own check).
+        co_await slot->open(_id, _offset, 0, RawstdUUID{});
     } catch (const std::system_error& e) {
         error = e.code().value();
     } catch (const std::exception& e) {
@@ -1477,7 +1486,9 @@ rawstd::Task<size_t> Chunk::_read(
             for (const auto& failure : failures) {
                 size_t fidx = failure.first;
                 int ferror = failure.second;
-                if (ferror == EPROTO) {
+                if (_readonly) {
+                    /* Nothing here may write (read-repair/degrade). */
+                } else if (ferror == EPROTO) {
                     std::vector<char> data(result);
                     copy_to(data, result);
                     _read_repair(fidx, offset, std::move(data), _alive);
@@ -1631,6 +1642,11 @@ Chunk::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
         (intmax_t)offset, sync
     );
 
+    // A READONLY chunk (create()'s `flags`) never writes anything.
+    if (_readonly) {
+        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+    }
+
     unsigned int ticket = _writes_issued++;
 
     try {
@@ -1665,6 +1681,11 @@ rawstd::Task<size_t> Chunk::pwritev(
         (intmax_t)offset, sync
     );
 
+    // A READONLY chunk (create()'s `flags`) never writes anything.
+    if (_readonly) {
+        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+    }
+
     unsigned int ticket = _writes_issued++;
 
     try {
@@ -1696,6 +1717,11 @@ rawstd::Task<size_t> Chunk::discard(size_t size, off_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "discard(): size = %zu, offset = %jd\n", size, (intmax_t)offset
     );
+
+    // A READONLY chunk (create()'s `flags`) never writes anything.
+    if (_readonly) {
+        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+    }
 
     // discard() is purely advisory (see rawstor::Backend::discard()'s own
     // doc comment) -- it doesn't dirty the object the way pwrite()/
@@ -1736,6 +1762,11 @@ Chunk::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
         "write_zeroes(): size = %zu, offset = %jd, unmap = %d, sync = %d\n",
         size, (intmax_t)offset, unmap, sync
     );
+
+    // A READONLY chunk (create()'s `flags`) never writes anything.
+    if (_readonly) {
+        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+    }
 
     unsigned int ticket = _writes_issued++;
 

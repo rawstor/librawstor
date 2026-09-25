@@ -98,7 +98,7 @@ int open_trampoline(ssize_t result, void* data) {
 // passing a temporary (e.g. rawstd::URI::uris(...)) needs this to make its
 // own copy, safely owned by the coroutine frame across suspension.
 rawstd::Task<RawstorObject*>
-co_target_open(RawIOQueue* queue, std::string target) {
+co_target_open(RawIOQueue* queue, std::string target, int flags) {
     // rawstor_target_open() writes `object` before open_trampoline() ever
     // runs (see its own doc comment), and open_trampoline() only fires
     // once co_await awaiter below resumes -- so `object` is always
@@ -107,7 +107,7 @@ co_target_open(RawIOQueue* queue, std::string target) {
     RawstorObject* object = nullptr;
     rawstd::CallbackAwaitable<void> awaiter;
     int res = rawstor_target_open(
-        queue, target.c_str(), &object, open_trampoline, &awaiter
+        queue, target.c_str(), flags, &object, open_trampoline, &awaiter
     );
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -1360,7 +1360,9 @@ rawstd::DetachedTask Client::_set_object(
     RawstorObject* object = nullptr;
     int error = 0;
     try {
-        object = co_await co_target_open(queue, target);
+        object = co_await co_target_open(
+            queue, target, static_cast<int>(payload.val)
+        );
     } catch (const std::system_error& e) {
         error = e.code().value();
     }

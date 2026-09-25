@@ -111,7 +111,7 @@ public:
     rawstd::Task<RawstorLocationInfo> info() override;
 
     rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t offset) override;
+    set_object(const RawstdUUID& id, uint64_t offset, int flags) override;
 
     // Both relayed over the wire as a RAWSTOR_CMD_SET_OBJECT request,
     // nil vs. non-nil snapshot_id (protocol.h's own doc comment) -- the

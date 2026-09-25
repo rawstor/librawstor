@@ -283,7 +283,7 @@ static int result_cb(ssize_t result, void* data) {
 static int
 open_object(RawIOQueue* queue, const char* target, RawstorObject** object) {
     Result result = {0};
-    int res = rawstor_target_open(queue, target, object, result_cb, &result);
+    int res = rawstor_target_open(queue, target, 0, object, result_cb, &result);
     if (res < 0) {
         return res;
     }

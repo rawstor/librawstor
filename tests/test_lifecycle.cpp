@@ -96,10 +96,13 @@ ssize_t target_set_sync_state(
 }
 
 ssize_t target_open(
-    rawio::Queue& queue, const std::string& target, RawstorObject** object
+    rawio::Queue& queue, const std::string& target, int flags,
+    RawstorObject** object
 ) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_target_open(&queue, target.c_str(), object, cb, data);
+        return rawstor_target_open(
+            &queue, target.c_str(), flags, object, cb, data
+        );
     });
 }
 
@@ -296,6 +299,50 @@ TEST(FileLifecycleTest, create_on_already_bound_target_is_einval) {
     EXPECT_EQ(res, -EINVAL);
 }
 
+// A target naming a bound snapshot version can only be opened
+// RAWSTOR_READONLY -- refused before any I/O otherwise.
+TEST(FileLifecycleTest, open_snapshot_without_readonly_is_einval) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
+    std::string uuid = "00000000-0000-7000-8000-000000000008";
+    std::string snapshot_id = "00000000-0000-7000-8000-000000000009";
+    std::string target =
+        rawstd::URI(rawstd::URI(location_uri, uuid), snapshot_id).str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorObject* object = nullptr;
+    EXPECT_EQ(target_open(*queue, target, 0, &object), -EINVAL);
+}
+
+// With RAWSTOR_READONLY the open goes ahead and reaches the backend, which
+// (file:// has no native CoW) answers ENOTSUP -- Chunk::create() then
+// reports the lone member as unavailable, i.e. ENOTCONN.
+TEST(FileLifecycleTest, open_snapshot_readonly_reaches_backend) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
+    std::string uuid = "00000000-0000-7000-8000-00000000000a";
+    std::string snapshot_id = "00000000-0000-7000-8000-00000000000b";
+    std::string live = rawstd::URI(location_uri, uuid).str();
+    std::string target = rawstd::URI(rawstd::URI(live), snapshot_id).str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 1,
+        .chunk_size = 0,
+    };
+    ASSERT_EQ(target_create(*queue, live, spec), 0);
+
+    RawstorObject* object = nullptr;
+    EXPECT_EQ(
+        target_open(*queue, target, RAWSTOR_READONLY, &object), -ENOTCONN
+    );
+
+    EXPECT_EQ(target_remove(*queue, live), 0);
+}
+
 // A freshly created object must read back as all zeros, even though
 // nothing has ever been written to it -- file::Backend relies on a sparse
 // regular file's own guarantee that an unwritten byte range always reads
@@ -322,7 +369,7 @@ TEST(FileLifecycleTest, create_is_zero_filled) {
     ASSERT_EQ(res, 0);
 
     RawstorObject* object = nullptr;
-    res = target_open(*queue, target, &object);
+    res = target_open(*queue, target, 0, &object);
     ASSERT_EQ(res, 0);
 
     std::vector<unsigned char> buf(size, 0xff);

@@ -167,7 +167,8 @@ std::string Backend::_device_path(const RawstdUUID& id, uint64_t offset) const {
     return _device_path_for_name(_lv_name(id, offset));
 }
 
-rawstd::Task<int> Backend::_open_object(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<int>
+Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
     std::string path = _device_path(id, offset);
 
     // No O_NONBLOCK: io_uring does not need the fd to be non-blocking --
@@ -176,7 +177,10 @@ rawstd::Task<int> Backend::_open_object(const RawstdUUID& id, uint64_t offset) {
     // -EAGAIN, which the pread/pwrite paths above don't retry. O_CLOEXEC
     // so this fd doesn't leak into the lvcreate/lvremove children forked
     // by create()/remove() below.
-    int fd = co_await _queue.open(path.c_str(), O_RDWR | O_CLOEXEC, 0);
+    int fd = co_await _queue.open(
+        path.c_str(),
+        ((flags & RAWSTOR_READONLY) != 0 ? O_RDONLY : O_RDWR) | O_CLOEXEC, 0
+    );
     co_return fd;
 }
 

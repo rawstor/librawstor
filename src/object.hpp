@@ -186,6 +186,11 @@ private:
     };
 
     uint64_t _chunk_size;
+    // Open flags/bound snapshot version (nil: live) every lazily opened
+    // chunk is opened with -- the same ones Target::open() opened the
+    // eagerly opened last chunk with.
+    int _flags;
+    RawstdUUID _snapshot_id;
     std::vector<ChunkEntry> _chunks;
 
     // Object is only ever built by Target::open() (a friend), which has
@@ -200,7 +205,7 @@ private:
     // other entry starts unopened, lazily opened on first touch.
     MultiChunkObject(
         rawio::Queue& queue, const RawstdUUID& id, uint64_t size,
-        uint64_t chunk_size,
+        uint64_t chunk_size, int flags, const RawstdUUID& snapshot_id,
         std::vector<std::vector<rawstd::URI>> chunk_locations,
         std::unique_ptr<Chunk> last_chunk
     );

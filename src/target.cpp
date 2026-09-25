@@ -307,7 +307,7 @@ remove_many(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
 // are caught for the same reason (preserving what the old synchronous
 // wrapper used to map to -ENOMEM/-EINVAL, now that the call is async).
 rawstd::DetachedTask launch_open_op_coro(
-    rawstor::Target t, rawio::Queue* queue, RawstorObject** object,
+    rawstor::Target t, rawio::Queue* queue, int flags, RawstorObject** object,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
@@ -319,7 +319,7 @@ rawstd::DetachedTask launch_open_op_coro(
         // DetachedTask coroutine's try block -- chaining .release() on
         // the co_await'd temporary directly, without a named local,
         // sidesteps it.
-        *object = (co_await t.open(*queue)).release();
+        *object = (co_await t.open(*queue, flags)).release();
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -984,15 +984,22 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
 // exactly the eagerly-opened Chunk a SingleChunkObject needs, so a
 // plain, single-chunk target never pays for a second, separate open.
 //
-// Opening a bound snapshot bypasses the mirror consistency state machine
-// entirely (a frozen, read-only copy has nothing to reconcile) --
-// machinery Chunk::create() below doesn't have yet, so a snapshot-bound
-// target can't be opened this way today.
-rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) const {
+// A bound snapshot is a frozen, immutable copy, so it can only be opened
+// RAWSTOR_READONLY (nothing to write, nothing to reconcile); `flags` and
+// the bound snapshot id (nil for the live version) then ride down to
+// every Chunk::create() below.
+rawstd::Task<std::unique_ptr<Object>>
+Target::open(rawio::Queue& queue, int flags) const {
+    if ((flags & ~RAWSTOR_READONLY) != 0) {
+        rawstd_error("Unknown open flags: %x\n", flags);
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     RawstdUUID bound_snapshot_id = snapshot_id();
-    if (!rawstd_uuid_is_nil(&bound_snapshot_id)) {
-        rawstd_error("Opening a bound snapshot is not supported yet\n");
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    if (!rawstd_uuid_is_nil(&bound_snapshot_id) &&
+        (flags & RAWSTOR_READONLY) == 0) {
+        rawstd_error("A bound snapshot can only be opened RAWSTOR_READONLY\n");
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
     std::vector<std::vector<rawstd::URI>> chunks = chunk_uris_by_offset(_uris);
@@ -1016,7 +1023,8 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) const {
     RawstdUUID last_id = uuid_from_target(chunks.back().front());
     uint64_t last_offset = extract_offset(chunks.back().front());
     std::unique_ptr<Chunk> last = co_await Chunk::create(
-        chunk_locations.back(), queue, last_id, last_offset
+        chunk_locations.back(), queue, last_id, last_offset, flags,
+        bound_snapshot_id
     );
 
     uint64_t chunk_size = last->spec().chunk_size;
@@ -1064,8 +1072,8 @@ rawstd::Task<std::unique_ptr<Object>> Target::open(rawio::Queue& queue) const {
     }
 
     co_return std::unique_ptr<Object>(new MultiChunkObject(
-        queue, last_id, size, chunk_size, std::move(chunk_locations),
-        std::move(last)
+        queue, last_id, size, chunk_size, flags, bound_snapshot_id,
+        std::move(chunk_locations), std::move(last)
     ));
 }
 
@@ -1201,13 +1209,14 @@ int rawstor_target_set_sync_state(
 }
 
 int rawstor_target_open(
-    RawIOQueue* queue, const char* target, RawstorObject** object,
+    RawIOQueue* queue, const char* target, int flags, RawstorObject** object,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
         launch_open_op_coro(
-            std::move(t), static_cast<rawio::Queue*>(queue), object, cb, data
+            std::move(t), static_cast<rawio::Queue*>(queue), flags, object, cb,
+            data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;

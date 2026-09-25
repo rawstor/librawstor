@@ -416,6 +416,9 @@ int rawstor_target_remove(
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
+/** rawstor_target_open() flag: open read-only (see its own doc comment). */
+#define RAWSTOR_READONLY 1
+
 /**
  * @brief Asynchronously open an existing object for reading and/or writing.
  *
@@ -441,6 +444,14 @@ int rawstor_target_remove(
  *                - "file:///var/rawstor/019cbfad-a389-7d42-a0f6-c29993ac8c00"
  *                - "ost://host1:9090/abc,ost://host2:9090/abc"  (mirroring)
  *                - "file:///data/abc,ost://host1:9090/abc"      (locality)
+ * @param flags   Open flags: 0, or RAWSTOR_READONLY. A @p target that
+ *                names a bound snapshot version (see
+ *                rawstor_target_snapshot_id()) can only be opened with
+ *                RAWSTOR_READONLY (@c -EINVAL otherwise). RAWSTOR_READONLY
+ *                also lets a mirrored object open without a write quorum
+ *                (reachable members are read from as-is: no mirror
+ *                state is recorded, no read-repair or resync runs), and
+ *                every write to the resulting handle fails with @c -EROFS.
  * @param object  Out-parameter written exactly once, immediately before
  *                @p cb is invoked: the opaque handle on success, or NULL on
  *                error. The caller must not modify the pointed-to memory
@@ -470,7 +481,7 @@ int rawstor_target_remove(
  * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
  */
 int rawstor_target_open(
-    RawIOQueue* queue, const char* target, RawstorObject** object,
+    RawIOQueue* queue, const char* target, int flags, RawstorObject** object,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 

@@ -171,12 +171,13 @@ rawstd::Task<void> Backend::close() {
     co_await _queue.close(f);
 }
 
-rawstd::Task<void> Backend::set_object(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<void>
+Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
 
-    int fd = co_await _open_object(id, offset);
+    int fd = co_await _open_object(id, offset, flags);
     set_fd(fd);
 }
 
@@ -194,7 +195,7 @@ rawstd::Task<void> Backend::set_snapshot(
 rawstd::Task<uint64_t>
 Backend::_blk_size(const RawstdUUID& id, uint64_t offset) {
 #if defined(RAWSTD_ON_LINUX)
-    int f = co_await _open_object(id, offset);
+    int f = co_await _open_object(id, offset, 0);
 
     uint64_t size = 0;
     if (ioctl(f, BLKGETSIZE64, &size) == -1) {

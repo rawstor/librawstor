@@ -76,11 +76,14 @@ rawstd::Task<void> SingleChunkObject::close() {
 
 MultiChunkObject::MultiChunkObject(
     rawio::Queue& queue, const RawstdUUID& id, uint64_t size,
-    uint64_t chunk_size, std::vector<std::vector<rawstd::URI>> chunk_locations,
+    uint64_t chunk_size, int flags, const RawstdUUID& snapshot_id,
+    std::vector<std::vector<rawstd::URI>> chunk_locations,
     std::unique_ptr<Chunk> last_chunk
 ) :
     Object(queue, id, size),
-    _chunk_size(chunk_size) {
+    _chunk_size(chunk_size),
+    _flags(flags),
+    _snapshot_id(snapshot_id) {
     _chunks.resize(chunk_locations.size());
     for (size_t i = 0; i < chunk_locations.size(); ++i) {
         _chunks[i].locations = std::move(chunk_locations[i]);
@@ -111,8 +114,9 @@ rawstd::Task<Chunk*> MultiChunkObject::_chunk(uint32_t index) {
     std::exception_ptr error;
     try {
         uint64_t offset = static_cast<uint64_t>(index) * _chunk_size;
-        entry.chunk =
-            co_await Chunk::create(entry.locations, _queue, _id, offset);
+        entry.chunk = co_await Chunk::create(
+            entry.locations, _queue, _id, offset, _flags, _snapshot_id
+        );
     } catch (const std::system_error& e) {
         entry.open_errno = e.code().value();
         error = std::current_exception();

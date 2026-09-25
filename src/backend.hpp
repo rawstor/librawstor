@@ -111,9 +111,12 @@ public:
     // real wire round trip either way), so a caller that also needs this
     // copy's own meta() (e.g. Slot::open(), see its own doc comment)
     // calls it separately, afterward. A previously snapshotted version is
-    // bound via set_snapshot() below instead.
+    // bound via set_snapshot() below instead. `flags` is RAWSTOR_READONLY
+    // or 0 (<rawstor/target.h>): READONLY opens the object read-only all
+    // the way down to the final open (blk-backed: O_RDONLY; ost://: the
+    // server's own rawstor_target_open() does the same).
     virtual rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t offset) = 0;
+    set_object(const RawstdUUID& id, uint64_t offset, int flags) = 0;
 
     // Same as set_object() above, but binds one previously snapshotted
     // version of `object_id`/`offset` (`snapshot_id`, never nil -- see
