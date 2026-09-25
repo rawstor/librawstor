@@ -259,9 +259,9 @@ rawstd::Task<void> Session::_dispatch(
         // The mandatory handshake; MDS control connections bind no
         // object (docs/mds.md, "Wire protocol") -- just drain
         // the fixed payload and ack. SET_OBJECT rides
-        // RawstorOSTFrameSnapPayload on the wire (shared with every
+        // RawstorOSTFrameBasicPayload on the wire (shared with every
         // other server role, protocol.h).
-        RawstorOSTFrameSnapPayload payload;
+        RawstorOSTFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         co_await session->_send_response(head.cmd, head.cid, 0);
         break;
@@ -297,13 +297,13 @@ rawstd::Task<void> Session::_dispatch(
         break;
     }
     case RAWSTOR_CMD_OBJ_OPEN: {
-        RawstorOSTFrameSnapPayload payload;
+        RawstorOSTFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
         std::vector<unsigned char> data;
         try {
             ObjectMap map = store.open(
-                uuid_of(payload.object_id), uuid_of(payload.snap_id)
+                uuid_of(payload.object_id), uuid_of(payload.snapshot_id)
             );
             data = encode_object_map(store.topology(), map);
         } catch (const std::system_error& e) {
@@ -377,7 +377,7 @@ rawstd::Task<void> Session::_dispatch(
                 );
             }
             out.map_epoch = store.snap_commit(
-                uuid_of(payload.id), uuid_of(payload.snap_id), members
+                uuid_of(payload.id), uuid_of(payload.snapshot_id), members
             );
         } catch (const std::system_error& e) {
             res = -e.code().value();
@@ -392,13 +392,13 @@ rawstd::Task<void> Session::_dispatch(
         break;
     }
     case RAWSTOR_CMD_OBJ_SNAP_REMOVE: {
-        RawstorOSTFrameSnapPayload payload;
+        RawstorOSTFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
         std::vector<unsigned char> data;
         try {
             std::vector<SnapMember> members = store.snap_remove(
-                uuid_of(payload.object_id), uuid_of(payload.snap_id)
+                uuid_of(payload.object_id), uuid_of(payload.snapshot_id)
             );
             data.resize(
                 members.size() * sizeof(RawstorObjectSnapMemberPayload)
@@ -428,7 +428,7 @@ rawstd::Task<void> Session::_dispatch(
     default:
         // Forward-compat and role separation (docs/mds.md, "Wire
         // protocol"): this v1 MDS serves the object group only, not yet
-        // the shared metadata group (SPEC/META/SET_SYNC_STATE -- stage
+        // the shared metadata group (META/SET_SYNC_STATE -- stage
         // 3's witness role) -- there's no length field on the request to
         // safely skip an unknown payload, so answering -ENOSYS here still
         // requires the peer to close and reconnect, same as an OST's own

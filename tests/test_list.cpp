@@ -94,6 +94,9 @@ TEST(ListTest, merge) {
         .size = 1ull << 20,
         .width = 1,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     res = create(target11, spec);
     ASSERT_EQ(res, 0);
@@ -197,6 +200,9 @@ TEST(ListTest, merge_multi_chunk) {
         .size = 1ull << 20,
         .width = 1,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ssize_t res = create(chunk0, spec);
     ASSERT_EQ(res, 0);
@@ -283,6 +289,9 @@ TEST(ListTest, pagination) {
             .size = 1ull << 10,
             .width = 1,
             .chunk_size = 0,
+            .stripe_width = 0,
+            .failure_domain = 0,
+            .member_kind = RAWSTOR_MEMBER_DATA,
         };
 
         char target[65536];

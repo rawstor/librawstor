@@ -31,10 +31,10 @@ private:
     // comment below) rather than left for a caller to track separately,
     // so every subclass rejects a record from an incompatible version
     // the same way. Private: only meta_encode()/meta_decode()'s own
-    // implementation ever needs it. Still 1 despite the width/chunk_size
-    // fields added below -- this whole format is itself part of the
-    // unreleased 0.3.0 line (no live installation has ever written one),
-    // so there's nothing to stay compatible with yet.
+    // implementation ever needs it. Still 1 despite the member_kind/
+    // width/chunk_size fields added below -- this whole format is itself
+    // part of the unreleased 0.3.0 line (no live installation has ever
+    // written one), so there's nothing to stay compatible with yet.
     static constexpr unsigned int META_FORMAT_VERSION = 1;
 
     // Writes dispatched to the io queue whose completion hasn't arrived
@@ -83,10 +83,11 @@ protected:
     _open_object(const RawstdUUID& id, uint64_t offset, int flags) = 0;
 
     // Opens one previously-snapshotted version of `id`/`offset`
-    // (`snapshot_id`, never nil -- see create_snapshot() below). Default:
-    // ENOTSUP, covering file::Backend and lvm::Backend (no native CoW)
-    // without each needing its own override; zfs::Backend overrides this
-    // with the real thing.
+    // (`snapshot_id`, never nil -- see create_snapshot() below,
+    // docs/mds.md "Snapshots"). Default: ENOTSUP, covering
+    // file::Backend and lvm::Backend (no native CoW) without each
+    // needing its own override; zfs::Backend overrides this with the
+    // real thing.
     virtual rawstd::Task<int> _open_snapshot(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     );
@@ -134,16 +135,21 @@ protected:
     // record to this constant instead of guessing; nothing outside the
     // class hierarchy needs it, unlike meta_encode()/meta_decode()
     // themselves (public further down, for tests/).
-    static constexpr size_t META_MAX_SIZE = 256;
+    static constexpr size_t META_MAX_SIZE = 400;
 
 public:
-    // A chunk's own placement identity: stamped at create, immutable
-    // afterwards, persisted alongside the mirror consistency state by
-    // meta_encode()/meta_decode() below. chunk_size here is always the
-    // full byte value -- RawstorOSTFrameAllocatePayload's own chunk_shift
-    // is only a wire-transfer encoding (its own doc comment on why),
-    // already converted back to bytes before reaching this local record.
+    // A chunk's own placement identity (docs/mds.md, chunk_meta), minus
+    // size/consistency state (RawstorObjectSyncState already covers
+    // those): stamped at create, immutable afterwards, persisted
+    // alongside sync state by meta_encode()/meta_decode() below --
+    // set_sync_state() must read the existing record and carry this
+    // part through unchanged rather than reset it, since it never
+    // receives this identity itself. chunk_size here is always the full
+    // byte value -- RawstorOSTFrameAllocatePayload's own chunk_shift is
+    // only a wire-transfer encoding (its own doc comment on why), already
+    // converted back to bytes before reaching this local record.
     struct ChunkIdentity {
+        RawstorMemberKind member_kind;
         uint8_t width;
         uint64_t chunk_size;
     };
@@ -164,7 +170,7 @@ public:
     // latter stamped at create and never changed again) as a compact
     // colon-separated string of hex fields, e.g.
     // "version=1:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:
-    // width=0:chunk_size=0" -- shared by every blk-backed
+    // member_kind=0:width=0:chunk_size=0" -- shared by every blk-backed
     // subclass's own native per-copy metadata storage: lvm::Backend's LVM
     // tag, zfs::Backend's ZFS user property, and file::Backend's own
     // on-disk .meta file (NUL-padded out to META_MAX_SIZE bytes -- see

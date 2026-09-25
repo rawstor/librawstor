@@ -90,12 +90,16 @@ open_object(rawio::Queue& queue, const rawstd::URI& location) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    rawstor::Target target({rawstd::URI(location, uuid_string)});
+    rawstd::URI uri(location, uuid_string);
+    rawstor::Target target(uri.str());
 
     RawstorObjectSpec spec{
         .size = 1u << 20,
         .width = 1,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     run(queue, target.create(queue, spec));
 
@@ -312,6 +316,7 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
         .reserved1 = 0,
         .reserved2 = 0,

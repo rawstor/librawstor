@@ -3,18 +3,23 @@ SUBDIRS = librawstd \
           src \
           cli \
           vhost \
-          vhost-qemu
+          vhost-qemu \
+          ost
 
 if ENABLE_VDUSE_BACKEND
     SUBDIRS += vduse
 endif
 
-if ENABLE_TESTS
-    SUBDIRS += tests
+if WITH_SQLITE3
+    SUBDIRS += mds
 endif
 
-if ENABLE_OST_BACKEND
-    SUBDIRS += ost
+# After ost/mds: tests/ links against ost's libost.la unconditionally,
+# and mds's libmds.la/libmdsstore.la when sqlite3 is enabled
+# (Volume::snapshot()/snap_remove()'s real MDS+OST wire path,
+# tests/volume_env.*).
+if ENABLE_TESTS
+    SUBDIRS += tests
 endif
 
 if WITH_PYTHON3
@@ -58,6 +63,9 @@ EXTRA_DIST = deb/librawstor/compat \
              deb/librawstor/rawstor-vduse.install \
              deb/librawstor/rawstor-vduse.postinst \
              deb/librawstor/rawstor-vduse.prerm \
+             deb/librawstor/rawstor-mds.install \
+             deb/librawstor/rawstor-mds.postinst \
+             deb/librawstor/rawstor-mds.prerm \
              deb/librawstor/rules \
              deb/python3-rawstor/compat \
              deb/python3-rawstor/format \
@@ -65,6 +73,7 @@ EXTRA_DIST = deb/librawstor/compat \
              systemd/rawstor-ost.service \
              systemd/rawstor-vhost@.service \
              systemd/rawstor-vduse@.service \
+             systemd/rawstor-mds.service \
              udev/60-rawstor-vduse.rules \
              .github/tools/deb-changelog.sh \
              ChangeLog.md \
@@ -96,9 +105,7 @@ test: all
 	  make -C vduse test; \
 	fi
 	make -C tests test
-	@if [ "x$(ENABLE_OST_BACKEND)" = "xyes" ]; then \
-	  make -C ost test; \
-	fi
+	make -C ost test
 	@if [ "x$(WITH_PYTHON3)" = "xyes" ]; then \
 	  make -C pyrawstor test; \
 	fi

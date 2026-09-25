@@ -912,9 +912,8 @@ PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
 
-    /* Same ','-separated URI count rawstor_target_create()'s own doc
-     * comment describes deriving width from -- rawstor_target_meta()
-     * requires its own `count` to equal this exactly. */
+    /* rawstor_target_meta() returns one entry per ','-separated URI in
+     * `target` -- `count` must match that exactly. */
     size_t count = 1;
     for (const char* p = target; *p != '\0'; p++) {
         if (*p == ',') {

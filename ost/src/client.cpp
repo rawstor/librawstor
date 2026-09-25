@@ -2,6 +2,11 @@
 
 #include <ost/server.hpp>
 
+#include "object.hpp"
+#include "target.hpp"
+
+#include <rawio/queue.hpp>
+
 #include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
@@ -25,6 +30,7 @@
 #include <vector>
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -76,8 +82,10 @@ uint64_t chunk_shift_to_size(uint8_t chunk_shift) {
 // join more than one URI with a comma, but rawstor_target_offsets() already
 // collapses same-offset mirrors down to one entry per distinct chunk --
 // matching RawstorOSTFrameListEntry's own doc comment (protocol.h): one row
-// per offset, all sharing that id, for the receiving end to group back into
-// one rawstor::ChunkGroup.
+// per offset, all sharing that id and snapshot_id (the latter always nil
+// today, an mds:// chunk never itself being a bound snapshot -- see
+// mds.md), for the receiving end to group back into one
+// rawstor::ChunkGroup.
 void append_list_entries(
     const char* target, std::vector<RawstorOSTFrameListEntry>& out
 ) {
@@ -92,8 +100,24 @@ void append_list_entries(
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
+    RawstdUUIDString snapshot_id_buf;
+    res = rawstor_target_snapshot_id(
+        target, snapshot_id_buf, sizeof(snapshot_id_buf)
+    );
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    RawstdUUID snapshot_id{};
+    if (res > 0) {
+        res = rawstd_uuid_from_string(&snapshot_id, snapshot_id_buf);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+    }
+
     RawstorOSTFrameListEntry base{};
     memcpy(base.id, id.bytes, sizeof(base.id));
+    memcpy(base.snapshot_id, snapshot_id.bytes, sizeof(base.snapshot_id));
 
     int count = rawstor_target_offsets(target, nullptr, 0);
     if (count < 0) {
@@ -123,38 +147,23 @@ void append_list_entries(
 // comment for the general shape this follows.
 // ---------------------------------------------------------------------
 
-// Same shape as close_trampoline() below -- rawstor_target_open() writes
-// the opened object directly to `*object` (an out-parameter, see
-// co_target_open() below) rather than delivering it as one of the C
-// callback's own arguments, so there's nothing left for this one to hand
-// to complete() beyond the result.
-int open_trampoline(ssize_t result, void* data) {
-    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
-    return 0;
-}
-
-// `target` is taken by value (not `const std::string&`): a coroutine
-// parameter declared as a reference is *not* lifetime-extended past the
-// initiating call the way an ordinary function's would be, so a caller
-// passing a temporary (e.g. rawstd::URI::uris(...)) needs this to make its
-// own copy, safely owned by the coroutine frame across suspension.
+// Uses rawstor::Target directly (not the rawstor_target_open() C API):
+// this is the one place in ost/ that needs a snapshot_id-bound open
+// (docs/mds.md, "Snapshots" -- SET_OBJECT's own snapshot_id field already
+// carries it, but the public C API has no way to pass it through).
+// `uris` already has any bound version folded into its own trailing path
+// segment (Client::_targets()'s own `snapshot_id` parameter, called by
+// _set_object() below) -- Target::open() itself takes no `snapshot_id`
+// parameter of its own. Taken by value for the same reason a by-value
+// std::string used to be here: a coroutine parameter declared as a
+// reference is not lifetime-extended past the initiating call the way an
+// ordinary function's would be.
 rawstd::Task<RawstorObject*>
-co_target_open(RawIOQueue* queue, std::string target, int flags) {
-    // rawstor_target_open() writes `object` before open_trampoline() ever
-    // runs (see its own doc comment), and open_trampoline() only fires
-    // once co_await awaiter below resumes -- so `object` is always
-    // already valid, whether it took a real suspension or completed
-    // synchronously, by the time it's read here.
-    RawstorObject* object = nullptr;
-    rawstd::CallbackAwaitable<void> awaiter;
-    int res = rawstor_target_open(
-        queue, target.c_str(), flags, &object, open_trampoline, &awaiter
-    );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_await awaiter;
-    co_return object;
+co_target_open(RawIOQueue* queue, std::vector<rawstd::URI> uris, int flags) {
+    rawstor::Target t(rawstd::URI::uris(uris));
+    std::unique_ptr<rawstor::Object> object =
+        co_await t.open(*static_cast<rawio::Queue*>(queue), flags);
+    co_return object.release();
 }
 
 int close_trampoline(ssize_t result, void* data) {
@@ -1040,17 +1049,19 @@ rawstd::DetachedTask Client::_allocate(
 
     int result = 0;
     try {
-        // Target::create() requires width to exactly match the target's
-        // own URI count -- here, that's this server's own locations(),
-        // not whatever the incoming request's payload.width happens to
-        // be (the caller's target-wide URI count, which has no reason to
-        // match this server's own location count for a relay/multi-
-        // location rawstor-ost). chunk_shift_to_size() can throw on a
+        // width is forwarded straight through: it's the object's own
+        // configured policy (persisted per-copy for reconstruct,
+        // docs/mds.md, chunk_meta), not a statement about how many URIs
+        // this relay/multi-location rawstor-ost happens to have
+        // configured locally. chunk_shift_to_size() can throw on a
         // malformed chunk_shift, so it needs to run inside this try too.
         RawstorObjectSpec spec{
             .size = payload.size,
-            .width = static_cast<unsigned int>(targets.size()),
+            .width = payload.width,
             .chunk_size = chunk_shift_to_size(payload.chunk_shift),
+            .stripe_width = payload.stripe_width,
+            .failure_domain = payload.failure_domain,
+            .member_kind = static_cast<RawstorMemberKind>(payload.member_kind),
         };
 
         std::string target = rawstd::URI::uris(targets);
@@ -1126,11 +1137,11 @@ rawstd::DetachedTask Client::_release(
     }
 }
 
-// SNAPSHOT: forwarded to the same rawstor_target_create() this server's
-// own local backend(s) implement -- the bound snapshot_id baked into the
-// target's own path (_targets()'s own `snapshot_id` parameter) makes it
-// take a CoW snapshot instead of creating a fresh object, same shape as
-// _release() above.
+// SNAPSHOT (docs/mds.md, "Snapshots"): forwarded to the same
+// rawstor_target_create() this server's own local backend(s) implement --
+// the bound snapshot_id baked into the target's own path (_targets()'s
+// own `snapshot_id` parameter) makes it take a CoW snapshot instead of
+// creating a fresh object, same shape as _release() above.
 rawstd::DetachedTask Client::_create_snapshot(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
     RawstorOSTFrameBasicPayload payload
@@ -1155,11 +1166,18 @@ rawstd::DetachedTask Client::_create_snapshot(
     try {
         std::string target = rawstd::URI::uris(targets);
         rawstd::CallbackAwaitable<void> awaiter;
-        // spec is meaningless for a CoW snapshot (the version's shape
-        // comes from the live object) -- NULL, per rawstor_target_
-        // create()'s own doc comment.
-        int res = rawstor_target_create(
-            client->_queue, target.c_str(), nullptr, result_trampoline, &awaiter
+        // `target` already carries the bound snapshot_id (_targets() above)
+        // -- rawstor_target_create_snapshot() takes that as-is (its own
+        // mode 1, doc comment) and does the actual CoW; create() itself no
+        // longer accepts a bound target at all (rejects it with -EINVAL,
+        // its own doc comment) now that create_snapshot() is the only
+        // entry point for this. The resulting target string it also
+        // returns is discarded -- this wire command only reports
+        // success/failure.
+        char snapshot_target[65536];
+        int res = rawstor_target_create_snapshot(
+            client->_queue, target.c_str(), nullptr, snapshot_target,
+            sizeof(snapshot_target), result_trampoline, &awaiter
         );
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -1251,6 +1269,7 @@ rawstd::DetachedTask Client::_meta(
                 .state =
                     static_cast<RawstorOSTSyncStateType>(meta.sync_state.state),
                 .chunk_shift = chunk_size_to_shift(meta.spec.chunk_size),
+                .member_kind = static_cast<uint8_t>(meta.spec.member_kind),
                 .width = static_cast<uint8_t>(meta.spec.width),
                 .reserved1 = 0,
                 .reserved2 = 0,
@@ -1378,7 +1397,7 @@ rawstd::DetachedTask Client::_set_object(
     RawstorOSTFrameBasicPayload payload
 ) {
     RawIOQueue* queue;
-    std::string target;
+    std::vector<rawstd::URI> targets;
     {
         std::shared_ptr<Client> client = co_await _close_current_object(weak);
         if (client == nullptr) {
@@ -1388,22 +1407,20 @@ rawstd::DetachedTask Client::_set_object(
 
         RawstdUUID uuid;
         memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-        // snapshot_id carries the bound version -- nil for live, or a
-        // previously snapshotted id.
+        // snapshot_id is the bound version -- nil for live, or a previously
+        // snapshotted id (docs/mds.md, "Snapshots").
         RawstdUUID snapshot_id;
         memcpy(
             snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id)
         );
-        target = rawstd::URI::uris(
-            client->_targets(uuid, payload.offset, snapshot_id)
-        );
+        targets = client->_targets(uuid, payload.offset, snapshot_id);
     }
 
     RawstorObject* object = nullptr;
     int error = 0;
     try {
         object = co_await co_target_open(
-            queue, target, static_cast<int>(payload.val)
+            queue, targets, static_cast<int>(payload.val)
         );
     } catch (const std::system_error& e) {
         error = e.code().value();

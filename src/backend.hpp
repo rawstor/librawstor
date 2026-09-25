@@ -18,10 +18,12 @@ namespace rawstor {
 
 // One list_chunks() entry: an id and every offset this one backend holds
 // for it (sorted ascending) -- one entry per id, not one per (id,
-// offset) pair, since more than one offset can share an id (distinct
-// chunks of the same multi-chunk object, docs/locations_and_targets.md).
-// `offsets` is never empty: an id with nothing to report isn't an entry
-// at all.
+// offset) pair, since more than one offset can share an id: distinct
+// chunks of the same multi-chunk object (docs/concepts.md), or, for an
+// mds:// volume specifically, every one of its own chunks (mds::Backend's
+// own chunk_slot_target(), docs/mds.md's "Chunk identity": obj_id =
+// volume_id). `offsets` is never empty: an id with nothing to report
+// isn't an entry at all.
 struct ChunkGroup {
     RawstdUUID id;
     std::vector<uint64_t> offsets;
@@ -73,19 +75,20 @@ public:
 
     // `chunks`: overwritten with this page's own ChunkGroups, one per id,
     // each carrying every offset this backend holds for that id
-    // (ascending) -- the caller (Location::list()) combines each one
-    // with this backend's own location() to build a Target itself; a
-    // single Backend never owns enough context to do that (it doesn't
-    // know its sibling mirrors' own URIs). `token`: this call's
-    // pagination cursor on entry (the last id already returned),
-    // overwritten with the next page's cursor on return (nil once
-    // there's nothing left) -- resumes strictly after the id `token`
-    // itself names, so `limit` counts ids (ChunkGroups), not individual
-    // offsets: a concrete backend never splits one id's own offsets
-    // across two pages. A concrete backend implements this by
-    // re-deriving its own full, sorted-by-id listing each call (as
-    // today) and resuming from the first id strictly greater than
-    // `token` (e.g. std::upper_bound).
+    // (ascending, including every chunk of an mds:// volume, now that
+    // they all share their volume's own id -- ChunkGroup's own doc
+    // comment) -- the caller (Location::list()) combines each one with
+    // this backend's own location() to build a Target itself; a single
+    // Backend never owns enough context to do that (it doesn't know its
+    // sibling mirrors' own URIs). `token`: this call's pagination cursor
+    // on entry (the last id already returned), overwritten with the next
+    // page's cursor on return (nil once there's nothing left) -- resumes
+    // strictly after the id `token` itself names, so `limit` counts ids
+    // (ChunkGroups), not individual offsets: a concrete backend never
+    // splits one id's own offsets across two pages. A concrete backend
+    // implements this by re-deriving its own full, sorted-by-id listing
+    // each call (as today) and resuming from the first id strictly
+    // greater than `token` (e.g. std::upper_bound).
     virtual rawstd::Task<void> list_chunks(
         unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
     ) = 0;
@@ -103,18 +106,23 @@ public:
     // Removes one version previously registered via create_snapshot()
     // below (`snapshot_id`, never nil -- nil is the live version, removed via
     // remove() above). Default: ENOTSUP, covering file::Backend and
-    // lvm::Backend (classic LVM has no thin CoW) without each needing its
-    // own override; zfs::Backend overrides this with the real thing.
+    // lvm::Backend (classic LVM has no thin CoW -- docs/mds.md's own
+    // "Snapshots" section) without each needing its own override;
+    // zfs::Backend overrides this with the real thing, mds::Backend
+    // overrides it with its own MDS-orchestrated fan-out (see
+    // mds_backend.cpp).
     virtual rawstd::Task<void> remove_snapshot(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     );
 
-    // The full creation-time shape (size/width/chunk_size) plus this
-    // copy's own mirror consistency identity (state/epoch/sync_id and its
-    // ancestry, see docs/mirroring.md) -- the one metadata round trip
-    // every concrete Backend implements, no separate cheaper variant that
-    // only reports a subset. set_sync_state() persists a caller-supplied
-    // sync identity durably before returning.
+    // The full creation-time shape (size/width/chunk_size/member_kind)
+    // plus this copy's own mirror consistency identity (state/epoch/
+    // sync_id and its ancestry, see docs/mirroring.md) -- the one
+    // metadata round trip every concrete Backend implements, no separate
+    // cheaper variant that only reports a subset (a caller that only
+    // wants the spec half, e.g. Chunk::spec(), just discards
+    // RawstorObjectMeta::sync_state). set_sync_state() persists a
+    // caller-supplied sync identity durably before returning.
     virtual rawstd::Task<RawstorObjectMeta>
     meta(const RawstdUUID& id, uint64_t offset) = 0;
 
@@ -143,11 +151,12 @@ public:
 
     // Same as set_object() above, but binds one previously snapshotted
     // version of `object_id`/`offset` (`snapshot_id`, never nil -- see
-    // create_snapshot() below) instead of its live version. Default:
-    // ENOTSUP, covering file::Backend and lvm::Backend (classic LVM has
-    // no thin CoW) without each needing its own override; blk::Backend
-    // overrides this for its own subclasses capable of it (currently
-    // zfs::Backend only).
+    // create_snapshot() below, docs/mds.md "Snapshots") instead of its
+    // live version. Default: ENOTSUP, covering file::Backend and
+    // lvm::Backend (classic LVM has no thin CoW) without each needing its
+    // own override; blk::Backend overrides this for its own subclasses
+    // capable of it (currently zfs::Backend only), mds::Backend overrides
+    // it with its own MDS-orchestrated fan-out (see mds_backend.cpp).
     virtual rawstd::Task<void> set_snapshot(
         const RawstdUUID& object_id, uint64_t offset,
         const RawstdUUID& snapshot_id
@@ -155,14 +164,27 @@ public:
 
     // Native CoW snapshot of the live version as `snapshot_id` (never nil --
     // nil is the live version; like every object id, the caller
-    // generates it itself before calling). Its removal is
+    // generates it itself before calling, docs/mds.md). Its removal is
     // remove_snapshot() above, called with this same `snapshot_id`. Default:
-    // ENOTSUP, covering file::Backend and lvm::Backend (classic LVM has
-    // no thin CoW) without each needing its own override;
-    // zfs::Backend overrides this with the real thing.
+    // ENOTSUP, covering file::Backend and lvm::Backend (classic LVM has no thin
+    // CoW -- docs/mds.md's own "Snapshots" section) without each needing
+    // its own override; zfs::Backend overrides this with the real thing,
+    // mds::Backend overrides it with its own MDS-orchestrated fan-out
+    // (see mds_backend.cpp).
     virtual rawstd::Task<void> create_snapshot(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     );
+
+    // Grows `id` to `new_size` (grow-only -- docs/mds.md: shrink
+    // interacts with GC and snapshots, deferred past v1). Default:
+    // ENOTSUP, covering every backend a plain (non-mds://) target
+    // addresses directly -- their own size is fixed at create() time,
+    // same as today. mds::Backend overrides this with the real thing
+    // (Object::resize()'s former per-chunk materialization logic);
+    // `offset` is always 0 there (a single mds:// URI is never
+    // itself split into chunks -- resize operates on the whole volume).
+    virtual rawstd::Task<void>
+    resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size);
 
     virtual rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) = 0;

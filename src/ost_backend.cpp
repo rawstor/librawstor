@@ -60,7 +60,7 @@ int validate_result(size_t size, size_t result) noexcept {
 // rejection from the backend (response->body.res < 0) from a broken/
 // malformed wire -- every failure here just reconnects and retries, up
 // to the same rawstor_opts_io_attempts() budget, unless it's one
-// is_permanent_backend_error() (see slot.cpp) already knows can
+// is_permanent_backend_error() (see connection.cpp) already knows can
 // never succeed on retry. EBADMSG is one such body.res value: the OST
 // server sends it (see ost/src/client.cpp) only when the payload it just
 // received doesn't hash to what the client declared, meaning the client
@@ -825,7 +825,7 @@ public:
 };
 
 // ALLOCATE's request carries the object's own size and its caller's
-// width intent as a RawstorOSTFrameAllocatePayload (not just object_id/
+// mirrors intent as a RawstorOSTFrameAllocatePayload (not just object_id/
 // offset/val like BackendOpBasic below), so it needs its own request shape
 // -- the response is otherwise the same no-payload acknowledgement as
 // BackendOpFlush above.
@@ -852,9 +852,12 @@ public:
                 .chunk_offset = chunk_offset,
                 .size = sp.size,
                 .chunk_shift = chunk_size_to_shift(sp.chunk_size),
+                .stripe_width = sp.stripe_width,
+                .failure_domain = sp.failure_domain,
+                .member_kind = (uint8_t)sp.member_kind,
                 .width = (uint8_t)sp.width,
+                .reserved1 = 0,
                 .reserved2 = 0,
-                .reserved3 = 0,
             },
         }) {
         memcpy(
@@ -889,15 +892,16 @@ public:
 
 // The cid-dispatched counterpart of BackendOpRead/BackendOpWrite/
 // BackendOpFlush above, for the RawstorOSTFrameBasic-shaped commands
-// (remove/spec/info/set_object/set_snapshot/create_snapshot) -- these
-// carry no hash and have either no response body or a body of some number
-// of T's, per response.body.res. Routed through the same _recv_pump
-// demultiplex mechanism as every other op, now that the pump starts in
-// Backend::_connect() instead of after the first request round-trips.
-// `val`/`snapshot_id` are never both meaningful for the same command
-// (protocol.h's own doc comment on RawstorOSTFrameBasicPayload) but both
-// live in this one op regardless, so every such command shares one
-// request path rather than two nearly identical ones.
+// (remove/meta/info/set_object/set_snapshot/create_snapshot) -- these
+// carry no hash and have either no response body or a body of some
+// number of T's, per response.body.res. Routed through the same
+// _recv_pump demultiplex mechanism as every other op, now that the pump
+// starts in Backend::_connect() instead of after the first request
+// round-trips. `val`/`snapshot_id` are never both meaningful for the
+// same command (protocol.h's own doc comment on
+// RawstorOSTFrameBasicPayload) but both live in this one op regardless,
+// so every such command shares one request path rather than two nearly
+// identical ones.
 template <typename T = char>
 class BackendOpBasic final : public BackendOp {
 private:
@@ -1096,7 +1100,7 @@ BackendOp* Backend::_find_op(uint16_t cid) {
 
 void Backend::_add_op(const std::shared_ptr<BackendOp>& op) {
     if (_read_event == nullptr) {
-        // _recv_pump has already exited (e.g. the slot died right
+        // _recv_pump has already exited (e.g. the connection died right
         // after a previous op's response, before this one was ever
         // issued -- _connect() itself and this op's own caller can both
         // legitimately run to completion in between, with nothing to
@@ -1150,7 +1154,7 @@ rawstd::Task<void> Backend::_connect() {
     // transient one -- means "couldn't establish this backend"; all of
     // them surface as a plain std::system_error, which
     // Slot::_with_retry() reacts to by reconnecting and retrying
-    // (see slot.cpp).
+    // (see connection.cpp).
     if (!location().path().str().empty() && location().path().str() != "/") {
         rawstd_error("Empty path expected: %s\n", location().str().c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -1262,8 +1266,8 @@ rawstd::Task<void> Backend::close() {
     // a *sibling* op's own failure is what triggered this close() (e.g.
     // via Slot::invalidate_backend(), reacting to any
     // std::system_error one op's own Slot::_with_retry() caught --
-    // a dropped slot, but just as easily a well-formed error
-    // response for one op on an otherwise perfectly healthy slot,
+    // a dropped connection, but just as easily a well-formed error
+    // response for one op on an otherwise perfectly healthy connection,
     // which _recv_pump has no way to notice on its own since nothing
     // about the wire ever looked wrong): this backend's other, already-
     // sent ops are still sitting in _ops purely waiting on a response
@@ -1396,10 +1400,12 @@ rawstd::Task<void> Backend::list_chunks(
     memcpy(token.bytes, token_entry.id, sizeof(token.bytes));
 }
 
-// sp is forwarded on the wire unchanged (see BackendOpAllocate), width
-// included -- the remote rawstor-ost's own Client::_allocate() ignores
-// payload.width and fills in its own instead, from its own locally
-// configured location count (see its own comment).
+// sp is forwarded on the wire unchanged (see BackendOpAllocate); the
+// remote rawstor-ost's own Client::_allocate() derives its own local
+// copy count from its own configured location count directly (see its
+// own comment), never from anything in the request -- this connection is
+// still one copy from its caller's point of view, same as every other
+// backend.
 rawstd::Task<void> Backend::create(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
 ) {
@@ -1483,6 +1489,12 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
                 static_cast<const void*>(response.data())
             );
         ret.spec.size = payload.size;
+        ret.spec.member_kind =
+            static_cast<RawstorMemberKind>(payload.member_kind);
+        // payload.width is the chunk's own persisted redundancy width
+        // (docs/mds.md, chunk_meta) -- 0 for a plain object that was never
+        // given one (Target::meta()'s own doc comment on the resulting
+        // fallback).
         ret.spec.width = payload.width;
         ret.spec.chunk_size = chunk_shift_to_size(payload.chunk_shift);
         ret.sync_state.epoch = payload.epoch;
@@ -1624,7 +1636,7 @@ rawstd::DetachedTask Backend::_recv_pump(
 
             BackendOp* op = backend->_find_op(cid);
             if (op == nullptr) {
-                // A stray/late response for an op this slot
+                // A stray/late response for an op this connection
                 // already failed and that Slot::_op() has since
                 // retried on a different backend. We have no op to ask
                 // whether this response carries a body, so we can no

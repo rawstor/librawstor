@@ -7,6 +7,7 @@
 #include "opts.h"
 #include "ost_backend.hpp"
 #include "slot.hpp"
+#include "target.hpp"
 
 #include <rawio/awaitable.hpp>
 #include <rawio/stream.hpp>
@@ -14,6 +15,7 @@
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
+#include <rawstd/uri.hpp>
 
 #include <algorithm>
 #include <exception>
@@ -22,9 +24,13 @@
 #include <new>
 #include <optional>
 #include <random>
+#include <set>
+#include <sstream>
+#include <string>
 #include <system_error>
 #include <utility>
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -32,6 +38,66 @@
 #include <unordered_map>
 
 namespace {
+
+void validate_not_empty(const std::vector<rawstd::URI>& uris) {
+    if (!uris.empty()) {
+        return;
+    }
+
+    rawstd_error("Empty uri list\n");
+    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+}
+
+void validate_different_uris(const std::vector<rawstd::URI>& uris) {
+    if (uris.empty()) {
+        return;
+    }
+
+    std::set<rawstd::URI> seen;
+    for (const auto& uri : uris) {
+        if (seen.find(uri) != seen.end()) {
+            rawstd_error("Different uris expected\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        seen.insert(uri);
+    }
+}
+
+// One URI's worth of Chunk::spec()/Chunk::meta()'s own work: connect a
+// single-backend Slot just for this call, meta() it, close it again --
+// unlike create() below, neither of these two keeps the connection
+// around afterward, so there's no reason to stand up a full pool
+// (rawstor_opts_sessions()) for it. Only Chunk::spec()/Chunk::meta()
+// below ever call this -- they're handed a raw URI list spanning more
+// than one chunk (Target::spec()/Target::meta()'s own callers), unlike
+// create() above, whose own `locations` carry no identity at all
+// (id/offset/snapshot_id are already separate parameters there). A
+// single parse_target_path() call answers id/offset/the URI's own
+// identity-stripped location together -- target.cpp's own per-URI
+// dispatch needs each of those independently enough to be worth its own
+// three named accessors, but this is their only call site here.
+rawstd::Task<RawstorObjectMeta>
+meta_one(rawio::Queue& queue, const rawstd::URI& uri) {
+    rawstor::TargetPath path = rawstor::parse_target_path(uri.path().str());
+    rawstd::URI stripped = uri;
+    for (unsigned int i = 0; i < path.segments; ++i) {
+        stripped = stripped.parent();
+    }
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, stripped, 1);
+    RawstorObjectMeta ret{};
+    std::exception_ptr error;
+    try {
+        ret = co_await slot->meta(path.id, path.offset);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    co_return ret;
+}
 
 // A nonzero random sync-set id; zero is reserved for legacy copies.
 uint64_t random_sync_id() {
@@ -76,19 +142,18 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
 
 namespace rawstor {
 
-// The heavy async work -- standing up a Slot per URI, fetching
-// spec()/meta() from each -- still lives in Target::open(), the one
-// place that actually constructs a Chunk (by analogy with
-// Slot(Private, queue)): a constructor can't co_await, so none of
-// that can live here. Deciding whether the result is trustworthy enough
-// to open from (_reconcile_sync_set(), or the mirrors == 1 shortcut)
-// CAN safely live here instead, now that `spec`/`members` already
-// reflect a completed connect+spec+open round -- same as
-// _reconcile_sync_set()'s own doc comment on why a refusal here is
-// safe to let unwind through a throwing constructor.
+// The heavy async work -- standing up a Slot per URI, meta()-ing each --
+// still lives in create() below, the one place that actually constructs
+// a Chunk (by analogy with Slot(Private, queue)): a constructor can't
+// co_await, so none of that can live here. Deciding whether the result
+// is trustworthy enough to open from (_reconcile_sync_set(), or the
+// mirrors == 1 shortcut) CAN safely live here instead, now that
+// `spec`/`members` already reflect a completed connect+open round --
+// same as _reconcile_sync_set()'s own doc comment on why a refusal here
+// is safe to let unwind through a throwing constructor.
 Chunk::Chunk(
-    Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
-    bool readonly, RawstorObjectSpec spec, std::vector<Member> members
+    Private, rawio::Queue& queue, RawstdUUID id, uint64_t offset, bool readonly,
+    RawstorObjectSpec spec, std::vector<Member> members
 ) :
     _queue(queue),
     _id(id),
@@ -167,6 +232,17 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     const RawstdUUID& id, uint64_t offset, int flags,
     const RawstdUUID& snapshot_id
 ) {
+    // Same two checks a Target's own constructor used to run on its own
+    // uris on this factory's behalf -- now run here instead, since
+    // Object's own lazy per-chunk opening (and tests/) call this
+    // directly, without a Target in between to have validated the list
+    // already. Nothing left to check that every location agrees on one
+    // identity: a bare location carries none -- `id`/`offset`/`snapshot_id`
+    // are already single, explicit parameters here, not derived from
+    // `locations` itself.
+    validate_not_empty(locations);
+    validate_different_uris(locations);
+
     // Every location's Slot goes out concurrently instead of one at a
     // time -- just Slot::create(), kept in a plain local vector
     // (parallel to `locations`, not the eventual member list yet: that's
@@ -191,16 +267,16 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // Anything else is unexpected (not a normal connectivity failure)
     // and aborts outright, even if every other member succeeded --
     // `fatal` marks that. Either way, co_await isn't allowed inside a
-    // catch block, so a failure is only recorded here; closing the slots
-    // that DID succeed happens just below, outside the handler, same
-    // shape as Target::create()'s own rollback.
+    // catch block, so a failure is only recorded here; closing the
+    // connections that DID succeed happens just below, outside the
+    // handler, same shape as Target::create()'s own rollback.
     std::exception_ptr eptr;
     bool fatal = false;
-    std::vector<std::unique_ptr<Slot>> slots(locations.size());
+    std::vector<std::unique_ptr<Slot>> cns(locations.size());
     size_t reachable = 0;
     for (size_t i = 0; i < connect_tasks.size(); ++i) {
         try {
-            slots[i] = co_await connect_tasks[i];
+            cns[i] = co_await connect_tasks[i];
             ++reachable;
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unreachable: %s\n", e.what());
@@ -221,7 +297,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // rethrown as-is, whichever of the two it was, rather than
     // reconstructed from a bare errno.
     if (fatal || reachable == 0) {
-        for (auto& slot : slots) {
+        for (auto& slot : cns) {
             if (!slot) {
                 continue;
             }
@@ -244,11 +320,11 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // that one member to unreachable (same F1/F4 tolerance as a connect
     // failure above), not a whole-create() failure by itself.
     std::vector<std::optional<rawstd::Task<RawstorObjectMeta>>> open_tasks(
-        slots.size()
+        cns.size()
     );
-    for (size_t i = 0; i < slots.size(); ++i) {
-        if (slots[i]) {
-            open_tasks[i] = slots[i]->open(id, offset, flags, snapshot_id);
+    for (size_t i = 0; i < cns.size(); ++i) {
+        if (cns[i]) {
+            open_tasks[i] = cns[i]->open(id, offset, flags, snapshot_id);
         }
     }
 
@@ -260,7 +336,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         }
 
         // co_await isn't allowed inside a catch block, so the failure is
-        // only recorded here; closing the slot happens just below,
+        // only recorded here; closing the connection happens just below,
         // outside the handler.
         bool unavailable = false;
         try {
@@ -276,42 +352,40 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         }
 
         try {
-            co_await slots[i]->close();
+            co_await cns[i]->close();
         } catch (const std::exception& e2) {
             rawstd_warning("Chunk::create(): %s\n", e2.what());
         }
-        slots[i].reset();
+        cns[i].reset();
     }
 
     // Members are assembled only now, with connect/open all already
     // settled -- one slot per location (the only member identity this
-    // codebase knows today). A local vector, not Chunk's own _members:
-    // no Chunk exists yet to hold it -- see the constructor's own doc
-    // comment on why that's now deferred to the very end. Slot indices
-    // must stay stable from here on (the reconnect probe addresses
-    // members by index): no reallocation after handing it to Chunk
-    // below. This factory's own overall spec (handed to Chunk's own
-    // constructor below) is whichever reachable member's own META
-    // answered first, in `locations`' own order -- every member of the
-    // same chunk agrees on it by construction, so there's no separate
-    // spec-fetch round trip to run first; metas[] already has it.
-    std::vector<Chunk::Member> members;
+    // codebase knows today; see Chunk::meta()'s own doc comment on why
+    // that isn't necessarily the whole story forever). Slot indices must
+    // stay stable from here on (the reconnect probe addresses members by
+    // index): no reallocation after handing it to Chunk below. This
+    // factory's own overall spec (handed to Chunk's own constructor
+    // below) is whichever reachable member's own META answered first, in
+    // `locations`' own order -- every member of the same chunk agrees on
+    // it by construction (docs/mds.md, chunk_meta), so there's no
+    // separate spec-fetch round trip to run first; metas[] already has
+    // it.
+    std::vector<Member> members;
     members.reserve(locations.size());
     reachable = 0;
     RawstorObjectSpec spec{};
     bool got_spec = false;
     for (size_t i = 0; i < locations.size(); ++i) {
-        // Chunk's own constructor (_reconcile_sync_set(), for width
-        // >= 2) only ever downgrades a member (e.g. an interrupted
+        // Chunk's own constructor (_reconcile_sync_set(), for more than
+        // one member) only ever downgrades a member (e.g. an interrupted
         // resync makes it STALE) -- it never upgrades one from the
         // STALE default, so a successfully opened member is marked
         // IN_SYNC up front.
-        Chunk::MemberState state =
-            opened[i] ? Chunk::MemberState::IN_SYNC : Chunk::MemberState::STALE;
+        MemberState state =
+            opened[i] ? MemberState::IN_SYNC : MemberState::STALE;
         members.push_back(
-            Chunk::Member{
-                std::move(slots[i]), locations[i], state, metas[i], opened[i]
-            }
+            Member{std::move(cns[i]), locations[i], state, metas[i], opened[i]}
         );
         if (opened[i]) {
             ++reachable;
@@ -324,8 +398,8 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
 
     // reachable == 0 (not just below quorum) is the one precondition
     // Chunk's own constructor can't check itself: a member with no
-    // Slot at all is meaningless to it even for the trivial
-    // single-member case (there's nothing there to trust), unlike a real
+    // Slot at all is meaningless to it even for the trivial single-
+    // member case (there's nothing there to trust), unlike a real
     // quorum shortfall, which _reconcile_sync_set() already checks on
     // its own -- see it, and the constructor's own comment, for why a
     // refusal there is safe to let unwind through it rather than
@@ -361,14 +435,84 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         break;
     }
 
-    // Everything the constructor needs is gathered -- deciding whether
+    // Everything Chunk needs to exist is gathered -- deciding whether
     // it's actually trustworthy enough to open from (the single-member
     // shortcut, or _reconcile_sync_set()'s own quorum/split-brain/no-
-    // trusted-member analysis) is its own job from here.
+    // trusted-member analysis) is the constructor's own job from here.
     co_return std::make_unique<Chunk>(
         Private(), queue, id, offset, (flags & RAWSTOR_READONLY) != 0,
         std::move(spec), std::move(members)
     );
+}
+
+// width is this chunk's own per-copy count: the chunk's own URI count
+// when it has more than one (an ordinary mirror set can only ever be
+// that -- no single URI in it is self-aware enough to say otherwise),
+// or whatever the sole backend itself reported for a single-URI chunk
+// (an mds:// object's own configured redundancy, never derivable by
+// counting) -- falling back to 1 only if that answer was itself 0 (a
+// plain, single-URI object that was never given one). `size` is
+// identical on every copy, so this only needs one to answer: URIs are
+// tried in order, first reachable wins -- unlike meta() below, which
+// queries every one of them instead of stopping at the first answer.
+rawstd::Task<RawstorObjectSpec>
+Chunk::spec(rawio::Queue& queue, const std::vector<rawstd::URI>& uris) {
+    int first_error = 0;
+    for (const auto& uri : uris) {
+        try {
+            RawstorObjectMeta m = co_await meta_one(queue, uri);
+            RawstorObjectSpec ret = m.spec;
+            if (uris.size() > 1 || ret.width == 0) {
+                ret.width = static_cast<unsigned int>(uris.size());
+            }
+            co_return ret;
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            if (first_error == 0) {
+                first_error = e.code().value();
+            }
+        }
+    }
+
+    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
+}
+
+// Unlike spec() above, every URI is queried, not just the first
+// reachable one: a caller asking for mirror consistency state wants to
+// see each copy's own state (docs/mirroring.md), not one answer papered
+// over the rest by fail-over. Every URI is still queried concurrently
+// (own tasks, awaited one by one below, same pattern as create()'s own
+// per-URI tracking -- this can't use gather() either, for the same
+// reason: one URI's failure must not erase what the others answered).
+// A URI that doesn't answer gets a zero-filled entry rather than being
+// left out: the result's own index is what ties an entry back to its
+// URI, and dropping entries would lose that correspondence. Every
+// answering entry's own spec.width is trusted verbatim, no override:
+// Target::create() already guarantees it's persisted correctly on every
+// member (exactly the chunk's own URI count for an ordinary multi-URI
+// mirror set, or a real, always non-zero value otherwise -- its own
+// comment).
+rawstd::Task<std::vector<RawstorObjectMeta>>
+Chunk::meta(rawio::Queue& queue, const std::vector<rawstd::URI>& uris) {
+    std::vector<rawstd::Task<RawstorObjectMeta>> tasks;
+    tasks.reserve(uris.size());
+    for (const auto& uri : uris) {
+        tasks.push_back(meta_one(queue, uri));
+    }
+
+    std::vector<RawstorObjectMeta> ret;
+    ret.reserve(uris.size());
+    for (size_t i = 0; i < tasks.size(); ++i) {
+        RawstorObjectMeta m{};
+        try {
+            m = co_await tasks[i];
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+        }
+        ret.push_back(m);
+    }
+
+    co_return ret;
 }
 
 void Chunk::_write_finished(unsigned int ticket) noexcept {

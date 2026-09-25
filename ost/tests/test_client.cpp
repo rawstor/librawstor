@@ -524,6 +524,9 @@ TEST(OstClientTest, list_reports_every_chunk_offset) {
         .size = 4096,
         .width = 1,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
 
     CreateResult res0;

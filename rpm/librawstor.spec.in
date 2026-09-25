@@ -8,6 +8,7 @@ URL: https://github.com/rawstor/librawstor
 Source0: %{name}-@PACKAGE_VERSION@.tar.gz
 
 BuildRequires: liburing-devel >= @LIBURING_MIN_VERSION@
+BuildRequires: sqlite-devel
 BuildRequires: systemd-rpm-macros
 Requires: liburing >= @LIBURING_MIN_VERSION@
 
@@ -86,6 +87,21 @@ if [ "$1" -gt 1 ]; then
     echo "  systemctl restart 'rawstor-vduse@*.service'"
 fi
 
+
+%package -n rawstor-mds
+Summary: Rawstor MDS (metadata server) for mds:// volumes
+Requires(pre): shadow-utils
+Requires: %{name} = %{version}-%{release}
+%{?systemd_requires}
+
+%description -n rawstor-mds
+Rawstor MDS (metadata server) for mds:// volumes.
+
+
+%pre -n rawstor-mds
+getent group rawstor >/dev/null || groupadd -r rawstor
+getent passwd rawstor >/dev/null || useradd -r -g rawstor -d /var/lib/rawstor -s /sbin/nologin -c "Rawstor daemon" rawstor
+
 %prep
 %autosetup -n %{name}-@PACKAGE_VERSION@
 
@@ -101,9 +117,11 @@ mkdir -p %{buildroot}%{_unitdir}
 install -m 644 systemd/rawstor-ost.service %{buildroot}%{_unitdir}/rawstor-ost.service
 install -m 644 systemd/rawstor-vhost@.service %{buildroot}%{_unitdir}/rawstor-vhost@.service
 install -m 644 systemd/rawstor-vduse@.service %{buildroot}%{_unitdir}/rawstor-vduse@.service
+install -m 644 systemd/rawstor-mds.service %{buildroot}%{_unitdir}/rawstor-mds.service
 mkdir -p %{buildroot}/usr/lib/udev/rules.d
 install -m 644 udev/60-rawstor-vduse.rules %{buildroot}/usr/lib/udev/rules.d/60-rawstor-vduse.rules
 mkdir -p %{buildroot}/var/lib/rawstor
+mkdir -p %{buildroot}/var/lib/rawstor-mds
 
 %post -n rawstor-ost
 %systemd_post rawstor-ost.service
@@ -113,6 +131,15 @@ mkdir -p %{buildroot}/var/lib/rawstor
 
 %postun -n rawstor-ost
 %systemd_postun_with_restart rawstor-ost.service
+
+%post -n rawstor-mds
+%systemd_post rawstor-mds.service
+
+%preun -n rawstor-mds
+%systemd_preun rawstor-mds.service
+
+%postun -n rawstor-mds
+%systemd_postun_with_restart rawstor-mds.service
 
 %files
 %{_bindir}/rawstor
@@ -137,3 +164,8 @@ mkdir -p %{buildroot}/var/lib/rawstor
 %{_bindir}/rawstor-vduse
 %{_unitdir}/rawstor-vduse@.service
 /usr/lib/udev/rules.d/60-rawstor-vduse.rules
+
+%files -n rawstor-mds
+%{_bindir}/rawstor-mds
+%{_unitdir}/rawstor-mds.service
+%dir %attr(0755, rawstor, rawstor) /var/lib/rawstor-mds

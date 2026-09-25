@@ -89,10 +89,10 @@ std::vector<rawstd::URI> build_create_uris(
     const RawstorObjectSpec& sp
 ) {
     bool is_mds = !uris.empty() && uris.front().scheme() == "mds";
-    uint64_t num_chunks = (!is_mds && sp.chunk_size != 0 &&
-                            sp.chunk_size < sp.size)
-                              ? (sp.size + sp.chunk_size - 1) / sp.chunk_size
-                              : 1;
+    uint64_t num_chunks =
+        (!is_mds && sp.chunk_size != 0 && sp.chunk_size < sp.size)
+            ? (sp.size + sp.chunk_size - 1) / sp.chunk_size
+            : 1;
 
     std::vector<rawstd::URI> ret;
     ret.reserve(uris.size() * num_chunks);
@@ -312,13 +312,17 @@ void launch_create_op(
 
 namespace rawstor {
 
-Location::Location(const std::vector<rawstd::URI>& uris) : _uris(uris) {
+// Every public method below used to re-run these two checks itself,
+// identically, before touching _uris -- validated once, here, instead:
+// _uris never changes after construction, so nothing past this point
+// can un-validate it (same pattern as Target's own constructor).
+Location::Location(const std::string& location) :
+    _uris(rawstd::URI::uriv(location.c_str())) {
+    validate_not_empty(_uris);
+    validate_different_uris(_uris);
 }
 
 rawstd::Task<RawstorLocationInfo> Location::info(rawio::Queue& queue) const {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-
     std::vector<rawstd::Task<RawstorLocationInfo>> tasks;
     tasks.reserve(_uris.size());
     for (const auto& location : _uris) {
@@ -368,7 +372,10 @@ rawstd::Task<void> Location::list(
     // own "internal multi-chunk form") -- which must come back as one
     // Target listing every chunk's own URI, not one Target per location.
     // A plain RawstdUUID has no built-in ordering, hence the explicit
-    // comparator.
+    // comparator. Target's own Location-based constructor rebuilds each
+    // chunk's own URI (offset segment omitted when 0, same convention
+    // Target::create() itself uses) rather than a second copy of that
+    // logic here.
     auto id_less = [](const RawstdUUID& lhs, const RawstdUUID& rhs) -> bool {
         return rawstd_uuid_cmp(&lhs, &rhs) < 0;
     };
@@ -379,22 +386,28 @@ rawstd::Task<void> Location::list(
     RawstdUUID empty_id{};
     RawstdUUID next_token = empty_id;
     for (size_t i = 0; i < _uris.size(); ++i) {
-        const rawstd::URI& location = _uris[i];
         const auto& [loc_groups, loc_token] = listings[i];
+        Location self_location(_uris[i].str());
         for (const auto& group : loc_groups) {
-            RawstdUUIDString uuid_string;
-            rawstd_uuid_to_string(&group.id, &uuid_string);
             std::vector<std::pair<uint64_t, rawstd::URI>>& entries =
                 targets_map[group.id];
+            RawstdUUIDString uuid_string;
+            rawstd_uuid_to_string(&group.id, &uuid_string);
             for (uint64_t offset : group.offsets) {
                 // Always stamped, even "0" -- parsing still accepts a
                 // target string with no offset segment at all (implying
                 // 0, TargetPath's own doc comment above), but a string
                 // this library builds itself names every chunk's own
-                // offset explicitly rather than relying on that default.
+                // offset explicitly rather than relying on that default
+                // (Target's own Location-based constructor, target.cpp,
+                // omits it at 0 -- meant for a plain target's own
+                // create()-time identity, not this listing).
                 std::ostringstream oss;
                 oss << std::hex << offset;
-                rawstd::URI uri(rawstd::URI(location, uuid_string), oss.str());
+                rawstd::URI uri(
+                    rawstd::URI(self_location.uris().front(), uuid_string),
+                    oss.str()
+                );
                 entries.emplace_back(offset, uri);
             }
         }
@@ -421,7 +434,6 @@ rawstd::Task<void> Location::list(
             capped = true;
             break;
         }
-
         // Each id's own chunks, sorted by offset -- stable, so two
         // entries sharing one offset (real mirrors of that chunk) keep
         // the order their own locations were listed in, matching every
@@ -441,7 +453,7 @@ rawstd::Task<void> Location::list(
         for (const auto& [offset, uri] : chunks) {
             uris.push_back(uri);
         }
-        ret.emplace_back(uris);
+        ret.emplace_back(rawstd::URI::uris(uris));
 
         have_last = true;
         last_id = it.first;
@@ -471,13 +483,10 @@ Location::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
 rawstd::Task<Target> Location::create(
     rawio::Queue& queue, const RawstdUUID& uuid, const RawstorObjectSpec& sp
 ) const {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
 
-    Target t(build_create_uris(_uris, uuid_string, sp));
+    Target t(rawstd::URI::uris(build_create_uris(_uris, uuid_string, sp)));
     co_await t.create(queue, sp);
 
     co_return t;
@@ -491,7 +500,7 @@ int rawstor_location_list(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Location loc(rawstd::URI::uriv(location));
+        rawstor::Location loc(location);
         launch_list_op(
             std::move(loc), static_cast<rawio::Queue*>(queue), limit, targets,
             token, cb, data
@@ -515,7 +524,7 @@ int rawstor_location_info(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Location loc(rawstd::URI::uriv(location));
+        rawstor::Location loc(location);
         launch_info_op(
             std::move(loc), static_cast<rawio::Queue*>(queue), info, cb, data
         );
@@ -579,8 +588,8 @@ int rawstor_location_create(
         }
 
         launch_create_op(
-            rawstor::Target(ret), static_cast<rawio::Queue*>(queue), *spec, res,
-            cb, data
+            rawstor::Target(rawstd::URI::uris(ret)),
+            static_cast<rawio::Queue*>(queue), *spec, res, cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
