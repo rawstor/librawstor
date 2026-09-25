@@ -136,20 +136,33 @@ public:
     rawstd::Task<void>
     create(rawio::Queue& queue, const RawstorObjectSpec& sp) const;
 
-    // Takes a native CoW snapshot of the live version under a fresh UUID
-    // v7 (this class's own single point of generation, like
-    // Location::create() above), returning the id actually used.
+    // Takes a native CoW snapshot of the live version, returning the id
+    // actually used. Two cases, both driven by whether `this` already
+    // names a specific version (snapshot_id() above):
+    // - Already bound (a caller-typed target string of the form
+    //   <id>/<snapshot_id>): that version id IS the one to use -- nothing
+    //   to generate, so this just runs create()'s own bound-snapshot
+    //   branch on `this` directly and returns snapshot_id() back.
+    // - Not bound (a plain target): generates a fresh UUID v7 itself
+    //   (this class's own single point of generation, like
+    //   Location::create() above) and delegates to the explicit-id
+    //   overload below.
     rawstd::Task<RawstdUUID> create_snapshot(rawio::Queue& queue) const;
 
-    // Same, but under the caller-supplied snapshot_id -- splices it onto
-    // every URI in `_uris` and lets the resulting Target's own create()
-    // (the bound-snapshot branch above) do the actual CoW fan-out, the
-    // same way Location::create(uuid, sp) above delegates the actual
-    // per-URI CREATE to a fresh Target too. Only ever touches the
-    // target's own first chunk (see spec()'s own comment on why); every
-    // URI in it is still attempted even if an earlier one fails, the
-    // first error encountered reported. ENOTSUP on a backend without
-    // native CoW (file://, classic LVM).
+    // Same, but under the caller-supplied snapshot_id rather than one this
+    // class picks itself -- splices it onto every URI in `_uris` and lets
+    // the resulting Target's own create() (the bound-snapshot branch
+    // above) do the actual CoW fan-out, the same way Location::create(uuid,
+    // sp) above delegates the actual per-URI CREATE to a fresh Target too.
+    // Throws EINVAL if `this` already names its own bound version
+    // (snapshot_id() above, non-nil) -- combining that with a second,
+    // caller-supplied one here would be ambiguous, and splicing one on top
+    // of the other would just produce an invalid, doubly-nested path; a
+    // caller in that situation wants the no-argument overload above
+    // instead. Only ever touches the target's own first chunk (see spec()'s
+    // own comment on why); every URI in it is still attempted even if an
+    // earlier one fails, the first error encountered reported. ENOTSUP on
+    // a backend without native CoW (file://, classic LVM).
     rawstd::Task<void>
     create_snapshot(rawio::Queue& queue, const RawstdUUID& snapshot_id) const;
 

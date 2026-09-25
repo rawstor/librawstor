@@ -421,7 +421,18 @@ rawstd::DetachedTask launch_create_snapshot_op_coro(
 ) {
     ssize_t result = length;
     try {
-        co_await t.create_snapshot(*queue, snapshot_id);
+        // `t` already bound to its own version (rawstor_target_create_
+        // snapshot()'s own comment, mode 1) means `snapshot_id` is just
+        // that same id, already resolved for `buf` -- calling the
+        // explicit-id overload on it would splice a second copy on top and
+        // fail its own guard, so this runs create()'s bound-snapshot
+        // branch on `t` directly instead, same as Target::create_
+        // snapshot()'s own no-argument overload does.
+        if (!rawstd_uuid_is_nil(&t.snapshot_id())) {
+            co_await t.create(*queue, RawstorObjectSpec{});
+        } else {
+            co_await t.create_snapshot(*queue, snapshot_id);
+        }
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -820,6 +831,14 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
 }
 
 rawstd::Task<RawstdUUID> Target::create_snapshot(rawio::Queue& queue) const {
+    if (!rawstd_uuid_is_nil(&_snapshot_id)) {
+        // `this` already names a specific version -- nothing to generate;
+        // take the CoW snapshot as that exact version (create()'s own
+        // bound-snapshot branch).
+        co_await create(queue, RawstorObjectSpec{});
+        co_return _snapshot_id;
+    }
+
     RawstdUUID id;
     int res = rawstd_uuid7_init(&id);
     if (res < 0) {
@@ -833,6 +852,10 @@ rawstd::Task<RawstdUUID> Target::create_snapshot(rawio::Queue& queue) const {
 rawstd::Task<void> Target::create_snapshot(
     rawio::Queue& queue, const RawstdUUID& snapshot_id
 ) const {
+    if (!rawstd_uuid_is_nil(&_snapshot_id)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     RawstdUUIDString snapshot_id_string;
     rawstd_uuid_to_string(&snapshot_id, &snapshot_id_string);
 
@@ -1267,13 +1290,26 @@ int rawstor_target_snapshot_id(
     }
 }
 
-// `snapshot_id`: NULL to have this call generate a fresh one itself (the
-// single point every snapshot id is generated at, by analogy with how a
-// fresh object id is generated in Location::create()/rawstor_location_
-// create() -- rawstd_uuid7_init(), same function, same reasoning), or a
-// caller-chosen version id string. Either way, the id actually used is
-// written into `buf`/`size` synchronously, before any I/O, same
-// convention as rawstor_location_create()'s own `target`/`size`.
+// Three ways the version id actually used is picked, all resolved
+// synchronously (no I/O needed for any of them) before `buf` is written:
+// - `target` already names a specific version of its own (its own path
+//   carries a trailing snapshot_id, e.g. as printed back by a previous
+//   rawstor_target_create_snapshot()/read by rawstor_target_snapshot_id())
+//   and `snapshot_id` here is NULL: that bound version IS the one used.
+// - `target` names a plain object and `snapshot_id` here is NULL: a fresh
+//   one is generated (the single point every snapshot id is generated at,
+//   by analogy with how a fresh object id is generated in Location::
+//   create()/rawstor_location_create() -- rawstd_uuid7_init(), same
+//   function, same reasoning).
+// - `snapshot_id` here is non-NULL: that caller-chosen version id is used
+//   verbatim -- but only if `target` names a plain object; combining it
+//   with a `target` that already carries its own bound version would be
+//   ambiguous, so that combination fails with -EINVAL instead (Target::
+//   create_snapshot(queue, id)'s own guard, checked once the operation is
+//   actually queued below -- see launch_create_snapshot_op_coro()).
+// Either way, the id actually used is written into `buf`/`size`
+// synchronously, before any I/O, same convention as rawstor_location_
+// create()'s own `target`/`size`.
 int rawstor_target_create_snapshot(
     RawIOQueue* queue, const char* target, const char* snapshot_id, char* buf,
     size_t size, int (*cb)(ssize_t result, void* data), void* data
@@ -1287,13 +1323,15 @@ int rawstor_target_create_snapshot(
 
         RawstdUUID id;
         int res;
-        if (snapshot_id == nullptr) {
-            res = rawstd_uuid7_init(&id);
+        if (snapshot_id != nullptr) {
+            res = rawstd_uuid_from_string(&id, snapshot_id);
             if (res < 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
+        } else if (!rawstd_uuid_is_nil(&t.snapshot_id())) {
+            id = t.snapshot_id();
         } else {
-            res = rawstd_uuid_from_string(&id, snapshot_id);
+            res = rawstd_uuid7_init(&id);
             if (res < 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(-res);
             }

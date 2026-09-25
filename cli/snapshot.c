@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-int rawstor_cli_snapshot(const char* target) {
+int rawstor_cli_snapshot(const char* target, const char* uuid) {
     fprintf(stderr, "Taking a snapshot of: %s\n", target);
 
     RawstorCliOp op;
@@ -21,10 +21,11 @@ int rawstor_cli_snapshot(const char* target) {
         return rawstd_exitcode_for_errno(-res);
     }
 
-    /* NULL: this call generates a fresh version id itself. */
+    /* `uuid` NULL: the version id is either already bound in `target`'s
+     * own path, or generated fresh -- see rawstor_target_create_snapshot(). */
     RawstdUUIDString snapshot_id;
     int sres = rawstor_target_create_snapshot(
-        op.queue, target, NULL, snapshot_id, sizeof(snapshot_id),
+        op.queue, target, uuid, snapshot_id, sizeof(snapshot_id),
         rawstor_cli_op_cb, &op
     );
     ssize_t result = rawstor_cli_op_wait(&op, sres);

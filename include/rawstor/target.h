@@ -559,31 +559,44 @@ int rawstor_target_snapshot_id(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously take a snapshot of a target under a fresh or
- *        caller-chosen version id.
+ * @brief Asynchronously take a snapshot of a target, under whichever
+ *        version id @p target/@p snapshot_id together resolve to.
  *
  * Every version id is client-generated, like every object id (see
- * rawstor_location_create()). This takes a plain native CoW snapshot as
- * that exact version on every URI in @p target (every URI is still
- * attempted even if an earlier one fails, and the first error encountered
- * is reported); the caller owns crash consistency -- all acknowledged
- * writes must be flushed before this call.
+ * rawstor_location_create()). Three ways the id actually used is picked,
+ * all resolved synchronously (no I/O needed for any of them):
+ * - @p target already names a specific version of its own (its own path
+ *   carries a trailing snapshot_id -- e.g. as read back by
+ *   rawstor_target_snapshot_id(), or as this same function itself already
+ *   printed into a previous @p buf) and @p snapshot_id here is NULL: that
+ *   bound version IS the one taken.
+ * - @p target names a plain object and @p snapshot_id here is NULL: a
+ *   fresh id is generated (rawstd_uuid7_init(), the same single point of
+ *   generation a fresh object id comes from -- rawstor_location_create()).
+ * - @p snapshot_id here is non-NULL: that caller-chosen version id is used
+ *   verbatim -- but only if @p target names a plain object; combining it
+ *   with a @p target that already carries its own bound version is
+ *   ambiguous and fails with @c -EINVAL instead.
+ *
+ * This then takes a plain native CoW snapshot as that exact version on
+ * every URI in @p target (every URI is still attempted even if an earlier
+ * one fails, and the first error encountered is reported); the caller
+ * owns crash consistency -- all acknowledged writes must be flushed
+ * before this call.
  *
  * @param queue    Queue used to drive the asynchronous snapshot.
  * @param target   Target string, see rawstor_target_spec().
- * @param snapshot_id  The version id's UUID string, or NULL to have this call
- *                 generate a fresh one itself (rawstd_uuid7_init(), the
- *                 same single point of generation a fresh object id comes
- *                 from -- rawstor_location_create()).
- * @param buf      Output buffer for the version id actually used (whether
- *                 generated here or supplied in @p snapshot_id), written
+ * @param snapshot_id  The version id's UUID string, or NULL -- see above.
+ * @param buf      Output buffer for the version id actually used, written
  *                 synchronously before this call returns -- same
  *                 truncation convention as rawstor_target_id().
  * @param size     Size of @p buf in bytes (including space for the
  *                 terminating null byte).
  * @param cb       Callback invoked on completion.
  *                 - @p result is zero on success, or a negative errno on
- *                   failure (@c -ENOTSUP if a backend has no CoW --
+ *                   failure (@c -EINVAL if @p target already names its own
+ *                   bound version and @p snapshot_id is also non-NULL --
+ *                   see above; @c -ENOTSUP if a backend has no CoW --
  *                   file://, classic LVM -- no fallback copies are made
  *                   behind the caller's back).
  *                 - @p data is the same pointer passed as @p data below.

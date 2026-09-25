@@ -287,23 +287,41 @@ static int command_remove(int argc, char** argv) {
 
 static void command_snapshot_usage(void) {
     fprintf(
-        stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
-                "\n"
-                "usage: rawstor [options] snapshot TARGET [command_options]\n"
-                "\n"
-                "command options:\n"
-                "  -h, --help            Show this help message and exit\n"
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] snapshot TARGET [-u UUID] "
+        "[command_options]\n"
+        "\n"
+        "  TARGET                A plain target, or one already naming its "
+        "own\n"
+        "                        bound version (TARGET/SNAPSHOT_ID, as "
+        "printed\n"
+        "                        back by a previous snapshot) -- that "
+        "version is\n"
+        "                        then the one taken, and -u is not "
+        "accepted.\n"
+        "  -u, --uuid UUID       Explicit UUID for the new version (only "
+        "valid\n"
+        "                        when TARGET is plain). If omitted, a "
+        "random\n"
+        "                        UUIDv7 is generated.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
     );
 };
 
 static int command_snapshot(int argc, char** argv) {
-    const char* optstring = "h";
+    const char* optstring = "hu:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
+        {"uuid", required_argument, NULL, 'u'},
         {},
     };
 
     char* target_arg = NULL;
+    const char* uuid_arg = NULL;
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -315,6 +333,10 @@ static int command_snapshot(int argc, char** argv) {
         case 'h':
             command_snapshot_usage();
             return EXIT_SUCCESS;
+
+        case 'u':
+            uuid_arg = optarg;
+            break;
 
         default:
             return EX_USAGE;
@@ -336,7 +358,7 @@ static int command_snapshot(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_snapshot(target_arg);
+    return rawstor_cli_snapshot(target_arg, uuid_arg);
 }
 
 static void command_list_usage(void) {
