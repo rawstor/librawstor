@@ -1,6 +1,5 @@
-#include "target.hpp"
+#include "target_path.hpp"
 
-#include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
 #include <gtest/gtest.h>
@@ -29,8 +28,7 @@ const RawstdUUID snap_uuid = uuid_of(snap_str);
 } // namespace
 
 TEST(TargetParsePathTest, bare_id_has_no_offset_or_snapshot) {
-    rawstor::Target::Path path =
-        rawstor::Target::parse_path(rawstd::URI("file:///data/" + id_str));
+    rawstor::TargetPath path = rawstor::parse_target_path("/data/" + id_str);
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
     EXPECT_EQ(path.offset, 0u);
@@ -39,9 +37,8 @@ TEST(TargetParsePathTest, bare_id_has_no_offset_or_snapshot) {
 }
 
 TEST(TargetParsePathTest, physical_live_shape_has_offset_no_snapshot) {
-    rawstor::Target::Path path = rawstor::Target::parse_path(
-        rawstd::URI("file:///data/" + id_str + "/2a")
-    );
+    rawstor::TargetPath path =
+        rawstor::parse_target_path("/data/" + id_str + "/2a");
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
     EXPECT_EQ(path.offset, 42u);
@@ -50,9 +47,8 @@ TEST(TargetParsePathTest, physical_live_shape_has_offset_no_snapshot) {
 }
 
 TEST(TargetParsePathTest, logical_shape_has_snapshot_no_offset) {
-    rawstor::Target::Path path = rawstor::Target::parse_path(
-        rawstd::URI("file:///data/" + id_str + "/" + snap_str)
-    );
+    rawstor::TargetPath path =
+        rawstor::parse_target_path("/data/" + id_str + "/" + snap_str);
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
     EXPECT_EQ(path.offset, 0u);
@@ -61,9 +57,8 @@ TEST(TargetParsePathTest, logical_shape_has_snapshot_no_offset) {
 }
 
 TEST(TargetParsePathTest, physical_shape_with_snapshot_has_both) {
-    rawstor::Target::Path path = rawstor::Target::parse_path(
-        rawstd::URI("file:///data/" + id_str + "/2a/" + snap_str)
-    );
+    rawstor::TargetPath path =
+        rawstor::parse_target_path("/data/" + id_str + "/2a/" + snap_str);
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
     EXPECT_EQ(path.offset, 42u);
@@ -72,9 +67,8 @@ TEST(TargetParsePathTest, physical_shape_with_snapshot_has_both) {
 }
 
 TEST(TargetParsePathTest, deep_location_prefix_does_not_confuse_parsing) {
-    rawstor::Target::Path path = rawstor::Target::parse_path(
-        rawstd::URI("file:///a/b/c/" + id_str + "/2a/" + snap_str)
-    );
+    rawstor::TargetPath path =
+        rawstor::parse_target_path("/a/b/c/" + id_str + "/2a/" + snap_str);
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
     EXPECT_EQ(path.offset, 42u);
@@ -84,7 +78,6 @@ TEST(TargetParsePathTest, deep_location_prefix_does_not_confuse_parsing) {
 
 TEST(TargetParsePathTest, malformed_path_throws_einval) {
     EXPECT_THROW(
-        rawstor::Target::parse_path(rawstd::URI("file:///data/not-a-uuid")),
-        std::system_error
+        rawstor::parse_target_path("/data/not-a-uuid"), std::system_error
     );
 }

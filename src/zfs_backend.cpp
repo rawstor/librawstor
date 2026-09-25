@@ -62,9 +62,9 @@ std::string Backend::_dataset(
 ) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
-    // Hex, not decimal -- see Target::parse_path()'s own doc comment
-    // (target.cpp) for why every physical, offset-carrying name in this
-    // codebase agrees on one base.
+    // Hex, not decimal -- see parse_target_path()'s own doc comment
+    // (target_path.cpp) for why every physical, offset-carrying name in
+    // this codebase agrees on one base.
     char offset_str[17];
     snprintf(offset_str, sizeof(offset_str), "%" PRIx64, offset);
     std::string name = std::string(uuid_str) + ":" + offset_str;

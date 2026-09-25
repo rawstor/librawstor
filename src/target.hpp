@@ -24,69 +24,22 @@ class Object;
 // A Target addresses one specific object, made up of one or more chunks
 // -- URIs sharing one offset path segment are mirrors of the same chunk
 // (its own chunk uris); distinct chunks never share one (see
-// docs/locations_and_targets.md and parse_path()'s own doc comment in
-// target.cpp). `_uris` is a flat, offset-sorted list; the split into
-// chunk uris is never stored, only ever re-derived on demand
-// (chunk_uris_by_offset()/chunk_uris_at_offset() in target.cpp) -- nothing is
-// gained by keeping every method reach through one extra level of
-// nesting just for the ordinary, single-chunk case every plain target
-// is. Deliberately lightweight -- unlike Chunk, it never holds a Slot
-// between calls; create()/spec()/remove()/meta()/set_sync_state() each
-// open a Slot per URI just for that one call and close it again before
-// returning, same as the code they replace used to do. open() is the
-// one exception that needs a Slot to survive past the call -- it builds
-// one Chunk per chunk (via Chunk::create(), by analogy with
+// docs/locations_and_targets.md and parse_target_path()'s own doc
+// comment in target_path.cpp). `_uris` is a flat, offset-sorted list;
+// the split into chunk uris is never stored, only ever re-derived on
+// demand (chunk_uris_by_offset()/chunk_uris_at_offset() in target.cpp)
+// -- nothing is gained by keeping every method reach through one extra
+// level of nesting just for the ordinary, single-chunk case every plain
+// target is. Deliberately lightweight -- unlike Chunk, it never holds a
+// Slot between calls; create()/spec()/remove()/meta()/set_sync_state()
+// each open a Slot per URI just for that one call and close it again
+// before returning, same as the code they replace used to do. open() is
+// the one exception that needs a Slot to survive past the call -- it
+// builds one Chunk per chunk (via Chunk::create(), by analogy with
 // Slot::create()), keeping one Slot per URI alive in each Chunk's own
 // pool, then wraps them all in a SingleChunkObject or MultiChunkObject
 // (object.hpp), depending on how many chunks the target names.
 class Target final {
-public:
-    // One URI's own trailing path identity, in one of three shapes:
-    // - Physical, with a bound snapshot: `/<id>/<offset>/<snapshot_id>` --
-    //   offset always an explicit segment (even "0"), the convention
-    //   every internal builder in this codebase uses whenever it
-    //   addresses one chunk of a larger object.
-    // - Physical, live: `/<id>/<offset>` -- same convention, no bound
-    //   snapshot.
-    // - Logical: `/<id>[/<snapshot_id>]` -- no offset segment at all, implied
-    //   0. This is the shape a caller types by hand to name a plain
-    //   target's own bound snapshot -- there is no chunk-offset concept
-    //   to name at that level. A bare `/<id>`, with no snapshot either,
-    //   is this same shape with nothing bound.
-    //
-    // All three are really the same grammar read from the *end* (a
-    // target's own location can itself carry an arbitrary path, e.g.
-    // file:///a/b, so the identity can't be found any other way): if the
-    // last segment isn't UUID-shaped, it must be a hexadecimal chunk offset
-    // with a UUID id right before it -- the physical-live shape, no
-    // snapshot. If the last segment IS UUID-shaped, it's tentatively a
-    // trailing snapshot_id; check what precedes it: another UUID right
-    // before it makes this the logical shape (that UUID is the id, the
-    // last segment its bound snapshot); a valid hexadecimal offset followed
-    // by a UUID makes it the physical-with-snapshot shape instead. If
-    // neither precedes it, the last segment is not a snapshot at all --
-    // just a bare id. See parse_path()'s own comment in target.cpp for
-    // the exact algorithm. `segments` is how many trailing path segments
-    // this identity actually consumed (1, 2, or 3) -- callers that need
-    // the URI with the identity stripped back off (to recover the plain
-    // Location it was built under) call URI::parent() this many times,
-    // not just once.
-    struct Path {
-        RawstdUUID id;
-        uint64_t offset;
-        RawstdUUID snapshot_id;
-        unsigned int segments;
-    };
-
-    // Parses one URI's own trailing identity (see Path's own doc comment
-    // above). Throws EINVAL if the path's last segment (past any
-    // snapshot/offset segments) isn't a valid UUID, or an offset segment
-    // isn't a valid hexadecimal number. A static method, not
-    // an instance one -- by analogy with Chunk::create(), callers that
-    // don't (yet) have a Target instance to ask (Chunk::create() itself)
-    // can still parse a raw URI on their own.
-    static Path parse_path(const rawstd::URI& uri);
-
 private:
     std::vector<rawstd::URI> _uris;
 

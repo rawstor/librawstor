@@ -4,6 +4,7 @@
 #include "location.hpp"
 #include "object.hpp"
 #include "slot.hpp"
+#include "target_path.hpp"
 
 #include <rawstor/target.h>
 
@@ -25,7 +26,6 @@
 
 #include <cerrno>
 #include <cstdio>
-#include <cstdlib>
 
 namespace {
 
@@ -39,7 +39,7 @@ void validate_not_empty(const std::vector<rawstd::URI>& uris) {
 }
 
 // Every URI in `uris` must name the same logical resource as `id` --
-// compared on its *parsed* value (Target::parse_path()), not the raw
+// compared on its *parsed* value (parse_target_path()), not the raw
 // path string, so equivalent-but-differently-spelled URIs (e.g. "<uuid>"
 // and "<uuid>/0" -- offset is already guaranteed equal within one
 // chunk's own uris, both landed in the same bucket via extract_offset()
@@ -53,7 +53,7 @@ void validate_same_uuid(
     const std::vector<rawstd::URI>& uris, const RawstdUUID& id
 ) {
     for (const auto& uri : uris) {
-        RawstdUUID other_id = rawstor::Target::parse_path(uri).id;
+        RawstdUUID other_id = rawstor::parse_target_path(uri.path().str()).id;
         if (rawstd_uuid_cmp(&id, &other_id) != 0) {
             rawstd_error("Equal UUID expected\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -69,7 +69,7 @@ void validate_same_snapshot_id(
 ) {
     for (const auto& uri : uris) {
         RawstdUUID other_snapshot_id =
-            rawstor::Target::parse_path(uri).snapshot_id;
+            rawstor::parse_target_path(uri.path().str()).snapshot_id;
         if (rawstd_uuid_cmp(&snapshot_id, &other_snapshot_id) != 0) {
             rawstd_error("Equal snapshot version expected\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -81,20 +81,20 @@ void validate_same_snapshot_id(
 // Backend methods they wrap) rather than a full target -- extract it once
 // here instead of in every one of this file's own call sites.
 RawstdUUID uuid_from_target(const rawstd::URI& target) {
-    return rawstor::Target::parse_path(target).id;
+    return rawstor::parse_target_path(target.path().str()).id;
 }
 
 // The chunk offset embedded in one URI's own trailing path segments, if
-// any (Target::Path's own doc comment in target.hpp) -- 0 for the
+// any (TargetPath's own doc comment in target_path.hpp) -- 0 for the
 // ordinary, single-chunk case every plain target is.
 uint64_t extract_offset(const rawstd::URI& uri) {
-    return rawstor::Target::parse_path(uri).offset;
+    return rawstor::parse_target_path(uri.path().str()).offset;
 }
 
 // The bound snapshot version embedded in one URI's own trailing path
 // segments, if any -- nil (live) for the ordinary case.
 RawstdUUID extract_snapshot_id(const rawstd::URI& uri) {
-    return rawstor::Target::parse_path(uri).snapshot_id;
+    return rawstor::parse_target_path(uri.path().str()).snapshot_id;
 }
 
 // The bound URI with its own identity path segments stripped back off --
@@ -104,7 +104,7 @@ RawstdUUID extract_snapshot_id(const rawstd::URI& uri) {
 // segment, not just once, now that the identity doesn't always fit in a
 // single trailing one.
 rawstd::URI strip_path(const rawstd::URI& uri) {
-    rawstor::Target::Path path = rawstor::Target::parse_path(uri);
+    rawstor::TargetPath path = rawstor::parse_target_path(uri.path().str());
     rawstd::URI ret = uri;
     for (unsigned int i = 0; i < path.segments; ++i) {
         ret = ret.parent();
@@ -478,105 +478,6 @@ rawstd::DetachedTask launch_set_sync_state_op_coro(
 } // namespace
 
 namespace rawstor {
-
-// Whether `s` is a well-formed, non-negative hexadecimal number in full --
-// shared by parse_path()'s two offset checks below (the last segment for
-// the physical-live shape, the one before a trailing snapshot_id for the
-// physical-with-snapshot shape). Hex, not decimal: every other numeric
-// field this codebase persists or transmits alongside a chunk's own
-// identity (meta_encode()'s own chunk_size, epoch, sync_id, ...) is
-// already hex, so a human reading a target string, a backend's own
-// physical path, or a persisted meta record side by side sees the same
-// base everywhere instead of having to remember which fields are which.
-bool parse_hex_offset(const std::string& s, uint64_t* out) {
-    char* endptr = nullptr;
-    errno = 0;
-    unsigned long long parsed = strtoull(s.c_str(), &endptr, 16);
-    if (errno != 0 || endptr == s.c_str() || *endptr != '\0') {
-        return false;
-    }
-    *out = parsed;
-    return true;
-}
-
-// Finds one URI's own trailing chunk identity (Path's own doc comment,
-// target.hpp): the URI's own path may carry an arbitrarily deep location
-// prefix in front of it (e.g. file:///a/b/c/<id>), so the identity can't
-// be found by counting segments from the front -- only by reading from
-// the *end*. If the last segment isn't UUID-shaped, it must be a valid
-// hexadecimal chunk offset with a UUID id right before it -- the
-// physical-live shape, no snapshot. If the last segment IS UUID-shaped,
-// it's tentatively a trailing snapshot_id; another UUID right before it makes
-// this the logical shape instead (that UUID is the real id, the last
-// segment its bound snapshot); a valid hexadecimal offset followed by a
-// UUID makes it the physical-with-snapshot shape. If neither precedes it,
-// the last segment isn't a snapshot at all -- just a bare id.
-Target::Path Target::parse_path(const rawstd::URI& uri) {
-    const std::string& last = uri.path().filename();
-
-    // rawstd_uuid_from_string() writes into its output byte by byte as it
-    // parses and can leave it partially (non-nil-ly) clobbered on a
-    // failed attempt -- every candidate parse below lands in its own
-    // local first, never straight into `ret`, so a rejected candidate
-    // never leaks a bogus non-nil value into the final result.
-    Path ret{};
-    RawstdUUID last_as_uuid;
-    if (rawstd_uuid_from_string(&last_as_uuid, last.c_str()) == 0) {
-        rawstd::URIPath dirname1(uri.path().dirname());
-        const std::string& seg2 = dirname1.filename();
-
-        RawstdUUID id2;
-        if (rawstd_uuid_from_string(&id2, seg2.c_str()) == 0) {
-            // Logical shape: <id>/<snapshot_id>.
-            ret.id = id2;
-            ret.offset = 0;
-            ret.snapshot_id = last_as_uuid;
-            ret.segments = 2;
-            return ret;
-        }
-
-        uint64_t offset2 = 0;
-        if (parse_hex_offset(seg2, &offset2)) {
-            rawstd::URIPath dirname2(dirname1.dirname());
-            RawstdUUID id3;
-            if (rawstd_uuid_from_string(&id3, dirname2.filename().c_str()) ==
-                0) {
-                // Physical shape with a bound snapshot:
-                // <id>/<offset>/<snapshot_id>.
-                ret.id = id3;
-                ret.offset = offset2;
-                ret.snapshot_id = last_as_uuid;
-                ret.segments = 3;
-                return ret;
-            }
-        }
-
-        // A lone trailing UUID with nothing recognizable behind it: a
-        // bare id, no bound snapshot.
-        ret.id = last_as_uuid;
-        ret.offset = 0;
-        ret.segments = 1;
-        return ret;
-    }
-
-    // The physical-live shape: <id>/<offset>, no snapshot anywhere in
-    // the path.
-    uint64_t offset = 0;
-    if (!parse_hex_offset(last, &offset)) {
-        rawstd_error("Valid UUID expected\n");
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-
-    rawstd::URIPath parent_path(uri.path().dirname());
-    int res = rawstd_uuid_from_string(&ret.id, parent_path.filename().c_str());
-    if (res < 0) {
-        rawstd_error("Valid UUID expected\n");
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    ret.offset = offset;
-    ret.segments = 2;
-    return ret;
-}
 
 // Every public method below used to re-run these checks itself,
 // identically, before touching _uris -- validated once, here, instead:

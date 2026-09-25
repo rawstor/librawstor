@@ -1764,10 +1764,10 @@ std::vector<rawstd::URI> Client::_targets(
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
 
-    // Self-describing (Target::Path's own doc comment, target.hpp): the
-    // offset segment is always stated explicitly here, even 0, since
+    // Self-describing (TargetPath's own doc comment, target_path.hpp):
+    // the offset segment is always stated explicitly here, even 0, since
     // this is an internal builder, not something a caller types by hand;
-    // hex, like every offset segment Target::parse_path() accepts.
+    // hex, like every offset segment parse_target_path() accepts.
     std::ostringstream offset_oss;
     offset_oss << std::hex << offset;
     std::string child = std::string(uuid_string) + "/" + offset_oss.str();

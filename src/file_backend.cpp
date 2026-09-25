@@ -36,7 +36,7 @@ namespace {
 // id this is. Two files live directly under this directory: `data` (the
 // object's own bytes) and `meta` (get_target_meta_path() below). `offset`
 // is hex, not decimal -- same base as the target URI's own offset path
-// segment (Target::parse_path()'s own doc comment) and every numeric
+// segment (parse_target_path()'s own doc comment) and every numeric
 // field meta_encode() persists alongside it, so a directory listing and
 // its own meta record read the same way.
 std::string get_target_dir(
