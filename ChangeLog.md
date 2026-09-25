@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - Unreleased
 
 ### Added
-- Native CoW snapshots (`zfs://` only; `-ENOTSUP` elsewhere): `rawstor snapshot TARGET` / `rawstor snap-remove TARGET SNAPSHOT_ID`, riding the existing `rawstor_target_create()`/`rawstor_target_remove()` API for a target string that carries a bound snapshot version, plus the new `rawstor_target_snapshot_id()` (`<rawstor/target.h>`).
+- Native CoW snapshots (`zfs://` only; `-ENOTSUP` elsewhere): `rawstor snapshot TARGET` creates one, `rawstor remove TARGET/SNAPSHOT_ID` removes it -- both riding the existing `rawstor_target_create()`/`rawstor_target_remove()` API for a target string that carries a bound snapshot version, plus the new `rawstor_target_snapshot_id()` (`<rawstor/target.h>`).
 - `--write-cache=on|off` for `rawstor-vhost` and `rawstor-vhost-qemu` (default `off`, write-through): advertises `VIRTIO_BLK_F_CONFIG_WCE` and honors the guest live-toggling it via `SET_CONFIG`. With write-cache off, every write is made durable (`sync=true`) since the guest treats a completed write as already durable and won't issue a `FLUSH`.
 - [Mirroring design](docs/mirroring.md): failure model, quorum rules and online resync for N-way mirrors.
 - Per-copy object metadata (state/epoch/sync_id/history) via new `META`/`SET_SYNC_STATE`/`FLUSH` OST protocol commands and the public `rawstor_target_spec()`/`rawstor_target_meta()`/`rawstor_target_set_sync_state()` (`<rawstor/target.h>`) API. Setting mirror consistency state by hand is a sharp tool, not meant for routine application use.

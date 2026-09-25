@@ -4,7 +4,6 @@
 #include "remove.h"
 #include "resolve.h"
 #include "show.h"
-#include "snap_remove.h"
 #include "snapshot.h"
 #include "testio.h"
 
@@ -50,7 +49,6 @@ static void usage(void) {
         "  info                  Show rawstor location info\n"
         "  resolve               Resolve a mirrored object's split brain\n"
         "  snapshot              Take a snapshot of a rawstor object\n"
-        "  snap-remove           Remove a snapshot of a rawstor object\n"
         "  testio                Test rawstor IO routines\n"
         "\n"
         "command options:        Run `<command> --help` to show command usage\n"
@@ -339,72 +337,6 @@ static int command_snapshot(int argc, char** argv) {
     }
 
     return rawstor_cli_snapshot(target_arg);
-}
-
-static void command_snap_remove_usage(void) {
-    fprintf(
-        stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
-                "\n"
-                "usage: rawstor [options] snap-remove TARGET SNAPSHOT_ID "
-                "[command_options]\n"
-                "\n"
-                "command options:\n"
-                "  -h, --help            Show this help message and exit\n"
-    );
-};
-
-static int command_snap_remove(int argc, char** argv) {
-    const char* optstring = "h";
-    struct option longopts[] = {
-        {"help", no_argument, NULL, 'h'},
-        {},
-    };
-
-    char* target_arg = NULL;
-    char* snapshot_id_arg = NULL;
-    optind = 0;
-    while (1) {
-        int c = getopt_long(argc, argv, optstring, longopts, NULL);
-        if (c == -1) {
-            break;
-        }
-
-        switch (c) {
-        case 'h':
-            command_snap_remove_usage();
-            return EXIT_SUCCESS;
-
-        default:
-            return EX_USAGE;
-        }
-    }
-
-    if (optind < argc) {
-        target_arg = argv[optind];
-        optind++;
-    }
-
-    if (optind < argc) {
-        snapshot_id_arg = argv[optind];
-        optind++;
-    }
-
-    if (optind < argc) {
-        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
-        return EX_USAGE;
-    }
-
-    if (target_arg == NULL) {
-        fprintf(stderr, "target required\n");
-        return EX_USAGE;
-    }
-
-    if (snapshot_id_arg == NULL) {
-        fprintf(stderr, "snapshot_id required\n");
-        return EX_USAGE;
-    }
-
-    return rawstor_cli_snap_remove(target_arg, snapshot_id_arg);
 }
 
 static void command_list_usage(void) {
@@ -974,8 +906,6 @@ static int run_command(
         ret = command_resolve(argc, argv);
     } else if (strcmp(command, "snapshot") == 0) {
         ret = command_snapshot(argc, argv);
-    } else if (strcmp(command, "snap-remove") == 0) {
-        ret = command_snap_remove(argc, argv);
     } else if (strcmp(command, "testio") == 0) {
         ret = command_testio(argc, argv);
     } else {
