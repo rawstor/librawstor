@@ -405,6 +405,40 @@ rawstd::DetachedTask launch_remove_op_coro(
     }
 }
 
+// C ABI adapter for rawstor_target_create_snapshot()'s actual CoW-snapshot
+// step, once the snapshot_id string is already known to fit the caller's
+// buffer (see rawstor_target_create_snapshot() itself for the
+// synchronous, no-I/O-needed length computation and the too-small case,
+// which never reaches this at all). `length` is threaded through as the
+// success result -- rawstor_target_create_snapshot() keeps its
+// snprintf()-style contract (the id string's length, always < the buffer
+// size on success) even though the actual snapshot is asynchronous, same
+// shape as location.cpp's own launch_create_op_coro() for
+// rawstor_location_create().
+rawstd::DetachedTask launch_create_snapshot_op_coro(
+    rawstor::Target t, rawio::Queue* queue, RawstdUUID snapshot_id,
+    ssize_t length, int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = length;
+    try {
+        co_await t.create_snapshot(*queue, snapshot_id);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
 // Same shape as launch_create_op_coro()/launch_remove_op_coro() above,
 // except the retrieved RawstorObjectSpec is delivered through `spec`, an
 // out-parameter written here immediately before `cb` runs (same
@@ -783,6 +817,33 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
         }
         std::rethrow_exception(eptr);
     }
+}
+
+rawstd::Task<RawstdUUID> Target::create_snapshot(rawio::Queue& queue) const {
+    RawstdUUID id;
+    int res = rawstd_uuid7_init(&id);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    co_await create_snapshot(queue, id);
+    co_return id;
+}
+
+rawstd::Task<void> Target::create_snapshot(
+    rawio::Queue& queue, const RawstdUUID& snapshot_id
+) const {
+    RawstdUUIDString snapshot_id_string;
+    rawstd_uuid_to_string(&snapshot_id, &snapshot_id_string);
+
+    std::vector<rawstd::URI> uris;
+    uris.reserve(_uris.size());
+    for (const auto& uri : _uris) {
+        uris.emplace_back(uri, std::string(snapshot_id_string));
+    }
+
+    Target snap_target(uris);
+    co_await snap_target.create(queue, RawstorObjectSpec{});
 }
 
 // width only ever comes from the target's own first chunk (Target's own
@@ -1193,6 +1254,74 @@ int rawstor_target_snapshot_id(
             RAWSTD_THROW_ERRNO();
         }
         return res;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+// `snapshot_id`: NULL to have this call generate a fresh one itself (the
+// single point every snapshot id is generated at, by analogy with how a
+// fresh object id is generated in Location::create()/rawstor_location_
+// create() -- rawstd_uuid7_init(), same function, same reasoning), or a
+// caller-chosen version id string. Either way, the id actually used is
+// written into `buf`/`size` synchronously, before any I/O, same
+// convention as rawstor_location_create()'s own `target`/`size`.
+int rawstor_target_create_snapshot(
+    RawIOQueue* queue, const char* target, const char* snapshot_id, char* buf,
+    size_t size, int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        // Validates `target` before resolving/writing the version to
+        // `buf` below -- an immediate failure (malformed target) must
+        // leave `buf` untouched, same as every other immediate-failure
+        // case here.
+        rawstor::Target t(rawstd::URI::uriv(target));
+
+        RawstdUUID id;
+        int res;
+        if (snapshot_id == nullptr) {
+            res = rawstd_uuid7_init(&id);
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
+        } else {
+            res = rawstd_uuid_from_string(&id, snapshot_id);
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
+        }
+
+        RawstdUUIDString uuid_string;
+        rawstd_uuid_to_string(&id, &uuid_string);
+        res = snprintf(buf, size, "%s", uuid_string);
+        if (res < 0) {
+            return res;
+        }
+
+        if (static_cast<size_t>(res) >= size) {
+            // Buffer too small -- nothing was queued (the id string is
+            // fully known without any I/O), same convention as
+            // rawstor_location_create()'s own too-small-buffer case.
+            int cbres = cb(res, data);
+            if (cbres < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-cbres);
+            }
+            return 0;
+        }
+
+        launch_create_snapshot_op_coro(
+            std::move(t), static_cast<rawio::Queue*>(queue), id, res, cb, data
+        );
+        rawstd::DetachedTask::rethrow_if_pending();
+        return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
     } catch (const std::bad_alloc& e) {

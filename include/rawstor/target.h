@@ -559,6 +559,50 @@ int rawstor_target_snapshot_id(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Asynchronously take a snapshot of a target under a fresh or
+ *        caller-chosen version id.
+ *
+ * Every version id is client-generated, like every object id (see
+ * rawstor_location_create()). This takes a plain native CoW snapshot as
+ * that exact version on every URI in @p target (every URI is still
+ * attempted even if an earlier one fails, and the first error encountered
+ * is reported); the caller owns crash consistency -- all acknowledged
+ * writes must be flushed before this call.
+ *
+ * @param queue    Queue used to drive the asynchronous snapshot.
+ * @param target   Target string, see rawstor_target_spec().
+ * @param snapshot_id  The version id's UUID string, or NULL to have this call
+ *                 generate a fresh one itself (rawstd_uuid7_init(), the
+ *                 same single point of generation a fresh object id comes
+ *                 from -- rawstor_location_create()).
+ * @param buf      Output buffer for the version id actually used (whether
+ *                 generated here or supplied in @p snapshot_id), written
+ *                 synchronously before this call returns -- same
+ *                 truncation convention as rawstor_target_id().
+ * @param size     Size of @p buf in bytes (including space for the
+ *                 terminating null byte).
+ * @param cb       Callback invoked on completion.
+ *                 - @p result is zero on success, or a negative errno on
+ *                   failure (@c -ENOTSUP if a backend has no CoW --
+ *                   file://, classic LVM -- no fallback copies are made
+ *                   behind the caller's back).
+ *                 - @p data is the same pointer passed as @p data below.
+ * @param data     User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return The number of characters written to @p buf (see
+ *         rawstor_target_id()) if the snapshot was successfully queued;
+ *         negative errno on immediate failure (in which case @p cb is
+ *         never invoked).
+ *
+ * @see rawstor_target_create
+ * @see rawstor_target_remove
+ */
+int rawstor_target_create_snapshot(
+    RawIOQueue* queue, const char* target, const char* snapshot_id, char* buf,
+    size_t size, int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Retrieve the location part of a target string.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),

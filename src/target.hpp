@@ -135,6 +135,24 @@ public:
     // already tells it how many there are).
     rawstd::Task<void>
     create(rawio::Queue& queue, const RawstorObjectSpec& sp) const;
+
+    // Takes a native CoW snapshot of the live version under a fresh UUID
+    // v7 (this class's own single point of generation, like
+    // Location::create() above), returning the id actually used.
+    rawstd::Task<RawstdUUID> create_snapshot(rawio::Queue& queue) const;
+
+    // Same, but under the caller-supplied snapshot_id -- splices it onto
+    // every URI in `_uris` and lets the resulting Target's own create()
+    // (the bound-snapshot branch above) do the actual CoW fan-out, the
+    // same way Location::create(uuid, sp) above delegates the actual
+    // per-URI CREATE to a fresh Target too. Only ever touches the
+    // target's own first chunk (see spec()'s own comment on why); every
+    // URI in it is still attempted even if an earlier one fails, the
+    // first error encountered reported. ENOTSUP on a backend without
+    // native CoW (file://, classic LVM).
+    rawstd::Task<void>
+    create_snapshot(rawio::Queue& queue, const RawstdUUID& snapshot_id) const;
+
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue) const;
     // One RawstorObjectMeta per URI of the chunk at `offset`, same order
     // -- every URI of that chunk is queried, not just the first
