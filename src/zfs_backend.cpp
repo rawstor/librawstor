@@ -329,7 +329,9 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
 
     rawstd_info("zfs: destroying zvol %s\n", dataset.c_str());
 
-    std::vector<std::string> argv = {"zfs", "destroy", dataset};
+    // -r: a zvol that has snapshots can't be destroyed without also
+    // destroying them, and removing an object removes every version of it.
+    std::vector<std::string> argv = {"zfs", "destroy", "-r", dataset};
     try {
         co_await rawstor::run_command(_queue, std::move(argv));
         co_await _wait_for_blockdev(
@@ -487,26 +489,19 @@ rawstd::Task<void> Backend::create_snapshot(
 
     rawstd_info("zfs: creating snapshot %s\n", snapshot.c_str());
 
+    // The snapshot read path opens /dev/zvol/.../<uuid>@s<id>, which
+    // exists only with snapdev=visible on the origin. Set it with every
+    // snapshot, so every one that exists is also openable -- one
+    // mechanism, old zvols included, rather than a per-snapshot property.
+    // It goes first and is idempotent, so "zfs snapshot" is the only step
+    // that can leave state behind: a retry after a failure of either step
+    // never trips over an already-existing snapshot.
+    //
     // GCC 13 ICEs (build_special_member_call) when a std::vector<std::
     // string> argument is brace-initialized directly at the call site of
     // a nested coroutine that's co_await-ed from within another coroutine
     // -- naming the vector first works around it (see Backend::create()'s
     // own comment on this file).
-    std::vector<std::string> snapshot_argv = {"zfs", "snapshot", snapshot};
-    try {
-        co_await rawstor::run_command(_queue, std::move(snapshot_argv));
-    } catch (const std::system_error& e) {
-        rawstd_error(
-            "zfs: failed to create snapshot %s: %s\n", snapshot.c_str(),
-            e.what()
-        );
-        throw;
-    }
-
-    // The snapshot read path opens /dev/zvol/.../<uuid>@s<id>, which
-    // exists only with snapdev=visible on the origin. Set it with every
-    // snapshot, so every one that exists is also openable -- one
-    // mechanism, old zvols included, rather than a per-snapshot property.
     std::vector<std::string> snapdev_argv = {
         "zfs", "set", "snapdev=visible", dataset
     };
@@ -519,12 +514,35 @@ rawstd::Task<void> Backend::create_snapshot(
         );
         throw;
     }
+
+    std::vector<std::string> snapshot_argv = {"zfs", "snapshot", snapshot};
+    try {
+        co_await rawstor::run_command(_queue, std::move(snapshot_argv));
+    } catch (const std::system_error& e) {
+        rawstd_error(
+            "zfs: failed to create snapshot %s: %s\n", snapshot.c_str(),
+            e.what()
+        );
+        throw;
+    }
 }
 
 rawstd::Task<void> Backend::remove_snapshot(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
     std::string snapshot = _dataset(id, offset, snapshot_id);
+
+    // Same ENOENT convention as remove(): a nonexistent snapshot is
+    // permanent, not the retryable EIO "zfs destroy" would produce.
+    std::vector<std::string> probe_argv = {"zfs",  "list",     "-H",
+                                           "-t",   "snapshot", "-o",
+                                           "name", snapshot};
+    try {
+        co_await rawstor::run_command(_queue, std::move(probe_argv));
+    } catch (const std::system_error&) {
+        rawstd_error("zfs: snapshot %s does not exist\n", snapshot.c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
 
     rawstd_info("zfs: destroying snapshot %s\n", snapshot.c_str());
 

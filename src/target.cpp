@@ -812,16 +812,13 @@ rawstd::Task<RawstdUUID> Target::create_snapshot(rawio::Queue& queue) const {
     if (!rawstd_uuid_is_nil(&_snapshot_id)) {
         // `this` already names a specific version -- nothing to generate;
         // take the CoW snapshot as that exact version directly. Only the
-        // target's own first chunk is touched (spec()'s own comment on
-        // why); every URI in it is still attempted even if an earlier one
-        // fails, the first error encountered reported. ENOTSUP on a
-        // backend without native CoW (file://, classic LVM).
-        std::vector<std::vector<rawstd::URI>> chunks =
-            chunk_uris_by_offset(_uris);
-        const std::vector<rawstd::URI>& uris = chunks.front();
+        // target's own chunks are all snapshotted, so the version covers
+        // the whole object; every URI is still attempted even if an
+        // earlier one fails, the first error encountered reported.
+        // ENOTSUP on a backend without native CoW (file://, classic LVM).
         std::vector<rawstd::Task<void>> tasks;
-        tasks.reserve(uris.size());
-        for (const auto& uri : uris) {
+        tasks.reserve(_uris.size());
+        for (const auto& uri : _uris) {
             tasks.push_back(create_snapshot_one(queue, uri, _snapshot_id));
         }
         co_await rawstd::gather(std::move(tasks));
@@ -916,6 +913,12 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
 // non-zero value otherwise -- its own comment).
 rawstd::Task<std::vector<RawstorObjectMeta>>
 Target::meta(rawio::Queue& queue, uint64_t offset) const {
+    if (!rawstd_uuid_is_nil(&_snapshot_id)) {
+        // A bound snapshot has no mirror state of its own; answering from
+        // the live chunk would misreport it.
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     std::vector<rawstd::URI> uris = chunk_uris_at_offset(_uris, offset);
     std::vector<rawstd::Task<RawstorObjectMeta>> tasks;
     tasks.reserve(uris.size());
@@ -951,6 +954,11 @@ rawstd::Task<void> Target::set_sync_state(
     rawio::Queue& queue, uint64_t offset,
     const RawstorObjectSyncState& sync_state
 ) const {
+    if (!rawstd_uuid_is_nil(&_snapshot_id)) {
+        // Would otherwise rewrite the live chunk's state.
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     std::vector<rawstd::URI> uris = chunk_uris_at_offset(_uris, offset);
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(uris.size());

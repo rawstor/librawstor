@@ -43,7 +43,6 @@ extern "C" {
 #define RAWSTOR_CMD_WRITE_ZEROES 10
 #define RAWSTOR_CMD_SET_SYNC_STATE 11
 #define RAWSTOR_CMD_META 12
-
 /*
  * Native CoW snapshot of one stored object version -- rides
  * RawstorOSTFrameBasicPayload, snapshot_id is the caller's own already-
@@ -51,7 +50,7 @@ extern "C" {
  * nil, nil is reserved for the live version). -ENOTSUP on backends
  * without CoW (file://, classic LVM).
  */
-#define RAWSTOR_CMD_SNAPSHOT 0x23
+#define RAWSTOR_CMD_SNAPSHOT 13
 
 typedef uint16_t RawstorOSTCommandType;
 
