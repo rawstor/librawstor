@@ -44,24 +44,24 @@ RawstorObjectPolicy policy_of(const RawstorObjectSpec& sp) {
     return ret;
 }
 
-// One chunk slot's own target URI: "<uuid>/<offset>[/<snap_id>]"
+// One chunk slot's own target URI: "<uuid>/<offset>[/<snapshot_id>]"
 // (Target's own doc comment) -- `uuid` is the whole object's own id,
 // unchanged for every one of its chunks (docs/mds.md, "Chunk identity":
 // obj_id = id -- the physical resource's own name is self-describing, so
 // nothing here needs to scramble it into a per-chunk uuid of its own);
 // `offset` (index * chunk_size, the same formula docs/mds.md's own
-// "chunk_offset" uses) is what Target::parse_path() reads back on the
+// "chunk_offset" uses) is what parse_target_path() reads back on the
 // far end and disambiguates which of the object's chunks this is -- always
 // stamped, even 0 for chunk 0 (unlike a plain, non-chunked target's own
-// offset segment, which Target::parse_path() only ever sees omitted):
+// offset segment, which parse_target_path() only ever sees omitted):
 // its presence is what marks this URI as one chunk of a larger object
-// rather than a standalone one. `snap_id` is what Target::snap_id()
+// rather than a standalone one. `snapshot_id` is what Target::snapshot_id()
 // reads back, omitted when nil (live). Throws if the MDS could not
 // resolve the OST: refuse loudly instead of silently opening
 // under-protected.
 rawstd::URI chunk_slot_target(
     const RawstdUUID& id, uint64_t index, const WireSlot& slot,
-    uint64_t chunk_size, const RawstdUUID& snap_id = {}
+    uint64_t chunk_size, const RawstdUUID& snapshot_id = {}
 ) {
     if (slot.address.empty()) {
         rawstd_error("Chunk slot without a resolved OST address\n");
@@ -72,23 +72,23 @@ rawstd::URI chunk_slot_target(
 
     std::ostringstream oss;
     oss << "ost://" << slot.address << "/" << uuid_string;
-    oss << "/" << (index * chunk_size);
-    if (!rawstd_uuid_is_nil(&snap_id)) {
+    oss << "/" << std::hex << (index * chunk_size);
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
         RawstdUUIDString snap_string;
-        rawstd_uuid_to_string(&snap_id, &snap_string);
+        rawstd_uuid_to_string(&snapshot_id, &snap_string);
         oss << "/" << snap_string;
     }
     return rawstd::URI(oss.str());
 }
 
 std::vector<rawstd::URI> chunk_targets(
-    const WireMap& map, uint64_t index, const RawstdUUID& snap_id = {}
+    const WireMap& map, uint64_t index, const RawstdUUID& snapshot_id = {}
 ) {
     std::vector<rawstd::URI> ret;
     ret.reserve(map.chunks[index].size());
     for (const WireSlot& slot : map.chunks[index]) {
         ret.push_back(
-            chunk_slot_target(map.id, index, slot, map.chunk_size, snap_id)
+            chunk_slot_target(map.id, index, slot, map.chunk_size, snapshot_id)
         );
     }
     return ret;
@@ -102,9 +102,9 @@ std::vector<rawstd::URI> chunk_targets(
 // loop below), and as one ingredient of build_target_string()'s own
 // whole-object string otherwise.
 std::string chunk_target_string(
-    const WireMap& map, uint64_t index, const RawstdUUID& snap_id = {}
+    const WireMap& map, uint64_t index, const RawstdUUID& snapshot_id = {}
 ) {
-    return rawstd::URI::uris(chunk_targets(map, index, snap_id));
+    return rawstd::URI::uris(chunk_targets(map, index, snapshot_id));
 }
 
 uint64_t
@@ -118,7 +118,7 @@ RawstorObjectSpec chunk_spec(const WireMap& map, uint64_t index) {
     sp.size = chunk_logical_size(map.logical_size, map.chunk_size, index);
     // The chunk's own placement identity: member_kind plus the target
     // string's own id/offset segment (chunk_slot_target() above) -- no
-    // separate id/logical_index/snap_id fields to stamp here any more
+    // separate id/logical_index/snapshot_id fields to stamp here any more
     // (see RawstorObjectSpec's own doc comment in target.h).
     sp.member_kind = RAWSTOR_MEMBER_DATA;
     sp.chunk_size = map.chunk_size;
@@ -132,7 +132,7 @@ RawstorObjectSpec chunk_spec(const WireMap& map, uint64_t index) {
 // own doc comment) needs to derive each chunk's own share of it by
 // itself (chunk_size + this total size + each chunk's own offset
 // segment), so create() below only has to build this once instead of one
-// chunk_spec() per chunk. Same fields Backend::spec() below already
+// chunk_spec() per chunk. Same fields Backend::meta() below already
 // reports for an open object.
 RawstorObjectSpec object_spec(const WireMap& map) {
     RawstorObjectSpec sp{};
@@ -151,10 +151,11 @@ RawstorObjectSpec object_spec(const WireMap& map) {
 // them back into chunk groups itself, by each URI's own offset path
 // segment, so nothing here needs to mark where one chunk's own group
 // ends and the next begins.
-std::string build_target_string(const WireMap& map, const RawstdUUID& snap_id) {
+std::string
+build_target_string(const WireMap& map, const RawstdUUID& snapshot_id) {
     std::vector<rawstd::URI> uris;
     for (uint64_t i = 0; i < map.chunks.size(); ++i) {
-        std::vector<rawstd::URI> chunk = chunk_targets(map, i, snap_id);
+        std::vector<rawstd::URI> chunk = chunk_targets(map, i, snapshot_id);
         uris.insert(uris.end(), chunk.begin(), chunk.end());
     }
     return rawstd::URI::uris(uris);
@@ -222,9 +223,9 @@ Backend::create(const RawstdUUID& id, uint64_t, const RawstorObjectSpec& sp) {
 }
 
 rawstd::Task<void> Backend::remove_snapshot(
-    const RawstdUUID& id, uint64_t, const RawstdUUID& snap_id
+    const RawstdUUID& id, uint64_t, const RawstdUUID& snapshot_id
 ) {
-    co_await _snapshot_remove(id, snap_id);
+    co_await _remove_snapshot(id, snapshot_id);
 }
 
 rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t) {
@@ -250,18 +251,6 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t) {
             throw;
         }
     }
-}
-
-rawstd::Task<RawstorObjectSpec> Backend::spec(const RawstdUUID& id, uint64_t) {
-    WireMap map = co_await _client.open(id, RawstdUUID{});
-
-    RawstorObjectSpec sp{};
-    sp.size = map.logical_size;
-    sp.chunk_size = map.chunk_size;
-    sp.width = map.policy.width;
-    sp.failure_domain = map.policy.failure_domain;
-    sp.stripe_width = map.policy.stripe_width;
-    co_return sp;
 }
 
 rawstd::Task<void>
@@ -314,9 +303,9 @@ Backend::resize(const RawstdUUID& id, uint64_t, uint64_t new_size) {
 }
 
 rawstd::Task<void> Backend::create_snapshot(
-    const RawstdUUID& id, uint64_t, const RawstdUUID& snap_id
+    const RawstdUUID& id, uint64_t, const RawstdUUID& snapshot_id
 ) {
-    if (rawstd_uuid_is_nil(&snap_id)) {
+    if (rawstd_uuid_is_nil(&snapshot_id)) {
         /* nil is the live version, never a snapshot. */
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -338,10 +327,14 @@ rawstd::Task<void> Backend::create_snapshot(
                 continue;
             }
             try {
-                Target t(
-                    chunk_slot_target(map.id, i, slot, map.chunk_size, snap_id)
-                        .str()
-                );
+                Target t(chunk_slot_target(
+                             map.id, i, slot, map.chunk_size, snapshot_id
+                )
+                             .str());
+                // `t`'s own path already carries snapshot_id -- Target::
+                // create_snapshot()'s own already-bound branch takes it,
+                // never create() (create() is only ever for a fresh
+                // object, this class's own doc comment).
                 co_await t.create_snapshot(_queue);
                 members.push_back(mds::WireSnapMember{i, slot.ost_id});
                 any = true;
@@ -375,19 +368,19 @@ rawstd::Task<void> Backend::create_snapshot(
         }
     }
 
-    co_await _client.snap_commit(id, snap_id, members);
+    co_await _client.snap_commit(id, snapshot_id, members);
 }
 
-// Fan-out destroy of a previously committed snapshot -- the `snap_id`
+// Fan-out destroy of a previously committed snapshot -- the `snapshot_id`
 // branch of remove() above. The MDS unregisters it (no new
 // readers) before this returns the recorded member set; the per-member
 // destroy below is therefore best-effort cleanup -- a member that can no
 // longer be resolved (address changed, OST replaced) is left for the
 // reconstruct scan.
 rawstd::Task<void>
-Backend::_snapshot_remove(const RawstdUUID& id, const RawstdUUID& snap_id) {
+Backend::_remove_snapshot(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
     std::vector<mds::WireSnapMember> members =
-        co_await _client.snap_remove(id, snap_id);
+        co_await _client.snap_remove(id, snapshot_id);
 
     /*
      * The MDS has already unregistered the snapshot above (no new
@@ -419,7 +412,8 @@ Backend::_snapshot_remove(const RawstdUUID& id, const RawstdUUID& snap_id) {
         }
         try {
             Target t(chunk_slot_target(
-                         map.id, m.logical_index, *it, map.chunk_size, snap_id
+                         map.id, m.logical_index, *it, map.chunk_size,
+                         snapshot_id
             )
                          .str());
             co_await t.remove(_queue);
@@ -462,17 +456,32 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
-rawstd::Task<void>
-Backend::set_object(const RawstdUUID& id, uint64_t, const RawstdUUID& snap_id) {
-    WireMap map = co_await _client.open(id, snap_id);
-    std::string target_string = build_target_string(map, snap_id);
+rawstd::Task<void> Backend::_set_object(
+    const RawstdUUID& id, const RawstdUUID& snapshot_id, int flags
+) {
+    WireMap map = co_await _client.open(id, snapshot_id);
+    std::string target_string = build_target_string(map, snapshot_id);
 
     if (_object) {
         co_await _object->close();
         _object.reset();
     }
 
-    _object = co_await Target(target_string).open(_queue);
+    // `flags` (RAWSTOR_READONLY or 0) rides straight down into the nested
+    // per-chunk open, where a snapshot's chunks require READONLY.
+    _object = co_await Target(target_string).open(_queue, flags);
+}
+
+rawstd::Task<void>
+Backend::set_object(const RawstdUUID& id, uint64_t, int flags) {
+    co_await _set_object(id, RawstdUUID{}, flags);
+}
+
+rawstd::Task<void> Backend::set_snapshot(
+    const RawstdUUID& object_id, uint64_t, const RawstdUUID& snapshot_id
+) {
+    // A snapshot is only ever opened read-only (Target::open()'s own check).
+    co_await _set_object(object_id, snapshot_id, RAWSTOR_READONLY);
 }
 
 rawstd::Task<void> Backend::close() {

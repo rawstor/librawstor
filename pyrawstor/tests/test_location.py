@@ -47,7 +47,7 @@ class TestLocation(unittest.TestCase):
         # file:// pairs each object's data file with a fixed-size .meta
         # file (blk_backend.hpp's META_MAX_SIZE) that "used" accounts for
         # too.
-        META_FILE_SIZE = 256
+        META_FILE_SIZE = 400
 
         with tempfile.TemporaryDirectory() as temp_dir:
             location = rawstor.Location(f"file://{temp_dir}")

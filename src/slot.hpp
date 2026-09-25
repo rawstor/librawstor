@@ -1,6 +1,7 @@
 #ifndef RAWSTOR_SLOT_HPP
 #define RAWSTOR_SLOT_HPP
 
+#include "backend.hpp"
 #include "telemetry.hpp"
 
 #include <rawstor/location.h>
@@ -17,13 +18,12 @@
 #include <optional>
 #include <type_traits>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include <cstddef>
 
 namespace rawstor {
-
-class Backend;
 
 class Slot final {
 private:
@@ -33,13 +33,15 @@ private:
     // Slot is only ever used for metadata (list/create/remove/
     // meta/info), which needs no SET_OBJECT step of its own.
     std::optional<RawstdUUID> _id;
-    // The chunk offset open() bound _id to -- meaningless while _id is
-    // unset; carried alongside it so invalidate_backend()'s own
-    // reconnect-and-set_object() replay (below) doesn't need open()'s
-    // caller to hand it back in a second time.
+    // The chunk offset/version open() bound _id to -- 0/0 (whole object,
+    // live) unless open() was called otherwise (docs/mds.md, "Chunk
+    // identity"/"Snapshots"). Meaningless while _id is unset; carried
+    // alongside it so a reconnected backend's own set_object()
+    // (invalidate_backend()) rebinds to the same chunk/version, not
+    // silently back to the whole object's own live one.
     uint64_t _offset;
-    // The flags/bound snapshot version (nil: live) open() bound _id with
-    // -- carried alongside _id/_offset for the same replay reason.
+    // The open flags (RAWSTOR_READONLY or 0) open() bound _id with --
+    // carried alongside _id/_offset/_snapshot_id for the same replay reason.
     int _flags;
     RawstdUUID _snapshot_id;
 
@@ -77,13 +79,13 @@ private:
     // handled the same way: reconnect via invalidate_backend() and retry,
     // up to rawstor_opts_io_attempts() times total, unless it's a
     // rejection retrying can never fix (e.g. ENOENT -- see
-    // is_permanent_backend_error() in slot.cpp), which fails
+    // is_permanent_backend_error() in connection.cpp), which fails
     // immediately without retrying at all. The one exception to
     // "reconnect before every retry" is a plain EBUSY: the backend itself
     // is fine, just backed up against the remote server's own write-
     // throttling, so reconnecting would only cost a round trip for no
     // benefit. Every retry also waits out an exponential backoff first --
-    // see backoff_delay_ms() in slot.cpp and the
+    // see backoff_delay_ms() in connection.cpp and the
     // rawstor_opts_io_retry_backoff_*() knobs it reads. `T`/`Args...` are
     // deduced straight from `method`'s own pointer-to-member-function
     // type (e.g. &Backend::pread), so the wrapped operation's natural
@@ -91,7 +93,7 @@ private:
     // flows straight through with no caller-supplied template argument
     // and no faked value for the void case. The trailing pack is wrapped
     // in std::type_identity_t to keep it a non-deduced context: some
-    // wrapped methods (e.g. Backend::list()'s out-params) take
+    // wrapped methods (e.g. Backend::list_chunks()'s out-params) take
     // references, and without this, deducing Args a second time from
     // the call arguments themselves (plain by-value here) would conflict
     // with what `method`'s own type already fixed them to.
@@ -136,16 +138,23 @@ public:
     // data-path methods below -- same shape as the matching Backend
     // methods they wrap, since a connect()ed Slot is (like a
     // Backend) already bound to one location.
+    rawstd::Task<void> list_chunks(
+        unsigned int limit,
+        std::vector<std::pair<RawstdUUID, uint64_t>>& chunks, ChunkCursor& token
+    );
+
+    rawstd::Task<void> create_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    );
+
     rawstd::Task<void>
-    list(unsigned int limit, std::vector<RawstdUUID>& uuids, RawstdUUID& token);
+    resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size);
 
     rawstd::Task<void>
     create(const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp);
 
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset);
 
-    // Removes one version previously registered via create_snapshot()
-    // below (`snapshot_id`, never nil).
     rawstd::Task<void> remove_snapshot(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     );
@@ -159,12 +168,6 @@ public:
 
     rawstd::Task<RawstorLocationInfo> info();
 
-    // Native CoW snapshot of the live version as `snapshot_id` (never nil).
-    // ENOTSUP on a backend without native CoW (file://, classic LVM).
-    rawstd::Task<void> create_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
-    );
-
     // set_object()s every backend in the pool create() populated --
     // must be called (at most once) after create(), before any data-path
     // method below. A backend that fails is fixed up via
@@ -174,12 +177,11 @@ public:
     // (retrying against another on failure) rather than target every
     // backend the way this needs to. Returns a separate meta() read
     // against whichever backend the pool now has (set_object() itself
-    // doesn't return it, see its own doc comment) -- spec.width on it
-    // is this copy's own local share, not the target-wide count.
-    // `flags` (RAWSTOR_READONLY or 0) goes to every Backend::set_object();
-    // a non-nil `snapshot_id` binds every backend to that previously
-    // snapshotted version instead (Backend::set_snapshot(), read-only by
-    // nature).
+    // doesn't return it, see its own doc comment) -- spec.width on it is
+    // this copy's own persisted identity, not the target-wide count.
+    // `flags` (RAWSTOR_READONLY or 0) goes to every Backend::set_object()
+    // (a non-nil `snapshot_id` binds via set_snapshot() instead, read-only
+    // by nature).
     rawstd::Task<RawstorObjectMeta> open(
         const RawstdUUID& id, uint64_t offset, int flags,
         const RawstdUUID& snapshot_id

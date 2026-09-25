@@ -9,7 +9,6 @@
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/uri.hpp>
-#include <rawstd/uuid.h>
 
 #include <rawstor/list.h>
 #include <rawstor/location.h>
@@ -49,17 +48,6 @@ ssize_t target_spec(
 ssize_t target_remove(rawio::Queue& queue, const std::string& target) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
         return rawstor_target_remove(&queue, target.c_str(), cb, data);
-    });
-}
-
-ssize_t target_create_snapshot(
-    rawio::Queue& queue, const std::string& target, const char* snapshot_id,
-    char* buf, size_t size
-) {
-    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_target_create_snapshot(
-            &queue, target.c_str(), snapshot_id, buf, size, cb, data
-        );
     });
 }
 
@@ -184,6 +172,9 @@ TEST(FileLifecycleTest, create_spec_list_remove) {
         .size = 1ull << 20,
         .width = 1,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ssize_t res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
@@ -232,6 +223,9 @@ TEST(FileLifecycleTest, create_twice_preserves_existing) {
         .size = 1ull << 20,
         .width = 1,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ssize_t res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
@@ -266,6 +260,9 @@ TEST(FileLifecycleTest, remove_already_removed_target_fails_with_enoent) {
         .size = 1ull << 20,
         .width = 1,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ssize_t res = target_create(*queue, target, spec);
     ASSERT_EQ(res, 0);
@@ -275,28 +272,6 @@ TEST(FileLifecycleTest, remove_already_removed_target_fails_with_enoent) {
 
     res = target_remove(*queue, target);
     EXPECT_EQ(res, -ENOENT);
-}
-
-// create() is only ever for a fresh object -- taking a snapshot of an
-// existing one is create_snapshot()'s own job (rawstor_target_create_
-// snapshot()), never create()'s.
-TEST(FileLifecycleTest, create_on_already_bound_target_is_einval) {
-    rawstor::tests::TmpDir dir;
-    rawstd::URI location_uri(dir.uri());
-    std::string uuid = "00000000-0000-7000-8000-000000000006";
-    std::string snapshot_id = "00000000-0000-7000-8000-000000000007";
-    std::string target =
-        rawstd::URI(rawstd::URI(location_uri, uuid), snapshot_id).str();
-
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-
-    RawstorObjectSpec spec{
-        .size = 1ull << 20,
-        .width = 1,
-        .chunk_size = 0,
-    };
-    ssize_t res = target_create(*queue, target, spec);
-    EXPECT_EQ(res, -EINVAL);
 }
 
 // A target naming a bound snapshot version can only be opened
@@ -328,11 +303,9 @@ TEST(FileLifecycleTest, open_snapshot_readonly_reaches_backend) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
-    RawstorObjectSpec spec{
-        .size = 1ull << 20,
-        .width = 1,
-        .chunk_size = 0,
-    };
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    spec.width = 1;
     ASSERT_EQ(target_create(*queue, live, spec), 0);
 
     RawstorObject* object = nullptr;
@@ -364,6 +337,9 @@ TEST(FileLifecycleTest, create_is_zero_filled) {
         .size = size,
         .width = 1,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ssize_t res = target_create(*queue, target, spec);
     ASSERT_EQ(res, 0);
@@ -398,6 +374,9 @@ TEST(FileLifecycleTest, create_at_default_spec_list_remove) {
         .size = 1ull << 20,
         .width = 1,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ssize_t res = location_create(
         *queue, location, nullptr, spec, target.data(), target.size()
@@ -448,6 +427,9 @@ TEST(FileLifecycleTest, create_at_spec_list_remove) {
         .size = 1ull << 20,
         .width = 1,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ssize_t res = location_create(
         *queue, location, uuid.c_str(), spec, target.data(), target.size()
@@ -498,6 +480,9 @@ TEST(FileLifecycleTest, meta_set_state) {
         .size = 1ull << 20,
         .width = 1,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ssize_t res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
@@ -534,91 +519,6 @@ TEST(FileLifecycleTest, meta_set_state) {
     EXPECT_EQ(res, 0);
 }
 
-// file:// has no native CoW (-ENOTSUP once the attempt actually reaches the
-// backend), so these only exercise rawstor_target_create_snapshot()'s own
-// version id resolution and resulting target string (all three modes --
-// see its own doc comment, target.h) -- both are resolved and written to
-// `buf` synchronously, before the doomed backend attempt, so that part is
-// fully testable without a CoW-capable backend at all.
-TEST(FileCreateSnapshotTest, generates_fresh_id_for_plain_target) {
-    rawstor::tests::TmpDir dir;
-    rawstd::URI location_uri(dir.uri());
-    std::string uuid = "00000000-0000-7000-8000-000000000001";
-    std::string target = rawstd::URI(location_uri, uuid).str();
-
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-
-    char buf[65536];
-    ssize_t res =
-        target_create_snapshot(*queue, target, nullptr, buf, sizeof(buf));
-    EXPECT_EQ(res, -ENOTSUP);
-
-    std::string snapshot_target = buf;
-    ASSERT_EQ(snapshot_target.rfind(target + "/", 0), 0u);
-    RawstdUUID parsed;
-    EXPECT_EQ(
-        rawstd_uuid_from_string(
-            &parsed, snapshot_target.substr(target.size() + 1).c_str()
-        ),
-        0
-    );
-    EXPECT_FALSE(rawstd_uuid_is_nil(&parsed));
-}
-
-TEST(FileCreateSnapshotTest, uses_id_already_bound_in_target) {
-    rawstor::tests::TmpDir dir;
-    rawstd::URI location_uri(dir.uri());
-    std::string uuid = "00000000-0000-7000-8000-000000000001";
-    std::string snapshot_id = "00000000-0000-7000-8000-000000000002";
-    std::string target =
-        rawstd::URI(rawstd::URI(location_uri, uuid), snapshot_id).str();
-
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-
-    char buf[65536];
-    ssize_t res =
-        target_create_snapshot(*queue, target, nullptr, buf, sizeof(buf));
-    EXPECT_EQ(res, -ENOTSUP);
-    EXPECT_EQ(target, buf);
-}
-
-TEST(FileCreateSnapshotTest, uses_explicit_id_for_plain_target) {
-    rawstor::tests::TmpDir dir;
-    rawstd::URI location_uri(dir.uri());
-    std::string uuid = "00000000-0000-7000-8000-000000000001";
-    std::string snapshot_id = "00000000-0000-7000-8000-000000000002";
-    std::string target = rawstd::URI(location_uri, uuid).str();
-
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-
-    char buf[65536];
-    ssize_t res = target_create_snapshot(
-        *queue, target, snapshot_id.c_str(), buf, sizeof(buf)
-    );
-    EXPECT_EQ(res, -ENOTSUP);
-    EXPECT_EQ(rawstd::URI(rawstd::URI(target), snapshot_id).str(), buf);
-}
-
-// Combining an already-bound target with an explicit snapshot_id is
-// ambiguous -- rawstor_target_create_snapshot()'s own guard.
-TEST(FileCreateSnapshotTest, explicit_id_on_already_bound_target_is_einval) {
-    rawstor::tests::TmpDir dir;
-    rawstd::URI location_uri(dir.uri());
-    std::string uuid = "00000000-0000-7000-8000-000000000001";
-    std::string bound_id = "00000000-0000-7000-8000-000000000002";
-    std::string other_id = "00000000-0000-7000-8000-000000000003";
-    std::string target =
-        rawstd::URI(rawstd::URI(location_uri, uuid), bound_id).str();
-
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
-
-    char buf[65536];
-    ssize_t res = target_create_snapshot(
-        *queue, target, other_id.c_str(), buf, sizeof(buf)
-    );
-    EXPECT_EQ(res, -EINVAL);
-}
-
 TEST(OstLifecycleTest, create_spec_remove) {
     rawstor::tests::Server server(8753, 256);
 
@@ -633,6 +533,7 @@ TEST(OstLifecycleTest, create_spec_remove) {
         .sync_id_history = {0xaabbccddeeff0011ull, 0, 0, 0},
         .state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
         .chunk_shift = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
         .reserved1 = 0,
         .reserved2 = 0,
@@ -670,6 +571,9 @@ TEST(OstLifecycleTest, create_spec_remove) {
             .size = 1ull << 20,
             .width = 1,
             .chunk_size = 0,
+            .stripe_width = 0,
+            .failure_domain = 0,
+            .member_kind = RAWSTOR_MEMBER_DATA,
         };
 
         ssize_t res = target_create(*queue, target, spec);
@@ -716,6 +620,19 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
     std::string location = location_uri.str();
     std::string target(65536, '\0');
 
+    RawstorOSTFrameMetaPayload meta_body = {
+        .size = 1ull << 20,
+        .epoch = 0,
+        .sync_id = 0,
+        .sync_id_history = {},
+        .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+        .width = 1,
+        .reserved1 = 0,
+        .reserved2 = 0,
+    };
+
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
@@ -723,17 +640,6 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
-        RawstorOSTFrameMetaPayload meta_body = {
-            .size = 1ull << 20,
-            .epoch = 0,
-            .sync_id = 0,
-            .sync_id_history = {},
-            .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
-            .chunk_shift = 0,
-            .width = 1,
-            .reserved1 = 0,
-            .reserved2 = 0,
-        };
         s.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta_body);
     }
 
@@ -749,6 +655,9 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
             .size = 1ull << 20,
             .width = 1,
             .chunk_size = 0,
+            .stripe_width = 0,
+            .failure_domain = 0,
+            .member_kind = RAWSTOR_MEMBER_DATA,
         };
 
         ssize_t res = location_create(
@@ -780,6 +689,19 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
     std::string uuid = "00000000-0000-7000-8000-000000000004";
     std::string target(65536, '\0');
 
+    RawstorOSTFrameMetaPayload meta_body = {
+        .size = 1ull << 20,
+        .epoch = 0,
+        .sync_id = 0,
+        .sync_id_history = {},
+        .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
+        .width = 1,
+        .reserved1 = 0,
+        .reserved2 = 0,
+    };
+
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
@@ -787,17 +709,6 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
-        RawstorOSTFrameMetaPayload meta_body = {
-            .size = 1ull << 20,
-            .epoch = 0,
-            .sync_id = 0,
-            .sync_id_history = {},
-            .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
-            .chunk_shift = 0,
-            .width = 1,
-            .reserved1 = 0,
-            .reserved2 = 0,
-        };
         s.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta_body);
     }
 
@@ -813,6 +724,9 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
             .size = 1ull << 20,
             .width = 1,
             .chunk_size = 0,
+            .stripe_width = 0,
+            .failure_domain = 0,
+            .member_kind = RAWSTOR_MEMBER_DATA,
         };
 
         ssize_t res = location_create(

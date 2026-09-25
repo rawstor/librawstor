@@ -141,13 +141,29 @@ void scan_ost(
              it = rawstor_string_list_next(it)) {
             const char* target = *it;
 
+            RawstdUUIDString uuid_string;
+            RawstdUUID obj_id;
+            uint64_t offset = 0;
+            if (rawstor_target_id(target, uuid_string, sizeof(uuid_string)) <
+                    0 ||
+                rawstd_uuid_from_string(&obj_id, uuid_string) < 0 ||
+                rawstor_target_offset(target, &offset) < 0) {
+                rawstd_error("reconstruct: malformed target: %s\n", target);
+                continue;
+            }
+
+            // `target` names one specific chunk directly (this scan walks
+            // physical objects one OST at a time, not a caller's own
+            // multi-chunk target string), so its own offset -- already
+            // parsed above -- is exactly the chunk META below asks for.
             RawstorObjectMeta meta{};
             SyncOp meta_op;
             meta_op.queue = queue;
             ssize_t mr = sync_op_wait(
-                meta_op, rawstor_target_meta(
-                             queue, target, &meta, 1, sync_op_cb, &meta_op
-                         )
+                meta_op,
+                rawstor_target_meta(
+                    queue, target, offset, &meta, 1, sync_op_cb, &meta_op
+                )
             );
             if (mr < 0) {
                 rawstd_error(
@@ -157,21 +173,10 @@ void scan_ost(
                 continue;
             }
 
-            RawstdUUIDString uuid_string;
-            RawstdUUID obj_id;
-            uint64_t chunk_offset = 0;
-            if (rawstor_target_id(target, uuid_string, sizeof(uuid_string)) <
-                    0 ||
-                rawstd_uuid_from_string(&obj_id, uuid_string) < 0 ||
-                rawstor_target_offset(target, &chunk_offset) < 0) {
-                rawstd_error("reconstruct: malformed target: %s\n", target);
-                continue;
-            }
-
             rawstor::mds::ScanRecord record;
             record.ost_id = ost_id;
             record.obj_id = obj_id;
-            record.chunk_offset = chunk_offset;
+            record.offset = offset;
             record.meta = meta;
             records.push_back(record);
         }

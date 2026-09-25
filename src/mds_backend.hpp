@@ -49,7 +49,11 @@ private:
 
     // Shared by remove_snapshot() below.
     rawstd::Task<void>
-    _snapshot_remove(const RawstdUUID& id, const RawstdUUID& snap_id);
+    _remove_snapshot(const RawstdUUID& id, const RawstdUUID& snapshot_id);
+
+    // Shared by set_object()/set_snapshot() below.
+    rawstd::Task<void>
+    _set_object(const RawstdUUID& id, const RawstdUUID& snapshot_id, int flags);
 
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
@@ -60,7 +64,7 @@ public:
     ) override;
 
     rawstd::Task<void> create(
-        const RawstdUUID& id, uint64_t chunk_offset, const RawstorObjectSpec& sp
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
     ) override;
 
     // Unregisters and destroys the whole object (docs/mds.md, deletion
@@ -68,30 +72,25 @@ public:
     // returns; the per-chunk destroy that follows is therefore
     // best-effort cleanup -- a member that can no longer be resolved
     // (address changed, OST replaced) is left for the reconstruct scan.
-    rawstd::Task<void>
-    remove(const RawstdUUID& id, uint64_t chunk_offset) override;
+    rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset) override;
 
-    // Removes one previously committed snapshot, via _snapshot_remove()
+    // Removes one previously committed snapshot, via _remove_snapshot()
     // above. Same MDS-unregisters-first, best-effort per-chunk cleanup
     // convention as remove() above.
     rawstd::Task<void> remove_snapshot(
-        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     ) override;
 
-    rawstd::Task<RawstorObjectSpec>
-    spec(const RawstdUUID& id, uint64_t chunk_offset) override;
-
-    // `chunk_offset` is always 0 here -- a single mds:// URI is never
+    // `offset` is always 0 here -- a single mds:// URI is never
     // itself split into chunks (chunking happens one level down, inside
     // the object) -- see rawstor::Backend::resize()'s own doc comment.
-    rawstd::Task<void> resize(
-        const RawstdUUID& id, uint64_t chunk_offset, uint64_t new_size
-    ) override;
+    rawstd::Task<void>
+    resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size) override;
 
     // MDS-orchestrated snapshot (docs/mds.md, "Snapshots (stage 2)"):
-    // `snap_id` is the caller's own already-generated version id (like
+    // `snapshot_id` is the caller's own already-generated version id (like
     // every object id -- client-generated, single point of generation,
-    // Target::create_snapshot()'s own contract, target.h). No more
+    // Target::create()'s own bound-snapshot contract, target.h). No more
     // separate "assign" step (there used to be one, back when the MDS
     // itself handed out a monotonic counter's next value): a client-
     // generated id can never collide with a crashed attempt's leftovers,
@@ -102,10 +101,10 @@ public:
     // legitimately shorter, pre-resize snapshot), then registers the
     // surviving membership. v1 caveat (see the design doc): assumes no
     // concurrent writer -- draining/flushing an in-flight write session
-    // is the writing client's own duty, not this call's. `chunk_offset`
+    // is the writing client's own duty, not this call's. `offset`
     // is always 0, same reason as resize() above.
     rawstd::Task<void> create_snapshot(
-        const RawstdUUID& id, uint64_t chunk_offset, const RawstdUUID& snap_id
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     ) override;
 
     // Synthetic: mirrors == 1 at the Target level (a single mds:// URI),
@@ -115,25 +114,30 @@ public:
     // tracked one level down, by each chunk's own (possibly mirrored)
     // Chunk.
     rawstd::Task<RawstorObjectMeta>
-    meta(const RawstdUUID& id, uint64_t chunk_offset) override;
+    meta(const RawstdUUID& id, uint64_t offset) override;
 
     // No-op, for the same reason meta() above is synthetic.
     rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& id, uint64_t offset,
         const RawstorObjectSyncState& sync_state
     ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
-    // Fetches the object's current WireMap and opens the nested
-    // multi-chunk Object it describes (see this class's own doc
-    // comment) -- `snap_id` is folded into every chunk slot's own URI
-    // (its own trailing path segment, chunk_slot_target()'s own
-    // convention in mds_backend.cpp), not passed down any other way.
-    // `chunk_offset` is always 0, same reason as resize() above.
-    rawstd::Task<void> set_object(
-        const RawstdUUID& id, uint64_t chunk_offset,
-        const RawstdUUID& snap_id = {}
+    // Fetches the object's current (live) WireMap and opens the nested
+    // multi-chunk Object it describes (see this class's own doc comment),
+    // via _set_object() above. `offset` is always 0, same reason as
+    // resize() above.
+    rawstd::Task<void>
+    set_object(const RawstdUUID& id, uint64_t offset, int flags) override;
+
+    // Same as set_object() above, for one previously committed snapshot:
+    // `snapshot_id` is folded into every chunk slot's own URI (its own
+    // trailing path segment, chunk_slot_target()'s own convention in
+    // mds_backend.cpp), not passed down any other way.
+    rawstd::Task<void> set_snapshot(
+        const RawstdUUID& object_id, uint64_t offset,
+        const RawstdUUID& snapshot_id
     ) override;
 
     rawstd::Task<void> close() override;

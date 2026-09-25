@@ -36,7 +36,7 @@ struct ObjectMap {
  * `obj_id` is the whole object's own id for every one of its chunks
  * (docs/mds.md, "Chunk identity": obj_id = id -- the physical
  * resource's own name is self-describing, so nothing here needs a
- * separate id field); `chunk_offset` (read back via
+ * separate id field); `offset` (read back via
  * rawstor_target_offset(), the same suffix chunk_slot_target() stamped
  * on the target LIST returned) disambiguates which of that object's
  * chunks this is.
@@ -44,7 +44,7 @@ struct ObjectMap {
 struct ScanRecord {
     RawstdUUID ost_id;
     RawstdUUID obj_id;
-    uint64_t chunk_offset;
+    uint64_t offset;
     RawstorObjectMeta meta;
 };
 
@@ -75,7 +75,8 @@ private:
     Topology _topology;
 
     ObjectDescriptor _descriptor(const RawstdUUID& id);
-    ObjectMap _open_snapshot(const RawstdUUID& id, const RawstdUUID& snap_id);
+    ObjectMap
+    _open_snapshot(const RawstdUUID& id, const RawstdUUID& snapshot_id);
 
 public:
     ObjectStore(const std::string& path, Topology topology);
@@ -98,10 +99,10 @@ public:
     );
 
     /*
-     * A non-nil snap_id opens the registered snapshot view: the logical
+     * A non-nil snapshot_id opens the registered snapshot view: the logical
      * size frozen at commit, chunks routed to the recorded members only.
      */
-    ObjectMap open(const RawstdUUID& id, const RawstdUUID& snap_id);
+    ObjectMap open(const RawstdUUID& id, const RawstdUUID& snapshot_id);
 
     /* Grow-only in v1; returns the new map_epoch. */
     uint64_t resize(const RawstdUUID& id, uint64_t new_size);
@@ -111,7 +112,7 @@ public:
 
     /*
      * Registers the snapshot: members = exactly the chunk copies that
-     * hold it. `snap_id` is the caller's own already-generated version
+     * hold it. `snapshot_id` is the caller's own already-generated version
      * id (like every object id -- client-generated, single point of
      * generation, see docs/mds.md) -- never nil (EINVAL; nil is reserved
      * for the live version) and not already registered (EEXIST). Every
@@ -120,7 +121,7 @@ public:
      * into the snapshot. Returns the bumped map_epoch.
      */
     uint64_t snap_commit(
-        const RawstdUUID& id, const RawstdUUID& snap_id,
+        const RawstdUUID& id, const RawstdUUID& snapshot_id,
         const std::vector<SnapMember>& members
     );
 
@@ -129,7 +130,7 @@ public:
      * registered: the member set for the caller's fan-out destroy.
      */
     std::vector<SnapMember>
-    snap_remove(const RawstdUUID& id, const RawstdUUID& snap_id);
+    snap_remove(const RawstdUUID& id, const RawstdUUID& snapshot_id);
 
     /*
      * Rebuilds the whole map from a scan of every OST in the topology

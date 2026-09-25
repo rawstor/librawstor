@@ -71,9 +71,12 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
             .chunk_offset = 0,
             .size = size,
             .chunk_shift = 0,
+            .stripe_width = 0,
+            .failure_domain = 0,
+            .member_kind = 0, /* RAWSTOR_MEMBER_DATA, <rawstor/target.h> */
             .width = static_cast<uint8_t>(width),
+            .reserved1 = 0,
             .reserved2 = 0,
-            .reserved3 = 0,
         },
     };
     std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));

@@ -292,6 +292,9 @@ TEST(MirrorQuorumTest, open_refused_without_quorum_n2) {
         .size = 1ull << 20,
         .width = 2,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -322,6 +325,9 @@ TEST(MirrorQuorumTest, all_mirrors_down_at_open_refused) {
         .size = 1ull << 20,
         .width = 3,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -341,11 +347,9 @@ TEST(MirrorQuorumTest, readonly_open_without_quorum_n2) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000b0");
 
-    RawstorObjectSpec spec{
-        .size = 1ull << 20,
-        .width = 2,
-        .chunk_size = 0,
-    };
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    spec.width = 2;
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     RawstorObject* writer = nullptr;
@@ -378,6 +382,9 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
         .size = 1ull << 20,
         .width = 3,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -421,6 +428,9 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
         .size = 1ull << 20,
         .width = 2,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -477,6 +487,9 @@ TEST(MirrorQuorumTest, split_brain_refused) {
         .size = 1ull << 20,
         .width = 2,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -509,6 +522,9 @@ TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
         .size = 1ull << 20,
         .width = 2,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -546,6 +562,9 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
         .size = 1ull << 20,
         .width = 2,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -597,6 +616,9 @@ TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
         .size = 1ull << 20,
         .width = 2,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -659,6 +681,9 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
         .size = size,
         .width = 2,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -721,6 +746,9 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
         .size = 1ull << 20,
         .width = 3,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -738,6 +766,9 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
         .size = 1ull << 20,
         .width = 1,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target(2), member_spec), 0);
 
@@ -770,6 +801,9 @@ TEST(MirrorQuorumTest, clean_close_stable_identity) {
         .size = 1ull << 20,
         .width = 2,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -817,24 +851,26 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
         .reserved1 = 0,
         .reserved2 = 0,
     };
 
     /*
-     * The object is CLEAN, so the slot layer still retries reads
+     * The object is CLEAN, so the connection layer still retries reads
      * transparently: the member serves the error on the initial session and
      * on two reopened ones before the read fails over to the second member.
      * The repair then lands on the last reopened session.
      */
-    // Chunk::create() opens every reachable slot concurrently (see its
-    // own comment) -- both server1's and server2's own first session
-    // get their own combined SET_OBJECT+META (Slot::open()'s own
-    // comment). Every later low-level reconnect (invalidate_backend())
-    // goes through Backend::set_object() too, folding its own META
-    // fetch in on success, so each reopened session below still gets
-    // its own SET_OBJECT+META pair.
+    // Both members go through Slot::open()'s own combined SET_OBJECT+META
+    // step (see its own comment), concurrently, on their first session --
+    // Chunk::create()'s own overall spec comes straight out of that same
+    // META answer (see its own comment), no separate round trip. Every
+    // later low-level reconnect (invalidate_backend()) goes through
+    // Backend::set_object() only, but it always folds its own META fetch
+    // in on success too, so each reopened session below still gets its
+    // own SET_OBJECT+META pair.
     {
         rawstor::tests::Session s(server1);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -899,14 +935,16 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
         .reserved1 = 0,
         .reserved2 = 0,
     };
 
-    // Chunk::create() opens every reachable slot concurrently (see its
-    // own comment) -- both server1's and server2's own session get
-    // their own combined SET_OBJECT+META (Slot::open()'s own comment).
+    // Both members go through Slot::open()'s own combined SET_OBJECT+META
+    // step (see its own comment), concurrently -- Chunk::create()'s own
+    // overall spec comes straight out of that same META answer (see its
+    // own comment), no separate round trip.
     {
         rawstor::tests::Session s(server1);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -962,7 +1000,7 @@ TEST(MirrorOstTest, degrade_and_continue) {
  * (reconnect + up to rawstor_opts_io_attempts() attempts, 3 under this
  * suite's own test override -- see tests/main.cpp), which would need 3
  * scripted reconnect sessions per member just to reach the same end
- * state. is_permanent_backend_error() (src/slot.cpp) treats
+ * state. is_permanent_backend_error() (src/connection.cpp) treats
  * -EINVAL as non-retryable instead, so a single scripted response is
  * enough to reach "member excluded" -- the class of error is what this
  * test cares about, not this specific one.
@@ -982,6 +1020,7 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
         .reserved1 = 0,
         .reserved2 = 0,
@@ -1049,6 +1088,7 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
         .reserved1 = 0,
         .reserved2 = 0,
