@@ -414,21 +414,22 @@ rawstd::DetachedTask launch_remove_op_coro(
 // snprintf()-style contract (the id string's length, always < the buffer
 // size on success) even though the actual snapshot is asynchronous, same
 // shape as location.cpp's own launch_create_op_coro() for
-// rawstor_location_create().
+// rawstor_location_create(). `explicit_id` is true iff the caller passed
+// a non-NULL snapshot_id of their own (rawstor_target_create_snapshot()'s
+// own mode 3) -- in that case `t` must go through the explicit-id
+// overload even if it's already bound (so its own guard against that
+// combination actually fires); only an unbound-caller (`snapshot_id` here
+// is one this call resolved on `t`'s own behalf, mode 1 or 2) skips
+// straight to create() when `t` is already bound, since splicing a second
+// copy of the very id `t` already carries would be pointless.
 rawstd::DetachedTask launch_create_snapshot_op_coro(
     rawstor::Target t, rawio::Queue* queue, RawstdUUID snapshot_id,
-    ssize_t length, int (*cb)(ssize_t result, void* data), void* data
+    bool explicit_id, ssize_t length, int (*cb)(ssize_t result, void* data),
+    void* data
 ) {
     ssize_t result = length;
     try {
-        // `t` already bound to its own version (rawstor_target_create_
-        // snapshot()'s own comment, mode 1) means `snapshot_id` is just
-        // that same id, already resolved for `buf` -- calling the
-        // explicit-id overload on it would splice a second copy on top and
-        // fail its own guard, so this runs create()'s bound-snapshot
-        // branch on `t` directly instead, same as Target::create_
-        // snapshot()'s own no-argument overload does.
-        if (!rawstd_uuid_is_nil(&t.snapshot_id())) {
+        if (!explicit_id && !rawstd_uuid_is_nil(&t.snapshot_id())) {
             co_await t.create(*queue, RawstorObjectSpec{});
         } else {
             co_await t.create_snapshot(*queue, snapshot_id);
@@ -1305,8 +1306,10 @@ int rawstor_target_snapshot_id(
 //   verbatim -- but only if `target` names a plain object; combining it
 //   with a `target` that already carries its own bound version would be
 //   ambiguous, so that combination fails with -EINVAL instead (Target::
-//   create_snapshot(queue, id)'s own guard, checked once the operation is
-//   actually queued below -- see launch_create_snapshot_op_coro()).
+//   create_snapshot(queue, id)'s own guard -- explicit_id below routes
+//   this case to that same overload even though `target` is bound, so the
+//   guard actually runs once the operation is queued -- see
+//   launch_create_snapshot_op_coro()).
 // Either way, the id actually used is written into `buf`/`size`
 // synchronously, before any I/O, same convention as rawstor_location_
 // create()'s own `target`/`size`.
@@ -1323,7 +1326,8 @@ int rawstor_target_create_snapshot(
 
         RawstdUUID id;
         int res;
-        if (snapshot_id != nullptr) {
+        bool explicit_id = snapshot_id != nullptr;
+        if (explicit_id) {
             res = rawstd_uuid_from_string(&id, snapshot_id);
             if (res < 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -1356,7 +1360,8 @@ int rawstor_target_create_snapshot(
         }
 
         launch_create_snapshot_op_coro(
-            std::move(t), static_cast<rawio::Queue*>(queue), id, res, cb, data
+            std::move(t), static_cast<rawio::Queue*>(queue), id, explicit_id,
+            res, cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;

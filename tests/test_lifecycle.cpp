@@ -9,6 +9,7 @@
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/uri.hpp>
+#include <rawstd/uuid.h>
 
 #include <rawstor/list.h>
 #include <rawstor/location.h>
@@ -48,6 +49,17 @@ ssize_t target_spec(
 ssize_t target_remove(rawio::Queue& queue, const std::string& target) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
         return rawstor_target_remove(&queue, target.c_str(), cb, data);
+    });
+}
+
+ssize_t target_create_snapshot(
+    rawio::Queue& queue, const std::string& target, const char* snapshot_id,
+    char* buf, size_t size
+) {
+    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_create_snapshot(
+            &queue, target.c_str(), snapshot_id, buf, size, cb, data
+        );
     });
 }
 
@@ -451,6 +463,84 @@ TEST(FileLifecycleTest, meta_set_state) {
 
     res = target_remove(*queue, target);
     EXPECT_EQ(res, 0);
+}
+
+// file:// has no native CoW (-ENOTSUP once the attempt actually reaches the
+// backend), so these only exercise rawstor_target_create_snapshot()'s own
+// version id resolution (all three modes -- see its own doc comment,
+// target.h) -- the id is resolved and written to `buf` synchronously,
+// before the doomed backend attempt, so that part is fully testable
+// without a CoW-capable backend at all.
+TEST(FileCreateSnapshotTest, generates_fresh_id_for_plain_target) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
+    std::string uuid = "00000000-0000-7000-8000-000000000001";
+    std::string target = rawstd::URI(location_uri, uuid).str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstdUUIDString buf;
+    ssize_t res =
+        target_create_snapshot(*queue, target, nullptr, buf, sizeof(buf));
+    EXPECT_EQ(res, -ENOTSUP);
+
+    RawstdUUID parsed;
+    EXPECT_EQ(rawstd_uuid_from_string(&parsed, buf), 0);
+    EXPECT_FALSE(rawstd_uuid_is_nil(&parsed));
+}
+
+TEST(FileCreateSnapshotTest, uses_id_already_bound_in_target) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
+    std::string uuid = "00000000-0000-7000-8000-000000000001";
+    std::string snapshot_id = "00000000-0000-7000-8000-000000000002";
+    std::string target =
+        rawstd::URI(rawstd::URI(location_uri, uuid), snapshot_id).str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstdUUIDString buf;
+    ssize_t res =
+        target_create_snapshot(*queue, target, nullptr, buf, sizeof(buf));
+    EXPECT_EQ(res, -ENOTSUP);
+    EXPECT_EQ(snapshot_id, buf);
+}
+
+TEST(FileCreateSnapshotTest, uses_explicit_id_for_plain_target) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
+    std::string uuid = "00000000-0000-7000-8000-000000000001";
+    std::string snapshot_id = "00000000-0000-7000-8000-000000000002";
+    std::string target = rawstd::URI(location_uri, uuid).str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstdUUIDString buf;
+    ssize_t res = target_create_snapshot(
+        *queue, target, snapshot_id.c_str(), buf, sizeof(buf)
+    );
+    EXPECT_EQ(res, -ENOTSUP);
+    EXPECT_EQ(snapshot_id, buf);
+}
+
+// Combining an already-bound target with an explicit snapshot_id is
+// ambiguous -- Target::create_snapshot(queue, id)'s own guard.
+TEST(FileCreateSnapshotTest, explicit_id_on_already_bound_target_is_einval) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
+    std::string uuid = "00000000-0000-7000-8000-000000000001";
+    std::string bound_id = "00000000-0000-7000-8000-000000000002";
+    std::string other_id = "00000000-0000-7000-8000-000000000003";
+    std::string target =
+        rawstd::URI(rawstd::URI(location_uri, uuid), bound_id).str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstdUUIDString buf;
+    ssize_t res = target_create_snapshot(
+        *queue, target, other_id.c_str(), buf, sizeof(buf)
+    );
+    EXPECT_EQ(res, -EINVAL);
 }
 
 TEST(OstLifecycleTest, create_spec_remove) {
