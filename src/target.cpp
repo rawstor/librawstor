@@ -811,17 +811,51 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
 rawstd::Task<RawstdUUID> Target::create_snapshot(rawio::Queue& queue) const {
     if (!rawstd_uuid_is_nil(&_snapshot_id)) {
         // `this` already names a specific version -- nothing to generate;
-        // take the CoW snapshot as that exact version directly. Only the
-        // target's own chunks are all snapshotted, so the version covers
-        // the whole object; every URI is still attempted even if an
-        // earlier one fails, the first error encountered reported.
+        // take the CoW snapshot as that exact version directly, on every
+        // URI of every chunk, so the version covers the whole object.
         // ENOTSUP on a backend without native CoW (file://, classic LVM).
+        //
+        // Every URI is attempted even if an earlier one fails, the first
+        // error encountered reported -- but this can't just gather() them:
+        // on failure, the URIs THIS call did snapshot are rolled back (same
+        // reasoning as create()'s own rollback), or a partial failure would
+        // leave snapshots behind that nobody knows about. The URI that
+        // failed is not rolled back, since it may name a pre-existing
+        // snapshot this call didn't create.
         std::vector<rawstd::Task<void>> tasks;
         tasks.reserve(_uris.size());
         for (const auto& uri : _uris) {
             tasks.push_back(create_snapshot_one(queue, uri, _snapshot_id));
         }
-        co_await rawstd::gather(std::move(tasks));
+
+        // co_await isn't allowed inside a catch block, so the failure is
+        // only recorded here; rolling back happens just below.
+        std::vector<rawstd::URI> created;
+        std::exception_ptr eptr;
+        for (size_t i = 0; i < _uris.size(); ++i) {
+            try {
+                co_await tasks[i];
+                created.push_back(_uris[i]);
+            } catch (...) {
+                if (!eptr) {
+                    eptr = std::current_exception();
+                }
+            }
+        }
+
+        if (eptr) {
+            if (!created.empty()) {
+                try {
+                    co_await remove_many(queue, created);
+                } catch (const std::exception& e) {
+                    rawstd_error(
+                        "Failed to rollback create_snapshot operation: %s\n",
+                        e.what()
+                    );
+                }
+            }
+            std::rethrow_exception(eptr);
+        }
         co_return _snapshot_id;
     }
 
