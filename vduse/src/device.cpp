@@ -197,7 +197,7 @@ namespace vduse {
 
 Device::Device(
     unsigned int queue_size, unsigned int num_queues, const std::string& target,
-    bool write_cache_enabled, int wake_fd
+    bool write_cache_enabled, bool readonly, int wake_fd
 ) :
     _ctrl_fd(-1),
     _fd(-1),
@@ -207,6 +207,7 @@ Device::Device(
     _vqs(num_queues),
     _features(0),
     _write_cache_enabled(write_cache_enabled),
+    _readonly(readonly),
     _wake_fd(wake_fd),
     _stop_requested(false) {
     int ires = rawio_queue_create(queue_size, &_queue);
@@ -281,6 +282,9 @@ Device::Device(
             1ull << VIRTIO_BLK_F_TOPOLOGY | 1ull << VIRTIO_BLK_F_BLK_SIZE |
             1ull << VIRTIO_BLK_F_FLUSH | 1ull << VIRTIO_BLK_F_MQ |
             1ull << VIRTIO_BLK_F_DISCARD | 1ull << VIRTIO_BLK_F_WRITE_ZEROES;
+        if (readonly) {
+            init_features |= 1ull << VIRTIO_BLK_F_RO;
+        }
         // Unlike vhost-user, the VDUSE kernel driver unconditionally
         // rejects VIRTIO_BLK_F_CONFIG_WCE for virtio-blk devices
         // (vduse_dev.c's features_is_valid(): "we only support read-only
@@ -360,7 +364,7 @@ Device::Device(
         // through leaves only the earlier ones running, which the catch
         // below stops before rethrowing.
         for (auto& vq : _vqs) {
-            vq.start(target, queue_size);
+            vq.start(target, queue_size, readonly);
         }
 
         rawstd_info("Waiting for connection on %s\n", dev_path.c_str());

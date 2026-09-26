@@ -38,6 +38,10 @@ private:
     // reconnect-and-set_object() replay (below) doesn't need open()'s
     // caller to hand it back in a second time.
     uint64_t _offset;
+    // The flags/bound snapshot version (nil: live) open() bound _id with
+    // -- carried alongside _id/_offset for the same replay reason.
+    int _flags;
+    RawstdUUID _snapshot_id;
 
     std::vector<std::shared_ptr<Backend>> _backends;
     size_t _backend_index;
@@ -140,6 +144,12 @@ public:
 
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset);
 
+    // Removes one version previously registered via create_snapshot()
+    // below (`snapshot_id`, never nil).
+    rawstd::Task<void> remove_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    );
+
     rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id, uint64_t offset);
 
     rawstd::Task<void> set_sync_state(
@@ -148,6 +158,12 @@ public:
     );
 
     rawstd::Task<RawstorLocationInfo> info();
+
+    // Native CoW snapshot of the live version as `snapshot_id` (never nil).
+    // ENOTSUP on a backend without native CoW (file://, classic LVM).
+    rawstd::Task<void> create_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    );
 
     // set_object()s every backend in the pool create() populated --
     // must be called (at most once) after create(), before any data-path
@@ -160,7 +176,14 @@ public:
     // against whichever backend the pool now has (set_object() itself
     // doesn't return it, see its own doc comment) -- spec.width on it
     // is this copy's own local share, not the target-wide count.
-    rawstd::Task<RawstorObjectMeta> open(const RawstdUUID& id, uint64_t offset);
+    // `flags` (RAWSTOR_READONLY or 0) goes to every Backend::set_object();
+    // a non-nil `snapshot_id` binds every backend to that previously
+    // snapshotted version instead (Backend::set_snapshot(), read-only by
+    // nature).
+    rawstd::Task<RawstorObjectMeta> open(
+        const RawstdUUID& id, uint64_t offset, int flags,
+        const RawstdUUID& snapshot_id
+    );
 
     // Not called implicitly by ~Slot() (a coroutine can't run in a
     // destructor, and there's no other synchronous fallback here beyond

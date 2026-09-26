@@ -21,6 +21,14 @@ void rawstd_uuid_to_string(const struct RawstdUUID* uuid, RawstdUUIDString* s);
 
 int rawstd_uuid_cmp(const struct RawstdUUID* lhs, const struct RawstdUUID* rhs);
 
+/*
+ * True for the all-zero UUID -- never a value rawstd_uuid7_init() itself
+ * produces (version/variant are always stamped nonzero), so callers can
+ * safely reserve it as a "no id bound" sentinel without risking a
+ * collision with a real, generated one.
+ */
+int rawstd_uuid_is_nil(const struct RawstdUUID* uuid);
+
 #ifdef __cplusplus
 }
 #endif

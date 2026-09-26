@@ -67,7 +67,7 @@ public:
 
     Device(
         unsigned int queue_size, const std::string& target, int fd,
-        bool write_cache_enabled
+        bool write_cache_enabled, bool readonly
     );
     Device(const Device&) = delete;
     Device(Device&&) = delete;

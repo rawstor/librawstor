@@ -33,6 +33,10 @@ namespace zfs {
  * <parent_dataset>/<uuid>:<offset>. Device path:
  * /dev/zvol/<parent_dataset>/<uuid>:<offset>.
  *
+ * A non-nil `snapshot_id` names that version's own native snapshot:
+ * <dataset>@s<snapshot_id> / /dev/zvol/.../<uuid>:<offset>@s<snapshot_id>
+ * -- the "@s<id>" name is the version key itself, nothing stored twice.
+ *
  * Requires the 'zfs' CLI to be available in PATH and sufficient privileges
  * (typically root or CAP_SYS_ADMIN + ZFS delegation).
  */
@@ -40,10 +44,21 @@ class Backend final : public rawstor::blk::Backend {
 private:
     std::string _parent_dataset;
 
-    std::string _device_path(const RawstdUUID& id, uint64_t offset) const;
-    std::string _dataset(const RawstdUUID& id, uint64_t offset) const;
+    std::string _device_path(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
+    ) const;
+    std::string _dataset(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
+    ) const;
 
-    rawstd::Task<int> _open(const RawstdUUID& id, uint64_t offset) override;
+    rawstd::Task<int>
+    _open_object(const RawstdUUID& id, uint64_t offset, int flags) override;
+
+    rawstd::Task<int> _open_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    ) override;
 
     // Polls for `path`'s existence-as-a-block-device to match
     // `want_present`, for up to `timeout_ms`, via _queue.stat()/
@@ -80,6 +95,19 @@ public:
     rawstd::Task<void> set_sync_state(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectSyncState& sync_state
+    ) override;
+
+    // The v1 CoW backend: a native "zfs snapshot"/"zfs destroy" of the
+    // zvol. create_snapshot() also sets snapdev=visible on the *origin*
+    // dataset so every snapshot's own device node
+    // (/dev/zvol/.../<uuid>@s<id>) is openable -- one mechanism, old
+    // zvols included, rather than per-snapshot.
+    rawstd::Task<void> create_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    ) override;
+
+    rawstd::Task<void> remove_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     ) override;
 };
 

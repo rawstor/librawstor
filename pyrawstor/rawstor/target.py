@@ -48,6 +48,24 @@ class Target:
             librawstor.ObjectSpec(
                 size=size, width=width, chunk_size=chunk_size))
 
+    def create_snapshot(self, uuid: str | None = None) -> "Target":
+        """Take a native CoW snapshot of this target's live version,
+        returning the resulting Target (this target's own URI, with the
+        version id actually used spliced onto it -- or this target
+        itself, unchanged, if it already named a bound version). Three
+        ways that id is picked (see rawstor_target_create_snapshot()'s
+        own doc comment, <rawstor/target.h>):
+        - This target's own URI already names a specific version of its
+          own (e.g. as returned by a previous create_snapshot()) and
+          `uuid` is None: that bound version IS the one taken.
+        - This target names a plain object and `uuid` is None: a fresh
+          id is generated.
+        - `uuid` is given: that id is used verbatim -- but only if this
+          target names a plain object; combining it with a target that
+          already carries its own bound version raises OSError (EINVAL).
+        """
+        return Target(librawstor.object_create_snapshot(self._uri, uuid))
+
     def spec(self) -> librawstor.ObjectSpec:
         return librawstor.object_spec(self._uri)
 

@@ -98,7 +98,7 @@ int open_trampoline(ssize_t result, void* data) {
 // passing a temporary (e.g. rawstd::URI::uris(...)) needs this to make its
 // own copy, safely owned by the coroutine frame across suspension.
 rawstd::Task<RawstorObject*>
-co_target_open(RawIOQueue* queue, std::string target) {
+co_target_open(RawIOQueue* queue, std::string target, int flags) {
     // rawstor_target_open() writes `object` before open_trampoline() ever
     // runs (see its own doc comment), and open_trampoline() only fires
     // once co_await awaiter below resumes -- so `object` is always
@@ -107,7 +107,7 @@ co_target_open(RawIOQueue* queue, std::string target) {
     RawstorObject* object = nullptr;
     rawstd::CallbackAwaitable<void> awaiter;
     int res = rawstor_target_open(
-        queue, target.c_str(), &object, open_trampoline, &awaiter
+        queue, target.c_str(), flags, &object, open_trampoline, &awaiter
     );
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -648,6 +648,20 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
+            case RAWSTOR_CMD_SNAPSHOT: {
+                RawstorOSTFrameBasicPayload basic;
+                co_await recv_frame(
+                    stream, &basic, sizeof(basic), fd, "request payload",
+                    &stream_failed
+                );
+                client = weak.lock();
+                if (client == nullptr) {
+                    co_return;
+                }
+                _create_snapshot(weak, head, basic);
+                rawstd::DetachedTask::rethrow_if_pending();
+                break;
+            }
             case RAWSTOR_CMD_LIST: {
                 RawstorOSTFrameBasicPayload basic;
                 co_await recv_frame(
@@ -1035,8 +1049,11 @@ rawstd::DetachedTask Client::_release(
 
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
+    RawstdUUID snapshot_id;
+    memcpy(snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
+    std::vector<rawstd::URI> targets =
+        client->_targets(uuid, payload.offset, snapshot_id);
 
     int result = 0;
     try {
@@ -1057,6 +1074,63 @@ rawstd::DetachedTask Client::_release(
     try {
         co_await client->_send_response(
             RAWSTOR_CMD_RELEASE, head.cid, result, 0
+        );
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        send_failed = true;
+    }
+    if (send_failed) {
+        co_await client->_server.del_client(client->_fd);
+    }
+}
+
+// SNAPSHOT: forwarded to the same rawstor_target_create() this server's
+// own local backend(s) implement -- the bound snapshot_id baked into the
+// target's own path (_targets()'s own `snapshot_id` parameter) makes it
+// take a CoW snapshot instead of creating a fresh object, same shape as
+// _release() above.
+rawstd::DetachedTask Client::_create_snapshot(
+    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
+    RawstorOSTFrameBasicPayload payload
+) {
+    std::shared_ptr<Client> client = weak.lock();
+    if (client == nullptr) {
+        co_return;
+    }
+
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
+    // payload.snapshot_id is always a concrete, already-chosen id off the
+    // wire (never nil -- a plain OST-local snapshot always names an
+    // exact version, client-generated like every object id).
+    RawstdUUID snapshot_id;
+    memcpy(snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id));
+
+    std::vector<rawstd::URI> targets =
+        client->_targets(uuid, payload.offset, snapshot_id);
+
+    int result = 0;
+    try {
+        std::string target = rawstd::URI::uris(targets);
+        rawstd::CallbackAwaitable<void> awaiter;
+        // spec is meaningless for a CoW snapshot (the version's shape
+        // comes from the live object) -- NULL, per rawstor_target_
+        // create()'s own doc comment.
+        int res = rawstor_target_create(
+            client->_queue, target.c_str(), nullptr, result_trampoline, &awaiter
+        );
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        co_await awaiter;
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    }
+
+    bool send_failed = false;
+    try {
+        co_await client->_send_response(
+            RAWSTOR_CMD_SNAPSHOT, head.cid, result, 0
         );
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
@@ -1272,13 +1346,23 @@ rawstd::DetachedTask Client::_set_object(
 
         RawstdUUID uuid;
         memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-        target = rawstd::URI::uris(client->_targets(uuid, payload.offset));
+        // snapshot_id carries the bound version -- nil for live, or a
+        // previously snapshotted id.
+        RawstdUUID snapshot_id;
+        memcpy(
+            snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id)
+        );
+        target = rawstd::URI::uris(
+            client->_targets(uuid, payload.offset, snapshot_id)
+        );
     }
 
     RawstorObject* object = nullptr;
     int error = 0;
     try {
-        object = co_await co_target_open(queue, target);
+        object = co_await co_target_open(
+            queue, target, static_cast<int>(payload.val)
+        );
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1676,18 +1760,24 @@ rawstd::DetachedTask Client::_write_zeroes(
     }
 }
 
-std::vector<rawstd::URI>
-Client::_targets(const RawstdUUID& uuid, uint64_t offset) {
+std::vector<rawstd::URI> Client::_targets(
+    const RawstdUUID& uuid, uint64_t offset, const RawstdUUID& snapshot_id
+) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
 
-    // Self-describing (Target::Path's own doc comment, target.hpp): the
+    // Self-describing (TargetPath's own doc comment, target.hpp): the
     // offset segment is always stated explicitly here, even 0, since
     // this is an internal builder, not something a caller types by hand;
-    // hex, like every offset segment Target::parse_path() accepts.
+    // hex, like every offset segment parse_target_path() accepts.
     std::ostringstream offset_oss;
     offset_oss << std::hex << offset;
     std::string child = std::string(uuid_string) + "/" + offset_oss.str();
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
+        RawstdUUIDString snap_string;
+        rawstd_uuid_to_string(&snapshot_id, &snap_string);
+        child += "/" + std::string(snap_string);
+    }
 
     std::vector<rawstd::URI> ret;
     ret.reserve(_server.locations().size());

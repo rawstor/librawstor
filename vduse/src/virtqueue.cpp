@@ -156,7 +156,9 @@ VirtQueue::~VirtQueue() {
     // destructor) if start() ever created it.
 }
 
-void VirtQueue::start(const std::string& target, unsigned int queue_size) {
+void VirtQueue::start(
+    const std::string& target, unsigned int queue_size, bool readonly
+) {
     _wake_pipe.emplace(rawstd::Pipe::Mode::NonBlocking);
 
     std::promise<void> ready;
@@ -175,7 +177,7 @@ void VirtQueue::start(const std::string& target, unsigned int queue_size) {
     pthread_sigmask(SIG_BLOCK, &all_signals, &old_mask);
 
     _thread = std::thread(
-        &VirtQueue::_run, this, target, queue_size, std::move(ready)
+        &VirtQueue::_run, this, target, queue_size, readonly, std::move(ready)
     );
 
     pthread_sigmask(SIG_SETMASK, &old_mask, nullptr);

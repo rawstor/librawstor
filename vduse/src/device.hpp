@@ -73,6 +73,7 @@ private:
     std::vector<VirtQueue> _vqs;
     std::atomic<uint64_t> _features;
     bool _write_cache_enabled;
+    bool _readonly;
     int _wake_fd;
     bool _stop_requested;
 
@@ -108,7 +109,8 @@ public:
      */
     Device(
         unsigned int queue_size, unsigned int num_queues,
-        const std::string& target, bool write_cache_enabled, int wake_fd = -1
+        const std::string& target, bool write_cache_enabled, bool readonly,
+        int wake_fd = -1
     );
     Device(const Device&) = delete;
     Device(Device&&) = delete;

@@ -71,8 +71,20 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
     ) = 0;
 
+    // Removes the live version of `id`/`offset`. A version
+    // previously registered via create_snapshot() below is removed via
+    // remove_snapshot() below instead.
     virtual rawstd::Task<void>
     remove(const RawstdUUID& id, uint64_t offset) = 0;
+
+    // Removes one version previously registered via create_snapshot()
+    // below (`snapshot_id`, never nil -- nil is the live version, removed via
+    // remove() above). Default: ENOTSUP, covering file::Backend and
+    // lvm::Backend (classic LVM has no thin CoW) without each needing its
+    // own override; zfs::Backend overrides this with the real thing.
+    virtual rawstd::Task<void> remove_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    );
 
     // The full creation-time shape (size/width/chunk_size) plus this
     // copy's own mirror consistency identity (state/epoch/sync_id and its
@@ -90,17 +102,44 @@ public:
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 
-    // Binds this Backend to `id`/`offset` -- data-path methods
-    // below need this done first. Also the one operation that actually
-    // touches the real store for every backend kind (a blk-backed one's
-    // own _open(const RawstdUUID&, uint64_t) is lazy -- see
-    // blk::Backend's own doc comment -- so nothing before this call
-    // genuinely proves the object exists; an ost:// one's is a real wire
-    // round trip either way), so a caller that also needs this copy's
-    // own meta() (e.g. Slot::open(), see its own doc comment) calls it
-    // separately, afterward.
+    // Binds this Backend to the live version of `id`/`offset` -- data-path
+    // methods below need this done first. Also the one operation that
+    // actually touches the real store for every backend kind (a
+    // blk-backed one's own _open_object(const RawstdUUID&, uint64_t) is
+    // lazy -- see blk::Backend's own doc comment -- so nothing before
+    // this call genuinely proves the object exists; an ost:// one's is a
+    // real wire round trip either way), so a caller that also needs this
+    // copy's own meta() (e.g. Slot::open(), see its own doc comment)
+    // calls it separately, afterward. A previously snapshotted version is
+    // bound via set_snapshot() below instead. `flags` is RAWSTOR_READONLY
+    // or 0 (<rawstor/target.h>): READONLY opens the object read-only all
+    // the way down to the final open (blk-backed: O_RDONLY; ost://: the
+    // server's own rawstor_target_open() does the same).
     virtual rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t offset) = 0;
+    set_object(const RawstdUUID& id, uint64_t offset, int flags) = 0;
+
+    // Same as set_object() above, but binds one previously snapshotted
+    // version of `object_id`/`offset` (`snapshot_id`, never nil -- see
+    // create_snapshot() below) instead of its live version. Default:
+    // ENOTSUP, covering file::Backend and lvm::Backend (classic LVM has
+    // no thin CoW) without each needing its own override; blk::Backend
+    // overrides this for its own subclasses capable of it (currently
+    // zfs::Backend only).
+    virtual rawstd::Task<void> set_snapshot(
+        const RawstdUUID& object_id, uint64_t offset,
+        const RawstdUUID& snapshot_id
+    );
+
+    // Native CoW snapshot of the live version as `snapshot_id` (never nil --
+    // nil is the live version; like every object id, the caller
+    // generates it itself before calling). Its removal is
+    // remove_snapshot() above, called with this same `snapshot_id`. Default:
+    // ENOTSUP, covering file::Backend and lvm::Backend (classic LVM has
+    // no thin CoW) without each needing its own override;
+    // zfs::Backend overrides this with the real thing.
+    virtual rawstd::Task<void> create_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    );
 
     virtual rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) = 0;

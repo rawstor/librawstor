@@ -225,8 +225,10 @@ private:
      * reactor loop until a Shutdown command lands, then tears both back
      * down. `ready` is fulfilled (or given the startup exception) once
      * _queue/_object are usable, before the reactor loop is entered. */
-    void
-    _run(std::string target, unsigned int queue_size, std::promise<void> ready);
+    void _run(
+        std::string target, unsigned int queue_size, bool readonly,
+        std::promise<void> ready
+    );
 
 public:
     VirtQueue() :
@@ -309,7 +311,8 @@ public:
      * which case the worker thread has already exited and this
      * VirtQueue is back to its not-started state (running() is false).
      */
-    void start(const std::string& target, unsigned int queue_size);
+    void
+    start(const std::string& target, unsigned int queue_size, bool readonly);
 
     inline bool running() const noexcept { return _thread.joinable(); }
 

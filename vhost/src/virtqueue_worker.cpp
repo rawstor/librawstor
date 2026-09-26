@@ -65,11 +65,14 @@ int result_cb(ssize_t result, void* data) {
     return 0;
 }
 
-RawstorObject* open_object(RawIOQueue* queue, const std::string& target) {
+RawstorObject*
+open_object(RawIOQueue* queue, const std::string& target, bool readonly) {
     RawstorObject* object = nullptr;
     Result result;
-    int res =
-        rawstor_target_open(queue, target.c_str(), &object, result_cb, &result);
+    int res = rawstor_target_open(
+        queue, target.c_str(), readonly ? RAWSTOR_READONLY : 0, &object,
+        result_cb, &result
+    );
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -605,7 +608,8 @@ namespace rawstor {
 namespace vhost {
 
 void VirtQueue::_run(
-    std::string target, unsigned int queue_size, std::promise<void> ready
+    std::string target, unsigned int queue_size, bool readonly,
+    std::promise<void> ready
 ) {
     RawIOQueue* queue = nullptr;
     RawstorObject* object = nullptr;
@@ -615,7 +619,7 @@ void VirtQueue::_run(
         if (res) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
-        object = open_object(queue, target);
+        object = open_object(queue, target, readonly);
     } catch (...) {
         if (queue != nullptr) {
             rawio_queue_delete(queue);

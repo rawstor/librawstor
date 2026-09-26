@@ -39,14 +39,17 @@ private:
     rawstd::Task<void> _connect() override;
     // The cid-dispatched counterpart of the old basic_request_async():
     // sends a RawstorOSTFrameBasic-shaped request (list/create/remove/
-    // spec/info/set_object all share this shape) and awaits its response
-    // through the same _ops demultiplex mechanism as every other op --
-    // requires _recv_pump to already be running, i.e. _connect() to have
-    // completed.
+    // spec/info/set_object/set_snapshot/create_snapshot all share this
+    // shape) and awaits its response through the same _ops demultiplex
+    // mechanism as every other op -- requires _recv_pump to already be
+    // running, i.e. _connect() to have completed. `val`/`snapshot_id` are
+    // never both meaningful for the same command (protocol.h's own doc
+    // comment on RawstorOSTFrameBasicPayload); a caller that only needs
+    // one leaves the other at its default (0/nil).
     template <typename T = char>
     rawstd::Task<std::vector<T>> _basic_request(
         RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
-        uint64_t offset, uint64_t val
+        uint64_t offset, uint64_t val = 0, const RawstdUUID& snapshot_id = {}
     );
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
@@ -86,7 +89,16 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
     ) override;
 
+    // Both relayed over the wire as a RAWSTOR_CMD_RELEASE request, nil vs.
+    // non-nil `snapshot_id` (protocol.h widened this command's own payload for
+    // exactly this, same as SET_OBJECT's own nil-means-live convention)
+    // -- the split here mirrors Backend::remove()/remove_snapshot()'s own
+    // C++-level distinction, not a second wire command.
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset) override;
+
+    rawstd::Task<void> remove_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    ) override;
 
     rawstd::Task<RawstorObjectMeta>
     meta(const RawstdUUID& id, uint64_t offset) override;
@@ -99,7 +111,22 @@ public:
     rawstd::Task<RawstorLocationInfo> info() override;
 
     rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t offset) override;
+    set_object(const RawstdUUID& id, uint64_t offset, int flags) override;
+
+    // Both relayed over the wire as a RAWSTOR_CMD_SET_OBJECT request,
+    // nil vs. non-nil snapshot_id (protocol.h's own doc comment) -- the
+    // split here mirrors Backend::remove()/remove_snapshot()'s own
+    // C++-level distinction, not a second wire command.
+    rawstd::Task<void> set_snapshot(
+        const RawstdUUID& object_id, uint64_t offset,
+        const RawstdUUID& snapshot_id
+    ) override;
+
+    // Relays RAWSTOR_CMD_SNAPSHOT over the wire -- the remote rawstor-ost
+    // forwards to its own local backend the same way.
+    rawstd::Task<void> create_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    ) override;
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;
 

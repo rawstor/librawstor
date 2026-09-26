@@ -75,6 +75,7 @@ private:
     uint64_t _protocol_features;
     virtio_blk_config _config;
     std::atomic<bool> _wce_enabled;
+    bool _readonly;
     bool _postcopy_listening;
     int _wake_fd;
 
@@ -93,7 +94,7 @@ public:
     Device(
         unsigned int queue_size, unsigned int num_queues,
         const std::string& target, int fd, bool write_cache_enabled,
-        int wake_fd = -1
+        bool readonly, int wake_fd = -1
     );
 
     Device(const Device&) = delete;

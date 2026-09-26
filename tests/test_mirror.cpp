@@ -83,10 +83,14 @@ ssize_t target_create(
     });
 }
 
-ssize_t
-target_open(Queue& queue, const std::string& target, RawstorObject** object) {
+ssize_t target_open(
+    Queue& queue, const std::string& target, RawstorObject** object,
+    int flags = 0
+) {
     return rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
-        return rawstor_target_open(queue, target.c_str(), object, cb, data);
+        return rawstor_target_open(
+            queue, target.c_str(), flags, object, cb, data
+        );
     });
 }
 
@@ -329,6 +333,41 @@ TEST(MirrorQuorumTest, all_mirrors_down_at_open_refused) {
     ssize_t res = target_open(queue, members.target_all(), &object);
     EXPECT_EQ(res, -ENOTCONN);
     EXPECT_EQ(object, nullptr);
+}
+
+// RAWSTOR_READONLY drops the quorum requirement: one reachable member of
+// two is enough to read from, but nothing may write.
+TEST(MirrorQuorumTest, readonly_open_without_quorum_n2) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000b0");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* writer = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &writer), 0);
+    std::string ping = "ping";
+    object_write(queue, writer, ping.data(), ping.size(), 0, 0);
+    object_close_clean(queue, writer);
+
+    members.drop(1);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(
+        target_open(queue, members.target_all(), &object, RAWSTOR_READONLY), 0
+    );
+
+    std::string data(4, '\0');
+    object_read(queue, object, data.data(), data.size(), 0);
+    EXPECT_EQ(data, "ping");
+
+    object_write(queue, object, ping.data(), ping.size(), 0, EROFS);
+
+    EXPECT_EQ(object_close(queue, object), 0);
 }
 
 TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {

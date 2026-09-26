@@ -36,7 +36,7 @@ namespace {
 // id this is. Two files live directly under this directory: `data` (the
 // object's own bytes) and `meta` (get_target_meta_path() below). `offset`
 // is hex, not decimal -- same base as the target URI's own offset path
-// segment (Target::parse_path()'s own doc comment) and every numeric
+// segment (parse_target_path()'s own doc comment) and every numeric
 // field meta_encode() persists alongside it, so a directory listing and
 // its own meta record read the same way.
 std::string get_target_dir(
@@ -98,7 +98,8 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::blk::Backend(p, queue, location) {
 }
 
-rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<int>
+Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString id_string;
@@ -112,7 +113,10 @@ rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t offset) {
     // out via fork()+exec() (src/subprocess.cpp) -- without it, this fd
     // would leak into those children.
     int fd = co_await _queue.open(
-        target_path.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC, 0
+        target_path.c_str(),
+        ((flags & RAWSTOR_READONLY) != 0 ? O_RDONLY : O_RDWR) | O_NONBLOCK |
+            O_CLOEXEC,
+        0
     );
     co_return fd;
 }

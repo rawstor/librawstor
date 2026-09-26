@@ -749,11 +749,14 @@ int result_cb(ssize_t result, void* data) {
     return 0;
 }
 
-RawstorObject* open_object(RawIOQueue* queue, const std::string& target) {
+RawstorObject*
+open_object(RawIOQueue* queue, const std::string& target, bool readonly) {
     RawstorObject* object = nullptr;
     Result result;
-    int res =
-        rawstor_target_open(queue, target.c_str(), &object, result_cb, &result);
+    int res = rawstor_target_open(
+        queue, target.c_str(), readonly ? RAWSTOR_READONLY : 0, &object,
+        result_cb, &result
+    );
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
@@ -840,7 +843,7 @@ std::unordered_map<int, Device*> Device::_devices;
 
 Device::Device(
     unsigned int queue_size, const std::string& target, int fd,
-    bool write_cache_enabled
+    bool write_cache_enabled, bool readonly
 ) :
     _queue(nullptr),
     _target(target),
@@ -864,7 +867,8 @@ Device::Device(
         1ull << VIRTIO_BLK_F_CONFIG_WCE | 1ull << VIRTIO_BLK_F_DISCARD |
         1ull << VIRTIO_BLK_F_WRITE_ZEROES | 1ull << VIRTIO_F_VERSION_1 |
         1ull << VIRTIO_RING_F_INDIRECT_DESC | 1ull << VIRTIO_RING_F_EVENT_IDX |
-        1ull << VHOST_USER_F_PROTOCOL_FEATURES
+        1ull << VHOST_USER_F_PROTOCOL_FEATURES |
+        (readonly ? 1ull << VIRTIO_BLK_F_RO : 0)
     ),
     _protocol_features(0),
     _blk_config(std::make_unique<virtio_blk_config>()),
@@ -879,7 +883,7 @@ Device::Device(
     try {
         _spec = spec_object(_queue, target);
 
-        _object = open_object(_queue, target);
+        _object = open_object(_queue, target, readonly);
 
         _blk_config->capacity = _spec.size >> VIRTIO_BLK_SECTOR_BITS;
 

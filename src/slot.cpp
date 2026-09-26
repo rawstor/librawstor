@@ -135,6 +135,20 @@ auto retry_n_async(const char* func_name, rawio::Queue& queue, F&& attempt)
     RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
 }
 
+// One backend's bind step: the live version of `id`/`offset` (with
+// `flags`), or -- non-nil `snapshot_id` -- one previously snapshotted
+// version of it (read-only by nature, so no flags of its own).
+rawstd::Task<void> set_object_or_snapshot(
+    rawstor::Backend& backend, const RawstdUUID& id, uint64_t offset, int flags,
+    const RawstdUUID& snapshot_id
+) {
+    if (rawstd_uuid_is_nil(&snapshot_id)) {
+        co_await backend.set_object(id, offset, flags);
+    } else {
+        co_await backend.set_snapshot(id, offset, snapshot_id);
+    }
+}
+
 } // namespace
 
 namespace rawstor {
@@ -143,6 +157,8 @@ Slot::Slot(Private, rawio::Queue& queue) :
     _queue(queue),
     _id(std::nullopt),
     _offset(0),
+    _flags(0),
+    _snapshot_id{},
     _backend_index(0),
     _transparent_retry(true) {
 }
@@ -438,7 +454,9 @@ Slot::invalidate_backend(const std::shared_ptr<Backend>& be) {
                     // outside the handler.
                     std::exception_ptr eptr;
                     try {
-                        co_await backend->set_object(*_id, _offset);
+                        co_await set_object_or_snapshot(
+                            *backend, *_id, _offset, _flags, _snapshot_id
+                        );
                         // The result is unused -- nothing here needs it
                         // -- this is purely to keep the same SET_OBJECT+
                         // META wire round trip every set_object() caller
@@ -581,6 +599,26 @@ rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t offset) {
     }
 }
 
+rawstd::Task<void> Slot::remove_snapshot(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::remove_snapshot, id, offset,
+            snapshot_id
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
 rawstd::Task<RawstorLocationInfo> Slot::info() {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -598,20 +636,46 @@ rawstd::Task<RawstorLocationInfo> Slot::info() {
     }
 }
 
-rawstd::Task<RawstorObjectMeta>
-Slot::open(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<void> Slot::create_snapshot(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::create_snapshot, id, offset,
+            snapshot_id
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<RawstorObjectMeta> Slot::open(
+    const RawstdUUID& id, uint64_t offset, int flags,
+    const RawstdUUID& snapshot_id
+) {
     // Set before any of the set_object() calls below: on failure,
     // invalidate_backend() reconnects and set_object()s the replacement
     // itself, using these same members.
     _id = id;
     _offset = offset;
+    _flags = flags;
+    _snapshot_id = snapshot_id;
 
     // Every backend's SET_OBJECT goes out up front, so they run
     // concurrently.
     std::vector<rawstd::Task<void>> set_objects;
     set_objects.reserve(_backends.size());
     for (std::shared_ptr<Backend>& be : _backends) {
-        set_objects.push_back(be->set_object(id, offset));
+        set_objects.push_back(
+            set_object_or_snapshot(*be, id, offset, flags, snapshot_id)
+        );
     }
 
     // co_await isn't allowed inside a catch block, so the failure is only

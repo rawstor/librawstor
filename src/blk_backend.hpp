@@ -76,11 +76,24 @@ private:
     void _throttle_release() noexcept;
 
 protected:
-    virtual rawstd::Task<int> _open(const RawstdUUID& id, uint64_t offset) = 0;
+    // Opens the live version of `id`/`offset` -- every concrete subclass
+    // implements this. `flags` is RAWSTOR_READONLY or 0: READONLY opens
+    // O_RDONLY instead of O_RDWR.
+    virtual rawstd::Task<int>
+    _open_object(const RawstdUUID& id, uint64_t offset, int flags) = 0;
+
+    // Opens one previously-snapshotted version of `id`/`offset`
+    // (`snapshot_id`, never nil -- see create_snapshot() below). Default:
+    // ENOTSUP, covering file::Backend and lvm::Backend (no native CoW)
+    // without each needing its own override; zfs::Backend overrides this
+    // with the real thing.
+    virtual rawstd::Task<int> _open_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    );
 
     // A blk-backed backend has no upfront connection step: the fd is
-    // opened lazily, by _open(const RawstdUUID&) above, once
-    // set_object() knows which object id to open.
+    // opened lazily, by _open_object()/_open_snapshot() above, once
+    // set_object()/set_snapshot() knows which object id to open.
     rawstd::Task<void> _connect() override final;
 
     // Zeroes [offset, offset + size) of `target_fd` -- shared by
@@ -140,7 +153,12 @@ public:
     rawstd::Task<void> close() override final;
 
     rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t offset) override final;
+    set_object(const RawstdUUID& id, uint64_t offset, int flags) override final;
+
+    rawstd::Task<void> set_snapshot(
+        const RawstdUUID& object_id, uint64_t offset,
+        const RawstdUUID& snapshot_id
+    ) override final;
 
     // Encodes/decodes a RawstorObjectSyncState plus a ChunkIdentity (the
     // latter stamped at create and never changed again) as a compact

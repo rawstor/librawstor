@@ -4,6 +4,7 @@
 #include "remove.h"
 #include "resolve.h"
 #include "show.h"
+#include "snapshot.h"
 #include "testio.h"
 
 #include "config.h"
@@ -47,6 +48,7 @@ static void usage(void) {
         "  show                  Show rawstor object\n"
         "  info                  Show rawstor location info\n"
         "  resolve               Resolve a mirrored object's split brain\n"
+        "  snapshot              Take a snapshot of a rawstor object\n"
         "  testio                Test rawstor IO routines\n"
         "\n"
         "command options:        Run `<command> --help` to show command usage\n"
@@ -281,6 +283,82 @@ static int command_remove(int argc, char** argv) {
     }
 
     return rawstor_cli_remove(target_arg);
+}
+
+static void command_snapshot_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] snapshot TARGET [-u UUID] "
+        "[command_options]\n"
+        "\n"
+        "  TARGET                A plain target, or one already naming its "
+        "own\n"
+        "                        bound version (TARGET/SNAPSHOT_ID, as "
+        "printed\n"
+        "                        back by a previous snapshot) -- that "
+        "version is\n"
+        "                        then the one taken, and -u is not "
+        "accepted.\n"
+        "  -u, --uuid UUID       Explicit UUID for the new version (only "
+        "valid\n"
+        "                        when TARGET is plain). If omitted, a "
+        "random\n"
+        "                        UUIDv7 is generated.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
+    );
+};
+
+static int command_snapshot(int argc, char** argv) {
+    const char* optstring = "hu:";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"uuid", required_argument, NULL, 'u'},
+        {},
+    };
+
+    char* target_arg = NULL;
+    const char* uuid_arg = NULL;
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_snapshot_usage();
+            return EXIT_SUCCESS;
+
+        case 'u':
+            uuid_arg = optarg;
+            break;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    if (optind < argc) {
+        target_arg = argv[optind];
+        optind++;
+    }
+
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EX_USAGE;
+    }
+
+    if (target_arg == NULL) {
+        fprintf(stderr, "target required\n");
+        return EX_USAGE;
+    }
+
+    return rawstor_cli_snapshot(target_arg, uuid_arg);
 }
 
 static void command_list_usage(void) {
@@ -848,6 +926,8 @@ static int run_command(
         ret = command_info(argc, argv);
     } else if (strcmp(command, "resolve") == 0) {
         ret = command_resolve(argc, argv);
+    } else if (strcmp(command, "snapshot") == 0) {
+        ret = command_snapshot(argc, argv);
     } else if (strcmp(command, "testio") == 0) {
         ret = command_testio(argc, argv);
     } else {

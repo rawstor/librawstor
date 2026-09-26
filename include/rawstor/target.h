@@ -311,22 +311,28 @@ int rawstor_target_set_sync_state(
 /**
  * @brief Asynchronously create a new empty object at the specified target.
  *
- * This function creates an object at the exact target location given by the
- * @p target string. The object metadata (such as size) is provided via the
- * @p spec structure. The target string must follow the format described in the
- * Locations and Targets documentation (e.g., "ost://host:port/<uuid>" or any
- * other valid object identifier). The caller is responsible for ensuring that
- * the target is unique and that the backend can accept the requested location;
- * if the target already exists, the behaviour is implementation‑defined (likely
- * an error is returned).
+ * @p target must be plain (no bound snapshot version, see
+ * rawstor_target_snapshot_id()) -- taking a snapshot of an existing object
+ * is rawstor_target_create_snapshot()'s own job, never this function's; a
+ * @p target that carries a bound snapshot version fails with @c -EINVAL.
+ * This creates an object at the exact target location @p target names.
+ * The object metadata (such as size) is provided via the @p spec
+ * structure. The target string must follow the format described in the
+ * Locations and Targets documentation (e.g., "ost://host:port/<uuid>" or
+ * any other valid object identifier). The caller is responsible for
+ * ensuring that the target is unique and that the backend can accept the
+ * requested location; if the target already exists, the behaviour is
+ * implementation‑defined (likely an error is returned).
  *
  * This function returns immediately; the actual result is reported via
  * @p cb once the operation completes.
  *
  * @param queue     Queue used to drive the asynchronous create.
- * @param target    Target string specifying the full identifier of the object
- *                  to be created (e.g., "ost://host:port/<uuid>"). Must not be
- *                  NULL and must be a valid target as per the library's format.
+ * @param target    Target string specifying the full identifier of the
+ *                  object to create, e.g., "ost://host:port/<uuid>". Must
+ *                  not be NULL, must be a valid target as per the
+ *                  library's format, and must not carry a bound snapshot
+ *                  version (see above).
  * @param spec      Pointer to a RawstorObjectSpec structure containing the
  *                  desired object shape. The size field must be set to the
  *                  expected size of the object. width is mandatory
@@ -337,9 +343,10 @@ int rawstor_target_set_sync_state(
  * @param cb        Callback invoked on completion.
  *                  - @p result is zero on success, or a negative errno on
  *                    failure (e.g. @c -EINVAL for invalid target or spec,
- *                    or a width value that doesn't match @p target's own
- *                    URI count; @c -ENOMEM, @c -EIO, etc; implementation‑
- *                    defined beyond that).
+ *                    a width value that doesn't match @p target's own URI
+ *                    count, or @p target carrying a bound snapshot version;
+ *                    @c -ENOMEM, @c -EIO, etc; implementation‑defined
+ *                    beyond that).
  *                  - @p data is the same pointer passed as @p data below.
  *                  - Return zero on success. A negative errno value signals
  *                    an error back into the I/O completion machinery.
@@ -350,6 +357,8 @@ int rawstor_target_set_sync_state(
  *         actual create result is delivered via @p cb.
  *
  * @see RawstorObjectSpec
+ * @see rawstor_target_create_snapshot
+ * @see rawstor_target_snapshot_id
  * @see Locations and Targets:
  * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
  */
@@ -359,12 +368,19 @@ int rawstor_target_create(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously remove an object from the storage system.
+ * @brief Asynchronously remove an object -- or one of its snapshots --
+ *        from the storage system.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
  * this function deletes the specified object from all backends listed in the
  * target. If the target contains multiple URIs (mirroring or locality),
  * the object is removed from every backend in the list.
+ *
+ * A @p target that carries a bound snapshot version (its own trailing
+ * "/<snapshot_id>" path segment, see rawstor_target_snapshot_id()) instead
+ * destroys that one version -- there is no separate function for it: which
+ * identity gets removed is already whatever @p target itself names, live
+ * object or a specific snapshot.
  *
  * This function returns immediately; the actual result is reported via
  * @p cb once the operation completes.
@@ -400,6 +416,9 @@ int rawstor_target_remove(
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
+/** rawstor_target_open() flag: open read-only (see its own doc comment). */
+#define RAWSTOR_READONLY 1
+
 /**
  * @brief Asynchronously open an existing object for reading and/or writing.
  *
@@ -425,6 +444,14 @@ int rawstor_target_remove(
  *                - "file:///var/rawstor/019cbfad-a389-7d42-a0f6-c29993ac8c00"
  *                - "ost://host1:9090/abc,ost://host2:9090/abc"  (mirroring)
  *                - "file:///data/abc,ost://host1:9090/abc"      (locality)
+ * @param flags   Open flags: 0, or RAWSTOR_READONLY. A @p target that
+ *                names a bound snapshot version (see
+ *                rawstor_target_snapshot_id()) can only be opened with
+ *                RAWSTOR_READONLY (@c -EINVAL otherwise). RAWSTOR_READONLY
+ *                also lets a mirrored object open without a write quorum
+ *                (reachable members are read from as-is: no mirror
+ *                state is recorded, no read-repair or resync runs), and
+ *                every write to the resulting handle fails with @c -EROFS.
  * @param object  Out-parameter written exactly once, immediately before
  *                @p cb is invoked: the opaque handle on success, or NULL on
  *                error. The caller must not modify the pointed-to memory
@@ -454,7 +481,7 @@ int rawstor_target_remove(
  * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
  */
 int rawstor_target_open(
-    RawIOQueue* queue, const char* target, RawstorObject** object,
+    RawIOQueue* queue, const char* target, int flags, RawstorObject** object,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
@@ -495,6 +522,107 @@ int rawstor_target_open(
  */
 int rawstor_target_id(
     const char* target, char* buf, size_t size
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Retrieve the snapshot version bound to a target string.
+ *
+ * Given a target string (as defined in the Rawstor location/target syntax),
+ * this function reads the trailing snapshot path segment (if any) off
+ * @p target's own path (`<uuid>/<snapshot_id>`). This is purely a syntactic
+ * operation on @p target -- no backend is contacted, and the target need
+ * not exist.
+ *
+ * @param target   Target string, e.g.:
+ *                 - "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00"
+ *                 -
+ * "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00/019cbfad-..."
+ * @param buf      Output buffer for the bound version's UUID string, or an
+ *                 empty string if @p target carries no bound snapshot
+ *                 (the live version). Same truncation convention as
+ *                 rawstor_target_id().
+ * @param size     Size of the output buffer in bytes (including space for the
+ *                 terminating null byte). If size is 0, no data is written,
+ *                 but the required length is still returned.
+ *
+ * @return On success, the number of characters that would have been written
+ *         to buf (excluding the terminating null byte; 0 for the live
+ *         version). A negative errno if @p target is not valid target
+ *         syntax.
+ *
+ * @see rawstor_target_create
+ * @see rawstor_target_remove
+ */
+int rawstor_target_snapshot_id(
+    const char* target, char* buf, size_t size
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously take a snapshot of a target, under whichever
+ *        version id @p target/@p snapshot_id together resolve to, and
+ *        return the resulting target string.
+ *
+ * Every version id is client-generated, like every object id (see
+ * rawstor_location_create()). Three ways the id actually used is picked,
+ * all resolved synchronously (no I/O needed for any of them):
+ * - @p target already names a specific version of its own (its own path
+ *   carries a trailing snapshot_id -- e.g. as read back by
+ *   rawstor_target_snapshot_id(), or as this same function itself already
+ *   printed into a previous @p snapshot_target) and @p snapshot_id here is
+ *   NULL: that bound version IS the one taken -- @p target itself is
+ *   already the snapshot's own target string.
+ * - @p target names a plain object and @p snapshot_id here is NULL: a
+ *   fresh id is generated (rawstd_uuid7_init(), the same single point of
+ *   generation a fresh object id comes from -- rawstor_location_create()).
+ * - @p snapshot_id here is non-NULL: that caller-chosen version id is used
+ *   verbatim -- but only if @p target names a plain object; combining it
+ *   with a @p target that already carries its own bound version is
+ *   ambiguous and fails with @c -EINVAL instead.
+ *
+ * This then takes a plain native CoW snapshot as that exact version on
+ * every URI in @p target (every URI is still attempted even if an earlier
+ * one fails, and the first error encountered is reported); the caller
+ * owns crash consistency -- all acknowledged writes must be flushed
+ * before this call. The resulting target string -- @p target itself when
+ * already bound, or @p target with the id actually used spliced onto every
+ * URI otherwise, i.e. exactly what rawstor_target_snapshot_id() would read
+ * back off it -- is written into @p snapshot_target, the same synchronous,
+ * before-any-I/O, snprintf()-style convention as rawstor_location_create()'s
+ * own @p target/@p size.
+ *
+ * @param queue    Queue used to drive the asynchronous snapshot.
+ * @param target   Target string, see rawstor_target_spec().
+ * @param snapshot_id  The version id's UUID string, or NULL -- see above.
+ * @param snapshot_target  Output buffer for the snapshot's own target
+ *                 string, written synchronously before this call returns
+ *                 -- same truncation convention as
+ *                 rawstor_location_create()'s own @p target (size it the
+ *                 same way, e.g. 65536 bytes, not rawstor_target_id()'s
+ *                 much smaller UUID-sized buffer).
+ * @param size     Size of @p snapshot_target in bytes (including space for
+ *                 the terminating null byte).
+ * @param cb       Callback invoked on completion.
+ *                 - @p result is zero on success, or a negative errno on
+ *                   failure (@c -EINVAL if @p target already names its own
+ *                   bound version and @p snapshot_id is also non-NULL --
+ *                   see above; @c -ENOTSUP if a backend has no CoW --
+ *                   file://, classic LVM -- no fallback copies are made
+ *                   behind the caller's back).
+ *                 - @p data is the same pointer passed as @p data below.
+ * @param data     User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return The number of characters written to @p snapshot_target (see
+ *         rawstor_location_create()) if the snapshot was successfully
+ *         queued; negative errno on immediate failure (in which case
+ *         @p cb is never invoked).
+ *
+ * @see rawstor_target_create
+ * @see rawstor_target_remove
+ */
+int rawstor_target_create_snapshot(
+    RawIOQueue* queue, const char* target, const char* snapshot_id,
+    char* snapshot_target, size_t size, int (*cb)(ssize_t result, void* data),
+    void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**

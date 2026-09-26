@@ -806,6 +806,49 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
     return py_target;
 }
 
+// `snapshot_id` NULL (Python None): the version id is either already bound
+// in `target`'s own path, a caller-chosen one, or a freshly generated one
+// -- see rawstor_target_create_snapshot()'s own doc comment for the three
+// ways this resolves. Returns the snapshot's own target string (`target`
+// itself when already bound, or `target` with the id actually used spliced
+// onto it otherwise) -- same shape as object_create_at() above.
+PyObject*
+py_rawstor_object_create_snapshot(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* target;
+    const char* snapshot_id = NULL;
+    if (!PyArg_ParseTuple(args, "sz", &target, &snapshot_id)) {
+        return NULL;
+    }
+
+    char snapshot_target[65536];
+
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres = rawstor_target_create_snapshot(
+        op.queue, target, snapshot_id, snapshot_target, sizeof(snapshot_target),
+        rawstor_sync_op_cb, &op
+    );
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
+    if (res < 0) {
+        set_os_error((int)-res);
+        return NULL;
+    }
+    if ((size_t)res >= sizeof(snapshot_target)) {
+        PyErr_SetString(
+            PyExc_ValueError,
+            "rawstor_target_create_snapshot(): output truncated"
+        );
+        return NULL;
+    }
+
+    return PyUnicode_FromString(snapshot_target);
+}
+
 PyObject* py_rawstor_object_spec(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
     struct RawstorObjectSpec spec;

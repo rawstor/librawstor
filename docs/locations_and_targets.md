@@ -43,9 +43,12 @@ When multiple URIs are listed, the client interprets the list according to speci
 
 A **target** identifies a specific data object. For a single target, the format is `<scheme>://<endpoint>/<uuid>`. For multiple targets, the UUID must be appended to each URI: `<scheme1>://<endpoint1>/<uuid>,<scheme2>://<endpoint2>/<uuid>,...`
 
+A target that names one snapshot of an object appends the snapshot's UUID: `<scheme>://<endpoint>/<uuid>/<snapshot_uuid>` (on every URI of a multiple target). Such a target can only be opened read-only (`RAWSTOR_READONLY`) or removed.
+
 Where:
 - `<scheme>` and `<endpoint>` are the same as for location.
 - `<uuid>` is the unique identifier of the object (rawstor uses UUID v7).
+- `<snapshot_uuid>` is the identifier of a snapshot of that object (also UUID v7), optional.
 
 ### Single backend target examples
 

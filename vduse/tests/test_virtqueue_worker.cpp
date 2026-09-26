@@ -156,13 +156,22 @@ TEST_F(VirtQueueWorkerTest, StopWithoutStartIsSafeNoOp) {
 TEST_F(VirtQueueWorkerTest, StartOpensOwnObjectAndStopJoinsCleanly) {
     // A dummy Device isn't needed here: start() never touches _device.
     VirtQueue vq;
-    vq.start(scratch.target(), kQueueSize);
+    vq.start(scratch.target(), kQueueSize, false);
     EXPECT_TRUE(vq.running());
 
     vq.stop();
     EXPECT_FALSE(vq.running());
 
     // stop() must be idempotent.
+    vq.stop();
+    EXPECT_FALSE(vq.running());
+}
+
+TEST_F(VirtQueueWorkerTest, StartReadonlyOpensObjectAndStopJoinsCleanly) {
+    VirtQueue vq;
+    vq.start(scratch.target(), kQueueSize, true);
+    EXPECT_TRUE(vq.running());
+
     vq.stop();
     EXPECT_FALSE(vq.running());
 }
@@ -174,7 +183,7 @@ TEST_F(VirtQueueWorkerTest, StartThrowsOnInvalidTargetAndLeavesNotRunning) {
     // rejected before any backend is even chosen.
     VirtQueue vq;
     EXPECT_THROW(
-        vq.start("bogus-scheme://nope/not-a-uuid", kQueueSize),
+        vq.start("bogus-scheme://nope/not-a-uuid", kQueueSize, false),
         std::system_error
     );
     EXPECT_FALSE(vq.running());
@@ -182,7 +191,7 @@ TEST_F(VirtQueueWorkerTest, StartThrowsOnInvalidTargetAndLeavesNotRunning) {
 
 TEST_F(VirtQueueWorkerTest, GetVqStateRoundTripsAcrossWorkerThread) {
     VirtQueue vq;
-    vq.start(scratch.target(), kQueueSize);
+    vq.start(scratch.target(), kQueueSize, false);
 
     // last_avail_idx starts at 0 with nothing popped; a plain round trip
     // through the command queue is enough to confirm the worker thread
@@ -194,7 +203,7 @@ TEST_F(VirtQueueWorkerTest, GetVqStateRoundTripsAcrossWorkerThread) {
 
 TEST_F(VirtQueueWorkerTest, PauseWithNothingInFlightReturnsImmediately) {
     VirtQueue vq;
-    vq.start(scratch.target(), kQueueSize);
+    vq.start(scratch.target(), kQueueSize, false);
 
     // No descriptor was ever popped on this VirtQueue, so pause() has
     // nothing to wait for -- must not hang. Deliberately not paired with

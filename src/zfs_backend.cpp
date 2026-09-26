@@ -51,19 +51,28 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     _parent_dataset(parse_parent_dataset(location)) {
 }
 
-std::string Backend::_device_path(const RawstdUUID& id, uint64_t offset) const {
-    return "/dev/zvol/" + _dataset(id, offset);
+std::string Backend::_device_path(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) const {
+    return "/dev/zvol/" + _dataset(id, offset, snapshot_id);
 }
 
-std::string Backend::_dataset(const RawstdUUID& id, uint64_t offset) const {
+std::string Backend::_dataset(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
-    // Hex, not decimal -- see Target::parse_path()'s own doc comment
+    // Hex, not decimal -- see parse_target_path()'s own doc comment
     // (target.cpp) for why every physical, offset-carrying name in this
     // codebase agrees on one base.
     char offset_str[17];
     snprintf(offset_str, sizeof(offset_str), "%" PRIx64, offset);
     std::string name = std::string(uuid_str) + ":" + offset_str;
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
+        RawstdUUIDString snap_str;
+        rawstd_uuid_to_string(&snapshot_id, &snap_str);
+        name += "@s" + std::string(snap_str);
+    }
     return _parent_dataset + "/" + name;
 }
 
@@ -95,7 +104,8 @@ rawstd::Task<void> Backend::_wait_for_blockdev(
     RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
 }
 
-rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<int>
+Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
     std::string path = _device_path(id, offset);
 
     // No O_NONBLOCK: opening a ZFS zvol with it caused cache-miss reads to
@@ -105,7 +115,23 @@ rawstd::Task<int> Backend::_open(const RawstdUUID& id, uint64_t offset) {
     // io_wq worker threads and does not need the fd to be non-blocking.
     // O_CLOEXEC so this fd doesn't leak into the zfs create/destroy
     // children forked by create()/remove() below.
-    int fd = co_await _queue.open(path.c_str(), O_RDWR | O_CLOEXEC, 0);
+    int fd = co_await _queue.open(
+        path.c_str(),
+        ((flags & RAWSTOR_READONLY) != 0 ? O_RDONLY : O_RDWR) | O_CLOEXEC, 0
+    );
+    co_return fd;
+}
+
+rawstd::Task<int> Backend::_open_snapshot(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
+    std::string path = _device_path(id, offset, snapshot_id);
+
+    // O_RDONLY, not O_RDWR: a snapshot device is read-only at the device
+    // level too, so a write against one fails as soon as the fd itself is
+    // wrong, before ever reaching pwrite(). See _open_object() above for
+    // O_NONBLOCK/O_CLOEXEC's own reasoning, unchanged here.
+    int fd = co_await _queue.open(path.c_str(), O_RDONLY | O_CLOEXEC, 0);
     co_return fd;
 }
 
@@ -303,7 +329,9 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
 
     rawstd_info("zfs: destroying zvol %s\n", dataset.c_str());
 
-    std::vector<std::string> argv = {"zfs", "destroy", dataset};
+    // -r: a zvol that has snapshots can't be destroyed without also
+    // destroying them, and removing an object removes every version of it.
+    std::vector<std::string> argv = {"zfs", "destroy", "-r", dataset};
     try {
         co_await rawstor::run_command(_queue, std::move(argv));
         co_await _wait_for_blockdev(
@@ -446,6 +474,88 @@ rawstd::Task<void> Backend::set_sync_state(
     }
 
     co_return;
+}
+
+rawstd::Task<void> Backend::create_snapshot(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
+    if (rawstd_uuid_is_nil(&snapshot_id)) {
+        /* nil is the live version, never a snapshot. */
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    std::string dataset = _dataset(id, offset);
+    std::string snapshot = _dataset(id, offset, snapshot_id);
+
+    rawstd_info("zfs: creating snapshot %s\n", snapshot.c_str());
+
+    // The snapshot read path opens /dev/zvol/.../<uuid>@s<id>, which
+    // exists only with snapdev=visible on the origin. Set it with every
+    // snapshot, so every one that exists is also openable -- one
+    // mechanism, old zvols included, rather than a per-snapshot property.
+    // It goes first and is idempotent, so "zfs snapshot" is the only step
+    // that can leave state behind: a retry after a failure of either step
+    // never trips over an already-existing snapshot.
+    //
+    // GCC 13 ICEs (build_special_member_call) when a std::vector<std::
+    // string> argument is brace-initialized directly at the call site of
+    // a nested coroutine that's co_await-ed from within another coroutine
+    // -- naming the vector first works around it (see Backend::create()'s
+    // own comment on this file).
+    std::vector<std::string> snapdev_argv = {
+        "zfs", "set", "snapdev=visible", dataset
+    };
+    try {
+        co_await rawstor::run_command(_queue, std::move(snapdev_argv));
+    } catch (const std::system_error& e) {
+        rawstd_error(
+            "zfs: failed to set snapdev=visible on %s: %s\n", dataset.c_str(),
+            e.what()
+        );
+        throw;
+    }
+
+    std::vector<std::string> snapshot_argv = {"zfs", "snapshot", snapshot};
+    try {
+        co_await rawstor::run_command(_queue, std::move(snapshot_argv));
+    } catch (const std::system_error& e) {
+        rawstd_error(
+            "zfs: failed to create snapshot %s: %s\n", snapshot.c_str(),
+            e.what()
+        );
+        throw;
+    }
+}
+
+rawstd::Task<void> Backend::remove_snapshot(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
+    std::string snapshot = _dataset(id, offset, snapshot_id);
+
+    // Same ENOENT convention as remove(): a nonexistent snapshot is
+    // permanent, not the retryable EIO "zfs destroy" would produce.
+    std::vector<std::string> probe_argv = {"zfs",  "list",     "-H",
+                                           "-t",   "snapshot", "-o",
+                                           "name", snapshot};
+    try {
+        co_await rawstor::run_command(_queue, std::move(probe_argv));
+    } catch (const std::system_error&) {
+        rawstd_error("zfs: snapshot %s does not exist\n", snapshot.c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+
+    rawstd_info("zfs: destroying snapshot %s\n", snapshot.c_str());
+
+    std::vector<std::string> destroy_argv = {"zfs", "destroy", snapshot};
+    try {
+        co_await rawstor::run_command(_queue, std::move(destroy_argv));
+    } catch (const std::system_error& e) {
+        rawstd_error(
+            "zfs: failed to destroy snapshot %s: %s\n", snapshot.c_str(),
+            e.what()
+        );
+        throw;
+    }
 }
 
 } // namespace zfs
