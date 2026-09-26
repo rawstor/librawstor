@@ -53,16 +53,41 @@ static void print_sync_id_history(
  * needs to cover one chunk's own width, not the whole object at once. */
 enum { MAX_MIRRORS = 256 };
 
-/* The object's own chunk count, computed from spec()'s own size/
- * chunk_size the same way MultiChunkObject routes I/O (chunk_size == 0
- * meaning the ordinary, single-chunk case every plain target is, one
- * chunk at offset 0 -- object.cpp's own doc comment on why chunk_size is
- * otherwise always a real, nonzero value). */
-static uint64_t rawstor_cli_chunk_count(const struct RawstorObjectSpec* spec) {
-    if (spec->chunk_size == 0) {
+/* How many distinct chunks `target` actually names, from a caller of
+ * rawstor_target_meta()'s own point of view: `spec`'s own size/chunk_size
+ * describe the object's real shape the same way MultiChunkObject routes
+ * I/O by it (chunk_size == 0 meaning the ordinary, single-chunk case
+ * every plain target is), but for an mds:// target that real shape isn't
+ * reflected in `target`'s own flat URI list at all -- rawstor_target_meta()
+ * itself only ever accepts offset 0 there (its own doc comment) even
+ * though spec.size/chunk_size describe a real, multi-chunk object. So
+ * before trusting size/chunk_size to decide how many chunk[N] blocks to
+ * print, cross-check that `target`'s own URI count actually equals
+ * chunk_count * spec->width -- every chunk of a target this call can
+ * really address carries exactly that many URIs (Target::create()'s own
+ * validation); if it doesn't, `target` isn't decomposable at this level,
+ * so treat it as a single, opaque chunk instead. */
+static uint64_t rawstor_cli_chunk_count(
+    const char* target, const struct RawstorObjectSpec* spec
+) {
+    uint64_t chunk_count =
+        spec->chunk_size == 0
+            ? 1
+            : (spec->size + spec->chunk_size - 1) / spec->chunk_size;
+    if (chunk_count <= 1 || spec->width == 0) {
         return 1;
     }
-    return (spec->size + spec->chunk_size - 1) / spec->chunk_size;
+
+    size_t uri_count = 1;
+    for (const char* p = target; *p != '\0'; p++) {
+        if (*p == ',') {
+            uri_count++;
+        }
+    }
+    if (uri_count != (size_t)chunk_count * spec->width) {
+        return 1;
+    }
+    return chunk_count;
 }
 
 static int
@@ -98,7 +123,7 @@ show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
      * --offset takes, and target's own comma-separated order, not a
      * value this command has to re-parse target to print. Hex, not
      * decimal -- same base the offset segment itself uses in a target
-     * string (Target::parse_path()'s own doc comment, target.hpp). */
+     * string (parse_target_path()'s own doc comment, target.hpp). */
     printf("chunk[%llx]:\n", (unsigned long long)offset);
     for (ssize_t i = 0; i < result; i++) {
         const struct RawstorObjectMeta* meta = &metas[i];
@@ -138,7 +163,7 @@ static int show_meta(const char* target, const struct RawstorObjectSpec* spec) {
         return rawstd_exitcode_for_errno(-res);
     }
 
-    uint64_t chunk_count = rawstor_cli_chunk_count(spec);
+    uint64_t chunk_count = rawstor_cli_chunk_count(target, spec);
     int ret = EXIT_SUCCESS;
     for (uint64_t i = 0; i < chunk_count; i++) {
         ret = show_chunk_meta(&op, target, i * spec->chunk_size);

@@ -41,6 +41,8 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         blk_backend.hpp \
                         chunk.cpp \
                         chunk.hpp \
+                        slot.cpp \
+                        slot.hpp \
                         file_backend.cpp \
                         file_backend.hpp \
                         list.c \
@@ -48,14 +50,18 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         location.hpp \
                         lvm_backend.cpp \
                         lvm_backend.hpp \
+                        mds_backend.cpp \
+                        mds_backend.hpp \
+                        mds_client.cpp \
+                        mds_client.hpp \
                         object.cpp \
                         object.hpp \
                         ost_backend.cpp \
                         ost_backend.hpp \
                         opts.c \
                         opts.h \
-                        slot.cpp \
-                        slot.hpp \
+                        placement.cpp \
+                        placement.hpp \
                         subprocess.cpp \
                         subprocess.hpp \
                         rawstor.cpp \
@@ -63,6 +69,8 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         target.hpp \
                         telemetry.cpp \
                         telemetry.hpp \
+                        topology.cpp \
+                        topology.hpp \
                         zfs_backend.cpp \
                         zfs_backend.hpp
 

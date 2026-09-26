@@ -13,6 +13,7 @@
 #include <rawstor/target.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace rawstor {
@@ -24,13 +25,12 @@ namespace lvm {
  * Location URI: lvm://<vg>
  *   Example:    lvm://rawstor_vg
  *
- * Each object is a Logical Volume named after its UUID inside the Volume
- * Group -- self-describing: `id` is the same id every chunk of that id
- * carries, `offset` disambiguates which one, as an explicit
- * "-<offset>" LV-name suffix (0 for a plain object, same as every other
- * chunk) -- LVM's own naming forbids ':'; hex, like every other offset
- * this codebase carries in a physical name or a target URI's own path
- * segment. Device path: /dev/<vg>/<uuid>-<offset>.
+ * Group -- self-describing (docs/mds.md, "Chunk identity"): `id` is the
+ * volume's own id for every one of its chunks, `offset` disambiguates
+ * which one, as an explicit "-<offset>" LV-name suffix (0 for a plain
+ * object, same as every other chunk) -- LVM's own naming forbids ':';
+ * hex, like every other offset this codebase carries in a physical name
+ * or a target URI's own path segment. Device path: /dev/<vg>/<uuid>-<offset>.
  *
  * Requires lvcreate/lvremove/lvs/vgs to be available in PATH and sufficient
  * privileges.
@@ -64,8 +64,9 @@ private:
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
-    rawstd::Task<void> list(
-        unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+    rawstd::Task<void> list_chunks(
+        unsigned int limit,
+        std::vector<std::pair<RawstdUUID, uint64_t>>& chunks, ChunkCursor& token
     ) override;
 
     rawstd::Task<void> create(

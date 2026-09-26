@@ -55,6 +55,44 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
     }
 }
 
+// A resume cursor's own string form, mirroring a target string's own
+// trailing path grammar (TargetPath's own doc comment, target.hpp) --
+// never a full URI itself: a RawstorPaginationToken's cursor has no
+// scheme/host of its own, it only ever gets passed back to the exact
+// Location it came from. Empty (all-zero ChunkCursor) means "from the
+// start"/"nothing left", matching rawstor_pagination_token_empty().
+std::string encode_token(const rawstor::ChunkCursor& cursor) {
+    if (cursor == rawstor::ChunkCursor{}) {
+        return "";
+    }
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&cursor.id, &uuid_string);
+    std::string ret = uuid_string;
+    if (cursor.offset != 0) {
+        ret += "/" + std::to_string(cursor.offset);
+    }
+    return ret;
+}
+
+// Reuses parse_target_path() rather than a second copy of its own
+// id/offset grammar -- it only ever looks at a path string, never a full
+// URI, so the bare cursor string (no scheme/host of its own) parses
+// directly, with nothing to wrap it in first. The resulting TargetPath's
+// own snapshot_id is always nil here (list_chunks() never returns a
+// snapshot, so nothing ever encodes one into this cursor) and simply
+// discarded.
+rawstor::ChunkCursor decode_token(const std::string& s) {
+    rawstor::ChunkCursor ret{};
+    if (s.empty()) {
+        return ret;
+    }
+
+    rawstor::TargetPath path = rawstor::parse_target_path(s);
+    ret.id = path.id;
+    ret.offset = path.offset;
+    return ret;
+}
+
 // One URI's worth of Location::info() work: connect a single-session
 // Slot just for this call, do the one metadata op, close it again.
 // Factored out so info()/list() can fan these out across every URI via
@@ -68,21 +106,25 @@ info_one(rawio::Queue& queue, const rawstd::URI& location) {
     co_return ret;
 }
 
-// Location::list()'s per-URI result: the uuids it found plus the
-// pagination token it reported (seeded from the caller's incoming token,
-// same as the old sequential loop's per-iteration `loc_token_uuid` local)
-// -- .first/.second are unpacked back into those same names via
-// structured bindings at every call site below, so the pair itself never
-// needs to be read directly.
-rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>> list_one(
+// Location::list()'s per-URI result: the (id, offset) pairs it
+// found plus the pagination cursor it reported (seeded from the caller's
+// incoming cursor, same as the old sequential loop's per-iteration
+// `loc_token_uuid` local) -- .first/.second are unpacked back into those
+// same names via structured bindings at every call site below, so the
+// pair itself never needs to be read directly.
+rawstd::Task<std::pair<
+    std::vector<std::pair<RawstdUUID, uint64_t>>, rawstor::ChunkCursor>>
+list_one(
     rawio::Queue& queue, const rawstd::URI& location, unsigned int limit,
-    RawstdUUID token_uuid
+    rawstor::ChunkCursor token
 ) {
-    std::pair<std::vector<RawstdUUID>, RawstdUUID> ret;
-    ret.second = token_uuid;
+    std::pair<
+        std::vector<std::pair<RawstdUUID, uint64_t>>, rawstor::ChunkCursor>
+        ret;
+    ret.second = token;
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location, 1);
-    co_await slot->list(limit, ret.first, ret.second);
+    co_await slot->list_chunks(limit, ret.first, ret.second);
     co_await slot->close();
     co_return ret;
 }
@@ -245,13 +287,17 @@ void launch_create_op(
 
 namespace rawstor {
 
-Location::Location(const std::vector<rawstd::URI>& uris) : _uris(uris) {
+// Every public method below used to re-run these two checks itself,
+// identically, before touching _uris -- validated once, here, instead:
+// _uris never changes after construction, so nothing past this point
+// can un-validate it (same pattern as Target's own constructor).
+Location::Location(const std::string& location) :
+    _uris(rawstd::URI::uriv(location.c_str())) {
+    validate_not_empty(_uris);
+    validate_different_uris(_uris);
 }
 
 rawstd::Task<RawstorLocationInfo> Location::info(rawio::Queue& queue) const {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-
     std::vector<rawstd::Task<RawstorLocationInfo>> tasks;
     tasks.reserve(_uris.size());
     for (const auto& location : _uris) {
@@ -278,43 +324,49 @@ rawstd::Task<void> Location::list(
     rawio::Queue& queue, unsigned int limit, std::list<Target>& targets,
     RawstorPaginationToken& token
 ) const {
-    validate_not_empty(_uris);
-
-    RawstdUUID token_uuid = {};
-    memcpy(token_uuid.bytes, token.bytes, sizeof(token.bytes));
+    ChunkCursor token_obj = decode_token(
+        std::string(token.bytes, strnlen(token.bytes, sizeof(token.bytes)))
+    );
 
     // Every URI's LIST goes out concurrently instead of one at a time;
-    // the per-URI uuids/token are only merged below, once every URI has
+    // the per-URI chunks/cursor are only merged below, once every URI has
     // answered.
-    std::vector<rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>>>
+    std::vector<rawstd::Task<
+        std::pair<std::vector<std::pair<RawstdUUID, uint64_t>>, ChunkCursor>>>
         tasks;
     tasks.reserve(_uris.size());
     for (const auto& location : _uris) {
-        tasks.push_back(list_one(queue, location, limit, token_uuid));
+        tasks.push_back(list_one(queue, location, limit, token_obj));
     }
-    std::vector<std::pair<std::vector<RawstdUUID>, RawstdUUID>> listings =
-        co_await rawstd::gather(std::move(tasks));
+    std::vector<
+        std::pair<std::vector<std::pair<RawstdUUID, uint64_t>>, ChunkCursor>>
+        listings = co_await rawstd::gather(std::move(tasks));
 
-    auto cmp = [](const RawstdUUID& lhs, const RawstdUUID& rhs) -> bool {
-        return rawstd_uuid_cmp(&lhs, &rhs) < 0;
-    };
-    std::map<RawstdUUID, std::vector<rawstd::URI>, decltype(cmp)> targets_map(
-        cmp
-    );
-    RawstdUUID empty_uuid = {};
-    RawstdUUID next_token_uuid = empty_uuid;
-    for (size_t i = 0; i < _uris.size(); ++i) {
-        const rawstd::URI& location = _uris[i];
-        const auto& [loc_uuids, loc_token_uuid] = listings[i];
-        for (const auto& uuid : loc_uuids) {
-            RawstdUUIDString uuid_string;
-            rawstd_uuid_to_string(&uuid, &uuid_string);
-            targets_map[uuid].emplace_back(location, uuid_string);
+    // ChunkCursor's own operator<() (id, then offset -- backend.hpp)
+    // is exactly the total order every one of list_chunks()'s concrete
+    // implementations already sorts its own output by, so a plain
+    // std::map needs no custom comparator here. Each backend answered for
+    // exactly its own bound URI (_uris[i], zipped by index below) --
+    // Target's own Location-based constructor rebuilds the single URI
+    // that URI's own backend would have built into it, now that
+    // list_chunks() itself only ever hands back the bare id/offset
+    // (backend.hpp's own doc comment on why: a single Backend has no
+    // visibility into its sibling mirrors' own URIs, so building a
+    // multi-mirror Target isn't its job).
+    std::map<ChunkCursor, std::vector<rawstd::URI>> targets_map;
+    ChunkCursor empty{};
+    ChunkCursor next_token = empty;
+    for (size_t i = 0; i < listings.size(); ++i) {
+        const auto& [loc_chunks, loc_token] = listings[i];
+        Location self_location(_uris[i].str());
+        for (const auto& [id, offset] : loc_chunks) {
+            ChunkCursor key{id, offset};
+            Target t(self_location, id, offset);
+            targets_map[key].push_back(t.uris().front());
         }
-        if (rawstd_uuid_cmp(&loc_token_uuid, &empty_uuid) != 0) {
-            if (rawstd_uuid_cmp(&next_token_uuid, &empty_uuid) == 0 ||
-                rawstd_uuid_cmp(&loc_token_uuid, &next_token_uuid) < 0) {
-                next_token_uuid = loc_token_uuid;
+        if (!(loc_token == empty)) {
+            if (next_token == empty || loc_token < next_token) {
+                next_token = loc_token;
             }
         }
     }
@@ -326,25 +378,32 @@ rawstd::Task<void> Location::list(
     }
 
     std::list<Target> ret;
-    const RawstdUUID* last_uuid = nullptr;
+    const ChunkCursor* last_cursor = nullptr;
     bool capped = false;
     for (const auto& it : targets_map) {
         if (ret.size() >= limit) {
             capped = true;
             break;
         }
-        last_uuid = &it.first;
-        ret.emplace_back(it.second);
+        last_cursor = &it.first;
+        ret.emplace_back(rawstd::URI::uris(it.second));
     }
-    if (last_uuid != nullptr) {
-        if (capped && (rawstd_uuid_cmp(&next_token_uuid, &empty_uuid) == 0 ||
-                       rawstd_uuid_cmp(last_uuid, &next_token_uuid) < 0)) {
-            next_token_uuid = *last_uuid;
+    if (last_cursor != nullptr) {
+        if (capped && (next_token == empty || *last_cursor < next_token)) {
+            next_token = *last_cursor;
         }
     }
 
     targets.swap(ret);
-    memcpy(token.bytes, next_token_uuid.bytes, sizeof(next_token_uuid.bytes));
+    std::string encoded = encode_token(next_token);
+    if (encoded.size() >= sizeof(token.bytes)) {
+        // Can't happen with a real uuid+offset (comfortably under
+        // RAWSTOR_PAGINATION_TOKEN_SIZE) -- refuse loudly rather than
+        // silently truncate a cursor into an unparseable one.
+        RAWSTD_THROW_SYSTEM_ERROR(ENAMETOOLONG);
+    }
+    memset(token.bytes, 0, sizeof(token.bytes));
+    memcpy(token.bytes, encoded.data(), encoded.size());
 }
 
 rawstd::Task<Target>
@@ -361,9 +420,6 @@ Location::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
 rawstd::Task<Target> Location::create(
     rawio::Queue& queue, const RawstdUUID& uuid, const RawstorObjectSpec& sp
 ) const {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
 
@@ -373,7 +429,7 @@ rawstd::Task<Target> Location::create(
         targets.emplace_back(uri, uuid_string);
     }
 
-    Target t(targets);
+    Target t(rawstd::URI::uris(targets));
     co_await t.create(queue, sp);
 
     co_return t;
@@ -387,7 +443,7 @@ int rawstor_location_list(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Location loc(rawstd::URI::uriv(location));
+        rawstor::Location loc(location);
         launch_list_op(
             std::move(loc), static_cast<rawio::Queue*>(queue), limit, targets,
             token, cb, data
@@ -411,7 +467,7 @@ int rawstor_location_info(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Location loc(rawstd::URI::uriv(location));
+        rawstor::Location loc(location);
         launch_info_op(
             std::move(loc), static_cast<rawio::Queue*>(queue), info, cb, data
         );
@@ -478,8 +534,8 @@ int rawstor_location_create(
         }
 
         launch_create_op(
-            rawstor::Target(ret), static_cast<rawio::Queue*>(queue), *spec, res,
-            cb, data
+            rawstor::Target(rawstd::URI::uris(ret)),
+            static_cast<rawio::Queue*>(queue), *spec, res, cb, data
         );
         return 0;
     } catch (const std::system_error& e) {

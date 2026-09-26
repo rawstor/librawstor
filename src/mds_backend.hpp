@@ -1,0 +1,169 @@
+#ifndef RAWSTOR_MDS_BACKEND_HPP
+#define RAWSTOR_MDS_BACKEND_HPP
+
+#include "backend.hpp"
+#include "mds_client.hpp"
+#include "object.hpp"
+
+#include <rawio/queue.hpp>
+
+#include <rawstd/coro.hpp>
+#include <rawstd/uri.hpp>
+#include <rawstd/uuid.h>
+
+#include <rawstor/location.h>
+#include <rawstor/target.h>
+
+#include <memory>
+#include <utility>
+#include <vector>
+
+namespace rawstor {
+namespace mds {
+
+/*
+ * mds:// object storage backend.
+ *
+ * Location URI: mds://host:port
+ *
+ * A peer of file/lvm/ost/zfs::Backend, not a special case Target/Object
+ * dispatch around them (docs/locations_and_targets.md, docs/mds.md):
+ * `mds://host:port/<id>` is, from Target's own point of view, an
+ * ordinary single-URI target whose one "chunk" happens to be an entire
+ * MDS-orchestrated object. Opening it (set_object()) fetches the
+ * object's current WireMap from the MDS and builds the same internal
+ * multi-chunk Target string Target::open() already knows how to parse
+ * (see target.hpp) -- recursing into Target/Object/Chunk/Slot
+ * again, the same way ost::Backend's own client recurses into a fresh
+ * Target/Backend pair on the far end of the wire (ost/src/client.cpp) --
+ * just intra-process here instead of across a socket. The nested Object
+ * this produces (`_object` below) is what every data-path method
+ * delegates to.
+ */
+class Backend final : public rawstor::Backend {
+private:
+    mds::Client _client;
+    std::unique_ptr<Object> _object;
+
+    rawstd::Task<void> _connect() override;
+
+    // Shared by remove_snapshot() below.
+    rawstd::Task<void>
+    _remove_snapshot(const RawstdUUID& id, const RawstdUUID& snapshot_id);
+
+    // Shared by set_object()/set_snapshot() below.
+    rawstd::Task<void>
+    _set_object(const RawstdUUID& id, const RawstdUUID& snapshot_id, int flags);
+
+public:
+    Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
+
+    rawstd::Task<void> list_chunks(
+        unsigned int limit,
+        std::vector<std::pair<RawstdUUID, uint64_t>>& chunks, ChunkCursor& token
+    ) override;
+
+    rawstd::Task<void> create(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
+    ) override;
+
+    // Unregisters and destroys the whole object (docs/mds.md, deletion
+    // order). The MDS unregisters first (no new readers), before this
+    // returns; the per-chunk destroy that follows is therefore
+    // best-effort cleanup -- a member that can no longer be resolved
+    // (address changed, OST replaced) is left for the reconstruct scan.
+    rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset) override;
+
+    // Removes one previously committed snapshot, via _remove_snapshot()
+    // above. Same MDS-unregisters-first, best-effort per-chunk cleanup
+    // convention as remove() above.
+    rawstd::Task<void> remove_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    ) override;
+
+    // `offset` is always 0 here -- a single mds:// URI is never
+    // itself split into chunks (chunking happens one level down, inside
+    // the object) -- see rawstor::Backend::resize()'s own doc comment.
+    rawstd::Task<void>
+    resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size) override;
+
+    // MDS-orchestrated snapshot (docs/mds.md, "Snapshots (stage 2)"):
+    // `snapshot_id` is the caller's own already-generated version id (like
+    // every object id -- client-generated, single point of generation,
+    // Target::create()'s own bound-snapshot contract, target.h). No more
+    // separate "assign" step (there used to be one, back when the MDS
+    // itself handed out a monotonic counter's next value): a client-
+    // generated id can never collide with a crashed attempt's leftovers,
+    // so there's nothing left for the MDS to reserve ahead of time.
+    // backend-CoWs every reachable chunk member under it (descending
+    // logical index, so a crash midway always leaves a hole at the low
+    // indices -- the reconstruct scan tells that apart from a
+    // legitimately shorter, pre-resize snapshot), then registers the
+    // surviving membership. v1 caveat (see the design doc): assumes no
+    // concurrent writer -- draining/flushing an in-flight write session
+    // is the writing client's own duty, not this call's. `offset`
+    // is always 0, same reason as resize() above.
+    rawstd::Task<void> create_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    ) override;
+
+    // Synthetic: mirrors == 1 at the Target level (a single mds:// URI),
+    // but Slot::open()/Chunk's constructor call meta() unconditionally
+    // regardless of mirror count (see this method's own comment in
+    // mds_backend.cpp) -- real per-chunk DIRTY/CLEAN is already honestly
+    // tracked one level down, by each chunk's own (possibly mirrored)
+    // Chunk.
+    rawstd::Task<RawstorObjectMeta>
+    meta(const RawstdUUID& id, uint64_t offset) override;
+
+    // No-op, for the same reason meta() above is synthetic.
+    rawstd::Task<void> set_sync_state(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectSyncState& sync_state
+    ) override;
+
+    rawstd::Task<RawstorLocationInfo> info() override;
+
+    // Fetches the object's current (live) WireMap and opens the nested
+    // multi-chunk Object it describes (see this class's own doc comment),
+    // via _set_object() above. `offset` is always 0, same reason as
+    // resize() above.
+    rawstd::Task<void>
+    set_object(const RawstdUUID& id, uint64_t offset, int flags) override;
+
+    // Same as set_object() above, for one previously committed snapshot:
+    // `snapshot_id` is folded into every chunk slot's own URI (its own
+    // trailing path segment, chunk_slot_target()'s own convention in
+    // mds_backend.cpp), not passed down any other way.
+    rawstd::Task<void> set_snapshot(
+        const RawstdUUID& object_id, uint64_t offset,
+        const RawstdUUID& snapshot_id
+    ) override;
+
+    rawstd::Task<void> close() override;
+
+    rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;
+
+    rawstd::Task<size_t>
+    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) override;
+
+    rawstd::Task<size_t>
+    pwrite(const void* buf, size_t size, off_t offset, bool sync) override;
+
+    rawstd::Task<size_t> pwritev(
+        const iovec* iov, unsigned int niov, size_t size, off_t offset,
+        bool sync
+    ) override;
+
+    rawstd::Task<size_t> discard(size_t size, off_t offset) override;
+
+    rawstd::Task<size_t>
+    write_zeroes(size_t size, off_t offset, bool unmap, bool sync) override;
+
+    rawstd::Task<void> flush() override;
+};
+
+} // namespace mds
+} // namespace rawstor
+
+#endif // RAWSTOR_MDS_BACKEND_HPP

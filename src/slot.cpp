@@ -64,13 +64,34 @@ unsigned int backoff_delay_ms(
 
 // A rejection retrying can never turn into success: the target object
 // doesn't exist (ENOENT), already exists where create() needs it not to
-// (EEXIST), or the request itself is malformed (EINVAL).
+// (EEXIST), the request itself is malformed (EINVAL), or the backend
+// permanently lacks a capability (ENOTSUP -- e.g. create_snapshot()/a
+// non-nil snapshot_id to remove() on file:// or classic LVM, docs/mds.md's
+// "Snapshots": no retry will ever make a backend grow native CoW support
+// it doesn't have).
 // Anything else defaults to retryable -- safer to spend a few pointless
 // retries on a genuinely transient rejection we don't recognize than to
 // silently give up on one that would have gone away on its own (e.g.
 // EBUSY, ENOSPC, EIO).
 bool is_permanent_backend_error(int error) {
-    return error == ENOENT || error == EEXIST || error == EINVAL;
+    return error == ENOENT || error == EEXIST || error == EINVAL ||
+           error == ENOTSUP;
+}
+
+// Binds `backend` to `id`/`offset`'s live version, or one previously
+// snapshotted version of it if `snapshot_id` isn't nil (Backend::
+// set_object()/set_snapshot()'s own split) -- shared by Slot::open() and
+// invalidate_backend() below, both of which rebind to whichever
+// `id`/`offset`/`snapshot_id` this Slot itself was last opened with.
+rawstd::Task<void> set_object_or_snapshot(
+    rawstor::Backend& backend, const RawstdUUID& id, uint64_t offset, int flags,
+    const RawstdUUID& snapshot_id
+) {
+    if (rawstd_uuid_is_nil(&snapshot_id)) {
+        co_await backend.set_object(id, offset, flags);
+    } else {
+        co_await backend.set_snapshot(id, offset, snapshot_id);
+    }
 }
 
 // Retries `attempt()` up to rawstor_opts_io_attempts() times, sharing the
@@ -83,7 +104,7 @@ bool is_permanent_backend_error(int error) {
 // nested synchronous pump -- unlike the old callback-based retry_n() this
 // replaces, nothing here ever needs a private Queue of its own to drive
 // `attempt()` to completion. The data-path/metadata methods
-// (pread/preadv/pwrite/pwritev/flush/list/create/remove/spec/info) each
+// (pread/preadv/pwrite/pwritev/flush/list/create/remove/meta/info) each
 // go through _with_retry() instead -- same overall shape, but with the
 // extra EBUSY-vs-reconnect policy and no set-up/tear-down step, so
 // sharing this one wouldn't fit them without a callback out for it.
@@ -133,20 +154,6 @@ auto retry_n_async(const char* func_name, rawio::Queue& queue, F&& attempt)
     }
     // Only reachable if rawstor_opts_io_attempts() == 0.
     RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-}
-
-// One backend's bind step: the live version of `id`/`offset` (with
-// `flags`), or -- non-nil `snapshot_id` -- one previously snapshotted
-// version of it (read-only by nature, so no flags of its own).
-rawstd::Task<void> set_object_or_snapshot(
-    rawstor::Backend& backend, const RawstdUUID& id, uint64_t offset, int flags,
-    const RawstdUUID& snapshot_id
-) {
-    if (rawstd_uuid_is_nil(&snapshot_id)) {
-        co_await backend.set_object(id, offset, flags);
-    } else {
-        co_await backend.set_snapshot(id, offset, snapshot_id);
-    }
 }
 
 } // namespace
@@ -252,7 +259,7 @@ rawstd::Task<T> Slot::_with_retry(
                 // Same GCC 15 coroutine ICE class as the T = void branch
                 // above, different shape: here it's "no suspend point
                 // info ... not supported by dump_decl" (see
-                // Target::open()'s spec-fetch loop for the same
+                // Chunk::meta()'s own per-uri loop for the same
                 // diagnostic) on a fresh named local direct-initialized
                 // from co_await inside a try block -- declaring `result`
                 // separately from the co_await that fills it in sidesteps
@@ -440,7 +447,7 @@ Slot::invalidate_backend(const std::shared_ptr<Backend>& be) {
                     co_await Backend::create(_queue, be->location());
                 // _id is only set once open() has run (see its own doc
                 // comment) -- a Slot used purely for metadata
-                // (list/create/remove/spec/info) never calls open(), so
+                // (list/create/remove/meta/info) never calls open(), so
                 // _id stays unset and there's no id to set_object() this
                 // replacement backend to in the first place. Metadata
                 // ops don't need SET_OBJECT first, so just skip it here.
@@ -544,8 +551,9 @@ const rawstd::URI* Slot::location() const noexcept {
     return &_backends.front()->location();
 }
 
-rawstd::Task<void> Slot::list(
-    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+rawstd::Task<void> Slot::list_chunks(
+    unsigned int limit, std::vector<std::pair<RawstdUUID, uint64_t>>& chunks,
+    ChunkCursor& token
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -554,7 +562,45 @@ rawstd::Task<void> Slot::list(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::list, limit, targets, token
+            func_name, trace_event, &Backend::list_chunks, limit, chunks, token
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void> Slot::create_snapshot(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::create_snapshot, id, offset,
+            snapshot_id
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void>
+Slot::resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::resize, id, offset, new_size
         );
         _finish(t_call);
     } catch (...) {
@@ -630,26 +676,6 @@ rawstd::Task<RawstorLocationInfo> Slot::info() {
             co_await _with_retry(func_name, trace_event, &Backend::info);
         _finish(t_call);
         co_return result;
-    } catch (...) {
-        _finish(t_call);
-        throw;
-    }
-}
-
-rawstd::Task<void> Slot::create_snapshot(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
-) {
-    const char* func_name = __FUNCTION__;
-    rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
-    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
-
-    try {
-        co_await _with_retry(
-            func_name, trace_event, &Backend::create_snapshot, id, offset,
-            snapshot_id
-        );
-        _finish(t_call);
     } catch (...) {
         _finish(t_call);
         throw;

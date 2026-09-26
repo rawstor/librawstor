@@ -45,21 +45,20 @@ std::string hex_offset(uint64_t offset) {
 }
 
 // Builds a target string naming two chunks' own uris of one object by
-// hand (docs/locations_and_targets.md): "<location>/<uuid>/0" and
-// "<location>/<uuid>/<chunk_size in hex>" -- the same flat, offset-sorted
-// URI list a real chunk-placement caller (rawstor-mds, in a later bucket)
-// would build, just typed out here instead. Nothing about Target/Object
-// requires that caller to exist; chunk_uris_by_offset()/Target::open()'s
-// own multi-chunk machinery only ever looks at the URIs themselves.
-std::vector<rawstd::URI> two_chunk_uris(
+// hand (docs/locations_and_targets.md): "<location>/<uuid>/0,<location>/
+// <uuid>/<chunk_size in hex>" -- the same flat, offset-sorted URI list
+// rawstor-mds itself would build internally, just typed out here
+// instead. Nothing about Target/Object requires an MDS server to exist;
+// chunk_uris_by_offset()/Target::open()'s own multi-chunk machinery only
+// ever looks at the URIs themselves.
+std::string two_chunk_target(
     const rawstd::URI& location, const std::string& uuid_string,
     uint64_t chunk_size
 ) {
     rawstd::URI id_uri(location, uuid_string);
-    return {
-        rawstd::URI(id_uri, "0"),
-        rawstd::URI(id_uri, hex_offset(chunk_size)),
-    };
+    return rawstd::URI::uris(
+        {rawstd::URI(id_uri, "0"), rawstd::URI(id_uri, hex_offset(chunk_size))}
+    );
 }
 
 } // namespace
@@ -82,12 +81,15 @@ TEST(MultiChunkTest, create_open_read_write_across_chunk_boundary) {
     const uint64_t chunk_size = 64 * 1024;
     const uint64_t total_size = chunk_size + (32 * 1024); // short last chunk
 
-    rawstor::Target target(two_chunk_uris(location, uuid_string, chunk_size));
+    rawstor::Target target(two_chunk_target(location, uuid_string, chunk_size));
 
     RawstorObjectSpec spec{
         .size = total_size,
         .width = 1,
         .chunk_size = chunk_size,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     run(*queue, target.create(*queue, spec));
 
@@ -162,12 +164,15 @@ TEST(MultiChunkTest, preadv_pwritev_across_chunk_boundary) {
     const uint64_t chunk_size = 64 * 1024;
     const uint64_t total_size = chunk_size + (32 * 1024); // short last chunk
 
-    rawstor::Target target(two_chunk_uris(location, uuid_string, chunk_size));
+    rawstor::Target target(two_chunk_target(location, uuid_string, chunk_size));
 
     RawstorObjectSpec spec{
         .size = total_size,
         .width = 1,
         .chunk_size = chunk_size,
+        .stripe_width = 0,
+        .failure_domain = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     run(*queue, target.create(*queue, spec));
 

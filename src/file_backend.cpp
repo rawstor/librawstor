@@ -30,22 +30,39 @@
 
 namespace {
 
-// One chunk's own directory: <location>/<uuid>/<offset> --
-// self-describing: `uuid` is the same id every chunk of that id carries,
-// `offset` (0 for a plain object) disambiguates which chunk of that
-// id this is. Two files live directly under this directory: `data` (the
-// object's own bytes) and `meta` (get_target_meta_path() below). `offset`
-// is hex, not decimal -- same base as the target URI's own offset path
-// segment (parse_target_path()'s own doc comment) and every numeric
-// field meta_encode() persists alongside it, so a directory listing and
-// its own meta record read the same way.
+// One chunk's own directory: <location>/<uuid>/<offset>[/<snapshot_id>]
+// -- self-describing (docs/mds.md, "Chunk identity"): `uuid` is the
+// volume's own id for every one of its chunks (mds::Backend no longer
+// scrambles it), `offset` (0 for a plain object or a volume's own
+// chunk 0 -- the two are indistinguishable at this layer by design)
+// disambiguates which chunk of that id this is, always its own path
+// component (never omitted, unlike the id/offset/snapshot_id path *target
+// strings* use -- see TargetPath's own doc comment in target.hpp for why
+// those stay optional; a physical directory layout has no such
+// ambiguity to worry about, so there's nothing to gain from omitting
+// it), and hex, not decimal -- same base as the target URI's own offset
+// path segment (parse_target_path()'s own doc comment) and every
+// numeric field meta_encode() persists alongside it, so a directory
+// listing and its own meta record read the same way. `snapshot_id`, when
+// bound, is one directory deeper still -- file:// never actually creates
+// one (its own _open_object() below has no snapshot_id parameter at all,
+// and it never overrides _open_snapshot(), whose blk::Backend default
+// rejects every call with ENOTSUP -- no native CoW), but the layout is
+// already shaped for a backend that could. Two
+// files live directly under this directory: `data` (the object's own
+// bytes) and `meta` (get_target_meta_path() below).
 std::string get_target_dir(
     const std::string& location_path, const RawstdUUIDString& uuid,
-    uint64_t offset
+    uint64_t offset, const RawstdUUID& snapshot_id = {}
 ) {
     std::ostringstream oss;
 
     oss << location_path << "/" << uuid << "/" << std::hex << offset;
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
+        RawstdUUIDString snap_string;
+        rawstd_uuid_to_string(&snapshot_id, &snap_string);
+        oss << "/" << snap_string;
+    }
 
     return oss.str();
 }
@@ -121,53 +138,67 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
     co_return fd;
 }
 
-rawstd::Task<void> Backend::list(
-    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+rawstd::Task<void> Backend::list_chunks(
+    unsigned int limit, std::vector<std::pair<RawstdUUID, uint64_t>>& chunks,
+    ChunkCursor& token
 ) {
-    RawstdUUID input_token = token;
-    targets.clear();
+    ChunkCursor input_token = token;
+    chunks.clear();
     token = {};
     try {
         std::string location_path = get_location_path(location());
 
-        // One entry per id directory (<location>/<uuid>/), regardless of
-        // how many offset subdirectories it holds -- nothing today
-        // ever creates more than one offset under the same id, so this
-        // stays UUID-only (multi-chunk listing is a later concern).
-        for (const auto& entry :
+        // Two levels deep: <location>/<uuid>/<offset>/data --
+        // list_chunks() only ever enumerates live objects (docs/mds.md,
+        // "Snapshot-version records are skipped (stage 2)"), so a third,
+        // snapshot-named level (get_target_dir()'s own doc comment)
+        // never applies here; an offset directory missing its own `data`
+        // file (mid-create(), or a leftover empty one after remove())
+        // is silently skipped rather than reported as a malformed name.
+        std::vector<ChunkCursor> found;
+        for (const auto& uuid_entry :
              std::filesystem::directory_iterator(location_path)) {
-            if (!entry.is_directory()) {
+            if (!uuid_entry.is_directory()) {
                 continue;
             }
-            std::string dirname = entry.path().filename().string();
-
+            std::string uuid_name = uuid_entry.path().filename().string();
             RawstdUUID uuid;
-            int res = rawstd_uuid_from_string(&uuid, dirname.c_str());
+            int res = rawstd_uuid_from_string(&uuid, uuid_name.c_str());
             if (res < 0) {
                 rawstd_warning(
-                    "%s: %s\n", strerror(-res), entry.path().string().c_str()
+                    "%s: %s\n", strerror(-res),
+                    uuid_entry.path().string().c_str()
                 );
                 continue;
             }
 
-            targets.push_back(uuid);
+            for (const auto& offset_entry :
+                 std::filesystem::directory_iterator(uuid_entry.path())) {
+                if (!offset_entry.is_directory()) {
+                    continue;
+                }
+                std::string offset_name = offset_entry.path().filename();
+                char* endptr = nullptr;
+                errno = 0;
+                uint64_t offset = strtoull(offset_name.c_str(), &endptr, 10);
+                if (errno != 0 || endptr == offset_name.c_str() ||
+                    *endptr != '\0') {
+                    errno = 0;
+                    continue;
+                }
+                if (!std::filesystem::exists(offset_entry.path() / "data")) {
+                    continue;
+                }
+
+                found.push_back(ChunkCursor{uuid, offset});
+            }
         }
 
-        std::sort(
-            targets.begin(), targets.end(),
-            [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-                return rawstd_uuid_cmp(&lhs, &rhs) < 0;
-            }
-        );
+        std::sort(found.begin(), found.end());
 
-        targets.erase(
-            targets.begin(),
-            std::upper_bound(
-                targets.begin(), targets.end(), input_token,
-                [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-                    return rawstd_uuid_cmp(&lhs, &rhs) < 0;
-                }
-            )
+        found.erase(
+            found.begin(),
+            std::upper_bound(found.begin(), found.end(), input_token)
         );
 
         if (limit == 0) {
@@ -176,9 +207,17 @@ rawstd::Task<void> Backend::list(
             limit = std::min(limit, rawstor_opts_list_limit());
         }
 
-        if (targets.size() > limit) {
-            targets.resize(limit);
-            token = targets.back();
+        bool capped = found.size() > limit;
+        if (capped) {
+            found.resize(limit);
+        }
+
+        chunks.reserve(found.size());
+        for (const ChunkCursor& cursor : found) {
+            chunks.emplace_back(cursor.id, cursor.offset);
+        }
+        if (capped) {
+            token = found.back();
         }
     } catch (const std::system_error&) {
         throw;
@@ -311,7 +350,11 @@ rawstd::Task<void> Backend::create(
             RawstorObjectSyncState sync_state{};
             sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
 
-            ChunkIdentity identity{};
+            // The placement identity (docs/mds.md, chunk_meta) is
+            // stamped now, from the caller's own spec, and never touched
+            // again -- set_sync_state() below preserves it unchanged.
+            ChunkIdentity identity;
+            identity.member_kind = sp.member_kind;
             identity.width = static_cast<uint8_t>(sp.width);
             identity.chunk_size = sp.chunk_size;
 
@@ -379,7 +422,9 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
 
     // Best-effort cleanup of the now-empty directory chain -- rmdir()
     // fails ENOTEMPTY, silently tolerated, the moment a sibling still
-    // lives there: another offset under the same uuid directory.
+    // lives there: another offset under the same uuid (the uuid
+    // directory), or -- once a backend actually creates one -- a
+    // surviving snapshot under this same offset (this directory).
     if (rmdir(target_dir.c_str()) == -1) {
         errno = 0;
     } else if (rmdir((location_path + "/" + uuid_string).c_str()) == -1) {
@@ -405,7 +450,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     int fd = co_await _queue.open(meta_path.c_str(), O_RDONLY | O_CLOEXEC, 0);
 
     RawstorObjectSyncState sync_state{};
-    ChunkIdentity identity{};
+    ChunkIdentity identity;
     std::exception_ptr eptr;
     try {
         std::array<char, META_MAX_SIZE> disk{};
@@ -430,6 +475,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
 
     RawstorObjectMeta ret{};
     ret.spec.size = static_cast<uint64_t>(st.st_size);
+    ret.spec.member_kind = identity.member_kind;
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.sync_state = sync_state;
@@ -456,12 +502,12 @@ rawstd::Task<void> Backend::set_sync_state(
 
     std::exception_ptr eptr;
     try {
-        // Read the existing record first so overwriting sync_state here
-        // doesn't clobber its own identity.
-        std::array<char, META_MAX_SIZE> old_disk{};
-        size_t old_rval =
-            co_await _queue.pread(fd, old_disk.data(), old_disk.size(), 0);
-        if (old_rval != old_disk.size()) {
+        // The placement identity is immutable once stamped at create() --
+        // read the existing record first and carry it through unchanged,
+        // rather than clobbering it with a zeroed one.
+        std::array<char, META_MAX_SIZE> disk{};
+        size_t got = co_await _queue.pread(fd, disk.data(), disk.size(), 0);
+        if (got != disk.size()) {
             rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
@@ -473,9 +519,7 @@ rawstd::Task<void> Backend::set_sync_state(
         RawstorObjectSyncState old_sync_state{};
         ChunkIdentity identity{};
         try {
-            meta_decode(
-                std::string(old_disk.data()), &old_sync_state, &identity
-            );
+            meta_decode(std::string(disk.data()), &old_sync_state, &identity);
         } catch (const std::system_error&) {
             identity = ChunkIdentity{};
         }
@@ -485,7 +529,7 @@ rawstd::Task<void> Backend::set_sync_state(
         // across every rewrite -- required here specifically, since this
         // is an in-place overwrite without O_TRUNC (see above).
         std::string encoded = meta_encode(sync_state, identity);
-        std::array<char, META_MAX_SIZE> disk{};
+        disk.fill('\0');
         memcpy(disk.data(), encoded.data(), encoded.size());
 
         size_t rval =
@@ -519,8 +563,11 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
         // readdir/getdents opcode to make that part async too, only
         // IORING_OP_STATX for the per-entry stat() below (already async
         // via _queue.stat()). Recursive now that each object's own
-        // `data`/`meta` live a directory deep (get_target_dir()'s own
-        // doc comment) rather than directly under location_path.
+        // `data`/`meta` live a directory (or two) deep
+        // (get_target_dir()'s own doc comment) rather than directly
+        // under location_path -- every directory level along the way is
+        // skipped by the is_regular_file() check, only the leaf files
+        // themselves are stat()ed and summed.
         for (const auto& entry :
              std::filesystem::recursive_directory_iterator(location_path)) {
             if (!entry.is_regular_file()) {

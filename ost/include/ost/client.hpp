@@ -80,21 +80,18 @@ private:
 
     static rawstd::DetachedTask _list(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
+        RawstorOSTFrameListPayload payload
     );
     static rawstd::DetachedTask _allocate(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameAllocatePayload payload
     );
+    // `payload.snapshot_id` nil for the live version, non-nil for one
+    // previously snapshotted (protocol.h's own doc comment on RELEASE).
     static rawstd::DetachedTask _release(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameBasicPayload payload
     );
-    // SNAPSHOT: forwarded to the same rawstor_target_create() this
-    // server's own local backend(s) implement -- the bound snapshot_id
-    // baked into the target's own path (_targets()'s own `snapshot_id`
-    // parameter) makes it take a CoW snapshot instead of creating a fresh
-    // object, same shape as _release() above.
     static rawstd::DetachedTask _create_snapshot(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameBasicPayload payload
@@ -139,11 +136,13 @@ private:
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
         RawstorOSTFrameSyncStatePayload payload
     );
-    // Builds this server's own local target string for `uuid`/`offset`,
-    // with `snapshot_id` appended as a bound-snapshot path segment when
-    // non-nil (nil, the default, addresses the live version).
+    // Every configured location's own URI for `uuid`, with `offset`/
+    // `snapshot_id` folded into each one's own path as
+    // "<uuid>[/<offset>[/<snapshot_id>]]" (TargetPath's own doc comment,
+    // src/target.hpp) -- the same self-describing name every backend on
+    // the receiving end already expects (docs/mds.md, "Chunk identity").
     std::vector<rawstd::URI> _targets(
-        const RawstdUUID& uuid, uint64_t offset,
+        const RawstdUUID& uuid, uint64_t offset = 0,
         const RawstdUUID& snapshot_id = {}
     );
 

@@ -1,8 +1,6 @@
 #ifndef RAWSTOR_CLI_SNAPSHOT_H
 #define RAWSTOR_CLI_SNAPSHOT_H
 
-#include <stddef.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif

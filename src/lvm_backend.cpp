@@ -17,6 +17,7 @@
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <mutex>
 #include <sstream>
@@ -184,14 +185,17 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
     co_return fd;
 }
 
-rawstd::Task<void> Backend::list(
-    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+rawstd::Task<void> Backend::list_chunks(
+    unsigned int limit, std::vector<std::pair<RawstdUUID, uint64_t>>& chunks,
+    ChunkCursor& token
 ) {
     co_await _cleanup_staging_lvs();
 
-    RawstdUUID input_token = token;
-    targets.clear();
+    ChunkCursor input_token = token;
+    chunks.clear();
     token = {};
+
+    std::vector<ChunkCursor> found;
 
     // GCC 13 ICEs (is_this_parameter) when a std::vector<std::string>
     // argument is brace-initialized directly at the call site of a nested
@@ -219,22 +223,26 @@ rawstd::Task<void> Backend::list(
 
             // A UUID's own string form is always exactly 36 characters
             // (RawstdUUIDString) -- a fixed prefix, since the UUID itself
-            // already embeds dashes, unlike this backend's own
-            // "-<offset>" suffix, which can't be told apart from
-            // those by splitting on the last '-' alone.
+            // already embeds dashes (8-4-4-4-12), unlike this backend's
+            // own "-<offset>" suffix, which can't be told apart
+            // from those by splitting on the last '-' alone.
             if (name.size() < 36) {
                 continue;
             }
             std::string uuid_part = name.substr(0, 36);
-            if (name.size() > 36 && name[36] != '-') {
-                continue;
+            uint64_t offset = 0;
+            if (name.size() > 36) {
+                if (name[36] != '-') {
+                    continue;
+                }
+                offset = strtoull(name.c_str() + 37, nullptr, 10);
             }
 
             RawstdUUID uuid;
             if (rawstd_uuid_from_string(&uuid, uuid_part.c_str()) < 0) {
                 continue;
             }
-            targets.push_back(uuid);
+            found.push_back(ChunkCursor{uuid, offset});
         }
     } catch (const std::exception& e) {
         rawstd_error(
@@ -244,31 +252,10 @@ rawstd::Task<void> Backend::list(
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    std::sort(
-        targets.begin(), targets.end(),
-        [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-            return rawstd_uuid_cmp(&lhs, &rhs) < 0;
-        }
-    );
-    // One entry per id, regardless of how many offset LVs it has --
-    // nothing today ever creates more than one offset under the same id.
-    targets.erase(
-        std::unique(
-            targets.begin(), targets.end(),
-            [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-                return rawstd_uuid_cmp(&lhs, &rhs) == 0;
-            }
-        ),
-        targets.end()
-    );
+    std::sort(found.begin(), found.end());
 
-    targets.erase(
-        targets.begin(), std::upper_bound(
-                             targets.begin(), targets.end(), input_token,
-                             [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-                                 return rawstd_uuid_cmp(&lhs, &rhs) < 0;
-                             }
-                         )
+    found.erase(
+        found.begin(), std::upper_bound(found.begin(), found.end(), input_token)
     );
 
     if (limit == 0) {
@@ -277,9 +264,17 @@ rawstd::Task<void> Backend::list(
         limit = std::min(limit, rawstor_opts_list_limit());
     }
 
-    if (targets.size() > limit) {
-        targets.resize(limit);
-        token = targets.back();
+    bool capped = found.size() > limit;
+    if (capped) {
+        found.resize(limit);
+    }
+
+    chunks.reserve(found.size());
+    for (const ChunkCursor& cursor : found) {
+        chunks.emplace_back(cursor.id, cursor.offset);
+    }
+    if (capped) {
+        token = found.back();
     }
 
     co_return;
@@ -426,7 +421,8 @@ rawstd::Task<void> Backend::create(
     // window -- staged or revealed -- where the LV exists without one.
     RawstorObjectSyncState sync_state{};
     sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    ChunkIdentity identity{};
+    Backend::ChunkIdentity identity;
+    identity.member_kind = sp.member_kind;
     identity.width = static_cast<uint8_t>(sp.width);
     identity.chunk_size = sp.chunk_size;
     std::string tag =
@@ -443,7 +439,7 @@ rawstd::Task<void> Backend::create(
     // the whole thing -- a thick LV's freshly allocated extents can
     // otherwise still hold whatever a previous LV in this VG left on
     // them. Revealing it under its real name only now means every access
-    // path (set_object()/spec()/pread() -- not just list(), which
+    // path (set_object()/meta()/pread() -- not just list(), which
     // already skips a non-UUID name on its own) sees plain ENOENT until
     // zeroing has actually finished, instead of a still-partially-zeroed
     // device. It also survives this process crashing mid-fill: the LV
@@ -651,7 +647,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     // CLEAN -- the caller treats any error here as "member stale, needs a
     // resync" (docs/mirroring.md, case F10).
     RawstorObjectSyncState sync_state;
-    ChunkIdentity identity{};
+    Backend::ChunkIdentity identity;
     try {
         meta_decode(tag, &sync_state, &identity);
     } catch (const std::system_error&) {
@@ -665,6 +661,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     // rawstor.
     RawstorObjectMeta ret{};
     ret.spec.size = co_await _blk_size(id, offset);
+    ret.spec.member_kind = identity.member_kind;
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.sync_state = sync_state;
@@ -681,16 +678,17 @@ rawstd::Task<void> Backend::set_sync_state(
     std::string tags = co_await _lv_tags(path);
     std::string old_tag = find_tag(tags, rawstor_tag_prefix);
 
-    // identity is stamped once at create() and never changed again --
-    // preserve it across this rewrite. An LV that predates this feature
-    // (no tag, or one meta_decode() can't parse) has no identity to
+    // The placement identity is immutable once stamped at create() --
+    // carry the existing tag's through unchanged rather than clobber it
+    // with a zeroed one. An empty/unrecorded old_tag (an LV created
+    // before this feature, or by something else) has no identity to
     // preserve; it degenerates to the all-zero default.
-    ChunkIdentity identity{};
-    RawstorObjectSyncState old_sync_state{};
+    Backend::ChunkIdentity identity;
+    RawstorObjectSyncState old_sync_state;
     try {
         meta_decode(old_tag, &old_sync_state, &identity);
     } catch (const std::system_error&) {
-        identity = ChunkIdentity{};
+        identity = Backend::ChunkIdentity{};
     }
 
     std::string new_tag =

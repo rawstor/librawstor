@@ -2,6 +2,7 @@
 #include "info.h"
 #include "list.h"
 #include "remove.h"
+#include "resize.h"
 #include "resolve.h"
 #include "show.h"
 #include "snapshot.h"
@@ -45,10 +46,11 @@ static void usage(void) {
         "  list                  List rawstor objects\n"
         "  create                Create rawstor object\n"
         "  remove                Remove rawstor object\n"
+        "  resize                Grow an mds:// object\n"
         "  show                  Show rawstor object\n"
         "  info                  Show rawstor location info\n"
         "  resolve               Resolve a mirrored object's split brain\n"
-        "  snapshot              Take a snapshot of a rawstor object\n"
+        "  snapshot              Snapshot an mds:// object\n"
         "  testio                Test rawstor IO routines\n"
         "\n"
         "command options:        Run `<command> --help` to show command usage\n"
@@ -98,6 +100,22 @@ static void command_create_usage(void) {
         "  -s, --size SIZE       Object size with unit suffix (B, K, M, G, "
         "T, P, E).\n"
         "                        Examples: 10G, 5M, 2T.\n"
+        "\n"
+        "object policy (mds:// targets only -- docs/mds.md; "
+        "ignored\n"
+        "otherwise):\n"
+        "  --chunk-size SIZE     Chunk size with unit suffix, power of "
+        "two.\n"
+        "                        Default: one chunk spans the whole "
+        "object.\n"
+        "  --failure-domain LEVEL  Placement failure domain: dc, rack, "
+        "server\n"
+        "                        (default), ost.\n"
+        "  --stripe-width K      0 = spread every chunk across the "
+        "cluster\n"
+        "                        (default), 1 = object-local, K = spread "
+        "across K\n"
+        "                        OSTs.\n"
     );
 };
 
@@ -109,6 +127,9 @@ static int command_create(int argc, char** argv) {
         {"size", required_argument, NULL, 's'},
         {"target", required_argument, NULL, 't'},
         {"uuid", required_argument, NULL, 'u'},
+        {"chunk-size", required_argument, NULL, 'C'},
+        {"failure-domain", required_argument, NULL, 'F'},
+        {"stripe-width", required_argument, NULL, 'K'},
         {},
     };
 
@@ -117,6 +138,9 @@ static int command_create(int argc, char** argv) {
     const char* size_arg = NULL;
     const char* target_arg = NULL;
     const char* uuid_arg = NULL;
+    const char* chunk_size_arg = NULL;
+    const char* failure_domain_arg = NULL;
+    const char* stripe_width_arg = NULL;
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -143,6 +167,18 @@ static int command_create(int argc, char** argv) {
 
         case 'u':
             uuid_arg = optarg;
+            break;
+
+        case 'C':
+            chunk_size_arg = optarg;
+            break;
+
+        case 'F':
+            failure_domain_arg = optarg;
+            break;
+
+        case 'K':
+            stripe_width_arg = optarg;
             break;
 
         default:
@@ -204,6 +240,18 @@ static int command_create(int argc, char** argv) {
         return EX_USAGE;
     }
 
+    uint64_t chunk_size = 0;
+    if (chunk_size_arg != NULL) {
+        int cres = rawstd_size_to_bytes(chunk_size_arg, &chunk_size);
+        if (cres < 0) {
+            fprintf(
+                stderr, "Failed to parse units: %s\nError: %s\n",
+                chunk_size_arg, strerror(-cres)
+            );
+            return EX_USAGE;
+        }
+    }
+
     unsigned int mirrors;
     {
         char* endptr = NULL;
@@ -224,10 +272,58 @@ static int command_create(int argc, char** argv) {
         mirrors = (unsigned int)parsed_mirrors;
     }
 
+    uint8_t failure_domain = 0;
+    if (failure_domain_arg != NULL) {
+        if (strcmp(failure_domain_arg, "rack") == 0) {
+            failure_domain = RAWSTOR_OBJ_DOMAIN_RACK;
+        } else if (strcmp(failure_domain_arg, "server") == 0) {
+            failure_domain = RAWSTOR_OBJ_DOMAIN_SERVER;
+        } else if (strcmp(failure_domain_arg, "ost") == 0) {
+            failure_domain = RAWSTOR_OBJ_DOMAIN_OST;
+        } else if (strcmp(failure_domain_arg, "dc") == 0) {
+            /* RAWSTOR_OBJ_DOMAIN_DC is 0, indistinguishable on the wire
+             * from "not set" (struct RawstorObjectSpec's own convention,
+             * see policy_of() in src/mds_backend.cpp) -- refuse rather than
+             * silently falling back to the "server" default. */
+            fprintf(
+                stderr, "failure-domain \"dc\" cannot currently be "
+                        "selected explicitly (falls back to the default "
+                        "\"server\" instead) -- pass rack, server, or "
+                        "ost\n"
+            );
+            return EX_USAGE;
+        } else {
+            fprintf(
+                stderr, "Invalid failure-domain value: %s\n", failure_domain_arg
+            );
+            return EX_USAGE;
+        }
+    }
+
+    uint64_t stripe_width = 0;
+    if (stripe_width_arg != NULL) {
+        char* endptr = NULL;
+        errno = 0;
+        unsigned long long parsed_stripe_width =
+            strtoull(stripe_width_arg, &endptr, 10);
+        if (errno != 0 || endptr == stripe_width_arg || *endptr != '\0') {
+            fprintf(
+                stderr, "Invalid stripe-width value: %s\n", stripe_width_arg
+            );
+            return EX_USAGE;
+        }
+        stripe_width = (uint64_t)parsed_stripe_width;
+    }
+
     if (target_arg != NULL) {
-        return rawstor_cli_create(target_arg, size, mirrors);
+        return rawstor_cli_create(
+            target_arg, size, chunk_size, mirrors, failure_domain, stripe_width
+        );
     } else {
-        return rawstor_cli_create_at(location_arg, uuid_arg, size, mirrors);
+        return rawstor_cli_create_at(
+            location_arg, uuid_arg, size, chunk_size, mirrors, failure_domain,
+            stripe_width
+        );
     }
 }
 
@@ -236,6 +332,16 @@ static void command_remove_usage(void) {
         stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
                 "\n"
                 "usage: rawstor [options] remove TARGET [command_options]\n"
+                "\n"
+                "A TARGET naming a bound snapshot version (as printed by "
+                "`rawstor\n"
+                "snapshot`, e.g. ost://host:port/<uuid>/<snapshot_id>) "
+                "destroys that\n"
+                "version instead of the live object. For an mds:// TARGET, "
+                "the MDS\n"
+                "unregisters it first (no new readers); the per-member "
+                "destroy is\n"
+                "best-effort on whichever members still resolve.\n"
                 "\n"
                 "command options:\n"
                 "  -h, --help            Show this help message and exit\n"
@@ -285,43 +391,42 @@ static int command_remove(int argc, char** argv) {
     return rawstor_cli_remove(target_arg);
 }
 
-static void command_snapshot_usage(void) {
+static void command_resize_usage(void) {
     fprintf(
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor [options] snapshot TARGET [-u UUID] "
-        "[command_options]\n"
+        "usage: rawstor [options] resize TARGET -s SIZE [command_options]\n"
         "\n"
-        "  TARGET                A plain target, or one already naming its "
-        "own\n"
-        "                        bound version (TARGET/SNAPSHOT_ID, as "
-        "printed\n"
-        "                        back by a previous snapshot) -- that "
-        "version is\n"
-        "                        then the one taken, and -u is not "
-        "accepted.\n"
-        "  -u, --uuid UUID       Explicit UUID for the new version (only "
-        "valid\n"
-        "                        when TARGET is plain). If omitted, a "
-        "random\n"
-        "                        UUIDv7 is generated.\n"
+        "Grows an mds:// object to a new logical size (grow-only -- "
+        "shrinking\n"
+        "is not supported). Reserves placement for any newly needed "
+        "chunks on\n"
+        "the MDS, then creates them on their OSTs; existing chunks and "
+        "their\n"
+        "data are untouched.\n"
+        "\n"
+        "  TARGET                An mds://host:port/<id> target.\n"
+        "  -s, --size SIZE       New size with unit suffix (B, K, M, G, "
+        "T, P,\n"
+        "                        E); must be >= the object's current "
+        "size.\n"
         "\n"
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
     );
 };
 
-static int command_snapshot(int argc, char** argv) {
-    const char* optstring = "hu:";
+static int command_resize(int argc, char** argv) {
+    const char* optstring = "hs:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
-        {"uuid", required_argument, NULL, 'u'},
+        {"size", required_argument, NULL, 's'},
         {},
     };
 
     char* target_arg = NULL;
-    const char* uuid_arg = NULL;
+    const char* size_arg = NULL;
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -331,11 +436,11 @@ static int command_snapshot(int argc, char** argv) {
 
         switch (c) {
         case 'h':
-            command_snapshot_usage();
+            command_resize_usage();
             return EXIT_SUCCESS;
 
-        case 'u':
-            uuid_arg = optarg;
+        case 's':
+            size_arg = optarg;
             break;
 
         default:
@@ -358,7 +463,22 @@ static int command_snapshot(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_snapshot(target_arg, uuid_arg);
+    if (size_arg == NULL) {
+        fprintf(stderr, "size required\n");
+        return EX_USAGE;
+    }
+
+    uint64_t new_size = 0;
+    int res = rawstd_size_to_bytes(size_arg, &new_size);
+    if (res < 0) {
+        fprintf(
+            stderr, "Failed to parse units: %s\nError: %s\n", size_arg,
+            strerror(-res)
+        );
+        return EX_USAGE;
+    }
+
+    return rawstor_cli_resize(target_arg, new_size);
 }
 
 static void command_list_usage(void) {
@@ -756,6 +876,93 @@ static int command_resolve(int argc, char** argv) {
     );
 }
 
+static void command_snapshot_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] snapshot TARGET [-u UUID] "
+        "[command_options]\n"
+        "\n"
+        "Takes an MDS-orchestrated native CoW snapshot of an object "
+        "(docs/mds.md,\n"
+        "\"Snapshots (stage 2)\"): the resulting TARGET/SNAPSHOT_ID is "
+        "printed to\n"
+        "stdout on success (status messages go to stderr). Not supported "
+        "on an\n"
+        "object with file:// or classic-LVM chunk members (-ENOTSUP, no "
+        "fallback\n"
+        "copies).\n"
+        "\n"
+        "  TARGET                An mds://host:port/<id> target, or one "
+        "already\n"
+        "                        naming its own bound version "
+        "(TARGET/SNAPSHOT_ID,\n"
+        "                        as printed back by a previous snapshot) "
+        "-- that\n"
+        "                        version is then the one taken, and -u "
+        "is not\n"
+        "                        accepted.\n"
+        "  -u, --uuid UUID       Explicit UUID for the new version (only "
+        "valid\n"
+        "                        when TARGET is plain). If omitted, a "
+        "random\n"
+        "                        UUIDv7 is generated.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
+    );
+};
+
+static int command_snapshot(int argc, char** argv) {
+    const char* optstring = "hu:";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"uuid", required_argument, NULL, 'u'},
+        {},
+    };
+
+    char* target_arg = NULL;
+    const char* uuid_arg = NULL;
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_snapshot_usage();
+            return EXIT_SUCCESS;
+
+        case 'u':
+            uuid_arg = optarg;
+            break;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    if (optind < argc) {
+        target_arg = argv[optind];
+        optind++;
+    }
+
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EX_USAGE;
+    }
+
+    if (target_arg == NULL) {
+        fprintf(stderr, "target required\n");
+        return EX_USAGE;
+    }
+
+    return rawstor_cli_snapshot(target_arg, uuid_arg);
+}
+
 static void command_testio_usage(void) {
     fprintf(
         stdout,
@@ -918,6 +1125,8 @@ static int run_command(
         ret = command_create(argc, argv);
     } else if (strcmp(command, "remove") == 0) {
         ret = command_remove(argc, argv);
+    } else if (strcmp(command, "resize") == 0) {
+        ret = command_resize(argc, argv);
     } else if (strcmp(command, "list") == 0) {
         ret = command_list(argc, argv);
     } else if (strcmp(command, "show") == 0) {

@@ -60,7 +60,7 @@ int validate_result(size_t size, size_t result) noexcept {
 // rejection from the backend (response->body.res < 0) from a broken/
 // malformed wire -- every failure here just reconnects and retries, up
 // to the same rawstor_opts_io_attempts() budget, unless it's one
-// is_permanent_backend_error() (see slot.cpp) already knows can
+// is_permanent_backend_error() (see connection.cpp) already knows can
 // never succeed on retry. EBADMSG is one such body.res value: the OST
 // server sends it (see ost/src/client.cpp) only when the payload it just
 // received doesn't hash to what the client declared, meaning the client
@@ -825,7 +825,7 @@ public:
 };
 
 // ALLOCATE's request carries the object's own size and its caller's
-// width intent as a RawstorOSTFrameAllocatePayload (not just object_id/
+// mirrors intent as a RawstorOSTFrameAllocatePayload (not just object_id/
 // offset/val like BackendOpBasic below), so it needs its own request shape
 // -- the response is otherwise the same no-payload acknowledgement as
 // BackendOpFlush above.
@@ -852,9 +852,12 @@ public:
                 .chunk_offset = chunk_offset,
                 .size = sp.size,
                 .chunk_shift = chunk_size_to_shift(sp.chunk_size),
+                .stripe_width = sp.stripe_width,
+                .failure_domain = sp.failure_domain,
+                .member_kind = (uint8_t)sp.member_kind,
                 .width = (uint8_t)sp.width,
+                .reserved1 = 0,
                 .reserved2 = 0,
-                .reserved3 = 0,
             },
         }) {
         memcpy(
@@ -889,15 +892,16 @@ public:
 
 // The cid-dispatched counterpart of BackendOpRead/BackendOpWrite/
 // BackendOpFlush above, for the RawstorOSTFrameBasic-shaped commands
-// (list/remove/spec/info/set_object/set_snapshot/create_snapshot) -- these
-// carry no hash and have either no response body or a body of some number
-// of T's, per response.body.res. Routed through the same _recv_pump
-// demultiplex mechanism as every other op, now that the pump starts in
-// Backend::_connect() instead of after the first request round-trips.
-// `val`/`snapshot_id` are never both meaningful for the same command
-// (protocol.h's own doc comment on RawstorOSTFrameBasicPayload) but both
-// live in this one op regardless, so every such command shares one
-// request path rather than two nearly identical ones.
+// (remove/meta/info/set_object/set_snapshot/create_snapshot) -- these
+// carry no hash and have either no response body or a body of some
+// number of T's, per response.body.res. Routed through the same
+// _recv_pump demultiplex mechanism as every other op, now that the pump
+// starts in Backend::_connect() instead of after the first request
+// round-trips. `val`/`snapshot_id` are never both meaningful for the
+// same command (protocol.h's own doc comment on
+// RawstorOSTFrameBasicPayload) but both live in this one op regardless,
+// so every such command shares one request path rather than two nearly
+// identical ones.
 template <typename T = char>
 class BackendOpBasic final : public BackendOp {
 private:
@@ -982,6 +986,86 @@ public:
     std::vector<T> take_response_data() { return std::move(_response_data); }
 };
 
+// LIST's own request/response shape (RawstorOSTFrameList/
+// RawstorOSTFrameListEntry, protocol.h's own doc comment on why it isn't
+// just another BackendOpBasic<T>) -- otherwise the same terminal shape as
+// BackendOpBasic<RawstorOSTFrameListEntry> would have been.
+class BackendOpList final : public BackendOp {
+private:
+    RawstorOSTFrameList _request;
+    std::vector<RawstorOSTFrameListEntry> _response_data;
+
+public:
+    BackendOpList(
+        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const ChunkCursor& token, unsigned int limit,
+        const rawstd::TraceEvent& trace_event
+    ) :
+        BackendOp(backend, cid, trace_event, "list", 0, 0),
+        _request({
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_LIST,
+                    .cid = cid,
+                },
+            .payload = {
+                .token_id = {},
+                .token_chunk_offset = token.offset,
+                .token_snapshot_id = {},
+                .limit = limit,
+            },
+        }) {
+        memcpy(
+            _request.payload.token_id, token.id.bytes,
+            sizeof(_request.payload.token_id)
+        );
+        // token_snapshot_id stays all-zero (the aggregate init above):
+        // list_chunks() never returns a snapshot, so its own cursor never
+        // needs to resume mid one either.
+    }
+
+    const void* request_data() const noexcept { return &_request; }
+
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    size_t response_head_cb(
+        const RawstorOSTFrameResponse* response, int error
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        if (!error) {
+            error = validate_response(response);
+        }
+
+        if (!error) {
+            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_LIST);
+        }
+
+        if (!error && response->body.res > 0) {
+            if (response->body.res % sizeof(RawstorOSTFrameListEntry) != 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            }
+            return static_cast<size_t>(response->body.res);
+        }
+
+        _dispatch(0, error);
+        return 0;
+    }
+
+    void response_body_cb(
+        const iovec* iov, unsigned int niov, size_t result
+    ) override {
+        _response_data.resize(result / sizeof(RawstorOSTFrameListEntry));
+        rawstd_iovec_to_buf(iov, niov, 0, _response_data.data(), result);
+        _dispatch(result, 0);
+    }
+
+    std::vector<RawstorOSTFrameListEntry> take_response_data() {
+        return std::move(_response_data);
+    }
+};
+
 void Backend::_fail_in_flight(int error) {
     if (_ops.empty()) {
         return;
@@ -1021,7 +1105,7 @@ BackendOp* Backend::_find_op(uint16_t cid) {
 
 void Backend::_add_op(const std::shared_ptr<BackendOp>& op) {
     if (_read_event == nullptr) {
-        // _recv_pump has already exited (e.g. the slot died right
+        // _recv_pump has already exited (e.g. the connection died right
         // after a previous op's response, before this one was ever
         // issued -- _connect() itself and this op's own caller can both
         // legitimately run to completion in between, with nothing to
@@ -1075,7 +1159,7 @@ rawstd::Task<void> Backend::_connect() {
     // transient one -- means "couldn't establish this backend"; all of
     // them surface as a plain std::system_error, which
     // Slot::_with_retry() reacts to by reconnecting and retrying
-    // (see slot.cpp).
+    // (see connection.cpp).
     if (!location().path().str().empty() && location().path().str() != "/") {
         rawstd_error("Empty path expected: %s\n", location().str().c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -1187,8 +1271,8 @@ rawstd::Task<void> Backend::close() {
     // a *sibling* op's own failure is what triggered this close() (e.g.
     // via Slot::invalidate_backend(), reacting to any
     // std::system_error one op's own Slot::_with_retry() caught --
-    // a dropped slot, but just as easily a well-formed error
-    // response for one op on an otherwise perfectly healthy slot,
+    // a dropped connection, but just as easily a well-formed error
+    // response for one op on an otherwise perfectly healthy connection,
     // which _recv_pump has no way to notice on its own since nothing
     // about the wire ever looked wrong): this backend's other, already-
     // sent ops are still sitting in _ops purely waiting on a response
@@ -1253,33 +1337,74 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
     co_return op->take_response_data();
 }
 
-rawstd::Task<void> Backend::list(
-    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+rawstd::Task<void> Backend::list_chunks(
+    unsigned int limit, std::vector<std::pair<RawstdUUID, uint64_t>>& chunks,
+    ChunkCursor& token
 ) {
-    RawstdUUID input_token = token;
+    ChunkCursor input_token = token;
+    chunks.clear();
+    token = {};
+
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('l', "fd = %d\n", fd());
+
+    std::shared_ptr<BackendOpList> op = std::make_shared<BackendOpList>(
+        std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
+        input_token, limit, trace_event
+    );
+    _add_op(op);
+
     try {
-        targets = co_await _basic_request<RawstdUUID>(
-            RAWSTOR_CMD_LIST, "list", input_token, 0, limit
+        size_t result = co_await _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", result, op->request_size()
+        );
+        op->request_cb(validate_result(op->request_size(), result));
+    } catch (const std::system_error& e) {
+        op->request_cb(e.code().value());
+    }
+
+    std::vector<RawstorOSTFrameListEntry> entries;
+    try {
+        co_await *op;
+        entries = op->take_response_data();
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    token = {};
-    if (!targets.empty()) {
-        token = targets.back();
-        targets.resize(targets.size() - 1);
+    // The remote rawstor-ost's own response always carries one more entry
+    // than the real page: the resume cursor it reports, last (mirroring
+    // rawstor::Location::list()'s own doc comment on why -- the far end
+    // may itself be relaying across more than one local location, whose
+    // own merged resume point isn't necessarily identical to the last
+    // real entry returned). An empty response (nothing at all, not even
+    // a cursor entry) means the far end is already exhausted.
+    if (entries.empty()) {
+        co_return;
     }
 
-    co_return;
+    chunks.reserve(entries.size() - 1);
+    for (size_t i = 0; i + 1 < entries.size(); ++i) {
+        const RawstorOSTFrameListEntry& entry = entries[i];
+        RawstdUUID id;
+        memcpy(id.bytes, entry.id, sizeof(id.bytes));
+        chunks.emplace_back(id, entry.chunk_offset);
+    }
+
+    const RawstorOSTFrameListEntry& token_entry = entries.back();
+    memcpy(token.id.bytes, token_entry.id, sizeof(token.id.bytes));
+    token.offset = token_entry.chunk_offset;
 }
 
-// sp is forwarded on the wire unchanged (see BackendOpAllocate), width
-// included -- the remote rawstor-ost's own Client::_allocate() ignores
-// payload.width and fills in its own instead, from its own locally
-// configured location count (see its own comment).
+// sp is forwarded on the wire unchanged (see BackendOpAllocate); the
+// remote rawstor-ost's own Client::_allocate() derives its own local
+// copy count from its own configured location count directly (see its
+// own comment), never from anything in the request -- this connection is
+// still one copy from its caller's point of view, same as every other
+// backend.
 rawstd::Task<void> Backend::create(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
 ) {
@@ -1363,6 +1488,12 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
                 static_cast<const void*>(response.data())
             );
         ret.spec.size = payload.size;
+        ret.spec.member_kind =
+            static_cast<RawstorMemberKind>(payload.member_kind);
+        // payload.width is the chunk's own persisted redundancy width
+        // (docs/mds.md, chunk_meta) -- 0 for a plain object that was never
+        // given one (Target::meta()'s own doc comment on the resulting
+        // fallback).
         ret.spec.width = payload.width;
         ret.spec.chunk_size = chunk_shift_to_size(payload.chunk_shift);
         ret.sync_state.epoch = payload.epoch;
@@ -1504,7 +1635,7 @@ rawstd::DetachedTask Backend::_recv_pump(
 
             BackendOp* op = backend->_find_op(cid);
             if (op == nullptr) {
-                // A stray/late response for an op this slot
+                // A stray/late response for an op this connection
                 // already failed and that Slot::_op() has since
                 // retried on a different backend. We have no op to ask
                 // whether this response carries a body, so we can no
