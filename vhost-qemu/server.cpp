@@ -107,12 +107,13 @@ namespace vhost {
 
 Server::Server(
     unsigned int queue_size, const std::string& target,
-    const std::string& socket_path, bool write_cache_enabled
+    const std::string& socket_path, bool write_cache_enabled, bool readonly
 ) :
     _queue_size(queue_size),
     _target(target),
     _socket_path(socket_path),
     _write_cache_enabled(write_cache_enabled),
+    _readonly(readonly),
     _fd(open_unix_socket(_socket_path)) {
     int res = rawstor_initialize(NULL);
     if (res) {
@@ -155,7 +156,7 @@ void Server::loop() {
 
     rawstd_info("Client connected: fd=%d\n", fd);
 
-    Device d(_queue_size, _target, fd, _write_cache_enabled);
+    Device d(_queue_size, _target, fd, _write_cache_enabled, _readonly);
     d.loop();
 }
 

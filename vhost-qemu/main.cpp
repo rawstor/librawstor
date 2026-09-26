@@ -49,6 +49,10 @@ void usage() {
               << "                        "
                  "issuing an explicit flush"
               << std::endl
+              << "  --readonly            "
+                 "Export the object read-only (VIRTIO_BLK_F_RO); "
+                 "required for a snapshot target"
+              << std::endl
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl
               << "required arguments:" << std::endl
@@ -74,10 +78,10 @@ void sact_handler(int) {
 
 void server(
     unsigned int queue_size, const std::string& target,
-    const std::string& socket_path, bool write_cache_enabled
+    const std::string& socket_path, bool write_cache_enabled, bool readonly
 ) {
     rawstor::vhost::Server s(
-        queue_size, target, socket_path, write_cache_enabled
+        queue_size, target, socket_path, write_cache_enabled, readonly
     );
     // Not any earlier: rawstd_info() needs the logging mutex
     // rawstor_initialize() sets up, and that only happens inside Server's
@@ -95,6 +99,7 @@ int main(int argc, char** argv) {
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
         {"queue-size", required_argument, nullptr, 'q'},
+        {"readonly", no_argument, nullptr, 'r'},
         {"socket-path", required_argument, nullptr, 's'},
         {"target", required_argument, nullptr, 't'},
         {"version", no_argument, nullptr, 'v'},
@@ -106,6 +111,7 @@ int main(int argc, char** argv) {
     const char* socket_path_arg = nullptr;
     const char* target_arg = nullptr;
     const char* write_cache_arg = nullptr;
+    bool readonly = false;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, nullptr);
         if (c == -1) {
@@ -119,6 +125,10 @@ int main(int argc, char** argv) {
 
         case 'q':
             queue_size_arg = optarg;
+            break;
+
+        case 'r':
+            readonly = true;
             break;
 
         case 's':
@@ -212,7 +222,10 @@ int main(int argc, char** argv) {
     }
 
     try {
-        server(queue_size, target_arg, socket_path_arg, write_cache_enabled);
+        server(
+            queue_size, target_arg, socket_path_arg, write_cache_enabled,
+            readonly
+        );
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;
