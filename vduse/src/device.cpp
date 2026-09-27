@@ -207,7 +207,6 @@ Device::Device(
     _vqs(num_queues),
     _features(0),
     _write_cache_enabled(write_cache_enabled),
-    _readonly(readonly),
     _wake_fd(wake_fd),
     _stop_requested(false) {
     int ires = rawio_queue_create(queue_size, &_queue);
