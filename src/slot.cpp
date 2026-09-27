@@ -544,8 +544,8 @@ const rawstd::URI* Slot::location() const noexcept {
     return &_backends.front()->location();
 }
 
-rawstd::Task<void> Slot::list(
-    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+rawstd::Task<void> Slot::list_chunks(
+    unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -554,7 +554,7 @@ rawstd::Task<void> Slot::list(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::list, limit, targets, token
+            func_name, trace_event, &Backend::list_chunks, limit, chunks, token
         );
         _finish(t_call);
     } catch (...) {

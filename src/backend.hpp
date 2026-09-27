@@ -16,6 +16,17 @@
 
 namespace rawstor {
 
+// One list_chunks() entry: an id and every offset this one backend holds
+// for it (sorted ascending) -- one entry per id, not one per (id,
+// offset) pair, since more than one offset can share an id (distinct
+// chunks of the same multi-chunk object, docs/locations_and_targets.md).
+// `offsets` is never empty: an id with nothing to report isn't an entry
+// at all.
+struct ChunkGroup {
+    RawstdUUID id;
+    std::vector<uint64_t> offsets;
+};
+
 class Backend : public std::enable_shared_from_this<Backend> {
 private:
     rawstd::URI _location;
@@ -60,11 +71,23 @@ public:
     // want a graceful async teardown must co_await this themselves.
     virtual rawstd::Task<void> close() = 0;
 
-    // `targets`: overwritten with this page's UUIDs. `token`: this
-    // call's pagination cursor on entry, overwritten with the next
-    // page's cursor on return (zeroed once there's nothing left).
-    virtual rawstd::Task<void> list(
-        unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+    // `chunks`: overwritten with this page's own ChunkGroups, one per id,
+    // each carrying every offset this backend holds for that id
+    // (ascending) -- the caller (Location::list()) combines each one
+    // with this backend's own location() to build a Target itself; a
+    // single Backend never owns enough context to do that (it doesn't
+    // know its sibling mirrors' own URIs). `token`: this call's
+    // pagination cursor on entry (the last id already returned),
+    // overwritten with the next page's cursor on return (nil once
+    // there's nothing left) -- resumes strictly after the id `token`
+    // itself names, so `limit` counts ids (ChunkGroups), not individual
+    // offsets: a concrete backend never splits one id's own offsets
+    // across two pages. A concrete backend implements this by
+    // re-deriving its own full, sorted-by-id listing each call (as
+    // today) and resuming from the first id strictly greater than
+    // `token` (e.g. std::upper_bound).
+    virtual rawstd::Task<void> list_chunks(
+        unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
     ) = 0;
 
     virtual rawstd::Task<void> create(

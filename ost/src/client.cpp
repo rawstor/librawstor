@@ -71,6 +71,47 @@ uint64_t chunk_shift_to_size(uint8_t chunk_shift) {
     return chunk_shift == 0 ? 0 : (1ull << chunk_shift);
 }
 
+// One LIST response row per distinct chunk offset a target string
+// rawstor_location_list() returned actually names -- a target string can
+// join more than one URI with a comma, but rawstor_target_offsets() already
+// collapses same-offset mirrors down to one entry per distinct chunk --
+// matching RawstorOSTFrameListEntry's own doc comment (protocol.h): one row
+// per offset, all sharing that id, for the receiving end to group back into
+// one rawstor::ChunkGroup.
+void append_list_entries(
+    const char* target, std::vector<RawstorOSTFrameListEntry>& out
+) {
+    RawstdUUIDString id_buf;
+    int res = rawstor_target_id(target, id_buf, sizeof(id_buf));
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    RawstdUUID id;
+    res = rawstd_uuid_from_string(&id, id_buf);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    RawstorOSTFrameListEntry base{};
+    memcpy(base.id, id.bytes, sizeof(base.id));
+
+    int count = rawstor_target_offsets(target, nullptr, 0);
+    if (count < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-count);
+    }
+    std::vector<uint64_t> offsets(static_cast<size_t>(count));
+    res = rawstor_target_offsets(target, offsets.data(), offsets.size());
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    for (uint64_t offset : offsets) {
+        RawstorOSTFrameListEntry entry = base;
+        entry.chunk_offset = offset;
+        out.push_back(entry);
+    }
+}
+
 // ---------------------------------------------------------------------
 // rawstd::CallbackAwaitable<T> bridge over the async rawstor/{object,
 // target}.h C API: each co_object_*()/co_target_open() wrapper submits
@@ -663,16 +704,16 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 break;
             }
             case RAWSTOR_CMD_LIST: {
-                RawstorOSTFrameBasicPayload basic;
+                RawstorOSTFrameListPayload list_payload;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
-                    &stream_failed
+                    stream, &list_payload, sizeof(list_payload), fd,
+                    "request payload", &stream_failed
                 );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                _list(weak, head, basic);
+                _list(weak, head, list_payload);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -905,15 +946,15 @@ Client::_close_current_object(std::weak_ptr<Client> weak) {
 
 rawstd::DetachedTask Client::_list(
     std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicPayload payload
+    RawstorOSTFrameListPayload payload
 ) {
     std::shared_ptr<Client> client = co_await _close_current_object(weak);
     if (client == nullptr) {
         co_return;
     }
 
-    RawstorPaginationToken token;
-    memcpy(token.bytes, payload.object_id, sizeof(payload.object_id));
+    RawstorPaginationToken token{};
+    memcpy(token.bytes, payload.token_id, sizeof(token.bytes));
 
     RawstorStringList* targets;
     int result = 0;
@@ -921,7 +962,7 @@ rawstd::DetachedTask Client::_list(
         std::string location = rawstd::URI::uris(client->_server.locations());
         rawstd::CallbackAwaitable<void> awaiter;
         int res = rawstor_location_list(
-            client->_queue, location.c_str(), payload.val, &targets, &token,
+            client->_queue, location.c_str(), payload.limit, &targets, &token,
             result_trampoline, &awaiter
         );
         if (res < 0) {
@@ -952,24 +993,25 @@ rawstd::DetachedTask Client::_list(
     // and del_client() (only on failure) after that.
     bool send_failed = false;
     try {
-        std::vector<unsigned char> data(
-            sizeof(RawstdUUID) * (rawstor_string_list_size(targets) + 1)
-        );
-        RawstdUUID* out_it =
-            static_cast<RawstdUUID*>(static_cast<void*>(data.data()));
+        std::vector<RawstorOSTFrameListEntry> entries;
         for (const char** in_it = rawstor_string_list_iter(targets);
-             in_it != NULL; in_it = rawstor_string_list_next(in_it), ++out_it) {
-            rawstd::URI target(*in_it);
-            int res = rawstd_uuid_from_string(
-                out_it, target.path().filename().c_str()
-            );
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
-            }
+             in_it != NULL; in_it = rawstor_string_list_next(in_it)) {
+            append_list_entries(*in_it, entries);
         }
-        memcpy(out_it, &token, sizeof(token));
+        // The final row is always the resume cursor, never a real result
+        // (RawstorOSTFrameListEntry's own doc comment, protocol.h) --
+        // chunk_offset stays 0, unused by a cursor row.
+        RawstorOSTFrameListEntry cursor{};
+        memcpy(cursor.id, token.bytes, sizeof(cursor.id));
+        entries.push_back(cursor);
+
+        std::vector<unsigned char> data(
+            sizeof(RawstorOSTFrameListEntry) * entries.size()
+        );
+        memcpy(data.data(), entries.data(), data.size());
         co_await client->_send_response(
-            RAWSTOR_CMD_LIST, head.cid, data.size(), 0, data
+            RAWSTOR_CMD_LIST, head.cid, static_cast<int32_t>(data.size()), 0,
+            data
         );
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());

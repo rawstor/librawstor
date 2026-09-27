@@ -20,6 +20,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cinttypes>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -116,17 +118,25 @@ TEST(ListTest, merge) {
         EXPECT_EQ(rawstor_string_list_size(targets), static_cast<size_t>(3));
 
         if (rawstor_string_list_size(targets) == 3) {
+            // Location::list() always stamps an explicit offset segment,
+            // even "0" -- unlike target1N/target2N's own bare, offset-less
+            // form above.
             const char** it = rawstor_string_list_iter(targets);
             EXPECT_NE(it, nullptr);
-            EXPECT_EQ(rawstd::URI::uris({target11}), *it);
+            EXPECT_EQ(rawstd::URI::uris({rawstd::URI(target11, "0")}), *it);
 
             it = rawstor_string_list_next(it);
             EXPECT_NE(it, nullptr);
-            EXPECT_EQ(rawstd::URI::uris({target12, target22}), *it);
+            EXPECT_EQ(
+                rawstd::URI::uris(
+                    {rawstd::URI(target12, "0"), rawstd::URI(target22, "0")}
+                ),
+                *it
+            );
 
             it = rawstor_string_list_next(it);
             EXPECT_NE(it, nullptr);
-            EXPECT_EQ(rawstd::URI::uris({target23}), *it);
+            EXPECT_EQ(rawstd::URI::uris({rawstd::URI(target23, "0")}), *it);
 
             it = rawstor_string_list_next(it);
             EXPECT_EQ(it, nullptr);
@@ -150,6 +160,91 @@ TEST(ListTest, merge) {
     res = remove(target22);
     EXPECT_EQ(res, 0);
     res = remove(target23);
+    EXPECT_EQ(res, 0);
+}
+
+// Two locations each holding a different offset of the *same* id: they
+// must merge into one Target listing both chunk URIs (offset-ascending),
+// not two separate single-chunk Targets -- Backend::list_chunks() groups
+// by id alone (its own ChunkGroup, src/backend.hpp) precisely so
+// Location::list() never has to split a multi-chunk object's own chunks
+// across the ids/offsets a plain uuid map used to key on.
+TEST(ListTest, merge_multi_chunk) {
+    rawstor::tests::TmpDir dir1;
+    rawstor::tests::TmpDir dir2;
+    rawstd::URI location1(dir1.uri());
+    rawstd::URI location2(dir2.uri());
+
+    std::string uuid_string = "00000000-0000-7000-8000-000000000001";
+    uint64_t offset = 1ull << 30;
+    char offset_hex[17];
+    snprintf(offset_hex, sizeof(offset_hex), "%" PRIx64, offset);
+
+    rawstd::URI chunk0(rawstd::URI(location1, uuid_string), "0");
+    rawstd::URI chunk1(rawstd::URI(location2, uuid_string), offset_hex);
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+    auto create = [&](const rawstd::URI& target,
+                      const RawstorObjectSpec& spec) {
+        return rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+            return rawstor_target_create(
+                queue.get(), target.str().c_str(), &spec, cb, data
+            );
+        });
+    };
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 1,
+        .chunk_size = 0,
+    };
+    ssize_t res = create(chunk0, spec);
+    ASSERT_EQ(res, 0);
+    res = create(chunk1, spec);
+    ASSERT_EQ(res, 0);
+
+    std::string locations = rawstd::URI::uris({location1, location2});
+
+    RawstorStringList* targets;
+    RawstorPaginationToken token = {};
+    res = rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+        return rawstor_location_list(
+            queue.get(), locations.c_str(), 0, &targets, &token, cb, data
+        );
+    });
+    EXPECT_EQ(res, 0);
+    if (res == 0) {
+        EXPECT_EQ(rawstor_string_list_size(targets), static_cast<size_t>(1));
+
+        if (rawstor_string_list_size(targets) == 1) {
+            const char** it = rawstor_string_list_iter(targets);
+            EXPECT_NE(it, nullptr);
+            if (it != nullptr) {
+                // Location::list() always stamps an explicit offset
+                // segment, even "0" -- unlike a caller-typed target
+                // string, which may omit it (TargetPath's own doc
+                // comment, target.hpp).
+                EXPECT_EQ(rawstd::URI::uris({chunk0, chunk1}), *it);
+            }
+
+            it = rawstor_string_list_next(it);
+            EXPECT_EQ(it, nullptr);
+        }
+
+        rawstor_string_list_delete(targets);
+    }
+    EXPECT_TRUE(rawstor_pagination_token_empty(&token));
+
+    auto remove = [&](const rawstd::URI& target) {
+        return rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+            return rawstor_target_remove(
+                queue.get(), target.str().c_str(), cb, data
+            );
+        });
+    };
+    res = remove(chunk0);
+    EXPECT_EQ(res, 0);
+    res = remove(chunk1);
     EXPECT_EQ(res, 0);
 }
 
@@ -200,7 +295,10 @@ TEST(ListTest, pagination) {
             });
         EXPECT_GT(res, 0);
 
-        targets.push_back(target);
+        // Location::list() always stamps an explicit offset segment,
+        // even "0" -- unlike rawstor_location_create()'s own bare,
+        // offset-less return value here.
+        targets.push_back(std::string(target) + "/0");
     }
     std::sort(targets.begin(), targets.end());
 

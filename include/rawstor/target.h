@@ -525,6 +525,41 @@ int rawstor_target_id(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Retrieve every distinct chunk offset a target string names.
+ *
+ * Given a target string (as defined in the Rawstor location/target syntax),
+ * this function writes the byte offset of each of its own chunks into the
+ * provided array, ascending, one entry per chunk -- a URI that shares its
+ * own offset with an earlier one (a mirror of that same chunk, not a
+ * distinct one) contributes no entry of its own. An ordinary, single-chunk
+ * target (no URI names an offset at all) reports exactly one entry, 0. This
+ * is purely a syntactic operation on @p target -- no backend is contacted,
+ * and the target need not exist.
+ *
+ * If the array is too small, the output is truncated but the return value
+ * indicates the number of offsets that actually exist, similar to
+ * snprintf().
+ *
+ * @param target   Target string, see rawstor_target_id().
+ * @param offsets  Output array that will receive each chunk's own offset,
+ *                 ascending. Can be NULL if only the required array length
+ *                 is needed.
+ * @param size     Capacity of @p offsets, in elements. If size is 0, no
+ *                 data is written, but the required length is still
+ *                 returned.
+ *
+ * @return On success, returns the number of chunks @p target actually
+ *         names. If this value is greater than @p size, only the first
+ *         @p size entries were actually written to @p offsets. A negative
+ *         errno is returned if @p target is not valid target syntax.
+ *
+ * @see rawstor_target_id
+ */
+int rawstor_target_offsets(
+    const char* target, uint64_t* offsets, size_t size
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Retrieve the snapshot version bound to a target string.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),

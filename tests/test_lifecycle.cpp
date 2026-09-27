@@ -203,7 +203,9 @@ TEST(FileLifecycleTest, create_spec_list_remove) {
         const char** it = rawstor_string_list_iter(targets);
         EXPECT_NE(it, nullptr);
         if (it != nullptr) {
-            EXPECT_EQ(target, *it);
+            // Location::list() always stamps an explicit offset segment,
+            // even "0" -- unlike target's own bare, offset-less form here.
+            EXPECT_EQ(target + "/0", *it);
 
             it = rawstor_string_list_next(it);
             EXPECT_EQ(it, nullptr);
@@ -421,7 +423,9 @@ TEST(FileLifecycleTest, create_at_default_spec_list_remove) {
         const char** it = rawstor_string_list_iter(targets);
         EXPECT_NE(it, nullptr);
         if (it != nullptr) {
-            EXPECT_EQ(target, *it);
+            // Location::list() always stamps an explicit offset segment,
+            // even "0" -- unlike target's own bare, offset-less form here.
+            EXPECT_EQ(target + "/0", *it);
 
             it = rawstor_string_list_next(it);
             EXPECT_EQ(it, nullptr);
@@ -472,7 +476,9 @@ TEST(FileLifecycleTest, create_at_spec_list_remove) {
         const char** it = rawstor_string_list_iter(targets);
         EXPECT_NE(it, nullptr);
         if (it != nullptr) {
-            EXPECT_EQ(target, *it);
+            // Location::list() always stamps an explicit offset segment,
+            // even "0" -- unlike target's own bare, offset-less form here.
+            EXPECT_EQ(target + "/0", *it);
 
             it = rawstor_string_list_next(it);
             EXPECT_EQ(it, nullptr);

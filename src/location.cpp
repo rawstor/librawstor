@@ -20,6 +20,7 @@
 #include <memory>
 #include <new>
 #include <set>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -55,6 +56,18 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
     }
 }
 
+// RawstorPaginationToken now holds exactly a RawstdUUID's own bytes --
+// direct copies, not an encoding of anything.
+RawstdUUID decode_token(const RawstorPaginationToken& token) {
+    RawstdUUID ret;
+    memcpy(ret.bytes, token.bytes, sizeof(ret.bytes));
+    return ret;
+}
+
+void encode_token(const RawstdUUID& id, RawstorPaginationToken& token) {
+    memcpy(token.bytes, id.bytes, sizeof(id.bytes));
+}
+
 // One URI's worth of Location::info() work: connect a single-session
 // Slot just for this call, do the one metadata op, close it again.
 // Factored out so info()/list() can fan these out across every URI via
@@ -68,21 +81,21 @@ info_one(rawio::Queue& queue, const rawstd::URI& location) {
     co_return ret;
 }
 
-// Location::list()'s per-URI result: the uuids it found plus the
+// Location::list()'s per-URI result: the ChunkGroups it found plus the
 // pagination token it reported (seeded from the caller's incoming token,
-// same as the old sequential loop's per-iteration `loc_token_uuid` local)
-// -- .first/.second are unpacked back into those same names via
-// structured bindings at every call site below, so the pair itself never
-// needs to be read directly.
-rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>> list_one(
+// same as the old sequential loop's per-iteration `loc_token` local) --
+// .first/.second are unpacked back into those same names via structured
+// bindings at every call site below, so the pair itself never needs to
+// be read directly.
+rawstd::Task<std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID>> list_one(
     rawio::Queue& queue, const rawstd::URI& location, unsigned int limit,
-    RawstdUUID token_uuid
+    RawstdUUID token
 ) {
-    std::pair<std::vector<RawstdUUID>, RawstdUUID> ret;
-    ret.second = token_uuid;
+    std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID> ret;
+    ret.second = token;
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location, 1);
-    co_await slot->list(limit, ret.first, ret.second);
+    co_await slot->list_chunks(limit, ret.first, ret.second);
     co_await slot->close();
     co_return ret;
 }
@@ -280,41 +293,61 @@ rawstd::Task<void> Location::list(
 ) const {
     validate_not_empty(_uris);
 
-    RawstdUUID token_uuid = {};
-    memcpy(token_uuid.bytes, token.bytes, sizeof(token.bytes));
+    RawstdUUID token_id = decode_token(token);
 
     // Every URI's LIST goes out concurrently instead of one at a time;
-    // the per-URI uuids/token are only merged below, once every URI has
+    // the per-URI groups/token are only merged below, once every URI has
     // answered.
-    std::vector<rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>>>
+    std::vector<rawstd::Task<std::pair<std::vector<ChunkGroup>, RawstdUUID>>>
         tasks;
     tasks.reserve(_uris.size());
     for (const auto& location : _uris) {
-        tasks.push_back(list_one(queue, location, limit, token_uuid));
+        tasks.push_back(list_one(queue, location, limit, token_id));
     }
-    std::vector<std::pair<std::vector<RawstdUUID>, RawstdUUID>> listings =
+    std::vector<std::pair<std::vector<ChunkGroup>, RawstdUUID>> listings =
         co_await rawstd::gather(std::move(tasks));
 
-    auto cmp = [](const RawstdUUID& lhs, const RawstdUUID& rhs) -> bool {
+    // Merged across every URI, by id: each URI's own list_chunks() already
+    // groups its own offsets under one id (ChunkGroup, backend.hpp), but
+    // two different URIs can each hold a different offset of the same id
+    // -- distinct chunks of the same multi-chunk object (docs/concepts.md's
+    // own "internal multi-chunk form") -- which must come back as one
+    // Target listing every chunk's own URI, not one Target per location.
+    // A plain RawstdUUID has no built-in ordering, hence the explicit
+    // comparator.
+    auto id_less = [](const RawstdUUID& lhs, const RawstdUUID& rhs) -> bool {
         return rawstd_uuid_cmp(&lhs, &rhs) < 0;
     };
-    std::map<RawstdUUID, std::vector<rawstd::URI>, decltype(cmp)> targets_map(
-        cmp
-    );
-    RawstdUUID empty_uuid = {};
-    RawstdUUID next_token_uuid = empty_uuid;
+    std::map<
+        RawstdUUID, std::vector<std::pair<uint64_t, rawstd::URI>>,
+        decltype(id_less)>
+        targets_map(id_less);
+    RawstdUUID empty_id{};
+    RawstdUUID next_token = empty_id;
     for (size_t i = 0; i < _uris.size(); ++i) {
         const rawstd::URI& location = _uris[i];
-        const auto& [loc_uuids, loc_token_uuid] = listings[i];
-        for (const auto& uuid : loc_uuids) {
+        const auto& [loc_groups, loc_token] = listings[i];
+        for (const auto& group : loc_groups) {
             RawstdUUIDString uuid_string;
-            rawstd_uuid_to_string(&uuid, &uuid_string);
-            targets_map[uuid].emplace_back(location, uuid_string);
+            rawstd_uuid_to_string(&group.id, &uuid_string);
+            std::vector<std::pair<uint64_t, rawstd::URI>>& entries =
+                targets_map[group.id];
+            for (uint64_t offset : group.offsets) {
+                // Always stamped, even "0" -- parsing still accepts a
+                // target string with no offset segment at all (implying
+                // 0, TargetPath's own doc comment above), but a string
+                // this library builds itself names every chunk's own
+                // offset explicitly rather than relying on that default.
+                std::ostringstream oss;
+                oss << std::hex << offset;
+                rawstd::URI uri(rawstd::URI(location, uuid_string), oss.str());
+                entries.emplace_back(offset, uri);
+            }
         }
-        if (rawstd_uuid_cmp(&loc_token_uuid, &empty_uuid) != 0) {
-            if (rawstd_uuid_cmp(&next_token_uuid, &empty_uuid) == 0 ||
-                rawstd_uuid_cmp(&loc_token_uuid, &next_token_uuid) < 0) {
-                next_token_uuid = loc_token_uuid;
+        if (rawstd_uuid_cmp(&loc_token, &empty_id) != 0) {
+            if (rawstd_uuid_cmp(&next_token, &empty_id) == 0 ||
+                rawstd_uuid_cmp(&loc_token, &next_token) < 0) {
+                next_token = loc_token;
             }
         }
     }
@@ -326,25 +359,48 @@ rawstd::Task<void> Location::list(
     }
 
     std::list<Target> ret;
-    const RawstdUUID* last_uuid = nullptr;
+    RawstdUUID last_id = empty_id;
+    bool have_last = false;
     bool capped = false;
-    for (const auto& it : targets_map) {
+    for (auto& it : targets_map) {
         if (ret.size() >= limit) {
             capped = true;
             break;
         }
-        last_uuid = &it.first;
-        ret.emplace_back(it.second);
+
+        // Each id's own chunks, sorted by offset -- stable, so two
+        // entries sharing one offset (real mirrors of that chunk) keep
+        // the order their own locations were listed in, matching every
+        // other multi-URI ordering this codebase produces. The resulting
+        // URI order is exactly parse_target_path()'s own expectation:
+        // URIs sharing one offset are mirrors of the same chunk,
+        // distinct chunks always differ, offsets ascending.
+        std::vector<std::pair<uint64_t, rawstd::URI>>& chunks = it.second;
+        std::stable_sort(
+            chunks.begin(), chunks.end(), [](const auto& lhs, const auto& rhs) {
+                return lhs.first < rhs.first;
+            }
+        );
+
+        std::vector<rawstd::URI> uris;
+        uris.reserve(chunks.size());
+        for (const auto& [offset, uri] : chunks) {
+            uris.push_back(uri);
+        }
+        ret.emplace_back(uris);
+
+        have_last = true;
+        last_id = it.first;
     }
-    if (last_uuid != nullptr) {
-        if (capped && (rawstd_uuid_cmp(&next_token_uuid, &empty_uuid) == 0 ||
-                       rawstd_uuid_cmp(last_uuid, &next_token_uuid) < 0)) {
-            next_token_uuid = *last_uuid;
+    if (have_last) {
+        if (capped && (rawstd_uuid_cmp(&next_token, &empty_id) == 0 ||
+                       rawstd_uuid_cmp(&last_id, &next_token) < 0)) {
+            next_token = last_id;
         }
     }
 
     targets.swap(ret);
-    memcpy(token.bytes, next_token_uuid.bytes, sizeof(next_token_uuid.bytes));
+    encode_token(next_token, token);
 }
 
 rawstd::Task<Target>

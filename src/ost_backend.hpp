@@ -38,9 +38,10 @@ private:
 
     rawstd::Task<void> _connect() override;
     // The cid-dispatched counterpart of the old basic_request_async():
-    // sends a RawstorOSTFrameBasic-shaped request (list/create/remove/
-    // spec/info/set_object/set_snapshot/create_snapshot all share this
-    // shape) and awaits its response through the same _ops demultiplex
+    // sends a RawstorOSTFrameBasic-shaped request (create/remove/spec/
+    // info/set_object/set_snapshot/create_snapshot all share this shape;
+    // LIST has its own dedicated shape instead, see BackendOpList in the
+    // .cpp) and awaits its response through the same _ops demultiplex
     // mechanism as every other op -- requires _recv_pump to already be
     // running, i.e. _connect() to have completed. `val`/`snapshot_id` are
     // never both meaningful for the same command (protocol.h's own doc
@@ -81,8 +82,8 @@ public:
 
     rawstd::Task<void> close() override;
 
-    rawstd::Task<void> list(
-        unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+    rawstd::Task<void> list_chunks(
+        unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
     ) override;
 
     rawstd::Task<void> create(

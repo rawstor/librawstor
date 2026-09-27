@@ -7,6 +7,7 @@
 
 #include <rawstor/protocol.h>
 #include <rawstor/rawio.h>
+#include <rawstor/target.h>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
@@ -20,9 +21,13 @@
 #include <cerrno>
 
 #include <chrono>
+#include <cinttypes>
+#include <cstdio>
+#include <cstring>
 #include <functional>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -470,4 +475,100 @@ TEST(OstClientTest, disconnect_races_client_destruction) {
         ASSERT_TRUE(res >= 0 || res == -ETIME);
         idle = (res == -ETIME) ? idle + 1 : 0;
     }
+}
+
+namespace {
+
+struct CreateResult {
+    bool done = false;
+    ssize_t result = 0;
+};
+
+int create_cb(ssize_t result, void* data) {
+    CreateResult* r = static_cast<CreateResult*>(data);
+    r->result = result;
+    r->done = true;
+    return 0;
+}
+
+} // namespace
+
+// A multi-chunk object -- two chunks of the same id, at offset 0 and a
+// second, non-adjacent offset -- must come back over the wire as one row
+// per offset (RawstorOSTFrameListEntry's own doc comment, protocol.h),
+// not just its first chunk's own offset repeated or dropped.
+TEST(OstClientTest, list_reports_every_chunk_offset) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    RawstdUUIDString id_str;
+    rawstd_uuid_to_string(&id, &id_str);
+
+    const uint64_t second_offset = 1ull << 20;
+    char offset_hex[17];
+    std::snprintf(offset_hex, sizeof(offset_hex), "%" PRIx64, second_offset);
+
+    std::string target0 = dir.uri() + "/" + id_str + "/0";
+    std::string target1 =
+        dir.uri() + "/" + std::string(id_str) + "/" + offset_hex;
+
+    RawstorObjectSpec spec{
+        .size = 4096,
+        .width = 1,
+        .chunk_size = 0,
+    };
+
+    CreateResult res0;
+    int rc =
+        rawstor_target_create(queue, target0.c_str(), &spec, create_cb, &res0);
+    ASSERT_GE(rc, 0);
+    ASSERT_TRUE(pump_until(queue, [&] { return res0.done; }));
+    ASSERT_EQ(res0.result, 0);
+
+    CreateResult res1;
+    rc = rawstor_target_create(queue, target1.c_str(), &spec, create_cb, &res1);
+    ASSERT_GE(rc, 0);
+    ASSERT_TRUE(pump_until(queue, [&] { return res1.done; }));
+    ASSERT_EQ(res1.result, 0);
+
+    RawstdUUID token{};
+    client.send_list(token, 16);
+
+    // Two real rows (one per offset) plus the trailing resume cursor.
+    const size_t expected_rows = 3;
+    const size_t payload_size =
+        expected_rows * sizeof(RawstorOSTFrameListEntry);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >=
+               sizeof(RawstorOSTFrameResponse) + payload_size;
+    }));
+    std::vector<RawstorOSTFrameListEntry> entries(expected_rows);
+    RawstorOSTFrameResponse response =
+        client.recv_response(entries.data(), payload_size);
+    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_LIST);
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(payload_size));
+
+    RawstdUUID row_id;
+    std::memcpy(row_id.bytes, entries[0].id, sizeof(row_id.bytes));
+    EXPECT_EQ(rawstd_uuid_cmp(&row_id, &id), 0);
+    EXPECT_EQ(entries[0].chunk_offset, 0u);
+
+    std::memcpy(row_id.bytes, entries[1].id, sizeof(row_id.bytes));
+    EXPECT_EQ(rawstd_uuid_cmp(&row_id, &id), 0);
+    EXPECT_EQ(entries[1].chunk_offset, second_offset);
+
+    // The last row is always the resume cursor -- nil here, since nothing
+    // was left after this one id (RawstorPaginationToken's own doc
+    // comment, rawstor.h: a nil id means "from the start").
+    RawstdUUID nil_id{};
+    std::memcpy(row_id.bytes, entries[2].id, sizeof(row_id.bytes));
+    EXPECT_EQ(rawstd_uuid_cmp(&row_id, &nil_id), 0);
 }

@@ -73,20 +73,20 @@ struct RawstorOSTFrameHead {
 
 /*
  * Minimalistic protocol frame, shared by every command that doesn't need
- * one of the bigger, dedicated payloads further down (READ/WRITE/DISCARD/
- * WRITE_ZEROES, SET_SYNC_STATE, ALLOCATE). `offset` is the chunk_offset of
- * the object/chunk `object_id` names (0 for a plain, non-chunked object)
- * for META; unused (0) for LIST/LOCATION_INFO/FLUSH. `snapshot_id` binds
- * to a previously snapshotted version instead of the live one, for the
- * handful of commands that use it (SET_OBJECT, RELEASE, SNAPSHOT -- each
- * command's own doc comment above says which; nil means "the live
- * version" where that's a meaningful state for the command, SET_OBJECT/
- * RELEASE, while SNAPSHOT always carries a real, non-nil version); left
- * nil (unused) by every other command. `val` is command-specific (e.g.
- * LIST's own page limit); unused (0) for SET_OBJECT/RELEASE/SNAPSHOT.
- * `snapshot_id` and `val` are never both meaningful on the same command,
- * but living in one struct means every command that carries object_id/
- * offset shares one wire shape and one C++-side request path
+ * one of the bigger, dedicated payloads elsewhere (READ/WRITE/DISCARD/
+ * WRITE_ZEROES, SET_SYNC_STATE, ALLOCATE, LIST). `offset` is the
+ * chunk_offset of the object/chunk `object_id` names (0 for a plain,
+ * non-chunked object) for META; unused (0) for LOCATION_INFO/FLUSH.
+ * `snapshot_id` binds to a previously snapshotted version instead of the
+ * live one, for the handful of commands that use it (SET_OBJECT, RELEASE,
+ * SNAPSHOT -- each command's own doc comment above says which; nil means
+ * "the live version" where that's a meaningful state for the command,
+ * SET_OBJECT/RELEASE, while SNAPSHOT always carries a real, non-nil
+ * version); left nil (unused) by every other command. `val` is command-
+ * specific; unused (0) for RELEASE/SNAPSHOT. `snapshot_id` and `val` are
+ * never both meaningful on the same command (SET_OBJECT is the one
+ * exception), but living in one struct means every command that carries
+ * object_id/offset shares one wire shape and one C++-side request path
  * (Backend::_basic_request(), ost_backend.cpp) instead of two nearly
  * identical ones.
  */
@@ -100,6 +100,51 @@ struct RawstorOSTFrameBasicPayload {
 struct RawstorOSTFrameBasic {
     struct RawstorOSTFrameHead head;
     struct RawstorOSTFrameBasicPayload payload;
+} RAWSTOR_PACKED;
+
+/*
+ * LIST's request: `token_id` resumes strictly after the id it names --
+ * every offset a listed id has is always reported together in the same
+ * page (rawstor::Backend::list_chunks()'s own contract, src/backend.hpp:
+ * one page entry is an id plus every offset it has, never split across
+ * pages), so resuming only ever needs to name an id, unlike
+ * RawstorOSTFrameBasicPayload's own offset/snapshot_id fields, which
+ * LIST has no use for. This is why LIST gets its own dedicated request
+ * payload rather than reusing that one; its own response shape
+ * (BackendOpBasic's plain array-of-T, ost_backend.cpp) doesn't fit LIST's
+ * own resume-cursor-as-last-entry convention either (RawstorOSTFrameList
+ * Entry's own doc comment below). A nil token_id means "from the start",
+ * matching a nil RawstdUUID.
+ */
+struct RawstorOSTFrameListPayload {
+    uint8_t token_id[16];
+    uint32_t limit;
+} RAWSTOR_PACKED;
+
+struct RawstorOSTFrameList {
+    struct RawstorOSTFrameHead head;
+    struct RawstorOSTFrameListPayload payload;
+} RAWSTOR_PACKED;
+
+/*
+ * One LIST response row: one id's own one offset -- a listed id with
+ * more than one offset (distinct chunks of the same multi-chunk object)
+ * rides one row per offset, all sharing that id, which the receiving end
+ * groups back into one rawstor::ChunkGroup (src/backend.hpp) per id. The
+ * response body is a packed array of these (body.res = count *
+ * sizeof(this)), same "array of T" shape RawstorOSTFrameBasic's own
+ * response (e.g. an older LIST) used, with one addition: the *last* row
+ * is always the resume cursor for the next page (a nil id once nothing
+ * is left), never a real result -- the serving rawstor-ost may itself be
+ * relaying across more than one local location, whose own merged resume
+ * point isn't necessarily identical to the last real row returned (see
+ * rawstor::Location::list()'s own doc comment). An empty response body
+ * (no rows at all, not even a cursor) means the far end is already
+ * exhausted.
+ */
+struct RawstorOSTFrameListEntry {
+    uint8_t id[16];
+    uint64_t chunk_offset;
 } RAWSTOR_PACKED;
 
 // Shared by READ/WRITE/DISCARD/WRITE_ZEROES: `hash` is only meaningful for

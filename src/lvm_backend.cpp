@@ -17,7 +17,9 @@
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -184,14 +186,23 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
     co_return fd;
 }
 
-rawstd::Task<void> Backend::list(
-    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+rawstd::Task<void> Backend::list_chunks(
+    unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
 ) {
     co_await _cleanup_staging_lvs();
 
     RawstdUUID input_token = token;
-    targets.clear();
+    chunks.clear();
     token = {};
+
+    // Grouped by id as they're read: every "-<offset>" LV sharing one
+    // uuid prefix becomes that uuid's own single ChunkGroup entry.
+    auto id_less = [](const RawstdUUID& lhs, const RawstdUUID& rhs) -> bool {
+        return rawstd_uuid_cmp(&lhs, &rhs) < 0;
+    };
+    std::map<RawstdUUID, std::vector<uint64_t>, decltype(id_less)> grouped(
+        id_less
+    );
 
     // GCC 13 ICEs (is_this_parameter) when a std::vector<std::string>
     // argument is brace-initialized directly at the call site of a nested
@@ -219,22 +230,37 @@ rawstd::Task<void> Backend::list(
 
             // A UUID's own string form is always exactly 36 characters
             // (RawstdUUIDString) -- a fixed prefix, since the UUID itself
-            // already embeds dashes, unlike this backend's own
-            // "-<offset>" suffix, which can't be told apart from
+            // already embeds dashes (8-4-4-4-12), unlike this backend's
+            // own "-<offset>" suffix, which can't be told apart from
             // those by splitting on the last '-' alone.
             if (name.size() < 36) {
                 continue;
             }
             std::string uuid_part = name.substr(0, 36);
-            if (name.size() > 36 && name[36] != '-') {
-                continue;
+            uint64_t offset = 0;
+            if (name.size() > 36) {
+                if (name[36] != '-') {
+                    continue;
+                }
+                // Anything left over after the hex digits (an LV name this
+                // backend never creates itself, but lvs -- reports whatever
+                // exists in the VG) is rejected rather than silently
+                // truncated to whatever prefix strtoull() did parse.
+                char* endptr = nullptr;
+                errno = 0;
+                offset = strtoull(name.c_str() + 37, &endptr, 16);
+                if (errno != 0 || endptr == name.c_str() + 37 ||
+                    *endptr != '\0') {
+                    errno = 0;
+                    continue;
+                }
             }
 
             RawstdUUID uuid;
             if (rawstd_uuid_from_string(&uuid, uuid_part.c_str()) < 0) {
                 continue;
             }
-            targets.push_back(uuid);
+            grouped[uuid].push_back(offset);
         }
     } catch (const std::exception& e) {
         rawstd_error(
@@ -244,31 +270,20 @@ rawstd::Task<void> Backend::list(
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    std::sort(
-        targets.begin(), targets.end(),
-        [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-            return rawstd_uuid_cmp(&lhs, &rhs) < 0;
-        }
-    );
-    // One entry per id, regardless of how many offset LVs it has --
-    // nothing today ever creates more than one offset under the same id.
-    targets.erase(
-        std::unique(
-            targets.begin(), targets.end(),
-            [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-                return rawstd_uuid_cmp(&lhs, &rhs) == 0;
-            }
-        ),
-        targets.end()
-    );
+    std::vector<ChunkGroup> found;
+    found.reserve(grouped.size());
+    for (auto& [id, offsets] : grouped) {
+        std::sort(offsets.begin(), offsets.end());
+        found.push_back(ChunkGroup{id, std::move(offsets)});
+    }
 
-    targets.erase(
-        targets.begin(), std::upper_bound(
-                             targets.begin(), targets.end(), input_token,
-                             [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-                                 return rawstd_uuid_cmp(&lhs, &rhs) < 0;
-                             }
-                         )
+    found.erase(
+        found.begin(), std::upper_bound(
+                           found.begin(), found.end(), input_token,
+                           [](const RawstdUUID& lhs, const ChunkGroup& rhs) {
+                               return rawstd_uuid_cmp(&lhs, &rhs.id) < 0;
+                           }
+                       )
     );
 
     if (limit == 0) {
@@ -277,9 +292,14 @@ rawstd::Task<void> Backend::list(
         limit = std::min(limit, rawstor_opts_list_limit());
     }
 
-    if (targets.size() > limit) {
-        targets.resize(limit);
-        token = targets.back();
+    bool capped = found.size() > limit;
+    if (capped) {
+        found.resize(limit);
+    }
+
+    chunks = std::move(found);
+    if (capped) {
+        token = chunks.back().id;
     }
 
     co_return;

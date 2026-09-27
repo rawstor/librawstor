@@ -889,7 +889,7 @@ public:
 
 // The cid-dispatched counterpart of BackendOpRead/BackendOpWrite/
 // BackendOpFlush above, for the RawstorOSTFrameBasic-shaped commands
-// (list/remove/spec/info/set_object/set_snapshot/create_snapshot) -- these
+// (remove/spec/info/set_object/set_snapshot/create_snapshot) -- these
 // carry no hash and have either no response body or a body of some number
 // of T's, per response.body.res. Routed through the same _recv_pump
 // demultiplex mechanism as every other op, now that the pump starts in
@@ -980,6 +980,81 @@ public:
     }
 
     std::vector<T> take_response_data() { return std::move(_response_data); }
+};
+
+// LIST's own request/response shape (RawstorOSTFrameList/
+// RawstorOSTFrameListEntry, protocol.h's own doc comment on why it isn't
+// just another BackendOpBasic<T>) -- otherwise the same terminal shape as
+// BackendOpBasic<RawstorOSTFrameListEntry> would have been.
+class BackendOpList final : public BackendOp {
+private:
+    RawstorOSTFrameList _request;
+    std::vector<RawstorOSTFrameListEntry> _response_data;
+
+public:
+    BackendOpList(
+        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const RawstdUUID& token, unsigned int limit,
+        const rawstd::TraceEvent& trace_event
+    ) :
+        BackendOp(backend, cid, trace_event, "list", 0, 0),
+        _request({
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_LIST,
+                    .cid = cid,
+                },
+            .payload = {
+                .token_id = {},
+                .limit = limit,
+            },
+        }) {
+        memcpy(
+            _request.payload.token_id, token.bytes,
+            sizeof(_request.payload.token_id)
+        );
+    }
+
+    const void* request_data() const noexcept { return &_request; }
+
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    size_t response_head_cb(
+        const RawstorOSTFrameResponse* response, int error
+    ) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        if (!error) {
+            error = validate_response(response);
+        }
+
+        if (!error) {
+            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_LIST);
+        }
+
+        if (!error && response->body.res > 0) {
+            if (response->body.res % sizeof(RawstorOSTFrameListEntry) != 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            }
+            return static_cast<size_t>(response->body.res);
+        }
+
+        _dispatch(0, error);
+        return 0;
+    }
+
+    void response_body_cb(
+        const iovec* iov, unsigned int niov, size_t result
+    ) override {
+        _response_data.resize(result / sizeof(RawstorOSTFrameListEntry));
+        rawstd_iovec_to_buf(iov, niov, 0, _response_data.data(), result);
+        _dispatch(result, 0);
+    }
+
+    std::vector<RawstorOSTFrameListEntry> take_response_data() {
+        return std::move(_response_data);
+    }
 };
 
 void Backend::_fail_in_flight(int error) {
@@ -1253,27 +1328,72 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
     co_return op->take_response_data();
 }
 
-rawstd::Task<void> Backend::list(
-    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+rawstd::Task<void> Backend::list_chunks(
+    unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
 ) {
     RawstdUUID input_token = token;
+    chunks.clear();
+    token = {};
+
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('l', "fd = %d\n", fd());
+
+    std::shared_ptr<BackendOpList> op = std::make_shared<BackendOpList>(
+        std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
+        input_token, limit, trace_event
+    );
+    _add_op(op);
+
     try {
-        targets = co_await _basic_request<RawstdUUID>(
-            RAWSTOR_CMD_LIST, "list", input_token, 0, limit
+        size_t result = co_await _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", result, op->request_size()
+        );
+        op->request_cb(validate_result(op->request_size(), result));
+    } catch (const std::system_error& e) {
+        op->request_cb(e.code().value());
+    }
+
+    std::vector<RawstorOSTFrameListEntry> entries;
+    try {
+        co_await *op;
+        entries = op->take_response_data();
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    token = {};
-    if (!targets.empty()) {
-        token = targets.back();
-        targets.resize(targets.size() - 1);
+    // The remote rawstor-ost's own response always carries one more row
+    // than the real page: the resume cursor it reports, last (mirroring
+    // rawstor::Location::list()'s own doc comment on why -- the far end
+    // may itself be relaying across more than one local location, whose
+    // own merged resume point isn't necessarily identical to the last
+    // real row returned). An empty response (nothing at all, not even a
+    // cursor row) means the far end is already exhausted.
+    if (entries.empty()) {
+        co_return;
     }
 
-    co_return;
+    // Rows sharing one id (RawstorOSTFrameListEntry's own doc comment,
+    // protocol.h) are grouped back into one ChunkGroup here -- the far
+    // end already sends every one of an id's own rows consecutively, so
+    // appending to `chunks`' own last entry when its id matches is
+    // enough, no map needed.
+    for (size_t i = 0; i + 1 < entries.size(); ++i) {
+        const RawstorOSTFrameListEntry& entry = entries[i];
+        RawstdUUID id;
+        memcpy(id.bytes, entry.id, sizeof(id.bytes));
+        if (!chunks.empty() && rawstd_uuid_cmp(&chunks.back().id, &id) == 0) {
+            chunks.back().offsets.push_back(entry.chunk_offset);
+        } else {
+            chunks.push_back(ChunkGroup{id, {entry.chunk_offset}});
+        }
+    }
+
+    const RawstorOSTFrameListEntry& token_entry = entries.back();
+    memcpy(token.bytes, token_entry.id, sizeof(token.bytes));
 }
 
 // sp is forwarded on the wire unchanged (see BackendOpAllocate), width
