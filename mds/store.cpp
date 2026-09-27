@@ -174,7 +174,7 @@ void validate_geometry(uint64_t logical_size, uint64_t chunk_size) {
         rawstd_error("Object size 0\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    /* Architecture.md: the chunk size must be a power of two. */
+    /* architecture.md: the chunk size must be a power of two. */
     if (chunk_size == 0 || (chunk_size & (chunk_size - 1)) != 0) {
         rawstd_error("Chunk size is not a power of two\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);

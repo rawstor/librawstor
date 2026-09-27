@@ -27,7 +27,7 @@ namespace mds {
  * Location URI: mds://host:port
  *
  * A peer of file/lvm/ost/zfs::Backend, not a special case Target/Object
- * dispatch around them (docs/locations_and_targets.md, docs/mds.md):
+ * dispatch around them (docs/concepts.md, docs/mds.md):
  * `mds://host:port/<id>` is, from Target's own point of view, an
  * ordinary single-URI target whose one "chunk" happens to be an entire
  * MDS-orchestrated object. Opening it (set_object()) fetches the

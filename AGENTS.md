@@ -84,7 +84,7 @@ librawstor/
 ├── tests/            top-level librawstor integration/unit tests (own in-process test server)
 └── docs/             index.md, concepts.md, architecture.md, protocol.md
                        (design draft, predates include/rawstor/protocol.h),
-                       mirroring.md
+                       mds.md, mirroring.md
 ```
 
 Most component directories follow the same `src/` + `include/` + `tests/`

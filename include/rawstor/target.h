@@ -619,7 +619,7 @@ int rawstor_target_id(
  *
  * @see rawstor_target_id
  * @see Locations and Targets:
- * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 int rawstor_target_location(
     const char* target, char* buf, size_t size

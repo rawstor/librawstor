@@ -289,7 +289,7 @@ public:
     // the target string itself names.
     rawstd::Task<void> remove(rawio::Queue& queue) const;
 
-    // Opens the object this target addresses (docs/locations_and_targets.md).
+    // Opens the object this target addresses (docs/concepts.md).
     // A single chunk becomes a SingleChunkObject -- the ordinary case.
     // More than one (mds::Backend's own internal multi-chunk string)
     // becomes a MultiChunkObject, opening only the last chunk eagerly to

@@ -7,13 +7,13 @@ Status: **approved** (2026-07-06). Supersedes the earlier draft where the
 *Decision revalidation* table below says so. Nothing is implemented yet; see
 *Implementation stages*.
 
-See also: [Architecture.md](Architecture.md), [Protocol.md](Protocol.md),
+See also: [Architecture](architecture.md), [Protocol](protocol.md),
 `librawstor/docs/mirroring.md` (quorum rules the witness plugs into).
 
 ## Requirements, in priority order
 
 0. **Allocation and tracking** — answer "which OST hosts which part of which
-   object" (`getObj` / `getObjPart` / `getFreeOst` of Architecture.md, refined
+   object" (`getObj` / `getObjPart` / `getFreeOst` of `architecture.md`, refined
    below) and generate placements at create/grow time. This is the reason MDS
    exists; everything else layers on top.
 1. **Snapshot / version registry** — register client-generated `snapshot_id`s
@@ -39,7 +39,7 @@ redesign.
   made and recorded by the client on the surviving data members only, exactly
   as mirroring does today. The witness is written synchronously only at
   non-hot moments (open / clean close / resync completion); see *Witness*.
-- **Redundancy is the client's responsibility** (per Architecture.md). MDS and
+- **Redundancy is the client's responsibility** (per `architecture.md`). MDS and
   placement only produce *slots*; the client decides what goes in them
   (mirror copies or erasure-coding shards) and does the encode/decode.
 - **One wire protocol.** MDS commands are new opcodes in the existing OST
@@ -88,7 +88,7 @@ in four places and spent on one addition:
   install, so the mechanism for future breaks is added now, while it costs
   nothing: protocol version + feature bits in the connection handshake
   (`SET_OBJECT` is already the mandatory first command). Partially covers the
-  "capabilities negotiation TBD" of Protocol.md.
+  "capabilities negotiation TBD" of `protocol.md`.
 
 ## Decision revalidation (vs the earlier draft)
 
@@ -145,7 +145,7 @@ number:
 
 (`file://`'s own `<offset>` directory is never omitted, even "0" --
 unlike the target-string syntax's own offset path segment
-(docs/locations_and_targets.md, "Chunk offset"), a physical directory
+(docs/concepts.md, "Chunk offset"), a physical directory
 layout has no ambiguity to avoid by omitting it, so there's nothing to
 gain from doing so; `lvm://`/`zfs://` still omit it when 0, same as
 before. `slot_index` isn't part of the physical name at all: each
@@ -252,7 +252,7 @@ Two classes of state, by recoverability:
 | `removeObject(id)` | delete | no |
 | witness get/put | open (incl. witness-assisted degraded open) / clean close / resync-complete; async after degrade | no (see Witness) |
 
-Refines `getObj / getObjPart / getFreeOst` from Architecture.md; `getFreeOst`
+Refines `getObj / getObjPart / getFreeOst` from `architecture.md`; `getFreeOst`
 is subsumed by the placement function + topology (the client never picks OSTs
 ad hoc).
 
@@ -501,8 +501,8 @@ reconstruct scan (below).
   `/dev/zvol/…@s<id>`, read-only at the device level too.
 - **Reads:** a trailing snapshot path segment on the regular open
   (`mds://host:port/<id>/0/<snapshot_id>`, `ost://…/<uuid>/0/<snapshot_id>` -- the
-  offset segment is mandatory once a snapshot follows it, docs/
-  locations_and_targets.md's own "Chunk offset"), `snapshot_id` a UUID
+  offset segment is mandatory once a snapshot follows it,
+  docs/concepts.md's own "Chunk offset"), `snapshot_id` a UUID
   string; the wire carries it in SET_OBJECT's/OBJ_OPEN's own
   `snapshot_id[16]` field (`RawstorOSTFrameSnapPayload`) -- META never carried
   a version at all, it only ever answers about the live object. Opening a
@@ -736,7 +736,7 @@ of normal opens/closes.
   same `LIST` + per-object `META` scan from its own index (the scrub
   comparison) is not implemented yet.
 
-## Protocol deltas (to Protocol.md)
+## Protocol deltas (to `protocol.md`)
 
 - New MDS opcodes `CMD_OBJ_*` (same `rstr` command space; `-ENOSYS` outside a
   server's role); opcodes regrouped into reserved ranges per role.

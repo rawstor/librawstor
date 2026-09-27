@@ -55,8 +55,8 @@ class Target;
 class Chunk;
 
 /*
- * The client-facing entity a target addresses (rawstor_docs/
- * Architecture.md: "Object = group of chunks"): routes I/O onto one or
+ * The client-facing entity a target addresses (`architecture.md`:
+ * "Object = group of chunks"): routes I/O onto one or
  * more lazily opened, per-chunk (possibly mirrored) Chunks. Built only
  * by Target::open() (a friend of its two concrete subclasses below,
  * since it's the one place that actually parses a target string into
