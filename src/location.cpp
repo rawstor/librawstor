@@ -74,11 +74,23 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
 // caller comparing a freshly created target against one just listed
 // (pyrawstor's own Target.__eq__, a raw string compare) needs the two to
 // actually match.
+//
+// Never split (or offset-stamped) for mds://: an mds:// URI already
+// names a whole object (docs/mds.md), and mds::Backend::create() does
+// its own placement-driven chunking internally, off sp.size/sp.chunk_size
+// directly, given exactly one whole-object call -- splitting or stamping
+// an offset here too would make Target::create()'s own per-group fan-out
+// call it more than once, each time with only that one group's own
+// reduced chunk_sp.size. mds::Backend::list_chunks() doesn't support
+// listing at all (ENOTSUP), so there's no create()/list() round-trip to
+// keep consistent for it either.
 std::vector<rawstd::URI> build_create_uris(
     const std::vector<rawstd::URI>& uris, const RawstdUUIDString& uuid_string,
     const RawstorObjectSpec& sp
 ) {
-    uint64_t num_chunks = (sp.chunk_size != 0 && sp.chunk_size < sp.size)
+    bool is_mds = !uris.empty() && uris.front().scheme() == "mds";
+    uint64_t num_chunks = (!is_mds && sp.chunk_size != 0 &&
+                            sp.chunk_size < sp.size)
                               ? (sp.size + sp.chunk_size - 1) / sp.chunk_size
                               : 1;
 
@@ -86,9 +98,13 @@ std::vector<rawstd::URI> build_create_uris(
     ret.reserve(uris.size() * num_chunks);
     for (uint64_t i = 0; i < num_chunks; ++i) {
         for (const auto& uri : uris) {
-            std::ostringstream oss;
-            oss << std::hex << i * sp.chunk_size;
-            ret.emplace_back(rawstd::URI(uri, uuid_string), oss.str());
+            rawstd::URI target(uri, uuid_string);
+            if (!is_mds) {
+                std::ostringstream oss;
+                oss << std::hex << i * sp.chunk_size;
+                target = rawstd::URI(target, oss.str());
+            }
+            ret.push_back(std::move(target));
         }
     }
     return ret;
