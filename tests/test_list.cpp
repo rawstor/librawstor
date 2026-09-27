@@ -295,10 +295,9 @@ TEST(ListTest, pagination) {
             });
         EXPECT_GT(res, 0);
 
-        // Location::list() always stamps an explicit offset segment,
-        // even "0" -- unlike rawstor_location_create()'s own bare,
-        // offset-less return value here.
-        targets.push_back(std::string(target) + "/0");
+        // Location::create()/list() both always stamp an explicit offset
+        // segment, even "0" -- the two agree without any adjustment here.
+        targets.push_back(std::string(target));
     }
     std::sort(targets.begin(), targets.end());
 

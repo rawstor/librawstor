@@ -56,6 +56,44 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
     }
 }
 
+// Location::create()'s own target-string construction, shared with
+// rawstor_location_create()'s C ABI below (which can't just call
+// Location::create() itself -- it needs the built string's own length
+// synchronously, before any I/O, for its snprintf()-style contract).
+// sp.chunk_size splits sp.size into ceil(size / chunk_size) chunks, each
+// mirrored across every URI in `uris` at its own offset -- the same
+// (offset, mirror) shape a hand-built multi-offset -t/--target TARGET
+// already names, so Target::create() (target.cpp) handles the actual
+// per-chunk size split (and the chunk_size-must-be-a-power-of-two check)
+// identically either way; a chunk_size that doesn't divide sp.size
+// evenly just gives the last chunk a smaller share, same as the
+// hand-built case. 0 (the default) or a value >= sp.size means the
+// ordinary single-chunk case, one chunk spanning the whole object.
+// Every offset is stamped explicitly, even "0" -- Location::list()'s own
+// returned target strings always do (its own doc comment above), and a
+// caller comparing a freshly created target against one just listed
+// (pyrawstor's own Target.__eq__, a raw string compare) needs the two to
+// actually match.
+std::vector<rawstd::URI> build_create_uris(
+    const std::vector<rawstd::URI>& uris, const RawstdUUIDString& uuid_string,
+    const RawstorObjectSpec& sp
+) {
+    uint64_t num_chunks = (sp.chunk_size != 0 && sp.chunk_size < sp.size)
+                              ? (sp.size + sp.chunk_size - 1) / sp.chunk_size
+                              : 1;
+
+    std::vector<rawstd::URI> ret;
+    ret.reserve(uris.size() * num_chunks);
+    for (uint64_t i = 0; i < num_chunks; ++i) {
+        for (const auto& uri : uris) {
+            std::ostringstream oss;
+            oss << std::hex << i * sp.chunk_size;
+            ret.emplace_back(rawstd::URI(uri, uuid_string), oss.str());
+        }
+    }
+    return ret;
+}
+
 // RawstorPaginationToken now holds exactly a RawstdUUID's own bytes --
 // direct copies, not an encoding of anything.
 RawstdUUID decode_token(const RawstorPaginationToken& token) {
@@ -423,13 +461,7 @@ rawstd::Task<Target> Location::create(
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
 
-    std::vector<rawstd::URI> targets;
-    targets.reserve(_uris.size());
-    for (const auto& uri : _uris) {
-        targets.emplace_back(uri, uuid_string);
-    }
-
-    Target t(targets);
+    Target t(build_create_uris(_uris, uuid_string, sp));
     co_await t.create(queue, sp);
 
     co_return t;
@@ -510,11 +542,8 @@ int rawstor_location_create(
         rawstd_uuid_to_string(&id, &uuid_string);
 
         std::vector<rawstd::URI> uris = rawstd::URI::uriv(location);
-        std::vector<rawstd::URI> ret;
-        ret.reserve(uris.size());
-        for (const auto& uri : uris) {
-            ret.emplace_back(uri, uuid_string);
-        }
+        std::vector<rawstd::URI> ret =
+            build_create_uris(uris, uuid_string, *spec);
 
         res = snprintf(target, size, "%s", rawstd::URI::uris(ret).c_str());
         if (res < 0) {
