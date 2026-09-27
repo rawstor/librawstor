@@ -1,4 +1,4 @@
-# Locations and Targets
+# Concepts
 
 ## Overview
 
@@ -14,7 +14,7 @@ Currently, two URI schemes are supported:
 
 | Scheme | Description |
 |--------|-------------|
-| `ost`  | Backend server speaking the OST protocol (see [Protocol.md](https://github.com/rawstor/rawstor_docs/blob/main/Protocol.md)) |
+| `ost`  | Backend server speaking the OST protocol (see [Protocol](protocol.md)) |
 | `file` | Local filesystem backend (a folder path) |
 
 ### Single backend examples
@@ -79,4 +79,4 @@ This target references the same object (UUID `019cbfad-a389-7d42-a0f6-c29993ac8c
 ## Notes
 
 - When using the `file://` scheme, the path must be absolute. Relative paths are not allowed.
-- The OST protocol details, including authentication, error handling, and streaming, are defined in the [protocol specification](https://github.com/rawstor/rawstor_docs/blob/main/Protocol.md).
+- The OST protocol details, including authentication, error handling, and streaming, are defined in the [protocol specification](protocol.md).

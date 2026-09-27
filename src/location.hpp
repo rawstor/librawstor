@@ -19,7 +19,7 @@
 namespace rawstor {
 
 // A Location addresses a backend store (or set of stores, for mirroring/
-// data locality) by URI, with no UUID -- see docs/locations_and_targets.md.
+// data locality) by URI, with no UUID -- see docs/concepts.md.
 // Lightweight, like Target: holds only `_uris`, and never keeps a
 // Slot between calls -- info()/list() fan a Slot per URI out
 // and back down within the one call (same as Chunk::info()/list() used

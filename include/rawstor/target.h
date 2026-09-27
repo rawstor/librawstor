@@ -36,7 +36,7 @@ extern "C" {
  * location string); for a lone URI, any nonzero value is accepted as the
  * caller's own chosen redundancy for that one copy, not required to equal
  * 1. chunk_size only matters for a target string naming more than one
- * chunk's own uris (see docs/locations_and_targets.md): it must be a
+ * chunk's own uris (see docs/concepts.md): it must be a
  * nonzero power of two, the whole object's own per-chunk share, every
  * chunk exactly that size except the last (whatever remains of size);
  * ignored (and 0 is a valid, if meaningless, value) for the ordinary
@@ -176,7 +176,7 @@ struct RawstorObjectMeta {
  *
  * @see RawstorObjectSpec
  * @see Location and Target documentation in Rawstor user guide:
- * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 int rawstor_target_spec(
     RawIOQueue* queue, const char* target, struct RawstorObjectSpec* spec,
@@ -360,7 +360,7 @@ int rawstor_target_set_sync_state(
  * @see rawstor_target_create_snapshot
  * @see rawstor_target_snapshot_id
  * @see Locations and Targets:
- * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 int rawstor_target_create(
     RawIOQueue* queue, const char* target, const struct RawstorObjectSpec* spec,
@@ -409,7 +409,7 @@ int rawstor_target_create(
  *
  * @see RawstorObjectSpec
  * @see Locations and Targets:
- * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 int rawstor_target_remove(
     RawIOQueue* queue, const char* target,
@@ -478,7 +478,7 @@ int rawstor_target_remove(
  * @see RawstorObject
  * @see rawstor_object_close
  * @see Locations and Targets:
- * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 int rawstor_target_open(
     RawIOQueue* queue, const char* target, int flags, RawstorObject** object,
@@ -699,7 +699,7 @@ int rawstor_target_create_snapshot(
  *
  * @see rawstor_target_id
  * @see Locations and Targets:
- * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 int rawstor_target_location(
     const char* target, char* buf, size_t size

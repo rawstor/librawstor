@@ -36,7 +36,7 @@ class Chunk;
  * internal strategy object: SingleChunkObject (a plain, single-chunk
  * target -- the overwhelming majority of objects) and MultiChunkObject
  * (a target string naming more than one chunk's own uris,
- * docs/locations_and_targets.md) each implement every I/O method
+ * docs/concepts.md) each implement every I/O method
  * against their own actual shape directly, so the common single-chunk
  * case never pays for machinery (segment splitting, a chunk lookup by
  * index, a per-call heap allocation) it has no use for. Some
@@ -148,7 +148,7 @@ public:
 };
 
 // A target string naming more than one chunk's own uris
-// (docs/locations_and_targets.md): splits every I/O request at chunk
+// (docs/concepts.md): splits every I/O request at chunk
 // boundaries and dispatches each piece to its own, lazily opened Chunk,
 // concurrently.
 class MultiChunkObject final : public Object {

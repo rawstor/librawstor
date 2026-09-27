@@ -45,7 +45,7 @@ std::string hex_offset(uint64_t offset) {
 }
 
 // Builds a target string naming two chunks' own uris of one object by
-// hand (docs/locations_and_targets.md): "<location>/<uuid>/0" and
+// hand (docs/concepts.md): "<location>/<uuid>/0" and
 // "<location>/<uuid>/<chunk_size in hex>" -- the same flat, offset-sorted
 // URI list a real chunk-placement caller (rawstor-mds, in a later bucket)
 // would build, just typed out here instead. Nothing about Target/Object

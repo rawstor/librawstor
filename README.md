@@ -72,7 +72,7 @@ Default values are shown below.
 
 ## rawstor-ost – OST Protocol Server
 
-`rawstor-ost` implements the **OST protocol** (see [Protocol.md](https://github.com/rawstor/rawstor_docs/blob/main/Protocol.md)), handling network connections and providing access to data stored in **locations** (as defined in the [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md) documentation).
+`rawstor-ost` implements the **OST protocol** (see [Protocol](https://github.com/rawstor/librawstor/blob/main/docs/protocol.md)), handling network connections and providing access to data stored in **locations** (as defined in the [Concepts](https://github.com/rawstor/librawstor/blob/main/docs/concepts.md) documentation).
 
 - `file://` scheme → serves data directly from the local filesystem.
 - `ost://` scheme → acts as a proxy to an underlying OST backend.
@@ -139,7 +139,7 @@ multiple in-flight requests on a virtqueue may complete out of order.
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
 | `-s, --socket-path PATH` | Location of the vhost-user Unix domain socket. |
-| `TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). |
+| `TARGET` | Comma‑separated list of rawstor backend targets (see [Concepts](https://github.com/rawstor/librawstor/blob/main/docs/concepts.md)). |
 | `--queue-size SIZE` | RawIO queue (`io_uring`) depth of each virtqueue's own queue. Default: `256`. |
 | `--num-queues N` | Number of virtqueues advertised to the guest, each serviced by its own thread and its own connection to `TARGET`. The guest picks how many of these it actually uses (typically up to its vCPU count) via QEMU's own `num-queues=`. Default: `4`. |
 | `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest; write-through makes every write durable on completion, writeback relies on the guest issuing an explicit flush. |
@@ -270,7 +270,7 @@ vhost-user.
 | Option | Description |
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
-| `TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). Creates `/dev/vduse/UUID`, where `UUID` is the target object's own UUID -- there is no separate name to pick, since the UUID already uniquely and stably identifies it. |
+| `TARGET` | Comma‑separated list of rawstor backend targets (see [Concepts](https://github.com/rawstor/librawstor/blob/main/docs/concepts.md)). Creates `/dev/vduse/UUID`, where `UUID` is the target object's own UUID -- there is no separate name to pick, since the UUID already uniquely and stably identifies it. |
 | `--queue-size SIZE` | Virtqueue size, a power of two, of each virtqueue's own queue. Default: `256`, max `1024`. |
 | `--num-queues N` | Number of virtqueues advertised to the guest, each serviced by its own thread and its own connection to `TARGET`. Default: `16`. |
 | `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest. |

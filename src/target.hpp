@@ -72,7 +72,7 @@ class Object;
 // A Target addresses one specific object, made up of one or more chunks
 // -- URIs sharing one offset path segment are mirrors of the same chunk
 // (its own chunk uris); distinct chunks never share one (see
-// docs/locations_and_targets.md and parse_target_path()'s own doc
+// docs/concepts.md and parse_target_path()'s own doc
 // comment above). `_uris` is a flat, offset-sorted list;
 // the split into chunk uris is never stored, only ever re-derived on
 // demand (chunk_uris_by_offset()/chunk_uris_at_offset() in target.cpp)

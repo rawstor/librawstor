@@ -185,7 +185,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Multishot IO operations.
 - Units for command line arguments.
-- [Location and target](docs/locations_and_targets.md) conception.
+- [Location and target](docs/concepts.md) conception.
 - OST backend implementation.
 - Multiqueue support.
 - Add allocate and release methods to the OST protocol.

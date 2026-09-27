@@ -97,7 +97,7 @@ private:
 public:
     /**
      * `target` names exactly one rawstor object (or a mirrored/cached set
-     * of locations for the same object -- see docs/locations_and_targets.md);
+     * of locations for the same object -- see docs/concepts.md);
      * the VDUSE device name is that object's UUID (rawstor_target_id()),
      * not something the caller picks, since it already uniquely and
      * stably identifies the device this process is exporting. `wake_fd`,
