@@ -82,7 +82,7 @@ librawstor/
 │                     natively (no vendored qemu libvduse or other third-party library)
 ├── pyrawstor/        Python 3 bindings (location/target helpers)
 ├── tests/            top-level librawstor integration/unit tests (own in-process test server)
-└── docs/             index.md, concepts.md, architecture.md, protocol.md
+└── docs/             README.md, concepts.md, architecture.md, protocol.md
                        (design draft, predates include/rawstor/protocol.h),
                        mds.md, mirroring.md
 ```
