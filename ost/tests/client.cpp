@@ -174,6 +174,22 @@ uint16_t Client::send_write_zeroes(
     return cid;
 }
 
+uint16_t Client::send_list(const RawstdUUID& token, uint32_t limit) {
+    uint16_t cid = _next_cid++;
+    RawstorOSTFrameList frame = {
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_LIST,
+                .cid = cid,
+            },
+        .payload = {.token_id = {}, .limit = limit},
+    };
+    std::memcpy(frame.payload.token_id, token.bytes, sizeof(token.bytes));
+    send_all(_fd, &frame, sizeof(frame));
+    return cid;
+}
+
 uint16_t Client::send_unknown_command() {
     uint16_t cid = _next_cid++;
     RawstorOSTFrameHead head = {

@@ -203,7 +203,9 @@ TEST(FileLifecycleTest, create_spec_list_remove) {
         const char** it = rawstor_string_list_iter(targets);
         EXPECT_NE(it, nullptr);
         if (it != nullptr) {
-            EXPECT_EQ(target, *it);
+            // Location::list() always stamps an explicit offset segment,
+            // even "0" -- unlike target's own bare, offset-less form here.
+            EXPECT_EQ(target + "/0", *it);
 
             it = rawstor_string_list_next(it);
             EXPECT_EQ(it, nullptr);
@@ -421,6 +423,9 @@ TEST(FileLifecycleTest, create_at_default_spec_list_remove) {
         const char** it = rawstor_string_list_iter(targets);
         EXPECT_NE(it, nullptr);
         if (it != nullptr) {
+            // Location::create()/list() both always stamp an explicit
+            // offset segment, even "0" -- the two agree without any
+            // adjustment here.
             EXPECT_EQ(target, *it);
 
             it = rawstor_string_list_next(it);
@@ -430,6 +435,49 @@ TEST(FileLifecycleTest, create_at_default_spec_list_remove) {
         rawstor_string_list_delete(targets);
     }
     EXPECT_EQ(rawstor_pagination_token_empty(&token), 1);
+
+    res = target_remove(*queue, target);
+    EXPECT_EQ(res, 0);
+}
+
+// rawstor_location_create() splits size into ceil(size / chunk_size)
+// chunks itself when chunk_size is set -- the same (offset, mirror) shape
+// a hand-built multi-offset -t/--target TARGET already names, without
+// needing mds:// or any other placement orchestration.
+TEST(FileLifecycleTest, create_at_chunk_size_splits_into_multiple_chunks) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
+    std::string location = location_uri.str();
+    std::string uuid = "00000000-0000-7000-8000-000000000003";
+    std::string target(65536, '\0');
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorObjectSpec spec{
+        .size = 2ull << 20,
+        .width = 1,
+        .chunk_size = 1ull << 20,
+    };
+    ssize_t res = location_create(
+        *queue, location, uuid.c_str(), spec, target.data(), target.size()
+    );
+    ASSERT_GT(res, 0);
+    ASSERT_LT((size_t)res, target.size());
+    target.resize(res);
+
+    // A genuine multi-chunk target names every one of its own chunks'
+    // offsets explicitly, even "0" -- 1ull << 20 is "100000" in hex.
+    rawstd::URI id_uri(location_uri, uuid);
+    EXPECT_EQ(
+        target, rawstd::URI::uris(
+                    {rawstd::URI(id_uri, "0"), rawstd::URI(id_uri, "100000")}
+                )
+    );
+
+    RawstorObjectSpec read_spec = {};
+    res = target_spec(*queue, target, &read_spec);
+    EXPECT_EQ(res, 0);
+    EXPECT_EQ(read_spec.size, (size_t)(2ull << 20));
 
     res = target_remove(*queue, target);
     EXPECT_EQ(res, 0);
@@ -455,7 +503,11 @@ TEST(FileLifecycleTest, create_at_spec_list_remove) {
     ASSERT_GT(res, 0);
     ASSERT_LT((size_t)res, target.size());
     target.resize(res);
-    EXPECT_EQ(target, rawstd::URI(location_uri, uuid).str());
+    // Location::create() always stamps an explicit offset segment, even
+    // "0" -- matching Location::list()'s own returned target strings, so
+    // a caller comparing the two (pyrawstor's own Target.__eq__) sees
+    // them agree.
+    EXPECT_EQ(target, rawstd::URI(rawstd::URI(location_uri, uuid), "0").str());
 
     RawstorObjectSpec read_spec = {};
     res = target_spec(*queue, target, &read_spec);
@@ -472,6 +524,9 @@ TEST(FileLifecycleTest, create_at_spec_list_remove) {
         const char** it = rawstor_string_list_iter(targets);
         EXPECT_NE(it, nullptr);
         if (it != nullptr) {
+            // Location::create()/list() both always stamp an explicit
+            // offset segment, even "0" -- the two agree without any
+            // adjustment here.
             EXPECT_EQ(target, *it);
 
             it = rawstor_string_list_next(it);
@@ -821,7 +876,11 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
         ASSERT_GT(res, 0);
         ASSERT_LT((size_t)res, target.size());
         target.resize(res);
-        EXPECT_EQ(target, rawstd::URI(location_uri, uuid).str());
+        // Location::create() always stamps an explicit offset segment,
+        // even "0" -- Location::list()'s own doc comment.
+        EXPECT_EQ(
+            target, rawstd::URI(rawstd::URI(location_uri, uuid), "0").str()
+        );
     }
 
     {

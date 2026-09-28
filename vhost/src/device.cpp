@@ -1066,7 +1066,6 @@ Device::Device(
     _protocol_features(0),
     _config{},
     _wce_enabled(write_cache_enabled),
-    _readonly(readonly),
     _postcopy_listening(false),
     _wake_fd(wake_fd) {
     _regions.reserve(VHOST_USER_MAX_RAM_SLOTS);

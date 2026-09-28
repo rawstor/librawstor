@@ -73,7 +73,6 @@ private:
     std::vector<VirtQueue> _vqs;
     std::atomic<uint64_t> _features;
     bool _write_cache_enabled;
-    bool _readonly;
     int _wake_fd;
     bool _stop_requested;
 

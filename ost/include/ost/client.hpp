@@ -80,7 +80,7 @@ private:
 
     static rawstd::DetachedTask _list(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
+        RawstorOSTFrameListPayload payload
     );
     static rawstd::DetachedTask _allocate(
         std::weak_ptr<Client> weak, RawstorOSTFrameHead head,

@@ -98,6 +98,16 @@ static void command_create_usage(void) {
         "  -s, --size SIZE       Object size with unit suffix (B, K, M, G, "
         "T, P, E).\n"
         "                        Examples: 10G, 5M, 2T.\n"
+        "  --chunk-size SIZE     Chunk size with unit suffix, power of "
+        "two.\n"
+        "                        With LOCATION: splits the object into "
+        "ceil(size /\n"
+        "                        chunk-size) chunks, each mirrored across "
+        "every entry.\n"
+        "                        With TARGET: sizes the chunks the target "
+        "already names.\n"
+        "                        Default: one chunk spans the whole "
+        "object.\n"
     );
 };
 
@@ -109,6 +119,7 @@ static int command_create(int argc, char** argv) {
         {"size", required_argument, NULL, 's'},
         {"target", required_argument, NULL, 't'},
         {"uuid", required_argument, NULL, 'u'},
+        {"chunk-size", required_argument, NULL, 'C'},
         {},
     };
 
@@ -117,6 +128,7 @@ static int command_create(int argc, char** argv) {
     const char* size_arg = NULL;
     const char* target_arg = NULL;
     const char* uuid_arg = NULL;
+    const char* chunk_size_arg = NULL;
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -143,6 +155,10 @@ static int command_create(int argc, char** argv) {
 
         case 'u':
             uuid_arg = optarg;
+            break;
+
+        case 'C':
+            chunk_size_arg = optarg;
             break;
 
         default:
@@ -204,6 +220,18 @@ static int command_create(int argc, char** argv) {
         return EX_USAGE;
     }
 
+    uint64_t chunk_size = 0;
+    if (chunk_size_arg != NULL) {
+        int cres = rawstd_size_to_bytes(chunk_size_arg, &chunk_size);
+        if (cres < 0) {
+            fprintf(
+                stderr, "Failed to parse units: %s\nError: %s\n",
+                chunk_size_arg, strerror(-cres)
+            );
+            return EX_USAGE;
+        }
+    }
+
     unsigned int mirrors;
     {
         char* endptr = NULL;
@@ -225,9 +253,11 @@ static int command_create(int argc, char** argv) {
     }
 
     if (target_arg != NULL) {
-        return rawstor_cli_create(target_arg, size, mirrors);
+        return rawstor_cli_create(target_arg, size, chunk_size, mirrors);
     } else {
-        return rawstor_cli_create_at(location_arg, uuid_arg, size, mirrors);
+        return rawstor_cli_create_at(
+            location_arg, uuid_arg, size, chunk_size, mirrors
+        );
     }
 }
 

@@ -75,7 +75,6 @@ private:
     uint64_t _protocol_features;
     virtio_blk_config _config;
     std::atomic<bool> _wce_enabled;
-    bool _readonly;
     bool _postcopy_listening;
     int _wake_fd;
 

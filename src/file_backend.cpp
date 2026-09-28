@@ -121,51 +121,81 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
     co_return fd;
 }
 
-rawstd::Task<void> Backend::list(
-    unsigned int limit, std::vector<RawstdUUID>& targets, RawstdUUID& token
+rawstd::Task<void> Backend::list_chunks(
+    unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
 ) {
     RawstdUUID input_token = token;
-    targets.clear();
+    chunks.clear();
     token = {};
     try {
         std::string location_path = get_location_path(location());
 
-        // One entry per id directory (<location>/<uuid>/), regardless of
-        // how many offset subdirectories it holds -- nothing today
-        // ever creates more than one offset under the same id, so this
-        // stays UUID-only (multi-chunk listing is a later concern).
-        for (const auto& entry :
+        // Two levels deep: <location>/<uuid>/<offset>/data -- every
+        // offset directory under one uuid becomes that uuid's own single
+        // ChunkGroup entry (its own offsets sorted ascending); an offset
+        // directory missing its own `data` file (mid-create(), or a
+        // leftover empty one after remove()) is silently skipped rather
+        // than reported as a malformed name. `offset` is hex, matching
+        // get_target_dir()'s own doc comment.
+        std::vector<ChunkGroup> found;
+        for (const auto& uuid_entry :
              std::filesystem::directory_iterator(location_path)) {
-            if (!entry.is_directory()) {
+            if (!uuid_entry.is_directory()) {
                 continue;
             }
-            std::string dirname = entry.path().filename().string();
-
+            std::string uuid_name = uuid_entry.path().filename().string();
             RawstdUUID uuid;
-            int res = rawstd_uuid_from_string(&uuid, dirname.c_str());
+            int res = rawstd_uuid_from_string(&uuid, uuid_name.c_str());
             if (res < 0) {
                 rawstd_warning(
-                    "%s: %s\n", strerror(-res), entry.path().string().c_str()
+                    "%s: %s\n", strerror(-res),
+                    uuid_entry.path().string().c_str()
                 );
                 continue;
             }
 
-            targets.push_back(uuid);
+            std::vector<uint64_t> offsets;
+            for (const auto& offset_entry :
+                 std::filesystem::directory_iterator(uuid_entry.path())) {
+                if (!offset_entry.is_directory()) {
+                    continue;
+                }
+                std::string offset_name = offset_entry.path().filename();
+                char* endptr = nullptr;
+                errno = 0;
+                uint64_t offset = strtoull(offset_name.c_str(), &endptr, 16);
+                if (errno != 0 || endptr == offset_name.c_str() ||
+                    *endptr != '\0') {
+                    errno = 0;
+                    continue;
+                }
+                if (!std::filesystem::exists(offset_entry.path() / "data")) {
+                    continue;
+                }
+
+                offsets.push_back(offset);
+            }
+            if (offsets.empty()) {
+                continue;
+            }
+
+            std::sort(offsets.begin(), offsets.end());
+            found.push_back(ChunkGroup{uuid, std::move(offsets)});
         }
 
         std::sort(
-            targets.begin(), targets.end(),
-            [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-                return rawstd_uuid_cmp(&lhs, &rhs) < 0;
+            found.begin(), found.end(),
+            [](const ChunkGroup& lhs, const ChunkGroup& rhs) {
+                return rawstd_uuid_cmp(&lhs.id, &rhs.id) < 0;
             }
         );
 
-        targets.erase(
-            targets.begin(),
+        found.erase(
+            found.begin(),
             std::upper_bound(
-                targets.begin(), targets.end(), input_token,
-                [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
-                    return rawstd_uuid_cmp(&lhs, &rhs) < 0;
+                found.begin(), found.end(), input_token,
+                [](const RawstdUUID& lhs, const ChunkGroup& rhs) {
+                    return rawstd_uuid_cmp(&lhs, &rhs.id) < 0;
                 }
             )
         );
@@ -176,9 +206,14 @@ rawstd::Task<void> Backend::list(
             limit = std::min(limit, rawstor_opts_list_limit());
         }
 
-        if (targets.size() > limit) {
-            targets.resize(limit);
-            token = targets.back();
+        bool capped = found.size() > limit;
+        if (capped) {
+            found.resize(limit);
+        }
+
+        chunks = std::move(found);
+        if (capped) {
+            token = chunks.back().id;
         }
     } catch (const std::system_error&) {
         throw;

@@ -1,6 +1,7 @@
 #ifndef RAWSTOR_SLOT_HPP
 #define RAWSTOR_SLOT_HPP
 
+#include "backend.hpp"
 #include "telemetry.hpp"
 
 #include <rawstor/location.h>
@@ -22,8 +23,6 @@
 #include <cstddef>
 
 namespace rawstor {
-
-class Backend;
 
 class Slot final {
 private:
@@ -91,7 +90,7 @@ private:
     // flows straight through with no caller-supplied template argument
     // and no faked value for the void case. The trailing pack is wrapped
     // in std::type_identity_t to keep it a non-deduced context: some
-    // wrapped methods (e.g. Backend::list()'s out-params) take
+    // wrapped methods (e.g. Backend::list_chunks()'s out-params) take
     // references, and without this, deducing Args a second time from
     // the call arguments themselves (plain by-value here) would conflict
     // with what `method`'s own type already fixed them to.
@@ -136,8 +135,9 @@ public:
     // data-path methods below -- same shape as the matching Backend
     // methods they wrap, since a connect()ed Slot is (like a
     // Backend) already bound to one location.
-    rawstd::Task<void>
-    list(unsigned int limit, std::vector<RawstdUUID>& uuids, RawstdUUID& token);
+    rawstd::Task<void> list_chunks(
+        unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
+    );
 
     rawstd::Task<void>
     create(const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp);

@@ -1299,6 +1299,30 @@ int rawstor_target_id(const char* target, char* buf, size_t size) noexcept {
     }
 }
 
+int rawstor_target_offsets(
+    const char* target, uint64_t* offsets, size_t size
+) noexcept {
+    try {
+        rawstor::Target t(rawstd::URI::uriv(target));
+        std::vector<std::vector<rawstd::URI>> chunks =
+            chunk_uris_by_offset(t.uris());
+        for (size_t i = 0; i < chunks.size() && i < size; ++i) {
+            offsets[i] = extract_offset(chunks[i].front());
+        }
+        return static_cast<int>(chunks.size());
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
 int rawstor_target_snapshot_id(
     const char* target, char* buf, size_t size
 ) noexcept {

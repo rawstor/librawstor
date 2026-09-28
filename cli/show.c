@@ -109,7 +109,6 @@ show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
             char buf[256];
             rawstd_bytes_to_size(meta->spec.size, buf, sizeof(buf));
             printf("    size: %s\n", buf);
-            printf("    mirrors: %u\n", meta->spec.width);
             printf(
                 "    state: %s\n", sync_state_to_string(meta->sync_state.state)
             );
