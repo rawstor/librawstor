@@ -302,40 +302,15 @@ static int resolve_chunk(
     return EXIT_SUCCESS;
 }
 
-/* How many distinct chunks `target` actually names, from a caller of
- * rawstor_target_meta()'s own point of view: `spec`'s own size/chunk_size
- * describe the object's real shape the same way MultiChunkObject routes
- * I/O by it, but for an mds:// target that real shape isn't reflected in
- * `target`'s own flat URI list at all -- rawstor_target_meta() itself
- * only ever accepts offset 0 there (its own doc comment) even though
- * spec.size/chunk_size describe a real, multi-chunk object. So before
- * trusting size/chunk_size to decide how many chunks to resolve, cross-
- * check that `target`'s own URI count actually equals
- * chunk_count * spec->width -- every chunk of a target this call can
- * really address carries exactly that many URIs (Target::create()'s own
- * validation); if it doesn't, `target` isn't decomposable at this level,
- * so treat it as a single, opaque chunk instead. */
-static uint64_t rawstor_cli_chunk_count(
-    const char* target, const struct RawstorObjectSpec* spec
-) {
-    uint64_t chunk_count =
-        spec->chunk_size == 0
-            ? 1
-            : (spec->size + spec->chunk_size - 1) / spec->chunk_size;
-    if (chunk_count <= 1 || spec->width == 0) {
-        return 1;
-    }
-
-    size_t uri_count = 1;
-    for (const char* p = target; *p != '\0'; p++) {
-        if (*p == ',') {
-            uri_count++;
-        }
-    }
-    if (uri_count != (size_t)chunk_count * spec->width) {
-        return 1;
-    }
-    return chunk_count;
+/* How many distinct chunks `target` actually names -- purely syntactic,
+ * off `target`'s own comma/offset-segment shape (rawstor_target_offsets(),
+ * no I/O, its own doc comment). An mds:// target (a single URI, no offset
+ * segment) is always exactly one entry -- resolve it as one opaque chunk
+ * rather than the many its own spec.size/chunk_size describe, the same
+ * fallback an unexpected/invalid target gets. */
+static uint64_t count_chunks(const char* target) {
+    int n = rawstor_target_offsets(target, NULL, 0);
+    return n > 0 ? (uint64_t)n : 1;
 }
 
 int rawstor_cli_resolve(
@@ -365,7 +340,7 @@ int rawstor_cli_resolve(
         return resolve_chunk(target, winners, num_winners, offset);
     }
 
-    uint64_t chunk_count = rawstor_cli_chunk_count(target, &spec);
+    uint64_t chunk_count = count_chunks(target);
     for (uint64_t i = 0; i < chunk_count; i++) {
         int ret =
             resolve_chunk(target, winners, num_winners, i * spec.chunk_size);

@@ -19,7 +19,7 @@
  * list()+spec() loop below -- only when stderr is a terminal, so piped/
  * logged output stays clean. \x1b[K (clear to end of line) means each
  * update doesn't need to know how long the previous one was. */
-static void rawstor_cli_info_progress(int tty, uint64_t count) {
+static void info_progress(int tty, uint64_t count) {
     if (!tty) {
         return;
     }
@@ -29,10 +29,10 @@ static void rawstor_cli_info_progress(int tty, uint64_t count) {
     fflush(stderr);
 }
 
-/* Erases whatever rawstor_cli_info_progress() left on the line -- call
+/* Erases whatever info_progress() left on the line -- call
  * before anything else touches stderr (an error message) or stdout (the
  * final report), or that output would run into the progress line. */
-static void rawstor_cli_info_progress_clear(int tty) {
+static void info_progress_clear(int tty) {
     if (!tty) {
         return;
     }
@@ -45,7 +45,7 @@ static void rawstor_cli_info_progress_clear(int tty) {
  * have_logical is set, an extra "used (logical)" line (the sum of every
  * object's own declared size -- see info.h's own doc comment) is printed
  * right after "used", additional to it rather than replacing it. */
-static void rawstor_cli_info_print(
+static void info_print(
     const char* location, uint64_t used, uint64_t total, char unit,
     int have_logical, uint64_t logical_used
 ) {
@@ -87,7 +87,7 @@ static void rawstor_cli_info_print(
     printf("use%%: %.1f%%\n", percent);
 }
 
-static int rawstor_cli_info_physical(const char* location, char unit) {
+static int info_physical(const char* location, char unit) {
     struct RawstorLocationInfo info;
 
     RawstorCliOp op;
@@ -110,7 +110,7 @@ static int rawstor_cli_info_physical(const char* location, char unit) {
         return rawstd_exitcode_for_errno((int)-result);
     }
 
-    rawstor_cli_info_print(location, info.used, info.total, unit, 0, 0);
+    info_print(location, info.used, info.total, unit, 0, 0);
 
     return EXIT_SUCCESS;
 }
@@ -120,7 +120,7 @@ static int rawstor_cli_info_physical(const char* location, char unit) {
  * see info.h's own doc comment for why the two can diverge. Reuses the
  * same op/queue across the whole list()+spec()+info() sequence, same as
  * rawstor_cli_list()'s own pagination loop. */
-static int rawstor_cli_info_logical(const char* location, char unit) {
+static int info_logical(const char* location, char unit) {
     int tty = isatty(STDERR_FILENO);
 
     RawstorCliOp op;
@@ -141,7 +141,7 @@ static int rawstor_cli_info_logical(const char* location, char unit) {
         );
         ssize_t result = rawstor_cli_op_wait(&op, sres);
         if (result < 0) {
-            rawstor_cli_info_progress_clear(tty);
+            info_progress_clear(tty);
             fprintf(
                 stderr, "rawstor_location_list() failed: %s\n",
                 strerror((int)-result)
@@ -163,10 +163,10 @@ static int rawstor_cli_info_logical(const char* location, char unit) {
                  * under concurrent use, not a real failure. Just excludes
                  * it from the sum rather than aborting the whole count. */
                 if ((int)-spec_result == ENOENT) {
-                    rawstor_cli_info_progress(tty, ++count);
+                    info_progress(tty, ++count);
                     continue;
                 }
-                rawstor_cli_info_progress_clear(tty);
+                info_progress_clear(tty);
                 fprintf(
                     stderr, "rawstor_target_spec() failed for %s: %s\n", *it,
                     strerror((int)-spec_result)
@@ -176,7 +176,7 @@ static int rawstor_cli_info_logical(const char* location, char unit) {
                 return rawstd_exitcode_for_errno((int)-spec_result);
             }
             logical_used += spec.size;
-            rawstor_cli_info_progress(tty, ++count);
+            info_progress(tty, ++count);
         }
         rawstor_string_list_delete(targets);
     } while (!rawstor_pagination_token_empty(&token));
@@ -188,7 +188,7 @@ static int rawstor_cli_info_logical(const char* location, char unit) {
     );
     ssize_t info_result = rawstor_cli_op_wait(&op, info_sres);
     rawstor_cli_op_destroy(&op);
-    rawstor_cli_info_progress_clear(tty);
+    info_progress_clear(tty);
     if (info_result < 0) {
         fprintf(
             stderr, "rawstor_location_info() failed: %s\n",
@@ -197,16 +197,14 @@ static int rawstor_cli_info_logical(const char* location, char unit) {
         return rawstd_exitcode_for_errno((int)-info_result);
     }
 
-    rawstor_cli_info_print(
-        location, info.used, info.total, unit, 1, logical_used
-    );
+    info_print(location, info.used, info.total, unit, 1, logical_used);
 
     return EXIT_SUCCESS;
 }
 
 int rawstor_cli_info(const char* location, char unit, int logical) {
     if (logical) {
-        return rawstor_cli_info_logical(location, unit);
+        return info_logical(location, unit);
     }
-    return rawstor_cli_info_physical(location, unit);
+    return info_physical(location, unit);
 }
