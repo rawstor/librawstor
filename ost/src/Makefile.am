@@ -8,8 +8,7 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               -I$(top_srcdir)/ost/include \
               -I$(top_srcdir)/librawstd/include \
               -I$(top_srcdir)/librawio/include \
-              -I$(top_srcdir)/include \
-              -I$(top_srcdir)/src
+              -I$(top_srcdir)/include
 
 AM_LDFLAGS = $(ASAN_LDFLAGS) \
              -pthread

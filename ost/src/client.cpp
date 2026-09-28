@@ -152,16 +152,15 @@ int open_trampoline(ssize_t result, void* data) {
     return 0;
 }
 
-// `uris` already has any bound version folded into its own trailing path
-// segment (Client::_targets()'s own `snapshot_id` parameter, called by
-// _set_object() below) -- rawstor_target_open()'s `flags` is the only
+// `target` already has any bound version folded into its own trailing
+// path segment (Client::_targets()'s own `snapshot_id` parameter, called
+// by _set_object() below) -- rawstor_target_open()'s `flags` is the only
 // other input this needs (a bound-version target can only be opened
 // RAWSTOR_READONLY, docs/mds.md, "Snapshots"). Taken by value: a
 // coroutine parameter declared as a reference is not lifetime-extended
 // past the initiating call the way an ordinary function's would be.
 rawstd::Task<RawstorObject*>
-co_target_open(RawIOQueue* queue, std::vector<rawstd::URI> uris, int flags) {
-    std::string target = rawstd::URI::uris(uris);
+co_target_open(RawIOQueue* queue, std::string target, int flags) {
     rawstd::CallbackAwaitable<void> awaiter;
     RawstorObject* object = nullptr;
     int res = rawstor_target_open(
@@ -1425,7 +1424,7 @@ rawstd::DetachedTask Client::_set_object(
     RawstorOSTFrameBasicPayload payload
 ) {
     RawIOQueue* queue;
-    std::vector<rawstd::URI> targets;
+    std::string target;
     {
         std::shared_ptr<Client> client = co_await _close_current_object(weak);
         if (client == nullptr) {
@@ -1441,14 +1440,16 @@ rawstd::DetachedTask Client::_set_object(
         memcpy(
             snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id)
         );
-        targets = client->_targets(uuid, payload.offset, snapshot_id);
+        target = rawstd::URI::uris(
+            client->_targets(uuid, payload.offset, snapshot_id)
+        );
     }
 
     RawstorObject* object = nullptr;
     int error = 0;
     try {
         object = co_await co_target_open(
-            queue, targets, static_cast<int>(payload.val)
+            queue, target, static_cast<int>(payload.val)
         );
     } catch (const std::system_error& e) {
         error = e.code().value();
