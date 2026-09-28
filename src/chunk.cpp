@@ -152,8 +152,8 @@ namespace rawstor {
 // same as _reconcile_sync_set()'s own doc comment on why a refusal here
 // is safe to let unwind through a throwing constructor.
 Chunk::Chunk(
-    Private, rawio::Queue& queue, RawstdUUID id, uint64_t offset, bool readonly,
-    RawstorObjectSpec spec, std::vector<Member> members
+    Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
+    bool readonly, RawstorObjectSpec spec, std::vector<Member> members
 ) :
     _queue(queue),
     _id(id),

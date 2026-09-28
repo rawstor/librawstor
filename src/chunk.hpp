@@ -380,7 +380,7 @@ public:
     meta(rawio::Queue& queue, const std::vector<rawstd::URI>& uris);
 
     Chunk(
-        Private, rawio::Queue& queue, RawstdUUID id, uint64_t offset,
+        Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
         bool readonly, RawstorObjectSpec spec, std::vector<Member> members
     );
     Chunk(const Chunk&) = delete;
