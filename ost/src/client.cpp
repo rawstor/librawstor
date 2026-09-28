@@ -2,9 +2,6 @@
 
 #include <ost/server.hpp>
 
-#include "object.hpp"
-#include "target.hpp"
-
 #include <rawio/queue.hpp>
 
 #include <rawstd/coro.hpp>
@@ -147,23 +144,34 @@ void append_list_entries(
 // comment for the general shape this follows.
 // ---------------------------------------------------------------------
 
-// Uses rawstor::Target directly (not the rawstor_target_open() C API):
-// this is the one place in ost/ that needs a snapshot_id-bound open
-// (docs/mds.md, "Snapshots" -- SET_OBJECT's own snapshot_id field already
-// carries it, but the public C API has no way to pass it through).
+// rawstor_target_open()'s callback delivers a single ssize_t (0 or
+// negative errno) -- same shape as close_trampoline()/flush_trampoline()/
+// close_fd_trampoline()/result_trampoline() below.
+int open_trampoline(ssize_t result, void* data) {
+    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
+    return 0;
+}
+
 // `uris` already has any bound version folded into its own trailing path
 // segment (Client::_targets()'s own `snapshot_id` parameter, called by
-// _set_object() below) -- Target::open() itself takes no `snapshot_id`
-// parameter of its own. Taken by value for the same reason a by-value
-// std::string used to be here: a coroutine parameter declared as a
-// reference is not lifetime-extended past the initiating call the way an
-// ordinary function's would be.
+// _set_object() below) -- rawstor_target_open()'s `flags` is the only
+// other input this needs (a bound-version target can only be opened
+// RAWSTOR_READONLY, docs/mds.md, "Snapshots"). Taken by value: a
+// coroutine parameter declared as a reference is not lifetime-extended
+// past the initiating call the way an ordinary function's would be.
 rawstd::Task<RawstorObject*>
 co_target_open(RawIOQueue* queue, std::vector<rawstd::URI> uris, int flags) {
-    rawstor::Target t(rawstd::URI::uris(uris));
-    std::unique_ptr<rawstor::Object> object =
-        co_await t.open(*static_cast<rawio::Queue*>(queue), flags);
-    co_return object.release();
+    std::string target = rawstd::URI::uris(uris);
+    rawstd::CallbackAwaitable<void> awaiter;
+    RawstorObject* object = nullptr;
+    int res = rawstor_target_open(
+        queue, target.c_str(), flags, &object, open_trampoline, &awaiter
+    );
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    co_await awaiter;
+    co_return object;
 }
 
 int close_trampoline(ssize_t result, void* data) {
