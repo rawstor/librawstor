@@ -806,6 +806,30 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
     return py_target;
 }
 
+// One rawstor_target_create_snapshot() attempt against a fresh queue,
+// driven to completion synchronously -- returns its own result unchanged
+// (the snapshot target string's own length on success, negative errno on
+// failure; rawstor_sync_op_init()'s own failure already comes back in
+// that same shape, a negative errno).
+static ssize_t try_create_snapshot(
+    const char* target, const char* snapshot_id, char* snapshot_target,
+    size_t size
+) {
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        return ires;
+    }
+
+    int sres = rawstor_target_create_snapshot(
+        op.queue, target, snapshot_id, snapshot_target, size,
+        rawstor_sync_op_cb, &op
+    );
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
+    return res;
+}
+
 // `snapshot_id` NULL (Python None): the version id is either already bound
 // in `target`'s own path, a caller-chosen one, or a freshly generated one
 // -- see rawstor_target_create_snapshot()'s own doc comment for the three
@@ -820,33 +844,35 @@ py_rawstor_object_create_snapshot(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
 
-    char snapshot_target[65536];
-
-    RawstorSyncOp op;
-    int ires = rawstor_sync_op_init(&op);
-    if (ires < 0) {
-        set_os_error(-ires);
-        return NULL;
-    }
-    int sres = rawstor_target_create_snapshot(
-        op.queue, target, snapshot_id, snapshot_target, sizeof(snapshot_target),
-        rawstor_sync_op_cb, &op
-    );
-    ssize_t res = rawstor_sync_op_wait(&op, sres);
-    rawstor_sync_op_destroy(&op);
+    // NULL/0 asks for the snapshot target string's own length alone --
+    // the same snprintf(NULL, 0, ...) idiom rawstor_target_create_snapshot()
+    // itself just forwards to (target.cpp), needing no I/O and creating
+    // nothing. The second call, into a buffer sized exactly for that
+    // length, does the real CoW.
+    ssize_t res = try_create_snapshot(target, snapshot_id, NULL, 0);
     if (res < 0) {
         set_os_error((int)-res);
         return NULL;
     }
-    if ((size_t)res >= sizeof(snapshot_target)) {
-        PyErr_SetString(
-            PyExc_ValueError,
-            "rawstor_target_create_snapshot(): output truncated"
-        );
+
+    char* snapshot_target = malloc((size_t)res + 1);
+    if (!snapshot_target) {
+        PyErr_NoMemory();
         return NULL;
     }
 
-    return PyUnicode_FromString(snapshot_target);
+    res = try_create_snapshot(
+        target, snapshot_id, snapshot_target, (size_t)res + 1
+    );
+    if (res < 0) {
+        free(snapshot_target);
+        set_os_error((int)-res);
+        return NULL;
+    }
+
+    PyObject* py_result = PyUnicode_FromString(snapshot_target);
+    free(snapshot_target);
+    return py_result;
 }
 
 PyObject* py_rawstor_object_spec(PyObject* Py_UNUSED(self), PyObject* args) {

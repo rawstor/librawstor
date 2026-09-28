@@ -1170,7 +1170,6 @@ rawstd::DetachedTask Client::_create_snapshot(
     int result = 0;
     try {
         std::string target = rawstd::URI::uris(targets);
-        rawstd::CallbackAwaitable<void> awaiter;
         // `target` already carries the bound snapshot_id (_targets() above)
         // -- rawstor_target_create_snapshot() takes that as-is (its own
         // mode 1, doc comment) and does the actual CoW; create() itself no
@@ -1179,10 +1178,27 @@ rawstd::DetachedTask Client::_create_snapshot(
         // entry point for this. The resulting target string it also
         // returns is discarded -- this wire command only reports
         // success/failure.
-        char snapshot_target[65536];
+        //
+        // NULL/0 asks for the snapshot target string's own length alone --
+        // the same snprintf(NULL, 0, ...) idiom rawstor_target_create_
+        // snapshot() itself just forwards to (target.cpp), needing no I/O
+        // and creating nothing. send_trampoline() (above) already matches
+        // its callback shape (ssize_t result/data). The second call, into
+        // a buffer sized exactly for that length, does the real CoW.
+        rawstd::CallbackAwaitable<size_t> length_awaiter;
+        int lres = rawstor_target_create_snapshot(
+            client->_queue, target.c_str(), nullptr, nullptr, 0,
+            send_trampoline, &length_awaiter
+        );
+        if (lres < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-lres);
+        }
+        std::vector<char> snapshot_target(co_await length_awaiter + 1);
+
+        rawstd::CallbackAwaitable<void> awaiter;
         int res = rawstor_target_create_snapshot(
-            client->_queue, target.c_str(), nullptr, snapshot_target,
-            sizeof(snapshot_target), result_trampoline, &awaiter
+            client->_queue, target.c_str(), nullptr, snapshot_target.data(),
+            snapshot_target.size(), result_trampoline, &awaiter
         );
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
