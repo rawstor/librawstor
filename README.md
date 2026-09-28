@@ -140,7 +140,7 @@ multiple in-flight requests on a virtqueue may complete out of order.
 | `-h, --help` | Show help message and exit. |
 | `-s, --socket-path PATH` | Location of the vhost-user Unix domain socket. |
 | `TARGET` | Comma‑separated list of rawstor backend targets (see [Concepts](https://github.com/rawstor/librawstor/blob/main/docs/concepts.md)). |
-| `--queue-size SIZE` | RawIO queue (`io_uring`) depth of each virtqueue's own queue. Default: `256`. |
+| `--queue-size SIZE` | RawIO queue (`io_uring`) depth of each virtqueue's own queue. Default: `4096`. |
 | `--num-queues N` | Number of virtqueues advertised to the guest, each serviced by its own thread and its own connection to `TARGET`. The guest picks how many of these it actually uses (typically up to its vCPU count) via QEMU's own `num-queues=`. Default: `4`. |
 | `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest; write-through makes every write durable on completion, writeback relies on the guest issuing an explicit flush. |
 | `--readonly` | Export the object read-only: advertises `VIRTIO_BLK_F_RO` to the guest and opens `TARGET` with `RAWSTOR_READONLY` (no mirror write quorum needed; writes fail). Required to export a snapshot target. |

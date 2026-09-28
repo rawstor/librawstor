@@ -15,7 +15,7 @@ ConfigurationDirectory=rawstor-mds
 Environment=BIND_ADDR=0.0.0.0:7776
 # rawstor-mds's own --queue-size (see its --help); override in
 # /etc/rawstor-mds.conf below rather than editing this file.
-Environment=QUEUE_SIZE=256
+Environment=QUEUE_SIZE=4096
 # SQLite database file (created if missing). Override in
 # /etc/rawstor-mds.conf below.
 Environment=DB_PATH=/var/lib/rawstor-mds/mds.db

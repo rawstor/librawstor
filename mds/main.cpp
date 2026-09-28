@@ -25,7 +25,7 @@
 #include <cstring>
 #include <sysexits.h>
 
-#define DEFAULT_QUEUE_SIZE 256
+#define DEFAULT_QUEUE_SIZE 4096
 
 namespace {
 

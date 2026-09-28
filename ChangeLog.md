@@ -109,6 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `rawstor-ost --queue-size`'s default raised from 256 to 4096, now that per-session write concurrency is bounded (see Fixed below) and no longer needs a small ring to keep worst-case exposure in check.
+- `rawstor-vhost`/`rawstor-vhost-qemu`/`rawstor-mds`/`rawstor testio`'s own `--queue-size` defaults raised from 256 to 4096 to match `rawstor-ost`'s own default above.
 - `rawstor-ost.service` exposes `--queue-size`/`--write-throttle-limit`/`--write-backlog-capacity` as the `QUEUE_SIZE`/`WRITE_THROTTLE_LIMIT`/`WRITE_BACKLOG_CAPACITY` environment variables, overridable in `/etc/rawstor-ost.conf` like the rest of its tuning knobs.
 
 ### Fixed
