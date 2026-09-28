@@ -189,6 +189,8 @@ AC_CONFIG_FILES(
     [ost/src/Makefile]
     [ost/tests/Makefile]
     [mds/Makefile]
+    [mds/src/Makefile]
+    [mds/tests/Makefile]
     [tests/Makefile]
     [deb/librawstor/control]
     [deb/python3-rawstor/control]

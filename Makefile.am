@@ -106,6 +106,9 @@ test: all
 	fi
 	make -C tests test
 	make -C ost test
+	@if [ "x$(WITH_SQLITE3)" = "xyes" ]; then \
+	  make -C mds test; \
+	fi
 	@if [ "x$(WITH_PYTHON3)" = "xyes" ]; then \
 	  make -C pyrawstor test; \
 	fi

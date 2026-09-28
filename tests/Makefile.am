@@ -47,8 +47,8 @@ test_all_SOURCES += object_env.cpp \
                     object_env.hpp \
                     test_object.cpp
 test_all_LDADD += $(top_builddir)/ost/src/libost.la \
-                  $(top_builddir)/mds/libmds.la \
-                  $(top_builddir)/mds/libmdsstore.la \
+                  $(top_builddir)/mds/src/libmds.la \
+                  $(top_builddir)/mds/src/libmdsstore.la \
                   $(SQLITE3_LIBS) \
                   -lstdc++
 endif

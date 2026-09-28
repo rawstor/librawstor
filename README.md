@@ -358,6 +358,57 @@ vduse`), and attaching it to the vDPA bus requires the `vdpa` tool
 (`iproute2`) and `CAP_NET_ADMIN` -- neither is something `rawstor-vduse`
 itself does; both are external, one-time-per-device administrative steps.
 
+## rawstor-mds – Metadata Server
+
+`rawstor-mds` is the metadata server behind `mds://<host>:<port>/<uuid>`
+targets: a logical object split into fixed-size chunks, each independently
+placed (and optionally mirrored) across a static OST topology, opened/
+read/written through the same `rawstor_target_*()`/`rawstor` CLI surface
+as a plain object (see [MDS design](https://github.com/rawstor/librawstor/blob/main/docs/mds.md)). A single instance owns the explicit
+chunk map (SQLite, WAL journal) and the static topology config for its own
+cluster; it is not in the data path -- `rawstor_target_open()` talks to
+the placed OSTs directly once it has resolved an object's own chunk map.
+
+### Usage
+
+`rawstor-mds [options] -b ADDR -d DBPATH -t TOPOLOGY`
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `-h, --help` | Show help message and exit. |
+| `-b, --bind ADDR` | Bind address in `<ip>:<port>` format (e.g., `127.0.0.1:7776`). |
+| `-d, --db PATH` | SQLite database file holding the chunk map (created if missing). |
+| `-t, --topology PATH` | Static topology config file: one `ost <uuid> <host:port> <weight> <dc>/<rack>/<server>` line per OST (see [MDS design](https://github.com/rawstor/librawstor/blob/main/docs/mds.md)). |
+| `--queue-size SIZE` | RawIO queue (`io_uring`) depth. Default: `4096`. |
+| `-r, --reconstruct` | Rebuild the chunk map from a LIST+META scan of every OST in the topology before serving -- for recovering from a lost or corrupted database. |
+
+### Examples
+
+Serve a topology of two OSTs:
+```bash
+cat > topology.conf <<EOF
+ost 018f4e2a-1000-7000-8000-000000000001 host1:7777 100 dc1/rack1/host1
+ost 018f4e2a-1000-7000-8000-000000000002 host2:7777 100 dc1/rack1/host2
+EOF
+rawstor-mds -b 0.0.0.0:7776 -d /var/lib/rawstor-mds/mds.db -t topology.conf
+```
+
+Create and grow an `mds://` object:
+```bash
+rawstor create -t mds://127.0.0.1:7776/018f4e2a-2000-7000-8000-000000000001 --size=1G --mirrors=1
+rawstor resize mds://127.0.0.1:7776/018f4e2a-2000-7000-8000-000000000001 --size=2G
+```
+
+### Packaging
+
+`rawstor-mds` ships in its own `rawstor-mds` deb/rpm package (needs
+`sqlite3`; skip building it with `--without-sqlite3`), along with the
+`rawstor-mds.service` systemd unit. The admin must author the topology
+config (the OSTs and placement domains for the cluster) before the
+service's first start.
+
 ## Testing
 
 ```
