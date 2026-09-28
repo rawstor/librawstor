@@ -10,7 +10,9 @@ Group=rawstor
 WorkingDirectory=/var/lib/rawstor-mds
 StateDirectory=rawstor-mds
 ConfigurationDirectory=rawstor-mds
-Environment=BIND_ADDR=0.0.0.0:7778
+# Below rawstor-ost's own default (7777): a host typically runs one MDS
+# but several OSTs, each needing its own port (7777, 7778, ... upward).
+Environment=BIND_ADDR=0.0.0.0:7776
 # rawstor-mds's own --queue-size (see its --help); override in
 # /etc/rawstor-mds.conf below rather than editing this file.
 Environment=QUEUE_SIZE=256

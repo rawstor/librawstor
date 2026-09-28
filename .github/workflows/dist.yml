@@ -369,8 +369,8 @@ jobs:
       # as the mds:// volume's one chunk member.
       run: |
         rawstor-mds --version
-        rawstor create -t mds://127.0.0.1:7778/018f4e2a-2222-7000-8000-000000000001 --size=1M --width=1
-        rawstor resize mds://127.0.0.1:7778/018f4e2a-2222-7000-8000-000000000001 --size=2M
+        rawstor create -t mds://127.0.0.1:7776/018f4e2a-2222-7000-8000-000000000001 --size=1M --width=1
+        rawstor resize mds://127.0.0.1:7776/018f4e2a-2222-7000-8000-000000000001 --size=2M
     - name: install-python3-rawstor
       run: sudo apt install -y ./python3-rawstor-${{ matrix.os }}.deb/python*-rawstor_*.deb
     - name: test-python3-rawstor
@@ -568,10 +568,10 @@ jobs:
         OST_PID=$!
         sleep 10
         echo "ost 018f4e2a-1111-7000-8000-000000000001 127.0.0.1:7777 100 dc1/rack1/host1" > /tmp/topology.conf
-        rawstor-mds --bind=127.0.0.1:7778 --db=/tmp/mds.db --topology=/tmp/topology.conf &
+        rawstor-mds --bind=127.0.0.1:7776 --db=/tmp/mds.db --topology=/tmp/topology.conf &
         MDS_PID=$!
         sleep 5
-        rawstor create -t mds://127.0.0.1:7778/018f4e2a-2222-7000-8000-000000000001 --size=1M --width=1
+        rawstor create -t mds://127.0.0.1:7776/018f4e2a-2222-7000-8000-000000000001 --size=1M --width=1
         kill ${MDS_PID} ${OST_PID}
     - name: install-python3-rawstor
       run: dnf -y install ./python3-rawstor-${{ matrix.os }}.rpm/python3*-rawstor-[0-9]*.rpm
