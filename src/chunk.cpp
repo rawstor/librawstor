@@ -272,11 +272,11 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // handler, same shape as Target::create()'s own rollback.
     std::exception_ptr eptr;
     bool fatal = false;
-    std::vector<std::unique_ptr<Slot>> cns(locations.size());
+    std::vector<std::unique_ptr<Slot>> slots(locations.size());
     size_t reachable = 0;
     for (size_t i = 0; i < connect_tasks.size(); ++i) {
         try {
-            cns[i] = co_await connect_tasks[i];
+            slots[i] = co_await connect_tasks[i];
             ++reachable;
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unreachable: %s\n", e.what());
@@ -297,7 +297,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // rethrown as-is, whichever of the two it was, rather than
     // reconstructed from a bare errno.
     if (fatal || reachable == 0) {
-        for (auto& slot : cns) {
+        for (auto& slot : slots) {
             if (!slot) {
                 continue;
             }
@@ -320,11 +320,11 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // that one member to unreachable (same F1/F4 tolerance as a connect
     // failure above), not a whole-create() failure by itself.
     std::vector<std::optional<rawstd::Task<RawstorObjectMeta>>> open_tasks(
-        cns.size()
+        slots.size()
     );
-    for (size_t i = 0; i < cns.size(); ++i) {
-        if (cns[i]) {
-            open_tasks[i] = cns[i]->open(id, offset, flags, snapshot_id);
+    for (size_t i = 0; i < slots.size(); ++i) {
+        if (slots[i]) {
+            open_tasks[i] = slots[i]->open(id, offset, flags, snapshot_id);
         }
     }
 
@@ -352,11 +352,11 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         }
 
         try {
-            co_await cns[i]->close();
+            co_await slots[i]->close();
         } catch (const std::exception& e2) {
             rawstd_warning("Chunk::create(): %s\n", e2.what());
         }
-        cns[i].reset();
+        slots[i].reset();
     }
 
     // Members are assembled only now, with connect/open all already
@@ -385,7 +385,9 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         MemberState state =
             opened[i] ? MemberState::IN_SYNC : MemberState::STALE;
         members.push_back(
-            Member{std::move(cns[i]), locations[i], state, metas[i], opened[i]}
+            Member{
+                std::move(slots[i]), locations[i], state, metas[i], opened[i]
+            }
         );
         if (opened[i]) {
             ++reachable;
