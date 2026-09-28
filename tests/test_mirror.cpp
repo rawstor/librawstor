@@ -986,7 +986,7 @@ TEST(MirrorOstTest, degrade_and_continue) {
  * (reconnect + up to rawstor_opts_io_attempts() attempts, 3 under this
  * suite's own test override -- see tests/main.cpp), which would need 3
  * scripted reconnect sessions per member just to reach the same end
- * state. is_permanent_backend_error() (src/connection.cpp) treats
+ * state. is_permanent_backend_error() (src/slot.cpp) treats
  * -EINVAL as non-retryable instead, so a single scripted response is
  * enough to reach "member excluded" -- the class of error is what this
  * test cares about, not this specific one.

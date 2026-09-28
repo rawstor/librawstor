@@ -60,7 +60,7 @@ int validate_result(size_t size, size_t result) noexcept {
 // rejection from the backend (response->body.res < 0) from a broken/
 // malformed wire -- every failure here just reconnects and retries, up
 // to the same rawstor_opts_io_attempts() budget, unless it's one
-// is_permanent_backend_error() (see connection.cpp) already knows can
+// is_permanent_backend_error() (see slot.cpp) already knows can
 // never succeed on retry. EBADMSG is one such body.res value: the OST
 // server sends it (see ost/src/client.cpp) only when the payload it just
 // received doesn't hash to what the client declared, meaning the client
@@ -1154,7 +1154,7 @@ rawstd::Task<void> Backend::_connect() {
     // transient one -- means "couldn't establish this backend"; all of
     // them surface as a plain std::system_error, which
     // Slot::_with_retry() reacts to by reconnecting and retrying
-    // (see connection.cpp).
+    // (see slot.cpp).
     if (!location().path().str().empty() && location().path().str() != "/") {
         rawstd_error("Empty path expected: %s\n", location().str().c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);

@@ -78,13 +78,13 @@ private:
     // handled the same way: reconnect via invalidate_backend() and retry,
     // up to rawstor_opts_io_attempts() times total, unless it's a
     // rejection retrying can never fix (e.g. ENOENT -- see
-    // is_permanent_backend_error() in connection.cpp), which fails
+    // is_permanent_backend_error() in slot.cpp), which fails
     // immediately without retrying at all. The one exception to
     // "reconnect before every retry" is a plain EBUSY: the backend itself
     // is fine, just backed up against the remote server's own write-
     // throttling, so reconnecting would only cost a round trip for no
     // benefit. Every retry also waits out an exponential backoff first --
-    // see backoff_delay_ms() in connection.cpp and the
+    // see backoff_delay_ms() in slot.cpp and the
     // rawstor_opts_io_retry_backoff_*() knobs it reads. `T`/`Args...` are
     // deduced straight from `method`'s own pointer-to-member-function
     // type (e.g. &Backend::pread), so the wrapped operation's natural
