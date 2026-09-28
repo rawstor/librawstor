@@ -93,8 +93,15 @@ public:
         unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
     ) = 0;
 
+    // `member_kind` is the copy being created's own placement identity
+    // (docs/mds.md, chunk_meta) -- not part of `sp` (RawstorObjectSpec's
+    // own doc comment, target.h): every real caller today creates a
+    // RAWSTOR_MEMBER_DATA copy (Target::create()'s own create_one()
+    // hardcodes it), a witness copy being a stage-3 operation on an
+    // already-existing chunk's quorum, never a create() of its own.
     virtual rawstd::Task<void> create(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
+        RawstorMemberKind member_kind
     ) = 0;
 
     // Removes the live version of `id`/`offset`. A version
@@ -115,14 +122,14 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     );
 
-    // The full creation-time shape (size/width/chunk_size/member_kind)
-    // plus this copy's own mirror consistency identity (state/epoch/
-    // sync_id and its ancestry, see docs/mirroring.md) -- the one
-    // metadata round trip every concrete Backend implements, no separate
-    // cheaper variant that only reports a subset (a caller that only
-    // wants the spec half, e.g. Chunk::spec(), just discards
-    // RawstorObjectMeta::sync_state). set_sync_state() persists a
-    // caller-supplied sync identity durably before returning.
+    // The full creation-time shape (size/width/chunk_size) plus this
+    // copy's own mirror consistency identity (state/epoch/sync_id and
+    // its ancestry, see docs/mirroring.md) and its own member_kind -- the
+    // one metadata round trip every concrete Backend implements, no
+    // separate cheaper variant that only reports a subset (a caller that
+    // only wants the spec half, e.g. Chunk::spec(), just discards
+    // RawstorObjectMeta::sync_state/member_kind). set_sync_state()
+    // persists a caller-supplied sync identity durably before returning.
     virtual rawstd::Task<RawstorObjectMeta>
     meta(const RawstdUUID& id, uint64_t offset) = 0;
 

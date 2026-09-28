@@ -148,8 +148,10 @@ public:
     rawstd::Task<void>
     resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size);
 
-    rawstd::Task<void>
-    create(const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp);
+    rawstd::Task<void> create(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
+        RawstorMemberKind member_kind
+    );
 
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset);
 

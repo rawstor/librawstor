@@ -837,7 +837,8 @@ public:
     BackendOpAllocate(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const RawstdUUID& id, uint64_t chunk_offset,
-        const RawstorObjectSpec& sp, const rawstd::TraceEvent& trace_event
+        const RawstorObjectSpec& sp, RawstorMemberKind member_kind,
+        const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "create", 0, 0),
         _request({
@@ -854,9 +855,8 @@ public:
                 .chunk_shift = chunk_size_to_shift(sp.chunk_size),
                 .stripe_width = sp.stripe_width,
                 .failure_domain = sp.failure_domain,
-                .member_kind = (uint8_t)sp.member_kind,
                 .width = (uint8_t)sp.width,
-                .reserved1 = 0,
+                .member_kind = (uint8_t)member_kind,
                 .reserved2 = 0,
             },
         }) {
@@ -1407,13 +1407,14 @@ rawstd::Task<void> Backend::list_chunks(
 // still one copy from its caller's point of view, same as every other
 // backend.
 rawstd::Task<void> Backend::create(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
+    RawstorMemberKind member_kind
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('c', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpAllocate> op = std::make_shared<BackendOpAllocate>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        id, offset, sp, trace_event
+        id, offset, sp, member_kind, trace_event
     );
     _add_op(op);
 
@@ -1489,8 +1490,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
                 static_cast<const void*>(response.data())
             );
         ret.spec.size = payload.size;
-        ret.spec.member_kind =
-            static_cast<RawstorMemberKind>(payload.member_kind);
+        ret.member_kind = static_cast<RawstorMemberKind>(payload.member_kind);
         // payload.width is the chunk's own persisted redundancy width
         // (docs/mds.md, chunk_meta) -- 0 for a plain object that was never
         // given one (Target::meta()'s own doc comment on the resulting

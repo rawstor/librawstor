@@ -432,7 +432,7 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
 
     for (const ScanRecord& r : records) {
         /* Witness records are metadata-only votes, not data slots. */
-        if (r.meta.spec.member_kind != RAWSTOR_MEMBER_DATA) {
+        if (r.meta.member_kind != RAWSTOR_MEMBER_DATA) {
             continue;
         }
 

@@ -107,7 +107,6 @@ rawstor::blk::Backend* open_blk_backend(
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     run(queue, target.create(queue, spec));
 

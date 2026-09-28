@@ -79,17 +79,6 @@ struct RawstorObjectSpec {
     uint64_t stripe_width;  /**< K; 0 = spread every chunk, 1 =
                                   object-local. */
     uint8_t failure_domain; /**< RAWSTOR_OBJ_DOMAIN_*; default server. */
-
-    /*
-     * Placement identity of a chunk object (docs/mds.md, chunk_meta),
-     * minus the parts a caller already has to hand: the resource's own
-     * name is self-describing (docs/mds.md, "Chunk identity" -- obj_id =
-     * id) -- a chunk's own id is exactly the id its own target
-     * string carries, and its logical_index is chunk_offset / chunk_size
-     * (the target string's own offset path segment,
-     * rawstor_target_offsets()). Nothing here needs to repeat either.
-     */
-    enum RawstorMemberKind member_kind;
 };
 
 /**
@@ -146,13 +135,21 @@ struct RawstorObjectSyncState {
  * this record -- unlike a RawstorObjectSpec obtained through
  * rawstor_target_spec()/_create(), which is used both ways) plus this
  * copy's mirror consistency identity (sync_state, the part
- * rawstor_target_set_sync_state() can actually change). `spec.width`
- * is filled in by rawstor_target_meta() itself the same way
- * rawstor_target_spec() fills its own -- the target's own per-chunk
- * copy count: computed locally (the number of URIs in the target
- * string) for a plain target, or trusted from whichever copy answered
- * for an mds:// one (its own configured redundancy, which no URI count
- * could reveal -- an mds:// target is always a single URI).
+ * rawstor_target_set_sync_state() can actually change) and its own
+ * member_kind. `spec.width` is filled in by rawstor_target_meta() itself
+ * the same way rawstor_target_spec() fills its own -- the target's own
+ * per-chunk copy count: computed locally (the number of URIs in the
+ * target string) for a plain target, or trusted from whichever copy
+ * answered for an mds:// one (its own configured redundancy, which no
+ * URI count could reveal -- an mds:// target is always a single URI).
+ *
+ * member_kind lives here rather than on RawstorObjectSpec: unlike every
+ * field RawstorObjectSpec actually carries, it isn't something every
+ * copy of a chunk agrees on by construction -- a witness (docs/mds.md,
+ * "Witness", stage 3) is a metadata-only member of the same chunk a
+ * RAWSTOR_MEMBER_DATA copy also belongs to, so it's a property of one
+ * particular copy, exactly like sync_state, not of the chunk's own
+ * shape.
  *
  * @see rawstor_target_meta
  * @see rawstor_target_set_sync_state
@@ -160,6 +157,7 @@ struct RawstorObjectSyncState {
 struct RawstorObjectMeta {
     struct RawstorObjectSpec spec;
     struct RawstorObjectSyncState sync_state;
+    enum RawstorMemberKind member_kind;
 };
 
 /**

@@ -99,7 +99,6 @@ open_object(rawio::Queue& queue, const rawstd::URI& location) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     run(queue, target.create(queue, spec));
 
@@ -316,9 +315,8 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
-        .reserved1 = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
         .reserved2 = 0,
     };
 

@@ -116,11 +116,12 @@ chunk_logical_size(uint64_t logical_size, uint64_t chunk_size, uint64_t index) {
 RawstorObjectSpec chunk_spec(const WireMap& map, uint64_t index) {
     RawstorObjectSpec sp{};
     sp.size = chunk_logical_size(map.logical_size, map.chunk_size, index);
-    // The chunk's own placement identity: member_kind plus the target
-    // string's own id/offset segment (chunk_slot_target() above) -- no
-    // separate id/logical_index/snapshot_id fields to stamp here any more
-    // (see RawstorObjectSpec's own doc comment in target.h).
-    sp.member_kind = RAWSTOR_MEMBER_DATA;
+    // The chunk's own placement identity: the target string's own
+    // id/offset segment (chunk_slot_target() above) -- no separate
+    // id/logical_index/snapshot_id fields to stamp here any more (see
+    // RawstorObjectSpec's own doc comment in target.h). member_kind
+    // itself lives on RawstorObjectMeta, not here (its own doc comment)
+    // -- create_one() (target.cpp) always creates RAWSTOR_MEMBER_DATA.
     sp.chunk_size = map.chunk_size;
     sp.width = map.policy.width;
     sp.failure_domain = map.policy.failure_domain;
@@ -137,7 +138,6 @@ RawstorObjectSpec chunk_spec(const WireMap& map, uint64_t index) {
 RawstorObjectSpec object_spec(const WireMap& map) {
     RawstorObjectSpec sp{};
     sp.size = map.logical_size;
-    sp.member_kind = RAWSTOR_MEMBER_DATA;
     sp.chunk_size = map.chunk_size;
     sp.width = map.policy.width;
     sp.failure_domain = map.policy.failure_domain;
@@ -180,8 +180,10 @@ Backend::list_chunks(unsigned int, std::vector<ChunkGroup>&, RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
-rawstd::Task<void>
-Backend::create(const RawstdUUID& id, uint64_t, const RawstorObjectSpec& sp) {
+rawstd::Task<void> Backend::create(
+    const RawstdUUID& id, uint64_t, const RawstorObjectSpec& sp,
+    RawstorMemberKind
+) {
     if (sp.size == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }

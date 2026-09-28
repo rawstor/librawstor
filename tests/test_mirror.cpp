@@ -294,7 +294,6 @@ TEST(MirrorQuorumTest, open_refused_without_quorum_n2) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -327,7 +326,6 @@ TEST(MirrorQuorumTest, all_mirrors_down_at_open_refused) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -384,7 +382,6 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -430,7 +427,6 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -489,7 +485,6 @@ TEST(MirrorQuorumTest, split_brain_refused) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -524,7 +519,6 @@ TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -564,7 +558,6 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -618,7 +611,6 @@ TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -683,7 +675,6 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -748,7 +739,6 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -768,7 +758,6 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target(2), member_spec), 0);
 
@@ -803,7 +792,6 @@ TEST(MirrorQuorumTest, clean_close_stable_identity) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -851,9 +839,8 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
-        .reserved1 = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
         .reserved2 = 0,
     };
 
@@ -935,9 +922,8 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
-        .reserved1 = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
         .reserved2 = 0,
     };
 
@@ -1020,9 +1006,8 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
-        .reserved1 = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
         .reserved2 = 0,
     };
 
@@ -1088,9 +1073,8 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
         .width = 1,
-        .reserved1 = 0,
+        .member_kind = RAWSTOR_MEMBER_DATA,
         .reserved2 = 0,
     };
 

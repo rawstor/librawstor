@@ -266,9 +266,8 @@ struct RawstorOSTFrameAllocatePayload {
     uint8_t chunk_shift;
     uint64_t stripe_width;  /* K; 0 = spread every chunk, 1 = object-local */
     uint8_t failure_domain; /* RAWSTOR_OBJ_DOMAIN_* */
-    uint8_t member_kind;    /* enum RawstorMemberKind, <rawstor/target.h> */
     uint8_t width;          /* redundancy: copies per chunk */
-    uint8_t reserved1;
+    uint8_t member_kind;    /* enum RawstorMemberKind, <rawstor/target.h> */
     uint32_t reserved2;
 } RAWSTOR_PACKED;
 
@@ -319,9 +318,8 @@ struct RawstorOSTFrameMetaPayload {
      * Rest of the placement identity (docs/mds.md, chunk_meta): reported
      * by META, ignored by SET_SYNC_STATE (the stored values always win).
      */
-    uint8_t member_kind; /* enum RawstorMemberKind, <rawstor/target.h> */
     uint8_t width;       /* redundancy: copies per chunk */
-    uint8_t reserved1;
+    uint8_t member_kind; /* enum RawstorMemberKind, <rawstor/target.h> */
     uint32_t reserved2;
 } RAWSTOR_PACKED;
 

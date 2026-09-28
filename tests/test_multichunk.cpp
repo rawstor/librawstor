@@ -89,7 +89,6 @@ TEST(MultiChunkTest, create_open_read_write_across_chunk_boundary) {
         .chunk_size = chunk_size,
         .stripe_width = 0,
         .failure_domain = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     run(*queue, target.create(*queue, spec));
 
@@ -172,7 +171,6 @@ TEST(MultiChunkTest, preadv_pwritev_across_chunk_boundary) {
         .chunk_size = chunk_size,
         .stripe_width = 0,
         .failure_domain = 0,
-        .member_kind = RAWSTOR_MEMBER_DATA,
     };
     run(*queue, target.create(*queue, spec));
 

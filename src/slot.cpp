@@ -609,7 +609,8 @@ Slot::resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size) {
 }
 
 rawstd::Task<void> Slot::create(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
+    RawstorMemberKind member_kind
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -618,7 +619,8 @@ rawstd::Task<void> Slot::create(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::create, id, offset, sp
+            func_name, trace_event, &Backend::create, id, offset, sp,
+            member_kind
         );
         _finish(t_call);
     } catch (...) {

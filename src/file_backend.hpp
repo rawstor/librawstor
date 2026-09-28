@@ -31,7 +31,8 @@ public:
     ) override;
 
     rawstd::Task<void> create(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
+        RawstorMemberKind member_kind
     ) override;
 
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset) override;

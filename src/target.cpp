@@ -208,7 +208,11 @@ rawstd::Task<void> create_one(
         co_await rawstor::Slot::create(queue, strip_path(target), 1);
     std::exception_ptr error;
     try {
-        co_await slot->create(id, offset, sp);
+        // Every target created through this, the ordinary create() path,
+        // is a data copy -- a witness (docs/mds.md, "Witness", stage 3)
+        // is a metadata-only member attached to an already-existing
+        // chunk's own quorum, never something create_one() itself builds.
+        co_await slot->create(id, offset, sp, RAWSTOR_MEMBER_DATA);
     } catch (...) {
         error = std::current_exception();
     }

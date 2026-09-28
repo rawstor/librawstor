@@ -62,8 +62,12 @@ public:
         unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
     ) override;
 
+    // `member_kind` is unused: an mds:// object is always created whole,
+    // via this same call -- always RAWSTOR_MEMBER_DATA for every one of
+    // its own chunks (create_one()'s own comment, target.cpp).
     rawstd::Task<void> create(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
+        RawstorMemberKind member_kind
     ) override;
 
     // Unregisters and destroys the whole object (docs/mds.md, deletion

@@ -362,7 +362,7 @@ TEST_F(ObjectStoreTest, reconstruct_skips_witness_records) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
     RawstorObjectMeta meta = make_meta(chunk_size, 1);
-    meta.spec.member_kind = RAWSTOR_MEMBER_WITNESS;
+    meta.member_kind = RAWSTOR_MEMBER_WITNESS;
 
     std::vector<ScanRecord> records{
         ScanRecord{make_id(), id, 0, meta},

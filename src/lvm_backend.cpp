@@ -381,7 +381,8 @@ rawstd::Task<void> Backend::_cleanup_staging_lvs() {
 }
 
 rawstd::Task<void> Backend::create(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
+    RawstorMemberKind member_kind
 ) {
     if (sp.size == 0) {
         rawstd_error("lvm: object size must be positive\n");
@@ -447,7 +448,7 @@ rawstd::Task<void> Backend::create(
     RawstorObjectSyncState sync_state{};
     sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     Backend::ChunkIdentity identity;
-    identity.member_kind = sp.member_kind;
+    identity.member_kind = member_kind;
     identity.width = static_cast<uint8_t>(sp.width);
     identity.chunk_size = sp.chunk_size;
     std::string tag =
@@ -686,9 +687,9 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     // rawstor.
     RawstorObjectMeta ret{};
     ret.spec.size = co_await _blk_size(id, offset);
-    ret.spec.member_kind = identity.member_kind;
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
+    ret.member_kind = identity.member_kind;
     ret.sync_state = sync_state;
 
     co_return ret;
