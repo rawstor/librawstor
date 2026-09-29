@@ -328,6 +328,11 @@ stability; resolved to a location URI via topology (v1: static config, see
 MGS) and sent along with it, so clients stay zero-config. The location is
 any single rawstor location URI (normally `ost://host:port`), handed to the
 client as is: moving an OST only changes its location, never its id.
+A topology entry holds exactly one URI (several are rejected): an entry
+is one placement slot, i.e. one member with one vote in the mirror
+quorum. To back one entry with several stores, run a `rawstor-ost` over
+them (`rawstor-ost -b ADDR file:///a,file:///b`) and list that OST — it
+mirrors across them itself and still counts as one member.
 
 ## Placement function
 
