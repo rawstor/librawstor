@@ -149,7 +149,7 @@ rawstd::Task<std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID>> list_one(
     ret.second = token;
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location, 1);
-    co_await slot->list_chunks(limit, ret.first, ret.second);
+    co_await slot->list_chunks(RawstdUUID{}, limit, ret.first, ret.second);
     co_await slot->close();
     co_return ret;
 }

@@ -139,9 +139,14 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
 }
 
 rawstd::Task<void> Backend::list_chunks(
-    unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
+    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+    RawstdUUID& token
 ) {
-    RawstdUUID input_token = token;
+    // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc
+    // comment): only that one uuid's own offset directories get scanned
+    // below, and `token` plays no part.
+    bool filtered = !rawstd_uuid_is_nil(&id);
+    RawstdUUID input_token = filtered ? RawstdUUID{} : token;
     chunks.clear();
     token = {};
     try {
@@ -171,6 +176,9 @@ rawstd::Task<void> Backend::list_chunks(
                     "%s: %s\n", strerror(-res),
                     uuid_entry.path().string().c_str()
                 );
+                continue;
+            }
+            if (filtered && rawstd_uuid_cmp(&uuid, &id) != 0) {
                 continue;
             }
 

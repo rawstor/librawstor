@@ -123,11 +123,10 @@ rawstor::blk::Backend* open_blk_backend(
     return static_cast<rawstor::blk::Backend*>(slot->get_next_backend().get());
 }
 
-// Backend::chunks()'s own default (one list_chunks() page positioned to
-// start at `id`) against `location`: a one-chunk object created before
-// and after the multi-chunk one under test, so the page really has to
-// skip past a smaller id and stop before a larger one rather than
-// getting lucky with a location holding nothing else.
+// Backend::list_chunks() filtered by one id, against `location`: a
+// one-chunk object created before and after the multi-chunk one under
+// test, so the filter really has to drop a smaller and a larger id rather
+// than getting lucky with a location holding nothing else.
 void expect_chunks_of_multichunk_object(const rawstd::URI& location) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(16);
     rawstor::Location loc({location});
@@ -150,21 +149,22 @@ void expect_chunks_of_multichunk_object(const rawstd::URI& location) {
     std::unique_ptr<rawstor::Slot> slot =
         run(*queue, rawstor::Slot::create(*queue, location, 1));
 
+    std::vector<rawstor::ChunkGroup> groups;
+    RawstdUUID token{};
+    run(*queue, slot->list_chunks(target.object_id(), 0, groups, token));
+    ASSERT_EQ(groups.size(), 1u);
+    RawstdUUID target_id = target.object_id();
+    EXPECT_EQ(rawstd_uuid_cmp(&groups.front().id, &target_id), 0);
     EXPECT_EQ(
-        run(*queue, slot->chunks(target.object_id())),
-        (std::vector<uint64_t>{0, 1u << 20, 2u << 20})
+        groups.front().offsets, (std::vector<uint64_t>{0, 1u << 20, 2u << 20})
     );
+    EXPECT_TRUE(rawstd_uuid_is_nil(&token));
 
+    // Nothing of it here at all: an empty listing, not an error.
     RawstdUUID missing;
     ASSERT_EQ(rawstd_uuid7_init(&missing), 0);
-    bool threw = false;
-    try {
-        run(*queue, slot->chunks(missing));
-    } catch (const std::system_error& e) {
-        threw = true;
-        EXPECT_EQ(e.code().value(), ENOENT);
-    }
-    EXPECT_TRUE(threw);
+    run(*queue, slot->list_chunks(missing, 0, groups, token));
+    EXPECT_TRUE(groups.empty());
 
     run(*queue, slot->close());
 }

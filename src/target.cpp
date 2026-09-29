@@ -162,7 +162,7 @@ chunk_uris_at_offset(const std::vector<rawstd::URI>& uris, uint64_t offset) {
 // reflected in its own syntax at all -- true only for an mds:// target
 // (mds_backend.hpp's own class doc comment): resolving any offset beyond
 // the trivial, always-present chunk 0 is then each location's own
-// Backend's job (Backend::meta()/Backend::chunks()'s own doc comments),
+// Backend's job (Backend::meta()/Backend::list_chunks()'s own doc comments),
 // never something `uris` itself could ever answer. Every other scheme is
 // fully self-describing on its own terms instead -- chunk addressing for
 // a plain target is entirely client-side (docs/concepts.md): a URI
@@ -355,16 +355,19 @@ rawstd::Task<std::vector<RawstorObjectMeta>> meta_one(
 }
 
 // One location's worth of resolve_chunks() below -- same one-off shape
-// as meta_one() above, for Slot::chunks() instead of Slot::meta(). Only
-// `id` is needed (Backend::chunks()'s own doc comment takes no offset).
+// as meta_one() above, for an id-filtered Slot::list_chunks() instead of
+// Slot::meta() (Backend::list_chunks()'s own doc comment). A location
+// holding no chunk of `id` at all is ENOENT here, so resolve_chunks()
+// moves on to the next one the same way it would for an unreachable one.
 rawstd::Task<std::vector<uint64_t>>
 chunks_one(rawio::Queue& queue, rawstd::URI location, RawstdUUID id) {
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location, 1);
-    std::vector<uint64_t> ret;
+    std::vector<rawstor::ChunkGroup> groups;
+    RawstdUUID token{};
     std::exception_ptr error;
     try {
-        ret = co_await slot->chunks(id);
+        co_await slot->list_chunks(id, 0, groups, token);
     } catch (...) {
         error = std::current_exception();
     }
@@ -372,7 +375,10 @@ chunks_one(rawio::Queue& queue, rawstd::URI location, RawstdUUID id) {
     if (error) {
         std::rethrow_exception(error);
     }
-    co_return ret;
+    if (groups.empty()) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+    co_return std::move(groups.front().offsets);
 }
 
 // One location's worth of resolve_member_locations() below -- same
@@ -1307,7 +1313,7 @@ Target::meta(rawio::Queue& queue, uint64_t offset) const {
 // plain, unchunked object -- either way, no backend needs asking, see
 // is_opaque()'s own doc comment) already names every one of them; an
 // opaque (mds://) target instead asks its own Backend directly
-// (resolve_chunks(), Backend::chunks()'s own doc comment).
+// (resolve_chunks(), Backend::list_chunks()'s own doc comment).
 rawstd::Task<std::vector<uint64_t>> Target::chunks(rawio::Queue& queue) const {
     if (!is_opaque(_uris)) {
         std::vector<std::vector<rawstd::URI>> groups =

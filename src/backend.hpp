@@ -89,8 +89,19 @@ public:
     // implements this by re-deriving its own full, sorted-by-id listing
     // each call (as today) and resuming from the first id strictly
     // greater than `token` (e.g. std::upper_bound).
+    //
+    // A non-nil `id` filters the listing down to that one id (nil lists
+    // everything): `chunks` comes back with at most that id's own
+    // ChunkGroup -- empty if this backend holds no chunk of it at all --
+    // and `token`/`limit` play no part (`token` comes back nil, nothing
+    // left to page through). This is how a caller learns every real
+    // chunk offset one object has (Target::chunks(),
+    // rawstor_target_chunks()), without a separate lookup of its own.
+    // mds::Backend, which can't enumerate objects at all (ENOTSUP for a
+    // nil `id`), answers the filtered form off its own WireMap instead.
     virtual rawstd::Task<void> list_chunks(
-        unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
+        RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+        RawstdUUID& token
     ) = 0;
 
     // `member_kind` is the copy being created's own placement identity
@@ -147,19 +158,6 @@ public:
     // direct-to-Slot fan-out (mds_backend.cpp).
     virtual rawstd::Task<std::vector<RawstorObjectMeta>>
     meta(const RawstdUUID& id, uint64_t offset) = 0;
-
-    // Every distinct chunk offset of `id` this backend actually holds,
-    // ascending -- backend-verified, unlike rawstor_target_chunks()'s own
-    // purely syntactic reading of an ordinary target string's own URI
-    // shape (Target::chunks() only asks a Backend for an mds:// target).
-    // ENOENT if this backend holds no chunk of `id` at all. Default: one
-    // list_chunks() page positioned to start at `id` itself (its own
-    // .cpp doc comment on how) -- the same enumeration list_chunks()
-    // already does, so file/lvm/zfs and ost (over the existing LIST wire
-    // command) all get it without a lookup of their own. mds::Backend,
-    // whose own list_chunks() is ENOTSUP, overrides this with a WireMap
-    // round trip instead.
-    virtual rawstd::Task<std::vector<uint64_t>> chunks(const RawstdUUID& id);
 
     // Every real member's own bare location of the chunk at `offset` --
     // for addressing one specific member directly (rawstor resolve's own

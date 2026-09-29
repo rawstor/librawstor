@@ -240,9 +240,39 @@ rawstd::Task<void> Backend::_connect() {
     co_await _client.connect();
 }
 
-rawstd::Task<void>
-Backend::list_chunks(unsigned int, std::vector<ChunkGroup>&, RawstdUUID&) {
-    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+// Only the id-filtered form (Backend::list_chunks()'s own doc comment):
+// this object's own real chunk offsets, off its own WireMap. The MDS has
+// no way to enumerate every object it knows, so a nil `id` is ENOTSUP;
+// an `id` the MDS doesn't know comes back as an empty listing, same as
+// any other backend holding nothing of it.
+rawstd::Task<void> Backend::list_chunks(
+    RawstdUUID id, unsigned int, std::vector<ChunkGroup>& chunks,
+    RawstdUUID& token
+) {
+    if (rawstd_uuid_is_nil(&id)) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
+    chunks.clear();
+    token = {};
+
+    WireMap map;
+    try {
+        map = co_await _client.open(id, RawstdUUID{});
+    } catch (const std::system_error& e) {
+        if (e.code().value() != ENOENT) {
+            throw;
+        }
+        co_return;
+    }
+
+    ChunkGroup group{id, {}};
+    group.offsets.reserve(map.chunks.size());
+    for (uint64_t i = 0; i < map.chunks.size(); ++i) {
+        group.offsets.push_back(i * map.chunk_size);
+    }
+    if (!group.offsets.empty()) {
+        chunks.push_back(std::move(group));
+    }
 }
 
 rawstd::Task<void> Backend::create(
@@ -528,17 +558,6 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
         }
     }
 
-    co_return ret;
-}
-
-rawstd::Task<std::vector<uint64_t>> Backend::chunks(const RawstdUUID& id) {
-    WireMap map = co_await _client.open(id, RawstdUUID{});
-
-    std::vector<uint64_t> ret;
-    ret.reserve(map.chunks.size());
-    for (uint64_t i = 0; i < map.chunks.size(); ++i) {
-        ret.push_back(i * map.chunk_size);
-    }
     co_return ret;
 }
 

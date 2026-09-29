@@ -138,7 +138,8 @@ public:
     // methods they wrap, since a connect()ed Slot is (like a
     // Backend) already bound to one location.
     rawstd::Task<void> list_chunks(
-        unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
+        RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+        RawstdUUID& token
     );
 
     rawstd::Task<void> create_snapshot(
@@ -161,8 +162,6 @@ public:
 
     rawstd::Task<std::vector<RawstorObjectMeta>>
     meta(const RawstdUUID& id, uint64_t offset);
-
-    rawstd::Task<std::vector<uint64_t>> chunks(const RawstdUUID& id);
 
     rawstd::Task<std::vector<rawstd::URI>>
     resolve_locations(const RawstdUUID& id, uint64_t offset);

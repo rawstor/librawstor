@@ -58,8 +58,11 @@ private:
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
+    // Id-filtered form only (a nil `id` is ENOTSUP): that one object's
+    // own real chunk offsets, off its own WireMap.
     rawstd::Task<void> list_chunks(
-        unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
+        RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+        RawstdUUID& token
     ) override;
 
     // `member_kind` is unused: an mds:// object is always created whole,
@@ -126,11 +129,6 @@ public:
     // comment).
     rawstd::Task<std::vector<RawstorObjectMeta>>
     meta(const RawstdUUID& id, uint64_t offset) override;
-
-    // This object's own real chunk offsets, off its own WireMap -- the
-    // default (Backend::chunks()'s own doc comment) pages through
-    // list_chunks(), which this backend doesn't support (ENOTSUP).
-    rawstd::Task<std::vector<uint64_t>> chunks(const RawstdUUID& id) override;
 
     // Real: this chunk's own real members' own bare locations, off the
     // same WireMap resolution meta() above uses (Backend::

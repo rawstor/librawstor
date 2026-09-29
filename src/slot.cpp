@@ -552,7 +552,8 @@ const rawstd::URI* Slot::location() const noexcept {
 }
 
 rawstd::Task<void> Slot::list_chunks(
-    unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
+    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+    RawstdUUID& token
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -561,7 +562,8 @@ rawstd::Task<void> Slot::list_chunks(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::list_chunks, limit, chunks, token
+            func_name, trace_event, &Backend::list_chunks, id, limit, chunks,
+            token
         );
         _finish(t_call);
     } catch (...) {
@@ -926,23 +928,6 @@ Slot::meta(const RawstdUUID& id, uint64_t offset) {
         std::vector<RawstorObjectMeta> result = co_await _with_retry(
             func_name, trace_event, &Backend::meta, id, offset
         );
-        _finish(t_call);
-        co_return result;
-    } catch (...) {
-        _finish(t_call);
-        throw;
-    }
-}
-
-rawstd::Task<std::vector<uint64_t>> Slot::chunks(const RawstdUUID& id) {
-    const char* func_name = __FUNCTION__;
-    rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
-    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
-
-    try {
-        std::vector<uint64_t> result =
-            co_await _with_retry(func_name, trace_event, &Backend::chunks, id);
         _finish(t_call);
         co_return result;
     } catch (...) {

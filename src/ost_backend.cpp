@@ -1333,11 +1333,30 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
 }
 
 rawstd::Task<void> Backend::list_chunks(
-    unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
+    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+    RawstdUUID& token
 ) {
     RawstdUUID input_token = token;
     chunks.clear();
     token = {};
+
+    // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc
+    // comment) without a wire command of its own: LIST resumes strictly
+    // after its token in rawstd_uuid_cmp()'s own bytewise order, so a
+    // one-id page whose token is one less than `id` (its 16 bytes read as
+    // one big-endian number) can only start with `id` itself, if the far
+    // end holds it at all -- any other id it returns is dropped below.
+    // A nil `id` never gets here, so it always has a predecessor.
+    bool filtered = !rawstd_uuid_is_nil(&id);
+    if (filtered) {
+        input_token = id;
+        for (size_t i = sizeof(input_token.bytes); i-- > 0;) {
+            if (input_token.bytes[i]-- != 0) {
+                break;
+            }
+        }
+        limit = 1;
+    }
 
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('l', "fd = %d\n", fd());
 
@@ -1387,13 +1406,21 @@ rawstd::Task<void> Backend::list_chunks(
     // enough, no map needed.
     for (size_t i = 0; i + 1 < entries.size(); ++i) {
         const RawstorOSTFrameListEntry& entry = entries[i];
-        RawstdUUID id;
-        memcpy(id.bytes, entry.id, sizeof(id.bytes));
-        if (!chunks.empty() && rawstd_uuid_cmp(&chunks.back().id, &id) == 0) {
+        RawstdUUID entry_id;
+        memcpy(entry_id.bytes, entry.id, sizeof(entry_id.bytes));
+        if (!chunks.empty() &&
+            rawstd_uuid_cmp(&chunks.back().id, &entry_id) == 0) {
             chunks.back().offsets.push_back(entry.chunk_offset);
         } else {
-            chunks.push_back(ChunkGroup{id, {entry.chunk_offset}});
+            chunks.push_back(ChunkGroup{entry_id, {entry.chunk_offset}});
         }
+    }
+
+    if (filtered) {
+        std::erase_if(chunks, [&id](const ChunkGroup& group) {
+            return rawstd_uuid_cmp(&group.id, &id) != 0;
+        });
+        co_return;
     }
 
     const RawstorOSTFrameListEntry& token_entry = entries.back();

@@ -91,33 +91,6 @@ rawstd::Task<void> Backend::resize(const RawstdUUID&, uint64_t, uint64_t) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
-// list_chunks() resumes strictly after its own `token` (its own doc
-// comment, backend.hpp), in rawstd_uuid_cmp()'s own bytewise order -- so
-// a token one less than `id` (the 16 bytes read as one big-endian
-// number) makes `id` itself the first group a one-group page can return,
-// if this backend holds it at all. Nothing sorts between `id - 1` and
-// `id`, so any other first group means `id` isn't here. A nil `id` has
-// no predecessor, and is never a real object id anyway.
-rawstd::Task<std::vector<uint64_t>> Backend::chunks(const RawstdUUID& id) {
-    if (rawstd_uuid_is_nil(&id)) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
-    }
-
-    RawstdUUID token = id;
-    for (size_t i = sizeof(token.bytes); i-- > 0;) {
-        if (token.bytes[i]-- != 0) {
-            break;
-        }
-    }
-
-    std::vector<ChunkGroup> groups;
-    co_await list_chunks(1, groups, token);
-    if (groups.empty() || rawstd_uuid_cmp(&groups.front().id, &id) != 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
-    }
-    co_return std::move(groups.front().offsets);
-}
-
 std::string Backend::str() const {
     // Only ost::Backend ever calls set_fd() -- file/lvm/zfs backends have
     // no socket of their own, so _fd stays at its constructor default of
