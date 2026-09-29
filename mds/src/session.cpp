@@ -229,6 +229,12 @@ rawstd::DetachedTask Session::_recv_pump(std::weak_ptr<Session> weak) {
             co_await _dispatch(weak, head);
         }
     } catch (const std::system_error& e) {
+        // ECANCELED is the Server itself shutting down (SIGINT/SIGTERM):
+        // it is already tearing every session down, so there's nothing to
+        // report and no session left to delete.
+        if (e.code().value() == ECANCELED) {
+            co_return;
+        }
         if (e.code().value() != ECONNRESET) {
             rawstd_error("fd %d: %s\n", fd, e.what());
         }
