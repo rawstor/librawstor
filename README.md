@@ -12,6 +12,7 @@ make -j$(nproc)
 make install
 
 OST_ADDR=192.168.0.1:7777
+MDS_ADDR=192.168.0.1:7776
 
 ##
 # OST Server
@@ -25,9 +26,29 @@ rawstor-ost \
     file://${OST_DATADIR}
 
 ##
+# MDS Server (optional: only for chunked mds:// objects)
+#
+MDS_DATADIR=/var/lib/rawstor-mds
+
+mkdir -p ${MDS_DATADIR}
+
+# One line per OST: ost <uuid> <host:port> <weight> <dc>/<rack>/<server>
+cat > ${MDS_DATADIR}/topology.conf <<EOF
+ost $(cat /proc/sys/kernel/random/uuid) ${OST_ADDR} 100 dc1/rack1/host1
+EOF
+
+rawstor-mds \
+    --bind ${MDS_ADDR} \
+    --db ${MDS_DATADIR}/mds.db \
+    --topology ${MDS_DATADIR}/topology.conf
+
+##
 # Client
 #
-OBJECT_TARGET=$(rawstor create ost://${OST_ADDR} --size=1G --mirrors=1)
+# An object split into 256M chunks, placed across the OSTs by the MDS...
+OBJECT_TARGET=$(rawstor create mds://${MDS_ADDR} --size=1G --chunk-size=256M --mirrors=1)
+# ...or a plain object stored whole on one OST, no MDS needed:
+# OBJECT_TARGET=$(rawstor create ost://${OST_ADDR} --size=1G --mirrors=1)
 
 VHOST_RUNDIR=${PREFIX}/var/run/rawstor
 
