@@ -168,9 +168,7 @@ struct RawstorOSTFrameList {
  * more than one offset (distinct chunks of the same multi-chunk object)
  * rides one row per offset, all sharing that id, which the receiving end
  * groups back into one rawstor::ChunkGroup (src/backend.hpp) per id.
- * `snapshot_id` is always nil today (list_chunks() only ever enumerates
- * live objects) but travels along so a future snapshot listing doesn't
- * need a second wire shape. The response body is a packed array of these
+ * Only live objects are listed. The response body is a packed array of these
  * (body.res = count * sizeof(this)), same "array of T" shape
  * RawstorOSTFrameBasic's own response (e.g. an older LIST) used, with one
  * addition: the *last* row is always the resume cursor for the next page
@@ -184,7 +182,6 @@ struct RawstorOSTFrameList {
 struct RawstorOSTFrameListEntry {
     uint8_t id[16];
     uint64_t chunk_offset;
-    uint8_t snapshot_id[16];
 } RAWSTOR_PACKED;
 
 // Shared by READ/WRITE/DISCARD/WRITE_ZEROES: `hash` is only meaningful for

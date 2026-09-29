@@ -88,10 +88,8 @@ uint64_t chunk_shift_to_size(uint8_t chunk_shift) {
 // offsets its own comma-joined URIs literally spell out are all there
 // is to report. Same-offset mirrors collapse down to one entry per
 // distinct chunk -- matching RawstorOSTFrameListEntry's own doc comment
-// (protocol.h): one row per offset, all sharing that id and snapshot_id
-// (the latter always nil today, an mds:// chunk never itself being a
-// bound snapshot -- see mds.md), for the receiving end to group back
-// into one rawstor::ChunkGroup.
+// (protocol.h): one row per offset, all sharing that id, for the
+// receiving end to group back into one rawstor::ChunkGroup.
 void append_list_entries(
     const char* target, std::vector<RawstorOSTFrameListEntry>& out
 ) {
@@ -106,24 +104,8 @@ void append_list_entries(
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    RawstdUUIDString snapshot_id_buf;
-    res = rawstor_target_snapshot_id(
-        target, snapshot_id_buf, sizeof(snapshot_id_buf)
-    );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    RawstdUUID snapshot_id{};
-    if (res > 0) {
-        res = rawstd_uuid_from_string(&snapshot_id, snapshot_id_buf);
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-    }
-
     RawstorOSTFrameListEntry base{};
     memcpy(base.id, id.bytes, sizeof(base.id));
-    memcpy(base.snapshot_id, snapshot_id.bytes, sizeof(base.snapshot_id));
 
     std::vector<uint64_t> offsets;
     for (const rawstd::URI& uri : rawstd::URI::uriv(target)) {
