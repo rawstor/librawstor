@@ -246,7 +246,7 @@ struct RawstorFrameSyncState {
  * own, so object_id/chunk_offset here are the only way the server learns
  * which object (and which of its chunks) to create.
  *
- * chunk_shift/stripe_width/failure_domain/member_kind are the chunk's own
+ * chunk_shift/stripe_width/failure_domain/member_role are the chunk's own
  * placement policy (docs/mds.md, chunk_meta): stamped at create by the
  * volume layer, immutable afterwards. chunk_shift carries chunk_size's
  * (RawstorObjectSpec.chunk_size, target.h) own log2 rather than the full
@@ -269,7 +269,7 @@ struct RawstorFrameAllocatePayload {
     uint64_t stripe_width;  /* K; 0 = spread every chunk, 1 = object-local */
     uint8_t failure_domain; /* RAWSTOR_OBJ_DOMAIN_* */
     uint8_t width;          /* redundancy: copies per chunk */
-    uint8_t member_kind;    /* enum RawstorMemberKind, <rawstor/target.h> */
+    uint8_t member_role;    /* enum RawstorMemberRole, <rawstor/target.h> */
     uint32_t reserved2;
 } RAWSTOR_PACKED;
 
@@ -321,7 +321,7 @@ struct RawstorFrameMetaPayload {
      * by META, ignored by SET_SYNC_STATE (the stored values always win).
      */
     uint8_t width;       /* redundancy: copies per chunk */
-    uint8_t member_kind; /* enum RawstorMemberKind, <rawstor/target.h> */
+    uint8_t member_role; /* enum RawstorMemberRole, <rawstor/target.h> */
     uint32_t reserved2;
 } RAWSTOR_PACKED;
 

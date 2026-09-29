@@ -18,8 +18,8 @@
 extern "C" {
 #endif
 
-/** Chunk member kinds (docs/mds.md, chunk_meta.member_kind). */
-enum RawstorMemberKind {
+/** Chunk member roles (docs/mds.md, chunk_meta.member_role). */
+enum RawstorMemberRole {
     RAWSTOR_MEMBER_DATA = 0,
     RAWSTOR_MEMBER_WITNESS = 1, /**< Metadata-only quorum member; stage 3. */
 };
@@ -136,14 +136,14 @@ struct RawstorObjectSyncState {
  * rawstor_target_spec()/_create(), which is used both ways) plus this
  * copy's mirror consistency identity (sync_state, the part
  * rawstor_target_set_member_sync_state() can actually change) and its own
- * member_kind. `spec.width` is filled in by rawstor_target_meta() itself
+ * member_role. `spec.width` is filled in by rawstor_target_meta() itself
  * the same way rawstor_target_spec() fills its own -- the target's own
  * per-chunk copy count: computed locally (the number of URIs in the
  * target string) for a plain target, or trusted from whichever copy
  * answered for an mds:// one (its own configured redundancy, which no
  * URI count could reveal -- an mds:// target is always a single URI).
  *
- * member_kind lives here rather than on RawstorObjectSpec: unlike every
+ * member_role lives here rather than on RawstorObjectSpec: unlike every
  * field RawstorObjectSpec actually carries, it isn't something every
  * copy of a chunk agrees on by construction -- a witness (docs/mds.md,
  * "Witness", stage 3) is a metadata-only member of the same chunk a
@@ -157,7 +157,7 @@ struct RawstorObjectSyncState {
 struct RawstorObjectMeta {
     struct RawstorObjectSpec spec;
     struct RawstorObjectSyncState sync_state;
-    enum RawstorMemberKind member_kind;
+    enum RawstorMemberRole member_role;
 };
 
 /**

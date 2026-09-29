@@ -151,7 +151,7 @@ public:
 
     rawstd::Task<void> create(
         const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberKind member_kind
+        RawstorMemberRole member_role
     );
 
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset);
@@ -189,7 +189,7 @@ public:
     // to give anyway). `flags` (RAWSTOR_READONLY or 0) goes to every
     // Backend::set_object() (a non-nil `snapshot_id` binds via
     // set_snapshot() instead, read-only by nature). Throws ENOTSUP if
-    // that answer's own member_kind is RAWSTOR_MEMBER_WITNESS -- a
+    // that answer's own member_role is RAWSTOR_MEMBER_WITNESS -- a
     // witness holds no data and is never a valid target for real I/O
     // (docs/mds.md, "Witness (stage 3)"); its own .cpp doc comment on
     // why this is the one place that needs to check.

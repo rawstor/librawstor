@@ -423,7 +423,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     sync_state.sync_id_history[3] = 3;
 
     rawstor::blk::Backend::ChunkIdentity identity;
-    identity.member_kind = RAWSTOR_MEMBER_WITNESS;
+    identity.member_role = RAWSTOR_MEMBER_WITNESS;
     identity.width = 3;
 
     std::string encoded =
@@ -449,7 +449,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     EXPECT_EQ(
         decoded_sync_state.sync_id_history[3], sync_state.sync_id_history[3]
     );
-    EXPECT_EQ(decoded_identity.member_kind, identity.member_kind);
+    EXPECT_EQ(decoded_identity.member_role, identity.member_role);
     EXPECT_EQ(decoded_identity.width, identity.width);
 }
 
@@ -494,7 +494,7 @@ TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
     EXPECT_THROW(
         rawstor::blk::Backend::meta_decode(
             "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
-            "member_kind=0:width=0:chunk_size=0",
+            "member_role=0:width=0:chunk_size=0",
             &sync_state, &identity
         ),
         std::system_error
@@ -528,7 +528,7 @@ TEST(BlkBackendTest, witness_member_holds_no_data_and_refuses_real_io) {
 
     // Holds no data: its own "data" file exists (still enumerable --
     // e.g. rawstor-mds's reconstruct scan, which tells it apart from a
-    // data chunk by its own meta's member_kind, not by whether the file
+    // data chunk by its own meta's member_role, not by whether the file
     // is there at all) but is empty -- no real fallocate()/storage ever
     // happened for it (file_backend.cpp's own create() comment).
     RawstdUUIDString id_string;

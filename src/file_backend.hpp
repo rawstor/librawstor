@@ -33,13 +33,13 @@ public:
 
     rawstd::Task<void> create(
         const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberKind member_kind
+        RawstorMemberRole member_role
     ) override;
 
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset) override;
 
     // size comes straight from the object's own "data" file (stat());
-    // the rest (member_kind/width/chunk_size, plus the mirror consistency
+    // the rest (member_role/width/chunk_size, plus the mirror consistency
     // state) lives in a companion "meta" file next to it, both inside the
     // same "<uuid>/<offset>[/<snapshot_id>]" directory (get_target_dir()'s
     // own doc comment, file_backend.cpp; see docs/mirroring.md) -- there

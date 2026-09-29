@@ -284,7 +284,7 @@ rawstd::Task<void> Backend::list_chunks(
 
 rawstd::Task<void> Backend::create(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-    RawstorMemberKind member_kind
+    RawstorMemberRole member_role
 ) {
     std::string location_path = get_location_path(location());
     mkdir_or_exist(location_path);
@@ -317,11 +317,11 @@ rawstd::Task<void> Backend::create(
         // checks its own existence to enumerate this id/offset at all
         // (both stay correct -- a witness's own logical size is 0, and
         // it's still meant to be enumerable, just distinguishable from a
-        // data chunk once its own meta's member_kind is read back).
+        // data chunk once its own meta's member_role is read back).
         // Slot::open() is what actually refuses real I/O against it
         // (its own doc comment) -- this is just what makes that refusal
         // free of cost rather than merely free of use.
-        if (member_kind != RAWSTOR_MEMBER_WITNESS) {
+        if (member_role != RAWSTOR_MEMBER_WITNESS) {
             // fallocate() actually reserves real blocks -- this file backs a
             // virtio-blk-style virtual disk, so a write into unallocated
             // territory otherwise depends on the filesystem's own delayed
@@ -421,7 +421,7 @@ rawstd::Task<void> Backend::create(
             // stamped now, from the caller's own spec, and never touched
             // again -- set_sync_state() below preserves it unchanged.
             ChunkIdentity identity;
-            identity.member_kind = member_kind;
+            identity.member_role = member_role;
             identity.width = static_cast<uint8_t>(sp.width);
             identity.chunk_size = sp.chunk_size;
 
@@ -544,7 +544,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     ret.spec.size = static_cast<uint64_t>(st.st_size);
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
-    ret.member_kind = identity.member_kind;
+    ret.member_role = identity.member_role;
     ret.sync_state = sync_state;
 
     co_return std::vector<RawstorObjectMeta>{ret};

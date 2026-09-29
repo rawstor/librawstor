@@ -159,7 +159,7 @@ RawstorObjectSpec chunk_spec(const WireMap& map) {
     // The chunk's own placement identity: the target string's own
     // id/offset segment (chunk_slot_target() above) -- no separate
     // id/logical_index/snapshot_id fields to stamp here any more (see
-    // RawstorObjectSpec's own doc comment in target.h). member_kind
+    // RawstorObjectSpec's own doc comment in target.h). member_role
     // itself lives on RawstorObjectMeta, not here (its own doc comment)
     // -- create_one() (target.cpp) always creates RAWSTOR_MEMBER_DATA.
     sp.chunk_size = map.chunk_size;
@@ -252,7 +252,7 @@ rawstd::Task<void> Backend::list_chunks(
 
 rawstd::Task<void> Backend::create(
     const RawstdUUID& id, uint64_t, const RawstorObjectSpec& sp,
-    RawstorMemberKind
+    RawstorMemberRole
 ) {
     // An mds:// object is always chunked: the MDS map is per-chunk, and
     // there is no single-chunk layout for it to fall back on.

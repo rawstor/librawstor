@@ -74,7 +74,7 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
             .stripe_width = 0,
             .failure_domain = 0,
             .width = static_cast<uint8_t>(width),
-            .member_kind = 0, /* RAWSTOR_MEMBER_DATA, <rawstor/target.h> */
+            .member_role = 0, /* RAWSTOR_MEMBER_DATA, <rawstor/target.h> */
             .reserved2 = 0,
         },
     };

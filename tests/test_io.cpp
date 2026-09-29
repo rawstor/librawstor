@@ -36,7 +36,7 @@ const RawstorFrameMetaPayload clean_meta_1mb = {
     .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
     .chunk_shift = 0,
     .width = 1,
-    .member_kind = RAWSTOR_MEMBER_DATA,
+    .member_role = RAWSTOR_MEMBER_DATA,
     .reserved2 = 0,
 };
 

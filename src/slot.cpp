@@ -612,7 +612,7 @@ Slot::resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size) {
 
 rawstd::Task<void> Slot::create(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-    RawstorMemberKind member_kind
+    RawstorMemberRole member_role
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -622,7 +622,7 @@ rawstd::Task<void> Slot::create(
     try {
         co_await _with_retry(
             func_name, trace_event, &Backend::create, id, offset, sp,
-            member_kind
+            member_role
         );
         _finish(t_call);
     } catch (...) {
@@ -760,7 +760,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // all -- it talks to meta()/chunks()/resolve_locations() directly on
     // a Slot that was never open()ed -- so a witness stays fully
     // queryable; only a real data open is refused.
-    if (metas.front().member_kind == RAWSTOR_MEMBER_WITNESS) {
+    if (metas.front().member_role == RAWSTOR_MEMBER_WITNESS) {
         RawstdUUIDString id_string;
         rawstd_uuid_to_string(&id, &id_string);
         rawstd_error(

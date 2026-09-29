@@ -948,7 +948,7 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
         .width = 1,
-        .member_kind = RAWSTOR_MEMBER_DATA,
+        .member_role = RAWSTOR_MEMBER_DATA,
         .reserved2 = 0,
     };
 
@@ -1031,7 +1031,7 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
         .width = 1,
-        .member_kind = RAWSTOR_MEMBER_DATA,
+        .member_role = RAWSTOR_MEMBER_DATA,
         .reserved2 = 0,
     };
 
@@ -1115,7 +1115,7 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
         .width = 1,
-        .member_kind = RAWSTOR_MEMBER_DATA,
+        .member_role = RAWSTOR_MEMBER_DATA,
         .reserved2 = 0,
     };
 
@@ -1182,7 +1182,7 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
         .width = 1,
-        .member_kind = RAWSTOR_MEMBER_DATA,
+        .member_role = RAWSTOR_MEMBER_DATA,
         .reserved2 = 0,
     };
 

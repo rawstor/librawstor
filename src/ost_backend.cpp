@@ -828,7 +828,7 @@ public:
     BackendOpAllocate(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const RawstdUUID& id, uint64_t chunk_offset,
-        const RawstorObjectSpec& sp, RawstorMemberKind member_kind,
+        const RawstorObjectSpec& sp, RawstorMemberRole member_role,
         const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "create", 0, 0),
@@ -847,7 +847,7 @@ public:
                 .stripe_width = sp.stripe_width,
                 .failure_domain = sp.failure_domain,
                 .width = (uint8_t)sp.width,
-                .member_kind = (uint8_t)member_kind,
+                .member_role = (uint8_t)member_role,
                 .reserved2 = 0,
             },
         }) {
@@ -1443,13 +1443,13 @@ rawstd::Task<void> Backend::list_chunks(
 // backend.
 rawstd::Task<void> Backend::create(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-    RawstorMemberKind member_kind
+    RawstorMemberRole member_role
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('c', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpAllocate> op = std::make_shared<BackendOpAllocate>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        id, offset, sp, member_kind, trace_event
+        id, offset, sp, member_role, trace_event
     );
     _add_op(op);
 
@@ -1525,7 +1525,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
                 static_cast<const void*>(response.data())
             );
         ret.spec.size = payload.size;
-        ret.member_kind = static_cast<RawstorMemberKind>(payload.member_kind);
+        ret.member_role = static_cast<RawstorMemberRole>(payload.member_role);
         // payload.width is the chunk's own persisted redundancy width
         // (docs/mds.md, chunk_meta) -- 0 for a plain object that was never
         // given one (Target::meta()'s own doc comment on the resulting

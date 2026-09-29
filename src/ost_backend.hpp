@@ -103,7 +103,7 @@ public:
 
     rawstd::Task<void> create(
         const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberKind member_kind
+        RawstorMemberRole member_role
     ) override;
 
     // Both relayed over the wire as a RAWSTOR_CMD_RELEASE request, nil vs.

@@ -1051,7 +1051,7 @@ rawstd::DetachedTask Client::_allocate(
         // this relay/multi-location rawstor-ost happens to have
         // configured locally. chunk_shift_to_size() can throw on a
         // malformed chunk_shift, so it needs to run inside this try too.
-        // payload.member_kind isn't forwarded: rawstor_target_create()
+        // payload.member_role isn't forwarded: rawstor_target_create()
         // itself always creates RAWSTOR_MEMBER_DATA members (create_one()'s
         // own comment, target.cpp) -- a witness (docs/mds.md, "Witness",
         // stage 3) is a metadata-only member attached to an
@@ -1287,7 +1287,7 @@ rawstd::DetachedTask Client::_meta(
                     static_cast<RawstorSyncStateType>(meta.sync_state.state),
                 .chunk_shift = chunk_size_to_shift(meta.spec.chunk_size),
                 .width = static_cast<uint8_t>(meta.spec.width),
-                .member_kind = static_cast<uint8_t>(meta.member_kind),
+                .member_role = static_cast<uint8_t>(meta.member_role),
                 .reserved2 = 0,
             };
             memcpy(
