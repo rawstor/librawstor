@@ -35,23 +35,23 @@ extern "C" {
  * for, so 0x20/0x21 stay unused rather than aliasing a second command onto
  * the same purpose.
  */
-#define RAWSTOR_CMD_SET_OBJECT 0
-#define RAWSTOR_CMD_READ 1
-#define RAWSTOR_CMD_WRITE 2
-#define RAWSTOR_CMD_DISCARD 3
-#define RAWSTOR_CMD_ALLOCATE 4
+#define RAWSTOR_CMD_SET_OBJECT 0x00
+#define RAWSTOR_CMD_READ 0x01
+#define RAWSTOR_CMD_WRITE 0x02
+#define RAWSTOR_CMD_DISCARD 0x03
+#define RAWSTOR_CMD_ALLOCATE 0x04
 /*
  * Removes an object/chunk -- or, if `snapshot_id` is non-nil, one previously
  * snapshotted version of it instead (nil-means-live, same convention as
  * SET_OBJECT/OBJ_OPEN) -- rides RawstorOSTFrameBasicPayload.
  */
-#define RAWSTOR_CMD_RELEASE 5
-#define RAWSTOR_CMD_LIST 6
-#define RAWSTOR_CMD_LOCATION_INFO 8
-#define RAWSTOR_CMD_FLUSH 9
-#define RAWSTOR_CMD_WRITE_ZEROES 10
-#define RAWSTOR_CMD_SET_SYNC_STATE 11
-#define RAWSTOR_CMD_META 12
+#define RAWSTOR_CMD_RELEASE 0x05
+#define RAWSTOR_CMD_LIST 0x06
+#define RAWSTOR_CMD_LOCATION_INFO 0x08
+#define RAWSTOR_CMD_FLUSH 0x09
+#define RAWSTOR_CMD_WRITE_ZEROES 0x0a
+#define RAWSTOR_CMD_SET_SYNC_STATE 0x0b
+#define RAWSTOR_CMD_META 0x0c
 /*
  * Native CoW snapshot of one stored object version (docs/mds.md,
  * "Snapshots"): rides RawstorOSTFrameBasicPayload, snapshot_id is the
@@ -59,7 +59,7 @@ extern "C" {
  * client-generated -- never nil, nil is reserved for the live version).
  * -ENOTSUP on backends without CoW (file://, classic LVM).
  */
-#define RAWSTOR_CMD_SNAPSHOT 13
+#define RAWSTOR_CMD_SNAPSHOT 0x0d
 
 /*
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/open/
