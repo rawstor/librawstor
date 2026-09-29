@@ -44,21 +44,21 @@ std::string hex_offset(uint64_t offset) {
     return std::string(buf);
 }
 
-// Builds a target string naming two chunks' own uris of one object by
-// hand (docs/concepts.md): "<location>/<uuid>/0,<location>/
+// Builds the URIs of a target naming two chunks' own uris of one object
+// by hand (docs/concepts.md): "<location>/<uuid>/0" and "<location>/
 // <uuid>/<chunk_size in hex>" -- the same flat, offset-sorted URI list
 // rawstor-mds itself would build internally, just typed out here
 // instead. Nothing about Target/Object requires an MDS server to exist;
 // chunk_uris_by_offset()/Target::open()'s own multi-chunk machinery only
 // ever looks at the URIs themselves.
-std::string two_chunk_target(
+std::vector<rawstd::URI> two_chunk_target(
     const rawstd::URI& location, const std::string& uuid_string,
     uint64_t chunk_size
 ) {
     rawstd::URI id_uri(location, uuid_string);
-    return rawstd::URI::uris(
-        {rawstd::URI(id_uri, "0"), rawstd::URI(id_uri, hex_offset(chunk_size))}
-    );
+    return {
+        rawstd::URI(id_uri, "0"), rawstd::URI(id_uri, hex_offset(chunk_size))
+    };
 }
 
 } // namespace

@@ -440,7 +440,7 @@ rawstd::Task<void> Location::list(
         for (const auto& [offset, uri] : chunks) {
             uris.push_back(uri);
         }
-        ret.emplace_back(rawstd::URI::uris(uris));
+        ret.emplace_back(uris);
 
         have_last = true;
         last_id = it.first;
@@ -473,7 +473,7 @@ rawstd::Task<Target> Location::create(
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
 
-    Target t(rawstd::URI::uris(build_create_uris(_uris, uuid_string, sp)));
+    Target t(build_create_uris(_uris, uuid_string, sp));
     co_await t.create(queue, sp);
 
     co_return t;
@@ -575,8 +575,8 @@ int rawstor_location_create(
         }
 
         launch_create_op(
-            rawstor::Target(rawstd::URI::uris(ret)),
-            static_cast<rawio::Queue*>(queue), *spec, res, cb, data
+            rawstor::Target(ret), static_cast<rawio::Queue*>(queue), *spec, res,
+            cb, data
         );
         return 0;
     } catch (const std::system_error& e) {

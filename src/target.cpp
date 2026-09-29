@@ -943,16 +943,14 @@ TargetPath parse_target_path(const std::string& path) {
     RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
 }
 
-// Every public method below used to re-run three validate_*() checks
-// itself, identically, before touching _uris -- validated once, here,
-// instead: _uris never changes after construction, so nothing past this
-// point can un-validate it.
+// Validated once, here: _uris never changes after construction, so
+// nothing past this point can un-validate it, and no public method below
+// needs to re-check it.
 //
-// A single, plain ','-separated URI list, same as any plain target
-// (mirroring, no chunking): no second separator for chunk uris. mds::
-// Backend's own internal multi-chunk string is the exact same flat
-// list -- every chunk's own mirrors, all comma-joined together, with no
-// marker of where one chunk's own uris end and the next chunk's begin.
+// `uris` is one flat list, same as any plain target (mirroring, no
+// chunking): nothing in it marks where one chunk's own uris end and the
+// next chunk's begin -- mds::Backend's own multi-chunk list is the same
+// shape, every chunk's own mirrors all together.
 // The split into chunk uris falls out of each URI's own offset
 // (extract_offset() above, its own trailing path segment, index *
 // chunk_size): URIs sharing one offset are mirrors of the same chunk
@@ -968,10 +966,8 @@ TargetPath parse_target_path(const std::string& path) {
 // plain, non-mds:// target's URIs all carry no offset segment at all --
 // extract_offset()'s own default of 0 for all of them puts every one of
 // them in the same single bucket, the ordinary single-chunk case.
-Target::Target(const std::string& target) {
-    std::vector<rawstd::URI> uris = rawstd::URI::uriv(target.c_str());
+Target::Target(const std::vector<rawstd::URI>& uris) {
     validate_not_empty(uris);
-    size_t total = uris.size();
 
     // The whole target's own identity (Target's own class doc comment,
     // target.hpp) -- any URI answers it identically, so the very first
@@ -982,12 +978,11 @@ Target::Target(const std::string& target) {
     _snapshot_id = extract_snapshot_id(uris.front());
 
     std::map<uint64_t, std::vector<rawstd::URI>> by_offset;
-    for (rawstd::URI& uri : uris) {
-        uint64_t offset = extract_offset(uri);
-        by_offset[offset].push_back(std::move(uri));
+    for (const rawstd::URI& uri : uris) {
+        by_offset[extract_offset(uri)].push_back(uri);
     }
 
-    _uris.reserve(total);
+    _uris.reserve(uris.size());
     for (auto& [offset, chunk_uris] : by_offset) {
         validate_different_uris(chunk_uris);
         validate_same_uuid(chunk_uris, _id, _snapshot_id);
@@ -1229,7 +1224,7 @@ rawstd::Task<void> Target::create_snapshot(
         uris.emplace_back(uri, std::string(snapshot_id_string));
     }
 
-    Target snap_target(rawstd::URI::uris(uris));
+    Target snap_target(uris);
     co_await snap_target.create_snapshot(queue);
 }
 
@@ -1531,7 +1526,7 @@ int rawstor_target_create(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Target t(target);
+        rawstor::Target t(rawstd::URI::uriv(target));
         // A NULL `spec` becomes a zeroed one, which the width-must-be-
         // stated check every real spec goes through (Target::create()'s
         // own comment) already rejects with -EINVAL, same as an explicit
@@ -1560,7 +1555,7 @@ int rawstor_target_remove(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Target t(target);
+        rawstor::Target t(rawstd::URI::uriv(target));
         launch_remove_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), cb, data
         );
@@ -1584,7 +1579,7 @@ int rawstor_target_resize(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Target t(target);
+        rawstor::Target t(rawstd::URI::uriv(target));
         launch_resize_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), new_size, cb, data
         );
@@ -1608,7 +1603,7 @@ int rawstor_target_spec(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Target t(target);
+        rawstor::Target t(rawstd::URI::uriv(target));
         launch_spec_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), sp, cb, data
         );
@@ -1633,7 +1628,7 @@ int rawstor_target_meta(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Target t(target);
+        rawstor::Target t(rawstd::URI::uriv(target));
         launch_meta_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), offset, metas,
             count, cb, data
@@ -1659,7 +1654,7 @@ int rawstor_target_set_member_sync_state(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Target t(target);
+        rawstor::Target t(rawstd::URI::uriv(target));
         launch_set_member_sync_state_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), offset,
             member_index, *sync_state, cb, data
@@ -1684,7 +1679,7 @@ int rawstor_target_open(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Target t(target);
+        rawstor::Target t(rawstd::URI::uriv(target));
         launch_open_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), flags, object, cb,
             data
@@ -1706,7 +1701,7 @@ int rawstor_target_open(
 
 int rawstor_target_id(const char* target, char* buf, size_t size) noexcept {
     try {
-        rawstor::Target t(target);
+        rawstor::Target t(rawstd::URI::uriv(target));
         RawstdUUID id = t.object_id();
         RawstdUUIDString uuid;
         rawstd_uuid_to_string(&id, &uuid);
@@ -1733,7 +1728,7 @@ int rawstor_target_chunks(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Target t(target);
+        rawstor::Target t(rawstd::URI::uriv(target));
         launch_chunks_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), offsets, size, cb,
             data
@@ -1785,7 +1780,7 @@ int rawstor_target_create_snapshot(
         // `snapshot_target` below -- an immediate failure (malformed
         // target) must leave it untouched, same as every other
         // immediate-failure case here.
-        rawstor::Target t(target);
+        rawstor::Target t(rawstd::URI::uriv(target));
 
         RawstdUUID id;
         int res;
@@ -1822,7 +1817,7 @@ int rawstor_target_create_snapshot(
             for (const auto& uri : t.uris()) {
                 uris.emplace_back(uri, std::string(uuid_string));
             }
-            snap_target = rawstor::Target(rawstd::URI::uris(uris));
+            snap_target = rawstor::Target(uris);
         }
 
         res = snprintf(
@@ -1867,7 +1862,7 @@ int rawstor_target_location(
     const char* target, char* buf, size_t size
 ) noexcept {
     try {
-        rawstor::Target t(target);
+        rawstor::Target t(rawstd::URI::uriv(target));
         std::string s = rawstd::URI::uris(t.location().uris());
         int res = snprintf(buf, size, "%s", s.c_str());
         if (res < 0) {
@@ -1891,7 +1886,7 @@ int rawstor_target_snapshot_id(
     const char* target, char* buf, size_t size
 ) noexcept {
     try {
-        rawstor::Target t(target);
+        rawstor::Target t(rawstd::URI::uriv(target));
         RawstdUUID snapshot_id = t.snapshot_id();
         if (rawstd_uuid_is_nil(&snapshot_id)) {
             // Live: no bound snapshot segment -- an empty string, same

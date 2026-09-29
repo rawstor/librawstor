@@ -92,8 +92,8 @@ rawstd::URI chunk_slot_target(
 
 // Every real member's own bare location of the chunk at `index` -- for
 // Backend::meta()'s own fan-out below, unlike chunk_targets() below
-// (identity-bearing target strings, for the client-facing multi-chunk
-// Target string build_target_string() builds).
+// (identity-bearing target URIs, for the client-facing multi-chunk
+// Target build_target_uris() builds).
 std::vector<rawstd::URI> chunk_locations(const WireMap& map, uint64_t index) {
     std::vector<rawstd::URI> ret;
     ret.reserve(map.chunks[index].size());
@@ -159,19 +159,6 @@ std::vector<rawstd::URI> chunk_targets(
     return ret;
 }
 
-// One chunk's own target string -- the comma-joined single-chunk format
-// every plain (non-mds://) target already uses. Also a valid multi-chunk
-// Target string all by itself (Target's own constructor groups by
-// offset, and every URI here shares this one chunk's own) -- used as one
-// wherever a single chunk is all that's needed (resize()'s own per-chunk
-// loop below), and as one ingredient of build_target_string()'s own
-// whole-object string otherwise.
-std::string chunk_target_string(
-    const WireMap& map, uint64_t index, const RawstdUUID& snapshot_id = {}
-) {
-    return rawstd::URI::uris(chunk_targets(map, index, snapshot_id));
-}
-
 uint64_t
 chunk_logical_size(uint64_t logical_size, uint64_t chunk_size, uint64_t index) {
     uint64_t begin = index * chunk_size;
@@ -210,20 +197,20 @@ RawstorObjectSpec object_spec(const WireMap& map) {
     return sp;
 }
 
-// The internal multi-chunk Target string (target.hpp's own doc comment)
-// describing the whole object: every chunk's own URIs, comma-joined
-// together with every other chunk's -- Target's own constructor sorts
-// them back into chunk groups itself, by each URI's own offset path
-// segment, so nothing here needs to mark where one chunk's own group
-// ends and the next begins.
-std::string
-build_target_string(const WireMap& map, const RawstdUUID& snapshot_id) {
+// The internal multi-chunk Target (target.hpp's own doc comment)
+// describing the whole object: every chunk's own URIs, together with
+// every other chunk's -- Target's own constructor sorts them back into
+// chunk groups itself, by each URI's own offset path segment, so nothing
+// here needs to mark where one chunk's own group ends and the next
+// begins.
+std::vector<rawstd::URI>
+build_target_uris(const WireMap& map, const RawstdUUID& snapshot_id) {
     std::vector<rawstd::URI> uris;
     for (uint64_t i = 0; i < map.chunks.size(); ++i) {
         std::vector<rawstd::URI> chunk = chunk_targets(map, i, snapshot_id);
         uris.insert(uris.end(), chunk.begin(), chunk.end());
     }
-    return rawstd::URI::uris(uris);
+    return uris;
 }
 
 } // namespace
@@ -298,11 +285,11 @@ rawstd::Task<void> Backend::create(
     std::exception_ptr error;
     try {
         // Target::create() (target.hpp's own doc comment) already fans
-        // out across every chunk group in build_target_string()'s own
+        // out across every chunk group in build_target_uris()'s own
         // flat string, and already rolls back whatever chunks it managed
         // to create before a later one's own failure -- only the object
         // map registration itself is left for this call to roll back.
-        co_await Target(build_target_string(map, RawstdUUID{}))
+        co_await Target(build_target_uris(map, RawstdUUID{}))
             .create(_queue, object_spec(map));
     } catch (...) {
         error = std::current_exception();
@@ -338,10 +325,10 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t) {
     co_await _client.remove(id);
 
     // Target::remove() (target.hpp's own doc comment) already fans out
-    // across every URI of every chunk group in build_target_string()'s
+    // across every URI of every chunk group in build_target_uris()'s
     // own flat string.
     try {
-        co_await Target(build_target_string(map, RawstdUUID{})).remove(_queue);
+        co_await Target(build_target_uris(map, RawstdUUID{})).remove(_queue);
     } catch (const std::system_error& e) {
         if (e.code().value() != ENOENT) {
             throw;
@@ -368,7 +355,7 @@ Backend::resize(const RawstdUUID& id, uint64_t, uint64_t new_size) {
     std::exception_ptr error;
     try {
         for (uint64_t i = old_chunks; i < after.chunks.size(); ++i) {
-            Target chunk_target(chunk_target_string(after, i));
+            Target chunk_target(chunk_targets(after, i));
             co_await chunk_target.create(_queue, chunk_spec(after, i));
             created = i + 1;
         }
@@ -388,7 +375,7 @@ Backend::resize(const RawstdUUID& id, uint64_t, uint64_t new_size) {
         while (created > old_chunks) {
             --created;
             try {
-                Target chunk_target(chunk_target_string(after, created));
+                Target chunk_target(chunk_targets(after, created));
                 co_await chunk_target.remove(_queue);
             } catch (const std::exception& e) {
                 rawstd_error("Failed to rollback chunk create: %s\n", e.what());
@@ -423,10 +410,9 @@ rawstd::Task<void> Backend::create_snapshot(
                 continue;
             }
             try {
-                Target t(chunk_slot_target(
-                             map.id, i, slot, map.chunk_size, snapshot_id
-                )
-                             .str());
+                Target t({chunk_slot_target(
+                    map.id, i, slot, map.chunk_size, snapshot_id
+                )});
                 // `t`'s own path already carries snapshot_id -- Target::
                 // create_snapshot()'s own already-bound branch takes it,
                 // never create() (create() is only ever for a fresh
@@ -507,11 +493,9 @@ Backend::_remove_snapshot(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
             continue;
         }
         try {
-            Target t(chunk_slot_target(
-                         map.id, m.logical_index, *it, map.chunk_size,
-                         snapshot_id
-            )
-                         .str());
+            Target t({chunk_slot_target(
+                map.id, m.logical_index, *it, map.chunk_size, snapshot_id
+            )});
             co_await t.remove(_queue);
         } catch (const std::exception& e) {
             rawstd_error("Snapshot remove: %s\n", e.what());
@@ -583,7 +567,7 @@ rawstd::Task<void> Backend::_set_object(
     const RawstdUUID& id, const RawstdUUID& snapshot_id, int flags
 ) {
     WireMap map = co_await _client.open(id, snapshot_id);
-    std::string target_string = build_target_string(map, snapshot_id);
+    std::vector<rawstd::URI> target_uris = build_target_uris(map, snapshot_id);
 
     if (_object) {
         co_await _object->close();
@@ -592,7 +576,7 @@ rawstd::Task<void> Backend::_set_object(
 
     // `flags` (RAWSTOR_READONLY or 0) rides straight down into the nested
     // per-chunk open, where a snapshot's chunks require READONLY.
-    _object = co_await Target(target_string).open(_queue, flags);
+    _object = co_await Target(target_uris).open(_queue, flags);
 }
 
 rawstd::Task<void>

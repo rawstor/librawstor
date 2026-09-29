@@ -137,7 +137,7 @@ private:
     RawstdUUID _snapshot_id;
 
 public:
-    explicit Target(const std::string& target);
+    explicit Target(const std::vector<rawstd::URI>& uris);
 
     // Every URI this target's own string names, in order.
     inline const std::vector<rawstd::URI>& uris() const noexcept {

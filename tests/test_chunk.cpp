@@ -91,7 +91,7 @@ open_object(rawio::Queue& queue, const rawstd::URI& location) {
     rawstd_uuid_to_string(&id, &uuid_string);
 
     rawstd::URI uri(location, uuid_string);
-    rawstor::Target target(uri.str());
+    rawstor::Target target({uri});
 
     RawstorObjectSpec spec{
         .size = 1u << 20,
