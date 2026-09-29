@@ -991,39 +991,6 @@ Target::Target(const std::string& target) {
     }
 }
 
-Target::Target(
-    const Location& location, const RawstdUUID& id, uint64_t offset,
-    const RawstdUUID& snapshot_id
-) :
-    _id(id),
-    _snapshot_id(snapshot_id) {
-    RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&id, &uuid_string);
-
-    bool has_snap = !rawstd_uuid_is_nil(&snapshot_id);
-    std::string child = uuid_string;
-    // The offset segment is mandatory once a snapshot segment follows it
-    // (Path's own doc comment in target.hpp) -- otherwise a bare
-    // "<uuid>/<snapshot_id>" would be indistinguishable from "<uuid>/<offset>"
-    // with no snapshot at all. Hex, not decimal -- parse_path()'s own doc
-    // comment above explains why.
-    if (offset != 0 || has_snap) {
-        std::ostringstream oss;
-        oss << std::hex << offset;
-        child += "/" + oss.str();
-    }
-    if (has_snap) {
-        RawstdUUIDString snap_string;
-        rawstd_uuid_to_string(&snapshot_id, &snap_string);
-        child += "/" + std::string(snap_string);
-    }
-
-    _uris.reserve(location.uris().size());
-    for (const rawstd::URI& uri : location.uris()) {
-        _uris.emplace_back(uri, child);
-    }
-}
-
 const RawstdUUID& Target::object_id() const {
     return _id;
 }

@@ -372,10 +372,7 @@ rawstd::Task<void> Location::list(
     // own "internal multi-chunk form") -- which must come back as one
     // Target listing every chunk's own URI, not one Target per location.
     // A plain RawstdUUID has no built-in ordering, hence the explicit
-    // comparator. Target's own Location-based constructor rebuilds each
-    // chunk's own URI (offset segment omitted when 0, same convention
-    // Target::create() itself uses) rather than a second copy of that
-    // logic here.
+    // comparator.
     auto id_less = [](const RawstdUUID& lhs, const RawstdUUID& rhs) -> bool {
         return rawstd_uuid_cmp(&lhs, &rhs) < 0;
     };
@@ -386,8 +383,8 @@ rawstd::Task<void> Location::list(
     RawstdUUID empty_id{};
     RawstdUUID next_token = empty_id;
     for (size_t i = 0; i < _uris.size(); ++i) {
+        const rawstd::URI& location = _uris[i];
         const auto& [loc_groups, loc_token] = listings[i];
-        Location self_location(_uris[i].str());
         for (const auto& group : loc_groups) {
             std::vector<std::pair<uint64_t, rawstd::URI>>& entries =
                 targets_map[group.id];
@@ -398,16 +395,10 @@ rawstd::Task<void> Location::list(
                 // target string with no offset segment at all (implying
                 // 0, TargetPath's own doc comment above), but a string
                 // this library builds itself names every chunk's own
-                // offset explicitly rather than relying on that default
-                // (Target's own Location-based constructor, target.cpp,
-                // omits it at 0 -- meant for a plain target's own
-                // create()-time identity, not this listing).
+                // offset explicitly rather than relying on that default.
                 std::ostringstream oss;
                 oss << std::hex << offset;
-                rawstd::URI uri(
-                    rawstd::URI(self_location.uris().front(), uuid_string),
-                    oss.str()
-                );
+                rawstd::URI uri(rawstd::URI(location, uuid_string), oss.str());
                 entries.emplace_back(offset, uri);
             }
         }

@@ -139,23 +139,6 @@ private:
 public:
     explicit Target(const std::string& target);
 
-    // Builds a single-chunk Target directly from `location`'s own URIs
-    // plus `id`/`offset`/`snapshot_id`, skipping the string round-trip the
-    // constructor above needs -- each of `location`'s own URIs gets
-    // `id`/`offset`/`snapshot_id` appended as its own trailing path segments
-    // (TargetPath's own doc comment above), `offset`/`snapshot_id` omitted
-    // when 0/nil, the same way Location::create() already builds one for a
-    // fresh object. `location`'s own constructor already guarantees at
-    // least one URI, so there's nothing left to validate here. Used
-    // where the pieces are already known separately (e.g. a concrete
-    // Backend's own list(), building one Target per entry from its own
-    // location() and a just-listed id/offset/snapshot_id) rather than
-    // assembled into a string first.
-    Target(
-        const Location& location, const RawstdUUID& id, uint64_t offset = 0,
-        const RawstdUUID& snapshot_id = {}
-    );
-
     // Every URI this target's own string names, in order.
     inline const std::vector<rawstd::URI>& uris() const noexcept {
         return _uris;
