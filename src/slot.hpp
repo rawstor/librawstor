@@ -165,7 +165,7 @@ public:
     rawstd::Task<std::vector<uint64_t>> chunks(const RawstdUUID& id);
 
     rawstd::Task<std::vector<rawstd::URI>>
-    locations(const RawstdUUID& id, uint64_t offset);
+    resolve_locations(const RawstdUUID& id, uint64_t offset);
 
     rawstd::Task<void> set_sync_state(
         const RawstdUUID& id, uint64_t offset,

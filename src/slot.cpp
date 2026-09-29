@@ -929,7 +929,7 @@ rawstd::Task<std::vector<uint64_t>> Slot::chunks(const RawstdUUID& id) {
 }
 
 rawstd::Task<std::vector<rawstd::URI>>
-Slot::locations(const RawstdUUID& id, uint64_t offset) {
+Slot::resolve_locations(const RawstdUUID& id, uint64_t offset) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);

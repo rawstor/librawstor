@@ -376,8 +376,8 @@ chunks_one(rawio::Queue& queue, rawstd::URI location, RawstdUUID id) {
 }
 
 // One location's worth of resolve_member_locations() below -- same
-// one-off shape as meta_one() above, for Slot::locations() instead of
-// Slot::meta().
+// one-off shape as meta_one() above, for Slot::resolve_locations()
+// instead of Slot::meta().
 rawstd::Task<std::vector<rawstd::URI>> member_locations_one(
     rawio::Queue& queue, rawstd::URI location, RawstdUUID id, uint64_t offset
 ) {
@@ -386,7 +386,7 @@ rawstd::Task<std::vector<rawstd::URI>> member_locations_one(
     std::vector<rawstd::URI> ret;
     std::exception_ptr error;
     try {
-        ret = co_await slot->locations(id, offset);
+        ret = co_await slot->resolve_locations(id, offset);
     } catch (...) {
         error = std::current_exception();
     }
