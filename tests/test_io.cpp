@@ -510,17 +510,22 @@ TEST(OstIOTest, set_object_error) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // See set_object_fail above for why this is one more than
-    // rawstor_opts_io_attempts(), and why every session here is the same
-    // single SET_OBJECT.
-    for (unsigned int i = 0; i < rawstor_opts_io_attempts() + 1; ++i) {
+    // Unlike set_object_fail above, a SET_OBJECT the server answers with
+    // ENOENT means its copy is missing (docs/mirroring.md, case F10), not
+    // a connectivity problem: Slot::open() doesn't reconnect and retry it,
+    // so there's exactly one session. With no other member to recreate it
+    // from, the open fails ENOENT itself.
+    {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, -ENOENT);
     }
 
-    EXPECT_THROW(
-        { Object object(queue, target, 1ull << 20); }, std::system_error
-    );
+    try {
+        Object object(queue, target, 1ull << 20);
+        ADD_FAILURE() << "expected the open to fail";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOENT);
+    }
 }
 
 TEST(OstIOTest, set_object_disconnect) {

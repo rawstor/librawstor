@@ -129,12 +129,38 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
     // target concurrently, src/target.cpp), whose create()/remove() shell
     // out via fork()+exec() (src/subprocess.cpp) -- without it, this fd
     // would leak into those children.
-    int fd = co_await _queue.open(
-        target_path.c_str(),
-        ((flags & RAWSTOR_READONLY) != 0 ? O_RDONLY : O_RDWR) | O_NONBLOCK |
-            O_CLOEXEC,
-        0
-    );
+    //
+    // ENOENT means this one copy is missing from a location that's still
+    // there (docs/mirroring.md, case F10) -- Chunk::create() recreates it
+    // from a surviving mirror. A location directory that's missing
+    // altogether is a different case: the store itself isn't there (e.g.
+    // an unmounted disk, whose empty mountpoint is all that's left), so
+    // it's reported as unreachable (ENOTCONN) instead, never mistaken for
+    // one missing copy to recreate onto whatever filesystem sits
+    // underneath.
+    bool missing = false;
+    int fd = -1;
+    try {
+        fd = co_await _queue.open(
+            target_path.c_str(),
+            ((flags & RAWSTOR_READONLY) != 0 ? O_RDONLY : O_RDWR) | O_NONBLOCK |
+                O_CLOEXEC,
+            0
+        );
+    } catch (const std::system_error& e) {
+        if (e.code().value() != ENOENT) {
+            throw;
+        }
+        missing = true;
+    }
+    if (missing) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(location_path, ec)) {
+            rawstd_error("Location unavailable: %s\n", location_path.c_str());
+            RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+        }
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
     co_return fd;
 }
 

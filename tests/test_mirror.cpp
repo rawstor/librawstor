@@ -175,7 +175,13 @@ public:
         return oss.str();
     }
 
+    // The whole location gone (e.g. an unmounted disk): the member is
+    // unreachable.
     void drop(size_t i) const { fs::remove_all(_dirs[i]); }
+
+    // Only this object's own copy gone, its location still there
+    // (docs/mirroring.md, case F10).
+    void drop_copy(size_t i) const { fs::remove_all(_dirs[i] / _uuid); }
 
     // file::Backend keeps one chunk directory per object,
     // <uuid>/<offset>/, holding a "data" file and a "meta" file
@@ -783,6 +789,105 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     object_read(queue, member, data.data(), data.size(), 0);
     EXPECT_EQ(data, "ping");
     EXPECT_EQ(object_close(queue, member), 0);
+}
+
+// F10 (docs/mirroring.md): one member's copy is missing from a location
+// that's still there -- open() recreates it blank from the survivor's
+// own spec, and online resync fills it back in.
+TEST(MirrorQuorumTest, missing_copy_recreated_and_resynced) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000aa");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* writer = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &writer), 0);
+    std::string ping = "ping";
+    object_write(queue, writer, ping.data(), ping.size(), 0, 0);
+    object_close_clean(queue, writer);
+
+    members.drop_copy(1);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    EXPECT_TRUE(
+        wait_member_synced(queue, members.target(0), members.target(1))
+    );
+    object_close_clean(queue, object);
+
+    RawstorObjectMeta a{};
+    RawstorObjectMeta b{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
+    ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
+    EXPECT_EQ(a.sync_state.sync_id, b.sync_state.sync_id);
+    EXPECT_EQ(b.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(b.spec.size, spec.size);
+
+    RawstorObject* member = nullptr;
+    ASSERT_EQ(target_open(queue, members.target(1), &member), 0);
+    std::string data(4, '\0');
+    object_read(queue, member, data.data(), data.size(), 0);
+    EXPECT_EQ(data, "ping");
+    EXPECT_EQ(object_close(queue, member), 0);
+}
+
+// Every copy missing: nothing survives to vouch the chunk never held
+// data, so nothing is recreated -- reported as missing (ENOENT), not as
+// unreachable.
+TEST(MirrorQuorumTest, all_copies_missing_not_recreated) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000ab");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    members.drop_copy(0);
+    members.drop_copy(1);
+
+    RawstorObject* object = nullptr;
+    ssize_t res = target_open(queue, members.target_all(), &object);
+    EXPECT_EQ(res, -ENOENT);
+    EXPECT_EQ(object, nullptr);
+    EXPECT_FALSE(fs::exists(members.dat(0)));
+    EXPECT_FALSE(fs::exists(members.dat(1)));
+}
+
+// A read-only open writes nothing, so a missing copy stays missing: the
+// open itself still succeeds off the survivor alone (no quorum needed).
+TEST(MirrorQuorumTest, readonly_open_does_not_recreate_missing_copy) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000ac");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    members.drop_copy(1);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(
+        target_open(queue, members.target_all(), &object, RAWSTOR_READONLY), 0
+    );
+    EXPECT_EQ(object_close(queue, object), 0);
+    EXPECT_FALSE(fs::exists(members.dat(1)));
 }
 
 TEST(MirrorQuorumTest, clean_close_stable_identity) {

@@ -561,3 +561,47 @@ TEST(BackendChunksTest, ost_reports_every_offset_of_id) {
     rawstor::tests::ObjectEnv env(8792, 8793);
     expect_chunks_of_multichunk_object(rawstd::URI("ost://127.0.0.1:8793"));
 }
+
+// F10 (docs/mirroring.md) across the wire: a real rawstor-ost missing
+// its own copy reports it as ENOENT (its own local open finds no copy at
+// all), not ENOTCONN, so a client opening a file:// + ost:// mirror
+// recreates that copy through the OST like any other missing member.
+TEST(ChunkF10Test, missing_copy_recreated_over_ost) {
+    rawstor::tests::ObjectEnv env(8794, 8795);
+    rawstor::tests::TmpDir dir;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(16);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    rawstd::URI file_location(dir.uri());
+    rawstd::URI ost_location("ost://127.0.0.1:8795");
+    rawstd::URI ost_uri(ost_location, uuid_string);
+
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .width = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    run(*queue,
+        rawstor::Target({rawstd::URI(file_location, uuid_string), ost_uri})
+            .create(*queue, spec));
+
+    run(*queue, rawstor::Target({ost_uri}).remove(*queue));
+
+    std::unique_ptr<rawstor::Chunk> chunk =
+        run(*queue,
+            rawstor::Chunk::create(
+                *queue, {file_location, ost_location}, id, 0, 0, RawstdUUID{}
+            ));
+    run(*queue, chunk->close());
+
+    std::vector<RawstorObjectMeta> metas =
+        run(*queue, rawstor::Target({ost_uri}).meta(*queue, 0));
+    ASSERT_EQ(metas.size(), 1u);
+    EXPECT_EQ(metas.front().spec.size, spec.size);
+}

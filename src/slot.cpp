@@ -714,6 +714,12 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     try {
         co_await rawstd::gather(std::move(set_objects));
     } catch (const std::system_error& e) {
+        // The copy itself is missing (docs/mirroring.md, case F10), not a
+        // connectivity problem: reconnecting won't bring it back, so it
+        // goes straight to the caller (Chunk::create() recreates it).
+        if (e.code().value() == ENOENT) {
+            throw;
+        }
         failed = true;
         rawstd_warning(
             "Slot::open(): %s; reconnecting every backend\n", e.what()

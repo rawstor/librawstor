@@ -189,6 +189,94 @@ connect_one(rawio::Queue& queue, const rawstd::URI& location) {
     );
 }
 
+// F10 (docs/mirroring.md): a member whose own copy is missing
+// (`missing`, its open failed ENOENT on a location that's still there)
+// gets that copy recreated on a fresh Slot and opened again, turning it
+// into a reachable, blank member (sync_id 0) -- _reconcile_sync_set()
+// then marks it STALE next to any established sync set, and online
+// resync fills it from a survivor, same as any other stale member (or
+// keeps it IN_SYNC alongside survivors that were never written either).
+// Only rebuilt from a surviving copy, whose own META gives its size:
+// with every copy missing there's nothing to vouch that the chunk never
+// held data, so that stays an error rather than a silent blank chunk.
+// Never for a read-only open (it writes nothing) or a bound snapshot
+// version (a CoW version can't be regenerated from live data). A member
+// whose recreate fails just stays unreachable, as before.
+rawstd::Task<void> recreate_missing(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
+    const RawstdUUID& id, uint64_t offset, int flags,
+    const RawstdUUID& snapshot_id,
+    std::vector<std::unique_ptr<rawstor::Slot>>& slots,
+    std::vector<RawstorObjectMeta>& metas, std::vector<bool>& opened,
+    const std::vector<bool>& missing
+) {
+    if ((flags & RAWSTOR_READONLY) != 0 || !rawstd_uuid_is_nil(&snapshot_id)) {
+        co_return;
+    }
+
+    // The largest surviving copy's size, not just the first's: a smaller
+    // one is itself F11-stale (_reconcile_sync_set()'s own comment), and
+    // a recreated copy sized off it would be too.
+    const RawstorObjectMeta* survivor = nullptr;
+    uint64_t size = 0;
+    for (size_t i = 0; i < locations.size(); ++i) {
+        if (!opened[i]) {
+            continue;
+        }
+        if (survivor == nullptr) {
+            survivor = &metas[i];
+        }
+        size = std::max(size, metas[i].spec.size);
+    }
+    if (survivor == nullptr) {
+        co_return;
+    }
+
+    RawstorObjectSpec sp{};
+    sp.size = size;
+    sp.width = survivor->spec.width;
+    sp.chunk_size = survivor->spec.chunk_size;
+
+    for (size_t i = 0; i < locations.size(); ++i) {
+        if (!missing[i]) {
+            continue;
+        }
+        rawstd_warning(
+            "Mirror member copy missing, recreating it: %s\n",
+            locations[i].str().c_str()
+        );
+
+        // co_await isn't allowed inside a catch block, so the failure is
+        // only recorded here; closing the connection happens just below,
+        // outside the handler.
+        std::unique_ptr<rawstor::Slot> slot;
+        RawstorObjectMeta meta{};
+        bool failed = false;
+        try {
+            slot = co_await connect_one(queue, locations[i]);
+            co_await slot->create(id, offset, sp, RAWSTOR_MEMBER_DATA);
+            meta = co_await slot->open(id, offset, flags, snapshot_id);
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member recreate failed: %s\n", e.what());
+            failed = true;
+        }
+
+        if (!failed) {
+            slots[i] = std::move(slot);
+            metas[i] = meta;
+            opened[i] = true;
+            continue;
+        }
+        if (slot) {
+            try {
+                co_await slot->close();
+            } catch (const std::exception& e) {
+                rawstd_warning("Chunk::create(): %s\n", e.what());
+            }
+        }
+    }
+}
+
 } // namespace
 
 rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
@@ -294,6 +382,12 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
 
     std::vector<RawstorObjectMeta> metas(locations.size());
     std::vector<bool> opened(locations.size(), false);
+    // Whether a member's own open failed because its copy is missing
+    // (ENOENT -- docs/mirroring.md, case F10) rather than for any other
+    // reason: only such a member can be recreated below, and only if
+    // every member failed this way is the chunk reported missing
+    // (ENOENT) rather than unreachable (ENOTCONN).
+    std::vector<bool> missing(locations.size(), false);
     for (size_t i = 0; i < open_tasks.size(); ++i) {
         if (!open_tasks[i]) {
             continue;
@@ -308,6 +402,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unavailable: %s\n", e.what());
             unavailable = true;
+            missing[i] = e.code().value() == ENOENT;
         }
 
         if (!unavailable) {
@@ -322,6 +417,11 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         }
         slots[i].reset();
     }
+
+    co_await recreate_missing(
+        queue, locations, id, offset, flags, snapshot_id, slots, metas, opened,
+        missing
+    );
 
     // Members are assembled only now, with connect/open all already
     // settled -- one slot per location (the only member identity this
@@ -372,7 +472,18 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // refusal there is safe to let unwind through it rather than
     // checked redundantly here first.
     if (reachable == 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+        // Every member reachable but holding no copy at all is a missing
+        // chunk, not an unreachable one -- e.g. rawstor-ost's own local
+        // open of a copy it doesn't have, which a client above it can
+        // then recreate like any other F10 member.
+        bool all_missing = true;
+        for (size_t i = 0; i < locations.size(); ++i) {
+            if (!missing[i]) {
+                all_missing = false;
+                break;
+            }
+        }
+        RAWSTD_THROW_SYSTEM_ERROR(all_missing ? ENOENT : ENOTCONN);
     }
 
     // Born degraded: this chunk's own membership (`locations`, the
