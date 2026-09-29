@@ -13,6 +13,116 @@ Chunk and Slot are the client library's internal model of what a Target
 opens into, described here so the two visible forms make sense in
 context.
 
+### How the pieces fit
+
+A caller types a **Location** or a **Target**; opening a Target gives an
+**Object**, which the library splits into **Chunks**, each mirrored over
+one or more **Slots**, each talking to one **Backend**:
+
+```mermaid
+classDiagram
+    direction LR
+    Location "1" o-- "*" Target : holds objects
+    Target "1" ..> "1" Object : open()
+    Object "1" *-- "1..*" Chunk : routes I/O by offset
+    Chunk "1" *-- "1..*" Slot : mirrors
+    Slot "1" --> "1" Backend : one connection
+    Backend <|-- file
+    Backend <|-- lvm
+    Backend <|-- zfs
+    Backend <|-- ost
+    Backend <|-- mds
+    class Location {
+      <<typed by the caller>>
+      one URI per backend
+      +create(spec) Target
+      +list() Targets
+      +info() used, total
+    }
+    class Target {
+      <<typed by the caller>>
+      Location + object uuid
+      optional snapshot uuid
+      +create(spec)
+      +open(flags) Object
+      +meta() / spec()
+      +create_snapshot()
+      +resize(size)
+      +remove()
+    }
+    class Object {
+      <<runtime handle>>
+      size, chunk_size
+      +pread() / pwrite()
+      +discard() / write_zeroes()
+      +flush() / close()
+    }
+    class Chunk {
+      <<mirror consistency>>
+      offset = index x chunk_size
+      state, epoch, sync_id
+      +quorum open, degrade, resync()
+    }
+    class Slot {
+      <<one mirror arm>>
+      one bare URI
+      +retry / reconnect()
+    }
+    class Backend {
+      <<physical store>>
+      +create / remove / meta()
+      +read / write()
+    }
+    class mds {
+      <<resolves, stores nothing>>
+      expands one object into
+      per-chunk ost URIs
+    }
+    note for Location "ost://host:7777
+    file:///var/rawstor
+    mds://host:7776
+    comma-separated = mirrors"
+    note for Target "ost://host:7777/UUID
+    ost://a/UUID,ost://b/UUID
+    mds://host:7776/UUID/SNAPSHOT_UUID"
+```
+
+The same layers on a concrete object: a 1.5 GiB `mds://` object with
+512 MiB chunks, two copies each. The caller only ever sees the Target at
+the top; everything below it is built by the library from the MDS's chunk
+map, and the leaves are plain `ost://` servers:
+
+```mermaid
+flowchart TB
+    T(["Target<br/>mds://mds:7776/U"])
+    O["Object U<br/>size 1.5 GiB, chunk_size 512 MiB"]
+    T -- "open()" --> O
+
+    subgraph C0 ["Chunk @ 0"]
+        S00["Slot<br/>ost://a:7777/U/0"]
+        S01["Slot<br/>ost://b:7777/U/0"]
+    end
+    subgraph C1 ["Chunk @ 512 MiB"]
+        S10["Slot<br/>ost://b:7777/U/20000000"]
+        S11["Slot<br/>ost://c:7777/U/20000000"]
+    end
+    subgraph C2 ["Chunk @ 1 GiB"]
+        S20["Slot<br/>ost://a:7777/U/40000000"]
+        S21["Slot<br/>ost://c:7777/U/40000000"]
+    end
+    O --> C0 & C1 & C2
+
+    A[("OST a")]
+    B[("OST b")]
+    C[("OST c")]
+    S00 --> A
+    S01 --> B
+    S10 --> B
+    S11 --> C
+    S20 --> A
+    S21 --> C
+```
+
 ---
 
 ## Location
