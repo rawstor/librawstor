@@ -14,26 +14,24 @@
 #include <rawstd/uuid.h>
 
 #include <list>
-#include <string>
 #include <vector>
 
 namespace rawstor {
 
 // A Location addresses a backend store (or set of stores, for mirroring/
 // data locality) by URI, with no UUID -- see docs/concepts.md.
-// Parsed from its own string form, same as Target -- validated once, at
-// construction (see the constructor's own comment); no other method
-// re-checks it. Lightweight, like Target: holds only `_uris`, and never
-// keeps a Slot between calls -- info()/list() fan a Slot per URI out
-// and back down within the one call (same as Chunk::info()/list() used
-// to), and create() hands the actual per-URI CREATE off to a fresh Target
-// rather than doing it itself.
+// Validated once, at construction (see the constructor's own comment); no
+// other method re-checks it. Lightweight, like Target: holds only `_uris`, and
+// never keeps a Slot between calls -- info()/list() fan a Slot per URI out and
+// back down within the one call (same as Chunk::info()/list() used to), and
+// create() hands the actual per-URI CREATE off to a fresh Target rather than
+// doing it itself.
 class Location final {
 private:
     std::vector<rawstd::URI> _uris;
 
 public:
-    explicit Location(const std::string& location);
+    explicit Location(const std::vector<rawstd::URI>& uris);
 
     inline const std::vector<rawstd::URI>& uris() const noexcept {
         return _uris;

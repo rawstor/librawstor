@@ -312,12 +312,10 @@ void launch_create_op(
 
 namespace rawstor {
 
-// Every public method below used to re-run these two checks itself,
-// identically, before touching _uris -- validated once, here, instead:
-// _uris never changes after construction, so nothing past this point
-// can un-validate it (same pattern as Target's own constructor).
-Location::Location(const std::string& location) :
-    _uris(rawstd::URI::uriv(location.c_str())) {
+// Validated once, here: _uris never changes after construction, so
+// nothing past this point can un-validate it, and no public method below
+// needs to re-check it (same pattern as Target's own constructor).
+Location::Location(const std::vector<rawstd::URI>& uris) : _uris(uris) {
     validate_not_empty(_uris);
     validate_different_uris(_uris);
 }
@@ -349,8 +347,6 @@ rawstd::Task<void> Location::list(
     rawio::Queue& queue, unsigned int limit, std::list<Target>& targets,
     RawstorPaginationToken& token
 ) const {
-    validate_not_empty(_uris);
-
     RawstdUUID token_id = decode_token(token);
 
     // Every URI's LIST goes out concurrently instead of one at a time;
@@ -491,7 +487,7 @@ int rawstor_location_list(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Location loc(location);
+        rawstor::Location loc(rawstd::URI::uriv(location));
         launch_list_op(
             std::move(loc), static_cast<rawio::Queue*>(queue), limit, targets,
             token, cb, data
@@ -515,7 +511,7 @@ int rawstor_location_info(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        rawstor::Location loc(location);
+        rawstor::Location loc(rawstd::URI::uriv(location));
         launch_info_op(
             std::move(loc), static_cast<rawio::Queue*>(queue), info, cb, data
         );

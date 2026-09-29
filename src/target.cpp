@@ -1009,7 +1009,7 @@ Location Target::location() const {
             stripped.push_back(std::move(s));
         }
     }
-    return Location(rawstd::URI::uris(stripped));
+    return Location(stripped);
 }
 
 const RawstdUUID& Target::snapshot_id() const {
