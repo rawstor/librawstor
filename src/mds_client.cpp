@@ -78,7 +78,12 @@ WireMap decode_object_map(const std::vector<unsigned char>& data) {
 
     map.id = uuid_from_bytes(descriptor.id);
     map.logical_size = descriptor.logical_size;
-    map.chunk_size = descriptor.chunk_size;
+    // An mds:// object's chunk_size is a nonzero power of two;
+    // 1ull << chunk_shift is undefined from 64 on.
+    if (descriptor.chunk_shift == 0 || descriptor.chunk_shift >= 64) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+    map.chunk_size = 1ull << descriptor.chunk_shift;
     map.policy = descriptor.policy;
     map.map_epoch = descriptor.map_epoch;
     map.chunks.resize(descriptor.nchunks);
@@ -223,7 +228,10 @@ rawstd::Task<uint64_t> Client::create(
     };
     uuid_to_bytes(id, request.payload.id);
     request.payload.logical_size = logical_size;
-    request.payload.chunk_size = chunk_size;
+    // mds::Backend::create() only gets here with a nonzero power-of-two
+    // chunk_size (Target::create()'s own check).
+    request.payload.chunk_shift =
+        static_cast<uint8_t>(__builtin_ctzll(chunk_size));
     request.payload.policy = policy;
 
     std::vector<unsigned char> data =

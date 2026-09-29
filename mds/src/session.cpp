@@ -115,17 +115,20 @@ encode_object_map(const Topology& topology, const ObjectMap& map) {
     RawstorFrameObjDescriptorPayload descriptor{};
     memcpy(descriptor.id, map.descriptor.id.bytes, sizeof(descriptor.id));
     descriptor.logical_size = map.descriptor.logical_size;
-    descriptor.chunk_size = map.descriptor.chunk_size;
+    descriptor.map_epoch = map.descriptor.map_epoch;
     descriptor.policy = RawstorFrameObjPolicy{
+        .stripe_width = map.descriptor.policy.stripe_width,
+        .placement_seed = map.descriptor.policy.seed,
         .redundancy = RAWSTOR_OBJ_REDUNDANCY_MIRROR,
         .width = static_cast<uint8_t>(map.descriptor.policy.width),
         .failure_domain =
             static_cast<uint8_t>(map.descriptor.policy.failure_domain),
         .reserved = 0,
-        .stripe_width = map.descriptor.policy.stripe_width,
-        .placement_seed = map.descriptor.policy.seed,
     };
-    descriptor.map_epoch = map.descriptor.map_epoch;
+    // The store only ever holds a nonzero power-of-two chunk_size
+    // (validate_geometry(), store.cpp).
+    descriptor.chunk_shift =
+        static_cast<uint8_t>(__builtin_ctzll(map.descriptor.chunk_size));
     descriptor.nchunks = static_cast<uint32_t>(map.chunks.size());
 
     std::vector<unsigned char> data(sizeof(descriptor));
@@ -282,6 +285,11 @@ Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
         int32_t res = 0;
         RawstorFrameObjCreatedPayload out{};
         try {
+            // 1ull << chunk_shift is undefined from 64 on; 0 would be a
+            // chunk_size of 0, which an mds:// object never has.
+            if (payload.chunk_shift == 0 || payload.chunk_shift >= 64) {
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
             PlacementPolicy policy{
                 .width = payload.policy.width,
                 .failure_domain =
@@ -290,8 +298,8 @@ Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
                 .seed = payload.policy.placement_seed,
             };
             ObjectDescriptor descriptor = store.create(
-                uuid_of(payload.id), payload.logical_size, payload.chunk_size,
-                policy
+                uuid_of(payload.id), payload.logical_size,
+                1ull << payload.chunk_shift, policy
             );
             out.map_epoch = descriptor.map_epoch;
         } catch (const std::system_error& e) {

@@ -198,8 +198,8 @@ struct RawstorFrameListEntry {
 // DISCARD leaves the byte unused (0).
 struct RawstorFrameIOPayload {
     uint64_t offset;
-    uint32_t len;
     uint64_t hash;
+    uint32_t len;
     uint8_t flags;
 } RAWSTOR_PACKED;
 
@@ -265,8 +265,8 @@ struct RawstorFrameAllocatePayload {
     uint8_t object_id[16];
     uint64_t chunk_offset;
     uint64_t size;
+    uint64_t stripe_width; /* K; 0 = spread every chunk, 1 = object-local */
     uint8_t chunk_shift;
-    uint64_t stripe_width;  /* K; 0 = spread every chunk, 1 = object-local */
     uint8_t failure_domain; /* RAWSTOR_OBJ_DOMAIN_* */
     uint8_t width;          /* redundancy: copies per chunk */
     uint8_t member_role;    /* enum RawstorMemberRole, <rawstor/target.h> */
@@ -345,20 +345,30 @@ struct RawstorFrameMetaPayload {
 /* stripe_width: 1 = object-local (DRBD-like), 0 = spread (Ceph-like). */
 #define RAWSTOR_OBJ_STRIPE_ALL 0
 
+/*
+ * The 64-bit fields lead, so they stay 8-byte aligned wherever this is
+ * embedded at an 8-byte offset (RawstorFrameObjCreatePayload,
+ * RawstorFrameObjDescriptorPayload); `reserved` rounds it to 4 bytes past
+ * them, so a 32-bit field right after it stays aligned too.
+ */
 struct RawstorFrameObjPolicy {
+    uint64_t stripe_width;
+    uint64_t placement_seed;
     uint8_t redundancy; /* RAWSTOR_OBJ_REDUNDANCY_* */
     uint8_t width;      /* slots per chunk: mirror R */
     uint8_t failure_domain;
     uint8_t reserved;
-    uint64_t stripe_width;
-    uint64_t placement_seed;
 } RAWSTOR_PACKED;
 
+/*
+ * chunk_shift is log2(chunk_size), like RawstorFrameAllocatePayload's:
+ * an mds:// object's chunk_size is always a nonzero power of two.
+ */
 struct RawstorFrameObjCreatePayload {
     uint8_t id[16]; /* client-generated, like every object id */
     uint64_t logical_size;
-    uint64_t chunk_size; /* power of two */
     struct RawstorFrameObjPolicy policy;
+    uint8_t chunk_shift;
 } RAWSTOR_PACKED;
 
 struct RawstorFrameObjCreate {
@@ -385,10 +395,10 @@ struct RawstorFrameObjResizedPayload {
 struct RawstorFrameObjDescriptorPayload {
     uint8_t id[16];
     uint64_t logical_size;
-    uint64_t chunk_size;
-    struct RawstorFrameObjPolicy policy;
     uint64_t map_epoch;
+    struct RawstorFrameObjPolicy policy;
     uint32_t nchunks;
+    uint8_t chunk_shift; /* log2(chunk_size), see OBJ_CREATE's */
 } RAWSTOR_PACKED;
 
 struct RawstorFrameObjChunkEntry {
@@ -404,9 +414,9 @@ struct RawstorFrameObjChunkEntry {
  * treats such a member as unreachable).
  */
 struct RawstorFrameObjChunkSlot {
-    uint8_t slot_index;
     uint8_t ost_id[16];
     uint16_t location_len;
+    uint8_t slot_index;
 } RAWSTOR_PACKED;
 
 /*
@@ -437,6 +447,31 @@ struct RawstorFrameObjSnapMemberPayload {
 struct RawstorFrameObjSnapCommittedPayload {
     uint64_t map_epoch;
 } RAWSTOR_PACKED;
+
+/* Every wire struct's exact size, checked at compile time. */
+#ifdef __cplusplus
+#define RAWSTOR_PROTOCOL_ASSERT_SIZE(type, size)                               \
+    static_assert(sizeof(struct type) == (size), #type " wire size")
+#else
+#define RAWSTOR_PROTOCOL_ASSERT_SIZE(type, size)                               \
+    _Static_assert(sizeof(struct type) == (size), #type " wire size")
+#endif
+
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameHead, 8);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBasicPayload, 48);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 20);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 24);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 21);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncStatePayload, 73);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAllocatePayload, 48);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameResponseBody, 12);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 64);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjPolicy, 20);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjCreatePayload, 45);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjDescriptorPayload, 57);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjChunkSlot, 19);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjSnapCommitPayload, 36);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjSnapMemberPayload, 24);
 
 #ifdef __cplusplus
 }

@@ -333,8 +333,8 @@ public:
             .payload =
                 {
                     .offset = (uint64_t)offset,
-                    .len = (uint32_t)_size,
                     .hash = 0,
+                    .len = (uint32_t)_size,
                     .flags = 0,
                 },
         }),
@@ -415,8 +415,8 @@ public:
             .payload =
                 {
                     .offset = (uint64_t)offset,
-                    .len = (uint32_t)_size,
                     .hash = 0,
+                    .len = (uint32_t)_size,
                     .flags = 0,
                 },
         }),
@@ -490,8 +490,8 @@ public:
                 },
             .payload = {
                 .offset = (uint64_t)offset,
-                .len = (uint32_t)size,
                 .hash = hash(buf, size),
+                .len = (uint32_t)size,
                 .flags = static_cast<uint8_t>(sync ? RAWSTOR_FLAG_SYNC : 0),
             },
         }) {
@@ -564,8 +564,8 @@ public:
                 },
             .payload = {
                 .offset = (uint64_t)offset,
-                .len = (uint32_t)size,
                 .hash = hash(iov, niov),
+                .len = (uint32_t)size,
                 .flags = static_cast<uint8_t>(sync ? RAWSTOR_FLAG_SYNC : 0),
             },
         }) {
@@ -641,8 +641,8 @@ public:
                 },
             .payload = {
                 .offset = (uint64_t)offset,
-                .len = (uint32_t)size,
                 .hash = 0,
+                .len = (uint32_t)size,
                 .flags = flags,
             },
         }) {}
@@ -843,8 +843,8 @@ public:
                 .object_id = {},
                 .chunk_offset = chunk_offset,
                 .size = sp.size,
-                .chunk_shift = chunk_size_to_shift(sp.chunk_size),
                 .stripe_width = sp.stripe_width,
+                .chunk_shift = chunk_size_to_shift(sp.chunk_size),
                 .failure_domain = sp.failure_domain,
                 .width = (uint8_t)sp.width,
                 .member_role = (uint8_t)member_role,
