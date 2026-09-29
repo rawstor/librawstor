@@ -127,23 +127,24 @@ public:
     // its ancestry, see docs/mirroring.md) and its own member_kind -- the
     // one metadata round trip every concrete Backend implements, no
     // separate cheaper variant that only reports a subset (a caller that
-    // only wants the spec half, e.g. Chunk::spec(), just discards
-    // RawstorObjectMeta::sync_state/member_kind). set_sync_state()
+    // only wants the spec half, e.g. Target's own spec lookup, just
+    // discards RawstorObjectMeta::sync_state/member_kind). set_sync_state()
     // persists a caller-supplied sync identity durably before returning.
     //
     // Returns one entry per real member of the chunk at `offset` -- every
     // backend but mds::Backend represents exactly one physical copy of
     // its own, so this is always a single-element vector for them
-    // (Chunk::meta() is what fans out across a plain chunk's own mirror
-    // URIs, one single-element Backend::meta() call per URI). Slot::open()
-    // -- the "is my one location healthy" question Chunk::create() asks
-    // of every location in its own pool -- takes this vector's own first
-    // entry as that location's answer; every backend but mds::Backend
-    // only ever has the one to give anyway. mds::Backend is the one case
-    // where a single Backend instance stands for a whole many-chunk
-    // object: at a real chunk offset, it resolves that chunk's own real
-    // OST members (via its own WireMap) and reports every one of their
-    // real states, recursing into the same Chunk::meta() (mds_backend.cpp).
+    // (Target's own resolve_meta(), target.cpp, is what fans out across
+    // a plain chunk's own mirror URIs, one single-element Backend::meta()
+    // call per URI). Slot::open() -- the "is my one location healthy"
+    // question Chunk::create() asks of every location in its own pool --
+    // takes this vector's own first entry as that location's answer;
+    // every backend but mds::Backend only ever has the one to give
+    // anyway. mds::Backend is the one case where a single Backend
+    // instance stands for a whole many-chunk object: at a real chunk
+    // offset, it resolves that chunk's own real OST members (via its own
+    // WireMap) and reports every one of their real states, via the same
+    // direct-to-Slot fan-out (mds_backend.cpp).
     virtual rawstd::Task<std::vector<RawstorObjectMeta>>
     meta(const RawstdUUID& id, uint64_t offset) = 0;
 

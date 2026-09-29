@@ -112,13 +112,18 @@ public:
 
     // Resolves `offset` to one of this object's own real chunks (its
     // own WireMap), then reports every one of that chunk's own real
-    // members' real mirror consistency state -- recursing into the same
-    // Chunk::meta() a plain target's own mirror set goes through
-    // (mds_backend.cpp's own comment). `id`/`offset` at the *outer*
-    // Target level (Slot::open()/Chunk::create(), see this class's own
-    // doc comment) is always chunk 0's -- the whole object trusted
-    // outright there (mirrors == 1 at that level), taking this method's
-    // own first entry as its answer (Backend::meta()'s own doc comment).
+    // members' real mirror consistency state -- querying every one of
+    // that chunk's own real member locations concurrently, the same
+    // direct-to-Slot fan-out Target's own resolve_meta() uses for a
+    // plain target's mirror set (target.cpp's own comment; duplicated
+    // here rather than shared, since this call's own locations are
+    // already resolved off a live WireMap, with nothing left of that
+    // resolution for a shared helper to still do). `id`/`offset` at the
+    // *outer* Target level (Slot::open()/Chunk::create(), see this
+    // class's own doc comment) is always chunk 0's -- the whole object
+    // trusted outright there (mirrors == 1 at that level), taking this
+    // method's own first entry as its answer (Backend::meta()'s own doc
+    // comment).
     rawstd::Task<std::vector<RawstorObjectMeta>>
     meta(const RawstdUUID& id, uint64_t offset) override;
 

@@ -174,13 +174,13 @@ bool is_opaque(const std::vector<rawstd::URI>& uris) {
     return uris.front().scheme() == "mds";
 }
 
-// The (stripped) locations Chunk::spec()/meta()/chunks() should query for
-// real offset `offset` -- `opaque` (is_opaque() above) means a single
-// location whose own real per-chunk shape isn't reflected in `uris` at
-// all: that one location answers regardless of which real `offset` was
-// asked for, resolving it internally. A non-opaque target is fully
-// self-describing instead: chunk_uris_at_offset() finds the exact group
-// `offset` names, or throws ENOENT if none does.
+// The (stripped) locations resolve_spec()/resolve_meta()/resolve_chunks()
+// should query for real offset `offset` -- `opaque` (is_opaque() above)
+// means a single location whose own real per-chunk shape isn't reflected
+// in `uris` at all: that one location answers regardless of which real
+// `offset` was asked for, resolving it internally. A non-opaque target
+// is fully self-describing instead: chunk_uris_at_offset() finds the
+// exact group `offset` names, or throws ENOENT if none does.
 std::vector<rawstd::URI> locations_for(
     const std::vector<rawstd::URI>& uris, uint64_t offset, bool opaque
 ) {
@@ -317,6 +317,217 @@ resize_one(rawio::Queue& queue, const rawstd::URI& target, uint64_t new_size) {
     if (error) {
         std::rethrow_exception(error);
     }
+}
+
+// One location's worth of resolve_spec()/resolve_meta() below: connect a
+// single-backend Slot just for this call, meta() it, close it again --
+// same connect/close shape as create_one()/remove_one() above, but for a
+// read-only lookup rather than a mutating one, and (like those) with no
+// connection kept around afterward. `location` is already identity-
+// stripped, `id`/`offset` already parsed and shared by every location of
+// the same chunk. Taken by value, all three: a coroutine parameter
+// declared as a reference is not lifetime-extended past the initiating
+// call the way an ordinary function's would be, and every one of these
+// is still read well after this coroutine's own first suspension point
+// (slot->meta() below). Returns whatever Backend::meta() itself returns
+// -- one entry for every backend but mds::Backend, whose own real
+// per-member count at a real chunk offset this call has no reason to
+// second-guess (Backend::meta()'s own doc comment); resolve_spec() below
+// only ever wants its own first entry, resolve_meta() wants every one of
+// them.
+rawstd::Task<std::vector<RawstorObjectMeta>> meta_one(
+    rawio::Queue& queue, rawstd::URI location, RawstdUUID id, uint64_t offset
+) {
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, location, 1);
+    std::vector<RawstorObjectMeta> ret;
+    std::exception_ptr error;
+    try {
+        ret = co_await slot->meta(id, offset);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    co_return ret;
+}
+
+// One location's worth of resolve_chunks() below -- same one-off shape
+// as meta_one() above, for Slot::chunks() instead of Slot::meta(). Only
+// `id` is needed (Backend::chunks()'s own doc comment takes no offset).
+rawstd::Task<std::vector<uint64_t>>
+chunks_one(rawio::Queue& queue, rawstd::URI location, RawstdUUID id) {
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, location, 1);
+    std::vector<uint64_t> ret;
+    std::exception_ptr error;
+    try {
+        ret = co_await slot->chunks(id);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    co_return ret;
+}
+
+// One location's worth of resolve_member_locations() below -- same
+// one-off shape as meta_one() above, for Slot::locations() instead of
+// Slot::meta().
+rawstd::Task<std::vector<rawstd::URI>> member_locations_one(
+    rawio::Queue& queue, rawstd::URI location, RawstdUUID id, uint64_t offset
+) {
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, location, 1);
+    std::vector<rawstd::URI> ret;
+    std::exception_ptr error;
+    try {
+        ret = co_await slot->locations(id, offset);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    co_return ret;
+}
+
+// width is this chunk's own per-copy count: the chunk's own URI count
+// when it has more than one (an ordinary mirror set can only ever be
+// that -- no single URI in it is self-aware enough to say otherwise), or
+// whatever the sole backend itself reported for a single-URI chunk (an
+// mds:// object's own configured redundancy, never derivable by
+// counting) -- falling back to 1 only if that answer was itself 0 (a
+// plain, single-URI object that was never given one). `size` is
+// identical on every copy, so this only needs one to answer: locations
+// are tried in order, first reachable wins -- unlike resolve_meta()
+// below, which queries every one of them instead of stopping at the
+// first answer.
+rawstd::Task<RawstorObjectSpec> resolve_spec(
+    rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
+    uint64_t offset
+) {
+    int first_error = 0;
+    for (const auto& location : locations) {
+        try {
+            std::vector<RawstorObjectMeta> ms =
+                co_await meta_one(queue, location, id, offset);
+            RawstorObjectSpec ret = ms.front().spec;
+            if (locations.size() > 1 || ret.width == 0) {
+                ret.width = static_cast<unsigned int>(locations.size());
+            }
+            co_return ret;
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            if (first_error == 0) {
+                first_error = e.code().value();
+            }
+        }
+    }
+
+    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
+}
+
+// Unlike resolve_spec() above, every location is queried, not just the
+// first reachable one: a caller asking for mirror consistency state
+// wants to see each copy's own state (docs/mirroring.md), not one
+// answer papered over the rest by fail-over. Every location is still
+// queried concurrently (own tasks, awaited one by one below, same
+// pattern as Target::create()'s own per-location tracking -- this can't
+// use gather() either, for the same reason: one location's failure must
+// not erase what the others answered). A location that doesn't answer
+// gets a single zero-filled entry rather than being left out -- for
+// every backend but mds::Backend, that location's own vector is always
+// exactly one entry either way, answering or not, so the result's own
+// index still ties an entry back to its location. An mds:// location's
+// own vector, when it does answer, is instead flattened in -- every one
+// of that one real chunk's own real members, in their own WireMap order
+// (mds_backend.cpp) -- so `locations` and the result no longer
+// correspond index-for-index once one of them is mds://, same as any
+// other multi-entry-per-location case would. Every answering entry's own
+// spec.width is trusted verbatim, no override: Target::create() already
+// guarantees it's persisted correctly on every member (exactly the
+// chunk's own location count for an ordinary multi-URI mirror set, or a
+// real, always non-zero value otherwise -- its own comment).
+rawstd::Task<std::vector<RawstorObjectMeta>> resolve_meta(
+    rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
+    uint64_t offset
+) {
+    std::vector<rawstd::Task<std::vector<RawstorObjectMeta>>> tasks;
+    tasks.reserve(locations.size());
+    for (const auto& location : locations) {
+        tasks.push_back(meta_one(queue, location, id, offset));
+    }
+
+    std::vector<RawstorObjectMeta> ret;
+    ret.reserve(locations.size());
+    for (size_t i = 0; i < tasks.size(); ++i) {
+        try {
+            std::vector<RawstorObjectMeta> ms = co_await tasks[i];
+            ret.insert(ret.end(), ms.begin(), ms.end());
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            ret.push_back(RawstorObjectMeta{});
+        }
+    }
+
+    co_return ret;
+}
+
+// Every distinct chunk offset the object at `id` actually has,
+// backend-verified (rawstor_target_chunks(), Backend::chunks()'s own doc
+// comment) -- same first-reachable-wins fail-over tolerance as
+// resolve_spec() above, since every location of one chunk answers the
+// same either way (this is a property of the chunk/object as a whole,
+// not of one particular copy).
+rawstd::Task<std::vector<uint64_t>> resolve_chunks(
+    rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id
+) {
+    int first_error = 0;
+    for (const auto& location : locations) {
+        try {
+            co_return co_await chunks_one(queue, location, id);
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            if (first_error == 0) {
+                first_error = e.code().value();
+            }
+        }
+    }
+
+    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
+}
+
+// Every real member's own bare location of the chunk at `offset` -- same
+// one-off shape and first-reachable-wins fail-over as resolve_chunks()
+// above, for rawstor_target_set_member_sync_state()'s own write
+// (Backend::resolve_locations()'s own doc comment): every location of
+// one chunk answers the same either way, since this is a property of the
+// chunk as a whole, not of one particular copy.
+rawstd::Task<std::vector<rawstd::URI>> resolve_member_locations(
+    rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
+    uint64_t offset
+) {
+    int first_error = 0;
+    for (const auto& location : locations) {
+        try {
+            co_return co_await member_locations_one(
+                queue, location, id, offset
+            );
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            if (first_error == 0) {
+                first_error = e.code().value();
+            }
+        }
+    }
+
+    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
 }
 
 // Shared by Target::remove() and the rollback path in Target::create():
@@ -1054,7 +1265,7 @@ rawstd::Task<void> Target::create_snapshot(
 // for exactly one answer, so it can't generalize across every chunk the
 // way a caller looping meta()/set_member_sync_state() over each one's
 // own offset can. The actual lookup (first reachable location wins, width
-// fallback) is Chunk::spec()'s own job; locations_for() above resolves
+// fallback) is resolve_spec()'s own job; locations_for() above resolves
 // which locations to ask, real offsets come from chunks() below (a
 // no-op re-derivation of chunk_uris_by_offset()'s own grouping for an
 // ordinary, self-describing target -- no extra round trip there).
@@ -1062,7 +1273,7 @@ rawstd::Task<void> Target::create_snapshot(
 // size, unlike width, does generalize: it's the whole object's own
 // total, the same derivation Target::open() uses (its own comment) --
 // chunk_size times every chunk but the last, plus the last chunk's own
-// (possibly smaller) size, both learned through the same Chunk::spec()
+// (possibly smaller) size, both learned through the same resolve_spec()
 // lookup as the first chunk's own answer above. For the ordinary
 // single-chunk case that's just chunk_size * 0 plus the one chunk's own
 // answer, so no second lookup is needed.
@@ -1072,13 +1283,13 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
 
     std::vector<uint64_t> offsets = co_await chunks(queue);
 
-    RawstorObjectSpec ret = co_await Chunk::spec(
+    RawstorObjectSpec ret = co_await resolve_spec(
         queue, locations_for(_uris, offsets.front(), opaque), id,
         offsets.front()
     );
 
     if (offsets.size() > 1) {
-        RawstorObjectSpec last = co_await Chunk::spec(
+        RawstorObjectSpec last = co_await resolve_spec(
             queue, locations_for(_uris, offsets.back(), opaque), id,
             offsets.back()
         );
@@ -1096,8 +1307,8 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
 // resolve needing to compare copies against each other, neither of
 // which a single-answer result could ever support. The actual lookup
 // (every location of that one chunk queried concurrently, flattening in
-// every one of an mds:// location's own real members -- Chunk::meta()'s
-// own doc comment) is Chunk::meta()'s own job; locations_for() above
+// every one of an mds:// location's own real members -- resolve_meta()'s
+// own doc comment) is resolve_meta()'s own job; locations_for() above
 // resolves which locations to ask (throwing ENOENT itself for a
 // non-opaque target with no chunk at `offset` -- an opaque one instead
 // leaves that to its own Backend). Every answering entry's own
@@ -1118,7 +1329,9 @@ Target::meta(rawio::Queue& queue, uint64_t offset) const {
 
     bool opaque = is_opaque(_uris);
     RawstdUUID id = uuid_from_target(_uris.front());
-    return Chunk::meta(queue, locations_for(_uris, offset, opaque), id, offset);
+    return resolve_meta(
+        queue, locations_for(_uris, offset, opaque), id, offset
+    );
 }
 
 // Every distinct chunk offset this target actually has -- purely
@@ -1127,7 +1340,7 @@ Target::meta(rawio::Queue& queue, uint64_t offset) const {
 // plain, unchunked object -- either way, no backend needs asking, see
 // is_opaque()'s own doc comment) already names every one of them; an
 // opaque (mds://) target instead asks its own Backend directly
-// (Chunk::chunks(), Backend::chunks()'s own doc comment).
+// (resolve_chunks(), Backend::chunks()'s own doc comment).
 rawstd::Task<std::vector<uint64_t>> Target::chunks(rawio::Queue& queue) const {
     if (!is_opaque(_uris)) {
         std::vector<std::vector<rawstd::URI>> groups =
@@ -1141,7 +1354,7 @@ rawstd::Task<std::vector<uint64_t>> Target::chunks(rawio::Queue& queue) const {
     }
 
     RawstdUUID id = uuid_from_target(_uris.front());
-    co_return co_await Chunk::chunks(queue, locations_for(_uris, 0, true), id);
+    co_return co_await resolve_chunks(queue, locations_for(_uris, 0, true), id);
 }
 
 // Only ever touches the chunk at `offset` (chunk_uris_at_offset() above)
@@ -1149,9 +1362,9 @@ rawstd::Task<std::vector<uint64_t>> Target::chunks(rawio::Queue& queue) const {
 // with no explicit --offset) loops over every chunk's own offset itself.
 // Writes to exactly one real member: `member_index` into that chunk's
 // own real member list -- locations_for()'s own opaque branch (an
-// mds:// target) resolves it via Chunk::locations() (a real WireMap
-// round trip, Backend::resolve_locations()'s own doc comment); a non-opaque
-// target's own member list is already fully described by
+// mds:// target) resolves it via resolve_member_locations() (a real
+// WireMap round trip, Backend::resolve_locations()'s own doc comment); a
+// non-opaque target's own member list is already fully described by
 // chunk_uris_at_offset() itself, no backend needed. Either way, this is
 // the same list rawstor_target_meta()'s own per-chunk result reports
 // state in, so `member_index` (rawstor resolve's own --winner) means the
@@ -1170,7 +1383,7 @@ rawstd::Task<void> Target::set_member_sync_state(
     bool opaque = is_opaque(_uris);
     RawstdUUID id = uuid_from_target(_uris.front());
     std::vector<rawstd::URI> members =
-        opaque ? co_await Chunk::locations(
+        opaque ? co_await resolve_member_locations(
                      queue, locations_for(_uris, offset, true), id, offset
                  )
                : locations_for(_uris, offset, false);

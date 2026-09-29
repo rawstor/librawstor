@@ -259,11 +259,11 @@ rawstd::Task<T> Slot::_with_retry(
                 // Same GCC 15 coroutine ICE class as the T = void branch
                 // above, different shape: here it's "no suspend point
                 // info ... not supported by dump_decl" (see
-                // Chunk::meta()'s own per-uri loop for the same
-                // diagnostic) on a fresh named local direct-initialized
-                // from co_await inside a try block -- declaring `result`
-                // separately from the co_await that fills it in sidesteps
-                // it.
+                // target.cpp's resolve_meta()'s own per-location loop for
+                // the same diagnostic) on a fresh named local
+                // direct-initialized from co_await inside a try block --
+                // declaring `result` separately from the co_await that fills it
+                // in sidesteps it.
                 rawstd::Task<T> t = (be.get()->*method)(args...);
                 T result{};
                 result = co_await t;
