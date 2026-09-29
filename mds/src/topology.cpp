@@ -2,6 +2,7 @@
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
+#include <rawstd/uri.hpp>
 
 #include <fstream>
 #include <sstream>
@@ -65,21 +66,14 @@ Topology Topology::parse(std::istream& in) {
         }
 
         std::istringstream tokens(line);
-        std::string kind;
-        if (!(tokens >> kind)) {
+        std::string id;
+        if (!(tokens >> id)) {
             continue; /* blank */
         }
 
-        if (kind != "ost") {
-            rawstd_error(
-                "Topology line %zu: unknown entry: %s\n", lineno, kind.c_str()
-            );
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-
-        std::string id, address, path;
+        std::string location, path;
         uint64_t weight = 0;
-        if (!(tokens >> id >> address >> weight >> path)) {
+        if (!(tokens >> location >> weight >> path)) {
             rawstd_error("Topology line %zu: malformed entry\n", lineno);
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
@@ -101,7 +95,17 @@ Topology Topology::parse(std::istream& in) {
             );
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
-        ost.address = address;
+        // One URI per entry: several comma-separated URIs would make one
+        // placement slot several copies, which nothing downstream
+        // accounts for yet.
+        if (rawstd::URI::uriv(location.c_str()).size() != 1) {
+            rawstd_error(
+                "Topology line %zu: expected a single location URI: %s\n",
+                lineno, location.c_str()
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        ost.location = location;
         ost.weight = weight;
         split_path(path, ost.path);
 

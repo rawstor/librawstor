@@ -434,7 +434,7 @@ int rawstor_target_create(
  * specific snapshot. For an mds://host:port/<id> @p target naming a
  * snapshot version, the MDS unregisters it (no new readers) before a
  * best-effort per-member fan-out destroy runs -- a member that can no
- * longer be resolved (address changed, OST replaced) is left for the
+ * longer be resolved (location changed, OST replaced) is left for the
  * reconstruct scan rather than failing the call.
  *
  * This function returns immediately; the actual result is reported via

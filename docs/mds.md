@@ -240,7 +240,7 @@ Two classes of state, by recoverability:
   Losing them degrades availability (auto-start falls back to plain N=2
   rules), never correctness; re-attach is defined in *Witness*.
 
-The topology (OST roster, failure domains, weights, `ost_id -> host:port`) is
+The topology (OST roster, failure domains, weights, `ost_id -> location`) is
 neither: it is operator input, not state the MDS derives, and it lives
 **outside the MDS database** (v1: a static config file, `-t/--topology`) on
 purpose. Rebuilding the index starts from the OST roster (see *Reconstruct /
@@ -318,11 +318,16 @@ Example `CMD_OBJ_OPEN`:
 req  body: { id[16], snapshot_id[16] }                      // nil = live
 resp: { res, len, hash }; body:
       { descriptor{...}, nchunks u32,
-        entry[nchunks] { width u8, (slot_index u8, ost_id[16]) * width } }
+        entry[nchunks] { width u8,
+                         (slot_index u8, ost_id[16], location_len u16,
+                          location[location_len]) * width } }
 ```
 
-`ost_id` is an **opaque stable UUID** (not host:port) — required for HRW
-stability; resolved to an address via topology (v1: static config, see MGS).
+`ost_id` is an **opaque stable UUID** (not its location) — required for HRW
+stability; resolved to a location URI via topology (v1: static config, see
+MGS) and sent along with it, so clients stay zero-config. The location is
+any single rawstor location URI (normally `ost://host:port`), handed to the
+client as is: moving an OST only changes its location, never its id.
 
 ## Placement function
 

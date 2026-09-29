@@ -34,7 +34,7 @@ TopologyOST make_ost(const char* id, const char* host) {
     if (rawstd_uuid_from_string(&ost.id, id) < 0) {
         RAWSTD_THROW_ERRNO();
     }
-    ost.address = "127.0.0.1:0";
+    ost.location = "ost://127.0.0.1:0";
     ost.weight = 100;
     ost.path[0] = "dc1";
     ost.path[1] = "rack1";

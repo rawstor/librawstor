@@ -77,7 +77,7 @@ public:
     // order). The MDS unregisters first (no new readers), before this
     // returns; the per-chunk destroy that follows is therefore
     // best-effort cleanup -- a member that can no longer be resolved
-    // (address changed, OST replaced) is left for the reconstruct scan.
+    // (location changed, OST replaced) is left for the reconstruct scan.
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset) override;
 
     // Removes one previously committed snapshot, via _remove_snapshot()

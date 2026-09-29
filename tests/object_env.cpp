@@ -57,7 +57,7 @@ ObjectEnv::ObjectEnv(unsigned int mds_port, unsigned int ost_port) :
     mds::Topology topology;
     mds::TopologyOST ost{};
     ost.id = ost_id;
-    ost.address = ost_addr_oss.str();
+    ost.location = "ost://" + ost_addr_oss.str();
     ost.weight = 100;
     ost.path[0] = "dc1";
     ost.path[1] = "rack1";

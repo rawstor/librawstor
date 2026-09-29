@@ -26,7 +26,9 @@ enum class Level : unsigned {
 
 struct TopologyOST {
     RawstdUUID id;
-    std::string address; /* host:port; the client resolves it at open */
+    /* A rawstor location URI (ost://host:port, ...); the client opens
+     * the chunks this OST holds through it. */
+    std::string location;
     uint64_t weight;
     std::string path[3]; /* dc, rack, server */
 
@@ -40,10 +42,13 @@ struct TopologyOST {
  * The static topology config, v1 of the MGS role of docs/mds.md.
  * Line-based:
  *
- *   # ost <uuid> <host:port> <weight> <dc>/<rack>/<server>
- *   ost 00000000-0000-7000-8000-000000000001 127.0.0.1:8753 100 dc1/rack1/host1
+ *   # <ost-uuid> <location> <weight> <dc>/<rack>/<server>
+ *   00000000-0000-7000-8000-000000000001 ost://host1:7777 100 dc1/r1/host1
  *
- * '#' comments and blank lines are skipped.
+ * <location> is a single rawstor location URI of any scheme; it is
+ * handed to clients as is, so a client-local one (file://, lvm://, zfs://)
+ * only makes sense on a single host. '#' comments and blank lines are
+ * skipped.
  */
 class Topology final {
 private:

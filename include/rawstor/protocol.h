@@ -394,17 +394,17 @@ struct RawstorObjectChunkEntry {
 } RAWSTOR_PACKED;
 
 /*
- * ost_id is the stable identity (HRW); the address is advisory routing
+ * ost_id is the stable identity (HRW); the location is advisory routing
  * data resolved by the MDS from its topology so that clients stay
- * zero-config. A null-terminated <ip>:<port>; empty when the topology no
- * longer lists the OST (the client treats such a member as unreachable).
+ * zero-config: a rawstor location URI (e.g. ost://host:port), carried as
+ * the location_len bytes (not null-terminated) right after this record.
+ * location_len is 0 when the topology no longer lists the OST (the client
+ * treats such a member as unreachable).
  */
-#define RAWSTOR_OBJ_ADDRESS_LEN 32
-
 struct RawstorObjectChunkSlot {
     uint8_t slot_index;
     uint8_t ost_id[16];
-    char address[RAWSTOR_OBJ_ADDRESS_LEN];
+    uint16_t location_len;
 } RAWSTOR_PACKED;
 
 /*

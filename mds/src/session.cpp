@@ -98,10 +98,10 @@ RawstdUUID uuid_of(const uint8_t bytes[16]) {
     return id;
 }
 
-std::string ost_address(const Topology& topology, const RawstdUUID& ost_id) {
+std::string ost_location(const Topology& topology, const RawstdUUID& ost_id) {
     for (const auto& ost : topology.osts()) {
         if (memcmp(ost.id.bytes, ost_id.bytes, sizeof(ost_id.bytes)) == 0) {
-            return ost.address;
+            return ost.location;
         }
     }
     return std::string(); // no longer in the topology -- unreachable
@@ -140,20 +140,25 @@ encode_object_map(const Topology& topology, const ObjectMap& map) {
         memcpy(data.data() + off, &entry, sizeof(entry));
 
         for (const PlacementSlot& slot : slots) {
+            std::string location = ost_location(topology, slot.ost_id);
+            if (location.size() > UINT16_MAX) {
+                RAWSTD_THROW_SYSTEM_ERROR(ENAMETOOLONG);
+            }
+
             RawstorObjectChunkSlot wire_slot{};
             wire_slot.slot_index = slot.slot_index;
             memcpy(
                 wire_slot.ost_id, slot.ost_id.bytes, sizeof(wire_slot.ost_id)
             );
-            std::string address = ost_address(topology, slot.ost_id);
-            size_t len =
-                std::min(address.size(), sizeof(wire_slot.address) - 1);
-            memcpy(wire_slot.address, address.data(), len);
-            wire_slot.address[len] = '\0';
+            wire_slot.location_len = static_cast<uint16_t>(location.size());
 
             off = data.size();
-            data.resize(off + sizeof(wire_slot));
+            data.resize(off + sizeof(wire_slot) + location.size());
             memcpy(data.data() + off, &wire_slot, sizeof(wire_slot));
+            memcpy(
+                data.data() + off + sizeof(wire_slot), location.data(),
+                location.size()
+            );
         }
     }
 

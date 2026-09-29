@@ -225,7 +225,7 @@ void reconstruct(
     std::vector<rawstor::mds::ScanRecord> records;
     try {
         for (const rawstor::mds::TopologyOST& ost : topology.osts()) {
-            std::string location = "ost://" + ost.address;
+            const std::string& location = ost.location;
             RawstdUUIDString ost_id_string;
             rawstd_uuid_to_string(&ost.id, &ost_id_string);
             rawstd_info(

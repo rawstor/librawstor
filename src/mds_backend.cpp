@@ -57,11 +57,11 @@ RawstorObjectPolicy policy_of(const RawstorObjectSpec& sp) {
 // Slot lookups) take bare locations and the identity (id/offset) as
 // separate parameters instead of a single identity-bearing URI.
 rawstd::URI slot_location(const WireSlot& slot) {
-    if (slot.address.empty()) {
-        rawstd_error("Chunk slot without a resolved OST address\n");
+    if (slot.location.empty()) {
+        rawstd_error("Chunk slot without a resolved OST location\n");
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
-    return rawstd::URI(std::string("ost://") + slot.address);
+    return rawstd::URI(slot.location);
 }
 
 rawstd::URI chunk_slot_target(
@@ -100,7 +100,7 @@ std::vector<rawstd::URI> chunk_locations(const WireMap& map, uint64_t index) {
 // again -- same one-off connect/close shape Target's own resolve_meta()
 // uses directly for a plain target's mirror set (target.cpp), duplicated
 // here rather than shared: `location` is already a bare, resolved OST
-// address by the time chunk_locations() above builds it, with nothing
+// location by the time chunk_locations() above builds it, with nothing
 // left of this class's own WireMap resolution for a shared helper to
 // still do.
 rawstd::Task<std::vector<RawstorObjectMeta>> member_meta_one(
@@ -406,7 +406,7 @@ rawstd::Task<void> Backend::create_snapshot(
         bool any = false;
         std::exception_ptr last_error;
         for (const WireSlot& slot : map.chunks[i]) {
-            if (slot.address.empty()) {
+            if (slot.location.empty()) {
                 continue;
             }
             try {
@@ -423,7 +423,7 @@ rawstd::Task<void> Backend::create_snapshot(
             } catch (const std::exception& e) {
                 rawstd_error(
                     "Object snapshot: chunk %llu, %s: %s\n",
-                    static_cast<unsigned long long>(i), slot.address.c_str(),
+                    static_cast<unsigned long long>(i), slot.location.c_str(),
                     e.what()
                 );
                 last_error = std::current_exception();
@@ -457,7 +457,7 @@ rawstd::Task<void> Backend::create_snapshot(
 // branch of remove() above. The MDS unregisters it (no new
 // readers) before this returns the recorded member set; the per-member
 // destroy below is therefore best-effort cleanup -- a member that can no
-// longer be resolved (address changed, OST replaced) is left for the
+// longer be resolved (location changed, OST replaced) is left for the
 // reconstruct scan.
 rawstd::Task<void>
 Backend::_remove_snapshot(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
@@ -467,7 +467,7 @@ Backend::_remove_snapshot(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
     /*
      * The MDS has already unregistered the snapshot above (no new
      * readers); the destroy below is best-effort cleanup on whichever
-     * members it recorded -- a member that no longer resolves (address
+     * members it recorded -- a member that no longer resolves (location
      * changed, OST replaced) is left for the reconstruct scan.
      */
     WireMap map = co_await _client.open(id, RawstdUUID{});
@@ -485,7 +485,7 @@ Backend::_remove_snapshot(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
                            sizeof(m.ost_id.bytes)
                        ) == 0;
             });
-        if (it == slots.end() || it->address.empty()) {
+        if (it == slots.end() || it->location.empty()) {
             rawstd_error(
                 "Snapshot remove: chunk %llu member no longer resolvable\n",
                 static_cast<unsigned long long>(m.logical_index)

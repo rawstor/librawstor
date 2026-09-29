@@ -63,9 +63,18 @@ WireMap decode_object_map(const std::vector<unsigned char>& data) {
     WireMap map;
     size_t off = 0;
 
+    // Every read below is bounds-checked against the payload: a truncated
+    // or malformed response is EPROTO, never an overread.
+    auto take = [&data, &off](void* out, size_t size) {
+        if (size > data.size() - off) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        memcpy(out, data.data() + off, size);
+        off += size;
+    };
+
     RawstorObjectDescriptorPayload descriptor;
-    memcpy(&descriptor, data.data() + off, sizeof(descriptor));
-    off += sizeof(descriptor);
+    take(&descriptor, sizeof(descriptor));
 
     map.id = uuid_from_bytes(descriptor.id);
     map.logical_size = descriptor.logical_size;
@@ -76,8 +85,7 @@ WireMap decode_object_map(const std::vector<unsigned char>& data) {
 
     for (uint32_t i = 0; i < descriptor.nchunks; ++i) {
         RawstorObjectChunkEntry entry;
-        memcpy(&entry, data.data() + off, sizeof(entry));
-        off += sizeof(entry);
+        take(&entry, sizeof(entry));
         // entry.width is all this carries now (RawstorObjectChunkEntry's
         // own doc comment) -- v1 never opens anything but the live view
         // per chunk, so there was never a distinct per-chunk snapshot_id to
@@ -87,15 +95,12 @@ WireMap decode_object_map(const std::vector<unsigned char>& data) {
         slots.resize(entry.width);
         for (uint8_t s = 0; s < entry.width; ++s) {
             RawstorObjectChunkSlot wire_slot;
-            memcpy(&wire_slot, data.data() + off, sizeof(wire_slot));
-            off += sizeof(wire_slot);
+            take(&wire_slot, sizeof(wire_slot));
 
             slots[s].slot_index = wire_slot.slot_index;
             slots[s].ost_id = uuid_from_bytes(wire_slot.ost_id);
-            slots[s].address = std::string(
-                wire_slot.address,
-                strnlen(wire_slot.address, sizeof(wire_slot.address))
-            );
+            slots[s].location.resize(wire_slot.location_len);
+            take(slots[s].location.data(), wire_slot.location_len);
         }
     }
 

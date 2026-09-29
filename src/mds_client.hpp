@@ -20,7 +20,7 @@ namespace mds {
 struct WireSlot {
     uint8_t slot_index;
     RawstdUUID ost_id;
-    std::string address; /* <ip>:<port>; empty = unresolved */
+    std::string location; /* location URI; empty = unresolved */
 };
 
 struct WireMap {
