@@ -198,7 +198,7 @@ out explicitly (one of the two physical shapes) since it's never
 is. Like the internal multi-chunk form above, this is built only by
 `mds::Backend` from its own chunk map and never something a caller
 types — `Target`'s own constructor reads it back out to reconstruct
-chunk grouping, and it's also readable through `rawstor_target_offsets()`
+chunk grouping, and it's also readable through `rawstor_target_chunks()`
 directly (a single entry, 0, for a plain, non-`mds://` target).
 
 ---

@@ -110,16 +110,37 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     ) override;
 
-    // Synthetic: mirrors == 1 at the Target level (a single mds:// URI),
-    // but Slot::open()/Chunk's constructor call meta() unconditionally
-    // regardless of mirror count (see this method's own comment in
-    // mds_backend.cpp) -- real per-chunk DIRTY/CLEAN is already honestly
-    // tracked one level down, by each chunk's own (possibly mirrored)
-    // Chunk.
-    rawstd::Task<RawstorObjectMeta>
+    // Resolves `offset` to one of this object's own real chunks (its
+    // own WireMap), then reports every one of that chunk's own real
+    // members' real mirror consistency state -- recursing into the same
+    // Chunk::meta() a plain target's own mirror set goes through
+    // (mds_backend.cpp's own comment). `id`/`offset` at the *outer*
+    // Target level (Slot::open()/Chunk::create(), see this class's own
+    // doc comment) is always chunk 0's -- the whole object trusted
+    // outright there (mirrors == 1 at that level), taking this method's
+    // own first entry as its answer (Backend::meta()'s own doc comment).
+    rawstd::Task<std::vector<RawstorObjectMeta>>
     meta(const RawstdUUID& id, uint64_t offset) override;
 
-    // No-op, for the same reason meta() above is synthetic.
+    // Real: this object's own real chunk offsets, off its own WireMap
+    // (Backend::chunks()'s own doc comment) -- unlike every other
+    // backend, a single mds:// Backend instance can genuinely have more
+    // than one.
+    rawstd::Task<std::vector<uint64_t>> chunks(const RawstdUUID& id) override;
+
+    // Real: this chunk's own real members' own bare locations, off the
+    // same WireMap resolution meta() above uses (Backend::locations()'s
+    // own doc comment) -- addresses one specific real member directly
+    // (rawstor resolve's own --winner), which no target string naming
+    // this mds:// object could ever do on its own.
+    rawstd::Task<std::vector<rawstd::URI>>
+    locations(const RawstdUUID& id, uint64_t offset) override;
+
+    // No-op, for the same reason meta() above never persists anything of
+    // its own: this Backend's own outer "am I healthy" answer at offset 0
+    // is decorative (docs/mirroring.md, "legacy copy"), and every real
+    // per-chunk sync state meta() reports is each real member's own
+    // backend's job to persist, not this one's.
     rawstd::Task<void> set_sync_state(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectSyncState& sync_state

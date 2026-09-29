@@ -53,15 +53,16 @@ static void print_sync_id_history(
  * needs to cover one chunk's own width, not the whole object at once. */
 enum { MAX_MIRRORS = 256 };
 
-/* How many distinct chunks `target` actually names -- purely syntactic,
- * off `target`'s own comma/offset-segment shape (rawstor_target_offsets(),
- * no I/O, its own doc comment). An mds:// target (a single URI, no offset
- * segment) is always exactly one entry -- print it as one opaque chunk
- * rather than the many chunk[N] blocks its own spec.size/chunk_size
- * describe, the same fallback an unexpected/invalid target gets. */
-static uint64_t count_chunks(const char* target) {
-    int n = rawstor_target_offsets(target, NULL, 0);
-    return n > 0 ? (uint64_t)n : 1;
+/* How many distinct chunks `target` actually has -- purely syntactic for
+ * an ordinary target (rawstor_target_chunks(), no I/O, its own doc
+ * comment), a real MDS round trip for an mds:// one. `op` is the same one
+ * show_meta() below reuses for every chunk's own meta -- NULL/0 asks for
+ * the count alone. */
+static ssize_t count_chunks(RawstorCliOp* op, const char* target) {
+    int sres = rawstor_target_chunks(
+        op->queue, target, NULL, 0, rawstor_cli_op_cb, op
+    );
+    return rawstor_cli_op_wait(op, sres);
 }
 
 static int
@@ -136,9 +137,18 @@ static int show_meta(const char* target, const struct RawstorObjectSpec* spec) {
         return rawstd_exitcode_for_errno(-res);
     }
 
-    uint64_t chunk_count = count_chunks(target);
+    ssize_t chunk_count = count_chunks(&op, target);
+    if (chunk_count < 0) {
+        fprintf(
+            stderr, "rawstor_target_chunks() failed: %s\n",
+            strerror((int)-chunk_count)
+        );
+        rawstor_cli_op_destroy(&op);
+        return rawstd_exitcode_for_errno((int)-chunk_count);
+    }
+
     int ret = EXIT_SUCCESS;
-    for (uint64_t i = 0; i < chunk_count; i++) {
+    for (uint64_t i = 0; i < (uint64_t)chunk_count; i++) {
         ret = show_chunk_meta(&op, target, i * spec->chunk_size);
         if (ret != EXIT_SUCCESS) {
             break;

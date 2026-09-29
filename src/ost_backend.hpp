@@ -103,8 +103,21 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     ) override;
 
-    rawstd::Task<RawstorObjectMeta>
+    rawstd::Task<std::vector<RawstorObjectMeta>>
     meta(const RawstdUUID& id, uint64_t offset) override;
+
+    // Trivial (Backend::chunks()'s own doc comment): a plain, unchunked
+    // object is always exactly one chunk, at offset 0 -- chunk addressing
+    // for a plain ost:// target is entirely client-side/self-describing
+    // (docs/concepts.md) once there's more than one, so there's nothing
+    // to ask the remote OST about either way.
+    rawstd::Task<std::vector<uint64_t>> chunks(const RawstdUUID& id) override;
+
+    // Trivial (Backend::locations()'s own doc comment): this is a plain,
+    // single-copy backend, already the one real member of whatever
+    // offset it's asked about.
+    rawstd::Task<std::vector<rawstd::URI>>
+    locations(const RawstdUUID& id, uint64_t offset) override;
 
     rawstd::Task<void> set_sync_state(
         const RawstdUUID& id, uint64_t offset,

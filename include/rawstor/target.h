@@ -353,6 +353,66 @@ int rawstor_target_set_sync_state(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Asynchronously write the mirror consistency identity of exactly
+ *        one real member of one chunk of a target.
+ *
+ * Unlike rawstor_target_set_sync_state() above (every member of the
+ * chunk), this writes to exactly one: @p member_index into that chunk's
+ * own real member list -- the same order rawstor_target_meta()'s own
+ * per-chunk result reports their state in, so an index read off one call
+ * names the same member in the other. This is what a `rawstor resolve`-
+ * style split-brain recovery flow uses to declare one member
+ * authoritative (its own --winner) without touching the others,
+ * something naming a target that already carries only that one member's
+ * own URI (and calling rawstor_target_set_sync_state() on it) can do for
+ * an ordinary target but not for an mds://host:port/<id> one, whose real
+ * per-chunk members aren't nameable by any target string at all (its own
+ * WireMap is consulted instead, the same real round trip
+ * rawstor_target_meta() makes for a real chunk).
+ *
+ * @warning Same caveat as rawstor_target_set_sync_state(): for tooling
+ * that already understands the mirror consistency model
+ * (docs/mirroring.md), not for routine application use.
+ *
+ * This function returns immediately; the actual result is reported via
+ * @p cb once the operation completes.
+ *
+ * @param queue         Queue used to drive the asynchronous write.
+ * @param target        Target string, see rawstor_target_spec().
+ * @param offset        The chunk's own byte offset within @p target, see
+ *                      rawstor_target_meta().
+ * @param member_index  Which real member of that chunk to write to, 0-based.
+ * @param sync_state    The mirror consistency identity to write. Only
+ *                      read while this call is being queued -- need not
+ *                      stay valid until @p cb runs.
+ * @param cb            Callback invoked on completion.
+ *                      - @p result is zero on success, or a negative
+ *                        errno on failure (@c -EINVAL for invalid target
+ *                        syntax or @p member_index naming no real member
+ *                        of the chunk, @c -ENOENT for no chunk at
+ *                        @p offset).
+ *                      - @p data is the same pointer passed as @p data
+ *                        below.
+ *                      - Return zero on success. A negative errno value
+ *                        signals an error back into the I/O completion
+ *                        machinery.
+ * @param data          User-defined context pointer passed unchanged to
+ *                      @p cb.
+ *
+ * @return 0 if the write was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked).
+ *
+ * @see RawstorObjectSyncState
+ * @see rawstor_target_meta
+ * @see rawstor_target_set_sync_state
+ */
+int rawstor_target_set_member_sync_state(
+    RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
+    const struct RawstorObjectSyncState* sync_state,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Asynchronously create a new empty object at the specified target.
  *
  * @p target must be plain (no bound snapshot version, see
@@ -624,38 +684,57 @@ int rawstor_target_location(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Retrieve every distinct chunk offset a target string names.
+ * @brief Asynchronously retrieve every distinct chunk offset a target
+ *        actually has.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
  * this function writes the byte offset of each of its own chunks into the
  * provided array, ascending, one entry per chunk -- a URI that shares its
  * own offset with an earlier one (a mirror of that same chunk, not a
- * distinct one) contributes no entry of its own. An ordinary, single-chunk
- * target (no URI names an offset at all) reports exactly one entry, 0. This
- * is purely a syntactic operation on @p target -- no backend is contacted,
- * and the target need not exist.
+ * distinct one) contributes no entry of its own. For an ordinary target
+ * (every URI already names its own offset, or there is exactly one URI
+ * with none) this is purely syntactic, off @p target's own shape -- no
+ * backend is contacted, and the target need not exist. An
+ * mds://host:port/<id> target is the one exception: its own real
+ * per-chunk shape isn't reflected in its single URI at all, so this
+ * contacts the MDS instead and reports every one of the object's own
+ * real chunk offsets.
  *
- * If the array is too small, the output is truncated but the return value
- * indicates the number of offsets that actually exist, similar to
- * snprintf().
+ * This function returns immediately; the actual result is reported via
+ * @p cb once the operation completes.
  *
+ * @param queue    Queue used to drive the asynchronous lookup.
  * @param target   Target string, see rawstor_target_id().
  * @param offsets  Output array that will receive each chunk's own offset,
- *                 ascending. Can be NULL if only the required array length
- *                 is needed.
+ *                 ascending, immediately before @p cb is invoked. Can be
+ *                 NULL if only the required array length is needed. Left
+ *                 untouched on error, and never written at all if the
+ *                 lookup is never queued (see the return value below).
  * @param size     Capacity of @p offsets, in elements. If size is 0, no
  *                 data is written, but the required length is still
- *                 returned.
+ *                 reported.
+ * @param cb       Callback invoked on completion.
+ *                 - @p result is the number of chunks @p target actually
+ *                   has on success -- same truncation convention as
+ *                   rawstor_target_id()/_location(): if it is greater than
+ *                   @p size, only the first @p size entries were actually
+ *                   written to @p offsets -- or a negative errno on
+ *                   failure (@c -EINVAL for invalid target syntax, @c
+ *                   -ENOMEM).
+ *                 - @p data is the same pointer passed as @p data below.
+ *                 - Return zero on success. A negative errno value signals
+ *                   an error back into the I/O completion machinery.
+ * @param data     User-defined context pointer passed unchanged to @p cb.
  *
- * @return On success, returns the number of chunks @p target actually
- *         names. If this value is greater than @p size, only the first
- *         @p size entries were actually written to @p offsets. A negative
- *         errno is returned if @p target is not valid target syntax.
+ * @return 0 if the lookup was successfully queued; negative errno on
+ *         immediate failure (in which case neither @p offsets nor @p cb is
+ *         ever touched).
  *
  * @see rawstor_target_id
  */
-int rawstor_target_offsets(
-    const char* target, uint64_t* offsets, size_t size
+int rawstor_target_chunks(
+    RawIOQueue* queue, const char* target, uint64_t* offsets, size_t size,
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -690,7 +769,7 @@ int rawstor_target_offsets(
  *
  * @see rawstor_target_create
  * @see rawstor_target_remove
- * @see rawstor_target_offsets
+ * @see rawstor_target_chunks
  */
 int rawstor_target_snapshot_id(
     const char* target, char* buf, size_t size

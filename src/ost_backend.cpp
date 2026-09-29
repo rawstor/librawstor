@@ -1474,7 +1474,7 @@ rawstd::Task<void> Backend::create_snapshot(
     co_return;
 }
 
-rawstd::Task<RawstorObjectMeta>
+rawstd::Task<std::vector<RawstorObjectMeta>>
 Backend::meta(const RawstdUUID& id, uint64_t offset) {
     rawstd_info("%s: Reading object metadata...\n", str().c_str());
 
@@ -1513,7 +1513,16 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
 
     rawstd_info("%s: Object metadata successfully received\n", str().c_str());
 
-    co_return ret;
+    co_return std::vector<RawstorObjectMeta>{ret};
+}
+
+rawstd::Task<std::vector<uint64_t>> Backend::chunks(const RawstdUUID&) {
+    co_return std::vector<uint64_t>{0};
+}
+
+rawstd::Task<std::vector<rawstd::URI>>
+Backend::locations(const RawstdUUID&, uint64_t) {
+    co_return std::vector<rawstd::URI>{location()};
 }
 
 rawstd::Task<void> Backend::set_sync_state(

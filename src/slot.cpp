@@ -109,7 +109,7 @@ rawstd::Task<void> set_object_or_snapshot(
 // extra EBUSY-vs-reconnect policy and no set-up/tear-down step, so
 // sharing this one wouldn't fit them without a callback out for it.
 template <typename F>
-auto retry_n_async(const char* func_name, rawio::Queue& queue, F&& attempt)
+auto retry_n_async(rawio::Queue& queue, const char* func_name, F&& attempt)
     -> decltype(attempt()) {
     for (unsigned int i = 1; i <= rawstor_opts_io_attempts(); ++i) {
         try {
@@ -441,7 +441,7 @@ Slot::invalidate_backend(const std::shared_ptr<Backend>& be) {
         // leaving the stale entry just means the next op that picks it up
         // retries invalidate_backend() again instead of failing forever.
         std::shared_ptr<Backend> new_backend = co_await retry_n_async(
-            "Slot::invalidate_backend", _queue,
+            _queue, "Slot::invalidate_backend",
             [&]() -> rawstd::Task<std::shared_ptr<Backend>> {
                 std::shared_ptr<Backend> backend =
                     co_await Backend::create(_queue, be->location());
@@ -736,7 +736,11 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // location, so any one of them answers the same as the rest --
     // set_object() itself doesn't return it (see its own doc comment),
     // so this is always its own separate call, win or lose above.
-    co_return co_await meta(id, offset);
+    // meta()'s own first entry is this location's own answer (its own
+    // doc comment) -- it never comes back empty without having already
+    // thrown (Backend::meta()'s own contract).
+    std::vector<RawstorObjectMeta> metas = co_await meta(id, offset);
+    co_return metas.front();
 }
 
 rawstd::Task<void> Slot::close() {
@@ -888,7 +892,7 @@ Slot::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
     }
 }
 
-rawstd::Task<RawstorObjectMeta>
+rawstd::Task<std::vector<RawstorObjectMeta>>
 Slot::meta(const RawstdUUID& id, uint64_t offset) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -896,8 +900,44 @@ Slot::meta(const RawstdUUID& id, uint64_t offset) {
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        RawstorObjectMeta result = co_await _with_retry(
+        std::vector<RawstorObjectMeta> result = co_await _with_retry(
             func_name, trace_event, &Backend::meta, id, offset
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<std::vector<uint64_t>> Slot::chunks(const RawstdUUID& id) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        std::vector<uint64_t> result =
+            co_await _with_retry(func_name, trace_event, &Backend::chunks, id);
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<std::vector<rawstd::URI>>
+Slot::locations(const RawstdUUID& id, uint64_t offset) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        std::vector<rawstd::URI> result = co_await _with_retry(
+            func_name, trace_event, &Backend::locations, id, offset
         );
         _finish(t_call);
         co_return result;

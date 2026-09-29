@@ -2,6 +2,8 @@
 
 #include <ost/server.hpp>
 
+#include "target.hpp"
+
 #include <rawio/queue.hpp>
 
 #include <rawstd/coro.hpp>
@@ -76,13 +78,20 @@ uint64_t chunk_shift_to_size(uint8_t chunk_shift) {
 
 // One LIST response row per distinct chunk offset a target string
 // rawstor_location_list() returned actually names -- a target string can
-// join more than one URI with a comma, but rawstor_target_offsets() already
-// collapses same-offset mirrors down to one entry per distinct chunk --
-// matching RawstorOSTFrameListEntry's own doc comment (protocol.h): one row
-// per offset, all sharing that id and snapshot_id (the latter always nil
-// today, an mds:// chunk never itself being a bound snapshot -- see
-// mds.md), for the receiving end to group back into one
-// rawstor::ChunkGroup.
+// join more than one URI with a comma, each already carrying its own
+// offset segment (or none at all, for an ordinary single-chunk one), so
+// this is purely a syntactic read of `target`'s own shape (parse_target_
+// path(), src/target.hpp), not rawstor_target_chunks()'s own (possibly
+// backend-verified, e.g. for an mds:// target) real answer -- `target`
+// here always already names this OST's own local, self-describing
+// storage, never an mds:// one, so there is nothing to verify: whatever
+// offsets its own comma-joined URIs literally spell out are all there
+// is to report. Same-offset mirrors collapse down to one entry per
+// distinct chunk -- matching RawstorOSTFrameListEntry's own doc comment
+// (protocol.h): one row per offset, all sharing that id and snapshot_id
+// (the latter always nil today, an mds:// chunk never itself being a
+// bound snapshot -- see mds.md), for the receiving end to group back
+// into one rawstor::ChunkGroup.
 void append_list_entries(
     const char* target, std::vector<RawstorOSTFrameListEntry>& out
 ) {
@@ -116,14 +125,12 @@ void append_list_entries(
     memcpy(base.id, id.bytes, sizeof(base.id));
     memcpy(base.snapshot_id, snapshot_id.bytes, sizeof(base.snapshot_id));
 
-    int count = rawstor_target_offsets(target, nullptr, 0);
-    if (count < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-count);
-    }
-    std::vector<uint64_t> offsets(static_cast<size_t>(count));
-    res = rawstor_target_offsets(target, offsets.data(), offsets.size());
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    std::vector<uint64_t> offsets;
+    for (const rawstd::URI& uri : rawstd::URI::uriv(target)) {
+        uint64_t offset = rawstor::parse_target_path(uri.path().str()).offset;
+        if (offsets.empty() || offsets.back() != offset) {
+            offsets.push_back(offset);
+        }
     }
 
     for (uint64_t offset : offsets) {

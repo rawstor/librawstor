@@ -358,26 +358,55 @@ public:
     // Target::create_snapshot() (docs/mds.md, "Snapshots") -- only ever
     // opened with READONLY (Target::open()'s own check).
     static rawstd::Task<std::unique_ptr<Chunk>> create(
-        const std::vector<rawstd::URI>& locations, rawio::Queue& queue,
+        rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
         const RawstdUUID& id, uint64_t offset, int flags,
         const RawstdUUID& snapshot_id
     );
 
-    // Metadata lookups spanning one chunk's own uris (mirror members),
-    // without opening a Chunk for real I/O -- no quorum/degraded-member
-    // logic at all, that's create() above's own job, and neither one
-    // goes through it: each uri gets its own single-backend Slot,
-    // connected and closed just for this one call. spec() tries each uri
-    // in order, first reachable wins (the fail-over tolerance
-    // Target::spec() promises its own caller); meta() queries every uri
-    // concurrently instead, one RawstorObjectMeta per uri, in `uris`'s
-    // own order -- a uri that doesn't answer gets a zero-filled entry
-    // rather than being left out (the convention Target::meta()
-    // promises).
-    static rawstd::Task<RawstorObjectSpec>
-    spec(rawio::Queue& queue, const std::vector<rawstd::URI>& uris);
-    static rawstd::Task<std::vector<RawstorObjectMeta>>
-    meta(rawio::Queue& queue, const std::vector<rawstd::URI>& uris);
+    // Metadata lookups spanning one chunk's own locations (mirror
+    // members), without opening a Chunk for real I/O -- no quorum/
+    // degraded-member logic at all, that's create() above's own job, and
+    // neither one goes through it: each location gets its own single-
+    // backend Slot, connected and closed just for this one call.
+    // `locations`/`id`/`offset` are already resolved, same division of
+    // labor as create() above's own parameters -- the caller's job, not
+    // this one's. Taken by value, all three: a coroutine parameter
+    // declared as a reference is not lifetime-extended past the
+    // initiating call the way an ordinary function's would be, and every
+    // one of these is still read well after this coroutine's own first
+    // suspension point. spec() tries each location in order, first
+    // reachable wins (the fail-over tolerance Target::spec() promises its
+    // own caller); meta() queries every location concurrently instead
+    // (the convention Target::meta() promises -- see its own doc comment
+    // for how an mds:// location's own many-member answer fits in).
+    static rawstd::Task<RawstorObjectSpec> spec(
+        rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
+        uint64_t offset
+    );
+    static rawstd::Task<std::vector<RawstorObjectMeta>> meta(
+        rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
+        uint64_t offset
+    );
+
+    // Every distinct chunk offset the object at `id` actually has -- same
+    // one-off, no-Chunk-kept shape as spec()/meta() above, for
+    // rawstor_target_chunks() (Backend::chunks()'s own doc comment); no
+    // `offset` of its own to resolve first (Backend::chunks() takes
+    // none). Taken by value, same reason as spec()/meta() above.
+    static rawstd::Task<std::vector<uint64_t>> chunks(
+        rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id
+    );
+
+    // Every real member's own bare location of the chunk at `offset` --
+    // same one-off, no-Chunk-kept shape and first-reachable-wins fail-
+    // over as chunks() above, for rawstor_target_set_sync_state()'s own
+    // per-member write (Backend::locations()'s own doc comment): every
+    // location of one chunk answers the same either way, since this is a
+    // property of the chunk as a whole, not of one particular copy.
+    static rawstd::Task<std::vector<rawstd::URI>> locations(
+        rawio::Queue& queue, std::vector<rawstd::URI> candidates, RawstdUUID id,
+        uint64_t offset
+    );
 
     Chunk(
         Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,

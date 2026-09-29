@@ -98,8 +98,18 @@ public:
 
     // Native per-copy mirror metadata, stored in the zvol's own
     // "rawstor:meta" user property -- see blk::Backend::meta_encode().
-    rawstd::Task<RawstorObjectMeta>
+    rawstd::Task<std::vector<RawstorObjectMeta>>
     meta(const RawstdUUID& id, uint64_t offset) override;
+
+    // Trivial (Backend::chunks()'s own doc comment): a plain, unchunked
+    // object is always exactly one chunk, at offset 0.
+    rawstd::Task<std::vector<uint64_t>> chunks(const RawstdUUID& id) override;
+
+    // Trivial (Backend::locations()'s own doc comment): this is a plain,
+    // single-copy backend, already the one real member of whatever
+    // offset it's asked about.
+    rawstd::Task<std::vector<rawstd::URI>>
+    locations(const RawstdUUID& id, uint64_t offset) override;
 
     rawstd::Task<void> set_sync_state(
         const RawstdUUID& id, uint64_t offset,

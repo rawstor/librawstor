@@ -143,19 +143,32 @@ void scan_ost(
 
             RawstdUUIDString uuid_string;
             RawstdUUID obj_id;
-            uint64_t offset = 0;
             if (rawstor_target_id(target, uuid_string, sizeof(uuid_string)) <
                     0 ||
-                rawstd_uuid_from_string(&obj_id, uuid_string) < 0 ||
-                rawstor_target_offsets(target, &offset, 1) < 0) {
+                rawstd_uuid_from_string(&obj_id, uuid_string) < 0) {
                 rawstd_error("reconstruct: malformed target: %s\n", target);
                 continue;
             }
 
-            // `target` names one specific chunk directly (this scan walks
-            // physical objects one OST at a time, not a caller's own
-            // multi-chunk target string), so its own offset -- already
-            // parsed above -- is exactly the chunk META below asks for.
+            // `target` names one specific physical chunk directly, never
+            // an mds:// one (this scan walks physical objects one OST at
+            // a time) -- purely syntactic, no I/O (rawstor_target_chunks()'s
+            // own doc comment).
+            uint64_t offset = 0;
+            SyncOp offset_op;
+            offset_op.queue = queue;
+            ssize_t or_ = sync_op_wait(
+                offset_op, rawstor_target_chunks(
+                               queue, target, &offset, 1, sync_op_cb, &offset_op
+                           )
+            );
+            if (or_ < 0) {
+                rawstd_error("reconstruct: malformed target: %s\n", target);
+                continue;
+            }
+
+            // `offset` -- already resolved above -- is exactly the chunk
+            // META below asks for.
             RawstorObjectMeta meta{};
             SyncOp meta_op;
             meta_op.queue = queue;

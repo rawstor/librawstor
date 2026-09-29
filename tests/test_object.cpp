@@ -386,16 +386,17 @@ TEST(ObjectSnapshotTest, explicit_id_on_already_bound_target_is_einval) {
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-// rawstor_target_meta()/_set_sync_state() used to reject an mds:// target
-// client-side (docs/mirroring.md doesn't apply to a whole object, many
-// chunks each with their own slots) -- now that mds:// is an ordinary
-// Backend, both succeed instead, with mds::Backend's own synthetic
-// answer (spec.size = the object's logical size, sync_state = a "legacy
-// copy" CLEAN/epoch-0/sync_id-0 -- see mds_backend.cpp's own doc
-// comment): the real per-chunk DIRTY/CLEAN state is honestly tracked one
-// level down, by each chunk's own (possibly mirrored) Chunk, not exposed
-// through the object-level target at all.
-TEST(ObjectMetaTest, meta_on_object_target_is_synthetic) {
+// rawstor_target_meta() resolves offset 0 to this object's own real
+// (only) chunk and reports that chunk's own real member's real mirror
+// state (mds::Backend::meta()'s own doc comment) -- a single-chunk,
+// single-member object's own chunk 0 answers with exactly the values
+// its own create() call established: `spec.size` the chunk's own
+// physical size (the object's own logical size too, since there's only
+// the one chunk), a freshly-created single member trusted CLEAN with no
+// sync_id of its own yet (docs/mirroring.md, "legacy copy").
+// rawstor_target_set_sync_state() below is different: mds:: doesn't
+// persist anything of its own for it (mds_backend.cpp's own comment).
+TEST(ObjectMetaTest, meta_on_object_target_is_real) {
     rawstor::tests::ObjectEnv env(8786, 8787);
     std::string target =
         object_target(env, "018f4e2a-3000-7000-8000-00000000000b");

@@ -449,7 +449,7 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
     }
 }
 
-rawstd::Task<RawstorObjectMeta>
+rawstd::Task<std::vector<RawstorObjectMeta>>
 Backend::meta(const RawstdUUID& id, uint64_t offset) {
     std::string location_path = get_location_path(location());
 
@@ -497,7 +497,16 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     ret.member_kind = identity.member_kind;
     ret.sync_state = sync_state;
 
-    co_return ret;
+    co_return std::vector<RawstorObjectMeta>{ret};
+}
+
+rawstd::Task<std::vector<uint64_t>> Backend::chunks(const RawstdUUID&) {
+    co_return std::vector<uint64_t>{0};
+}
+
+rawstd::Task<std::vector<rawstd::URI>>
+Backend::locations(const RawstdUUID&, uint64_t) {
+    co_return std::vector<rawstd::URI>{location()};
 }
 
 rawstd::Task<void> Backend::set_sync_state(

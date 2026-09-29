@@ -130,8 +130,55 @@ public:
     // only wants the spec half, e.g. Chunk::spec(), just discards
     // RawstorObjectMeta::sync_state/member_kind). set_sync_state()
     // persists a caller-supplied sync identity durably before returning.
-    virtual rawstd::Task<RawstorObjectMeta>
+    //
+    // Returns one entry per real member of the chunk at `offset` -- every
+    // backend but mds::Backend represents exactly one physical copy of
+    // its own, so this is always a single-element vector for them
+    // (Chunk::meta() is what fans out across a plain chunk's own mirror
+    // URIs, one single-element Backend::meta() call per URI). Slot::open()
+    // -- the "is my one location healthy" question Chunk::create() asks
+    // of every location in its own pool -- takes this vector's own first
+    // entry as that location's answer; every backend but mds::Backend
+    // only ever has the one to give anyway. mds::Backend is the one case
+    // where a single Backend instance stands for a whole many-chunk
+    // object: at a real chunk offset, it resolves that chunk's own real
+    // OST members (via its own WireMap) and reports every one of their
+    // real states, recursing into the same Chunk::meta() (mds_backend.cpp).
+    virtual rawstd::Task<std::vector<RawstorObjectMeta>>
     meta(const RawstdUUID& id, uint64_t offset) = 0;
+
+    // Every distinct chunk offset the object at `id` actually has --
+    // backend-verified, unlike rawstor_target_chunks()'s own purely
+    // syntactic reading of a target string's own URI shape (client-side
+    // parsing over Target's own _uris, no Backend involved at all: Target
+    // only ever falls back to asking a Backend when a single URI carries
+    // no offset segment of its own -- chunk_uris_by_offset(), target.cpp).
+    // A plain, unchunked object is always exactly one chunk at offset 0
+    // -- every backend but mds::Backend answers that trivially, with no
+    // I/O of its own. mds::Backend is the one case where a single Backend
+    // instance stands for a whole many-chunk object (this class's own
+    // doc comment, mds_backend.hpp): there, this does a real WireMap
+    // round trip and returns every one of the object's own real chunk
+    // offsets.
+    virtual rawstd::Task<std::vector<uint64_t>>
+    chunks(const RawstdUUID& id) = 0;
+
+    // Every real member's own bare location of the chunk at `offset` --
+    // for addressing one specific member directly (rawstor resolve's own
+    // --winner, rawstor_target_set_sync_state()'s own per-member write),
+    // without needing a target string that already names it (unlike a
+    // plain target's own flat URI list, an mds:// target's real members
+    // aren't nameable that way at all). Every backend but mds::Backend
+    // represents exactly one physical copy of its own -- this location()
+    // itself, unconditionally, with no I/O -- and this Backend/chunk was
+    // already asked about via the same `offset` given here, so there's
+    // nothing more to resolve. mds::Backend is the one case where a
+    // single Backend instance stands for a whole many-chunk object: at a
+    // real chunk offset, it resolves that chunk's own real OST members
+    // (via its own WireMap) and returns every one of their real bare
+    // locations, in the same order meta() above reports their state in.
+    virtual rawstd::Task<std::vector<rawstd::URI>>
+    locations(const RawstdUUID& id, uint64_t offset) = 0;
 
     virtual rawstd::Task<void> set_sync_state(
         const RawstdUUID& id, uint64_t offset,

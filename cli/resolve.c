@@ -6,7 +6,6 @@
 
 #include <rawstd/exitcode.h>
 
-#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,72 +67,12 @@ static int is_winner(const size_t* winners, size_t num_winners, size_t idx) {
     return 0;
 }
 
-/* One raw comma-separated member URI's own trailing offset segment --
- * parse_target_path()'s own C++ semantics (target.cpp), mirrored here
- * in C since resolve.c doesn't link against target.hpp: the last path
- * segment if it parses fully as a hexadecimal number, else 0 (the
- * ordinary, single-chunk case where the last segment is the id itself,
- * not an offset -- a UUID's own dashes always break strtoull() before
- * its end, so this never mistakes one for an offset). */
-static uint64_t member_offset(const char* uri) {
-    const char* slash = strrchr(uri, '/');
-    const char* segment = slash != NULL ? slash + 1 : uri;
-    if (*segment == '\0') {
-        return 0;
-    }
-
-    char* endptr = NULL;
-    errno = 0;
-    unsigned long long value = strtoull(segment, &endptr, 16);
-    if (errno != 0 || *endptr != '\0') {
-        return 0;
-    }
-    return value;
-}
-
-/* The idx-th (0-based) raw comma-separated member of `target` whose own
- * offset segment equals `offset` -- rawstor_target_set_sync_state() has
- * to be pointed at exactly one member at a time, not the whole mirror
- * set, and its own idx must agree with rawstor_target_meta()'s own
- * per-chunk `result` order (both built the same way, by filtering on
- * each member's own offset segment: chunk_uris_at_offset(), target.cpp).
- * A plain positional index into target's own raw comma order (as
- * chunk_index * width would give) can't make that guarantee: Target's
- * own constructor sorts _uris by ascending offset internally, but
- * nothing requires target's own raw string to already be written in
- * that order, so a target whose chunks appear out of offset order in
- * the string would otherwise resolve the wrong chunk's own member.
- * Caller frees the result. NULL on OOM or if idx is out of range for
- * this offset. */
-static char*
-extract_member_at_offset(const char* target, uint64_t offset, size_t idx) {
-    char* buf = strdup(target);
-    if (buf == NULL) {
-        return NULL;
-    }
-
-    char* saveptr = NULL;
-    char* tok = strtok_r(buf, ",", &saveptr);
-    size_t seen = 0;
-    while (tok != NULL) {
-        if (member_offset(tok) == offset) {
-            if (seen == idx) {
-                char* member = strdup(tok);
-                free(buf);
-                return member;
-            }
-            seen++;
-        }
-        tok = strtok_r(NULL, ",", &saveptr);
-    }
-    free(buf);
-    return NULL;
-}
-
 /* Resolves exactly one chunk: `winners` are positions within that
- * chunk's own mirror set (rawstor_target_meta()'s own per-chunk `result`,
- * the same order extract_member_at_offset() above filters target's own
- * raw members into). */
+ * chunk's own real member list -- rawstor_target_meta()'s own per-chunk
+ * `result` order, the same one rawstor_target_set_member_sync_state()'s
+ * own `member_index` addresses (its own doc comment) -- so an index read
+ * off one call names the same member in the other, for an ordinary
+ * target and an mds:// one alike. */
 static int resolve_chunk(
     const char* target, const size_t* winners, size_t num_winners,
     uint64_t offset
@@ -242,40 +181,31 @@ static int resolve_chunk(
     memcpy(new_state.sync_id_history, history, sizeof(history));
 
     /* Every winner gets the exact same new identity, written one at a
-     * time (rawstor_target_set_sync_state() only ever points at a single
-     * member here, same as the one-winner case) -- as many as already
-     * succeeded stay written even if a later one fails, same "partial
-     * failure leaves as many copies updated as possible" spirit as
-     * Target::set_sync_state()'s own fan-out. */
+     * time (rawstor_target_set_member_sync_state() only ever points at a
+     * single member) -- as many as already succeeded stay written even
+     * if a later one fails, same "partial failure leaves as many copies
+     * updated as possible" spirit as Target::set_sync_state()'s own
+     * fan-out. */
     for (size_t i = 0; i < num_winners; i++) {
-        char* winner_target =
-            extract_member_at_offset(target, offset, winners[i]);
-        if (winner_target == NULL) {
-            fprintf(stderr, "Out of memory\n");
-            return EXIT_FAILURE;
-        }
-
         RawstorCliOp set_op;
         res = rawstor_cli_op_init(&set_op);
         if (res < 0) {
-            free(winner_target);
             fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
             return rawstd_exitcode_for_errno(-res);
         }
-        int sres = rawstor_target_set_sync_state(
-            set_op.queue, winner_target, offset, &new_state, rawstor_cli_op_cb,
-            &set_op
+        int sres = rawstor_target_set_member_sync_state(
+            set_op.queue, target, offset, winners[i], &new_state,
+            rawstor_cli_op_cb, &set_op
         );
         ssize_t sresult = rawstor_cli_op_wait(&set_op, sres);
         rawstor_cli_op_destroy(&set_op);
         if (sresult < 0) {
             fprintf(
                 stderr,
-                "chunk[%llx]: mirror[%zu]: rawstor_target_set_sync_state() "
-                "failed: %s\n",
+                "chunk[%llx]: mirror[%zu]: "
+                "rawstor_target_set_member_sync_state() failed: %s\n",
                 (unsigned long long)offset, winners[i], strerror((int)-sresult)
             );
-            free(winner_target);
             return rawstd_exitcode_for_errno((int)-sresult);
         }
 
@@ -283,15 +213,14 @@ static int resolve_chunk(
          * displayed in everywhere else (rawstor show -v, meta_encode()'s
          * own on-disk encoding). */
         printf(
-            "chunk[%llx]: mirror[%zu] (%s) is now authoritative: sync_id "
-            "%llx -> %llx, epoch %llu -> %llu\n",
-            (unsigned long long)offset, winners[i], winner_target,
+            "chunk[%llx]: mirror[%zu] is now authoritative: sync_id %llx "
+            "-> %llx, epoch %llu -> %llu\n",
+            (unsigned long long)offset, winners[i],
             (unsigned long long)metas[winners[i]].sync_state.sync_id,
             (unsigned long long)new_state.sync_id,
             (unsigned long long)metas[winners[i]].sync_state.epoch,
             (unsigned long long)new_state.epoch
         );
-        free(winner_target);
     }
     printf(
         "chunk[%llx]: every other reachable mirror will resync on the "
@@ -302,15 +231,23 @@ static int resolve_chunk(
     return EXIT_SUCCESS;
 }
 
-/* How many distinct chunks `target` actually names -- purely syntactic,
- * off `target`'s own comma/offset-segment shape (rawstor_target_offsets(),
- * no I/O, its own doc comment). An mds:// target (a single URI, no offset
- * segment) is always exactly one entry -- resolve it as one opaque chunk
- * rather than the many its own spec.size/chunk_size describe, the same
- * fallback an unexpected/invalid target gets. */
-static uint64_t count_chunks(const char* target) {
-    int n = rawstor_target_offsets(target, NULL, 0);
-    return n > 0 ? (uint64_t)n : 1;
+/* How many distinct chunks `target` actually has -- purely syntactic for
+ * an ordinary target (rawstor_target_chunks(), no I/O, its own doc
+ * comment), a real MDS round trip for an mds:// one. Own self-contained
+ * queue, same convention as resolve_chunk() below. */
+static ssize_t count_chunks(const char* target) {
+    RawstorCliOp op;
+    int res = rawstor_cli_op_init(&op);
+    if (res < 0) {
+        return res;
+    }
+
+    int sres = rawstor_target_chunks(
+        op.queue, target, NULL, 0, rawstor_cli_op_cb, &op
+    );
+    ssize_t result = rawstor_cli_op_wait(&op, sres);
+    rawstor_cli_op_destroy(&op);
+    return result;
 }
 
 int rawstor_cli_resolve(
@@ -340,8 +277,16 @@ int rawstor_cli_resolve(
         return resolve_chunk(target, winners, num_winners, offset);
     }
 
-    uint64_t chunk_count = count_chunks(target);
-    for (uint64_t i = 0; i < chunk_count; i++) {
+    ssize_t chunk_count = count_chunks(target);
+    if (chunk_count < 0) {
+        fprintf(
+            stderr, "rawstor_target_chunks() failed: %s\n",
+            strerror((int)-chunk_count)
+        );
+        return rawstd_exitcode_for_errno((int)-chunk_count);
+    }
+
+    for (uint64_t i = 0; i < (uint64_t)chunk_count; i++) {
         int ret =
             resolve_chunk(target, winners, num_winners, i * spec.chunk_size);
         if (ret != EXIT_SUCCESS) {

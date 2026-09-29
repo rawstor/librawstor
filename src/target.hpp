@@ -269,10 +269,29 @@ public:
     // ENOENT if no chunk in `_uris` sits at `offset`.
     rawstd::Task<std::vector<RawstorObjectMeta>>
     meta(rawio::Queue& queue, uint64_t offset) const;
+    // Every distinct chunk offset `_uris` actually names -- backend-
+    // verified for an opaque (single-URI, no offset segment of its own)
+    // target, purely syntactic otherwise (see this method's own doc
+    // comment in target.cpp).
+    rawstd::Task<std::vector<uint64_t>> chunks(rawio::Queue& queue) const;
     // Throws ENOENT if no chunk in `_uris` sits at `offset` -- same as
     // meta() above.
     rawstd::Task<void> set_sync_state(
         rawio::Queue& queue, uint64_t offset,
+        const RawstorObjectSyncState& sync_state
+    ) const;
+    // Writes `sync_state` to exactly one real member of the chunk at
+    // `offset` -- `member_index` into that chunk's own real member list,
+    // the same order rawstor_target_meta()'s own per-chunk result reports
+    // their state in. Unlike set_sync_state() above (every member of the
+    // chunk), this is rawstor resolve's own --winner: declaring one
+    // member authoritative, not updating every one of them at once.
+    // Throws ENOENT if no chunk sits at `offset`, EINVAL if
+    // `member_index` names no real member of it (see this method's own
+    // doc comment in target.cpp for how an opaque, e.g. mds://, target's
+    // real member list is resolved).
+    rawstd::Task<void> set_member_sync_state(
+        rawio::Queue& queue, uint64_t offset, size_t member_index,
         const RawstorObjectSyncState& sync_state
     ) const;
     // Removes every URI of every chunk concurrently -- unlike create()

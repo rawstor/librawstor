@@ -112,7 +112,7 @@ rawstor::blk::Backend* open_blk_backend(
 
     object =
         run(queue,
-            rawstor::Chunk::create({location}, queue, id, 0, 0, RawstdUUID{}));
+            rawstor::Chunk::create(queue, {location}, id, 0, 0, RawstdUUID{}));
 
     slot = run(queue, rawstor::Slot::create(queue, location, 1));
     run(queue, slot->open(id, 0, 0, RawstdUUID{}));

@@ -159,7 +159,13 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     );
 
-    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id, uint64_t offset);
+    rawstd::Task<std::vector<RawstorObjectMeta>>
+    meta(const RawstdUUID& id, uint64_t offset);
+
+    rawstd::Task<std::vector<uint64_t>> chunks(const RawstdUUID& id);
+
+    rawstd::Task<std::vector<rawstd::URI>>
+    locations(const RawstdUUID& id, uint64_t offset);
 
     rawstd::Task<void> set_sync_state(
         const RawstdUUID& id, uint64_t offset,
@@ -179,9 +185,11 @@ public:
     // against whichever backend the pool now has (set_object() itself
     // doesn't return it, see its own doc comment) -- spec.width on it is
     // this copy's own persisted identity, not the target-wide count.
-    // `flags` (RAWSTOR_READONLY or 0) goes to every Backend::set_object()
-    // (a non-nil `snapshot_id` binds via set_snapshot() instead, read-only
-    // by nature).
+    // meta()'s own first entry is this location's own answer (its own
+    // doc comment: every backend but mds::Backend only ever has the one
+    // to give anyway). `flags` (RAWSTOR_READONLY or 0) goes to every
+    // Backend::set_object() (a non-nil `snapshot_id` binds via
+    // set_snapshot() instead, read-only by nature).
     rawstd::Task<RawstorObjectMeta> open(
         const RawstdUUID& id, uint64_t offset, int flags,
         const RawstdUUID& snapshot_id

@@ -662,7 +662,7 @@ rawstd::Task<std::string> Backend::_lv_tags(const std::string& path) {
     }
 }
 
-rawstd::Task<RawstorObjectMeta>
+rawstd::Task<std::vector<RawstorObjectMeta>>
 Backend::meta(const RawstdUUID& id, uint64_t offset) {
     std::string path = _device_path(id, offset);
     std::string tags = co_await _lv_tags(path);
@@ -692,7 +692,16 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     ret.member_kind = identity.member_kind;
     ret.sync_state = sync_state;
 
-    co_return ret;
+    co_return std::vector<RawstorObjectMeta>{ret};
+}
+
+rawstd::Task<std::vector<uint64_t>> Backend::chunks(const RawstdUUID&) {
+    co_return std::vector<uint64_t>{0};
+}
+
+rawstd::Task<std::vector<rawstd::URI>>
+Backend::locations(const RawstdUUID&, uint64_t) {
+    co_return std::vector<rawstd::URI>{location()};
 }
 
 rawstd::Task<void> Backend::set_sync_state(

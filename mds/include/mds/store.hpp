@@ -36,10 +36,9 @@ struct ObjectMap {
  * `obj_id` is the whole object's own id for every one of its chunks
  * (docs/mds.md, "Chunk identity": obj_id = id -- the physical
  * resource's own name is self-describing, so nothing here needs a
- * separate id field); `offset` (read back via
- * rawstor_target_offsets(), the same suffix chunk_slot_target() stamped
- * on the target LIST returned) disambiguates which of that object's
- * chunks this is.
+ * separate id field); `offset` (read back via rawstor_target_chunks(),
+ * the same suffix chunk_slot_target() stamped on the target LIST
+ * returned) disambiguates which of that object's chunks this is.
  */
 struct ScanRecord {
     RawstdUUID ost_id;

@@ -157,6 +157,42 @@ chunk_uris_at_offset(const std::vector<rawstd::URI>& uris, uint64_t offset) {
     return ret;
 }
 
+// Whether `uris` names a target whose own real per-chunk shape isn't
+// reflected in its own syntax at all -- true only for an mds:// target
+// (mds_backend.hpp's own class doc comment): resolving any offset beyond
+// the trivial, always-present chunk 0 is then each location's own
+// Backend's job (Backend::meta()/Backend::chunks()'s own doc comments),
+// never something `uris` itself could ever answer. Every other scheme is
+// fully self-describing on its own terms instead -- chunk addressing for
+// a plain target is entirely client-side (docs/concepts.md): a URI
+// carrying its own explicit offset segment names it authoritatively, and
+// one that doesn't (a plain, unchunked object, `uris.size() == 1`) is
+// unambiguously chunk 0 -- neither needs a backend to confirm it, so
+// `false` covers both without distinguishing them.
+bool is_opaque(const std::vector<rawstd::URI>& uris) {
+    return uris.front().scheme() == "mds";
+}
+
+// The (stripped) locations Chunk::spec()/meta()/chunks() should query for
+// real offset `offset` -- `opaque` (is_opaque() above) means a single
+// location whose own real per-chunk shape isn't reflected in `uris` at
+// all: that one location answers regardless of which real `offset` was
+// asked for, resolving it internally. A non-opaque target is fully
+// self-describing instead: chunk_uris_at_offset() finds the exact group
+// `offset` names, or throws ENOENT if none does.
+std::vector<rawstd::URI> locations_for(
+    const std::vector<rawstd::URI>& uris, uint64_t offset, bool opaque
+) {
+    std::vector<rawstd::URI> group =
+        opaque ? uris : chunk_uris_at_offset(uris, offset);
+    std::vector<rawstd::URI> ret;
+    ret.reserve(group.size());
+    for (const auto& uri : group) {
+        ret.push_back(strip_path(uri));
+    }
+    return ret;
+}
+
 // Every URI in `targets` must name the same logical resource as `id`/
 // `snapshot_id` -- compared on their *parsed* values (uuid_from_target()/
 // extract_snapshot_id()), not the raw path string, so equivalent-but-
@@ -547,6 +583,39 @@ rawstd::DetachedTask launch_meta_op_coro(
     }
 }
 
+// Same shape as launch_meta_op_coro() above, for Target::chunks() --
+// `offsets` is an array, `count` only a buffer capacity (same truncation
+// convention: the result, on success, is always the target's own real
+// chunk count, even past `count`).
+rawstd::DetachedTask launch_chunks_op_coro(
+    rawstor::Target t, rawio::Queue* queue, uint64_t* offsets, size_t count,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        std::vector<uint64_t> ret = co_await t.chunks(*queue);
+        size_t n = count < ret.size() ? count : ret.size();
+        for (size_t i = 0; i < n; ++i) {
+            offsets[i] = ret[i];
+        }
+        result = static_cast<ssize_t>(ret.size());
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
 // Same shape as launch_remove_op_coro() above, for Target::set_sync_state():
 // no out-parameter, just a result.
 rawstd::DetachedTask launch_set_sync_state_op_coro(
@@ -557,6 +626,35 @@ rawstd::DetachedTask launch_set_sync_state_op_coro(
     ssize_t result = 0;
     try {
         co_await t.set_sync_state(*queue, offset, sync_state);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+// Same shape as launch_set_sync_state_op_coro() above, for
+// Target::set_member_sync_state() instead.
+rawstd::DetachedTask launch_set_member_sync_state_op_coro(
+    rawstor::Target t, rawio::Queue* queue, uint64_t offset,
+    size_t member_index, RawstorObjectSyncState sync_state,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        co_await t.set_member_sync_state(
+            *queue, offset, member_index, sync_state
+        );
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -997,12 +1095,15 @@ rawstd::Task<void> Target::create_snapshot(
     co_await snap_target.create_snapshot(queue);
 }
 
-// Only ever touches the target's own first chunk (Target's own class doc
-// comment) -- a multi-chunk target's later chunks may have a different
-// width, but spec() has room for exactly one answer, so it can't
-// generalize across every chunk the way a caller looping meta()/
-// set_sync_state() over each one's own offset can. The actual lookup
-// (first reachable uri wins, width fallback) is Chunk::spec()'s own job.
+// Only ever touches the target's own first real chunk -- a multi-chunk
+// target's later chunks may have a different width, but spec() has room
+// for exactly one answer, so it can't generalize across every chunk the
+// way a caller looping meta()/set_sync_state() over each one's own
+// offset can. The actual lookup (first reachable location wins, width
+// fallback) is Chunk::spec()'s own job; locations_for() above resolves
+// which locations to ask, real offsets come from chunks() below (a
+// no-op re-derivation of chunk_uris_by_offset()'s own grouping for an
+// ordinary, self-describing target -- no extra round trip there).
 //
 // size, unlike width, does generalize: it's the whole object's own
 // total, the same derivation Target::open() uses (its own comment) --
@@ -1010,32 +1111,42 @@ rawstd::Task<void> Target::create_snapshot(
 // (possibly smaller) size, both learned through the same Chunk::spec()
 // lookup as the first chunk's own answer above. For the ordinary
 // single-chunk case that's just chunk_size * 0 plus the one chunk's own
-// answer, so no second round trip is needed.
+// answer, so no second lookup is needed.
 rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
-    std::vector<std::vector<rawstd::URI>> chunks = chunk_uris_by_offset(_uris);
+    bool opaque = is_opaque(_uris);
+    RawstdUUID id = uuid_from_target(_uris.front());
 
-    RawstorObjectSpec ret = co_await Chunk::spec(queue, chunks.front());
+    std::vector<uint64_t> offsets = co_await chunks(queue);
 
-    if (chunks.size() > 1) {
-        RawstorObjectSpec last = co_await Chunk::spec(queue, chunks.back());
-        ret.size = ret.chunk_size * (chunks.size() - 1) + last.size;
+    RawstorObjectSpec ret = co_await Chunk::spec(
+        queue, locations_for(_uris, offsets.front(), opaque), id,
+        offsets.front()
+    );
+
+    if (offsets.size() > 1) {
+        RawstorObjectSpec last = co_await Chunk::spec(
+            queue, locations_for(_uris, offsets.back(), opaque), id,
+            offsets.back()
+        );
+        ret.size = ret.chunk_size * (offsets.size() - 1) + last.size;
     }
 
     co_return ret;
 }
 
-// Unlike spec() above, every URI of the chunk at `offset` is queried,
-// not just the first reachable one: a caller asking for mirror
+// Unlike spec() above, every location of the chunk at `offset` is
+// queried, not just the first reachable one: a caller asking for mirror
 // consistency state wants to see each copy of that chunk's own state
 // (docs/mirroring.md), not one answer papered over the rest by fail-over
 // -- e.g. rawstor show -v printing every mirror's own state, or rawstor
 // resolve needing to compare copies against each other, neither of
 // which a single-answer result could ever support. The actual lookup
-// (every uri of that one chunk queried concurrently, one
-// RawstorObjectMeta per uri, zero-filled on failure rather than dropped
-// -- the result's own index is what ties an entry back to its URI) is
-// Chunk::meta()'s own job; chunk_uris_at_offset() here narrows `_uris`
-// down to that one chunk's own uris first. Every answering entry's own
+// (every location of that one chunk queried concurrently, flattening in
+// every one of an mds:// location's own real members -- Chunk::meta()'s
+// own doc comment) is Chunk::meta()'s own job; locations_for() above
+// resolves which locations to ask (throwing ENOENT itself for a
+// non-opaque target with no chunk at `offset` -- an opaque one instead
+// leaves that to its own Backend). Every answering entry's own
 // spec.width is trusted verbatim, no override: Target::create() already
 // guarantees it's persisted correctly on every member (exactly the
 // chunk's own URI count for an ordinary multi-URI mirror set, or a real,
@@ -1051,7 +1162,32 @@ Target::meta(rawio::Queue& queue, uint64_t offset) const {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    return Chunk::meta(queue, chunk_uris_at_offset(_uris, offset));
+    bool opaque = is_opaque(_uris);
+    RawstdUUID id = uuid_from_target(_uris.front());
+    return Chunk::meta(queue, locations_for(_uris, offset, opaque), id, offset);
+}
+
+// Every distinct chunk offset this target actually has -- purely
+// syntactic (chunk_uris_by_offset(), no I/O) for an ordinary target,
+// whose own URI shape (an explicit offset segment, or none at all for a
+// plain, unchunked object -- either way, no backend needs asking, see
+// is_opaque()'s own doc comment) already names every one of them; an
+// opaque (mds://) target instead asks its own Backend directly
+// (Chunk::chunks(), Backend::chunks()'s own doc comment).
+rawstd::Task<std::vector<uint64_t>> Target::chunks(rawio::Queue& queue) const {
+    if (!is_opaque(_uris)) {
+        std::vector<std::vector<rawstd::URI>> groups =
+            chunk_uris_by_offset(_uris);
+        std::vector<uint64_t> ret;
+        ret.reserve(groups.size());
+        for (const auto& group : groups) {
+            ret.push_back(extract_offset(group.front()));
+        }
+        co_return ret;
+    }
+
+    RawstdUUID id = uuid_from_target(_uris.front());
+    co_return co_await Chunk::chunks(queue, locations_for(_uris, 0, true), id);
 }
 
 // Only ever touches the chunk at `offset` (chunk_uris_at_offset() above)
@@ -1079,6 +1215,50 @@ rawstd::Task<void> Target::set_sync_state(
         tasks.push_back(set_sync_state_one(queue, uri, sync_state));
     }
     co_await rawstd::gather(std::move(tasks));
+}
+
+// Unlike set_sync_state() above (every member of the chunk), this writes
+// to exactly one: `member_index` into that chunk's own real member list
+// -- locations_for()'s own opaque branch (an mds:// target) resolves it
+// via Chunk::locations() (a real WireMap round trip, Backend::locations()'s
+// own doc comment); a non-opaque target's own member list is already
+// fully described by chunk_uris_at_offset() itself, no backend needed.
+// Either way, this is the same list rawstor_target_meta()'s own per-chunk
+// result reports state in, so `member_index` (rawstor resolve's own
+// --winner) means the same position in both.
+rawstd::Task<void> Target::set_member_sync_state(
+    rawio::Queue& queue, uint64_t offset, size_t member_index,
+    const RawstorObjectSyncState& sync_state
+) const {
+    if (!rawstd_uuid_is_nil(&_snapshot_id)) {
+        // Would otherwise rewrite the live chunk's state.
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    bool opaque = is_opaque(_uris);
+    RawstdUUID id = uuid_from_target(_uris.front());
+    std::vector<rawstd::URI> members =
+        opaque ? co_await Chunk::locations(
+                     queue, locations_for(_uris, offset, true), id, offset
+                 )
+               : locations_for(_uris, offset, false);
+
+    if (member_index >= members.size()) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, members[member_index], 1);
+    std::exception_ptr error;
+    try {
+        co_await slot->set_sync_state(id, offset, sync_state);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
 }
 
 rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
@@ -1172,7 +1352,7 @@ Target::open(rawio::Queue& queue, int flags) const {
     uint64_t last_offset = extract_offset(chunks.back().front());
     RawstdUUID last_snapshot_id = extract_snapshot_id(chunks.back().front());
     std::unique_ptr<Chunk> last = co_await Chunk::create(
-        chunk_locations.back(), queue, last_id, last_offset, flags,
+        queue, chunk_locations.back(), last_id, last_offset, flags,
         last_snapshot_id
     );
 
@@ -1381,6 +1561,32 @@ int rawstor_target_set_sync_state(
     }
 }
 
+int rawstor_target_set_member_sync_state(
+    RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
+    const RawstorObjectSyncState* sync_state,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Target t(target);
+        launch_set_member_sync_state_op_coro(
+            std::move(t), static_cast<rawio::Queue*>(queue), offset,
+            member_index, *sync_state, cb, data
+        );
+        rawstd::DetachedTask::rethrow_if_pending();
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
 int rawstor_target_open(
     RawIOQueue* queue, const char* target, int flags, RawstorObject** object,
     int (*cb)(ssize_t result, void* data), void* data
@@ -1430,17 +1636,18 @@ int rawstor_target_id(const char* target, char* buf, size_t size) noexcept {
     }
 }
 
-int rawstor_target_offsets(
-    const char* target, uint64_t* offsets, size_t size
+int rawstor_target_chunks(
+    RawIOQueue* queue, const char* target, uint64_t* offsets, size_t size,
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Target t(target);
-        std::vector<std::vector<rawstd::URI>> chunks =
-            chunk_uris_by_offset(t.uris());
-        for (size_t i = 0; i < chunks.size() && i < size; ++i) {
-            offsets[i] = extract_offset(chunks[i].front());
-        }
-        return static_cast<int>(chunks.size());
+        launch_chunks_op_coro(
+            std::move(t), static_cast<rawio::Queue*>(queue), offsets, size, cb,
+            data
+        );
+        rawstd::DetachedTask::rethrow_if_pending();
+        return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
     } catch (const std::bad_alloc& e) {
