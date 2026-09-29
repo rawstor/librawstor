@@ -1134,7 +1134,9 @@ void Backend::_remove_op(uint16_t cid) {
 Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::Backend(p, queue, location),
     _cid_counter(0),
-    _read_event(nullptr) {
+    _read_event(nullptr),
+    _ops(),
+    _pump() {
 }
 
 Backend::~Backend() {
@@ -1245,14 +1247,24 @@ rawstd::Task<void> Backend::_connect() {
         fd, 1u << 17, 64 * 16, sizeof(RawstorOSTFrameResponse), 0
     );
     _read_event = stream.event();
-    _recv_pump(
-        std::static_pointer_cast<Backend>(shared_from_this()),
-        std::move(stream), trace_event
-    );
-    // _recv_pump() may have stored a pending exception instead of
-    // throwing it directly -- see rawstd::DetachedTask's own doc comment
-    // for why, and why this is the one call site that needs to check.
-    rawstd::DetachedTask::rethrow_if_pending();
+    // An exception out of either call below means the pump never got as
+    // far as its own end() (its body catches everything it can reach), so
+    // it's ended here instead -- or close() would settle on it forever.
+    _pump.begin();
+    try {
+        _recv_pump(
+            std::static_pointer_cast<Backend>(shared_from_this()),
+            std::move(stream), trace_event
+        );
+        // _recv_pump() may have stored a pending exception instead of
+        // throwing it directly -- see rawstd::DetachedTask's own doc
+        // comment for why, and why this is the one call site that needs
+        // to check.
+        rawstd::DetachedTask::rethrow_if_pending();
+    } catch (...) {
+        _pump.end();
+        throw;
+    }
 }
 
 rawstd::Task<void> Backend::close() {
@@ -1280,6 +1292,14 @@ rawstd::Task<void> Backend::close() {
         co_await _queue.cancel(_read_event);
         _read_event = nullptr;
     }
+    // The cancel above only resolves once the cancel request itself is
+    // processed; the pump returns only once it sees its registration's own
+    // final ECANCELED completion, which can come later. Waiting for it here
+    // means nothing of this connection is left suspended on the queue once
+    // close() returns -- a caller free to destroy the queue right after
+    // would otherwise leave the pump's frame and its buffer ring behind for
+    // good. Returns at once if the pump already stopped on its own.
+    co_await _pump.settle();
 
     int f = fd();
     if (f != -1) {
@@ -1733,33 +1753,11 @@ rawstd::DetachedTask Backend::_recv_pump(
             );
         }
     } catch (const std::system_error& e) {
-        if (e.code().value() == ECANCELED) {
-            co_return;
+        // ECANCELED: close()/~Backend() cancelled this pump's own
+        // registration -- nothing left to clean up but the end() below.
+        if (e.code().value() != ECANCELED) {
+            _recv_pump_failed(weak, e.code().value());
         }
-
-        // A strong self-reference here (instead of weak_ptr::lock())
-        // would keep this Backend alive purely because its own recv
-        // registration exists -- including while this very pump's
-        // captured shared_ptr is what's being torn down as part of the
-        // *owning* rawio::Queue's own destruction (e.g. process
-        // shutdown), which would then call back into that same,
-        // still-destructing Queue via ~Backend()'s _queue.cancel(), a
-        // reentrant heap-use-after-free. A missing backend here means it
-        // was already destroyed via some other, unrelated reference
-        // dropping -- nothing to do.
-        std::shared_ptr<Backend> backend = weak.lock();
-        if (backend == nullptr) {
-            co_return;
-        }
-
-        // The stream is no longer trustworthy (either a real
-        // transport-level/framing error, or a cid we can't resync past):
-        // fail everything still in flight and stop the pump for good.
-        // _read_event must not outlive it -- ~Backend() would otherwise
-        // try to cancel() an Event that's already gone.
-        backend->_fail_in_flight(e.code().value());
-        backend->_read_event = nullptr;
-        co_return;
     } catch (const std::exception& e) {
         // Not a system_error: only reachable from
         // response_head_cb()/response_body_cb()'s own body (see above)
@@ -1767,16 +1765,39 @@ rawstd::DetachedTask Backend::_recv_pump(
         // we can no longer trust our position in the stream, so fail
         // everything in flight and stop.
         rawstd_error("_recv_pump: %s\n", e.what());
-
-        std::shared_ptr<Backend> backend = weak.lock();
-        if (backend == nullptr) {
-            co_return;
-        }
-
-        backend->_fail_in_flight(EIO);
-        backend->_read_event = nullptr;
-        co_return;
+        _recv_pump_failed(weak, EIO);
     }
+
+    // The pump is done for good: let a close() settling on it go on. A
+    // backend that's already gone has nobody left waiting.
+    std::shared_ptr<Backend> backend = weak.lock();
+    if (backend != nullptr) {
+        backend->_pump.end();
+    }
+}
+
+void Backend::_recv_pump_failed(const std::weak_ptr<Backend>& weak, int error) {
+    // A strong self-reference here (instead of weak_ptr::lock()) would keep
+    // this Backend alive purely because its own recv registration exists --
+    // including while this very pump's captured shared_ptr is what's being
+    // torn down as part of the *owning* rawio::Queue's own destruction
+    // (e.g. process shutdown), which would then call back into that same,
+    // still-destructing Queue via ~Backend()'s _queue.cancel(), a reentrant
+    // heap-use-after-free. A missing backend here means it was already
+    // destroyed via some other, unrelated reference dropping -- nothing to
+    // do.
+    std::shared_ptr<Backend> backend = weak.lock();
+    if (backend == nullptr) {
+        return;
+    }
+
+    // The stream is no longer trustworthy (either a real transport-level/
+    // framing error, or a cid we can't resync past): fail everything still
+    // in flight and stop the pump for good. _read_event must not outlive
+    // it -- ~Backend() would otherwise try to cancel() an Event that's
+    // already gone.
+    backend->_fail_in_flight(error);
+    backend->_read_event = nullptr;
 }
 
 rawstd::Task<size_t> Backend::pread(void* buf, size_t size, off_t offset) {

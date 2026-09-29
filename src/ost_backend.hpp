@@ -36,6 +36,15 @@ private:
     rawio::Event* _read_event;
     std::unordered_map<uint16_t, std::shared_ptr<BackendOp>> _ops;
 
+    // Running for as long as _recv_pump() is: begun by _connect() when it
+    // launches the pump, ended by the pump itself on its way out. close()
+    // settles on it after cancelling the pump's own recv registration --
+    // that cancel only resolves once the cancel request itself is
+    // processed, not once the pump has actually seen its registration's
+    // final ECANCELED completion and returned, and a pump still suspended
+    // on that when the queue goes away is never freed.
+    rawstd::Gate _pump;
+
     rawstd::Task<void> _connect() override;
     // The cid-dispatched counterpart of the old basic_request_async():
     // sends a RawstorOSTFrameBasic-shaped request (remove/meta/info/
@@ -75,6 +84,11 @@ private:
         std::weak_ptr<Backend> weak, rawio::RecvStream stream,
         rawstd::TraceEvent trace_event
     );
+    // _recv_pump()'s own way out on a stream it can no longer trust: fails
+    // everything still in flight with `error`, if the backend is still
+    // around.
+    static void
+    _recv_pump_failed(const std::weak_ptr<Backend>& weak, int error);
 
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
