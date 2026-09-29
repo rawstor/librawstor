@@ -129,12 +129,12 @@ public:
     rawstd::Task<std::vector<uint64_t>> chunks(const RawstdUUID& id) override;
 
     // Real: this chunk's own real members' own bare locations, off the
-    // same WireMap resolution meta() above uses (Backend::locations()'s
-    // own doc comment) -- addresses one specific real member directly
-    // (rawstor resolve's own --winner), which no target string naming
-    // this mds:// object could ever do on its own.
+    // same WireMap resolution meta() above uses (Backend::
+    // resolve_locations()'s own doc comment) -- addresses one specific
+    // real member directly (rawstor resolve's own --winner), which no
+    // target string naming this mds:// object could ever do on its own.
     rawstd::Task<std::vector<rawstd::URI>>
-    locations(const RawstdUUID& id, uint64_t offset) override;
+    resolve_locations(const RawstdUUID& id, uint64_t offset) override;
 
     // No-op, for the same reason meta() above never persists anything of
     // its own: this Backend's own outer "am I healthy" answer at offset 0

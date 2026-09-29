@@ -220,8 +220,9 @@ static PyType_Spec PyLocationInfo_spec = {
 PyTypeObject* PyLocationInfoType = NULL;
 
 // The settable half of a mirror's metadata (see RawstorObjectSyncState) --
-// input to Target.set_sync_state() (object_set_sync_state() below), same
-// shape/pattern as ObjectSpec above (constructible, with setters) since a
+// input to Target.set_member_sync_state() (object_set_member_sync_state()
+// below), same shape/pattern as ObjectSpec above (constructible, with
+// setters) since a
 // caller builds one of these and passes it in, unlike ObjectMeta/
 // LocationInfo below which are output-only.
 typedef struct {
@@ -459,8 +460,8 @@ PyTypeObject* PyObjectSyncStateType = NULL;
 // (object_meta() below). Output-only, like LocationInfo above -- no
 // Py_tp_new/_init/setters -- there is no legitimate way for a Python
 // caller to construct one and pass it back: the writer, Target.
-// set_sync_state() (object_set_sync_state() below), takes an
-// ObjectSyncState instead, the settable subset of these same fields.
+// set_member_sync_state() (object_set_member_sync_state() below), takes
+// an ObjectSyncState instead, the settable subset of these same fields.
 typedef struct {
     PyObject_HEAD unsigned long long size;
     unsigned int width;
@@ -989,12 +990,16 @@ PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
     return list;
 }
 
-PyObject*
-py_rawstor_object_set_sync_state(PyObject* Py_UNUSED(self), PyObject* args) {
+PyObject* py_rawstor_object_set_member_sync_state(
+    PyObject* Py_UNUSED(self), PyObject* args
+) {
     const char* target;
     PyObject* sync_state_obj;
+    unsigned long long member_index = 0;
     unsigned long long offset = 0;
-    if (!PyArg_ParseTuple(args, "sO|K", &target, &sync_state_obj, &offset)) {
+    if (!PyArg_ParseTuple(
+            args, "sO|KK", &target, &sync_state_obj, &member_index, &offset
+        )) {
         return NULL;
     }
 
@@ -1022,8 +1027,9 @@ py_rawstor_object_set_sync_state(PyObject* Py_UNUSED(self), PyObject* args) {
         set_os_error(-ires);
         return NULL;
     }
-    int sres = rawstor_target_set_sync_state(
-        op.queue, target, offset, &sync_state, rawstor_sync_op_cb, &op
+    int sres = rawstor_target_set_member_sync_state(
+        op.queue, target, offset, (size_t)member_index, &sync_state,
+        rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);
     rawstor_sync_op_destroy(&op);

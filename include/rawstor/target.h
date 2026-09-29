@@ -112,7 +112,7 @@ enum RawstorObjectSyncStateValue {
  * @brief Settable mirror consistency identity of a single object copy.
  *
  * Everything about a copy's consistency state that can actually be changed
- * (see docs/mirroring.md) -- the fields rawstor_target_set_sync_state()
+ * (see docs/mirroring.md) -- the fields rawstor_target_set_member_sync_state()
  * persists. A sync_id of 0 marks a legacy copy that has never been part of
  * an established sync set; such copies are treated as CLEAN and identical
  * right after creation.
@@ -135,7 +135,7 @@ struct RawstorObjectSyncState {
  * this record -- unlike a RawstorObjectSpec obtained through
  * rawstor_target_spec()/_create(), which is used both ways) plus this
  * copy's mirror consistency identity (sync_state, the part
- * rawstor_target_set_sync_state() can actually change) and its own
+ * rawstor_target_set_member_sync_state() can actually change) and its own
  * member_kind. `spec.width` is filled in by rawstor_target_meta() itself
  * the same way rawstor_target_spec() fills its own -- the target's own
  * per-chunk copy count: computed locally (the number of URIs in the
@@ -152,7 +152,7 @@ struct RawstorObjectSyncState {
  * shape.
  *
  * @see rawstor_target_meta
- * @see rawstor_target_set_sync_state
+ * @see rawstor_target_set_member_sync_state
  */
 struct RawstorObjectMeta {
     struct RawstorObjectSpec spec;
@@ -292,16 +292,20 @@ int rawstor_target_meta(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously write the mirror consistency identity of every
- *        copy of one chunk of a target.
+ * @brief Asynchronously write the mirror consistency identity of exactly
+ *        one real member of one chunk of a target.
  *
  * Unlike rawstor_target_spec()/rawstor_target_meta(), this writes rather
- * than reads: it sets @p sync_state on every URI of the chunk at
- * @p offset concurrently (fsynced on the backend before it is
- * acknowledged, per docs/mirroring.md's durability rule) -- every URI of
- * that chunk is still attempted even if an earlier one fails, so a
- * partial failure leaves as many copies updated as possible rather than
- * none.
+ * than reads: it sets @p sync_state on the chunk at @p offset's own
+ * real member @p member_index (fsynced on the backend before it is
+ * acknowledged, per docs/mirroring.md's durability rule) -- the same
+ * order rawstor_target_meta()'s own per-chunk result reports their state
+ * in, so an index read off one call names the same member in the other.
+ * A caller wanting every member of the chunk written (rather than one)
+ * calls this once per member instead -- every real member's own real
+ * count comes from rawstor_target_meta() (a caller-driven fan-out, still
+ * attempting every member even if an earlier one failed, leaves that
+ * choice to the caller instead of baking one fixed policy in here).
  *
  * @warning Setting mirror consistency state by hand can desynchronize a
  * target's copies in ways the library's own quorum/reconciliation logic
@@ -311,68 +315,10 @@ int rawstor_target_meta(
  * `rawstor-ost` relaying an incoming wire `SET_SYNC_STATE` command), not
  * for routine application use.
  *
- * An mds://host:port/<id> @p target succeeds as a no-op --
- * mds::Backend's own consistency state is tracked one level down, per
- * chunk, not at the object level this call writes to (same reason
- * rawstor_target_meta() reports a synthetic answer instead of failing).
- *
- * This function returns immediately; the actual result is reported via
- * @p cb once the operation completes.
- *
- * @param queue       Queue used to drive the asynchronous write.
- * @param target      Target string, see rawstor_target_spec().
- * @param offset      The chunk's own byte offset within @p target, see
- *                    rawstor_target_meta().
- * @param sync_state  The mirror consistency identity to write to every
- *                    copy of that chunk. Only read while this call is
- *                    being queued -- need not stay valid until @p cb
- *                    runs.
- * @param cb          Callback invoked on completion.
- *                    - @p result is zero on success, or a negative errno
- *                      on failure (@c -EINVAL for invalid target syntax,
- *                      @c -ENOENT for no chunk at @p offset, or the
- *                      first error any URI's own write failed with).
- *                    - @p data is the same pointer passed as @p data
- *                      below.
- *                    - Return zero on success. A negative errno value
- *                      signals an error back into the I/O completion
- *                      machinery.
- * @param data        User-defined context pointer passed unchanged to
- *                    @p cb.
- *
- * @return 0 if the write was successfully queued; negative errno on
- *         immediate failure (in which case @p cb is never invoked).
- *
- * @see RawstorObjectSyncState
- * @see rawstor_target_meta
- */
-int rawstor_target_set_sync_state(
-    RawIOQueue* queue, const char* target, uint64_t offset,
-    const struct RawstorObjectSyncState* sync_state,
-    int (*cb)(ssize_t result, void* data), void* data
-) RAWSTOR_NOEXCEPT;
-
-/**
- * @brief Asynchronously write the mirror consistency identity of exactly
- *        one real member of one chunk of a target.
- *
- * Unlike rawstor_target_set_sync_state() above (every member of the
- * chunk), this writes to exactly one: @p member_index into that chunk's
- * own real member list -- the same order rawstor_target_meta()'s own
- * per-chunk result reports their state in, so an index read off one call
- * names the same member in the other. This is what a `rawstor resolve`-
- * style split-brain recovery flow uses to declare one member
- * authoritative (its own --winner) without touching the others,
- * something naming a target that already carries only that one member's
- * own URI (and calling rawstor_target_set_sync_state() on it) can do for
- * an ordinary target but not for an mds://host:port/<id> one, whose real
- * per-chunk members aren't nameable by any target string at all (its own
- * WireMap is consulted instead, the same real round trip
- * rawstor_target_meta() makes for a real chunk).
- *
- * @warning Same caveat as rawstor_target_set_sync_state(): for tooling
- * that already understands the mirror consistency model
- * (docs/mirroring.md), not for routine application use.
+ * An mds://host:port/<id> @p target's own real per-chunk members aren't
+ * nameable by any target string at all -- its own WireMap is consulted
+ * instead, the same real round trip rawstor_target_meta() makes for a
+ * real chunk.
  *
  * This function returns immediately; the actual result is reported via
  * @p cb once the operation completes.
@@ -404,7 +350,6 @@ int rawstor_target_set_sync_state(
  *
  * @see RawstorObjectSyncState
  * @see rawstor_target_meta
- * @see rawstor_target_set_sync_state
  */
 int rawstor_target_set_member_sync_state(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,

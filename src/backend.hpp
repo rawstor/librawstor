@@ -165,7 +165,7 @@ public:
 
     // Every real member's own bare location of the chunk at `offset` --
     // for addressing one specific member directly (rawstor resolve's own
-    // --winner, rawstor_target_set_sync_state()'s own per-member write),
+    // --winner, rawstor_target_set_member_sync_state()'s own write),
     // without needing a target string that already names it (unlike a
     // plain target's own flat URI list, an mds:// target's real members
     // aren't nameable that way at all). Every backend but mds::Backend
@@ -178,7 +178,7 @@ public:
     // (via its own WireMap) and returns every one of their real bare
     // locations, in the same order meta() above reports their state in.
     virtual rawstd::Task<std::vector<rawstd::URI>>
-    locations(const RawstdUUID& id, uint64_t offset) = 0;
+    resolve_locations(const RawstdUUID& id, uint64_t offset) = 0;
 
     virtual rawstd::Task<void> set_sync_state(
         const RawstdUUID& id, uint64_t offset,

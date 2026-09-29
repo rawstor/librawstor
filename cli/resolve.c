@@ -183,9 +183,9 @@ static int resolve_chunk(
     /* Every winner gets the exact same new identity, written one at a
      * time (rawstor_target_set_member_sync_state() only ever points at a
      * single member) -- as many as already succeeded stay written even
-     * if a later one fails, same "partial failure leaves as many copies
-     * updated as possible" spirit as Target::set_sync_state()'s own
-     * fan-out. */
+     * if a later one fails, the same "partial failure leaves as many
+     * copies updated as possible" spirit as the rest of this codebase's
+     * own fan-outs. */
     for (size_t i = 0; i < num_winners; i++) {
         RawstorCliOp set_op;
         res = rawstor_cli_op_init(&set_op);

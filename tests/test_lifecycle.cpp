@@ -72,13 +72,15 @@ ssize_t target_meta(
                : 0;
 }
 
+// Every call site here targets a single-URI, single-chunk target at
+// offset 0, so its one member is index 0.
 ssize_t target_set_sync_state(
     rawio::Queue& queue, const std::string& target,
     const RawstorObjectSyncState& sync_state
 ) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_target_set_sync_state(
-            &queue, target.c_str(), 0, &sync_state, cb, data
+        return rawstor_target_set_member_sync_state(
+            &queue, target.c_str(), 0, 0, &sync_state, cb, data
         );
     });
 }

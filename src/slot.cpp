@@ -937,7 +937,7 @@ Slot::locations(const RawstdUUID& id, uint64_t offset) {
 
     try {
         std::vector<rawstd::URI> result = co_await _with_retry(
-            func_name, trace_event, &Backend::locations, id, offset
+            func_name, trace_event, &Backend::resolve_locations, id, offset
         );
         _finish(t_call);
         co_return result;

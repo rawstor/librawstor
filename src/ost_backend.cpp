@@ -1521,7 +1521,7 @@ rawstd::Task<std::vector<uint64_t>> Backend::chunks(const RawstdUUID&) {
 }
 
 rawstd::Task<std::vector<rawstd::URI>>
-Backend::locations(const RawstdUUID&, uint64_t) {
+Backend::resolve_locations(const RawstdUUID&, uint64_t) {
     co_return std::vector<rawstd::URI>{location()};
 }
 

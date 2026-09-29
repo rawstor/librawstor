@@ -120,8 +120,9 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
 // Target::Target()'s own constructor already validated at parse time.
 // Only create()/open() need every chunk's own uris at once; spec() only
 // ever touches the first chunk (`.front()` of this method's own
-// result), and meta()/set_sync_state() each touch exactly one chunk,
-// named by their own `offset` parameter (chunk_uris_at_offset() below).
+// result), and meta()/set_member_sync_state() each touch exactly one
+// chunk, named by their own `offset` parameter (chunk_uris_at_offset()
+// below).
 std::vector<std::vector<rawstd::URI>>
 chunk_uris_by_offset(const std::vector<rawstd::URI>& uris) {
     std::vector<std::vector<rawstd::URI>> ret;
@@ -138,7 +139,7 @@ chunk_uris_by_offset(const std::vector<rawstd::URI>& uris) {
 // The uris of one specific chunk -- the one whose own offset segment
 // equals `offset` (0 names an ordinary plain target's only chunk).
 // Unlike chunk_uris_by_offset() above, this doesn't build every chunk's
-// own list at once: meta()/set_sync_state() below take `offset`
+// own list at once: meta()/set_member_sync_state() below take `offset`
 // explicitly so a caller managing a real multi-chunk object can address
 // any one of its chunks directly, not just the first. Throws ENOENT if
 // no chunk in `uris` sits at `offset`.
@@ -291,26 +292,6 @@ rawstd::Task<void> create_snapshot_one(
     std::exception_ptr error;
     try {
         co_await slot->create_snapshot(id, offset, snapshot_id);
-    } catch (...) {
-        error = std::current_exception();
-    }
-    co_await slot->close();
-    if (error) {
-        std::rethrow_exception(error);
-    }
-}
-
-rawstd::Task<void> set_sync_state_one(
-    rawio::Queue& queue, const rawstd::URI& target,
-    const RawstorObjectSyncState& sync_state
-) {
-    RawstdUUID id = uuid_from_target(target);
-    uint64_t offset = extract_offset(target);
-    std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, strip_path(target), 1);
-    std::exception_ptr error;
-    try {
-        co_await slot->set_sync_state(id, offset, sync_state);
     } catch (...) {
         error = std::current_exception();
     }
@@ -616,35 +597,8 @@ rawstd::DetachedTask launch_chunks_op_coro(
     }
 }
 
-// Same shape as launch_remove_op_coro() above, for Target::set_sync_state():
-// no out-parameter, just a result.
-rawstd::DetachedTask launch_set_sync_state_op_coro(
-    rawstor::Target t, rawio::Queue* queue, uint64_t offset,
-    RawstorObjectSyncState sync_state, int (*cb)(ssize_t result, void* data),
-    void* data
-) {
-    ssize_t result = 0;
-    try {
-        co_await t.set_sync_state(*queue, offset, sync_state);
-    } catch (const std::system_error& e) {
-        result = -e.code().value();
-    } catch (const std::bad_alloc&) {
-        result = -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        result = -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        result = -EINVAL;
-    }
-    int res = cb(result, data);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-}
-
-// Same shape as launch_set_sync_state_op_coro() above, for
-// Target::set_member_sync_state() instead.
+// Same shape as launch_remove_op_coro() above, for
+// Target::set_member_sync_state(): no out-parameter, just a result.
 rawstd::DetachedTask launch_set_member_sync_state_op_coro(
     rawstor::Target t, rawio::Queue* queue, uint64_t offset,
     size_t member_index, RawstorObjectSyncState sync_state,
@@ -1098,8 +1052,8 @@ rawstd::Task<void> Target::create_snapshot(
 // Only ever touches the target's own first real chunk -- a multi-chunk
 // target's later chunks may have a different width, but spec() has room
 // for exactly one answer, so it can't generalize across every chunk the
-// way a caller looping meta()/set_sync_state() over each one's own
-// offset can. The actual lookup (first reachable location wins, width
+// way a caller looping meta()/set_member_sync_state() over each one's
+// own offset can. The actual lookup (first reachable location wins, width
 // fallback) is Chunk::spec()'s own job; locations_for() above resolves
 // which locations to ask, real offsets come from chunks() below (a
 // no-op re-derivation of chunk_uris_by_offset()'s own grouping for an
@@ -1193,39 +1147,17 @@ rawstd::Task<std::vector<uint64_t>> Target::chunks(rawio::Queue& queue) const {
 // Only ever touches the chunk at `offset` (chunk_uris_at_offset() above)
 // -- never "every chunk"; a caller wanting that (e.g. rawstor resolve
 // with no explicit --offset) loops over every chunk's own offset itself.
-// Unlike meta() above, every URI of that one chunk is updated
-// concurrently -- a mirror consistency state change must land on every
-// copy, not just the first one (docs/mirroring.md). Every URI is still
-// attempted even if an earlier one fails (gather() never abandons a task
-// still in flight, same as remove() below), so a partial failure leaves
-// as many copies updated as possible rather than none.
-rawstd::Task<void> Target::set_sync_state(
-    rawio::Queue& queue, uint64_t offset,
-    const RawstorObjectSyncState& sync_state
-) const {
-    if (!rawstd_uuid_is_nil(&_snapshot_id)) {
-        // Would otherwise rewrite the live chunk's state.
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-
-    std::vector<rawstd::URI> uris = chunk_uris_at_offset(_uris, offset);
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(uris.size());
-    for (const auto& uri : uris) {
-        tasks.push_back(set_sync_state_one(queue, uri, sync_state));
-    }
-    co_await rawstd::gather(std::move(tasks));
-}
-
-// Unlike set_sync_state() above (every member of the chunk), this writes
-// to exactly one: `member_index` into that chunk's own real member list
-// -- locations_for()'s own opaque branch (an mds:// target) resolves it
-// via Chunk::locations() (a real WireMap round trip, Backend::locations()'s
-// own doc comment); a non-opaque target's own member list is already
-// fully described by chunk_uris_at_offset() itself, no backend needed.
-// Either way, this is the same list rawstor_target_meta()'s own per-chunk
-// result reports state in, so `member_index` (rawstor resolve's own
-// --winner) means the same position in both.
+// Writes to exactly one real member: `member_index` into that chunk's
+// own real member list -- locations_for()'s own opaque branch (an
+// mds:// target) resolves it via Chunk::locations() (a real WireMap
+// round trip, Backend::resolve_locations()'s own doc comment); a non-opaque
+// target's own member list is already fully described by
+// chunk_uris_at_offset() itself, no backend needed. Either way, this is
+// the same list rawstor_target_meta()'s own per-chunk result reports
+// state in, so `member_index` (rawstor resolve's own --winner) means the
+// same position in both. A caller wanting every member of the chunk
+// written calls this once per member instead of relying on any fan-out
+// here.
 rawstd::Task<void> Target::set_member_sync_state(
     rawio::Queue& queue, uint64_t offset, size_t member_index,
     const RawstorObjectSyncState& sync_state
@@ -1519,32 +1451,6 @@ int rawstor_target_meta(
         launch_meta_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), offset, metas,
             count, cb, data
-        );
-        rawstd::DetachedTask::rethrow_if_pending();
-        return 0;
-    } catch (const std::system_error& e) {
-        return -e.code().value();
-    } catch (const std::bad_alloc& e) {
-        return -ENOMEM;
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        return -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        return -EINVAL;
-    }
-}
-
-int rawstor_target_set_sync_state(
-    RawIOQueue* queue, const char* target, uint64_t offset,
-    const RawstorObjectSyncState* sync_state,
-    int (*cb)(ssize_t result, void* data), void* data
-) noexcept {
-    try {
-        rawstor::Target t(target);
-        launch_set_sync_state_op_coro(
-            std::move(t), static_cast<rawio::Queue*>(queue), offset,
-            *sync_state, cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;

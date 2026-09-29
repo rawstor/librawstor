@@ -105,7 +105,7 @@ std::vector<rawstd::URI> chunk_locations(const WireMap& map, uint64_t index) {
 }
 
 // `offset` resolved to its own real chunk index -- shared by meta()/
-// locations() below. Not landing on a real chunk boundary (including a
+// resolve_locations() below. Not landing on a real chunk boundary (including a
 // WireMap whose own chunk_size is somehow 0) is -ENOENT, same as a plain
 // target's own chunk_uris_at_offset() (target.cpp) finding no chunk
 // there.
@@ -497,7 +497,7 @@ rawstd::Task<std::vector<uint64_t>> Backend::chunks(const RawstdUUID& id) {
 }
 
 rawstd::Task<std::vector<rawstd::URI>>
-Backend::locations(const RawstdUUID& id, uint64_t offset) {
+Backend::resolve_locations(const RawstdUUID& id, uint64_t offset) {
     WireMap map = co_await _client.open(id, RawstdUUID{});
     uint64_t index = chunk_index_at(map, offset);
     co_return chunk_locations(map, index);

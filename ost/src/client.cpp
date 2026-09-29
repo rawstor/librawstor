@@ -1351,20 +1351,31 @@ rawstd::DetachedTask Client::_set_state(
     );
     sync_state.state = static_cast<RawstorObjectSyncStateValue>(payload.state);
 
+    // Every one of this server's own configured locations gets the same
+    // identity -- rawstor_target_set_member_sync_state() only ever
+    // writes to one, so every member is its own call here, `targets`'
+    // own index order (the same one rawstor_target_meta() reports their
+    // state in). Every member is still attempted even if an earlier one
+    // fails, keeping the first error -- "partial failure leaves as many
+    // copies updated as possible" rather than none.
     int result = 0;
-    try {
-        std::string target = rawstd::URI::uris(targets);
-        rawstd::CallbackAwaitable<void> awaiter;
-        int res = rawstor_target_set_sync_state(
-            client->_queue, target.c_str(), payload.chunk_offset, &sync_state,
-            result_trampoline, &awaiter
-        );
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
+    std::string target = rawstd::URI::uris(targets);
+    for (size_t i = 0; i < targets.size(); ++i) {
+        try {
+            rawstd::CallbackAwaitable<void> awaiter;
+            int res = rawstor_target_set_member_sync_state(
+                client->_queue, target.c_str(), payload.chunk_offset, i,
+                &sync_state, result_trampoline, &awaiter
+            );
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
+            co_await awaiter;
+        } catch (const std::system_error& e) {
+            if (result == 0) {
+                result = -e.code().value();
+            }
         }
-        co_await awaiter;
-    } catch (const std::system_error& e) {
-        result = -e.code().value();
     }
 
     bool send_failed = false;

@@ -29,7 +29,8 @@ PyObject* py_rawstor_object_spec(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_meta(PyObject* self, PyObject* args);
 
-PyObject* py_rawstor_object_set_sync_state(PyObject* self, PyObject* args);
+PyObject*
+py_rawstor_object_set_member_sync_state(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_remove(PyObject* self, PyObject* args);
 

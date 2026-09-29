@@ -112,13 +112,16 @@ target_meta(Queue& queue, const std::string& target, RawstorObjectMeta* meta) {
                : 0;
 }
 
+// Every call site here passes a Members::target(i) -- a single-URI
+// target naming exactly one mirror member -- so that member is always
+// index 0.
 ssize_t target_set_sync_state(
     Queue& queue, const std::string& target,
     const RawstorObjectSyncState& sync_state
 ) {
     return rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
-        return rawstor_target_set_sync_state(
-            queue, target.c_str(), 0, &sync_state, cb, data
+        return rawstor_target_set_member_sync_state(
+            queue, target.c_str(), 0, 0, &sync_state, cb, data
         );
     });
 }

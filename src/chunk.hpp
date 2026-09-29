@@ -399,8 +399,8 @@ public:
 
     // Every real member's own bare location of the chunk at `offset` --
     // same one-off, no-Chunk-kept shape and first-reachable-wins fail-
-    // over as chunks() above, for rawstor_target_set_sync_state()'s own
-    // per-member write (Backend::locations()'s own doc comment): every
+    // over as chunks() above, for rawstor_target_set_member_sync_state()'s
+    // own write (Backend::resolve_locations()'s own doc comment): every
     // location of one chunk answers the same either way, since this is a
     // property of the chunk as a whole, not of one particular copy.
     static rawstd::Task<std::vector<rawstd::URI>> locations(

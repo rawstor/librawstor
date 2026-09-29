@@ -142,13 +142,13 @@ ssize_t target_meta(
     });
 }
 
-ssize_t target_set_sync_state(
+ssize_t target_set_member_sync_state(
     rawio::Queue& queue, const std::string& target, uint64_t offset,
-    const RawstorObjectSyncState& sync_state
+    size_t member_index, const RawstorObjectSyncState& sync_state
 ) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_target_set_sync_state(
-            &queue, target.c_str(), offset, &sync_state, cb, data
+        return rawstor_target_set_member_sync_state(
+            &queue, target.c_str(), offset, member_index, &sync_state, cb, data
         );
     });
 }
@@ -394,8 +394,11 @@ TEST(ObjectSnapshotTest, explicit_id_on_already_bound_target_is_einval) {
 // physical size (the object's own logical size too, since there's only
 // the one chunk), a freshly-created single member trusted CLEAN with no
 // sync_id of its own yet (docs/mirroring.md, "legacy copy").
-// rawstor_target_set_sync_state() below is different: mds:: doesn't
-// persist anything of its own for it (mds_backend.cpp's own comment).
+// rawstor_target_set_member_sync_state() below writes straight to that
+// one real member's own Slot (Target::set_member_sync_state()'s own doc
+// comment) instead of going through mds::Backend::set_sync_state()
+// (which stays a whole-object-level no-op, mds_backend.cpp's own
+// comment) -- so it persists for real even on an mds:: target.
 TEST(ObjectMetaTest, meta_on_object_target_is_real) {
     rawstor::tests::ObjectEnv env(8786, 8787);
     std::string target =
@@ -415,7 +418,7 @@ TEST(ObjectMetaTest, meta_on_object_target_is_real) {
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-TEST(ObjectMetaTest, set_sync_state_on_object_target_is_noop) {
+TEST(ObjectMetaTest, set_member_sync_state_on_object_target_is_real) {
     rawstor::tests::ObjectEnv env(8788, 8789);
     std::string target =
         object_target(env, "018f4e2a-3000-7000-8000-00000000000c");
@@ -426,7 +429,18 @@ TEST(ObjectMetaTest, set_sync_state_on_object_target_is_noop) {
     ASSERT_EQ(target_create(*queue, target, spec), 0);
 
     RawstorObjectSyncState sync_state{};
-    EXPECT_EQ(target_set_sync_state(*queue, target, 0, sync_state), 0);
+    sync_state.epoch = 5;
+    sync_state.sync_id = 0x1122334455667788ull;
+    sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    EXPECT_EQ(
+        target_set_member_sync_state(*queue, target, 0, 0, sync_state), 0
+    );
+
+    RawstorObjectMeta meta{};
+    ASSERT_EQ(target_meta(*queue, target, 0, &meta, 1), 1);
+    EXPECT_EQ(meta.sync_state.epoch, 5u);
+    EXPECT_EQ(meta.sync_state.sync_id, 0x1122334455667788ull);
+    EXPECT_EQ(meta.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 
     EXPECT_EQ(target_remove(*queue, target), 0);
 }

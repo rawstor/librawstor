@@ -124,8 +124,8 @@ chunks_one(rawio::Queue& queue, rawstd::URI location, RawstdUUID id) {
 
 // One location's worth of Chunk::locations()'s own work -- same one-off,
 // no-pool-kept connect/close shape as meta_one() above (including taken-
-// by-value `id`/`offset`, for the same reason), for Backend::locations()
-// instead of Backend::meta().
+// by-value `id`/`offset`, for the same reason), for
+// Backend::resolve_locations() instead of Backend::meta().
 rawstd::Task<std::vector<rawstd::URI>> locations_one(
     rawio::Queue& queue, rawstd::URI location, RawstdUUID id, uint64_t offset
 ) {
