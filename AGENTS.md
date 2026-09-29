@@ -26,10 +26,11 @@ The two headline consumers are:
   `ost://` remote). See `docs/concepts.md`.
 - **Target**: a Location with a UUID appended to each URI — addresses one
   specific object, possibly replicated across the backends in the list.
-- **OST protocol**: the binary wire protocol `rawstor-ost` speaks and
-  `librawstor`'s client implements. Frame layout (magic, command, cid) is
-  in `include/rawstor/protocol.h`; `docs/protocol.md` is the (now
-  outdated) design draft this predates.
+- **OST protocol**: the binary wire protocol `rawstor-ost` and
+  `rawstor-mds` speak and `librawstor`'s client implements.
+  `include/rawstor/protocol.h` is authoritative (every wire struct's size
+  is static_asserted there); `docs/protocol.md` describes the same
+  layouts and must be kept in sync with it.
 - **RawIO**: `librawio`'s internal async I/O abstraction (`rawio::Queue`),
   with two interchangeable backends selected at `configure` time:
   `rawio::uring` (io_uring, default, requires liburing >= 2.3) and
@@ -83,7 +84,7 @@ librawstor/
 ├── pyrawstor/        Python 3 bindings (location/target helpers)
 ├── tests/            top-level librawstor integration/unit tests (own in-process test server)
 └── docs/             README.md, concepts.md, architecture.md, protocol.md
-                       (design draft, predates include/rawstor/protocol.h),
+                       (wire protocol, mirrors include/rawstor/protocol.h),
                        mds.md, mirroring.md
 ```
 
