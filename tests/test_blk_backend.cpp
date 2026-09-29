@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <system_error>
@@ -450,4 +451,53 @@ TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
         ),
         std::system_error
     );
+}
+
+// A witness (docs/mds.md, "Witness (stage 3)") isn't reachable through
+// any public API yet -- no placement code anywhere ever passes
+// RAWSTOR_MEMBER_WITNESS to Slot::create()/Backend::create() -- so this
+// goes straight to Slot::create() itself, the same way Target::create()'s
+// own create_one() (target.cpp) would if a witness-attach path existed.
+TEST(BlkBackendTest, witness_member_holds_no_data_and_refuses_real_io) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .width = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+
+    std::unique_ptr<rawstor::Slot> slot =
+        run(*queue, rawstor::Slot::create(*queue, location, 1));
+    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_WITNESS));
+
+    // Holds no data: its own "data" file exists (still enumerable --
+    // e.g. rawstor-mds's reconstruct scan, which tells it apart from a
+    // data chunk by its own meta's member_kind, not by whether the file
+    // is there at all) but is empty -- no real fallocate()/storage ever
+    // happened for it (file_backend.cpp's own create() comment).
+    RawstdUUIDString id_string;
+    rawstd_uuid_to_string(&id, &id_string);
+    std::filesystem::path data_path = dir.path() / id_string / "0" / "data";
+    ASSERT_TRUE(std::filesystem::exists(data_path));
+    EXPECT_EQ(std::filesystem::file_size(data_path), 0u);
+
+    // Never a valid target for real I/O (same doc comment: "data I/O and
+    // resync skip it") -- Slot::open() refuses it outright rather than
+    // silently handing back a live fd onto that empty file.
+    bool threw = false;
+    try {
+        run(*queue, slot->open(id, 0, 0, RawstdUUID{}));
+    } catch (const std::system_error& e) {
+        threw = true;
+        EXPECT_EQ(e.code().value(), ENOTSUP);
+    }
+    EXPECT_TRUE(threw);
 }

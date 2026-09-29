@@ -740,6 +740,29 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // doc comment) -- it never comes back empty without having already
     // thrown (Backend::meta()'s own contract).
     std::vector<RawstorObjectMeta> metas = co_await meta(id, offset);
+
+    // A witness holds no data and is never a valid target for real I/O
+    // (docs/mds.md, "Witness (stage 3)": "data I/O and resync skip it")
+    // -- every real open (this call) goes through here regardless of
+    // caller, client-side (Chunk::create()'s own per-member connect) or
+    // server-side (rawstor-ost's own SET_OBJECT handler opens its local
+    // storage the same way, ost/src/client.cpp's co_target_open()), so
+    // this is the one place that needs to know. A read-only metadata
+    // lookup (meta()/spec()/chunks(), target.cpp) never calls open() at
+    // all -- it talks to meta()/chunks()/resolve_locations() directly on
+    // a Slot that was never open()ed -- so a witness stays fully
+    // queryable; only a real data open is refused.
+    if (metas.front().member_kind == RAWSTOR_MEMBER_WITNESS) {
+        RawstdUUIDString id_string;
+        rawstd_uuid_to_string(&id, &id_string);
+        rawstd_error(
+            "Refusing to open a witness member for real I/O: id=%s "
+            "offset=%llu\n",
+            id_string, (unsigned long long)offset
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
+
     co_return metas.front();
 }
 

@@ -275,54 +275,70 @@ rawstd::Task<void> Backend::create(
 
     std::exception_ptr create_error;
     try {
-        // fallocate() actually reserves real blocks -- this file backs a
-        // virtio-blk-style virtual disk, so a write into unallocated
-        // territory otherwise depends on the filesystem's own delayed
-        // allocation, which under ext4's data=ordered journaling must
-        // land before the next journal commit. Many concurrent writes
-        // into a still-sparse object (a fresh, mostly-unwritten one is
-        // the common case) can then back up behind that commit interval
-        // -- multiple seconds under sustained load even with the stock
-        // 5s commit interval, tens of seconds observed with an
-        // unusually long one. Preallocating up front removes writes
-        // from that dependency entirely; mode 0 (no FALLOC_FL_KEEP_SIZE)
-        // also extends the file to sp.size, so nothing else needs to on
-        // that path.
-        try {
-            co_await _queue.fallocate(fd, 0, 0, static_cast<off_t>(sp.size));
-        } catch (const std::system_error& e) {
+        // A witness holds no data (docs/mds.md, "Witness (stage 3)") --
+        // skips the whole real-storage dance below entirely, leaving
+        // `target_path` at the 0 bytes O_CREAT just gave it. This still
+        // needs to be a real (if empty) file rather than none at all:
+        // meta() below stat()s it for spec.size, and list_chunks()
+        // checks its own existence to enumerate this id/offset at all
+        // (both stay correct -- a witness's own logical size is 0, and
+        // it's still meant to be enumerable, just distinguishable from a
+        // data chunk once its own meta's member_kind is read back).
+        // Slot::open() is what actually refuses real I/O against it
+        // (its own doc comment) -- this is just what makes that refusal
+        // free of cost rather than merely free of use.
+        if (member_kind != RAWSTOR_MEMBER_WITNESS) {
+            // fallocate() actually reserves real blocks -- this file backs a
+            // virtio-blk-style virtual disk, so a write into unallocated
+            // territory otherwise depends on the filesystem's own delayed
+            // allocation, which under ext4's data=ordered journaling must
+            // land before the next journal commit. Many concurrent writes
+            // into a still-sparse object (a fresh, mostly-unwritten one is
+            // the common case) can then back up behind that commit interval
+            // -- multiple seconds under sustained load even with the stock
+            // 5s commit interval, tens of seconds observed with an
+            // unusually long one. Preallocating up front removes writes
+            // from that dependency entirely; mode 0 (no FALLOC_FL_KEEP_SIZE)
+            // also extends the file to sp.size, so nothing else needs to on
+            // that path.
+            try {
+                co_await _queue.fallocate(
+                    fd, 0, 0, static_cast<off_t>(sp.size)
+                );
+            } catch (const std::system_error& e) {
 #if defined(RAWSTD_ON_MACOS)
-            if (e.code().value() != ENOSYS) {
-                throw;
-            }
-            // Queue::fallocate() has no macOS equivalent of Linux's
-            // fallocate() to call (see its own doc comment,
-            // librawio/include/rawio/queue.hpp) -- F_PREALLOCATE is
-            // APFS/HFS+'s, same reasoning as above, but it only reserves
-            // the blocks, so ftruncate() still follows to make the file
-            // report the requested size. F_ALLOCATECONTIG (contiguous,
-            // best-effort) is tried first; falling back to
-            // F_ALLOCATEALL (fragmentation allowed) matches the common
-            // pattern for this call, since contiguous space this large
-            // is often unavailable.
-            fstore_t fstore = {
-                .fst_flags = F_ALLOCATECONTIG,
-                .fst_posmode = F_PEOFPOSMODE,
-                .fst_offset = 0,
-                .fst_length = static_cast<off_t>(sp.size),
-            };
-            if (fcntl(fd, F_PREALLOCATE, &fstore) == -1) {
-                fstore.fst_flags = F_ALLOCATEALL;
+                if (e.code().value() != ENOSYS) {
+                    throw;
+                }
+                // Queue::fallocate() has no macOS equivalent of Linux's
+                // fallocate() to call (see its own doc comment,
+                // librawio/include/rawio/queue.hpp) -- F_PREALLOCATE is
+                // APFS/HFS+'s, same reasoning as above, but it only reserves
+                // the blocks, so ftruncate() still follows to make the file
+                // report the requested size. F_ALLOCATECONTIG (contiguous,
+                // best-effort) is tried first; falling back to
+                // F_ALLOCATEALL (fragmentation allowed) matches the common
+                // pattern for this call, since contiguous space this large
+                // is often unavailable.
+                fstore_t fstore = {
+                    .fst_flags = F_ALLOCATECONTIG,
+                    .fst_posmode = F_PEOFPOSMODE,
+                    .fst_offset = 0,
+                    .fst_length = static_cast<off_t>(sp.size),
+                };
                 if (fcntl(fd, F_PREALLOCATE, &fstore) == -1) {
+                    fstore.fst_flags = F_ALLOCATEALL;
+                    if (fcntl(fd, F_PREALLOCATE, &fstore) == -1) {
+                        RAWSTD_THROW_ERRNO();
+                    }
+                }
+                if (ftruncate(fd, sp.size) == -1) {
                     RAWSTD_THROW_ERRNO();
                 }
-            }
-            if (ftruncate(fd, sp.size) == -1) {
-                RAWSTD_THROW_ERRNO();
-            }
 #else
-            throw;
+                throw;
 #endif
+            }
         }
 
         co_await _queue.close(fd);
