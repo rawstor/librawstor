@@ -15,7 +15,10 @@ this page describes the same layouts for a reader.
 - **Names:** `RawstorFrame*` for frames and payloads any role may use,
   `RawstorFrameObj*` for the payloads of the object (`OBJ_*`) commands.
 
-In the diagrams below every row is 8 bytes and every column is one byte.
+In the diagrams below every row is 4 bytes (32 bits), so a field's height
+is its size: a 64-bit field takes two rows, a 16-byte id four, and fields
+smaller than 4 bytes share a row. The numbers are bit offsets from the
+start of the struct.
 
 ## Connection
 
@@ -32,9 +35,17 @@ server answers any command outside its role with `res = -ENOSYS`.
 Every request and every response starts with the same 8-byte head.
 
 ```mermaid
-block-beta
-  columns 8
-  magic["uint32_t magic"]:4 cmd["uint16_t cmd"]:2 cid["uint16_t cid"]:2
+---
+config:
+  packet:
+    bitsPerRow: 32
+    bitWidth: 12
+    rowHeight: 28
+---
+packet-beta
+  0-31: "uint32_t magic"
+  32-47: "uint16_t cmd"
+  48-63: "uint16_t cid"
 ```
 
 ## Commands
@@ -76,11 +87,20 @@ Every response is the head followed by a 12-byte body; a payload, if any,
 follows right after.
 
 ```mermaid
-block-beta
-  columns 8
-  magic["uint32_t magic"]:4 cmd["uint16_t cmd"]:2 cid["uint16_t cid"]:2
-  hash["uint64_t hash"]:8
-  res["int32_t res"]:4 payload["payload..."]:4
+---
+config:
+  packet:
+    bitsPerRow: 32
+    bitWidth: 12
+    rowHeight: 28
+---
+packet-beta
+  0-31: "uint32_t magic"
+  32-47: "uint16_t cmd"
+  48-63: "uint16_t cid"
+  64-127: "uint64_t hash"
+  128-159: "int32_t res"
+  160-191: "payload (res bytes)..."
 ```
 
 - `res < 0` is `-errno`; no payload follows.
@@ -101,14 +121,18 @@ the object `object_id` names (0 for a plain object); `val` is
 command-specific.
 
 ```mermaid
-block-beta
-  columns 8
-  id1["uint8_t object_id[0..7]"]:8
-  id2["uint8_t object_id[8..15]"]:8
-  offset["uint64_t offset"]:8
-  snap1["uint8_t snapshot_id[0..7]"]:8
-  snap2["uint8_t snapshot_id[8..15]"]:8
-  val["uint64_t val"]:8
+---
+config:
+  packet:
+    bitsPerRow: 32
+    bitWidth: 12
+    rowHeight: 28
+---
+packet-beta
+  0-127: "uint8_t object_id[16]"
+  128-191: "uint64_t offset"
+  192-319: "uint8_t snapshot_id[16]"
+  320-383: "uint64_t val"
 ```
 
 ### IO — 21 bytes
@@ -120,11 +144,19 @@ otherwise. `flags`:
 `RAWSTOR_FLAG_UNMAP` (may deallocate; `WRITE_ZEROES`).
 
 ```mermaid
-block-beta
-  columns 8
-  offset["uint64_t offset"]:8
-  hash["uint64_t hash"]:8
-  len["uint32_t len"]:4 flags["uint8_t flags"]:1 data["WRITE data..."]:3
+---
+config:
+  packet:
+    bitsPerRow: 32
+    bitWidth: 12
+    rowHeight: 28
+---
+packet-beta
+  0-63: "uint64_t offset"
+  64-127: "uint64_t hash"
+  128-159: "uint32_t len"
+  160-167: "flags"
+  168-191: "WRITE data..."
 ```
 
 ### List — 20 bytes
@@ -132,11 +164,16 @@ block-beta
 `limit` ids per page, starting after `token_id` (nil = from the start).
 
 ```mermaid
-block-beta
-  columns 8
-  t1["uint8_t token_id[0..7]"]:8
-  t2["uint8_t token_id[8..15]"]:8
-  limit["uint32_t limit"]:4 space:4
+---
+config:
+  packet:
+    bitsPerRow: 32
+    bitWidth: 12
+    rowHeight: 28
+---
+packet-beta
+  0-127: "uint8_t token_id[16]"
+  128-159: "uint32_t limit"
 ```
 
 ### SyncState — 73 bytes
@@ -144,18 +181,23 @@ block-beta
 Sets one copy's mirror consistency state (see [mirroring](mirroring.md)).
 
 ```mermaid
-block-beta
-  columns 8
-  id1["uint8_t object_id[0..7]"]:8
-  id2["uint8_t object_id[8..15]"]:8
-  off["uint64_t chunk_offset"]:8
-  epoch["uint64_t epoch"]:8
-  sync["uint64_t sync_id"]:8
-  h0["uint64_t sync_id_history[0]"]:8
-  h1["uint64_t sync_id_history[1]"]:8
-  h2["uint64_t sync_id_history[2]"]:8
-  h3["uint64_t sync_id_history[3]"]:8
-  state["uint8_t state"]:1 space:7
+---
+config:
+  packet:
+    bitsPerRow: 32
+    bitWidth: 12
+    rowHeight: 28
+---
+packet-beta
+  0-127: "uint8_t object_id[16]"
+  128-191: "uint64_t chunk_offset"
+  192-255: "uint64_t epoch"
+  256-319: "uint64_t sync_id"
+  320-383: "uint64_t sync_id_history[0]"
+  384-447: "uint64_t sync_id_history[1]"
+  448-511: "uint64_t sync_id_history[2]"
+  512-575: "uint64_t sync_id_history[3]"
+  576-583: "state"
 ```
 
 ### Allocate — 48 bytes
@@ -165,14 +207,23 @@ unchunked object; `stripe_width`/`failure_domain`/`width`/`member_role` are the
 chunk's placement identity, stored with it.
 
 ```mermaid
-block-beta
-  columns 8
-  id1["uint8_t object_id[0..7]"]:8
-  id2["uint8_t object_id[8..15]"]:8
-  off["uint64_t chunk_offset"]:8
-  size["uint64_t size"]:8
-  sw["uint64_t stripe_width"]:8
-  shift["u8 chunk_shift"]:1 fd["u8 failure_domain"]:1 w["u8 width"]:1 role["u8 member_role"]:1 r["uint32_t reserved2"]:4
+---
+config:
+  packet:
+    bitsPerRow: 32
+    bitWidth: 12
+    rowHeight: 28
+---
+packet-beta
+  0-127: "uint8_t object_id[16]"
+  128-191: "uint64_t chunk_offset"
+  192-255: "uint64_t size"
+  256-319: "uint64_t stripe_width"
+  320-327: "chunk_shift"
+  328-335: "failure_domain"
+  336-343: "width"
+  344-351: "member_role"
+  352-383: "uint32_t reserved2"
 ```
 
 ## Response payloads
@@ -185,11 +236,16 @@ once nothing is left), never a result. An empty payload means the far end is
 already exhausted.
 
 ```mermaid
-block-beta
-  columns 8
-  id1["uint8_t id[0..7]"]:8
-  id2["uint8_t id[8..15]"]:8
-  off["uint64_t chunk_offset"]:8
+---
+config:
+  packet:
+    bitsPerRow: 32
+    bitWidth: 12
+    rowHeight: 28
+---
+packet-beta
+  0-127: "uint8_t id[16]"
+  128-191: "uint64_t chunk_offset"
 ```
 
 ### Meta — 64 bytes
@@ -198,16 +254,26 @@ Everything about one stored copy: its size, its placement identity and its
 mirror consistency state.
 
 ```mermaid
-block-beta
-  columns 8
-  size["uint64_t size"]:8
-  epoch["uint64_t epoch"]:8
-  sync["uint64_t sync_id"]:8
-  h0["uint64_t sync_id_history[0]"]:8
-  h1["uint64_t sync_id_history[1]"]:8
-  h2["uint64_t sync_id_history[2]"]:8
-  h3["uint64_t sync_id_history[3]"]:8
-  state["u8 state"]:1 shift["u8 chunk_shift"]:1 w["u8 width"]:1 role["u8 member_role"]:1 r["uint32_t reserved2"]:4
+---
+config:
+  packet:
+    bitsPerRow: 32
+    bitWidth: 12
+    rowHeight: 28
+---
+packet-beta
+  0-63: "uint64_t size"
+  64-127: "uint64_t epoch"
+  128-191: "uint64_t sync_id"
+  192-255: "uint64_t sync_id_history[0]"
+  256-319: "uint64_t sync_id_history[1]"
+  320-383: "uint64_t sync_id_history[2]"
+  384-447: "uint64_t sync_id_history[3]"
+  448-455: "state"
+  456-463: "chunk_shift"
+  464-471: "width"
+  472-479: "member_role"
+  480-511: "uint32_t reserved2"
 ```
 
 ### RawstorLocationInfo — 16 bytes
@@ -222,11 +288,20 @@ Embedded in ObjCreate and ObjDescriptor. `reserved` rounds it to a 4-byte
 boundary so a 32-bit field right after it stays aligned.
 
 ```mermaid
-block-beta
-  columns 8
-  sw["uint64_t stripe_width"]:8
-  seed["uint64_t placement_seed"]:8
-  red["u8 redundancy"]:1 w["u8 width"]:1 fd["u8 failure_domain"]:1 r["u8 reserved"]:1 space:4
+---
+config:
+  packet:
+    bitsPerRow: 32
+    bitWidth: 12
+    rowHeight: 28
+---
+packet-beta
+  0-63: "uint64_t stripe_width"
+  64-127: "uint64_t placement_seed"
+  128-135: "redundancy"
+  136-143: "width"
+  144-151: "failure_domain"
+  152-159: "reserved"
 ```
 
 ### ObjCreate — 45 bytes
@@ -235,14 +310,23 @@ block-beta
 a nonzero power of two, so 0 (and anything from 64 on) is rejected.
 
 ```mermaid
-block-beta
-  columns 8
-  id1["uint8_t id[0..7]"]:8
-  id2["uint8_t id[8..15]"]:8
-  size["uint64_t logical_size"]:8
-  sw["policy.stripe_width"]:8
-  seed["policy.placement_seed"]:8
-  red["policy: u8 redundancy, width, failure_domain, reserved"]:4 shift["u8 chunk_shift"]:1 space:3
+---
+config:
+  packet:
+    bitsPerRow: 32
+    bitWidth: 12
+    rowHeight: 28
+---
+packet-beta
+  0-127: "uint8_t id[16]"
+  128-191: "uint64_t logical_size"
+  192-255: "policy.stripe_width"
+  256-319: "policy.placement_seed"
+  320-327: "redundancy"
+  328-335: "width"
+  336-343: "failure_domain"
+  344-351: "reserved"
+  352-359: "chunk_shift"
 ```
 
 ObjCreated, ObjResized and ObjSnapCommitted are a single `uint64_t map_epoch`.
@@ -256,25 +340,57 @@ null-terminated); `location_len` is 0 when the topology no longer lists that
 OST.
 
 ```mermaid
-block-beta
-  columns 8
-  id1["uint8_t id[0..7]"]:8
-  id2["uint8_t id[8..15]"]:8
-  size["uint64_t logical_size"]:8
-  epoch["uint64_t map_epoch"]:8
-  sw["policy.stripe_width"]:8
-  seed["policy.placement_seed"]:8
-  pol["policy: u8 x4"]:4 n["uint32_t nchunks"]:4
-  shift["u8 chunk_shift"]:1 space:7
+---
+config:
+  packet:
+    bitsPerRow: 32
+    bitWidth: 12
+    rowHeight: 28
+---
+packet-beta
+  0-127: "uint8_t id[16]"
+  128-191: "uint64_t logical_size"
+  192-255: "uint64_t map_epoch"
+  256-319: "policy.stripe_width"
+  320-383: "policy.placement_seed"
+  384-391: "redundancy"
+  392-399: "width"
+  400-407: "failure_domain"
+  408-415: "reserved"
+  416-447: "uint32_t nchunks"
+  448-455: "chunk_shift"
 ```
 
+Each chunk entry:
+
 ```mermaid
-block-beta
-  columns 8
-  entry["ChunkEntry: u8 width"]:1 space:7
-  o1["Slot: uint8_t ost_id[0..7]"]:8
-  o2["uint8_t ost_id[8..15]"]:8
-  ll["uint16_t location_len"]:2 si["u8 slot_index"]:1 loc["location[location_len]..."]:5
+---
+config:
+  packet:
+    bitsPerRow: 32
+    bitWidth: 12
+    rowHeight: 28
+---
+packet-beta
+  0-7: "width"
+  8-31: "width slots..."
+```
+
+Each slot:
+
+```mermaid
+---
+config:
+  packet:
+    bitsPerRow: 32
+    bitWidth: 12
+    rowHeight: 28
+---
+packet-beta
+  0-127: "uint8_t ost_id[16]"
+  128-143: "uint16_t location_len"
+  144-151: "slot_index"
+  152-159: "location..."
 ```
 
 ### ObjSnapCommit — 36 bytes, then members
@@ -284,21 +400,30 @@ chunk copy that holds it. `OBJ_SNAP_REMOVE` replies with the same records (the
 copies to destroy).
 
 ```mermaid
-block-beta
-  columns 8
-  id1["uint8_t id[0..7]"]:8
-  id2["uint8_t id[8..15]"]:8
-  s1["uint8_t snapshot_id[0..7]"]:8
-  s2["uint8_t snapshot_id[8..15]"]:8
-  n["uint32_t nmembers"]:4 space:4
+---
+config:
+  packet:
+    bitsPerRow: 32
+    bitWidth: 12
+    rowHeight: 28
+---
+packet-beta
+  0-127: "uint8_t id[16]"
+  128-255: "uint8_t snapshot_id[16]"
+  256-287: "uint32_t nmembers"
 ```
 
 ObjSnapMember — 24 bytes:
 
 ```mermaid
-block-beta
-  columns 8
-  idx["uint64_t logical_index"]:8
-  o1["uint8_t ost_id[0..7]"]:8
-  o2["uint8_t ost_id[8..15]"]:8
+---
+config:
+  packet:
+    bitsPerRow: 32
+    bitWidth: 12
+    rowHeight: 28
+---
+packet-beta
+  0-63: "uint64_t logical_index"
+  64-191: "uint8_t ost_id[16]"
 ```
