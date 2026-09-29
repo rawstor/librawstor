@@ -60,8 +60,9 @@ ObjectEnv::ObjectEnv(unsigned int mds_port, unsigned int ost_port) :
     ost.location = "ost://" + ost_addr_oss.str();
     ost.weight = 100;
     ost.path[0] = "dc1";
-    ost.path[1] = "rack1";
-    ost.path[2] = "host1";
+    ost.path[1] = "row1";
+    ost.path[2] = "rack1";
+    ost.path[3] = "host1";
     topology.add(ost);
 
     // bind_listen() happens here, on this (the test's) thread, for both

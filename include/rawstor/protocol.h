@@ -336,11 +336,18 @@ struct RawstorFrameMetaPayload {
 /* Redundancy is a policy, not a wire concept: mirror in v1. */
 #define RAWSTOR_OBJ_REDUNDANCY_MIRROR 0
 
-/* Failure-domain levels of the topology tree. */
-#define RAWSTOR_OBJ_DOMAIN_DC 0
-#define RAWSTOR_OBJ_DOMAIN_RACK 1
+/*
+ * Failure-domain levels of the topology tree, numbered from the leaf up so
+ * a wider level (e.g. a region above dc) only ever takes the next number.
+ * 0 is "not set": the client resolves it to its default (server) before
+ * anything reaches the MDS or is stored.
+ */
+#define RAWSTOR_OBJ_DOMAIN_DEFAULT 0
+#define RAWSTOR_OBJ_DOMAIN_OST 1
 #define RAWSTOR_OBJ_DOMAIN_SERVER 2
-#define RAWSTOR_OBJ_DOMAIN_OST 3
+#define RAWSTOR_OBJ_DOMAIN_RACK 3
+#define RAWSTOR_OBJ_DOMAIN_ROW 4
+#define RAWSTOR_OBJ_DOMAIN_DC 5
 
 /* stripe_width: 1 = object-local (DRBD-like), 0 = spread (Ceph-like). */
 #define RAWSTOR_OBJ_STRIPE_ALL 0

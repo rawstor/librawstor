@@ -13,11 +13,11 @@
 
 namespace {
 
-void split_path(const std::string& s, std::string (&out)[3]) {
+void split_path(const std::string& s, std::string (&out)[4]) {
     size_t begin = 0;
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         size_t end = s.find('/', begin);
-        if ((end == std::string::npos) != (i == 2)) {
+        if ((end == std::string::npos) != (i == 3)) {
             rawstd_error("Malformed topology path: %s\n", s.c_str());
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
@@ -37,9 +37,45 @@ void split_path(const std::string& s, std::string (&out)[3]) {
 namespace rawstor {
 namespace mds {
 
+Level level_of(unsigned value) {
+    switch (value) {
+    case static_cast<unsigned>(Level::OST):
+    case static_cast<unsigned>(Level::Server):
+    case static_cast<unsigned>(Level::Rack):
+    case static_cast<unsigned>(Level::Row):
+    case static_cast<unsigned>(Level::DC):
+        return static_cast<Level>(value);
+    default:
+        rawstd_error("Unknown failure domain level: %u\n", value);
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+}
+
 std::string TopologyOST::domain(Level level) const {
+    // How many leading path components (dc, row, rack, server) name a
+    // domain at `level`; an OST adds its own id below its server.
+    unsigned depth = 0;
+    switch (level) {
+    case Level::DC:
+        depth = 1;
+        break;
+    case Level::Row:
+        depth = 2;
+        break;
+    case Level::Rack:
+        depth = 3;
+        break;
+    case Level::Server:
+    case Level::OST:
+        depth = 4;
+        break;
+    }
+    if (depth == 0) {
+        level_of(static_cast<unsigned>(level)); // throws
+    }
+
     std::string ret = path[0];
-    for (unsigned i = 1; i <= static_cast<unsigned>(level) && i < 3; ++i) {
+    for (unsigned i = 1; i < depth; ++i) {
         ret += '/';
         ret += path[i];
     }

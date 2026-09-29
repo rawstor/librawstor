@@ -13,16 +13,21 @@ namespace mds {
 
 /*
  * Topology tree levels (docs/mds.md, "Placement function"):
- * root -> dc -> rack -> server -> ost(leaf). A failure domain is a subtree
- * at one of these levels; OST is the degenerate per-leaf domain (useful for
- * single-host and test setups).
+ * root -> dc -> row -> rack -> server -> ost(leaf). A failure domain is a
+ * subtree at one of these levels; OST is the degenerate per-leaf domain
+ * (useful for single-host and test setups). Same values as
+ * RAWSTOR_OBJ_DOMAIN_* (<rawstor/protocol.h>), numbered from the leaf up.
  */
 enum class Level : unsigned {
-    DC = 0,
-    Rack = 1,
+    OST = 1,
     Server = 2,
-    OST = 3,
+    Rack = 3,
+    Row = 4,
+    DC = 5,
 };
+
+/* Throws EINVAL unless `value` is one of Level's values. */
+Level level_of(unsigned value);
 
 struct TopologyOST {
     RawstdUUID id;
@@ -30,7 +35,7 @@ struct TopologyOST {
      * the chunks this OST holds through it. */
     std::string location;
     uint64_t weight;
-    std::string path[3]; /* dc, rack, server */
+    std::string path[4]; /* dc, row, rack, server */
 
     /* Domain identity at a level: the full path prefix (not the last
      * component alone: two "host1" in different racks are different
@@ -42,8 +47,8 @@ struct TopologyOST {
  * The static topology config, v1 of the MGS role of docs/mds.md.
  * Line-based:
  *
- *   # <ost-uuid> <location> <weight> <dc>/<rack>/<server>
- *   00000000-0000-7000-8000-000000000001 ost://host1:7777 100 dc1/r1/host1
+ *   # <ost-uuid> <location> <weight> <dc>/<row>/<rack>/<server>
+ *   00000000-0000-7000-8000-000000000001 ost://host1:7777 100 dc1/w1/r1/host1
  *
  * <location> is a single rawstor location URI of any scheme; it is
  * handed to clients as is, so a client-local one (file://, lvm://, zfs://)

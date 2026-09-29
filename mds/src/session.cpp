@@ -292,8 +292,7 @@ Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
             }
             PlacementPolicy policy{
                 .width = payload.policy.width,
-                .failure_domain =
-                    static_cast<Level>(payload.policy.failure_domain),
+                .failure_domain = level_of(payload.policy.failure_domain),
                 .stripe_width = payload.policy.stripe_width,
                 .seed = payload.policy.placement_seed,
             };

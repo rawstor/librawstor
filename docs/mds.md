@@ -205,7 +205,7 @@ object_descriptor {
   id, logical_size, chunk_size,
   policy {
     redundancy    = mirror{ copies R } | ec{ data k, parity m },  // width = R | k+m
-    failure_domain = server | rack | dc,   // level at which slots must differ
+    failure_domain = ost | server | rack | row | dc,  // level at which slots must differ
     stripe_width  = K | all,               // locality: over how many OSTs spread
     placement_seed
   },
@@ -344,7 +344,11 @@ generator.
 - **Algorithm: weighted rendezvous (HRW)** hashing — deterministic, capacity-
   weighted, minimal reshuffle on topology change, distinct slots = top-N, no
   state. O(N) per lookup is fine (small N, rare lookups).
-- **Topology = tree**: `root -> dc -> rack -> server -> ost(leaf)`. Weights
+- **Topology = tree**: `root -> dc -> row -> rack -> server -> ost(leaf)`
+  (a topology line's path is `dc/row/rack/server`). Levels are numbered from
+  the leaf up (`RAWSTOR_OBJ_DOMAIN_OST = 1` ... `DC = 5`, 0 = unset, i.e. the
+  client's default, server), so a wider level such as a region only ever
+  takes the next number. Weights
   aggregate up the tree; `ost_id -> host:port` resolved from the same source
   (v1: static config).
 - **Hierarchical HRW** descends the tree, choosing `width` slots so that **no

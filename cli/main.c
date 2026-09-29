@@ -115,9 +115,9 @@ static void command_create_usage(void) {
         "\n"
         "chunk placement (mds:// targets only -- docs/mds.md; ignored\n"
         "otherwise):\n"
-        "  --failure-domain LEVEL  Placement failure domain: dc, rack, "
-        "server\n"
-        "                        (default), ost.\n"
+        "  --failure-domain LEVEL  Placement failure domain: dc, row, "
+        "rack,\n"
+        "                        server (default), ost.\n"
         "  --stripe-width K      0 = spread every chunk across the "
         "cluster\n"
         "                        (default), 1 = object-local, K = spread "
@@ -279,26 +279,18 @@ static int command_create(int argc, char** argv) {
         mirrors = (unsigned int)parsed_mirrors;
     }
 
-    uint8_t failure_domain = 0;
+    uint8_t failure_domain = RAWSTOR_OBJ_DOMAIN_DEFAULT;
     if (failure_domain_arg != NULL) {
-        if (strcmp(failure_domain_arg, "rack") == 0) {
+        if (strcmp(failure_domain_arg, "dc") == 0) {
+            failure_domain = RAWSTOR_OBJ_DOMAIN_DC;
+        } else if (strcmp(failure_domain_arg, "row") == 0) {
+            failure_domain = RAWSTOR_OBJ_DOMAIN_ROW;
+        } else if (strcmp(failure_domain_arg, "rack") == 0) {
             failure_domain = RAWSTOR_OBJ_DOMAIN_RACK;
         } else if (strcmp(failure_domain_arg, "server") == 0) {
             failure_domain = RAWSTOR_OBJ_DOMAIN_SERVER;
         } else if (strcmp(failure_domain_arg, "ost") == 0) {
             failure_domain = RAWSTOR_OBJ_DOMAIN_OST;
-        } else if (strcmp(failure_domain_arg, "dc") == 0) {
-            /* RAWSTOR_OBJ_DOMAIN_DC is 0, indistinguishable on the wire
-             * from "not set" (struct RawstorObjectSpec's own convention,
-             * see policy_of() in src/mds_backend.cpp) -- refuse rather than
-             * silently falling back to the "server" default. */
-            fprintf(
-                stderr, "failure-domain \"dc\" cannot currently be "
-                        "selected explicitly (falls back to the default "
-                        "\"server\" instead) -- pass rack, server, or "
-                        "ost\n"
-            );
-            return EX_USAGE;
         } else {
             fprintf(
                 stderr, "Invalid failure-domain value: %s\n", failure_domain_arg

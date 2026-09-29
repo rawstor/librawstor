@@ -276,7 +276,8 @@ ObjectDescriptor ObjectStore::_descriptor(const RawstdUUID& id) {
     ret.logical_size = select.column_int64(0);
     ret.chunk_size = select.column_int64(1);
     ret.policy.width = static_cast<unsigned>(select.column_int64(2));
-    ret.policy.failure_domain = static_cast<Level>(select.column_int64(3));
+    ret.policy.failure_domain =
+        level_of(static_cast<unsigned>(select.column_int64(3)));
     ret.policy.stripe_width = select.column_int64(4);
     ret.policy.seed = select.column_int64(5);
     ret.map_epoch = select.column_int64(6);

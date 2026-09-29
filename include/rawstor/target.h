@@ -78,7 +78,8 @@ struct RawstorObjectSpec {
                                   chunk spans the object. */
     uint64_t stripe_width;  /**< K; 0 = spread every chunk, 1 =
                                   object-local. */
-    uint8_t failure_domain; /**< RAWSTOR_OBJ_DOMAIN_*; default server. */
+    uint8_t failure_domain; /**< RAWSTOR_OBJ_DOMAIN_*; 0 = default
+                                  (server). */
 };
 
 /**

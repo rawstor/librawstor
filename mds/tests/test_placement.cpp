@@ -30,8 +30,9 @@ TopologyOST make_ost(const char* id, uint64_t weight, const char* host) {
     ost.location = "ost://127.0.0.1:0";
     ost.weight = weight;
     ost.path[0] = "dc1";
-    ost.path[1] = "rack1";
-    ost.path[2] = host;
+    ost.path[1] = "row1";
+    ost.path[2] = "rack1";
+    ost.path[3] = host;
     return ost;
 }
 

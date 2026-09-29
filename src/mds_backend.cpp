@@ -30,8 +30,9 @@ RawstorFrameObjPolicy policy_of(const RawstorObjectSpec& sp) {
     RawstorFrameObjPolicy ret{};
     ret.redundancy = RAWSTOR_OBJ_REDUNDANCY_MIRROR;
     ret.width = sp.width != 0 ? sp.width : 1;
-    ret.failure_domain =
-        sp.failure_domain != 0 ? sp.failure_domain : RAWSTOR_OBJ_DOMAIN_SERVER;
+    ret.failure_domain = sp.failure_domain != RAWSTOR_OBJ_DOMAIN_DEFAULT
+                             ? sp.failure_domain
+                             : RAWSTOR_OBJ_DOMAIN_SERVER;
     ret.stripe_width = sp.stripe_width;
     ret.placement_seed = 0;
     return ret;
