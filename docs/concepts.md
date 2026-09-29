@@ -21,7 +21,7 @@ one or more **Slots**, each talking to one **Backend**:
 
 ```mermaid
 classDiagram
-    direction LR
+    direction TB
     Location "1" o-- "*" Target : holds objects
     Target "1" ..> "1" Object : open()
     Object "1" *-- "1..*" Chunk : routes I/O by offset
@@ -107,20 +107,21 @@ flowchart TB
         S11["Slot<br/>ost://c:7777/U/20000000"]
     end
     subgraph C2 ["Chunk @ 1 GiB"]
-        S20["Slot<br/>ost://a:7777/U/40000000"]
-        S21["Slot<br/>ost://c:7777/U/40000000"]
+        S20["Slot<br/>ost://c:7777/U/40000000"]
+        S21["Slot<br/>ost://d:7777/U/40000000"]
     end
     O --> C0 & C1 & C2
 
     A[("OST a")]
     B[("OST b")]
     C[("OST c")]
+    D[("OST d")]
     S00 --> A
     S01 --> B
     S10 --> B
     S11 --> C
-    S20 --> A
-    S21 --> C
+    S20 --> C
+    S21 --> D
 ```
 
 ---
