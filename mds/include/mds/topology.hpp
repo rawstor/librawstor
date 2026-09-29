@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_TOPOLOGY_HPP
-#define RAWSTOR_TOPOLOGY_HPP
+#ifndef RAWSTOR_MDS_TOPOLOGY_HPP
+#define RAWSTOR_MDS_TOPOLOGY_HPP
 
 #include <rawstd/uuid.h>
 
@@ -62,4 +62,4 @@ public:
 } // namespace mds
 } // namespace rawstor
 
-#endif // RAWSTOR_TOPOLOGY_HPP
+#endif // RAWSTOR_MDS_TOPOLOGY_HPP

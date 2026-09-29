@@ -1,9 +1,8 @@
 #include "tmp_dir.hpp"
 
+#include <mds/placement.hpp>
 #include <mds/store.hpp>
-
-#include "placement.hpp"
-#include "topology.hpp"
+#include <mds/topology.hpp>
 
 #include <rawstor/target.h>
 

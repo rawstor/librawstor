@@ -9,14 +9,17 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               -I$(top_srcdir)/mds/include \
               -I$(top_srcdir)/librawstd/include \
               -I$(top_srcdir)/librawio/include \
-              -I$(top_srcdir)/include \
-              -I$(top_srcdir)/src
+              -I$(top_srcdir)/include
 
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-libmdsstore_la_SOURCES = store.cpp \
-                         $(top_srcdir)/mds/include/mds/store.hpp
+libmdsstore_la_SOURCES = placement.cpp \
+                         $(top_srcdir)/mds/include/mds/placement.hpp \
+                         store.cpp \
+                         $(top_srcdir)/mds/include/mds/store.hpp \
+                         topology.cpp \
+                         $(top_srcdir)/mds/include/mds/topology.hpp
 
 # Split out from rawstor_mds_SOURCES (matching ost/src/Makefile.am's own
 # libost.la split) so tests/ can drive a real mds::Server in-process,

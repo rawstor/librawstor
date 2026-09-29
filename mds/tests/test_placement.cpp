@@ -1,6 +1,5 @@
-#include "placement.hpp"
-
-#include "topology.hpp"
+#include <mds/placement.hpp>
+#include <mds/topology.hpp>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/uuid.h>

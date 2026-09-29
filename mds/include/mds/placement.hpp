@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_PLACEMENT_HPP
-#define RAWSTOR_PLACEMENT_HPP
+#ifndef RAWSTOR_MDS_PLACEMENT_HPP
+#define RAWSTOR_MDS_PLACEMENT_HPP
 
 #include "topology.hpp"
 
@@ -49,4 +49,4 @@ std::vector<PlacementSlot> place(
 } // namespace mds
 } // namespace rawstor
 
-#endif // RAWSTOR_PLACEMENT_HPP
+#endif // RAWSTOR_MDS_PLACEMENT_HPP

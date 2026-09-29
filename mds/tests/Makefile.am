@@ -7,8 +7,7 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(GTEST_CFLAGS) \
               -I$(top_srcdir)/mds/include \
               -I$(top_srcdir)/librawstd/include \
-              -I$(top_srcdir)/include \
-              -I$(top_srcdir)/src
+              -I$(top_srcdir)/include
 
 AM_LDFLAGS = $(ASAN_LDFLAGS) \
              $(GTEST_LIBS)

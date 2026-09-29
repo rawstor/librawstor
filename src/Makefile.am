@@ -58,8 +58,6 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         opts.h \
                         ost_backend.cpp \
                         ost_backend.hpp \
-                        placement.cpp \
-                        placement.hpp \
                         rawstor.cpp \
                         slot.cpp \
                         slot.hpp \
@@ -69,8 +67,6 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         target.hpp \
                         telemetry.cpp \
                         telemetry.hpp \
-                        topology.cpp \
-                        topology.hpp \
                         zfs_backend.cpp \
                         zfs_backend.hpp
 
