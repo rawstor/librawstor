@@ -127,10 +127,9 @@ public:
     rawstd::Task<std::vector<RawstorObjectMeta>>
     meta(const RawstdUUID& id, uint64_t offset) override;
 
-    // Real: this object's own real chunk offsets, off its own WireMap
-    // (Backend::chunks()'s own doc comment) -- unlike every other
-    // backend, a single mds:// Backend instance can genuinely have more
-    // than one.
+    // This object's own real chunk offsets, off its own WireMap -- the
+    // default (Backend::chunks()'s own doc comment) pages through
+    // list_chunks(), which this backend doesn't support (ENOTSUP).
     rawstd::Task<std::vector<uint64_t>> chunks(const RawstdUUID& id) override;
 
     // Real: this chunk's own real members' own bare locations, off the

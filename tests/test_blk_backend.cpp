@@ -1,5 +1,7 @@
 #include "blk_backend.hpp"
 #include "chunk.hpp"
+#include "location.hpp"
+#include "object_env.hpp"
 #include "opts.h"
 #include "slot.hpp"
 #include "target.hpp"
@@ -119,6 +121,52 @@ rawstor::blk::Backend* open_blk_backend(
     run(queue, slot->open(id, 0, 0, RawstdUUID{}));
 
     return static_cast<rawstor::blk::Backend*>(slot->get_next_backend().get());
+}
+
+// Backend::chunks()'s own default (one list_chunks() page positioned to
+// start at `id`) against `location`: a one-chunk object created before
+// and after the multi-chunk one under test, so the page really has to
+// skip past a smaller id and stop before a larger one rather than
+// getting lucky with a location holding nothing else.
+void expect_chunks_of_multichunk_object(const rawstd::URI& location) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(16);
+    rawstor::Location loc({location});
+
+    RawstorObjectSpec one_chunk{
+        .size = 1u << 20,
+        .width = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    RawstorObjectSpec three_chunks = one_chunk;
+    three_chunks.size = 3u << 20;
+    three_chunks.chunk_size = 1u << 20;
+
+    run(*queue, loc.create(*queue, one_chunk));
+    rawstor::Target target = run(*queue, loc.create(*queue, three_chunks));
+    run(*queue, loc.create(*queue, one_chunk));
+
+    std::unique_ptr<rawstor::Slot> slot =
+        run(*queue, rawstor::Slot::create(*queue, location, 1));
+
+    EXPECT_EQ(
+        run(*queue, slot->chunks(target.object_id())),
+        (std::vector<uint64_t>{0, 1u << 20, 2u << 20})
+    );
+
+    RawstdUUID missing;
+    ASSERT_EQ(rawstd_uuid7_init(&missing), 0);
+    bool threw = false;
+    try {
+        run(*queue, slot->chunks(missing));
+    } catch (const std::system_error& e) {
+        threw = true;
+        EXPECT_EQ(e.code().value(), ENOENT);
+    }
+    EXPECT_TRUE(threw);
+
+    run(*queue, slot->close());
 }
 
 } // namespace
@@ -500,4 +548,16 @@ TEST(BlkBackendTest, witness_member_holds_no_data_and_refuses_real_io) {
         EXPECT_EQ(e.code().value(), ENOTSUP);
     }
     EXPECT_TRUE(threw);
+}
+
+TEST(BackendChunksTest, file_reports_every_offset_of_id) {
+    rawstor::tests::TmpDir dir;
+    expect_chunks_of_multichunk_object(rawstd::URI(dir.uri()));
+}
+
+// Same, over ost:// -- the remote rawstor-ost answers through its own
+// existing LIST command, no chunks-specific wire command needed.
+TEST(BackendChunksTest, ost_reports_every_offset_of_id) {
+    rawstor::tests::ObjectEnv env(8792, 8793);
+    expect_chunks_of_multichunk_object(rawstd::URI("ost://127.0.0.1:8793"));
 }

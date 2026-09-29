@@ -148,21 +148,18 @@ public:
     virtual rawstd::Task<std::vector<RawstorObjectMeta>>
     meta(const RawstdUUID& id, uint64_t offset) = 0;
 
-    // Every distinct chunk offset the object at `id` actually has --
-    // backend-verified, unlike rawstor_target_chunks()'s own purely
-    // syntactic reading of a target string's own URI shape (client-side
-    // parsing over Target's own _uris, no Backend involved at all: Target
-    // only ever falls back to asking a Backend when a single URI carries
-    // no offset segment of its own -- chunk_uris_by_offset(), target.cpp).
-    // A plain, unchunked object is always exactly one chunk at offset 0
-    // -- every backend but mds::Backend answers that trivially, with no
-    // I/O of its own. mds::Backend is the one case where a single Backend
-    // instance stands for a whole many-chunk object (this class's own
-    // doc comment, mds_backend.hpp): there, this does a real WireMap
-    // round trip and returns every one of the object's own real chunk
-    // offsets.
-    virtual rawstd::Task<std::vector<uint64_t>>
-    chunks(const RawstdUUID& id) = 0;
+    // Every distinct chunk offset of `id` this backend actually holds,
+    // ascending -- backend-verified, unlike rawstor_target_chunks()'s own
+    // purely syntactic reading of an ordinary target string's own URI
+    // shape (Target::chunks() only asks a Backend for an mds:// target).
+    // ENOENT if this backend holds no chunk of `id` at all. Default: one
+    // list_chunks() page positioned to start at `id` itself (its own
+    // .cpp doc comment on how) -- the same enumeration list_chunks()
+    // already does, so file/lvm/zfs and ost (over the existing LIST wire
+    // command) all get it without a lookup of their own. mds::Backend,
+    // whose own list_chunks() is ENOTSUP, overrides this with a WireMap
+    // round trip instead.
+    virtual rawstd::Task<std::vector<uint64_t>> chunks(const RawstdUUID& id);
 
     // Every real member's own bare location of the chunk at `offset` --
     // for addressing one specific member directly (rawstor resolve's own

@@ -516,10 +516,6 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     co_return std::vector<RawstorObjectMeta>{ret};
 }
 
-rawstd::Task<std::vector<uint64_t>> Backend::chunks(const RawstdUUID&) {
-    co_return std::vector<uint64_t>{0};
-}
-
 rawstd::Task<std::vector<rawstd::URI>>
 Backend::resolve_locations(const RawstdUUID&, uint64_t) {
     co_return std::vector<rawstd::URI>{location()};
