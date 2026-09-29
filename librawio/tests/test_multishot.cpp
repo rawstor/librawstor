@@ -685,4 +685,56 @@ TEST_F(MultishotTest, recv_cancel_in_cb) {
     EXPECT_NO_THROW(_queue->cancel(stream.event()));
 }
 
+// io_uring ends a multishot recv on its own when a completion can't be
+// posted (e.g. the completion ring is full): the last completion still
+// carries data but no IORING_CQE_F_MORE. The stream must then deliver
+// what arrived and fail -- not wait for data a dead registration will
+// never deliver.
+TEST_F(MultishotTest, recv_ended_by_kernel_fails_instead_of_hanging) {
+    if (rawio::Queue::engine_name() != "uring") {
+        GTEST_SKIP() << "only io_uring ends a multishot registration itself";
+    }
+
+    rawio::RecvStream stream = _queue->recv_multishot(_fd, 4, 16, 4, 0);
+
+    // Armed and delivering.
+    _server.write("dat0", 4);
+    _server.wait();
+    std::vector<MultishotVectorItem> items;
+    pull(*_queue, stream, 4, items);
+    ASSERT_EQ(items.size(), 1u);
+    ASSERT_EQ(items[0].error(), 0);
+
+    // Nobody reaps completions meanwhile, so this depth-1 queue's
+    // completion ring fills up and the kernel ends the registration.
+    for (int i = 0; i < 8; ++i) {
+        _server.write("datX", 4);
+        _server.wait();
+        usleep(5000);
+    }
+
+    int error = 0;
+    for (int i = 0; i < 16 && error == 0; ++i) {
+        rawstd::Task<rawio::RecvStream::Item> t =
+            rawio::tests::wrap<rawio::RecvStream::Item>(stream.next(4));
+        for (int n = 0; n < 100 && !t.done(); ++n) {
+            try {
+                _queue->wait_timeout(10);
+            } catch (const std::system_error& e) {
+                if (e.code().value() != ETIME) {
+                    throw;
+                }
+            }
+        }
+        ASSERT_TRUE(t.done()) << "stream hangs on a registration the kernel "
+                                 "already ended";
+        try {
+            t.get();
+        } catch (const std::system_error& e) {
+            error = e.code().value();
+        }
+    }
+    EXPECT_NE(error, 0);
+}
+
 } // unnamed namespace
