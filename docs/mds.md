@@ -742,10 +742,11 @@ of normal opens/closes.
   owns the redundancy question). A chunk with **no** surviving copy fails
   the whole reconstruct loudly — the MDS must not pretend the object is
   whole, and it cannot invent data.
-- The tail chunk's stored size may be rounded up by a block backend (LVM
-  extent, ZFS volblocksize); the reconstructed `logical_size` takes the
-  smallest copy, clamped to `chunk_size` — never smaller than what was
-  written.
+- Every chunk is exactly `chunk_size` (an object's size is always a
+  multiple of it, checked at create and resize), so the reconstructed
+  `logical_size` is simply the chunk count times `chunk_size` — a copy's
+  own stored size, which a block backend may round up (LVM extent, ZFS
+  volblocksize), plays no part.
 - Snapshot-version records are skipped (stage 2); the full MDS serving the
   same `LIST` + per-object `META` scan from its own index (the scrub
   comparison) is not implemented yet.

@@ -25,14 +25,6 @@ using rawstor::mds::WireMap;
 using rawstor::mds::WireSlot;
 namespace mds = rawstor::mds;
 
-uint64_t next_pow2(uint64_t v) {
-    uint64_t ret = 1;
-    while (ret < v) {
-        ret <<= 1;
-    }
-    return ret;
-}
-
 /* The wire policy from spec fields; zeros are the documented defaults. */
 RawstorObjectPolicy policy_of(const RawstorObjectSpec& sp) {
     RawstorObjectPolicy ret{};
@@ -159,15 +151,11 @@ std::vector<rawstd::URI> chunk_targets(
     return ret;
 }
 
-uint64_t
-chunk_logical_size(uint64_t logical_size, uint64_t chunk_size, uint64_t index) {
-    uint64_t begin = index * chunk_size;
-    return std::min(chunk_size, logical_size - begin);
-}
-
-RawstorObjectSpec chunk_spec(const WireMap& map, uint64_t index) {
+// Every chunk is exactly chunk_size (the object's own size is always a
+// whole number of them -- Target::create()'s own check).
+RawstorObjectSpec chunk_spec(const WireMap& map) {
     RawstorObjectSpec sp{};
-    sp.size = chunk_logical_size(map.logical_size, map.chunk_size, index);
+    sp.size = map.chunk_size;
     // The chunk's own placement identity: the target string's own
     // id/offset segment (chunk_slot_target() above) -- no separate
     // id/logical_index/snapshot_id fields to stamp here any more (see
@@ -266,15 +254,15 @@ rawstd::Task<void> Backend::create(
     const RawstdUUID& id, uint64_t, const RawstorObjectSpec& sp,
     RawstorMemberKind
 ) {
-    if (sp.size == 0) {
+    // An mds:// object is always chunked: the MDS map is per-chunk, and
+    // there is no single-chunk layout for it to fall back on.
+    if (sp.size == 0 || sp.chunk_size == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    uint64_t chunk_size =
-        sp.chunk_size != 0 ? sp.chunk_size : next_pow2(sp.size);
     RawstorObjectPolicy policy = policy_of(sp);
 
-    co_await _client.create(id, sp.size, chunk_size, policy);
+    co_await _client.create(id, sp.size, sp.chunk_size, policy);
 
     /* Materialize every chunk object on its OSTs. */
     WireMap map = co_await _client.open(id, RawstdUUID{});
@@ -346,6 +334,18 @@ Backend::resize(const RawstdUUID& id, uint64_t, uint64_t new_size) {
     WireMap before = co_await _client.open(id, RawstdUUID{});
     uint64_t old_chunks = before.chunks.size();
 
+    // Growth only ever adds whole chunks (create()'s own invariant: every
+    // chunk is exactly chunk_size), and an object without a chunk_size
+    // has no chunk to grow by at all.
+    if (before.chunk_size == 0 || new_size % before.chunk_size != 0) {
+        rawstd_error(
+            "New size (%llu) is not a multiple of chunk_size (%llu)\n",
+            static_cast<unsigned long long>(new_size),
+            static_cast<unsigned long long>(before.chunk_size)
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     co_await _client.resize(id, new_size);
 
     /* Re-fetch: the map now has whatever new chunks the MDS reserved. */
@@ -356,7 +356,7 @@ Backend::resize(const RawstdUUID& id, uint64_t, uint64_t new_size) {
     try {
         for (uint64_t i = old_chunks; i < after.chunks.size(); ++i) {
             Target chunk_target(chunk_targets(after, i));
-            co_await chunk_target.create(_queue, chunk_spec(after, i));
+            co_await chunk_target.create(_queue, chunk_spec(after));
             created = i + 1;
         }
     } catch (...) {

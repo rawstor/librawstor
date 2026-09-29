@@ -121,6 +121,15 @@ TEST_F(ObjectStoreTest, create_rejects_non_power_of_two_chunk_size) {
     );
 }
 
+TEST_F(ObjectStoreTest, create_rejects_size_not_chunk_multiple) {
+    ObjectStore store = make_store();
+
+    EXPECT_THROW(
+        store.create(make_id(), chunk_size + 4096, chunk_size, make_policy(1)),
+        std::system_error
+    );
+}
+
 TEST_F(ObjectStoreTest, create_rejects_unsatisfiable_placement) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
@@ -166,6 +175,18 @@ TEST_F(ObjectStoreTest, resize_rejects_shrink) {
     store.create(id, 3 * chunk_size, chunk_size, make_policy(1));
 
     EXPECT_THROW(store.resize(id, chunk_size), std::system_error);
+}
+
+TEST_F(ObjectStoreTest, resize_rejects_size_not_chunk_multiple) {
+    ObjectStore store = make_store();
+    RawstdUUID id = make_id();
+    store.create(id, chunk_size, chunk_size, make_policy(1));
+
+    EXPECT_THROW(store.resize(id, 2 * chunk_size + 4096), std::system_error);
+
+    ObjectMap map = store.open(id, RawstdUUID{});
+    EXPECT_EQ(map.descriptor.logical_size, chunk_size);
+    EXPECT_EQ(map.descriptor.map_epoch, 1u);
 }
 
 TEST_F(ObjectStoreTest, resize_rejects_zero_size) {
@@ -342,8 +363,8 @@ TEST_F(ObjectStoreTest, reconstruct_rebuilds_multi_chunk_object) {
     RawstdUUID ost1 = make_id();
 
     // Chunk 1's own copy is rounded up by its backend past a full
-    // chunk_size -- reconstruct() clamps the tail back down to chunk_size
-    // (own doc comment, store.cpp).
+    // chunk_size -- the object's size comes from the chunk count alone,
+    // not from any copy's own size.
     std::vector<ScanRecord> records{
         ScanRecord{ost0, id, 0, make_meta(chunk_size, 1)},
         ScanRecord{ost1, id, chunk_size, make_meta(chunk_size + 4096, 1)},

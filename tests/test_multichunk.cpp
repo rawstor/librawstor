@@ -64,10 +64,9 @@ std::vector<rawstd::URI> two_chunk_target(
 } // namespace
 
 // An object spanning two chunks: create() splits its own size at
-// the chunk_size boundary (one full-size chunk plus one short, final
-// chunk), and open() builds a single Object routing reads/writes across
-// both, entirely from the target string's own two offset-tagged URIs --
-// no chunk-placement service involved.
+// the chunk_size boundary into two full-size chunks, and open() builds a single
+// Object routing reads/writes across both, entirely from the target string's
+// own two offset-tagged URIs -- no chunk-placement service involved.
 TEST(MultiChunkTest, create_open_read_write_across_chunk_boundary) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
@@ -79,7 +78,7 @@ TEST(MultiChunkTest, create_open_read_write_across_chunk_boundary) {
     rawstd_uuid_to_string(&id, &uuid_string);
 
     const uint64_t chunk_size = 64 * 1024;
-    const uint64_t total_size = chunk_size + (32 * 1024); // short last chunk
+    const uint64_t total_size = 2 * chunk_size;
 
     rawstor::Target target(two_chunk_target(location, uuid_string, chunk_size));
 
@@ -116,7 +115,7 @@ TEST(MultiChunkTest, create_open_read_write_across_chunk_boundary) {
     EXPECT_EQ(read, readback.size());
     EXPECT_EQ(readback, pattern);
 
-    // A write entirely inside the short, final chunk must also round-trip.
+    // A write entirely inside the final chunk must also round-trip.
     off_t last_chunk_offset = static_cast<off_t>(chunk_size) + 4;
     size_t written2 =
         run(*queue,
@@ -133,8 +132,8 @@ TEST(MultiChunkTest, create_open_read_write_across_chunk_boundary) {
     EXPECT_EQ(read2, readback2.size());
     EXPECT_EQ(readback2, pattern);
 
-    // Reading/writing past the object's own total size (short last chunk
-    // included) is rejected, same as a plain, single-chunk object.
+    // Reading/writing past the object's own total size is rejected, same as a
+    // plain, single-chunk object.
     std::vector<char> oob(1);
     EXPECT_THROW(
         run(*queue, object->pread(oob.data(), oob.size(), total_size)),
@@ -161,7 +160,7 @@ TEST(MultiChunkTest, preadv_pwritev_across_chunk_boundary) {
     rawstd_uuid_to_string(&id, &uuid_string);
 
     const uint64_t chunk_size = 64 * 1024;
-    const uint64_t total_size = chunk_size + (32 * 1024); // short last chunk
+    const uint64_t total_size = 2 * chunk_size;
 
     rawstor::Target target(two_chunk_target(location, uuid_string, chunk_size));
 

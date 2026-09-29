@@ -418,7 +418,7 @@ rawstor-mds -b 0.0.0.0:7776 -d /var/lib/rawstor-mds/mds.db -t topology.conf
 
 Create and grow an `mds://` object:
 ```bash
-rawstor create -t mds://127.0.0.1:7776/018f4e2a-2000-7000-8000-000000000001 --size=1G --mirrors=1
+rawstor create -t mds://127.0.0.1:7776/018f4e2a-2000-7000-8000-000000000001 --size=1G --chunk-size=256M --mirrors=1
 rawstor resize mds://127.0.0.1:7776/018f4e2a-2000-7000-8000-000000000001 --size=2G
 ```
 

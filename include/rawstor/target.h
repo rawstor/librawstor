@@ -40,12 +40,12 @@ enum RawstorMemberKind {
  * including when left at 0); for a single-URI target it's the caller's own
  * chosen redundancy -- 1 for an ordinary single-copy object, or an mds://
  * object's own real width -- but it must be stated (0 is refused, never
- * silently treated as 1). chunk_size only matters for a target string
- * naming more than one chunk's own uris (see docs/concepts.md):
- * it must be a nonzero power of two, the whole object's own per-chunk
- * share, every chunk exactly that size except the last (whatever remains
- * of size); ignored (and 0 is a valid, if meaningless, value) for the
- * ordinary single-chunk case.
+ * silently treated as 1). chunk_size, when nonzero, must be a power of
+ * two and size a multiple of it (@c -EINVAL otherwise): every chunk is
+ * exactly chunk_size. It is mandatory for an mds:// object, and for a
+ * target string naming more than one chunk's own uris (see
+ * docs/concepts.md); 0 means one chunk spans the whole object, which then
+ * can't be resized (rawstor_target_resize() only ever adds whole chunks).
  *
  * When used with rawstor_target_spec(), the fields are filled with the
  * actual shape of the existing object: its size in bytes, the number of
@@ -74,8 +74,8 @@ struct RawstorObjectSpec {
      * defaults that degenerate to a single-chunk, single-copy object --
      * which behaves exactly like a plain object.
      */
-    uint64_t chunk_size;    /**< Power of two; 0 = one chunk spans the
-                                  object. */
+    uint64_t chunk_size;    /**< Power of two dividing size; 0 = one
+                                  chunk spans the object. */
     uint64_t stripe_width;  /**< K; 0 = spread every chunk, 1 =
                                   object-local. */
     uint8_t failure_domain; /**< RAWSTOR_OBJ_DOMAIN_*; default server. */
@@ -809,7 +809,8 @@ int rawstor_target_create_snapshot(
  *                  fails with -EINVAL (a plain target has no notion of
  *                  growing -- its size is fixed at create()).
  * @param new_size  The object's new logical size in bytes; must be
- *                  greater than or equal to its current size.
+ *                  greater than or equal to its current size and a
+ *                  multiple of its chunk_size (@c -EINVAL otherwise).
  * @param cb        Callback invoked on completion.
  *                  - @p result is zero on success, or a negative errno on
  *                    failure.

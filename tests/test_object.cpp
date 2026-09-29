@@ -163,6 +163,7 @@ RawstorObjectSpec one_chunk_spec() {
     RawstorObjectSpec spec{};
     spec.size = 1ull << 20;
     spec.width = 1;
+    spec.chunk_size = spec.size;
     return spec;
 }
 
@@ -480,6 +481,7 @@ TEST(ObjectResizeTest, shrink_is_einval) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
     RawstorObjectSpec spec = one_chunk_spec();
+    spec.chunk_size = spec.size / 2;
     ASSERT_EQ(target_create(*queue, target, spec), 0);
 
     EXPECT_EQ(object_resize(*queue, target, spec.size / 2), -EINVAL);
@@ -501,6 +503,58 @@ TEST(ObjectResizeTest, zero_is_einval) {
     EXPECT_EQ(object_resize(*queue, target, 0), -EINVAL);
 
     EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
+// Growth only ever adds whole chunks: a new size that isn't a multiple of
+// the object's own chunk_size is rejected before the MDS is asked.
+TEST(ObjectResizeTest, not_chunk_multiple_is_einval) {
+    rawstor::tests::ObjectEnv env(8796, 8797);
+    std::string target =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000020");
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
+
+    EXPECT_EQ(
+        object_resize(*queue, target, spec.size + spec.size / 2), -EINVAL
+    );
+
+    RawstorObjectSpec read_spec{};
+    ASSERT_EQ(target_spec(*queue, target, &read_spec), 0);
+    EXPECT_EQ(read_spec.size, spec.size);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
+// An mds:// object is always chunked: there is no chunk_size to derive
+// for it, so 0 is rejected.
+TEST(ObjectCreateTest, mds_without_chunk_size_is_einval) {
+    rawstor::tests::ObjectEnv env(8798, 8799);
+    std::string target =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000021");
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    spec.chunk_size = 0;
+    EXPECT_EQ(target_create(*queue, target, spec), -EINVAL);
+}
+
+// Every chunk is exactly chunk_size, so the object's own size must be a
+// whole number of them -- checked for any target, not just mds://.
+TEST(ObjectCreateTest, size_not_chunk_multiple_is_einval) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    std::string target = file_target(
+        "test_object_create_not_multiple",
+        "018f4e2a-3000-7000-8000-000000000022"
+    );
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    spec.chunk_size = spec.size / 4;
+    spec.size += spec.chunk_size / 2;
+    EXPECT_EQ(target_create(*queue, target, spec), -EINVAL);
 }
 
 // resize() makes no sense against a plain (non-"mds://") target -- no

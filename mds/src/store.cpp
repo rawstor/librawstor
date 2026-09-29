@@ -179,6 +179,10 @@ void validate_geometry(uint64_t logical_size, uint64_t chunk_size) {
         rawstd_error("Chunk size is not a power of two\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
+    if (logical_size % chunk_size != 0) {
+        rawstd_error("Object size is not a multiple of chunk size\n");
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     if (nchunks_of(logical_size, chunk_size) > UINT32_MAX) {
         rawstd_error("Object has too many chunks\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -418,7 +422,6 @@ uint64_t ObjectStore::resize(const RawstdUUID& id, uint64_t new_size) {
 
 void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
     struct Chunk {
-        uint64_t size;
         /* Scan order becomes the slot order. */
         std::vector<RawstdUUID> ost_ids;
     };
@@ -474,8 +477,7 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
         // chunk_slot_target() in mds_backend.cpp used to stamp it.
         uint64_t logical_index = r.offset / o.chunk_size;
 
-        auto [cit, chunk_fresh] = o.chunks.try_emplace(logical_index);
-        Chunk& c = cit->second;
+        Chunk& c = o.chunks[logical_index];
 
         bool duplicate = false;
         for (const RawstdUUID& ost : c.ost_ids) {
@@ -492,13 +494,6 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
         }
 
         c.ost_ids.push_back(r.ost_id);
-        /*
-         * Copies may disagree on size: a block backend rounds the device
-         * up (LVM to the extent, ZFS to the volblocksize). The smallest
-         * copy is the closest bound on what was requested.
-         */
-        c.size =
-            chunk_fresh ? r.meta.spec.size : std::min(c.size, r.meta.spec.size);
     }
 
     Transaction tx(_db);
@@ -530,17 +525,8 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
             RAWSTD_THROW_SYSTEM_ERROR(EIO);
         }
 
-        /*
-         * The tail chunk copy may be rounded up by its backend; clamping
-         * keeps the chunk count consistent with the geometry. The
-         * reconstructed size never shrinks below what was written.
-         */
-        uint64_t tail = std::min(o.chunks.rbegin()->second.size, o.chunk_size);
-        if (tail == 0) {
-            rawstd_error("reconstruct: %s: zero-sized tail chunk\n", id_str);
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-        uint64_t logical_size = max_index * o.chunk_size + tail;
+        /* Every chunk is exactly chunk_size (validate_geometry()). */
+        uint64_t logical_size = (max_index + 1) * o.chunk_size;
 
         /*
          * The policy knobs are not persisted on chunks: existing chunks

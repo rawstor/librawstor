@@ -1065,6 +1065,19 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
+    // An object made of chunks is always a whole number of them: every
+    // chunk, the last one included, is exactly chunk_size -- which is what
+    // lets an object's own size be read back as chunk_size times its chunk
+    // count (spec()/open() below), and a grow add whole chunks without ever
+    // having to extend an existing, partial one.
+    if (sp.chunk_size != 0 && sp.size % sp.chunk_size != 0) {
+        rawstd_error(
+            "Spec size (%llu) is not a multiple of chunk_size (%llu)\n",
+            (unsigned long long)sp.size, (unsigned long long)sp.chunk_size
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     // Every URI actually created so far, across every chunk -- rolled
     // back as one flat list on any later failure (below), so a chunk
     // that fails partway through still gets its own already-created
@@ -1079,9 +1092,9 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
         // needs splitting) gets `sp.size` unmodified; only a genuine
         // multi-chunk target (mds::Backend's own internal flat string)
         // splits it, sp.size then being the whole object's own total
-        // size and this chunk's own share being `sp.chunk_size` starting
-        // at its own offset (extract_offset(), already stamped on its
-        // own URIs) -- smaller for the last, short chunk.
+        // size and every chunk's own share exactly `sp.chunk_size`
+        // (the size check above), starting at its own offset
+        // (extract_offset(), already stamped on its own URIs).
         RawstorObjectSpec chunk_sp = sp;
         if (chunks.size() > 1) {
             uint64_t offset = extract_offset(uris.front());
@@ -1093,7 +1106,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
                 );
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
-            chunk_sp.size = std::min(sp.chunk_size, sp.size - offset);
+            chunk_sp.size = sp.chunk_size;
         }
 
         // Every URI's CREATE goes out concurrently instead of one at a
@@ -1240,11 +1253,9 @@ rawstd::Task<void> Target::create_snapshot(
 //
 // size, unlike width, does generalize: it's the whole object's own
 // total, the same derivation Target::open() uses (its own comment) --
-// chunk_size times every chunk but the last, plus the last chunk's own
-// (possibly smaller) size, both learned through the same resolve_spec()
-// lookup as the first chunk's own answer above. For the ordinary
-// single-chunk case that's just chunk_size * 0 plus the one chunk's own
-// answer, so no second lookup is needed.
+// chunk_size times the chunk count, every chunk being exactly chunk_size
+// (create()'s own size check). An object with no chunk_size (0: one
+// chunk, never split) takes that one chunk's own size instead.
 rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
     bool opaque = is_opaque(_uris);
     RawstdUUID id = uuid_from_target(_uris.front());
@@ -1255,13 +1266,8 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
         queue, locations_for(_uris, offsets.front(), opaque), id,
         offsets.front()
     );
-
-    if (offsets.size() > 1) {
-        RawstorObjectSpec last = co_await resolve_spec(
-            queue, locations_for(_uris, offsets.back(), opaque), id,
-            offsets.back()
-        );
-        ret.size = ret.chunk_size * (offsets.size() - 1) + last.size;
+    if (ret.chunk_size != 0) {
+        ret.size = ret.chunk_size * offsets.size();
     }
 
     co_return ret;
@@ -1420,10 +1426,10 @@ Target::resize(rawio::Queue& queue, uint64_t new_size) const {
 // create() -- Target::create()'s own comment), so there's nothing chunk
 // 0 could tell this call that the last chunk doesn't already answer
 // itself. Every other chunk, index 0 included, stays lazily opened
-// (MultiChunkObject::_chunk()). The total size is chunk_size times
-// (N - 1) plus the last chunk's own (possibly smaller) spec().size --
-// for the single-chunk case that's just chunk_size * 0 plus the one
-// chunk's own spec().size, chunk_size itself unused.
+// (MultiChunkObject::_chunk()). The total size is chunk_size times N,
+// every chunk being exactly chunk_size (create()'s own size check); an
+// object with no chunk_size (0: one chunk, never split) takes that one
+// chunk's own spec().size instead.
 //
 // A bound snapshot is a frozen, immutable copy, so it can only be opened
 // RAWSTOR_READONLY (nothing to write, nothing to reconcile); `flags` and
@@ -1470,7 +1476,8 @@ Target::open(rawio::Queue& queue, int flags) const {
     );
 
     uint64_t chunk_size = last->spec().chunk_size;
-    uint64_t size = chunk_size * (chunks.size() - 1) + last->spec().size;
+    uint64_t size =
+        chunk_size != 0 ? chunk_size * chunks.size() : last->spec().size;
 
     // MultiChunkObject routes I/O purely positionally (chunk index =
     // logical offset / chunk_size) -- a real, multi-chunk target's own

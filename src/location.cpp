@@ -60,14 +60,12 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
 // rawstor_location_create()'s C ABI below (which can't just call
 // Location::create() itself -- it needs the built string's own length
 // synchronously, before any I/O, for its snprintf()-style contract).
-// sp.chunk_size splits sp.size into ceil(size / chunk_size) chunks, each
+// sp.chunk_size splits sp.size into size / chunk_size chunks, each
 // mirrored across every URI in `uris` at its own offset -- the same
 // (offset, mirror) shape a hand-built multi-offset -t/--target TARGET
 // already names, so Target::create() (target.cpp) handles the actual
-// per-chunk size split (and the chunk_size-must-be-a-power-of-two check)
-// identically either way; a chunk_size that doesn't divide sp.size
-// evenly just gives the last chunk a smaller share, same as the
-// hand-built case. 0 (the default) or a value >= sp.size means the
+// per-chunk size split (and the chunk_size-must-be-a-power-of-two-
+// dividing-size checks) identically either way. 0 (the default) means the
 // ordinary single-chunk case, one chunk spanning the whole object.
 // Every offset is stamped explicitly, even "0" -- Location::list()'s own
 // returned target strings always do (its own doc comment above), and a
@@ -91,7 +89,7 @@ std::vector<rawstd::URI> build_create_uris(
     bool is_mds = !uris.empty() && uris.front().scheme() == "mds";
     uint64_t num_chunks =
         (!is_mds && sp.chunk_size != 0 && sp.chunk_size < sp.size)
-            ? (sp.size + sp.chunk_size - 1) / sp.chunk_size
+            ? sp.size / sp.chunk_size
             : 1;
 
     std::vector<rawstd::URI> ret;
