@@ -240,6 +240,20 @@ Two classes of state, by recoverability:
   Losing them degrades availability (auto-start falls back to plain N=2
   rules), never correctness; re-attach is defined in *Witness*.
 
+The topology (OST roster, failure domains, weights, `ost_id -> host:port`) is
+neither: it is operator input, not state the MDS derives, and it lives
+**outside the MDS database** (v1: a static config file, `-t/--topology`) on
+purpose. Rebuilding the index starts from the OST roster (see *Reconstruct /
+DR*), so the roster must survive exactly the loss it is used to recover from —
+kept in the same database as the map, losing `mds.db` would also lose the
+list of OSTs to scan. Being plain operator-authored config, it is also
+versioned and deployed like any other (git, config management). The cost:
+the MDS reads it once at startup (a change means a restart), and nothing
+cross-checks it against the map — an OST removed from the topology while the
+map still references it leaves those slots without an address. A dynamic
+source (see *MGS as a service* under *Open questions*) would replace the file,
+not move the topology into the MDS database.
+
 ## MDS API
 
 | Method | When | Hot? |
