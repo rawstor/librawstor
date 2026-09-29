@@ -13,9 +13,10 @@ ConfigurationDirectory=rawstor-mds
 # Below rawstor-ost's own default (7777): a host typically runs one MDS
 # but several OSTs, each needing its own port (7777, 7778, ... upward).
 Environment=BIND_ADDR=0.0.0.0:7776
-# rawstor-mds's own --queue-size (see its --help); override in
+# rawstor-mds's own --queue-size/--workers (see its --help); override in
 # /etc/rawstor-mds.conf below rather than editing this file.
 Environment=QUEUE_SIZE=4096
+Environment=WORKERS=4
 # SQLite database file (created if missing). Override in
 # /etc/rawstor-mds.conf below.
 Environment=DB_PATH=/var/lib/rawstor-mds/mds.db
@@ -24,7 +25,7 @@ Environment=DB_PATH=/var/lib/rawstor-mds/mds.db
 # start; ConfigurationDirectory above creates /etc/rawstor-mds for it.
 Environment=TOPOLOGY_PATH=/etc/rawstor-mds/topology.conf
 EnvironmentFile=-/etc/rawstor-mds.conf
-ExecStart=/usr/bin/rawstor-mds --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --db=${DB_PATH} --topology=${TOPOLOGY_PATH}
+ExecStart=/usr/bin/rawstor-mds --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --db=${DB_PATH} --topology=${TOPOLOGY_PATH}
 # Re-reads TOPOLOGY_PATH without a restart (SIGHUP); a topology that
 # drops an OST still holding chunks is refused and the current one kept.
 ExecReload=/bin/kill -HUP $MAINPID

@@ -22,10 +22,9 @@ namespace {
 
 // Runs `body` (which constructs a Server and calls its blocking loop())
 // on its own thread, but only returns once the Server itself is
-// constructed (bind()/listen() done) or construction throws -- a test
-// that tries to connect the moment the constructor returns must never
-// race the server's own socket setup, which otherwise happens on a
-// thread this function has no other way to synchronize with.
+// constructed or construction throws -- so a construction failure (e.g.
+// the MDS store failing to open) surfaces in the test's own thread
+// instead of leaving it to connect to a server that never runs.
 template <typename ConstructAndLoop>
 std::thread spawn_server(ConstructAndLoop&& body) {
     auto ready = std::make_shared<std::promise<void>>();
@@ -41,6 +40,7 @@ std::thread spawn_server(ConstructAndLoop&& body) {
 ObjectEnv::ObjectEnv(unsigned int mds_port, unsigned int ost_port) :
     _ost_listen_fd(-1),
     _ost_wake_write_fd(-1),
+    _mds_listen_fd(-1),
     _mds_wake_write_fd(-1),
     _mds_port(mds_port) {
     RawstdUUID ost_id;
@@ -64,11 +64,8 @@ ObjectEnv::ObjectEnv(unsigned int mds_port, unsigned int ost_port) :
     ost.path[2] = "host1";
     topology.add(ost);
 
-    // bind_listen() happens here, on this (the test's) thread -- unlike
-    // mds::Server below, ostserver::Server's own constructor never binds
-    // anything itself, so there is no construction-time race to guard for
-    // it specifically. See spawn_server() above for why mds::Server does
-    // need one.
+    // bind_listen() happens here, on this (the test's) thread, for both
+    // servers -- neither Server's own constructor binds anything itself.
     _ost_listen_fd = ostserver::Server::bind_listen("127.0.0.1", ost_port);
 
     rawstd::Pipe ost_wake(rawstd::Pipe::Mode::NonBlocking);
@@ -95,29 +92,30 @@ ObjectEnv::ObjectEnv(unsigned int mds_port, unsigned int ost_port) :
         }
     );
 
+    _mds_listen_fd = mds::Server::bind_listen("127.0.0.1", mds_port);
+
     rawstd::Pipe mds_wake(rawstd::Pipe::Mode::NonBlocking);
     _mds_wake_write_fd = mds_wake.release_write();
     int mds_wake_read_fd = mds_wake.release_read();
 
     std::string mds_db = (_mds_dir.path() / "mds.db").string();
-    _mds_thread = spawn_server([mds_port, mds_db, topology, mds_wake_read_fd](
-                                   std::shared_ptr<std::promise<void>> ready
-                               ) mutable {
-        try {
-            mds::Server s(
-                256, "127.0.0.1", mds_port, mds_db, std::move(topology),
-                mds_wake_read_fd
-            );
-            ready->set_value();
-            s.loop();
-        } catch (...) {
-            std::exception_ptr e = std::current_exception();
+    _mds_thread = spawn_server(
+        [fd = _mds_listen_fd, mds_db, topology,
+         mds_wake_read_fd](std::shared_ptr<std::promise<void>> ready) mutable {
             try {
-                ready->set_exception(e);
-            } catch (const std::future_error&) {
+                mds::ObjectStore store(mds_db, std::move(topology));
+                mds::Server s(256, fd, store, mds_wake_read_fd);
+                ready->set_value();
+                s.loop();
+            } catch (...) {
+                std::exception_ptr e = std::current_exception();
+                try {
+                    ready->set_exception(e);
+                } catch (const std::future_error&) {
+                }
             }
         }
-    });
+    );
 }
 
 ObjectEnv::~ObjectEnv() {
@@ -148,6 +146,9 @@ ObjectEnv::~ObjectEnv() {
     }
     if (_ost_listen_fd != -1) {
         close(_ost_listen_fd);
+    }
+    if (_mds_listen_fd != -1) {
+        close(_mds_listen_fd);
     }
 }
 

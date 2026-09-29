@@ -16,18 +16,19 @@ namespace mds {
 
 class Session;
 
-// Single-instance MDS server (docs/mds.md, "MDS server, v1"):
-// owns its own listening socket and ObjectStore, one worker (ObjectStore's
-// calls are synchronous and rare -- a briefly blocked event loop is
-// accepted, see ObjectStore's own doc comment), no accept_multishot
-// sharing across threads unlike ost::Server.
+// One MDS worker (docs/mds.md, "MDS server, v1"): its own RawIOQueue and
+// sessions, accepting on a listening socket it may share with other
+// workers' Servers -- same shape as ostserver::Server, each worker thread
+// registering its own accept_multishot on that one fd. Every worker shares
+// one ObjectStore (thread-safe, see its own doc comment); its calls are
+// synchronous and rare, so a briefly blocked event loop is accepted.
 class Server final {
 private:
     RawIOQueue* _queue;
     int _fd;
     int _wake_fd;
     bool _stop;
-    ObjectStore _store;
+    ObjectStore& _store;
     RawIOEvent* _accept_event;
     std::unordered_map<int, std::shared_ptr<Session>> _sessions;
 
@@ -41,16 +42,22 @@ private:
     rawstd::DetachedTask _wake_task();
 
 public:
-    // `wake_fd`, if not -1, is only ever read from -- never closed --
-    // and treated as a stop request the moment it becomes readable; the
-    // caller must keep it open for at least as long as this Server runs.
+    // `listen_fd` must already be bound+listening (see bind_listen()) and
+    // `store` must outlive this Server; neither is owned. `wake_fd`, if
+    // not -1, is only ever read from -- never closed -- and treated as a
+    // stop request the moment it becomes readable; the caller must keep
+    // it open for at least as long as this Server runs.
     Server(
-        unsigned int queue_size, const std::string& addr, unsigned int port,
-        const std::string& db_path, Topology topology, int wake_fd = -1
+        unsigned int queue_size, int listen_fd, ObjectStore& store,
+        int wake_fd = -1
     );
     Server(const Server&) = delete;
     Server(Server&&) = delete;
     ~Server();
+
+    // Creates, binds and listens a socket on addr:port (SO_REUSEADDR, then
+    // listen(SOMAXCONN)), for one or more Servers to share.
+    static int bind_listen(const std::string& addr, unsigned int port);
 
     Server& operator=(const Server&) = delete;
     Server& operator=(Server&&) = delete;

@@ -44,28 +44,41 @@ namespace rawstor {
 namespace mds {
 
 Server::Server(
-    unsigned int queue_size, const std::string& addr, unsigned int port,
-    const std::string& db_path, Topology topology, int wake_fd
+    unsigned int queue_size, int listen_fd, ObjectStore& store, int wake_fd
 ) :
     _queue(nullptr),
-    _fd(-1),
+    _fd(listen_fd),
     _wake_fd(wake_fd),
     _stop(false),
-    _store(db_path, std::move(topology)),
+    _store(store),
     _accept_event(nullptr) {
+    int res = rawio_queue_create(queue_size, &_queue);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+Server::~Server() {
+    _sessions.clear();
+
+    if (_accept_event != nullptr) {
+        int res = rawio_cancel(_queue, _accept_event);
+        if (res < 0) {
+            rawstd_warning("Failed to cancel event: %s\n", strerror(-res));
+        }
+    }
+
+    rawio_queue_delete(_queue);
+}
+
+int Server::bind_listen(const std::string& addr, unsigned int port) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == -1) {
+        RAWSTD_THROW_ERRNO();
+    }
 
     try {
-        int res = rawio_queue_create(queue_size, &_queue);
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-
-        _fd = socket(AF_INET, SOCK_STREAM, 0);
-        if (_fd == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-
-        res = rawstd_socket_set_reuse(_fd);
+        int res = rawstd_socket_set_reuse(fd);
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
@@ -82,41 +95,19 @@ Server::Server(
         }
         sin.sin_port = htons(port);
 
-        if (bind(_fd, reinterpret_cast<sockaddr*>(&sin), sizeof(sin)) == -1) {
+        if (bind(fd, reinterpret_cast<sockaddr*>(&sin), sizeof(sin)) == -1) {
             RAWSTD_THROW_ERRNO();
         }
 
-        if (listen(_fd, SOMAXCONN) == -1) {
+        if (listen(fd, SOMAXCONN) == -1) {
             RAWSTD_THROW_ERRNO();
         }
-
-        rawstd_info("Waiting for connections on %s:%u\n", addr.c_str(), port);
     } catch (...) {
-        if (_fd != -1) {
-            close(_fd);
-        }
-        if (_queue != nullptr) {
-            rawio_queue_delete(_queue);
-        }
+        close(fd);
         throw;
     }
-}
 
-Server::~Server() {
-    _sessions.clear();
-
-    if (_fd != -1) {
-        close(_fd);
-    }
-
-    if (_accept_event != nullptr) {
-        int res = rawio_cancel(_queue, _accept_event);
-        if (res < 0) {
-            rawstd_warning("Failed to cancel event: %s\n", strerror(-res));
-        }
-    }
-
-    rawio_queue_delete(_queue);
+    return fd;
 }
 
 rawstd::Task<void> Server::_add_session(int fd) {

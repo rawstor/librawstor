@@ -29,6 +29,7 @@ private:
     TmpDir _mds_dir;
     int _ost_listen_fd;
     int _ost_wake_write_fd;
+    int _mds_listen_fd;
     int _mds_wake_write_fd;
     std::thread _ost_thread;
     std::thread _mds_thread;

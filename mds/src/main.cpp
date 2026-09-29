@@ -27,8 +27,28 @@
 #include <sysexits.h>
 
 #define DEFAULT_QUEUE_SIZE 4096
+#define DEFAULT_WORKERS 4
 
 namespace {
+
+// Owns one fd, closing it on destruction.
+class ScopedFd final {
+private:
+    int _fd;
+
+public:
+    explicit ScopedFd(int fd) : _fd(fd) {}
+    ScopedFd(const ScopedFd&) = delete;
+    ~ScopedFd() {
+        if (_fd != -1) {
+            close(_fd);
+        }
+    }
+
+    ScopedFd& operator=(const ScopedFd&) = delete;
+
+    int get() const noexcept { return _fd; }
+};
 
 void usage() {
     std::cout
@@ -48,6 +68,8 @@ void usage() {
         << std::endl
         << "                        serving (docs/mds.md)" << std::endl
         << "  -v, --version         Rawstor version" << std::endl
+        << "  -w, --workers N       Number of worker threads (default: "
+        << DEFAULT_WORKERS << ")" << std::endl
         << std::endl
         << "required arguments:" << std::endl
         << "  -b, --bind ADDR       Bind address in the format <ip>:<port>"
@@ -244,16 +266,23 @@ void reload_topology(
     }
 }
 
-// SIGINT/SIGTERM/SIGHUP are blocked before the server thread starts (it
-// inherits the mask) and taken synchronously by this thread with
-// sigwait(): none of them can interrupt the server's own rawio_wait(), so
+// Each worker is a thread with its own rawstor::mds::Server (own
+// RawIOQueue and sessions), all sharing the one listening socket
+// bind_listen() opens here -- every worker registers its own
+// accept_multishot on it and the kernel wakes exactly one of them per
+// incoming connection, same as rawstor-ost -- and the one ObjectStore
+// (one SQLite connection, every call serialized by the store itself).
+//
+// SIGINT/SIGTERM/SIGHUP are blocked before any worker starts (they
+// inherit the mask) and taken synchronously by this thread with
+// sigwait(): none of them can interrupt a worker's own rawio_wait(), so
 // SIGHUP never doubles as a stop, and a reload runs as ordinary code, not
-// inside a signal handler. Stop reaches the server through its wake pipe
-// (Server::_wake_task()).
+// inside a signal handler. Stop reaches each worker through its own wake
+// pipe (Server::_wake_task()).
 void mds(
-    unsigned int queue_size, const std::string& addr, unsigned int port,
-    const std::string& db_path, const std::string& topology_path,
-    bool do_reconstruct
+    unsigned int queue_size, unsigned int workers, const std::string& addr,
+    unsigned int port, const std::string& db_path,
+    const std::string& topology_path, bool do_reconstruct
 ) {
     sigset_t signals;
     sigemptyset(&signals);
@@ -267,31 +296,47 @@ void mds(
         );
     }
 
-    rawstd::Pipe wake_pipe(rawstd::Pipe::Mode::NonBlocking);
-
-    rawstor::mds::Server server(
-        queue_size, addr, port, db_path,
-        rawstor::mds::Topology::parse_file(topology_path), wake_pipe.read_fd()
+    rawstor::mds::ObjectStore store(
+        db_path, rawstor::mds::Topology::parse_file(topology_path)
     );
     // --reconstruct rebuilds the map from the topology's own OSTs, so a
     // map referencing one no longer there is exactly what it replaces.
     if (do_reconstruct) {
-        reconstruct(*server.store().topology(), server.store());
+        reconstruct(*store.topology(), store);
     } else {
-        server.store().check_topology(*server.store().topology());
+        store.check_topology(*store.topology());
     }
 
-    std::exception_ptr error;
-    std::thread thread([&server, &error]() {
-        try {
-            server.loop();
-        } catch (...) {
-            error = std::current_exception();
-            // Wakes the sigwait() below: this is the only thread not
-            // blocking SIGTERM.
-            kill(getpid(), SIGTERM);
-        }
-    });
+    ScopedFd listen_fd(rawstor::mds::Server::bind_listen(addr, port));
+    rawstd_info(
+        "Waiting for connections on %s:%u with %u worker(s)\n", addr.c_str(),
+        port, workers
+    );
+
+    std::vector<rawstd::Pipe> wake_pipes;
+    wake_pipes.reserve(workers);
+    for (unsigned int i = 0; i < workers; i++) {
+        wake_pipes.emplace_back(rawstd::Pipe::Mode::NonBlocking);
+    }
+
+    std::vector<std::exception_ptr> errors(workers);
+    std::vector<std::thread> threads;
+    threads.reserve(workers);
+    for (unsigned int i = 0; i < workers; i++) {
+        threads.emplace_back([&errors, &store, i, queue_size,
+                              fd = listen_fd.get(),
+                              wake_fd = wake_pipes[i].read_fd()]() {
+            try {
+                rawstor::mds::Server s(queue_size, fd, store, wake_fd);
+                s.loop();
+            } catch (...) {
+                errors[i] = std::current_exception();
+                // Wakes the sigwait() below: this is the only thread not
+                // blocking SIGTERM.
+                kill(getpid(), SIGTERM);
+            }
+        });
+    }
 
     while (true) {
         int sig;
@@ -303,16 +348,22 @@ void mds(
         if (sig != SIGHUP) {
             break;
         }
-        reload_topology(server.store(), topology_path);
+        reload_topology(store, topology_path);
     }
 
-    char byte = 0;
-    ssize_t n = write(wake_pipe.write_fd(), &byte, 1);
-    (void)n;
-    thread.join();
+    for (const rawstd::Pipe& pipe : wake_pipes) {
+        char byte = 0;
+        ssize_t n = write(pipe.write_fd(), &byte, 1);
+        (void)n;
+    }
+    for (std::thread& t : threads) {
+        t.join();
+    }
 
-    if (error) {
-        std::rethrow_exception(error);
+    for (std::exception_ptr& error : errors) {
+        if (error) {
+            std::rethrow_exception(error);
+        }
     }
 }
 
@@ -344,7 +395,7 @@ void parse_addr(
 } // namespace
 
 int main(int argc, char** argv) {
-    const char* optstring = "b:d:hrt:v";
+    const char* optstring = "b:d:hrt:vw:";
     struct option longopts[] = {
         {"bind", required_argument, nullptr, 'b'},
         {"db", required_argument, nullptr, 'd'},
@@ -353,6 +404,7 @@ int main(int argc, char** argv) {
         {"reconstruct", no_argument, nullptr, 'r'},
         {"topology", required_argument, nullptr, 't'},
         {"version", no_argument, nullptr, 'v'},
+        {"workers", required_argument, nullptr, 'w'},
         {},
     };
 
@@ -360,6 +412,7 @@ int main(int argc, char** argv) {
     const char* bind_arg = nullptr;
     const char* db_arg = nullptr;
     const char* topology_arg = nullptr;
+    const char* workers_arg = nullptr;
     bool do_reconstruct = false;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, nullptr);
@@ -396,6 +449,10 @@ int main(int argc, char** argv) {
             version();
             return EXIT_SUCCESS;
 
+        case 'w':
+            workers_arg = optarg;
+            break;
+
         default:
             return EX_USAGE;
         }
@@ -412,6 +469,20 @@ int main(int argc, char** argv) {
         if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> queue_size) ||
             !iss.eof()) {
             std::cerr << "queue-size must be unsigned integer" << std::endl;
+            return EX_USAGE;
+        }
+    }
+
+    unsigned int workers = DEFAULT_WORKERS;
+    if (workers_arg != nullptr) {
+        std::istringstream iss(workers_arg);
+        if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> workers) ||
+            !iss.eof()) {
+            std::cerr << "workers must be unsigned integer" << std::endl;
+            return EX_USAGE;
+        }
+        if (workers == 0) {
+            std::cerr << "workers must be at least 1" << std::endl;
             return EX_USAGE;
         }
     }
@@ -449,7 +520,8 @@ int main(int argc, char** argv) {
 
     int exit_code = EXIT_SUCCESS;
     try {
-        mds(queue_size, name, port, db_arg, topology_arg, do_reconstruct);
+        mds(queue_size, workers, name, port, db_arg, topology_arg,
+            do_reconstruct);
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
         exit_code = rawstd_exitcode_for_errno(e.code().value());

@@ -682,6 +682,14 @@ replicated. Replication (primary + log shipping, reads from any replica with
 the `map_epoch` fence catching lagging reads) is reserved for v2 — the
 epoch/CAS data model here is already compatible with it.
 
+Within that one process, `-w/--workers N` (default 4) worker threads each
+run their own I/O queue and client sessions, all accepting on one listening
+socket, like `rawstor-ost`. They share one store: a single SQLite
+connection, every store call serialized by a mutex. SQLite never sees
+concurrent use of the connection, and a read-then-write mutation (e.g.
+resize reading the descriptor before its transaction) can't race another
+worker's; mutations are rare enough that serializing them costs nothing.
+
 ### Storage engine
 
 Requirements: kilobyte-scale data, rare mutations, `fsync`-grade durability
