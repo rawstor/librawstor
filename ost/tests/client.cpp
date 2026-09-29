@@ -59,7 +59,7 @@ Client::~Client() {
 uint16_t
 Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
     uint16_t cid = _next_cid++;
-    RawstorOSTFrameAllocate frame = {
+    RawstorFrameAllocate frame = {
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
@@ -85,7 +85,7 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
 
 uint16_t Client::send_set_object(const RawstdUUID& id) {
     uint16_t cid = _next_cid++;
-    RawstorOSTFrameBasic frame = {
+    RawstorFrameBasic frame = {
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
@@ -102,7 +102,7 @@ uint16_t Client::send_set_object(const RawstdUUID& id) {
 uint16_t
 Client::send_write(uint64_t offset, const void* buf, size_t size, bool sync) {
     uint16_t cid = _next_cid++;
-    RawstorOSTFrameIO frame = {
+    RawstorFrameIO frame = {
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
@@ -123,7 +123,7 @@ Client::send_write(uint64_t offset, const void* buf, size_t size, bool sync) {
 
 uint16_t Client::send_read(uint64_t offset, uint32_t size) {
     uint16_t cid = _next_cid++;
-    RawstorOSTFrameIO frame = {
+    RawstorFrameIO frame = {
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
@@ -138,7 +138,7 @@ uint16_t Client::send_read(uint64_t offset, uint32_t size) {
 
 uint16_t Client::send_discard(uint64_t offset, uint32_t size) {
     uint16_t cid = _next_cid++;
-    RawstorOSTFrameIO frame = {
+    RawstorFrameIO frame = {
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
@@ -158,7 +158,7 @@ uint16_t Client::send_write_zeroes(
     uint8_t flags = static_cast<uint8_t>(
         (unmap ? RAWSTOR_FLAG_UNMAP : 0) | (sync ? RAWSTOR_FLAG_SYNC : 0)
     );
-    RawstorOSTFrameIO frame = {
+    RawstorFrameIO frame = {
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
@@ -178,7 +178,7 @@ uint16_t Client::send_write_zeroes(
 
 uint16_t Client::send_list(const RawstdUUID& token, uint32_t limit) {
     uint16_t cid = _next_cid++;
-    RawstorOSTFrameList frame = {
+    RawstorFrameList frame = {
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
@@ -194,7 +194,7 @@ uint16_t Client::send_list(const RawstdUUID& token, uint32_t limit) {
 
 uint16_t Client::send_unknown_command() {
     uint16_t cid = _next_cid++;
-    RawstorOSTFrameHead head = {
+    RawstorFrameHead head = {
         .magic = RAWSTOR_MAGIC,
         .cmd = 9999,
         .cid = cid,
@@ -203,9 +203,8 @@ uint16_t Client::send_unknown_command() {
     return cid;
 }
 
-RawstorOSTFrameResponse
-Client::recv_response(void* payload, size_t payload_size) {
-    RawstorOSTFrameResponse response;
+RawstorFrameResponse Client::recv_response(void* payload, size_t payload_size) {
+    RawstorFrameResponse response;
     recv_all(_fd, &response, sizeof(response));
     if (payload_size > 0) {
         recv_all(_fd, payload, payload_size);

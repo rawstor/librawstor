@@ -98,7 +98,7 @@ in four places and spent on one addition:
 | Explicit stored map (not CRUSH-computed) | Keep | ≤ 1024 entries/TiB; placement function stays the generator |
 | Weighted rendezvous (HRW) placement | Keep | deterministic, minimal reshuffle, stateless, O(N) fine at this scale |
 | Hand-rolled packed structs, count prefixes, `format_version` | Keep | codebase idiom, no new dependency |
-| Chunk identity rides `RawstorOSTFrameBasicBody` unchanged | Keep | see *Chunk identity* |
+| Chunk identity rides `RawstorFrameBasicBody` unchanged | Keep | see *Chunk identity* |
 | Opaque stable `ost_id` (UUID), resolved via topology | Keep | required for HRW stability |
 | epoch-fence (client cache vs per-chunk hard gate) | Keep, **collapsed + renamed** | one counter `map_epoch` per object; the per-slot fence is a stored *watermark* of it, not a second counter; the mirroring per-copy `mirror_epoch` (already shipped) provably cannot be merged in — see *epoch-fence* |
 | Shard by `id`; primary + replicated log per shard; reads from any replica | **Replaced in v1: single MDS instance** | witness availability does not require MDS replication (a dead witness = one lost vote); the map is rebuildable by scan; replication is v2, the epoch/CAS model below is compatible with primary+log |
@@ -114,10 +114,10 @@ A logical chunk has `width` slots (`slot_index` 0..width-1); see *Redundancy*.
 `version` is a UUID (`snapshot_id`, client-generated like every other id --
 never a monotonic counter), so it no longer fits the plain `uint64_t val`
 field the id/chunk_offset-only commands (META, OBJ_RESIZE,
-OBJ_REMOVE) still share via `RawstorOSTFrameBasicBody`:
+OBJ_REMOVE) still share via `RawstorFrameBasicBody`:
 
 ```c
-struct RawstorOSTFrameBasicBody {
+struct RawstorFrameBasicBody {
     uint8_t  obj_id[16];   // = id
     uint64_t offset;       // = chunk_offset (logical_index * chunk_size)
     uint64_t val;          // no version component -- these commands never bind one
@@ -126,7 +126,7 @@ struct RawstorOSTFrameBasicBody {
 
 Every command that *does* carry a `version` (SET_OBJECT, RELEASE,
 OBJ_OPEN, SNAPSHOT, OBJ_SNAP_REMOVE) instead rides its own
-`RawstorOSTFrameSnapBody { obj_id[16]; offset; snapshot_id[16]; }`, with
+`RawstorFrameSnapBody { obj_id[16]; offset; snapshot_id[16]; }`, with
 `snapshot_id` nil for "live" -- RELEASE removes the live version this way,
 non-nil the same command instead removes that one snapshot (the former
 separate SNAP_REMOVE command, retired: protocol.h's own doc comment).
@@ -158,7 +158,7 @@ its naming forbids `:`.)
 
 Mirroring (implemented) already stores a per-copy consistency tuple on every
 backend (`.spec` / LVM tags / ZFS user properties) and moves it over the wire
-as `RawstorOSTFrameMetaBody { size, epoch, sync_id, sync_id_history[4],
+as `RawstorFrameMetaBody { size, epoch, sync_id, sync_id_history[4],
 state }`. `chunk_meta` **extends** that record with placement identity instead
 of inventing a second one:
 
@@ -169,7 +169,7 @@ chunk_meta {
   // stored here as of the self-describing rename (v1, implemented):
   // obj_id already *is* id (see above), logical_index is
   // chunk_offset / chunk_size, and chunk_offset already rides the wire
-  // unconditionally (RawstorOSTFrameBasicBody.offset above / its own
+  // unconditionally (RawstorFrameBasicBody.offset above / its own
   // dedicated field on ALLOCATE) -- only chunk_size is still worth
   // storing here (needed to invert chunk_offset back into logical_index
   // without a separate lookup).
@@ -531,7 +531,7 @@ reconstruct scan (below).
   offset segment is mandatory once a snapshot follows it,
   docs/concepts.md's own "Chunk offset"), `snapshot_id` a UUID
   string; the wire carries it in SET_OBJECT's/OBJ_OPEN's own
-  `snapshot_id[16]` field (`RawstorOSTFrameSnapPayload`) -- META never carried
+  `snapshot_id[16]` field (`RawstorFrameSnapPayload`) -- META never carried
   a version at all, it only ever answers about the live object. Opening a
   snapshot **bypasses the mirror state machine
   entirely** — no metadata compare, no quorum, no barriers, no resync, no

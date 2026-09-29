@@ -29,11 +29,16 @@ extern "C" {
  *   0x40..0x5f  object    -- MDS
  *
  * A server answers -ENOSYS to any opcode outside its role. SET_SYNC_STATE
- * (11) and META (12) predate this grouping and keep the values they were
+ * (0x0b) and META (0x0c) predate this grouping and keep the values they were
  * released with instead of moving to their canonical 0x21/0x20 slots --
  * they already cover the "shared metadata" role those slots were reserved
  * for, so 0x20/0x21 stay unused rather than aliasing a second command onto
  * the same purpose.
+ *
+ * Every wire struct is named after the protocol, not a server role:
+ * RawstorFrame* for frames and payloads any role may use, and
+ * RawstorFrameObj* for the payloads of the object (RAWSTOR_CMD_OBJ_*)
+ * commands.
  */
 #define RAWSTOR_CMD_SET_OBJECT 0x00
 #define RAWSTOR_CMD_READ 0x01
@@ -43,7 +48,7 @@ extern "C" {
 /*
  * Removes an object/chunk -- or, if `snapshot_id` is non-nil, one previously
  * snapshotted version of it instead (nil-means-live, same convention as
- * SET_OBJECT/OBJ_OPEN) -- rides RawstorOSTFrameBasicPayload.
+ * SET_OBJECT/OBJ_OPEN) -- rides RawstorFrameBasicPayload.
  */
 #define RAWSTOR_CMD_RELEASE 0x05
 #define RAWSTOR_CMD_LIST 0x06
@@ -54,7 +59,7 @@ extern "C" {
 #define RAWSTOR_CMD_META 0x0c
 /*
  * Native CoW snapshot of one stored object version (docs/mds.md,
- * "Snapshots"): rides RawstorOSTFrameBasicPayload, snapshot_id is the
+ * "Snapshots"): rides RawstorFrameBasicPayload, snapshot_id is the
  * caller's own already-generated version id (like every object id,
  * client-generated -- never nil, nil is reserved for the live version).
  * -ENOTSUP on backends without CoW (file://, classic LVM).
@@ -64,7 +69,7 @@ extern "C" {
 /*
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/open/
  * resize/remove a whole, possibly multi-chunk mds:// object. OBJ_OPEN,
- * OBJ_RESIZE and OBJ_REMOVE all ride RawstorOSTFrameBasicPayload
+ * OBJ_RESIZE and OBJ_REMOVE all ride RawstorFrameBasicPayload
  * (object_id = id; val = the new size for resize, unused for open/
  * remove; snapshot_id = the bound version for open, nil = live, unused
  * for resize/remove).
@@ -77,28 +82,28 @@ extern "C" {
  * Object snapshots (docs/mds.md, "Snapshots"): the client generates
  * snapshot_id itself, like every object id, before taking any per-chunk CoW
  * copy -- COMMIT registers exactly who ends up holding them once every
- * reachable chunk has one (rides RawstorObjectSnapCommitPayload). REMOVE
+ * reachable chunk has one (rides RawstorFrameObjSnapCommitPayload). REMOVE
  * unregisters first (no new readers) and returns the member set for the
- * client's fan-out destroy (rides RawstorOSTFrameBasicPayload: object_id =
+ * client's fan-out destroy (rides RawstorFrameBasicPayload: object_id =
  * id, snapshot_id = the version to remove).
  */
 #define RAWSTOR_CMD_OBJ_SNAP_COMMIT 0x45
 #define RAWSTOR_CMD_OBJ_SNAP_REMOVE 0x46
 
-typedef uint16_t RawstorOSTCommandType;
+typedef uint16_t RawstorCommandType;
 
 // Wire representation of enum RawstorObjectSyncStateValue
 // (<rawstor/target.h>, values RAWSTOR_OBJECT_SYNC_STATE_*) -- a fixed-width
 // typedef rather than the enum itself, same reasoning as
-// RawstorOSTCommandType above: an enum's underlying type isn't guaranteed
+// RawstorCommandType above: an enum's underlying type isn't guaranteed
 // portable across compilers, which a RAWSTOR_PACKED wire struct can't risk.
 // uint8_t is plenty for a 3-value state (same size class as
-// RawstorOSTFrameIOPayload::flags below).
-typedef uint8_t RawstorOSTSyncStateType;
+// RawstorFrameIOPayload::flags below).
+typedef uint8_t RawstorSyncStateType;
 
-struct RawstorOSTFrameHead {
+struct RawstorFrameHead {
     uint32_t magic;
-    RawstorOSTCommandType cmd;
+    RawstorCommandType cmd;
     uint16_t cid;
 } RAWSTOR_PACKED;
 
@@ -127,16 +132,16 @@ struct RawstorOSTFrameHead {
  * one C++-side request path (Backend::_basic_request(), ost_backend.cpp)
  * instead of two nearly identical ones.
  */
-struct RawstorOSTFrameBasicPayload {
+struct RawstorFrameBasicPayload {
     uint8_t object_id[16];
     uint64_t offset;
     uint8_t snapshot_id[16];
     uint64_t val;
 } RAWSTOR_PACKED;
 
-struct RawstorOSTFrameBasic {
-    struct RawstorOSTFrameHead head;
-    struct RawstorOSTFrameBasicPayload payload;
+struct RawstorFrameBasic {
+    struct RawstorFrameHead head;
+    struct RawstorFrameBasicPayload payload;
 } RAWSTOR_PACKED;
 
 /*
@@ -145,22 +150,22 @@ struct RawstorOSTFrameBasic {
  * page (rawstor::Backend::list_chunks()'s own contract, src/backend.hpp:
  * one page entry is an id plus every offset it has, never split across
  * pages), so resuming only ever needs to name an id, unlike
- * RawstorOSTFrameBasicPayload's own offset/snapshot_id fields, which
+ * RawstorFrameBasicPayload's own offset/snapshot_id fields, which
  * LIST has no use for. This is why LIST gets its own dedicated request
  * payload rather than reusing that one; its own response shape
  * (BackendOpBasic's plain array-of-T, ost_backend.cpp) doesn't fit LIST's
- * own resume-cursor-as-last-entry convention either (RawstorOSTFrameList
+ * own resume-cursor-as-last-entry convention either (RawstorFrameList
  * Entry's own doc comment below). A nil token_id means "from the start",
  * matching a nil RawstdUUID.
  */
-struct RawstorOSTFrameListPayload {
+struct RawstorFrameListPayload {
     uint8_t token_id[16];
     uint32_t limit;
 } RAWSTOR_PACKED;
 
-struct RawstorOSTFrameList {
-    struct RawstorOSTFrameHead head;
-    struct RawstorOSTFrameListPayload payload;
+struct RawstorFrameList {
+    struct RawstorFrameHead head;
+    struct RawstorFrameListPayload payload;
 } RAWSTOR_PACKED;
 
 /*
@@ -170,7 +175,7 @@ struct RawstorOSTFrameList {
  * groups back into one rawstor::ChunkGroup (src/backend.hpp) per id.
  * Only live objects are listed. The response body is a packed array of these
  * (body.res = count * sizeof(this)), same "array of T" shape
- * RawstorOSTFrameBasic's own response (e.g. an older LIST) used, with one
+ * RawstorFrameBasic's own response (e.g. an older LIST) used, with one
  * addition: the *last* row is always the resume cursor for the next page
  * (a nil id once nothing is left), never a real result -- the serving
  * rawstor-ost may itself be relaying across more than one local location,
@@ -179,7 +184,7 @@ struct RawstorOSTFrameList {
  * An empty response body (no rows at all, not even a cursor) means the
  * far end is already exhausted.
  */
-struct RawstorOSTFrameListEntry {
+struct RawstorFrameListEntry {
     uint8_t id[16];
     uint64_t chunk_offset;
 } RAWSTOR_PACKED;
@@ -191,14 +196,14 @@ struct RawstorOSTFrameListEntry {
 // every command that uses it: WRITE sets only RAWSTOR_FLAG_SYNC,
 // WRITE_ZEROES sets RAWSTOR_FLAG_SYNC and/or RAWSTOR_FLAG_UNMAP, and
 // DISCARD leaves the byte unused (0).
-struct RawstorOSTFrameIOPayload {
+struct RawstorFrameIOPayload {
     uint64_t offset;
     uint32_t len;
     uint64_t hash;
     uint8_t flags;
 } RAWSTOR_PACKED;
 
-// RawstorOSTFrameIOPayload::flags bits above: whether the affected range
+// RawstorFrameIOPayload::flags bits above: whether the affected range
 // must be durable before the response is sent (same meaning as
 // rawstor_object_pwrite()'s own `sync`; meaningful for WRITE and
 // WRITE_ZEROES), and, for WRITE_ZEROES only, whether the backend may
@@ -207,37 +212,37 @@ struct RawstorOSTFrameIOPayload {
 #define RAWSTOR_FLAG_SYNC (1u << 0)
 #define RAWSTOR_FLAG_UNMAP (1u << 1)
 
-struct RawstorOSTFrameIO {
-    struct RawstorOSTFrameHead head;
-    struct RawstorOSTFrameIOPayload payload;
+struct RawstorFrameIO {
+    struct RawstorFrameHead head;
+    struct RawstorFrameIOPayload payload;
 } RAWSTOR_PACKED;
 
 /*
  * Settable mirror consistency state only -- no size, nothing here changes
  * it. SET_SYNC_STATE's request: unlike META, it isn't wrapped in a
- * RawstorOSTFrameBasicPayload of its own, so object_id/chunk_offset here
+ * RawstorFrameBasicPayload of its own, so object_id/chunk_offset here
  * are the only way the server learns which object (and which of its
  * chunks -- docs/mds.md, "Chunk identity") this applies to.
  */
-struct RawstorOSTFrameSyncStatePayload {
+struct RawstorFrameSyncStatePayload {
     uint8_t object_id[16];
     uint64_t chunk_offset;
     uint64_t epoch;
     uint64_t sync_id;
     uint64_t sync_id_history[4];
-    RawstorOSTSyncStateType state;
+    RawstorSyncStateType state;
 } RAWSTOR_PACKED;
 
 /* SET_SYNC_STATE request */
-struct RawstorOSTFrameSyncState {
-    struct RawstorOSTFrameHead head;
-    struct RawstorOSTFrameSyncStatePayload payload;
+struct RawstorFrameSyncState {
+    struct RawstorFrameHead head;
+    struct RawstorFrameSyncStatePayload payload;
 } RAWSTOR_PACKED;
 
 /*
  * ALLOCATE's request: the object to create's size and width. Unlike
- * META's response (RawstorOSTFrameMetaPayload below), this does need
- * object_id -- it isn't wrapped in a RawstorOSTFrameBasicPayload of its
+ * META's response (RawstorFrameMetaPayload below), this does need
+ * object_id -- it isn't wrapped in a RawstorFrameBasicPayload of its
  * own, so object_id/chunk_offset here are the only way the server learns
  * which object (and which of its chunks) to create.
  *
@@ -256,7 +261,7 @@ struct RawstorOSTFrameSyncState {
  * at create time (RAWSTOR_CMD_SNAPSHOT registers one afterwards) -- see
  * RawstorObjectSpec's own doc comment in target.h.
  */
-struct RawstorOSTFrameAllocatePayload {
+struct RawstorFrameAllocatePayload {
     uint8_t object_id[16];
     uint64_t chunk_offset;
     uint64_t size;
@@ -269,47 +274,47 @@ struct RawstorOSTFrameAllocatePayload {
 } RAWSTOR_PACKED;
 
 /* ALLOCATE request */
-struct RawstorOSTFrameAllocate {
-    struct RawstorOSTFrameHead head;
-    struct RawstorOSTFrameAllocatePayload payload;
+struct RawstorFrameAllocate {
+    struct RawstorFrameHead head;
+    struct RawstorFrameAllocatePayload payload;
 } RAWSTOR_PACKED;
 
 /* response frames */
-struct RawstorOSTFrameResponseBody {
+struct RawstorFrameResponseBody {
     uint64_t hash;
     // TODO: if we send length in res - it should be the same type
     // (signed-unsigned too)
     int32_t res;
 } RAWSTOR_PACKED;
 
-struct RawstorOSTFrameResponse {
-    struct RawstorOSTFrameHead head;
-    struct RawstorOSTFrameResponseBody body;
+struct RawstorFrameResponse {
+    struct RawstorFrameHead head;
+    struct RawstorFrameResponseBody body;
 } RAWSTOR_PACKED;
 
 /*
- * Full per-copy metadata: size, chunk_shift (RawstorOSTFrameAllocate-
+ * Full per-copy metadata: size, chunk_shift (RawstorFrameAllocate-
  * Payload's own doc comment on why a shift, not the full chunk_size) and
  * the mirror consistency state (see docs/mirroring.md) -- RawstorObjectMeta
  * (target.h) is spec plus sync_state, so this is the one wire round trip
  * that reports everything a caller could want about one copy. sync_id_history
  * length must match RAWSTOR_OBJECT_SYNC_ID_HISTORY. The only per-copy
- * response payload -- SET_SYNC_STATE's request is RawstorOSTFrameSyncState-
+ * response payload -- SET_SYNC_STATE's request is RawstorFrameSyncState-
  * Payload (settable fields only, no size). No object_id: this is only
- * ever a response, correlated to its request via RawstorOSTFrameHead::cid
+ * ever a response, correlated to its request via RawstorFrameHead::cid
  * -- the caller already knows which object it asked about. Sent as a
- * RawstorOSTFrameResponse (body.res = sizeof(this), body.hash covering
+ * RawstorFrameResponse (body.res = sizeof(this), body.hash covering
  * it) immediately followed by this payload -- no combined frame struct,
  * since every actual sender/receiver already handles header and payload
  * as two separate pieces (a fixed-size header read, then a body.res-sized
  * payload read, or a two-part iovec write).
  */
-struct RawstorOSTFrameMetaPayload {
+struct RawstorFrameMetaPayload {
     uint64_t size;
     uint64_t epoch;
     uint64_t sync_id;
     uint64_t sync_id_history[4];
-    RawstorOSTSyncStateType state;
+    RawstorSyncStateType state;
     uint8_t chunk_shift;
     /*
      * Rest of the placement identity (docs/mds.md, chunk_meta): reported
@@ -323,7 +328,7 @@ struct RawstorOSTFrameMetaPayload {
 /*
  * Object (MDS) wire structs -- docs/mds.md, "Wire protocol" /
  * "MDS data model": a whole, possibly multi-chunk mds:// object. OBJ_OPEN,
- * OBJ_RESIZE and OBJ_REMOVE ride RawstorOSTFrameBasicPayload (object_id =
+ * OBJ_RESIZE and OBJ_REMOVE ride RawstorFrameBasicPayload (object_id =
  * id; val = snapshot_id for open, the new size for resize) and need no
  * struct of their own.
  */
@@ -340,7 +345,7 @@ struct RawstorOSTFrameMetaPayload {
 /* stripe_width: 1 = object-local (DRBD-like), 0 = spread (Ceph-like). */
 #define RAWSTOR_OBJ_STRIPE_ALL 0
 
-struct RawstorObjectPolicy {
+struct RawstorFrameObjPolicy {
     uint8_t redundancy; /* RAWSTOR_OBJ_REDUNDANCY_* */
     uint8_t width;      /* slots per chunk: mirror R */
     uint8_t failure_domain;
@@ -349,44 +354,44 @@ struct RawstorObjectPolicy {
     uint64_t placement_seed;
 } RAWSTOR_PACKED;
 
-struct RawstorObjectCreatePayload {
+struct RawstorFrameObjCreatePayload {
     uint8_t id[16]; /* client-generated, like every object id */
     uint64_t logical_size;
     uint64_t chunk_size; /* power of two */
-    struct RawstorObjectPolicy policy;
+    struct RawstorFrameObjPolicy policy;
 } RAWSTOR_PACKED;
 
-struct RawstorObjectCreate {
-    struct RawstorOSTFrameHead head;
-    struct RawstorObjectCreatePayload payload;
+struct RawstorFrameObjCreate {
+    struct RawstorFrameHead head;
+    struct RawstorFrameObjCreatePayload payload;
 } RAWSTOR_PACKED;
 
 /* OBJ_CREATE response payload. */
-struct RawstorObjectCreatedPayload {
+struct RawstorFrameObjCreatedPayload {
     uint64_t map_epoch;
 } RAWSTOR_PACKED;
 
 /* OBJ_RESIZE response payload. */
-struct RawstorObjectResizedPayload {
+struct RawstorFrameObjResizedPayload {
     uint64_t map_epoch;
 } RAWSTOR_PACKED;
 
 /*
  * OBJ_OPEN response payload: the descriptor followed by nchunks chunk
  * entries, each entry followed by its width slots
- * (RawstorObjectChunkEntry, then that many RawstorObjectChunkSlot
+ * (RawstorFrameObjChunkEntry, then that many RawstorFrameObjChunkSlot
  * records).
  */
-struct RawstorObjectDescriptorPayload {
+struct RawstorFrameObjDescriptorPayload {
     uint8_t id[16];
     uint64_t logical_size;
     uint64_t chunk_size;
-    struct RawstorObjectPolicy policy;
+    struct RawstorFrameObjPolicy policy;
     uint64_t map_epoch;
     uint32_t nchunks;
 } RAWSTOR_PACKED;
 
-struct RawstorObjectChunkEntry {
+struct RawstorFrameObjChunkEntry {
     uint8_t width; /* slots that follow */
 } RAWSTOR_PACKED;
 
@@ -398,7 +403,7 @@ struct RawstorObjectChunkEntry {
  * location_len is 0 when the topology no longer lists the OST (the client
  * treats such a member as unreachable).
  */
-struct RawstorObjectChunkSlot {
+struct RawstorFrameObjChunkSlot {
     uint8_t slot_index;
     uint8_t ost_id[16];
     uint16_t location_len;
@@ -412,24 +417,24 @@ struct RawstorObjectChunkSlot {
  * client's own already-generated version id (like every object id) --
  * never nil, nil is reserved for the live version.
  *
- * OBJ_SNAP_REMOVE rides RawstorOSTFrameBasicPayload (object_id = id,
+ * OBJ_SNAP_REMOVE rides RawstorFrameBasicPayload (object_id = id,
  * snapshot_id = the version to remove); its response payload is `res`
- * RawstorObjectSnapMemberPayload records: what was registered, for the
+ * RawstorFrameObjSnapMemberPayload records: what was registered, for the
  * fan-out destroy.
  */
-struct RawstorObjectSnapCommitPayload {
+struct RawstorFrameObjSnapCommitPayload {
     uint8_t id[16];
     uint8_t snapshot_id[16];
     uint32_t nmembers;
 } RAWSTOR_PACKED;
 
-struct RawstorObjectSnapMemberPayload {
+struct RawstorFrameObjSnapMemberPayload {
     uint64_t logical_index;
     uint8_t ost_id[16];
 } RAWSTOR_PACKED;
 
 /* OBJ_SNAP_COMMIT response payload. */
-struct RawstorObjectSnapCommittedPayload {
+struct RawstorFrameObjSnapCommittedPayload {
     uint64_t map_epoch;
 } RAWSTOR_PACKED;
 

@@ -145,7 +145,7 @@ public:
     // set_sync_state() must read the existing record and carry this
     // part through unchanged rather than reset it, since it never
     // receives this identity itself. chunk_size here is always the full
-    // byte value -- RawstorOSTFrameAllocatePayload's own chunk_shift is
+    // byte value -- RawstorFrameAllocatePayload's own chunk_shift is
     // only a wire-transfer encoding (its own doc comment on why), already
     // converted back to bytes before reaching this local record.
     struct ChunkIdentity {

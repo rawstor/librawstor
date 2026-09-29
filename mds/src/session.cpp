@@ -108,15 +108,15 @@ std::string ost_location(const Topology& topology, const RawstdUUID& ost_id) {
 }
 
 // Serializes an ObjectMap into an OBJ_OPEN response payload: descriptor,
-// then one RawstorObjectChunkEntry + its width RawstorObjectChunkSlot
+// then one RawstorFrameObjChunkEntry + its width RawstorFrameObjChunkSlot
 // records per chunk (docs/mds.md, "Wire protocol").
 std::vector<unsigned char>
 encode_object_map(const Topology& topology, const ObjectMap& map) {
-    RawstorObjectDescriptorPayload descriptor{};
+    RawstorFrameObjDescriptorPayload descriptor{};
     memcpy(descriptor.id, map.descriptor.id.bytes, sizeof(descriptor.id));
     descriptor.logical_size = map.descriptor.logical_size;
     descriptor.chunk_size = map.descriptor.chunk_size;
-    descriptor.policy = RawstorObjectPolicy{
+    descriptor.policy = RawstorFrameObjPolicy{
         .redundancy = RAWSTOR_OBJ_REDUNDANCY_MIRROR,
         .width = static_cast<uint8_t>(map.descriptor.policy.width),
         .failure_domain =
@@ -132,7 +132,7 @@ encode_object_map(const Topology& topology, const ObjectMap& map) {
     memcpy(data.data(), &descriptor, sizeof(descriptor));
 
     for (const std::vector<PlacementSlot>& slots : map.chunks) {
-        RawstorObjectChunkEntry entry{
+        RawstorFrameObjChunkEntry entry{
             .width = static_cast<uint8_t>(slots.size()),
         };
         size_t off = data.size();
@@ -145,7 +145,7 @@ encode_object_map(const Topology& topology, const ObjectMap& map) {
                 RAWSTD_THROW_SYSTEM_ERROR(ENAMETOOLONG);
             }
 
-            RawstorObjectChunkSlot wire_slot{};
+            RawstorFrameObjChunkSlot wire_slot{};
             wire_slot.slot_index = slot.slot_index;
             memcpy(
                 wire_slot.ost_id, slot.ost_id.bytes, sizeof(wire_slot.ost_id)
@@ -192,10 +192,10 @@ Session::~Session() {
 }
 
 rawstd::Task<void> Session::_send_response(
-    RawstorOSTCommandType type, uint16_t cid, int32_t res, const void* data,
+    RawstorCommandType type, uint16_t cid, int32_t res, const void* data,
     size_t size
 ) {
-    RawstorOSTFrameResponse response{
+    RawstorFrameResponse response{
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
@@ -225,7 +225,7 @@ rawstd::DetachedTask Session::_recv_pump(std::weak_ptr<Session> weak) {
 
     try {
         while (true) {
-            RawstorOSTFrameHead head;
+            RawstorFrameHead head;
             co_await recv_all(queue, fd, &head, sizeof(head));
             if (head.magic != RAWSTOR_MAGIC) {
                 rawstd_error("fd %d: Bad magic\n", fd);
@@ -250,9 +250,8 @@ rawstd::DetachedTask Session::_recv_pump(std::weak_ptr<Session> weak) {
     co_await server.del_session(fd);
 }
 
-rawstd::Task<void> Session::_dispatch(
-    std::weak_ptr<Session> weak, const RawstorOSTFrameHead& head
-) {
+rawstd::Task<void>
+Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
     std::shared_ptr<Session> session = weak.lock();
     if (session == nullptr) {
         co_return;
@@ -270,18 +269,18 @@ rawstd::Task<void> Session::_dispatch(
         // The mandatory handshake; MDS control connections bind no
         // object (docs/mds.md, "Wire protocol") -- just drain
         // the fixed payload and ack. SET_OBJECT rides
-        // RawstorOSTFrameBasicPayload on the wire (shared with every
+        // RawstorFrameBasicPayload on the wire (shared with every
         // other server role, protocol.h).
-        RawstorOSTFrameBasicPayload payload;
+        RawstorFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         co_await session->_send_response(head.cmd, head.cid, 0);
         break;
     }
     case RAWSTOR_CMD_OBJ_CREATE: {
-        RawstorObjectCreatePayload payload;
+        RawstorFrameObjCreatePayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
-        RawstorObjectCreatedPayload out{};
+        RawstorFrameObjCreatedPayload out{};
         try {
             PlacementPolicy policy{
                 .width = payload.policy.width,
@@ -308,7 +307,7 @@ rawstd::Task<void> Session::_dispatch(
         break;
     }
     case RAWSTOR_CMD_OBJ_OPEN: {
-        RawstorOSTFrameBasicPayload payload;
+        RawstorFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
         std::vector<unsigned char> data;
@@ -331,10 +330,10 @@ rawstd::Task<void> Session::_dispatch(
         break;
     }
     case RAWSTOR_CMD_OBJ_RESIZE: {
-        RawstorOSTFrameBasicPayload payload;
+        RawstorFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
-        RawstorObjectResizedPayload out{};
+        RawstorFrameObjResizedPayload out{};
         try {
             out.map_epoch =
                 store.resize(uuid_of(payload.object_id), payload.val);
@@ -351,7 +350,7 @@ rawstd::Task<void> Session::_dispatch(
         break;
     }
     case RAWSTOR_CMD_OBJ_REMOVE: {
-        RawstorOSTFrameBasicPayload payload;
+        RawstorFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
         try {
@@ -363,23 +362,23 @@ rawstd::Task<void> Session::_dispatch(
         break;
     }
     case RAWSTOR_CMD_OBJ_SNAP_COMMIT: {
-        RawstorObjectSnapCommitPayload payload;
+        RawstorFrameObjSnapCommitPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
-        std::vector<RawstorObjectSnapMemberPayload> wire_members(
+        std::vector<RawstorFrameObjSnapMemberPayload> wire_members(
             payload.nmembers
         );
         if (payload.nmembers > 0) {
             co_await recv_all(
                 queue, fd, wire_members.data(),
-                wire_members.size() * sizeof(RawstorObjectSnapMemberPayload)
+                wire_members.size() * sizeof(RawstorFrameObjSnapMemberPayload)
             );
         }
         int32_t res = 0;
-        RawstorObjectSnapCommittedPayload out{};
+        RawstorFrameObjSnapCommittedPayload out{};
         try {
             std::vector<SnapMember> members;
             members.reserve(wire_members.size());
-            for (const RawstorObjectSnapMemberPayload& m : wire_members) {
+            for (const RawstorFrameObjSnapMemberPayload& m : wire_members) {
                 members.push_back(
                     SnapMember{
                         .logical_index = m.logical_index,
@@ -403,7 +402,7 @@ rawstd::Task<void> Session::_dispatch(
         break;
     }
     case RAWSTOR_CMD_OBJ_SNAP_REMOVE: {
-        RawstorOSTFrameBasicPayload payload;
+        RawstorFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
         std::vector<unsigned char> data;
@@ -412,10 +411,12 @@ rawstd::Task<void> Session::_dispatch(
                 uuid_of(payload.object_id), uuid_of(payload.snapshot_id)
             );
             data.resize(
-                members.size() * sizeof(RawstorObjectSnapMemberPayload)
+                members.size() * sizeof(RawstorFrameObjSnapMemberPayload)
             );
-            RawstorObjectSnapMemberPayload* out =
-                reinterpret_cast<RawstorObjectSnapMemberPayload*>(data.data());
+            RawstorFrameObjSnapMemberPayload* out =
+                reinterpret_cast<RawstorFrameObjSnapMemberPayload*>(
+                    data.data()
+                );
             for (size_t i = 0; i < members.size(); ++i) {
                 out[i].logical_index = members[i].logical_index;
                 memcpy(

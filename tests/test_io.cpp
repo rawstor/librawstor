@@ -28,7 +28,7 @@ namespace {
 // SET_OBJECT+META step (see its own comment), for every reachable
 // member -- Chunk::create()'s own overall spec comes straight out of
 // that same answer, no separate round trip.
-const RawstorOSTFrameMetaPayload clean_meta_1mb = {
+const RawstorFrameMetaPayload clean_meta_1mb = {
     .size = 1ull << 20,
     .epoch = 0,
     .sync_id = 0,
@@ -948,20 +948,19 @@ void auto_respond_writes_then_flush_and_release(
     int32_t write_res, int32_t flush_res, int32_t release_res
 ) {
     server.read(
-        "OST frame head <<<", sizeof(RawstorOSTFrameHead),
+        "OST frame head <<<", sizeof(RawstorFrameHead),
         [&server, write_payload_size, write_res, flush_res,
          release_res](const void* buf) {
-            RawstorOSTFrameHead head =
-                *static_cast<const RawstorOSTFrameHead*>(buf);
+            RawstorFrameHead head = *static_cast<const RawstorFrameHead*>(buf);
             if (head.cmd == RAWSTOR_CMD_WRITE) {
-                size_t rest_size = sizeof(RawstorOSTFrameIO) -
-                                   sizeof(RawstorOSTFrameHead) +
+                size_t rest_size = sizeof(RawstorFrameIO) -
+                                   sizeof(RawstorFrameHead) +
                                    write_payload_size;
                 server.read(
                     "RAWSTOR_CMD_WRITE (rest) <<<", rest_size,
                     [&server, head, write_res, write_payload_size, flush_res,
                      release_res](const void*) {
-                        RawstorOSTFrameResponse response = {
+                        RawstorFrameResponse response = {
                             .head{
                                 .magic = RAWSTOR_MAGIC,
                                 .cmd = RAWSTOR_CMD_WRITE,
@@ -980,11 +979,11 @@ void auto_respond_writes_then_flush_and_release(
                 );
             } else if (head.cmd == RAWSTOR_CMD_FLUSH) {
                 size_t rest_size =
-                    sizeof(RawstorOSTFrameBasic) - sizeof(RawstorOSTFrameHead);
+                    sizeof(RawstorFrameBasic) - sizeof(RawstorFrameHead);
                 server.read(
                     "RAWSTOR_CMD_FLUSH (rest) <<<", rest_size,
                     [&server, head, flush_res, release_res](const void*) {
-                        RawstorOSTFrameResponse response = {
+                        RawstorFrameResponse response = {
                             .head{
                                 .magic = RAWSTOR_MAGIC,
                                 .cmd = RAWSTOR_CMD_FLUSH,
@@ -999,9 +998,9 @@ void auto_respond_writes_then_flush_and_release(
                         server.accept("SESSION <<< (target remove)");
                         server.read(
                             "RAWSTOR_CMD_RELEASE <<<",
-                            sizeof(RawstorOSTFrameBasic), [](const void*) {}
+                            sizeof(RawstorFrameBasic), [](const void*) {}
                         );
-                        RawstorOSTFrameResponse release_response = {
+                        RawstorFrameResponse release_response = {
                             .head{
                                 .magic = RAWSTOR_MAGIC,
                                 .cmd = RAWSTOR_CMD_RELEASE,
@@ -1078,10 +1077,10 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     // matching Session::cmd_set_object_response()/cmd_meta_response()'s
     // own wire shape.
     server.read(
-        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameBasic),
+        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameBasic),
         [](const void*) {}
     );
-    RawstorOSTFrameResponse set_object_response = {
+    RawstorFrameResponse set_object_response = {
         .head{
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_SET_OBJECT,
@@ -1094,9 +1093,9 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
         sizeof(set_object_response)
     );
     server.read(
-        "RAWSTOR_CMD_META <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
+        "RAWSTOR_CMD_META <<<", sizeof(RawstorFrameBasic), [](const void*) {}
     );
-    RawstorOSTFrameResponse meta_response = {
+    RawstorFrameResponse meta_response = {
         .head{
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_META,
@@ -1110,8 +1109,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     iovec meta_iov[2] = {
         {.iov_base = &meta_response, .iov_len = sizeof(meta_response)},
         {
-            .iov_base =
-                const_cast<RawstorOSTFrameMetaPayload*>(&clean_meta_1mb),
+            .iov_base = const_cast<RawstorFrameMetaPayload*>(&clean_meta_1mb),
             .iov_len = sizeof(clean_meta_1mb),
         },
     };
@@ -1119,14 +1117,14 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
         "RAWSTOR_CMD_META >>>", meta_iov, sizeof(meta_iov) / sizeof(meta_iov[0])
     );
     server.read(
-        "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorOSTFrameIO) + 4,
+        "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorFrameIO) + 4,
         [&server](const void* buf) {
-            uint16_t cid = static_cast<const RawstorOSTFrameIO*>(buf)->head.cid;
+            uint16_t cid = static_cast<const RawstorFrameIO*>(buf)->head.cid;
             // A well-formed response with the wrong cmd -- validate_cmd()
             // rejects it as EPROTO, a same-backend *framing* error rather
             // than a dropped connection (see this TEST's own doc comment
             // for why that distinction matters here).
-            RawstorOSTFrameResponse wrong_cmd_response = {
+            RawstorFrameResponse wrong_cmd_response = {
                 .head{
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_FLUSH,
@@ -1151,10 +1149,10 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
             server.forget("SESSION (forgotten, connection left for the OS)");
             server.accept("SESSION <<< (retry target)");
             server.read(
-                "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameBasic),
+                "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameBasic),
                 [](const void*) {}
             );
-            RawstorOSTFrameResponse retry_set_object_response = {
+            RawstorFrameResponse retry_set_object_response = {
                 .head{
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_SET_OBJECT,
@@ -1170,10 +1168,10 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
             // set_object() same as Target::open() itself, so this retry
             // target also gets a META round trip.
             server.read(
-                "RAWSTOR_CMD_META <<<", sizeof(RawstorOSTFrameBasic),
+                "RAWSTOR_CMD_META <<<", sizeof(RawstorFrameBasic),
                 [](const void*) {}
             );
-            RawstorOSTFrameResponse retry_meta_response = {
+            RawstorFrameResponse retry_meta_response = {
                 .head{
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_META,
@@ -1190,9 +1188,8 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
                 {.iov_base = &retry_meta_response,
                  .iov_len = sizeof(retry_meta_response)},
                 {
-                    .iov_base = const_cast<RawstorOSTFrameMetaPayload*>(
-                        &clean_meta_1mb
-                    ),
+                    .iov_base =
+                        const_cast<RawstorFrameMetaPayload*>(&clean_meta_1mb),
                     .iov_len = sizeof(clean_meta_1mb),
                 },
             };
@@ -1323,10 +1320,10 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
     // matching Session::cmd_set_object_response()/cmd_meta_response()'s
     // own wire shape.
     server.read(
-        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameBasic),
+        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameBasic),
         [](const void*) {}
     );
-    RawstorOSTFrameResponse set_object_response = {
+    RawstorFrameResponse set_object_response = {
         .head{
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_SET_OBJECT,
@@ -1339,9 +1336,9 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
         sizeof(set_object_response)
     );
     server.read(
-        "RAWSTOR_CMD_META <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
+        "RAWSTOR_CMD_META <<<", sizeof(RawstorFrameBasic), [](const void*) {}
     );
-    RawstorOSTFrameResponse meta_response = {
+    RawstorFrameResponse meta_response = {
         .head{
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_META,
@@ -1355,8 +1352,7 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
     iovec meta_iov[2] = {
         {.iov_base = &meta_response, .iov_len = sizeof(meta_response)},
         {
-            .iov_base =
-                const_cast<RawstorOSTFrameMetaPayload*>(&clean_meta_1mb),
+            .iov_base = const_cast<RawstorFrameMetaPayload*>(&clean_meta_1mb),
             .iov_len = sizeof(clean_meta_1mb),
         },
     };
@@ -1370,17 +1366,17 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
     auto remaining = std::make_shared<int>(kWrites);
     for (int i = 0; i < kWrites; ++i) {
         server.read(
-            "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorOSTFrameIO) + 4,
+            "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorFrameIO) + 4,
             [&server, remaining](const void*) {
                 if (--*remaining == 0) {
                     server.close("SESSION >>> (after all writes, unanswered)");
 
                     server.accept("SESSION <<< (retry target)");
                     server.read(
-                        "RAWSTOR_CMD_SET_OBJECT <<<",
-                        sizeof(RawstorOSTFrameBasic), [](const void*) {}
+                        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameBasic),
+                        [](const void*) {}
                     );
-                    RawstorOSTFrameResponse retry_set_object_response = {
+                    RawstorFrameResponse retry_set_object_response = {
                         .head{
                             .magic = RAWSTOR_MAGIC,
                             .cmd = RAWSTOR_CMD_SET_OBJECT,
@@ -1397,10 +1393,10 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
                     // + set_object() same as Target::open() itself, so
                     // this retry target also gets a META round trip.
                     server.read(
-                        "RAWSTOR_CMD_META <<<", sizeof(RawstorOSTFrameBasic),
+                        "RAWSTOR_CMD_META <<<", sizeof(RawstorFrameBasic),
                         [](const void*) {}
                     );
-                    RawstorOSTFrameResponse retry_meta_response = {
+                    RawstorFrameResponse retry_meta_response = {
                         .head{
                             .magic = RAWSTOR_MAGIC,
                             .cmd = RAWSTOR_CMD_META,
@@ -1417,7 +1413,7 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
                         {.iov_base = &retry_meta_response,
                          .iov_len = sizeof(retry_meta_response)},
                         {
-                            .iov_base = const_cast<RawstorOSTFrameMetaPayload*>(
+                            .iov_base = const_cast<RawstorFrameMetaPayload*>(
                                 &clean_meta_1mb
                             ),
                             .iov_len = sizeof(clean_meta_1mb),

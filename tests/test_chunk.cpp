@@ -308,7 +308,7 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     ASSERT_EQ(rawstd_uuid7_init(&id), 0);
     rawstd::URI location("ost://127.0.0.1:8753");
 
-    RawstorOSTFrameMetaPayload clean_meta = {
+    RawstorFrameMetaPayload clean_meta = {
         .size = 1ull << 20,
         .epoch = 0,
         .sync_id = 0,
@@ -354,27 +354,25 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     std::atomic<uint16_t> cid_a{0};
     std::atomic<uint16_t> cid_b{0};
     server.read(
-        "WRITE A head <<<", sizeof(RawstorOSTFrameHead),
+        "WRITE A head <<<", sizeof(RawstorFrameHead),
         [&cid_a](const void* buf) {
-            cid_a = static_cast<const RawstorOSTFrameHead*>(buf)->cid;
+            cid_a = static_cast<const RawstorFrameHead*>(buf)->cid;
         }
     );
     server.read(
         "WRITE A rest <<<",
-        sizeof(RawstorOSTFrameIO) - sizeof(RawstorOSTFrameHead) +
-            payload_a.size(),
+        sizeof(RawstorFrameIO) - sizeof(RawstorFrameHead) + payload_a.size(),
         [](const void*) {}
     );
     server.read(
-        "WRITE B head <<<", sizeof(RawstorOSTFrameHead),
+        "WRITE B head <<<", sizeof(RawstorFrameHead),
         [&cid_b](const void* buf) {
-            cid_b = static_cast<const RawstorOSTFrameHead*>(buf)->cid;
+            cid_b = static_cast<const RawstorFrameHead*>(buf)->cid;
         }
     );
     server.read(
         "WRITE B rest <<<",
-        sizeof(RawstorOSTFrameIO) - sizeof(RawstorOSTFrameHead) +
-            payload_b.size(),
+        sizeof(RawstorFrameIO) - sizeof(RawstorFrameHead) + payload_b.size(),
         [](const void*) {}
     );
 
@@ -383,7 +381,7 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     // Answer write B -- the one flush() was never promised to wait for --
     // before write A, forcing the exact out-of-order completion a real
     // cid-matched OST response could produce on the wire.
-    RawstorOSTFrameResponse write_b_response = {
+    RawstorFrameResponse write_b_response = {
         .head{.magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_WRITE, .cid = cid_b},
         .body = {.hash = 0, .res = static_cast<int32_t>(payload_b.size())},
     };
@@ -402,7 +400,7 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     EXPECT_FALSE(flush_task.done());
 
     wait_for_nonzero(*queue, cid_a);
-    RawstorOSTFrameResponse write_a_response = {
+    RawstorFrameResponse write_a_response = {
         .head{.magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_WRITE, .cid = cid_a},
         .body = {.hash = 0, .res = static_cast<int32_t>(payload_a.size())},
     };
@@ -419,20 +417,19 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     // (see Chunk::flush()'s own comment: it waits for the barrier first).
     std::atomic<uint16_t> cid_flush{0};
     server.read(
-        "FLUSH head <<<", sizeof(RawstorOSTFrameHead),
+        "FLUSH head <<<", sizeof(RawstorFrameHead),
         [&cid_flush](const void* buf) {
-            cid_flush = static_cast<const RawstorOSTFrameHead*>(buf)->cid;
+            cid_flush = static_cast<const RawstorFrameHead*>(buf)->cid;
         }
     );
     server.read(
-        "FLUSH rest <<<",
-        sizeof(RawstorOSTFrameBasic) - sizeof(RawstorOSTFrameHead),
+        "FLUSH rest <<<", sizeof(RawstorFrameBasic) - sizeof(RawstorFrameHead),
         [](const void*) {}
     );
 
     wait_for_nonzero(*queue, cid_flush);
 
-    RawstorOSTFrameResponse flush_response = {
+    RawstorFrameResponse flush_response = {
         .head{
             .magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_FLUSH, .cid = cid_flush
         },

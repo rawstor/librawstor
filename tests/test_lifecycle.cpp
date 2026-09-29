@@ -578,7 +578,7 @@ TEST(OstLifecycleTest, create_spec_remove) {
     std::string uuid = "00000000-0000-7000-8000-000000000003";
     std::string target = rawstd::URI(location_uri, uuid).str();
 
-    RawstorOSTFrameMetaPayload meta_body = {
+    RawstorFrameMetaPayload meta_body = {
         .size = 1ull << 20,
         .epoch = 7,
         .sync_id = 0x1122334455667788ull,
@@ -670,7 +670,7 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
     std::string location = location_uri.str();
     std::string target(65536, '\0');
 
-    RawstorOSTFrameMetaPayload meta_body = {
+    RawstorFrameMetaPayload meta_body = {
         .size = 1ull << 20,
         .epoch = 0,
         .sync_id = 0,
@@ -737,7 +737,7 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
     std::string uuid = "00000000-0000-7000-8000-000000000004";
     std::string target(65536, '\0');
 
-    RawstorOSTFrameMetaPayload meta_body = {
+    RawstorFrameMetaPayload meta_body = {
         .size = 1ull << 20,
         .epoch = 0,
         .sync_id = 0,

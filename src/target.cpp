@@ -1049,7 +1049,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
         }
     }
 
-    // sp.chunk_size backs a wire chunk_shift (RawstorOSTFrameAllocate-
+    // sp.chunk_size backs a wire chunk_shift (RawstorFrameAllocate-
     // Payload's own doc comment, protocol.h) that can only represent a
     // power of two -- checked once, here, rather than letting a
     // non-power-of-two policy silently round down (__builtin_ctzll()) at

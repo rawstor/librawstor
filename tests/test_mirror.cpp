@@ -940,7 +940,7 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         "ost://127.0.0.1:8753/00000000-0000-7000-8000-0000000000b0,"
         "ost://127.0.0.1:8754/00000000-0000-7000-8000-0000000000b0";
 
-    RawstorOSTFrameMetaPayload legacy = {
+    RawstorFrameMetaPayload legacy = {
         .size = 1ull << 20,
         .epoch = 0,
         .sync_id = 0,
@@ -1023,7 +1023,7 @@ TEST(MirrorOstTest, degrade_and_continue) {
         "ost://127.0.0.1:8753/00000000-0000-7000-8000-0000000000b1,"
         "ost://127.0.0.1:8754/00000000-0000-7000-8000-0000000000b1";
 
-    RawstorOSTFrameMetaPayload legacy = {
+    RawstorFrameMetaPayload legacy = {
         .size = 1ull << 20,
         .epoch = 0,
         .sync_id = 0,
@@ -1107,7 +1107,7 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
         "ost://127.0.0.1:8755/00000000-0000-7000-8000-0000000000b2,"
         "ost://127.0.0.1:8756/00000000-0000-7000-8000-0000000000b2";
 
-    RawstorOSTFrameMetaPayload legacy = {
+    RawstorFrameMetaPayload legacy = {
         .size = 1ull << 20,
         .epoch = 0,
         .sync_id = 0,
@@ -1174,7 +1174,7 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         "ost://127.0.0.1:8757/00000000-0000-7000-8000-0000000000b3,"
         "ost://127.0.0.1:8758/00000000-0000-7000-8000-0000000000b3";
 
-    RawstorOSTFrameMetaPayload legacy = {
+    RawstorFrameMetaPayload legacy = {
         .size = 1ull << 20,
         .epoch = 0,
         .sync_id = 0,

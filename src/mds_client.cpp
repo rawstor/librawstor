@@ -73,7 +73,7 @@ WireMap decode_object_map(const std::vector<unsigned char>& data) {
         off += size;
     };
 
-    RawstorObjectDescriptorPayload descriptor;
+    RawstorFrameObjDescriptorPayload descriptor;
     take(&descriptor, sizeof(descriptor));
 
     map.id = uuid_from_bytes(descriptor.id);
@@ -84,9 +84,9 @@ WireMap decode_object_map(const std::vector<unsigned char>& data) {
     map.chunks.resize(descriptor.nchunks);
 
     for (uint32_t i = 0; i < descriptor.nchunks; ++i) {
-        RawstorObjectChunkEntry entry;
+        RawstorFrameObjChunkEntry entry;
         take(&entry, sizeof(entry));
-        // entry.width is all this carries now (RawstorObjectChunkEntry's
+        // entry.width is all this carries now (RawstorFrameObjChunkEntry's
         // own doc comment) -- v1 never opens anything but the live view
         // per chunk, so there was never a distinct per-chunk snapshot_id to
         // decode here in the first place.
@@ -94,7 +94,7 @@ WireMap decode_object_map(const std::vector<unsigned char>& data) {
         std::vector<WireSlot>& slots = map.chunks[i];
         slots.resize(entry.width);
         for (uint8_t s = 0; s < entry.width; ++s) {
-            RawstorObjectChunkSlot wire_slot;
+            RawstorFrameObjChunkSlot wire_slot;
             take(&wire_slot, sizeof(wire_slot));
 
             slots[s].slot_index = wire_slot.slot_index;
@@ -173,10 +173,10 @@ rawstd::Task<void> Client::connect() {
     _fd = fd;
 
     // SET_OBJECT handshake: null binding (a control connection, per
-    // docs/mds.md). SET_OBJECT rides RawstorOSTFrameBasicPayload on the
+    // docs/mds.md). SET_OBJECT rides RawstorFrameBasicPayload on the
     // wire (shared with every other server role, protocol.h), even
     // though an MDS control connection never actually binds an object.
-    RawstorOSTFrameBasic request{
+    RawstorFrameBasic request{
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
@@ -189,10 +189,10 @@ rawstd::Task<void> Client::connect() {
 }
 
 rawstd::Task<std::vector<unsigned char>>
-Client::_exchange(const void* request, size_t size, RawstorOSTCommandType cmd) {
+Client::_exchange(const void* request, size_t size, RawstorCommandType cmd) {
     co_await send_all(_queue, _fd, request, size);
 
-    RawstorOSTFrameResponse response;
+    RawstorFrameResponse response;
     co_await recv_all(_queue, _fd, &response, sizeof(response));
     if (response.head.magic != RAWSTOR_MAGIC || response.head.cmd != cmd) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
@@ -210,9 +210,9 @@ Client::_exchange(const void* request, size_t size, RawstorOSTCommandType cmd) {
 
 rawstd::Task<uint64_t> Client::create(
     const RawstdUUID& id, uint64_t logical_size, uint64_t chunk_size,
-    const RawstorObjectPolicy& policy
+    const RawstorFrameObjPolicy& policy
 ) {
-    RawstorObjectCreate request{
+    RawstorFrameObjCreate request{
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
@@ -228,17 +228,17 @@ rawstd::Task<uint64_t> Client::create(
 
     std::vector<unsigned char> data =
         co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_OBJ_CREATE);
-    if (data.size() != sizeof(RawstorObjectCreatedPayload)) {
+    if (data.size() != sizeof(RawstorFrameObjCreatedPayload)) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
-    RawstorObjectCreatedPayload out;
+    RawstorFrameObjCreatedPayload out;
     memcpy(&out, data.data(), sizeof(out));
     co_return out.map_epoch;
 }
 
 rawstd::Task<WireMap>
 Client::open(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
-    RawstorOSTFrameBasic request{
+    RawstorFrameBasic request{
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
@@ -256,7 +256,7 @@ Client::open(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
 }
 
 rawstd::Task<uint64_t> Client::resize(const RawstdUUID& id, uint64_t new_size) {
-    RawstorOSTFrameBasic request{
+    RawstorFrameBasic request{
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
@@ -271,16 +271,16 @@ rawstd::Task<uint64_t> Client::resize(const RawstdUUID& id, uint64_t new_size) {
 
     std::vector<unsigned char> data =
         co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_OBJ_RESIZE);
-    if (data.size() != sizeof(RawstorObjectResizedPayload)) {
+    if (data.size() != sizeof(RawstorFrameObjResizedPayload)) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
-    RawstorObjectResizedPayload out;
+    RawstorFrameObjResizedPayload out;
     memcpy(&out, data.data(), sizeof(out));
     co_return out.map_epoch;
 }
 
 rawstd::Task<void> Client::remove(const RawstdUUID& id) {
-    RawstorOSTFrameBasic request{
+    RawstorFrameBasic request{
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
@@ -298,12 +298,12 @@ rawstd::Task<uint64_t> Client::snap_commit(
     const RawstdUUID& id, const RawstdUUID& snapshot_id,
     const std::vector<WireSnapMember>& members
 ) {
-    RawstorObjectSnapCommitPayload payload{};
+    RawstorFrameObjSnapCommitPayload payload{};
     uuid_to_bytes(id, payload.id);
     uuid_to_bytes(snapshot_id, payload.snapshot_id);
     payload.nmembers = static_cast<uint32_t>(members.size());
 
-    RawstorOSTFrameHead head{
+    RawstorFrameHead head{
         .magic = RAWSTOR_MAGIC,
         .cmd = RAWSTOR_CMD_OBJ_SNAP_COMMIT,
         .cid = _cid_counter++,
@@ -313,7 +313,7 @@ rawstd::Task<uint64_t> Client::snap_commit(
     memcpy(request.data(), &head, sizeof(head));
     memcpy(request.data() + sizeof(head), &payload, sizeof(payload));
     for (const WireSnapMember& m : members) {
-        RawstorObjectSnapMemberPayload wire_member{};
+        RawstorFrameObjSnapMemberPayload wire_member{};
         wire_member.logical_index = m.logical_index;
         uuid_to_bytes(m.ost_id, wire_member.ost_id);
         size_t off = request.size();
@@ -324,17 +324,17 @@ rawstd::Task<uint64_t> Client::snap_commit(
     std::vector<unsigned char> data = co_await _exchange(
         request.data(), request.size(), RAWSTOR_CMD_OBJ_SNAP_COMMIT
     );
-    if (data.size() != sizeof(RawstorObjectSnapCommittedPayload)) {
+    if (data.size() != sizeof(RawstorFrameObjSnapCommittedPayload)) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
-    RawstorObjectSnapCommittedPayload out;
+    RawstorFrameObjSnapCommittedPayload out;
     memcpy(&out, data.data(), sizeof(out));
     co_return out.map_epoch;
 }
 
 rawstd::Task<std::vector<WireSnapMember>>
 Client::snap_remove(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
-    RawstorOSTFrameBasic request{
+    RawstorFrameBasic request{
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
@@ -349,13 +349,13 @@ Client::snap_remove(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
     std::vector<unsigned char> data = co_await _exchange(
         &request, sizeof(request), RAWSTOR_CMD_OBJ_SNAP_REMOVE
     );
-    if (data.size() % sizeof(RawstorObjectSnapMemberPayload) != 0) {
+    if (data.size() % sizeof(RawstorFrameObjSnapMemberPayload) != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
-    size_t n = data.size() / sizeof(RawstorObjectSnapMemberPayload);
+    size_t n = data.size() / sizeof(RawstorFrameObjSnapMemberPayload);
     std::vector<WireSnapMember> members(n);
     for (size_t i = 0; i < n; ++i) {
-        RawstorObjectSnapMemberPayload wire_member;
+        RawstorFrameObjSnapMemberPayload wire_member;
         memcpy(
             &wire_member, data.data() + i * sizeof(wire_member),
             sizeof(wire_member)

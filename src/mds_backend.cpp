@@ -26,8 +26,8 @@ using rawstor::mds::WireSlot;
 namespace mds = rawstor::mds;
 
 /* The wire policy from spec fields; zeros are the documented defaults. */
-RawstorObjectPolicy policy_of(const RawstorObjectSpec& sp) {
-    RawstorObjectPolicy ret{};
+RawstorFrameObjPolicy policy_of(const RawstorObjectSpec& sp) {
+    RawstorFrameObjPolicy ret{};
     ret.redundancy = RAWSTOR_OBJ_REDUNDANCY_MIRROR;
     ret.width = sp.width != 0 ? sp.width : 1;
     ret.failure_domain =
@@ -260,7 +260,7 @@ rawstd::Task<void> Backend::create(
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    RawstorObjectPolicy policy = policy_of(sp);
+    RawstorFrameObjPolicy policy = policy_of(sp);
 
     co_await _client.create(id, sp.size, sp.chunk_size, policy);
 

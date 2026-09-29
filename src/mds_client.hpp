@@ -27,7 +27,7 @@ struct WireMap {
     RawstdUUID id;
     uint64_t logical_size;
     uint64_t chunk_size;
-    RawstorObjectPolicy policy;
+    RawstorFrameObjPolicy policy;
     uint64_t map_epoch;
     std::vector<std::vector<WireSlot>> chunks;
 };
@@ -52,7 +52,7 @@ private:
     uint16_t _cid_counter;
 
     rawstd::Task<std::vector<unsigned char>>
-    _exchange(const void* request, size_t size, RawstorOSTCommandType cmd);
+    _exchange(const void* request, size_t size, RawstorCommandType cmd);
 
 public:
     Client(rawio::Queue& queue, const rawstd::URI& location);
@@ -68,7 +68,7 @@ public:
 
     rawstd::Task<uint64_t> create(
         const RawstdUUID& id, uint64_t logical_size, uint64_t chunk_size,
-        const RawstorObjectPolicy& policy
+        const RawstorFrameObjPolicy& policy
     );
 
     rawstd::Task<WireMap>

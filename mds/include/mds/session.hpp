@@ -39,10 +39,10 @@ private:
     static rawstd::DetachedTask _recv_pump(std::weak_ptr<Session> weak);
 
     static rawstd::Task<void>
-    _dispatch(std::weak_ptr<Session> weak, const RawstorOSTFrameHead& head);
+    _dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head);
 
     rawstd::Task<void> _send_response(
-        RawstorOSTCommandType type, uint16_t cid, int32_t res,
+        RawstorCommandType type, uint16_t cid, int32_t res,
         const void* data = nullptr, size_t size = 0
     );
 

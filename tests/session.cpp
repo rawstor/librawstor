@@ -25,13 +25,13 @@ Session::~Session() {
 
 void Session::cmd_allocate_request() {
     _server.read(
-        "RAWSTOR_CMD_ALLOCATE <<<", sizeof(RawstorOSTFrameAllocate),
+        "RAWSTOR_CMD_ALLOCATE <<<", sizeof(RawstorFrameAllocate),
         [](const void*) {}
     );
 }
 
 void Session::cmd_allocate_response(uint32_t magic, uint16_t cid, int32_t res) {
-    RawstorOSTFrameResponse response = {
+    RawstorFrameResponse response = {
         .head{
             .magic = magic,
             .cmd = RAWSTOR_CMD_ALLOCATE,
@@ -52,7 +52,7 @@ void Session::cmd_allocate(uint32_t magic, uint16_t cid, int32_t res) {
 
 void Session::cmd_set_object_request() {
     _server.read(
-        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameBasic),
+        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameBasic),
         [](const void*) {}
     );
 }
@@ -60,7 +60,7 @@ void Session::cmd_set_object_request() {
 void Session::cmd_set_object_response(
     uint32_t magic, uint16_t cid, int32_t res
 ) {
-    RawstorOSTFrameResponse response = {
+    RawstorFrameResponse response = {
         .head{
             .magic = magic,
             .cmd = RAWSTOR_CMD_SET_OBJECT,
@@ -81,13 +81,12 @@ void Session::cmd_set_object(uint32_t magic, uint16_t cid, int32_t res) {
 
 void Session::cmd_release_request() {
     _server.read(
-        "RAWSTOR_CMD_RELEASE <<<", sizeof(RawstorOSTFrameBasic),
-        [](const void*) {}
+        "RAWSTOR_CMD_RELEASE <<<", sizeof(RawstorFrameBasic), [](const void*) {}
     );
 }
 
 void Session::cmd_release_response(uint32_t magic, uint16_t cid, int32_t res) {
-    RawstorOSTFrameResponse response = {
+    RawstorFrameResponse response = {
         .head{
             .magic = magic,
             .cmd = RAWSTOR_CMD_RELEASE,
@@ -108,7 +107,7 @@ void Session::cmd_release(uint32_t magic, uint16_t cid, int32_t res) {
 
 void Session::cmd_location_info_request() {
     _server.read(
-        "RAWSTOR_CMD_LOCATION_INFO <<<", sizeof(RawstorOSTFrameBasic),
+        "RAWSTOR_CMD_LOCATION_INFO <<<", sizeof(RawstorFrameBasic),
         [](const void*) {}
     );
 }
@@ -116,7 +115,7 @@ void Session::cmd_location_info_request() {
 void Session::cmd_location_info_response(
     uint32_t magic, uint16_t cid, const RawstorLocationInfo& info
 ) {
-    RawstorOSTFrameResponse response = {
+    RawstorFrameResponse response = {
         .head{
             .magic = magic,
             .cmd = RAWSTOR_CMD_LOCATION_INFO,
@@ -151,14 +150,14 @@ void Session::cmd_location_info(
 
 void Session::cmd_read_request() {
     _server.read(
-        "RAWSTOR_CMD_READ <<<", sizeof(RawstorOSTFrameIO), [](const void*) {}
+        "RAWSTOR_CMD_READ <<<", sizeof(RawstorFrameIO), [](const void*) {}
     );
 }
 
 void Session::cmd_read_response(
     uint32_t magic, uint16_t cid, const void* buf, size_t size, uint64_t hash
 ) {
-    RawstorOSTFrameResponse response = {
+    RawstorFrameResponse response = {
         .head{
             .magic = magic,
             .cmd = RAWSTOR_CMD_READ,
@@ -205,7 +204,7 @@ void Session::cmd_read(
 void Session::cmd_read_error(uint32_t magic, uint16_t cid, int32_t res) {
     cmd_read_request();
 
-    RawstorOSTFrameResponse response = {
+    RawstorFrameResponse response = {
         .head{
             .magic = magic,
             .cmd = RAWSTOR_CMD_READ,
@@ -221,13 +220,13 @@ void Session::cmd_read_error(uint32_t magic, uint16_t cid, int32_t res) {
 
 void Session::cmd_write_request(size_t size) {
     _server.read(
-        "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorOSTFrameIO) + size,
+        "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorFrameIO) + size,
         [](const void*) {}
     );
 }
 
 void Session::cmd_write_response(uint32_t magic, uint16_t cid, int32_t res) {
-    RawstorOSTFrameResponse response = {
+    RawstorFrameResponse response = {
         .head{
             .magic = magic,
             .cmd = RAWSTOR_CMD_WRITE,
@@ -249,13 +248,13 @@ void Session::cmd_write(uint32_t magic, uint16_t cid, int32_t res) {
 
 void Session::cmd_meta_request() {
     _server.read(
-        "RAWSTOR_CMD_META <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
+        "RAWSTOR_CMD_META <<<", sizeof(RawstorFrameBasic), [](const void*) {}
     );
 }
 
 void Session::cmd_meta_response(
     uint32_t magic, uint16_t cid, int32_t res,
-    const RawstorOSTFrameMetaPayload& meta
+    const RawstorFrameMetaPayload& meta
 ) {
     // Unlike the no-payload commands (WRITE/DISCARD/FLUSH/SET_SYNC_STATE),
     // where body.res is a plain 0-on-success/-errno-on-failure result,
@@ -266,7 +265,7 @@ void Session::cmd_meta_response(
     // current test caller's "success") is not a valid payload size and
     // is replaced with sizeof(meta) below.
     if (res < 0) {
-        RawstorOSTFrameResponse response = {
+        RawstorFrameResponse response = {
             .head{
                 .magic = magic,
                 .cmd = RAWSTOR_CMD_META,
@@ -281,7 +280,7 @@ void Session::cmd_meta_response(
         return;
     }
 
-    RawstorOSTFrameResponse response = {
+    RawstorFrameResponse response = {
         .head{
             .magic = magic,
             .cmd = RAWSTOR_CMD_META,
@@ -298,7 +297,7 @@ void Session::cmd_meta_response(
             .iov_len = sizeof(response),
         },
         {
-            .iov_base = const_cast<RawstorOSTFrameMetaPayload*>(&meta),
+            .iov_base = const_cast<RawstorFrameMetaPayload*>(&meta),
             .iov_len = sizeof(meta),
         },
     };
@@ -307,7 +306,7 @@ void Session::cmd_meta_response(
 
 void Session::cmd_meta(
     uint32_t magic, uint16_t cid, int32_t res,
-    const RawstorOSTFrameMetaPayload& meta
+    const RawstorFrameMetaPayload& meta
 ) {
     cmd_meta_request();
     cmd_meta_response(magic, cid, res, meta);
@@ -315,7 +314,7 @@ void Session::cmd_meta(
 
 void Session::cmd_set_state_request() {
     _server.read(
-        "RAWSTOR_CMD_SET_SYNC_STATE <<<", sizeof(RawstorOSTFrameSyncState),
+        "RAWSTOR_CMD_SET_SYNC_STATE <<<", sizeof(RawstorFrameSyncState),
         [](const void*) {}
     );
 }
@@ -323,7 +322,7 @@ void Session::cmd_set_state_request() {
 void Session::cmd_set_state_response(
     uint32_t magic, uint16_t cid, int32_t res
 ) {
-    RawstorOSTFrameResponse response = {
+    RawstorFrameResponse response = {
         .head{
             .magic = magic,
             .cmd = RAWSTOR_CMD_SET_SYNC_STATE,
@@ -346,12 +345,12 @@ void Session::cmd_set_state(uint32_t magic, uint16_t cid, int32_t res) {
 
 void Session::cmd_discard_request() {
     _server.read(
-        "RAWSTOR_CMD_DISCARD <<<", sizeof(RawstorOSTFrameIO), [](const void*) {}
+        "RAWSTOR_CMD_DISCARD <<<", sizeof(RawstorFrameIO), [](const void*) {}
     );
 }
 
 void Session::cmd_discard_response(uint32_t magic, uint16_t cid, int32_t res) {
-    RawstorOSTFrameResponse response = {
+    RawstorFrameResponse response = {
         .head{
             .magic = magic,
             .cmd = RAWSTOR_CMD_DISCARD,
@@ -372,7 +371,7 @@ void Session::cmd_discard(uint32_t magic, uint16_t cid, int32_t res) {
 
 void Session::cmd_write_zeroes_request() {
     _server.read(
-        "RAWSTOR_CMD_WRITE_ZEROES <<<", sizeof(RawstorOSTFrameIO),
+        "RAWSTOR_CMD_WRITE_ZEROES <<<", sizeof(RawstorFrameIO),
         [](const void*) {}
     );
 }
@@ -380,7 +379,7 @@ void Session::cmd_write_zeroes_request() {
 void Session::cmd_write_zeroes_response(
     uint32_t magic, uint16_t cid, int32_t res
 ) {
-    RawstorOSTFrameResponse response = {
+    RawstorFrameResponse response = {
         .head{
             .magic = magic,
             .cmd = RAWSTOR_CMD_WRITE_ZEROES,
@@ -401,13 +400,12 @@ void Session::cmd_write_zeroes(uint32_t magic, uint16_t cid, int32_t res) {
 
 void Session::cmd_flush_request() {
     _server.read(
-        "RAWSTOR_CMD_FLUSH <<<", sizeof(RawstorOSTFrameBasic),
-        [](const void*) {}
+        "RAWSTOR_CMD_FLUSH <<<", sizeof(RawstorFrameBasic), [](const void*) {}
     );
 }
 
 void Session::cmd_flush_response(uint32_t magic, uint16_t cid, int32_t res) {
-    RawstorOSTFrameResponse response = {
+    RawstorFrameResponse response = {
         .head{
             .magic = magic,
             .cmd = RAWSTOR_CMD_FLUSH,

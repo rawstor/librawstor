@@ -67,7 +67,7 @@ int validate_result(size_t size, size_t result) noexcept {
 // and server have lost agreement on where in the byte stream the current
 // frame even ends -- reconnecting is what recovers alignment on the next
 // frame header, same as for a magic mismatch below.
-int validate_response(const RawstorOSTFrameResponse* response) noexcept {
+int validate_response(const RawstorFrameResponse* response) noexcept {
     assert(response != nullptr);
 
     if (response->head.magic != RAWSTOR_MAGIC) {
@@ -87,9 +87,7 @@ int validate_response(const RawstorOSTFrameResponse* response) noexcept {
     return 0;
 }
 
-int validate_cmd(
-    RawstorOSTCommandType cmd, RawstorOSTCommandType expected
-) noexcept {
+int validate_cmd(RawstorCommandType cmd, RawstorCommandType expected) noexcept {
     if (cmd == expected) {
         return 0;
     }
@@ -110,7 +108,7 @@ int validate_hash(uint64_t hash, uint64_t expected) noexcept {
     return EPROTO;
 }
 
-// RawstorOSTFrameAllocatePayload::chunk_shift's own doc comment on why a
+// RawstorFrameAllocatePayload::chunk_shift's own doc comment on why a
 // shift, not the full value -- `chunk_size` is always a power of two
 // (RawstorObjectSpec's own doc comment, target.h), 0 meaning no chunking.
 uint8_t chunk_size_to_shift(uint64_t chunk_size) noexcept {
@@ -196,7 +194,7 @@ protected:
     // keeps the Backend itself alive for as long as any BackendOp -- in
     // _ops or floating in a pending completion closure -- still needs it.
     std::shared_ptr<rawstor::ost::Backend> _backend;
-    RawstorOSTFrameResponse _response;
+    RawstorFrameResponse _response;
 
     inline void _dispatch(size_t result, int error) {
         if (_dispatched) {
@@ -290,7 +288,7 @@ public:
 
     // Returns the body size that follows this response -- 0 means none.
     virtual size_t
-    response_head_cb(const RawstorOSTFrameResponse* response, int error) = 0;
+    response_head_cb(const RawstorFrameResponse* response, int error) = 0;
 
     virtual void response_body_cb(const iovec*, unsigned int, size_t) {}
 
@@ -312,7 +310,7 @@ class BackendOpRead final : public BackendOp {
 private:
     void* _buf;
     size_t _size;
-    RawstorOSTFrameIO _request;
+    RawstorFrameIO _request;
 
     uint64_t _hash;
 
@@ -346,9 +344,8 @@ public:
 
     size_t request_size() const noexcept override { return sizeof(_request); }
 
-    size_t response_head_cb(
-        const RawstorOSTFrameResponse* response, int error
-    ) override {
+    size_t
+    response_head_cb(const RawstorFrameResponse* response, int error) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         if (!error) {
@@ -394,7 +391,7 @@ private:
     iovec* _iov;
     unsigned int _niov;
     size_t _size;
-    RawstorOSTFrameIO _request;
+    RawstorFrameIO _request;
 
     uint64_t _hash;
 
@@ -429,9 +426,8 @@ public:
 
     size_t request_size() const noexcept override { return sizeof(_request); }
 
-    size_t response_head_cb(
-        const RawstorOSTFrameResponse* response, int error
-    ) override {
+    size_t
+    response_head_cb(const RawstorFrameResponse* response, int error) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         if (!error) {
@@ -475,7 +471,7 @@ public:
 class BackendOpWrite final : public BackendOp {
 private:
     std::vector<iovec> _iov;
-    RawstorOSTFrameIO _request;
+    RawstorFrameIO _request;
     msghdr _msg;
 
 public:
@@ -525,9 +521,8 @@ public:
         return sizeof(_request) + _request.payload.len;
     }
 
-    size_t response_head_cb(
-        const RawstorOSTFrameResponse* response, int error
-    ) override {
+    size_t
+    response_head_cb(const RawstorFrameResponse* response, int error) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         if (!error) {
@@ -549,7 +544,7 @@ public:
 
 class BackendOpWriteV final : public BackendOp {
 private:
-    RawstorOSTFrameIO _request;
+    RawstorFrameIO _request;
     std::vector<iovec> _iov;
     msghdr _msg;
 
@@ -599,9 +594,8 @@ public:
         return sizeof(_request) + _request.payload.len;
     }
 
-    size_t response_head_cb(
-        const RawstorOSTFrameResponse* response, int error
-    ) override {
+    size_t
+    response_head_cb(const RawstorFrameResponse* response, int error) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         if (!error) {
@@ -622,19 +616,19 @@ public:
 };
 
 // Shared by BackendOpDiscard/BackendOpWriteZeroes below: both carry an
-// offset+len request (RawstorOSTFrameIO, same shape as BackendOpRead's,
+// offset+len request (RawstorFrameIO, same shape as BackendOpRead's,
 // minus any payload) and a response that never carries a body -- same
 // terminal shape as BackendOpWrite's own response_head_cb().
 class BackendOpNoPayloadIO : public BackendOp {
 protected:
-    RawstorOSTCommandType _cmd;
-    RawstorOSTFrameIO _request;
+    RawstorCommandType _cmd;
+    RawstorFrameIO _request;
 
 public:
     BackendOpNoPayloadIO(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
-        RawstorOSTCommandType cmd, const char* op_name, size_t size,
-        off_t offset, uint8_t flags, const rawstd::TraceEvent& trace_event
+        RawstorCommandType cmd, const char* op_name, size_t size, off_t offset,
+        uint8_t flags, const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, op_name, size, offset),
         _cmd(cmd),
@@ -657,9 +651,8 @@ public:
 
     size_t request_size() const noexcept override { return sizeof(_request); }
 
-    size_t response_head_cb(
-        const RawstorOSTFrameResponse* response, int error
-    ) override {
+    size_t
+    response_head_cb(const RawstorFrameResponse* response, int error) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         if (!error) {
@@ -709,7 +702,7 @@ public:
 
 class BackendOpFlush final : public BackendOp {
 private:
-    RawstorOSTFrameBasic _request;
+    RawstorFrameBasic _request;
 
 public:
     BackendOpFlush(
@@ -736,9 +729,8 @@ public:
 
     size_t request_size() const noexcept override { return sizeof(_request); }
 
-    size_t response_head_cb(
-        const RawstorOSTFrameResponse* response, int error
-    ) override {
+    size_t
+    response_head_cb(const RawstorFrameResponse* response, int error) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         if (!error) {
@@ -756,13 +748,13 @@ public:
     }
 };
 
-// SET_SYNC_STATE's request carries the full RawstorOSTFrameMetaPayload (not
+// SET_SYNC_STATE's request carries the full RawstorFrameMetaPayload (not
 // just object_id/offset/val like BackendOpBasic below), so it needs its own
 // request shape -- the response is otherwise the same no-payload
 // acknowledgement as BackendOpFlush above.
 class BackendOpSetState final : public BackendOp {
 private:
-    RawstorOSTFrameSyncState _request;
+    RawstorFrameSyncState _request;
 
 public:
     BackendOpSetState(
@@ -785,7 +777,7 @@ public:
                 .epoch = sync_state.epoch,
                 .sync_id = sync_state.sync_id,
                 .sync_id_history = {},
-                .state = static_cast<RawstorOSTSyncStateType>(sync_state.state),
+                .state = static_cast<RawstorSyncStateType>(sync_state.state),
             },
         }) {
         memcpy(
@@ -802,9 +794,8 @@ public:
 
     size_t request_size() const noexcept override { return sizeof(_request); }
 
-    size_t response_head_cb(
-        const RawstorOSTFrameResponse* response, int error
-    ) override {
+    size_t
+    response_head_cb(const RawstorFrameResponse* response, int error) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         if (!error) {
@@ -825,13 +816,13 @@ public:
 };
 
 // ALLOCATE's request carries the object's own size and its caller's
-// mirrors intent as a RawstorOSTFrameAllocatePayload (not just object_id/
+// mirrors intent as a RawstorFrameAllocatePayload (not just object_id/
 // offset/val like BackendOpBasic below), so it needs its own request shape
 // -- the response is otherwise the same no-payload acknowledgement as
 // BackendOpFlush above.
 class BackendOpAllocate final : public BackendOp {
 private:
-    RawstorOSTFrameAllocate _request;
+    RawstorFrameAllocate _request;
 
 public:
     BackendOpAllocate(
@@ -870,9 +861,8 @@ public:
 
     size_t request_size() const noexcept override { return sizeof(_request); }
 
-    size_t response_head_cb(
-        const RawstorOSTFrameResponse* response, int error
-    ) override {
+    size_t
+    response_head_cb(const RawstorFrameResponse* response, int error) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         if (!error) {
@@ -891,7 +881,7 @@ public:
 };
 
 // The cid-dispatched counterpart of BackendOpRead/BackendOpWrite/
-// BackendOpFlush above, for the RawstorOSTFrameBasic-shaped commands
+// BackendOpFlush above, for the RawstorFrameBasic-shaped commands
 // (remove/meta/info/set_object/set_snapshot/create_snapshot) -- these
 // carry no hash and have either no response body or a body of some
 // number of T's, per response.body.res. Routed through the same
@@ -899,20 +889,20 @@ public:
 // starts in Backend::_connect() instead of after the first request
 // round-trips. `val`/`snapshot_id` are never both meaningful for the
 // same command (protocol.h's own doc comment on
-// RawstorOSTFrameBasicPayload) but both live in this one op regardless,
+// RawstorFrameBasicPayload) but both live in this one op regardless,
 // so every such command shares one request path rather than two nearly
 // identical ones.
 template <typename T = char>
 class BackendOpBasic final : public BackendOp {
 private:
-    RawstorOSTCommandType _cmd;
-    RawstorOSTFrameBasic _request;
+    RawstorCommandType _cmd;
+    RawstorFrameBasic _request;
     std::vector<T> _response_data;
 
 public:
     BackendOpBasic(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
-        RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
+        RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
         uint64_t offset, uint64_t val, const RawstdUUID& snapshot_id,
         const rawstd::TraceEvent& trace_event
     ) :
@@ -946,9 +936,8 @@ public:
 
     size_t request_size() const noexcept override { return sizeof(_request); }
 
-    size_t response_head_cb(
-        const RawstorOSTFrameResponse* response, int error
-    ) override {
+    size_t
+    response_head_cb(const RawstorFrameResponse* response, int error) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         if (!error) {
@@ -986,14 +975,14 @@ public:
     std::vector<T> take_response_data() { return std::move(_response_data); }
 };
 
-// LIST's own request/response shape (RawstorOSTFrameList/
-// RawstorOSTFrameListEntry, protocol.h's own doc comment on why it isn't
+// LIST's own request/response shape (RawstorFrameList/
+// RawstorFrameListEntry, protocol.h's own doc comment on why it isn't
 // just another BackendOpBasic<T>) -- otherwise the same terminal shape as
-// BackendOpBasic<RawstorOSTFrameListEntry> would have been.
+// BackendOpBasic<RawstorFrameListEntry> would have been.
 class BackendOpList final : public BackendOp {
 private:
-    RawstorOSTFrameList _request;
-    std::vector<RawstorOSTFrameListEntry> _response_data;
+    RawstorFrameList _request;
+    std::vector<RawstorFrameListEntry> _response_data;
 
 public:
     BackendOpList(
@@ -1024,9 +1013,8 @@ public:
 
     size_t request_size() const noexcept override { return sizeof(_request); }
 
-    size_t response_head_cb(
-        const RawstorOSTFrameResponse* response, int error
-    ) override {
+    size_t
+    response_head_cb(const RawstorFrameResponse* response, int error) override {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
 
         if (!error) {
@@ -1038,7 +1026,7 @@ public:
         }
 
         if (!error && response->body.res > 0) {
-            if (response->body.res % sizeof(RawstorOSTFrameListEntry) != 0) {
+            if (response->body.res % sizeof(RawstorFrameListEntry) != 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
             }
             return static_cast<size_t>(response->body.res);
@@ -1051,12 +1039,12 @@ public:
     void response_body_cb(
         const iovec* iov, unsigned int niov, size_t result
     ) override {
-        _response_data.resize(result / sizeof(RawstorOSTFrameListEntry));
+        _response_data.resize(result / sizeof(RawstorFrameListEntry));
         rawstd_iovec_to_buf(iov, niov, 0, _response_data.data(), result);
         _dispatch(result, 0);
     }
 
-    std::vector<RawstorOSTFrameListEntry> take_response_data() {
+    std::vector<RawstorFrameListEntry> take_response_data() {
         return std::move(_response_data);
     }
 };
@@ -1244,7 +1232,7 @@ rawstd::Task<void> Backend::_connect() {
     // reconnect (see ost/src/client.cpp's matching registration for the
     // request-reading side of the same problem).
     rawio::RecvStream stream = _queue.recv_multishot(
-        fd, 1u << 17, 64 * 16, sizeof(RawstorOSTFrameResponse), 0
+        fd, 1u << 17, 64 * 16, sizeof(RawstorFrameResponse), 0
     );
     _read_event = stream.event();
     // An exception out of either call below means the pump never got as
@@ -1325,7 +1313,7 @@ rawstd::Task<void> Backend::close() {
 
 template <typename T>
 rawstd::Task<std::vector<T>> Backend::_basic_request(
-    RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
+    RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
     uint64_t offset, uint64_t val, const RawstdUUID& snapshot_id
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", op_name);
@@ -1398,7 +1386,7 @@ rawstd::Task<void> Backend::list_chunks(
         op->request_cb(e.code().value());
     }
 
-    std::vector<RawstorOSTFrameListEntry> entries;
+    std::vector<RawstorFrameListEntry> entries;
     try {
         co_await *op;
         entries = op->take_response_data();
@@ -1419,13 +1407,13 @@ rawstd::Task<void> Backend::list_chunks(
         co_return;
     }
 
-    // Rows sharing one id (RawstorOSTFrameListEntry's own doc comment,
+    // Rows sharing one id (RawstorFrameListEntry's own doc comment,
     // protocol.h) are grouped back into one ChunkGroup here -- the far
     // end already sends every one of an id's own rows consecutively, so
     // appending to `chunks`' own last entry when its id matches is
     // enough, no map needed.
     for (size_t i = 0; i + 1 < entries.size(); ++i) {
-        const RawstorOSTFrameListEntry& entry = entries[i];
+        const RawstorFrameListEntry& entry = entries[i];
         RawstdUUID entry_id;
         memcpy(entry_id.bytes, entry.id, sizeof(entry_id.bytes));
         if (!chunks.empty() &&
@@ -1443,7 +1431,7 @@ rawstd::Task<void> Backend::list_chunks(
         co_return;
     }
 
-    const RawstorOSTFrameListEntry& token_entry = entries.back();
+    const RawstorFrameListEntry& token_entry = entries.back();
     memcpy(token.bytes, token_entry.id, sizeof(token.bytes));
 }
 
@@ -1529,11 +1517,11 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     try {
         std::vector<char> response =
             co_await _basic_request(RAWSTOR_CMD_META, "meta", id, offset, 0);
-        if (response.size() != sizeof(RawstorOSTFrameMetaPayload)) {
+        if (response.size() != sizeof(RawstorFrameMetaPayload)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
-        const RawstorOSTFrameMetaPayload& payload =
-            *static_cast<const RawstorOSTFrameMetaPayload*>(
+        const RawstorFrameMetaPayload& payload =
+            *static_cast<const RawstorFrameMetaPayload*>(
                 static_cast<const void*>(response.data())
             );
         ret.spec.size = payload.size;
@@ -1658,7 +1646,7 @@ rawstd::DetachedTask Backend::_recv_pump(
     try {
         while (true) {
             // --- read and parse this message's frame head ---
-            RawstorOSTFrameResponse response;
+            RawstorFrameResponse response;
             rawio::RecvStream::Item head_item =
                 co_await stream.next(sizeof(response));
 
