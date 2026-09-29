@@ -146,6 +146,46 @@ TEST_F(ObjectStoreTest, create_rejects_unsatisfiable_placement) {
     EXPECT_THROW(store.open(id, RawstdUUID{}), std::system_error);
 }
 
+TEST_F(ObjectStoreTest, set_topology_adds_ost) {
+    ObjectStore store = make_store();
+    store.create(make_id(), chunk_size, chunk_size, make_policy(3));
+
+    Topology topology = make_topology();
+    topology.add(make_ost("00000000-0000-7000-8000-000000000004", "host4"));
+    store.set_topology(std::move(topology));
+
+    EXPECT_EQ(store.topology()->osts().size(), 4u);
+}
+
+TEST_F(ObjectStoreTest, set_topology_refuses_dropping_ost_with_chunks) {
+    ObjectStore store = make_store();
+    // Width 3 of 3 OSTs: every OST holds a copy.
+    store.create(make_id(), chunk_size, chunk_size, make_policy(3));
+
+    Topology topology;
+    topology.add(make_ost("00000000-0000-7000-8000-000000000001", "host1"));
+    topology.add(make_ost("00000000-0000-7000-8000-000000000002", "host2"));
+
+    try {
+        store.set_topology(std::move(topology));
+        FAIL() << "expected EBUSY";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EBUSY);
+    }
+    EXPECT_EQ(store.topology()->osts().size(), 3u);
+    EXPECT_THROW(store.check_topology(Topology()), std::system_error);
+}
+
+TEST_F(ObjectStoreTest, set_topology_allows_dropping_unused_ost) {
+    ObjectStore store = make_store();
+
+    Topology topology;
+    topology.add(make_ost("00000000-0000-7000-8000-000000000001", "host1"));
+    store.set_topology(std::move(topology));
+
+    EXPECT_EQ(store.topology()->osts().size(), 1u);
+}
+
 TEST_F(ObjectStoreTest, open_rejects_unknown_id) {
     ObjectStore store = make_store();
 

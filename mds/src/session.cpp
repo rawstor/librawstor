@@ -311,7 +311,7 @@ rawstd::Task<void> Session::_dispatch(
             ObjectMap map = store.open(
                 uuid_of(payload.object_id), uuid_of(payload.snapshot_id)
             );
-            data = encode_object_map(store.topology(), map);
+            data = encode_object_map(*store.topology(), map);
         } catch (const std::system_error& e) {
             res = -e.code().value();
         }

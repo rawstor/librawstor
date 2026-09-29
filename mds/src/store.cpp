@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 
@@ -221,8 +223,9 @@ namespace rawstor {
 namespace mds {
 
 ObjectStore::ObjectStore(const std::string& path, Topology topology) :
+    _mutex(),
     _db(nullptr),
-    _topology(std::move(topology)) {
+    _topology(std::make_shared<const Topology>(std::move(topology))) {
     int res = sqlite3_open_v2(
         path.c_str(), &_db,
         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX,
@@ -280,10 +283,62 @@ ObjectDescriptor ObjectStore::_descriptor(const RawstdUUID& id) {
     return ret;
 }
 
+std::shared_ptr<const Topology> ObjectStore::topology() {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _topology;
+}
+
+void ObjectStore::check_topology(const Topology& topology) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _check_topology(topology);
+}
+
+void ObjectStore::_check_topology(const Topology& topology) {
+    Stmt select(
+        _db, "SELECT ost_id FROM chunk_map"
+             " UNION SELECT ost_id FROM snapshot_members;"
+    );
+
+    bool missing = false;
+    while (select.step()) {
+        RawstdUUID ost_id;
+        select.column_uuid(0, &ost_id);
+
+        bool found = false;
+        for (const TopologyOST& ost : topology.osts()) {
+            if (rawstd_uuid_cmp(&ost.id, &ost_id) == 0) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            RawstdUUIDString ost_id_str;
+            rawstd_uuid_to_string(&ost_id, &ost_id_str);
+            rawstd_error(
+                "OST %s still holds chunks but is missing from the "
+                "topology\n",
+                ost_id_str
+            );
+            missing = true;
+        }
+    }
+
+    if (missing) {
+        RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
+    }
+}
+
+void ObjectStore::set_topology(Topology topology) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _check_topology(topology);
+    _topology = std::make_shared<const Topology>(std::move(topology));
+}
+
 ObjectDescriptor ObjectStore::create(
     const RawstdUUID& id, uint64_t logical_size, uint64_t chunk_size,
     const PlacementPolicy& policy
 ) {
+    std::lock_guard<std::mutex> lock(_mutex);
     validate_geometry(logical_size, chunk_size);
 
     ObjectDescriptor ret{};
@@ -296,7 +351,7 @@ ObjectDescriptor ObjectStore::create(
     uint64_t nchunks = nchunks_of(logical_size, chunk_size);
 
     /* Hard-fails on an unsatisfiable topology before anything lands. */
-    place(_topology, ret.id, 0, policy);
+    place(*_topology, ret.id, 0, policy);
 
     Transaction tx(_db);
 
@@ -320,7 +375,7 @@ ObjectDescriptor ObjectStore::create(
             .step();
     }
 
-    insert_chunks(_db, _topology, ret.id, 0, nchunks, chunk_size, ret.policy);
+    insert_chunks(_db, *_topology, ret.id, 0, nchunks, chunk_size, ret.policy);
 
     tx.commit();
 
@@ -329,6 +384,7 @@ ObjectDescriptor ObjectStore::create(
 
 ObjectMap
 ObjectStore::open(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
+    std::lock_guard<std::mutex> lock(_mutex);
     if (!rawstd_uuid_is_nil(&snapshot_id)) {
         return _open_snapshot(id, snapshot_id);
     }
@@ -382,6 +438,7 @@ ObjectStore::open(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
 }
 
 uint64_t ObjectStore::resize(const RawstdUUID& id, uint64_t new_size) {
+    std::lock_guard<std::mutex> lock(_mutex);
     ObjectDescriptor descriptor = _descriptor(id);
 
     validate_geometry(new_size, descriptor.chunk_size);
@@ -411,7 +468,7 @@ uint64_t ObjectStore::resize(const RawstdUUID& id, uint64_t new_size) {
     }
 
     insert_chunks(
-        _db, _topology, id, old_chunks, new_chunks, descriptor.chunk_size,
+        _db, *_topology, id, old_chunks, new_chunks, descriptor.chunk_size,
         descriptor.policy
     );
 
@@ -421,6 +478,7 @@ uint64_t ObjectStore::resize(const RawstdUUID& id, uint64_t new_size) {
 }
 
 void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
+    std::lock_guard<std::mutex> lock(_mutex);
     struct Chunk {
         /* Scan order becomes the slot order. */
         std::vector<RawstdUUID> ost_ids;
@@ -585,6 +643,7 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
 }
 
 void ObjectStore::remove(const RawstdUUID& id) {
+    std::lock_guard<std::mutex> lock(_mutex);
     Transaction tx(_db);
 
     {
@@ -676,6 +735,7 @@ uint64_t ObjectStore::snap_commit(
     const RawstdUUID& id, const RawstdUUID& snapshot_id,
     const std::vector<SnapMember>& members
 ) {
+    std::lock_guard<std::mutex> lock(_mutex);
     ObjectDescriptor descriptor = _descriptor(id);
     uint64_t nchunks =
         nchunks_of(descriptor.logical_size, descriptor.chunk_size);
@@ -752,6 +812,7 @@ uint64_t ObjectStore::snap_commit(
 
 std::vector<SnapMember>
 ObjectStore::snap_remove(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
+    std::lock_guard<std::mutex> lock(_mutex);
     std::vector<SnapMember> ret;
 
     Transaction tx(_db);

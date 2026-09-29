@@ -17,6 +17,7 @@
 #include <iostream>
 #include <sstream>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -28,14 +29,6 @@
 #define DEFAULT_QUEUE_SIZE 4096
 
 namespace {
-
-struct sigaction sact = {};
-
-// Write end of the wake-up pipe (Server::_wake_task() reads the other
-// end) -- filled once by mds() before SIGINT/SIGTERM are registered, same
-// self-pipe shutdown pattern as rawstor-ost's own main.cpp (see there for
-// why not just EINTR).
-int wake_write_fd = -1;
 
 void usage() {
     std::cout
@@ -62,16 +55,9 @@ void usage() {
         << "  -d, --db PATH         SQLite database file (created if missing)"
         << std::endl
         << "  -t, --topology PATH   Static topology config file "
-           "(docs/mds.md)"
-        << std::endl;
-}
-
-void sact_handler(int) {
-    char byte = 0;
-    if (wake_write_fd != -1) {
-        ssize_t n = write(wake_write_fd, &byte, 1);
-        (void)n;
-    }
+           "(docs/mds.md);"
+        << std::endl
+        << "                        re-read on SIGHUP" << std::endl;
 }
 
 // Drives one async rawstor_location_*() call to completion synchronously
@@ -241,48 +227,93 @@ void reconstruct(
     rawstd_info("reconstruct: done\n");
 }
 
+// Topology reload (SIGHUP): re-reads `topology_path` and swaps it in,
+// unless it can't be parsed or drops an OST that still holds chunks
+// (ObjectStore::set_topology()) -- the current topology then stays.
+void reload_topology(
+    rawstor::mds::ObjectStore& store, const std::string& topology_path
+) {
+    try {
+        store.set_topology(rawstor::mds::Topology::parse_file(topology_path));
+        rawstd_info("Topology reloaded from %s\n", topology_path.c_str());
+    } catch (const std::exception& e) {
+        rawstd_error(
+            "Topology reload from %s failed, keeping the current one: %s\n",
+            topology_path.c_str(), e.what()
+        );
+    }
+}
+
+// SIGINT/SIGTERM/SIGHUP are blocked before the server thread starts (it
+// inherits the mask) and taken synchronously by this thread with
+// sigwait(): none of them can interrupt the server's own rawio_wait(), so
+// SIGHUP never doubles as a stop, and a reload runs as ordinary code, not
+// inside a signal handler. Stop reaches the server through its wake pipe
+// (Server::_wake_task()).
 void mds(
     unsigned int queue_size, const std::string& addr, unsigned int port,
     const std::string& db_path, const std::string& topology_path,
     bool do_reconstruct
 ) {
-    rawstor::mds::Topology topology =
-        rawstor::mds::Topology::parse_file(topology_path);
+    sigset_t signals;
+    sigemptyset(&signals);
+    sigaddset(&signals, SIGINT);
+    sigaddset(&signals, SIGTERM);
+    sigaddset(&signals, SIGHUP);
+    int res = pthread_sigmask(SIG_BLOCK, &signals, nullptr);
+    if (res != 0) {
+        throw std::system_error(
+            res, std::generic_category(), "Failed to block signals"
+        );
+    }
 
     rawstd::Pipe wake_pipe(rawstd::Pipe::Mode::NonBlocking);
-    wake_write_fd = wake_pipe.release_write();
-    int wake_read_fd = wake_pipe.release_read();
 
-    if (sigaction(SIGINT, &sact, nullptr) == -1) {
-        int errsv = errno;
-        errno = 0;
-        throw std::system_error(
-            errsv, std::generic_category(), "Failed to register SIGINT handler"
-        );
-    }
-    if (sigaction(SIGTERM, &sact, nullptr) == -1) {
-        int errsv = errno;
-        errno = 0;
-        throw std::system_error(
-            errsv, std::generic_category(), "Failed to register SIGTERM handler"
-        );
+    rawstor::mds::Server server(
+        queue_size, addr, port, db_path,
+        rawstor::mds::Topology::parse_file(topology_path), wake_pipe.read_fd()
+    );
+    // --reconstruct rebuilds the map from the topology's own OSTs, so a
+    // map referencing one no longer there is exactly what it replaces.
+    if (do_reconstruct) {
+        reconstruct(*server.store().topology(), server.store());
+    } else {
+        server.store().check_topology(*server.store().topology());
     }
 
-    try {
-        rawstor::mds::Server server(
-            queue_size, addr, port, db_path, std::move(topology), wake_read_fd
-        );
-        if (do_reconstruct) {
-            reconstruct(server.store().topology(), server.store());
+    std::exception_ptr error;
+    std::thread thread([&server, &error]() {
+        try {
+            server.loop();
+        } catch (...) {
+            error = std::current_exception();
+            // Wakes the sigwait() below: this is the only thread not
+            // blocking SIGTERM.
+            kill(getpid(), SIGTERM);
         }
-        server.loop();
-    } catch (...) {
-        close(wake_read_fd);
-        wake_write_fd = -1;
-        throw;
+    });
+
+    while (true) {
+        int sig;
+        res = sigwait(&signals, &sig);
+        if (res != 0) {
+            rawstd_error("sigwait: %s\n", strerror(res));
+            break;
+        }
+        if (sig != SIGHUP) {
+            break;
+        }
+        reload_topology(server.store(), topology_path);
     }
-    close(wake_read_fd);
-    wake_write_fd = -1;
+
+    char byte = 0;
+    ssize_t n = write(wake_pipe.write_fd(), &byte, 1);
+    (void)n;
+    thread.join();
+
+    if (error) {
+        std::rethrow_exception(error);
+    }
 }
 
 void version() {
@@ -415,9 +446,6 @@ int main(int argc, char** argv) {
     }
 
     rawstd_info("Rawstor MDS server %s\n", PACKAGE_VERSION);
-
-    sact.sa_handler = sact_handler;
-    sigemptyset(&sact.sa_mask);
 
     int exit_code = EXIT_SUCCESS;
     try {

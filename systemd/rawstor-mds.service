@@ -25,6 +25,9 @@ Environment=DB_PATH=/var/lib/rawstor-mds/mds.db
 Environment=TOPOLOGY_PATH=/etc/rawstor-mds/topology.conf
 EnvironmentFile=-/etc/rawstor-mds.conf
 ExecStart=/usr/bin/rawstor-mds --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --db=${DB_PATH} --topology=${TOPOLOGY_PATH}
+# Re-reads TOPOLOGY_PATH without a restart (SIGHUP); a topology that
+# drops an OST still holding chunks is refused and the current one kept.
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=10
 # sysexits.h codes rawstor-mds exits with when retrying won't help:

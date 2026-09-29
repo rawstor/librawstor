@@ -422,6 +422,12 @@ rawstor create -t mds://127.0.0.1:7776/018f4e2a-2000-7000-8000-000000000001 --si
 rawstor resize mds://127.0.0.1:7776/018f4e2a-2000-7000-8000-000000000001 --size=2G
 ```
 
+Add an OST: append its line to `topology.conf` and send `SIGHUP`
+(`systemctl reload rawstor-mds`). New chunks may then be placed on it;
+existing ones stay where they are. A topology that drops an OST still
+holding chunks is refused, both on reload (the current one is kept) and at
+startup.
+
 ### Packaging
 
 `rawstor-mds` ships in its own `rawstor-mds` deb/rpm package (needs

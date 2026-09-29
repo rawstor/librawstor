@@ -9,6 +9,8 @@
 #include <rawstor/target.h>
 
 #include <cstdint>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -62,7 +64,8 @@ struct SnapMember {
  *
  * Calls are synchronous: v1 MDS is a control-plane-only server and its
  * mutations are rare (create/resize/remove), so a briefly blocked event
- * loop is accepted.
+ * loop is accepted. They are also thread-safe, each one serialized
+ * against every other.
  *
  * Errors are thrown as std::system_error: EINVAL (malformed request or
  * unsatisfiable placement), ENOENT (no such object), EEXIST, EIO
@@ -70,9 +73,16 @@ struct SnapMember {
  */
 class ObjectStore final {
 private:
+    // Serializes every public call: one SQLite connection shared by every
+    // worker thread, and the topology swapped by set_topology().
+    std::mutex _mutex;
     sqlite3* _db;
-    Topology _topology;
+    // Swapped whole, never modified in place: a caller of topology()
+    // keeps using the one it got even across a concurrent
+    // set_topology().
+    std::shared_ptr<const Topology> _topology;
 
+    void _check_topology(const Topology& topology);
     ObjectDescriptor _descriptor(const RawstdUUID& id);
     ObjectMap
     _open_snapshot(const RawstdUUID& id, const RawstdUUID& snapshot_id);
@@ -86,7 +96,17 @@ public:
     ObjectStore& operator=(const ObjectStore&) = delete;
     ObjectStore& operator=(ObjectStore&&) = delete;
 
-    const Topology& topology() const noexcept { return _topology; }
+    std::shared_ptr<const Topology> topology();
+
+    /*
+     * Throws EBUSY if `topology` is missing an OST that still holds a
+     * chunk (or a snapshot member) of any stored object -- its slots
+     * would be left without an address. Every missing ost_id is logged.
+     */
+    void check_topology(const Topology& topology);
+
+    /* check_topology(), then replaces the current topology. */
+    void set_topology(Topology topology);
 
     /*
      * Places every chunk up front; the backends stay sparse. The object's
