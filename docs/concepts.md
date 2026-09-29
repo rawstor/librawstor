@@ -219,7 +219,7 @@ directly (a single entry, 0, for a plain, non-`mds://` target).
 ## Notes
 
 - When using the `file://` scheme, the path must be absolute. Relative paths are not allowed.
-- The OST protocol details, including authentication, error handling, and streaming, are defined in the [protocol specification](protocol.md).
+- The wire protocol (commands, frame layouts, error reporting) is described in the [protocol specification](protocol.md).
 - **On naming**: this document's "Location"/"Target" pair, and the
   Object/Chunk/Slot model above, could arguably be called a "topology" —
   but that word is already taken: [mds.md](mds.md) uses "topology" for a

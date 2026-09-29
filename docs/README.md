@@ -2,6 +2,6 @@
 
 - [Concepts](concepts.md) -- Location and Target: the addressing model every other doc builds on.
 - [Architecture](architecture.md) -- high-level component overview (OST, MDS, MGS, client library).
-- [Protocol](protocol.md) -- the `rawstor-ost` wire protocol design notes.
+- [Protocol](protocol.md) -- the wire protocol `rawstor-ost` and `rawstor-mds` speak: commands and frame layouts.
 - [MDS design](mds.md) -- the metadata storage target: placement, chunk allocation, snapshots.
 - [Mirroring](mirroring.md) -- N-way mirror failure model and recovery.
