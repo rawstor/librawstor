@@ -118,13 +118,14 @@ struct RawstorFrameHead {
  * non-chunked object) for META; unused (0) for LOCATION_INFO/FLUSH.
  * `snapshot_id` binds to a previously snapshotted version instead of the
  * live one, for the handful of commands that use it (SET_OBJECT, RELEASE,
- * SNAPSHOT, OBJ_OPEN -- each command's own doc comment above says which;
- * nil means "the live version" where that's a meaningful state for the
- * command, SET_OBJECT/RELEASE/OBJ_OPEN, while SNAPSHOT always carries a
- * real, non-nil version); left nil (unused) by every other command. `val`
- * is command-specific (e.g. the open flags -- RAWSTOR_READONLY,
- * <rawstor/target.h>, or 0 -- for SET_OBJECT, which a bound snapshot
- * always carries); unused (0) for RELEASE/SNAPSHOT/OBJ_OPEN. `snapshot_id` and
+ * SNAPSHOT, META, OBJ_OPEN -- each command's own doc comment above says
+ * which; nil means "the live version" where that's a meaningful state for
+ * the command, SET_OBJECT/RELEASE/META/OBJ_OPEN, while SNAPSHOT always
+ * carries a real, non-nil version); left nil (unused) by every other
+ * command. `val` is command-specific (e.g. the open flags --
+ * RAWSTOR_READONLY, <rawstor/target.h>, or 0 -- for SET_OBJECT, which a
+ * bound snapshot always carries); unused (0) for RELEASE/SNAPSHOT/META/
+ * OBJ_OPEN. `snapshot_id` and
  * `val` are otherwise never both meaningful on the same command (SET_OBJECT is
  * the one exception), but living in one struct means every command that carries
  * object_id/offset shares one wire shape and one C++-side request path

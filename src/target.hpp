@@ -75,12 +75,13 @@ struct TargetPath {
 TargetPath parse_target_path(const std::string& path);
 
 // Every location's own mirror consistency state for the chunk at `id`/
-// `offset`, queried concurrently -- a location that doesn't answer gets a
+// `offset` (of its `snapshot_id` version, when non-nil), queried
+// concurrently -- a location that doesn't answer gets a
 // zero-filled (UNREACHABLE) entry instead of failing the call (target.cpp's
 // own comment).
 rawstd::Task<std::vector<RawstorObjectMeta>> resolve_meta(
     rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
-    uint64_t offset
+    uint64_t offset, RawstdUUID snapshot_id
 );
 
 class Location;

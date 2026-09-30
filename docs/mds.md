@@ -753,8 +753,8 @@ reconstruct scan (below).
   offset segment is mandatory once a snapshot follows it,
   docs/concepts.md's own "Chunk offset"), `snapshot_id` a UUID
   string; the wire carries it in SET_OBJECT's/OBJ_OPEN's own
-  `snapshot_id[16]` field (`RawstorFrameBasicPayload`) -- META leaves it
-  nil, it only ever answers about the live object. Opening a
+  `snapshot_id[16]` field (`RawstorFrameBasicPayload`), and META answers
+  about that version's own copy the same way. Opening a
   snapshot **bypasses the mirror state machine
   entirely** — no metadata compare, no quorum, no barriers, no resync, no
   probe. That is not just an optimization: the frozen copy state is DIRTY

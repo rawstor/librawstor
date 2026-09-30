@@ -9,6 +9,7 @@
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/uri.hpp>
+#include <rawstd/uuid.h>
 
 #include <rawstor/list.h>
 #include <rawstor/location.h>
@@ -661,6 +662,57 @@ TEST(OstLifecycleTest, create_spec_remove) {
         ssize_t res = target_remove(*queue, target);
         EXPECT_EQ(res, 0);
     }
+}
+
+// A bound snapshot's META asks the far end about that version: the
+// snapshot_id rides the request's own RawstorFrameBasicPayload.
+TEST(OstLifecycleTest, meta_of_bound_snapshot_carries_snapshot_id) {
+    rawstor::tests::Server server(8755, 256);
+
+    rawstd::URI location_uri("ost://127.0.0.1:8755");
+    std::string uuid = "00000000-0000-7000-8000-000000000004";
+    std::string snap = "00000000-0000-7000-8000-000000000005";
+    std::string target =
+        rawstd::URI(rawstd::URI(location_uri, uuid), snap).str();
+
+    RawstorFrameMetaPayload meta_body = {
+        .size = 1ull << 20,
+        .epoch = 7,
+        .sync_id = 0x11ull,
+        .sync_id_history = {0, 0, 0, 0},
+        .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
+        .width = 1,
+        .member_role = RAWSTOR_MEMBER_DATA,
+    };
+
+    auto requested = std::make_shared<RawstdUUID>();
+    {
+        rawstor::tests::Session s(server);
+        server.read(
+            "RAWSTOR_CMD_META <<<", sizeof(RawstorFrameBasic),
+            [requested](const void* buf) {
+                const RawstorFrameBasic* frame =
+                    static_cast<const RawstorFrameBasic*>(buf);
+                memcpy(
+                    requested->bytes, frame->payload.snapshot_id,
+                    sizeof(requested->bytes)
+                );
+            }
+        );
+        s.cmd_meta_response(RAWSTOR_MAGIC, 0, 0, meta_body);
+    }
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorObjectMeta meta{};
+    ssize_t res = target_meta(*queue, target, &meta);
+    EXPECT_EQ(res, 0);
+    EXPECT_EQ(meta.spec.size, 1ull << 20);
+
+    RawstdUUID expected;
+    ASSERT_EQ(rawstd_uuid_from_string(&expected, snap.c_str()), 0);
+    EXPECT_EQ(rawstd_uuid_cmp(requested.get(), &expected), 0);
 }
 
 TEST(OstLifecycleTest, create_at_default_spec_remove) {

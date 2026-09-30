@@ -337,14 +337,15 @@ resize_one(rawio::Queue& queue, const rawstd::URI& target, uint64_t new_size) {
 // only ever wants its own first entry, resolve_meta() wants every one of
 // them.
 rawstd::Task<std::vector<RawstorObjectMeta>> meta_one(
-    rawio::Queue& queue, rawstd::URI location, RawstdUUID id, uint64_t offset
+    rawio::Queue& queue, rawstd::URI location, RawstdUUID id, uint64_t offset,
+    RawstdUUID snapshot_id
 ) {
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location, 1);
     std::vector<RawstorObjectMeta> ret;
     std::exception_ptr error;
     try {
-        ret = co_await slot->meta(id, offset);
+        ret = co_await slot->meta(id, offset, snapshot_id);
     } catch (...) {
         error = std::current_exception();
     }
@@ -360,15 +361,17 @@ rawstd::Task<std::vector<RawstorObjectMeta>> meta_one(
 // Slot::meta() (Backend::list_chunks()'s own doc comment). A location
 // holding no chunk of `id` at all is ENOENT here, so resolve_chunks()
 // moves on to the next one the same way it would for an unreachable one.
-rawstd::Task<std::vector<uint64_t>>
-chunks_one(rawio::Queue& queue, rawstd::URI location, RawstdUUID id) {
+rawstd::Task<std::vector<uint64_t>> chunks_one(
+    rawio::Queue& queue, rawstd::URI location, RawstdUUID id,
+    RawstdUUID snapshot_id
+) {
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location, 1);
     std::vector<rawstor::ChunkGroup> groups;
     RawstdUUID token{};
     std::exception_ptr error;
     try {
-        co_await slot->list_chunks(id, 0, groups, token);
+        co_await slot->list_chunks(id, snapshot_id, 0, groups, token);
     } catch (...) {
         error = std::current_exception();
     }
@@ -386,14 +389,15 @@ chunks_one(rawio::Queue& queue, rawstd::URI location, RawstdUUID id) {
 // one-off shape as meta_one() above, for Slot::resolve_locations()
 // instead of Slot::meta().
 rawstd::Task<std::vector<rawstd::URI>> member_locations_one(
-    rawio::Queue& queue, rawstd::URI location, RawstdUUID id, uint64_t offset
+    rawio::Queue& queue, rawstd::URI location, RawstdUUID id, uint64_t offset,
+    RawstdUUID snapshot_id
 ) {
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location, 1);
     std::vector<rawstd::URI> ret;
     std::exception_ptr error;
     try {
-        ret = co_await slot->resolve_locations(id, offset);
+        ret = co_await slot->resolve_locations(id, offset, snapshot_id);
     } catch (...) {
         error = std::current_exception();
     }
@@ -417,13 +421,13 @@ rawstd::Task<std::vector<rawstd::URI>> member_locations_one(
 // first answer.
 rawstd::Task<RawstorObjectSpec> resolve_spec(
     rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
-    uint64_t offset
+    uint64_t offset, RawstdUUID snapshot_id
 ) {
     int first_error = 0;
     for (const auto& location : locations) {
         try {
             std::vector<RawstorObjectMeta> ms =
-                co_await meta_one(queue, location, id, offset);
+                co_await meta_one(queue, location, id, offset, snapshot_id);
             RawstorObjectSpec ret = ms.front().spec;
             if (locations.size() > 1 || ret.width == 0) {
                 ret.width = static_cast<unsigned int>(locations.size());
@@ -467,12 +471,12 @@ namespace rawstor {
 // real, always non-zero value otherwise -- its own comment).
 rawstd::Task<std::vector<RawstorObjectMeta>> resolve_meta(
     rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
-    uint64_t offset
+    uint64_t offset, RawstdUUID snapshot_id
 ) {
     std::vector<rawstd::Task<std::vector<RawstorObjectMeta>>> tasks;
     tasks.reserve(locations.size());
     for (const auto& location : locations) {
-        tasks.push_back(meta_one(queue, location, id, offset));
+        tasks.push_back(meta_one(queue, location, id, offset, snapshot_id));
     }
 
     std::vector<RawstorObjectMeta> ret;
@@ -501,12 +505,13 @@ namespace {
 // same either way (this is a property of the chunk/object as a whole,
 // not of one particular copy).
 rawstd::Task<std::vector<uint64_t>> resolve_chunks(
-    rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id
+    rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
+    RawstdUUID snapshot_id
 ) {
     int first_error = 0;
     for (const auto& location : locations) {
         try {
-            co_return co_await chunks_one(queue, location, id);
+            co_return co_await chunks_one(queue, location, id, snapshot_id);
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unreachable: %s\n", e.what());
             if (first_error == 0) {
@@ -526,13 +531,13 @@ rawstd::Task<std::vector<uint64_t>> resolve_chunks(
 // chunk as a whole, not of one particular copy.
 rawstd::Task<std::vector<rawstd::URI>> resolve_member_locations(
     rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
-    uint64_t offset
+    uint64_t offset, RawstdUUID snapshot_id
 ) {
     int first_error = 0;
     for (const auto& location : locations) {
         try {
             co_return co_await member_locations_one(
-                queue, location, id, offset
+                queue, location, id, offset, snapshot_id
             );
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unreachable: %s\n", e.what());
@@ -1245,7 +1250,7 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
 
     RawstorObjectSpec ret = co_await resolve_spec(
         queue, locations_for(_uris, offsets.front(), opaque), id,
-        offsets.front()
+        offsets.front(), _snapshot_id
     );
     if (ret.chunk_size != 0 && (opaque || offsets.size() > 1)) {
         ret.size = ret.chunk_size * offsets.size();
@@ -1270,19 +1275,15 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
 // spec.width is trusted verbatim, no override: it is the width
 // Target::create() persisted on every member (the object's own policy,
 // always non-zero -- its own comment), and every chunk of one object
-// shares the same policy width by construction (docs/mds.md).
+// shares the same policy width by construction (docs/mds.md). A bound
+// snapshot reports that version's own copies (Backend::meta()'s own doc
+// comment).
 rawstd::Task<std::vector<RawstorObjectMeta>>
 Target::meta(rawio::Queue& queue, uint64_t offset) const {
-    if (!rawstd_uuid_is_nil(&_snapshot_id)) {
-        // A bound snapshot has no mirror state of its own; answering from
-        // the live chunk would misreport it.
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-
     bool opaque = is_opaque(_uris);
     RawstdUUID id = uuid_from_target(_uris.front());
     return resolve_meta(
-        queue, locations_for(_uris, offset, opaque), id, offset
+        queue, locations_for(_uris, offset, opaque), id, offset, _snapshot_id
     );
 }
 
@@ -1292,7 +1293,8 @@ Target::meta(rawio::Queue& queue, uint64_t offset) const {
 // plain, unchunked object -- either way, no backend needs asking, see
 // is_opaque()'s own doc comment) already names every one of them; an
 // opaque (mds://) target instead asks its own Backend directly
-// (resolve_chunks(), Backend::list_chunks()'s own doc comment).
+// (resolve_chunks(), Backend::list_chunks()'s own doc comment), for the
+// bound version's own chunks when there is one.
 rawstd::Task<std::vector<uint64_t>> Target::chunks(rawio::Queue& queue) const {
     if (!is_opaque(_uris)) {
         std::vector<std::vector<rawstd::URI>> groups =
@@ -1306,7 +1308,9 @@ rawstd::Task<std::vector<uint64_t>> Target::chunks(rawio::Queue& queue) const {
     }
 
     RawstdUUID id = uuid_from_target(_uris.front());
-    co_return co_await resolve_chunks(queue, locations_for(_uris, 0, true), id);
+    co_return co_await resolve_chunks(
+        queue, locations_for(_uris, 0, true), id, _snapshot_id
+    );
 }
 
 // Only ever touches the chunk at `offset` (chunk_uris_at_offset() above)
@@ -1336,7 +1340,8 @@ rawstd::Task<void> Target::set_member_sync_state(
     RawstdUUID id = uuid_from_target(_uris.front());
     std::vector<rawstd::URI> members =
         opaque ? co_await resolve_member_locations(
-                     queue, locations_for(_uris, offset, true), id, offset
+                     queue, locations_for(_uris, offset, true), id, offset,
+                     _snapshot_id
                  )
                : locations_for(_uris, offset, false);
 

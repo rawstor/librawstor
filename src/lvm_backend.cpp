@@ -187,9 +187,14 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
 }
 
 rawstd::Task<void> Backend::list_chunks(
-    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token
+    RawstdUUID id, RawstdUUID snapshot_id, unsigned int limit,
+    std::vector<ChunkGroup>& chunks, RawstdUUID& token
 ) {
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
+        // No snapshots on this backend (Backend::remove_snapshot()'s own
+        // default).
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
     co_await _cleanup_staging_lvs();
 
     // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc
@@ -666,8 +671,14 @@ rawstd::Task<std::string> Backend::_lv_tags(const std::string& path) {
     }
 }
 
-rawstd::Task<std::vector<RawstorObjectMeta>>
-Backend::meta(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
+        // No snapshots on this backend (Backend::remove_snapshot()'s own
+        // default).
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
     std::string path = _device_path(id, offset);
     std::string tags = co_await _lv_tags(path);
     std::string tag = find_tag(tags, rawstor_tag_prefix);
@@ -690,7 +701,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     // a value that could go stale if the LV were ever resized outside
     // rawstor.
     RawstorObjectMeta ret{};
-    ret.spec.size = co_await _blk_size(id, offset);
+    ret.spec.size = co_await _blk_size(id, offset, snapshot_id);
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
@@ -700,7 +711,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
 }
 
 rawstd::Task<std::vector<rawstd::URI>>
-Backend::resolve_locations(const RawstdUUID&, uint64_t) {
+Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     co_return std::vector<rawstd::URI>{location()};
 }
 

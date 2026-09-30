@@ -118,15 +118,18 @@ protected:
     // retryable EIO.
     rawstd::Task<bool> _exists(const std::string& path);
 
-    // Real, current size of the block device `id`/`offset` maps to
-    // (BLKGETSIZE64) -- shared by lvm::Backend/zfs::Backend's own meta()
+    // Real, current size of the block device `id`/`offset` (or its
+    // `snapshot_id` version, when non-nil) maps to (BLKGETSIZE64) --
+    // shared by lvm::Backend/zfs::Backend's own meta()
     // below: their own native tag/property storage never carries size
     // (see meta_encode()'s own doc comment), so this is always the
     // up-to-date source of truth for it, even if the device were ever
     // resized outside rawstor. file::Backend needs no equivalent -- its
     // own meta() already gets size straight from its data file's own
     // stat().
-    rawstd::Task<uint64_t> _blk_size(const RawstdUUID& id, uint64_t offset);
+    rawstd::Task<uint64_t> _blk_size(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    );
 
     // Upper bound on meta_encode()'s own return value, comfortably
     // covering every field at its widest (a full 16 hex digits for each

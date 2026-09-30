@@ -140,13 +140,25 @@ rawstd::Task<int> Backend::_open_snapshot(
 }
 
 rawstd::Task<void> Backend::list_chunks(
-    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token
+    RawstdUUID id, RawstdUUID snapshot_id, unsigned int limit,
+    std::vector<ChunkGroup>& chunks, RawstdUUID& token
 ) {
     // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc
     // comment): every other uuid's own zvols are skipped while grouping,
-    // and `token` plays no part.
+    // and `token` plays no part. A non-nil `snapshot_id` lists that
+    // version's own snapshot datasets ("<zvol>@s<snapshot_id>") instead of
+    // the live zvols.
     bool filtered = !rawstd_uuid_is_nil(&id);
+    bool snapshot = !rawstd_uuid_is_nil(&snapshot_id);
+    if (snapshot && !filtered) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    std::string snapshot_suffix;
+    if (snapshot) {
+        RawstdUUIDString snap_str;
+        rawstd_uuid_to_string(&snapshot_id, &snap_str);
+        snapshot_suffix = std::string("s") + snap_str;
+    }
     RawstdUUID input_token = filtered ? RawstdUUID{} : token;
     chunks.clear();
     token = {};
@@ -164,8 +176,17 @@ rawstd::Task<void> Backend::list_chunks(
     // argument is brace-initialized directly at the call site of a nested
     // coroutine that's co_await-ed from within another coroutine -- naming
     // the vector first works around it.
-    std::vector<std::string> list_argv = {"zfs",  "list", "-H",           "-o",
-                                          "name", "-r",   _parent_dataset};
+    std::vector<std::string> list_argv = {
+        "zfs",
+        "list",
+        "-H",
+        "-o",
+        "name",
+        "-t",
+        snapshot ? "snapshot" : "volume",
+        "-r",
+        _parent_dataset
+    };
     std::string output;
     try {
         output =
@@ -190,6 +211,16 @@ rawstd::Task<void> Backend::list_chunks(
         if (name.find('/') != std::string::npos) {
             continue; // Not a direct child of the parent dataset.
         }
+        size_t at = name.find('@');
+        if (snapshot) {
+            if (at == std::string::npos ||
+                name.compare(at + 1, std::string::npos, snapshot_suffix) != 0) {
+                continue;
+            }
+            name.resize(at);
+        } else if (at != std::string::npos) {
+            continue;
+        }
 
         // A UUID's own string form is always exactly 36 characters
         // (RawstdUUIDString) -- a fixed prefix, since the UUID itself
@@ -201,12 +232,8 @@ rawstd::Task<void> Backend::list_chunks(
             continue;
         }
         std::string uuid_part = name.substr(0, 36);
-        // `listsnapshots=on` interleaves each dataset's own snapshots
-        // (name "<uuid>:<offset>@<snapshot>") into this same listing --
-        // strtoull() silently stops at '@', so an unchecked parse would
-        // read "<offset>@<snapshot>" as if it were a second, spurious
-        // chunk at the same offset. Anything left over after the hex
-        // digits is rejected instead of ignored.
+        // Anything left over after the hex digits is rejected instead of
+        // silently truncated to whatever prefix strtoull() did parse.
         char* endptr = nullptr;
         errno = 0;
         uint64_t offset = strtoull(name.c_str() + 37, &endptr, 16);
@@ -410,9 +437,13 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-rawstd::Task<std::vector<RawstorObjectMeta>>
-Backend::meta(const RawstdUUID& id, uint64_t offset) {
-    std::string dataset = _dataset(id, offset);
+rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
+    // A snapshot's own dataset (`<zvol>@s<snapshot_id>`) answers the same
+    // property query, and its device the same size query, as the live
+    // zvol's.
+    std::string dataset = _dataset(id, offset, snapshot_id);
 
     std::vector<std::string> argv = {"zfs",  "get",   "-H",
                                      "-o",   "value", rawstor_property,
@@ -451,7 +482,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     // trust a value that could go stale if the zvol were ever resized
     // outside rawstor.
     RawstorObjectMeta ret{};
-    ret.spec.size = co_await _blk_size(id, offset);
+    ret.spec.size = co_await _blk_size(id, offset, snapshot_id);
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
@@ -461,7 +492,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
 }
 
 rawstd::Task<std::vector<rawstd::URI>>
-Backend::resolve_locations(const RawstdUUID&, uint64_t) {
+Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     co_return std::vector<rawstd::URI>{location()};
 }
 

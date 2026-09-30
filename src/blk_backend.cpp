@@ -194,10 +194,13 @@ rawstd::Task<void> Backend::set_snapshot(
     set_fd(fd);
 }
 
-rawstd::Task<uint64_t>
-Backend::_blk_size(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<uint64_t> Backend::_blk_size(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
 #if defined(RAWSTD_ON_LINUX)
-    int f = co_await _open_object(id, offset, 0);
+    int f = rawstd_uuid_is_nil(&snapshot_id)
+                ? co_await _open_object(id, offset, 0)
+                : co_await _open_snapshot(id, offset, snapshot_id);
 
     uint64_t size = 0;
     if (ioctl(f, BLKGETSIZE64, &size) == -1) {
@@ -212,6 +215,7 @@ Backend::_blk_size(const RawstdUUID& id, uint64_t offset) {
 #else
     (void)id;
     (void)offset;
+    (void)snapshot_id;
     RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
 #endif
 }

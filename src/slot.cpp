@@ -486,7 +486,7 @@ Slot::invalidate_backend(const std::shared_ptr<Backend>& be) {
                         // gets (see Backend::set_object()'s own doc
                         // comment on why that's two separate calls now,
                         // not one that folds meta() in on its own).
-                        co_await backend->meta(*_id, _offset);
+                        co_await backend->meta(*_id, _offset, _snapshot_id);
                     } catch (...) {
                         eptr = std::current_exception();
                     }
@@ -568,8 +568,8 @@ const rawstd::URI* Slot::location() const noexcept {
 }
 
 rawstd::Task<void> Slot::list_chunks(
-    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token
+    RawstdUUID id, RawstdUUID snapshot_id, unsigned int limit,
+    std::vector<ChunkGroup>& chunks, RawstdUUID& token
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -578,8 +578,8 @@ rawstd::Task<void> Slot::list_chunks(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::list_chunks, id, limit, chunks,
-            token
+            func_name, trace_event, &Backend::list_chunks, id, snapshot_id,
+            limit, chunks, token
         );
         _finish(t_call);
     } catch (...) {
@@ -767,7 +767,8 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // location's own answer: one entry for every backend but
     // mds::Backend, whose per-member list may lead with an unreachable
     // (zero-filled) member.
-    std::vector<RawstorObjectMeta> metas = co_await meta(id, offset);
+    std::vector<RawstorObjectMeta> metas =
+        co_await meta(id, offset, snapshot_id);
     const RawstorObjectMeta* answer = &metas.front();
     for (const RawstorObjectMeta& m : metas) {
         if (m.sync_state.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
@@ -950,8 +951,9 @@ Slot::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
     }
 }
 
-rawstd::Task<std::vector<RawstorObjectMeta>>
-Slot::meta(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<std::vector<RawstorObjectMeta>> Slot::meta(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -959,7 +961,7 @@ Slot::meta(const RawstdUUID& id, uint64_t offset) {
 
     try {
         std::vector<RawstorObjectMeta> result = co_await _with_retry(
-            func_name, trace_event, &Backend::meta, id, offset
+            func_name, trace_event, &Backend::meta, id, offset, snapshot_id
         );
         _finish(t_call);
         co_return result;
@@ -969,8 +971,9 @@ Slot::meta(const RawstdUUID& id, uint64_t offset) {
     }
 }
 
-rawstd::Task<std::vector<rawstd::URI>>
-Slot::resolve_locations(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<std::vector<rawstd::URI>> Slot::resolve_locations(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -978,7 +981,8 @@ Slot::resolve_locations(const RawstdUUID& id, uint64_t offset) {
 
     try {
         std::vector<rawstd::URI> result = co_await _with_retry(
-            func_name, trace_event, &Backend::resolve_locations, id, offset
+            func_name, trace_event, &Backend::resolve_locations, id, offset,
+            snapshot_id
         );
         _finish(t_call);
         co_return result;

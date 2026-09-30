@@ -1217,7 +1217,8 @@ rawstd::DetachedTask Client::_create_snapshot(
 }
 
 // The full per-copy mirror consistency record: size/width/chunk_size plus
-// state/epoch/sync_id, via rawstor_target_meta().
+// state/epoch/sync_id, via rawstor_target_meta() -- of the version
+// `payload.snapshot_id` names, or the live one when it's nil.
 rawstd::DetachedTask Client::_meta(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameBasicPayload payload
@@ -1230,7 +1231,10 @@ rawstd::DetachedTask Client::_meta(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
+    RawstdUUID snapshot_id;
+    memcpy(snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id));
+    std::vector<rawstd::URI> targets =
+        client->_targets(uuid, payload.offset, snapshot_id);
 
     // rawstor_target_meta() now reports one entry per URI (a URI that
     // didn't answer is zero-filled, RawstorObjectSyncStateValue's own doc

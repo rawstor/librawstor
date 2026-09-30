@@ -164,9 +164,14 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
 }
 
 rawstd::Task<void> Backend::list_chunks(
-    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token
+    RawstdUUID id, RawstdUUID snapshot_id, unsigned int limit,
+    std::vector<ChunkGroup>& chunks, RawstdUUID& token
 ) {
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
+        // No snapshots on this backend (Backend::remove_snapshot()'s own
+        // default).
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
     // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc
     // comment): only that one uuid's own offset directories get scanned
     // below, and `token` plays no part.
@@ -499,8 +504,14 @@ Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
     }
 }
 
-rawstd::Task<std::vector<RawstorObjectMeta>>
-Backend::meta(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
+        // No snapshots on this backend (Backend::remove_snapshot()'s own
+        // default).
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
@@ -551,7 +562,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
 }
 
 rawstd::Task<std::vector<rawstd::URI>>
-Backend::resolve_locations(const RawstdUUID&, uint64_t) {
+Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     co_return std::vector<rawstd::URI>{location()};
 }
 

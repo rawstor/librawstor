@@ -64,8 +64,8 @@ public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     rawstd::Task<void> list_chunks(
-        RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token
+        RawstdUUID id, RawstdUUID snapshot_id, unsigned int limit,
+        std::vector<ChunkGroup>& chunks, RawstdUUID& token
     ) override;
 
     rawstd::Task<void> create(
@@ -82,14 +82,16 @@ public:
 
     // Native per-copy mirror metadata, stored in the LV's own
     // "rawstor.meta=..." tag -- see blk::Backend::meta_encode().
-    rawstd::Task<std::vector<RawstorObjectMeta>>
-    meta(const RawstdUUID& id, uint64_t offset) override;
+    rawstd::Task<std::vector<RawstorObjectMeta>> meta(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    ) override;
 
     // Trivial (Backend::resolve_locations()'s own doc comment): this is a
     // plain, single-copy backend, already the one real member of whatever
     // offset it's asked about.
-    rawstd::Task<std::vector<rawstd::URI>>
-    resolve_locations(const RawstdUUID& id, uint64_t offset) override;
+    rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    ) override;
 
     rawstd::Task<void> set_sync_state(
         const RawstdUUID& id, uint64_t offset,

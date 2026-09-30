@@ -201,13 +201,14 @@ rawstd::Task<void> Backend::_connect() {
 }
 
 // Only the id-filtered form (Backend::list_chunks()'s own doc comment):
-// this object's own real chunk offsets, off its own WireMap. The MDS has
+// this object's own real chunk offsets -- or `snapshot_id`'s, when
+// non-nil -- off the matching WireMap. The MDS has
 // no way to enumerate every object it knows, so a nil `id` is ENOTSUP;
 // an `id` the MDS doesn't know comes back as an empty listing, same as
 // any other backend holding nothing of it.
 rawstd::Task<void> Backend::list_chunks(
-    RawstdUUID id, unsigned int, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token
+    RawstdUUID id, RawstdUUID snapshot_id, unsigned int,
+    std::vector<ChunkGroup>& chunks, RawstdUUID& token
 ) {
     if (rawstd_uuid_is_nil(&id)) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
@@ -217,7 +218,7 @@ rawstd::Task<void> Backend::list_chunks(
 
     WireMap map;
     try {
-        map = co_await _client.open(id, RawstdUUID{});
+        map = co_await _client.open(id, snapshot_id);
     } catch (const std::system_error& e) {
         if (e.code().value() != ENOENT) {
             throw;
@@ -508,24 +509,27 @@ rawstd::Task<void> Backend::_remove_snapshot(
 // Resolves `offset` to one of this object's own real chunks, then
 // queries every one of that chunk's own real member locations
 // concurrently through Target's own resolve_meta() (target.cpp): every
-// location queried, a zero-filled entry for one that doesn't answer.
+// location queried, a zero-filled entry for one that doesn't answer. A
+// non-nil `snapshot_id` resolves that version's own map and members.
 // Every location here is already a bare ost:// member, never itself
 // mds://, so there's no further flattening to do. `offset` not landing on a
 // real chunk boundary (including a WireMap whose own chunk_size is somehow 0)
 // is -ENOENT, same as a plain target's own chunk_uris_at_offset() (target.cpp)
 // finding no chunk there.
-rawstd::Task<std::vector<RawstorObjectMeta>>
-Backend::meta(const RawstdUUID& id, uint64_t offset) {
-    WireMap map = co_await _client.open(id, RawstdUUID{});
+rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
+    WireMap map = co_await _client.open(id, snapshot_id);
     uint64_t index = chunk_index_at(map, offset);
     co_return co_await resolve_meta(
-        _queue, chunk_locations(map, index), id, offset
+        _queue, chunk_locations(map, index), id, offset, snapshot_id
     );
 }
 
-rawstd::Task<std::vector<rawstd::URI>>
-Backend::resolve_locations(const RawstdUUID& id, uint64_t offset) {
-    WireMap map = co_await _client.open(id, RawstdUUID{});
+rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
+    WireMap map = co_await _client.open(id, snapshot_id);
     uint64_t index = chunk_index_at(map, offset);
     co_return chunk_locations(map, index);
 }

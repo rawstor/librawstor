@@ -63,7 +63,7 @@ keep `0x0b`/`0x0c`.
 | `0x09` | `FLUSH` | OST | Basic (unused) | — |
 | `0x0a` | `WRITE_ZEROES` | OST | IO (`flags`: `SYNC`, `UNMAP`) | — |
 | `0x0b` | `SET_SYNC_STATE` | OST | SyncState | — |
-| `0x0c` | `META` | OST | Basic (`offset` = chunk offset) | Meta |
+| `0x0c` | `META` | OST | Basic (`offset` = chunk offset, `snapshot_id`, nil = live) | Meta |
 | `0x0d` | `SNAPSHOT` | OST | Basic (`snapshot_id` = new version) | — |
 | `0x40` | `OBJ_CREATE` | MDS | ObjCreate | ObjCreated |
 | `0x41` | `OBJ_OPEN` | MDS | Basic (`snapshot_id`, nil = live) | ObjDescriptor + chunks |
@@ -119,8 +119,9 @@ follows right after.
 
 Shared by every command that only names an object: `SET_OBJECT`, `RELEASE`,
 `SNAPSHOT`, `META`, `LOCATION_INFO`, `FLUSH` and the MDS's `OBJ_OPEN`. `offset` is the chunk offset of
-the object `object_id` names (0 for a plain object); `val` is
-command-specific.
+the object `object_id` names (0 for a plain object); `snapshot_id` binds
+a version for `SET_OBJECT`, `RELEASE`, `SNAPSHOT`, `META` and `OBJ_OPEN`
+(nil = live); `val` is command-specific.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7

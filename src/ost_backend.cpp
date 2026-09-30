@@ -1340,9 +1340,16 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
 }
 
 rawstd::Task<void> Backend::list_chunks(
-    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token
+    RawstdUUID id, RawstdUUID snapshot_id, unsigned int limit,
+    std::vector<ChunkGroup>& chunks, RawstdUUID& token
 ) {
+    // LIST only ever lists live objects (RawstorFrameListEntry's own doc
+    // comment, protocol.h). A version's own chunks are only ever asked
+    // for of an mds:// target, whose own map answers it instead.
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
+
     RawstdUUID input_token = token;
     chunks.clear();
     token = {};
@@ -1511,14 +1518,16 @@ rawstd::Task<void> Backend::create_snapshot(
     co_return;
 }
 
-rawstd::Task<std::vector<RawstorObjectMeta>>
-Backend::meta(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
     rawstd_info("%s: Reading object metadata...\n", str().c_str());
 
     RawstorObjectMeta ret = {};
     try {
-        std::vector<char> response =
-            co_await _basic_request(RAWSTOR_CMD_META, "meta", id, offset, 0);
+        std::vector<char> response = co_await _basic_request(
+            RAWSTOR_CMD_META, "meta", id, offset, 0, snapshot_id
+        );
         if (response.size() != sizeof(RawstorFrameMetaPayload)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
@@ -1554,7 +1563,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
 }
 
 rawstd::Task<std::vector<rawstd::URI>>
-Backend::resolve_locations(const RawstdUUID&, uint64_t) {
+Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     co_return std::vector<rawstd::URI>{location()};
 }
 
