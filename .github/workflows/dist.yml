@@ -367,8 +367,14 @@ jobs:
       run: |
         sudo apt install -y ./librawstor.deb/rawstor-mds_*.deb
         grep -q '^# 018f4e2a' /etc/rawstor-mds/topology.conf
+        sudo systemctl start rawstor-mds.service
+        systemctl is-active rawstor-mds.service
         echo "018f4e2a-1111-7000-8000-000000000001 ost://127.0.0.1:7777 100 host1/rack1/row1/dc1" | sudo tee /etc/rawstor-mds/topology.conf
-        sudo systemctl restart rawstor-mds.service
+        # reload only sends SIGHUP; give the MDS a moment to swap the
+        # topology in, then confirm it did.
+        sudo systemctl reload rawstor-mds.service
+        sleep 2
+        sudo journalctl -u rawstor-mds.service --no-pager | grep 'Topology reloaded from /etc/rawstor-mds/topology.conf'
     - name: test-rawstor-mds
       # rawstor-ost.service (started above) is still running -- reuse it
       # as the mds:// volume's one chunk member.
