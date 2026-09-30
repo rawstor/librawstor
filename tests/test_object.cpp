@@ -595,13 +595,13 @@ TEST(ObjectResizeTest, retried_after_lost_reply_materializes_new_chunks) {
     {
         rawstor::mds::Client client(*queue, rawstd::URI(env.location()));
         run(*queue, client.connect());
-        run(*queue, client.resize(id, op_id, new_size));
+        run(*queue, client.resize(op_id, id, new_size));
     }
 
     std::shared_ptr<rawstor::Backend> backend =
         run(*queue,
             rawstor::Backend::create(*queue, rawstd::URI(env.location())));
-    run(*queue, backend->resize(id, 0, new_size, op_id));
+    run(*queue, backend->resize(op_id, id, 0, new_size));
     run(*queue, backend->close());
 
     RawstorObjectSpec read_spec{};

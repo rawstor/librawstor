@@ -510,8 +510,8 @@ void ObjectStore::set_topology(Topology topology) {
 }
 
 ObjectDescriptor ObjectStore::create(
-    const RawstdUUID& id, uint64_t logical_size, uint64_t chunk_size,
-    const PlacementPolicy& policy, const RawstdUUID& op_id
+    const RawstdUUID& op_id, const RawstdUUID& id, uint64_t logical_size,
+    uint64_t chunk_size, const PlacementPolicy& policy
 ) {
     std::lock_guard<std::mutex> lock(_mutex);
     validate_geometry(logical_size, chunk_size);
@@ -631,7 +631,7 @@ ObjectMap ObjectStore::_open_live(const RawstdUUID& id) {
 }
 
 ResizeResult ObjectStore::resize(
-    const RawstdUUID& id, uint64_t new_size, const RawstdUUID& op_id
+    const RawstdUUID& op_id, const RawstdUUID& id, uint64_t new_size
 ) {
     std::lock_guard<std::mutex> lock(_mutex);
     if (std::optional<std::vector<unsigned char>> recorded =
@@ -851,7 +851,7 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
     );
 }
 
-ObjectMap ObjectStore::remove(const RawstdUUID& id, const RawstdUUID& op_id) {
+ObjectMap ObjectStore::remove(const RawstdUUID& op_id, const RawstdUUID& id) {
     std::lock_guard<std::mutex> lock(_mutex);
     if (std::optional<std::vector<unsigned char>> recorded =
             replay_op(_db, op_id, OpKind::remove, id)) {
@@ -949,8 +949,8 @@ ObjectMap ObjectStore::_open_snapshot(
 }
 
 uint64_t ObjectStore::snap_commit(
-    const RawstdUUID& id, const RawstdUUID& snapshot_id,
-    const std::vector<SnapMember>& members, const RawstdUUID& op_id
+    const RawstdUUID& op_id, const RawstdUUID& id,
+    const RawstdUUID& snapshot_id, const std::vector<SnapMember>& members
 ) {
     std::lock_guard<std::mutex> lock(_mutex);
     if (std::optional<std::vector<unsigned char>> recorded =
@@ -1038,7 +1038,7 @@ uint64_t ObjectStore::snap_commit(
 }
 
 std::vector<SnapMember> ObjectStore::snap_remove(
-    const RawstdUUID& id, const RawstdUUID& snapshot_id, const RawstdUUID& op_id
+    const RawstdUUID& op_id, const RawstdUUID& id, const RawstdUUID& snapshot_id
 ) {
     std::lock_guard<std::mutex> lock(_mutex);
     std::vector<SnapMember> ret;

@@ -389,8 +389,8 @@ rawstd::Task<void> Backend::_cleanup_staging_lvs() {
 }
 
 rawstd::Task<void> Backend::create(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-    RawstorMemberRole member_role, const RawstdUUID&
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
     if (sp.size == 0) {
         rawstd_error("lvm: object size must be positive\n");
@@ -560,7 +560,7 @@ rawstd::Task<void> Backend::create(
 }
 
 rawstd::Task<void>
-Backend::remove(const RawstdUUID& id, uint64_t offset, const RawstdUUID&) {
+Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
     co_await _cleanup_staging_lvs();
 
     std::string path = _device_path(id, offset);

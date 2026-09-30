@@ -214,7 +214,7 @@ Client::_exchange(const void* request, size_t size, RawstorCommandType cmd) {
 }
 
 rawstd::Task<uint64_t> Client::create(
-    const RawstdUUID& id, const RawstdUUID& op_id, uint64_t logical_size,
+    const RawstdUUID& op_id, const RawstdUUID& id, uint64_t logical_size,
     uint64_t chunk_size, const RawstorFrameObjPolicy& policy
 ) {
     RawstorFrameObjCreate request{
@@ -265,7 +265,7 @@ Client::open(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
 }
 
 rawstd::Task<WireResized> Client::resize(
-    const RawstdUUID& id, const RawstdUUID& op_id, uint64_t new_size
+    const RawstdUUID& op_id, const RawstdUUID& id, uint64_t new_size
 ) {
     RawstorFrameObjOp request{
         .head =
@@ -292,7 +292,7 @@ rawstd::Task<WireResized> Client::resize(
 }
 
 rawstd::Task<WireMap>
-Client::remove(const RawstdUUID& id, const RawstdUUID& op_id) {
+Client::remove(const RawstdUUID& op_id, const RawstdUUID& id) {
     RawstorFrameObjOp request{
         .head =
             {
@@ -311,8 +311,8 @@ Client::remove(const RawstdUUID& id, const RawstdUUID& op_id) {
 }
 
 rawstd::Task<uint64_t> Client::snap_commit(
-    const RawstdUUID& id, const RawstdUUID& snapshot_id,
-    const RawstdUUID& op_id, const std::vector<WireSnapMember>& members
+    const RawstdUUID& op_id, const RawstdUUID& id,
+    const RawstdUUID& snapshot_id, const std::vector<WireSnapMember>& members
 ) {
     RawstorFrameObjSnapCommitPayload payload{};
     uuid_to_bytes(id, payload.id);
@@ -350,7 +350,7 @@ rawstd::Task<uint64_t> Client::snap_commit(
 }
 
 rawstd::Task<std::vector<WireSnapMember>> Client::snap_remove(
-    const RawstdUUID& id, const RawstdUUID& snapshot_id, const RawstdUUID& op_id
+    const RawstdUUID& op_id, const RawstdUUID& id, const RawstdUUID& snapshot_id
 ) {
     RawstorFrameObjOp request{
         .head =

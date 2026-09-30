@@ -132,8 +132,8 @@ public:
      * own rollback) creates it afresh.
      */
     ObjectDescriptor create(
-        const RawstdUUID& id, uint64_t logical_size, uint64_t chunk_size,
-        const PlacementPolicy& policy, const RawstdUUID& op_id = {}
+        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t logical_size,
+        uint64_t chunk_size, const PlacementPolicy& policy
     );
 
     /*
@@ -143,16 +143,15 @@ public:
     ObjectMap open(const RawstdUUID& id, const RawstdUUID& snapshot_id);
 
     /* Grow-only in v1. */
-    ResizeResult resize(
-        const RawstdUUID& id, uint64_t new_size, const RawstdUUID& op_id = {}
-    );
+    ResizeResult
+    resize(const RawstdUUID& op_id, const RawstdUUID& id, uint64_t new_size);
 
     /*
      * EBUSY while snapshots exist: they must be removed explicitly.
      * Returns the map the object had, for the caller's fan-out destroy
      * of its chunks.
      */
-    ObjectMap remove(const RawstdUUID& id, const RawstdUUID& op_id = {});
+    ObjectMap remove(const RawstdUUID& op_id, const RawstdUUID& id);
 
     /*
      * Registers the snapshot: members = exactly the chunk copies that
@@ -165,8 +164,8 @@ public:
      * into the snapshot. Returns the bumped map_epoch.
      */
     uint64_t snap_commit(
-        const RawstdUUID& id, const RawstdUUID& snapshot_id,
-        const std::vector<SnapMember>& members, const RawstdUUID& op_id = {}
+        const RawstdUUID& op_id, const RawstdUUID& id,
+        const RawstdUUID& snapshot_id, const std::vector<SnapMember>& members
     );
 
     /*
@@ -174,8 +173,8 @@ public:
      * registered: the member set for the caller's fan-out destroy.
      */
     std::vector<SnapMember> snap_remove(
-        const RawstdUUID& id, const RawstdUUID& snapshot_id,
-        const RawstdUUID& op_id = {}
+        const RawstdUUID& op_id, const RawstdUUID& id,
+        const RawstdUUID& snapshot_id
     );
 
     /*

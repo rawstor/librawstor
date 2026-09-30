@@ -265,8 +265,8 @@ rawstd::Task<void> Backend::list_chunks(
 }
 
 rawstd::Task<void> Backend::create(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-    RawstorMemberRole member_role, const RawstdUUID&
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
     // zfs-create(8) rejects volume sizes that are not a multiple of
     // volblocksize (16 KiB by default, 8 KiB on older OpenZFS), so round
@@ -345,7 +345,7 @@ rawstd::Task<void> Backend::create(
 }
 
 rawstd::Task<void>
-Backend::remove(const RawstdUUID& id, uint64_t offset, const RawstdUUID&) {
+Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
     // Matches file::Backend::remove()'s own convention: a nonexistent
     // zvol is ENOENT specifically (permanent -- never retried by
     // Slot::_with_retry()'s is_permanent_backend_error()), not the
@@ -516,8 +516,8 @@ rawstd::Task<void> Backend::set_sync_state(
 }
 
 rawstd::Task<void> Backend::create_snapshot(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id,
-    const RawstdUUID&
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& snapshot_id
 ) {
     if (rawstd_uuid_is_nil(&snapshot_id)) {
         /* nil is the live version, never a snapshot. */
@@ -577,8 +577,8 @@ rawstd::Task<void> Backend::create_snapshot(
 }
 
 rawstd::Task<void> Backend::remove_snapshot(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id,
-    const RawstdUUID&
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& snapshot_id
 ) {
     std::string snapshot = _dataset(id, offset, snapshot_id);
 

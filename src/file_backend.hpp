@@ -32,12 +32,12 @@ public:
     ) override;
 
     rawstd::Task<void> create(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role, const RawstdUUID& op_id
+        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectSpec& sp, RawstorMemberRole member_role
     ) override;
 
     rawstd::Task<void> remove(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& op_id
+        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t offset
     ) override;
 
     // size comes straight from the object's own "data" file (stat());

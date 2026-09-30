@@ -598,8 +598,8 @@ rawstd::Task<void> Slot::create_snapshot(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::create_snapshot, id, offset,
-            snapshot_id, new_op_id()
+            func_name, trace_event, &Backend::create_snapshot, new_op_id(), id,
+            offset, snapshot_id
         );
         _finish(t_call);
     } catch (...) {
@@ -617,8 +617,8 @@ Slot::resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size) {
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::resize, id, offset, new_size,
-            new_op_id()
+            func_name, trace_event, &Backend::resize, new_op_id(), id, offset,
+            new_size
         );
         _finish(t_call);
     } catch (...) {
@@ -638,8 +638,8 @@ rawstd::Task<void> Slot::create(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::create, id, offset, sp,
-            member_role, new_op_id()
+            func_name, trace_event, &Backend::create, new_op_id(), id, offset,
+            sp, member_role
         );
         _finish(t_call);
     } catch (...) {
@@ -656,7 +656,7 @@ rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t offset) {
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::remove, id, offset, new_op_id()
+            func_name, trace_event, &Backend::remove, new_op_id(), id, offset
         );
         _finish(t_call);
     } catch (...) {
@@ -675,8 +675,8 @@ rawstd::Task<void> Slot::remove_snapshot(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::remove_snapshot, id, offset,
-            snapshot_id, new_op_id()
+            func_name, trace_event, &Backend::remove_snapshot, new_op_id(), id,
+            offset, snapshot_id
         );
         _finish(t_call);
     } catch (...) {

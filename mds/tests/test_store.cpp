@@ -79,8 +79,9 @@ TEST_F(ObjectStoreTest, create_populates_chunk_map) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
 
-    ObjectDescriptor descriptor =
-        store.create(id, 3 * chunk_size, chunk_size, make_policy(1));
+    ObjectDescriptor descriptor = store.create(
+        RawstdUUID{}, id, 3 * chunk_size, chunk_size, make_policy(1)
+    );
 
     EXPECT_EQ(descriptor.logical_size, 3 * chunk_size);
     EXPECT_EQ(descriptor.chunk_size, chunk_size);
@@ -97,10 +98,10 @@ TEST_F(ObjectStoreTest, create_rejects_duplicate_id) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
 
-    store.create(id, chunk_size, chunk_size, make_policy(1));
+    store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
 
     EXPECT_THROW(
-        store.create(id, chunk_size, chunk_size, make_policy(1)),
+        store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)),
         std::system_error
     );
 }
@@ -109,7 +110,7 @@ TEST_F(ObjectStoreTest, create_rejects_zero_size) {
     ObjectStore store = make_store();
 
     EXPECT_THROW(
-        store.create(make_id(), 0, chunk_size, make_policy(1)),
+        store.create(RawstdUUID{}, make_id(), 0, chunk_size, make_policy(1)),
         std::system_error
     );
 }
@@ -118,7 +119,7 @@ TEST_F(ObjectStoreTest, create_rejects_non_power_of_two_chunk_size) {
     ObjectStore store = make_store();
 
     EXPECT_THROW(
-        store.create(make_id(), chunk_size, 3, make_policy(1)),
+        store.create(RawstdUUID{}, make_id(), chunk_size, 3, make_policy(1)),
         std::system_error
     );
 }
@@ -127,7 +128,10 @@ TEST_F(ObjectStoreTest, create_rejects_size_not_chunk_multiple) {
     ObjectStore store = make_store();
 
     EXPECT_THROW(
-        store.create(make_id(), chunk_size + 4096, chunk_size, make_policy(1)),
+        store.create(
+            RawstdUUID{}, make_id(), chunk_size + 4096, chunk_size,
+            make_policy(1)
+        ),
         std::system_error
     );
 }
@@ -138,7 +142,7 @@ TEST_F(ObjectStoreTest, create_rejects_unsatisfiable_placement) {
 
     // Only 3 OST-level domains exist; width 4 can never be satisfied.
     EXPECT_THROW(
-        store.create(id, chunk_size, chunk_size, make_policy(4)),
+        store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(4)),
         std::system_error
     );
 
@@ -150,7 +154,9 @@ TEST_F(ObjectStoreTest, create_rejects_unsatisfiable_placement) {
 
 TEST_F(ObjectStoreTest, set_topology_adds_ost) {
     ObjectStore store = make_store();
-    store.create(make_id(), chunk_size, chunk_size, make_policy(3));
+    store.create(
+        RawstdUUID{}, make_id(), chunk_size, chunk_size, make_policy(3)
+    );
 
     Topology topology = make_topology();
     topology.add(make_ost("00000000-0000-7000-8000-000000000004", "host4"));
@@ -162,7 +168,9 @@ TEST_F(ObjectStoreTest, set_topology_adds_ost) {
 TEST_F(ObjectStoreTest, set_topology_refuses_dropping_ost_with_chunks) {
     ObjectStore store = make_store();
     // Width 3 of 3 OSTs: every OST holds a copy.
-    store.create(make_id(), chunk_size, chunk_size, make_policy(3));
+    store.create(
+        RawstdUUID{}, make_id(), chunk_size, chunk_size, make_policy(3)
+    );
 
     Topology topology;
     topology.add(make_ost("00000000-0000-7000-8000-000000000001", "host1"));
@@ -196,14 +204,14 @@ TEST_F(ObjectStoreTest, create_replays_repeated_op_id) {
     RawstdUUID op_id = make_id();
 
     ObjectDescriptor first =
-        store.create(id, chunk_size, chunk_size, make_policy(1), op_id);
+        store.create(op_id, id, chunk_size, chunk_size, make_policy(1));
     ObjectDescriptor again =
-        store.create(id, chunk_size, chunk_size, make_policy(1), op_id);
+        store.create(op_id, id, chunk_size, chunk_size, make_policy(1));
     EXPECT_EQ(again.map_epoch, first.map_epoch);
 
     // A different op for the same id is a genuine second create.
     EXPECT_THROW(
-        store.create(id, chunk_size, chunk_size, make_policy(1), make_id()),
+        store.create(make_id(), id, chunk_size, chunk_size, make_policy(1)),
         std::system_error
     );
 }
@@ -213,10 +221,10 @@ TEST_F(ObjectStoreTest, create_replayed_after_rollback_creates_afresh) {
     RawstdUUID id = make_id();
     RawstdUUID op_id = make_id();
 
-    store.create(id, chunk_size, chunk_size, make_policy(1), op_id);
-    store.remove(id, make_id());
+    store.create(op_id, id, chunk_size, chunk_size, make_policy(1));
+    store.remove(make_id(), id);
 
-    store.create(id, chunk_size, chunk_size, make_policy(1), op_id);
+    store.create(op_id, id, chunk_size, chunk_size, make_policy(1));
     EXPECT_NO_THROW(store.open(id, RawstdUUID{}));
 }
 
@@ -224,10 +232,10 @@ TEST_F(ObjectStoreTest, resize_replays_repeated_op_id) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
     RawstdUUID op_id = make_id();
-    store.create(id, chunk_size, chunk_size, make_policy(1));
+    store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
 
-    ResizeResult first = store.resize(id, 3 * chunk_size, op_id);
-    ResizeResult again = store.resize(id, 3 * chunk_size, op_id);
+    ResizeResult first = store.resize(op_id, id, 3 * chunk_size);
+    ResizeResult again = store.resize(op_id, id, 3 * chunk_size);
 
     EXPECT_EQ(first.old_nchunks, 1u);
     EXPECT_EQ(again.old_nchunks, 1u);
@@ -241,10 +249,10 @@ TEST_F(ObjectStoreTest, remove_replays_the_removed_map) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
     RawstdUUID op_id = make_id();
-    store.create(id, 2 * chunk_size, chunk_size, make_policy(1));
+    store.create(RawstdUUID{}, id, 2 * chunk_size, chunk_size, make_policy(1));
 
-    ObjectMap first = store.remove(id, op_id);
-    ObjectMap again = store.remove(id, op_id);
+    ObjectMap first = store.remove(op_id, id);
+    ObjectMap again = store.remove(op_id, id);
 
     ASSERT_EQ(first.chunks.size(), 2u);
     ASSERT_EQ(again.chunks.size(), 2u);
@@ -260,26 +268,26 @@ TEST_F(ObjectStoreTest, remove_replays_the_removed_map) {
     EXPECT_EQ(again.descriptor.logical_size, 2 * chunk_size);
 
     // Without the op_id it's a plain remove of a missing object.
-    EXPECT_THROW(store.remove(id, make_id()), std::system_error);
+    EXPECT_THROW(store.remove(make_id(), id), std::system_error);
 }
 
 TEST_F(ObjectStoreTest, snapshots_replay_repeated_op_id) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
     RawstdUUID snapshot_id = make_id();
-    store.create(id, chunk_size, chunk_size, make_policy(1));
+    store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
     ObjectMap map = store.open(id, RawstdUUID{});
     std::vector<SnapMember> members{{0, map.chunks[0][0].ost_id}};
 
     RawstdUUID commit_op = make_id();
-    uint64_t first = store.snap_commit(id, snapshot_id, members, commit_op);
-    EXPECT_EQ(store.snap_commit(id, snapshot_id, members, commit_op), first);
+    uint64_t first = store.snap_commit(commit_op, id, snapshot_id, members);
+    EXPECT_EQ(store.snap_commit(commit_op, id, snapshot_id, members), first);
 
     RawstdUUID remove_op = make_id();
     std::vector<SnapMember> removed =
-        store.snap_remove(id, snapshot_id, remove_op);
+        store.snap_remove(remove_op, id, snapshot_id);
     std::vector<SnapMember> again =
-        store.snap_remove(id, snapshot_id, remove_op);
+        store.snap_remove(remove_op, id, snapshot_id);
     ASSERT_EQ(removed.size(), 1u);
     ASSERT_EQ(again.size(), 1u);
     EXPECT_EQ(rawstd_uuid_cmp(&again[0].ost_id, &removed[0].ost_id), 0);
@@ -289,10 +297,10 @@ TEST_F(ObjectStoreTest, op_id_reused_for_another_call_is_einval) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
     RawstdUUID op_id = make_id();
-    store.create(id, chunk_size, chunk_size, make_policy(1), op_id);
+    store.create(op_id, id, chunk_size, chunk_size, make_policy(1));
 
     try {
-        store.resize(id, 2 * chunk_size, op_id);
+        store.resize(op_id, id, 2 * chunk_size);
         FAIL() << "expected EINVAL";
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), EINVAL);
@@ -308,9 +316,10 @@ TEST_F(ObjectStoreTest, open_rejects_unknown_id) {
 TEST_F(ObjectStoreTest, resize_grows_chunk_count_and_bumps_epoch) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    store.create(id, chunk_size, chunk_size, make_policy(1));
+    store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
 
-    uint64_t map_epoch = store.resize(id, 3 * chunk_size).map_epoch;
+    uint64_t map_epoch =
+        store.resize(RawstdUUID{}, id, 3 * chunk_size).map_epoch;
 
     EXPECT_EQ(map_epoch, 2u);
     ObjectMap map = store.open(id, RawstdUUID{});
@@ -325,17 +334,19 @@ TEST_F(ObjectStoreTest, resize_grows_chunk_count_and_bumps_epoch) {
 TEST_F(ObjectStoreTest, resize_rejects_shrink) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    store.create(id, 3 * chunk_size, chunk_size, make_policy(1));
+    store.create(RawstdUUID{}, id, 3 * chunk_size, chunk_size, make_policy(1));
 
-    EXPECT_THROW(store.resize(id, chunk_size), std::system_error);
+    EXPECT_THROW(store.resize(RawstdUUID{}, id, chunk_size), std::system_error);
 }
 
 TEST_F(ObjectStoreTest, resize_rejects_size_not_chunk_multiple) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    store.create(id, chunk_size, chunk_size, make_policy(1));
+    store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
 
-    EXPECT_THROW(store.resize(id, 2 * chunk_size + 4096), std::system_error);
+    EXPECT_THROW(
+        store.resize(RawstdUUID{}, id, 2 * chunk_size + 4096), std::system_error
+    );
 
     ObjectMap map = store.open(id, RawstdUUID{});
     EXPECT_EQ(map.descriptor.logical_size, chunk_size);
@@ -345,17 +356,17 @@ TEST_F(ObjectStoreTest, resize_rejects_size_not_chunk_multiple) {
 TEST_F(ObjectStoreTest, resize_rejects_zero_size) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    store.create(id, chunk_size, chunk_size, make_policy(1));
+    store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
 
-    EXPECT_THROW(store.resize(id, 0), std::system_error);
+    EXPECT_THROW(store.resize(RawstdUUID{}, id, 0), std::system_error);
 }
 
 TEST_F(ObjectStoreTest, remove_deletes_object) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    store.create(id, chunk_size, chunk_size, make_policy(1));
+    store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
 
-    store.remove(id);
+    store.remove(RawstdUUID{}, id);
 
     EXPECT_THROW(store.open(id, RawstdUUID{}), std::system_error);
 }
@@ -363,13 +374,13 @@ TEST_F(ObjectStoreTest, remove_deletes_object) {
 TEST_F(ObjectStoreTest, remove_rejects_unknown_id) {
     ObjectStore store = make_store();
 
-    EXPECT_THROW(store.remove(make_id()), std::system_error);
+    EXPECT_THROW(store.remove(RawstdUUID{}, make_id()), std::system_error);
 }
 
 TEST_F(ObjectStoreTest, remove_rejects_while_snapshot_exists) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    store.create(id, chunk_size, chunk_size, make_policy(1));
+    store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
     RawstdUUID snapshot_id = make_id();
     ObjectMap map = store.open(id, RawstdUUID{});
     std::vector<SnapMember> members;
@@ -378,19 +389,19 @@ TEST_F(ObjectStoreTest, remove_rejects_while_snapshot_exists) {
             members.push_back(SnapMember{index, slot.ost_id});
         }
     }
-    store.snap_commit(id, snapshot_id, members);
+    store.snap_commit(RawstdUUID{}, id, snapshot_id, members);
 
-    EXPECT_THROW(store.remove(id), std::system_error);
+    EXPECT_THROW(store.remove(RawstdUUID{}, id), std::system_error);
 
     // Removing the snapshot first clears the way.
-    store.snap_remove(id, snapshot_id);
-    store.remove(id);
+    store.snap_remove(RawstdUUID{}, id, snapshot_id);
+    store.remove(RawstdUUID{}, id);
 }
 
 TEST_F(ObjectStoreTest, snap_commit_and_open_round_trip) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    store.create(id, 2 * chunk_size, chunk_size, make_policy(1));
+    store.create(RawstdUUID{}, id, 2 * chunk_size, chunk_size, make_policy(1));
     ObjectMap live = store.open(id, RawstdUUID{});
     RawstdUUID snapshot_id = make_id();
 
@@ -400,7 +411,8 @@ TEST_F(ObjectStoreTest, snap_commit_and_open_round_trip) {
             members.push_back(SnapMember{index, slot.ost_id});
         }
     }
-    uint64_t map_epoch = store.snap_commit(id, snapshot_id, members);
+    uint64_t map_epoch =
+        store.snap_commit(RawstdUUID{}, id, snapshot_id, members);
     EXPECT_EQ(map_epoch, 2u);
 
     ObjectMap snap = store.open(id, snapshot_id);
@@ -420,15 +432,17 @@ TEST_F(ObjectStoreTest, snap_commit_and_open_round_trip) {
 TEST_F(ObjectStoreTest, snap_commit_rejects_nil_snapshot_id) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    store.create(id, chunk_size, chunk_size, make_policy(1));
+    store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
 
-    EXPECT_THROW(store.snap_commit(id, RawstdUUID{}, {}), std::system_error);
+    EXPECT_THROW(
+        store.snap_commit(RawstdUUID{}, id, RawstdUUID{}, {}), std::system_error
+    );
 }
 
 TEST_F(ObjectStoreTest, snap_commit_rejects_uncovered_chunk) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    store.create(id, 2 * chunk_size, chunk_size, make_policy(1));
+    store.create(RawstdUUID{}, id, 2 * chunk_size, chunk_size, make_policy(1));
     ObjectMap live = store.open(id, RawstdUUID{});
 
     // Only chunk 0's own member -- chunk 1 is left uncovered.
@@ -436,20 +450,23 @@ TEST_F(ObjectStoreTest, snap_commit_rejects_uncovered_chunk) {
         SnapMember{0, live.chunks[0][0].ost_id},
     };
 
-    EXPECT_THROW(store.snap_commit(id, make_id(), members), std::system_error);
+    EXPECT_THROW(
+        store.snap_commit(RawstdUUID{}, id, make_id(), members),
+        std::system_error
+    );
 }
 
 TEST_F(ObjectStoreTest, snap_commit_freezes_size_across_a_later_resize) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    store.create(id, chunk_size, chunk_size, make_policy(1));
+    store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
     ObjectMap live = store.open(id, RawstdUUID{});
     RawstdUUID snapshot_id = make_id();
     store.snap_commit(
-        id, snapshot_id, {SnapMember{0, live.chunks[0][0].ost_id}}
+        RawstdUUID{}, id, snapshot_id, {SnapMember{0, live.chunks[0][0].ost_id}}
     );
 
-    store.resize(id, 3 * chunk_size);
+    store.resize(RawstdUUID{}, id, 3 * chunk_size);
 
     ObjectMap snap = store.open(id, snapshot_id);
     EXPECT_EQ(snap.descriptor.logical_size, chunk_size);
@@ -459,13 +476,14 @@ TEST_F(ObjectStoreTest, snap_commit_freezes_size_across_a_later_resize) {
 TEST_F(ObjectStoreTest, snap_remove_returns_members_and_unregisters) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    store.create(id, chunk_size, chunk_size, make_policy(1));
+    store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
     ObjectMap live = store.open(id, RawstdUUID{});
     RawstdUUID snapshot_id = make_id();
     RawstdUUID ost_id = live.chunks[0][0].ost_id;
-    store.snap_commit(id, snapshot_id, {SnapMember{0, ost_id}});
+    store.snap_commit(RawstdUUID{}, id, snapshot_id, {SnapMember{0, ost_id}});
 
-    std::vector<SnapMember> removed = store.snap_remove(id, snapshot_id);
+    std::vector<SnapMember> removed =
+        store.snap_remove(RawstdUUID{}, id, snapshot_id);
 
     ASSERT_EQ(removed.size(), 1u);
     EXPECT_EQ(removed[0].logical_index, 0u);
@@ -476,9 +494,11 @@ TEST_F(ObjectStoreTest, snap_remove_returns_members_and_unregisters) {
 TEST_F(ObjectStoreTest, snap_remove_rejects_unknown_snapshot) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    store.create(id, chunk_size, chunk_size, make_policy(1));
+    store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
 
-    EXPECT_THROW(store.snap_remove(id, make_id()), std::system_error);
+    EXPECT_THROW(
+        store.snap_remove(RawstdUUID{}, id, make_id()), std::system_error
+    );
 }
 
 RawstorObjectMeta make_meta(uint64_t size, unsigned width) {
@@ -575,7 +595,9 @@ TEST_F(ObjectStoreTest, reconstruct_fails_on_conflicting_identity) {
 TEST_F(ObjectStoreTest, reconstruct_replaces_every_existing_object) {
     ObjectStore store = make_store();
     RawstdUUID stale_id = make_id();
-    store.create(stale_id, chunk_size, chunk_size, make_policy(1));
+    store.create(
+        RawstdUUID{}, stale_id, chunk_size, chunk_size, make_policy(1)
+    );
 
     RawstdUUID rebuilt_id = make_id();
     std::vector<ScanRecord> records{

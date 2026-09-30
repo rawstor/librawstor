@@ -76,7 +76,7 @@ public:
     rawstd::Task<void> connect();
 
     rawstd::Task<uint64_t> create(
-        const RawstdUUID& id, const RawstdUUID& op_id, uint64_t logical_size,
+        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t logical_size,
         uint64_t chunk_size, const RawstorFrameObjPolicy& policy
     );
 
@@ -84,10 +84,10 @@ public:
     open(const RawstdUUID& id, const RawstdUUID& snapshot_id);
 
     rawstd::Task<WireResized>
-    resize(const RawstdUUID& id, const RawstdUUID& op_id, uint64_t new_size);
+    resize(const RawstdUUID& op_id, const RawstdUUID& id, uint64_t new_size);
 
     /* Returns the map the object had, for the fan-out destroy. */
-    rawstd::Task<WireMap> remove(const RawstdUUID& id, const RawstdUUID& op_id);
+    rawstd::Task<WireMap> remove(const RawstdUUID& op_id, const RawstdUUID& id);
 
     /*
      * Registers the snapshot; snapshot_id is the caller's own already-
@@ -95,14 +95,15 @@ public:
      * map_epoch.
      */
     rawstd::Task<uint64_t> snap_commit(
-        const RawstdUUID& id, const RawstdUUID& snapshot_id,
-        const RawstdUUID& op_id, const std::vector<WireSnapMember>& members
+        const RawstdUUID& op_id, const RawstdUUID& id,
+        const RawstdUUID& snapshot_id,
+        const std::vector<WireSnapMember>& members
     );
 
     /* Unregisters and returns the member set for the fan-out destroy. */
     rawstd::Task<std::vector<WireSnapMember>> snap_remove(
-        const RawstdUUID& id, const RawstdUUID& snapshot_id,
-        const RawstdUUID& op_id
+        const RawstdUUID& op_id, const RawstdUUID& id,
+        const RawstdUUID& snapshot_id
     );
 };
 

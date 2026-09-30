@@ -1441,8 +1441,8 @@ rawstd::Task<void> Backend::list_chunks(
 // still one copy from its caller's point of view, same as every other
 // backend.
 rawstd::Task<void> Backend::create(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-    RawstorMemberRole member_role, const RawstdUUID&
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('c', "fd = %d\n", fd());
 
@@ -1468,7 +1468,7 @@ rawstd::Task<void> Backend::create(
 }
 
 rawstd::Task<void>
-Backend::remove(const RawstdUUID& id, uint64_t offset, const RawstdUUID&) {
+Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
     try {
         co_await _basic_request(RAWSTOR_CMD_RELEASE, "remove", id, offset);
     } catch (const std::system_error&) {
@@ -1480,8 +1480,8 @@ Backend::remove(const RawstdUUID& id, uint64_t offset, const RawstdUUID&) {
 }
 
 rawstd::Task<void> Backend::remove_snapshot(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id,
-    const RawstdUUID&
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& snapshot_id
 ) {
     try {
         co_await _basic_request(
@@ -1496,8 +1496,8 @@ rawstd::Task<void> Backend::remove_snapshot(
 }
 
 rawstd::Task<void> Backend::create_snapshot(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id,
-    const RawstdUUID&
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& snapshot_id
 ) {
     try {
         co_await _basic_request(

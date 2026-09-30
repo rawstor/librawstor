@@ -49,8 +49,8 @@ private:
 
     // Shared by remove_snapshot() below.
     rawstd::Task<void> _remove_snapshot(
-        const RawstdUUID& id, const RawstdUUID& snapshot_id,
-        const RawstdUUID& op_id
+        const RawstdUUID& op_id, const RawstdUUID& id,
+        const RawstdUUID& snapshot_id
     );
 
     // Shared by set_object()/set_snapshot() below.
@@ -71,8 +71,8 @@ public:
     // via this same call -- always RAWSTOR_MEMBER_DATA for every one of
     // its own chunks (create_one()'s own comment, target.cpp).
     rawstd::Task<void> create(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role, const RawstdUUID& op_id
+        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectSpec& sp, RawstorMemberRole member_role
     ) override;
 
     // Unregisters and destroys the whole object (docs/mds.md, deletion
@@ -81,23 +81,23 @@ public:
     // best-effort cleanup -- a member that can no longer be resolved
     // (location changed, OST replaced) is left for the reconstruct scan.
     rawstd::Task<void> remove(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& op_id
+        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t offset
     ) override;
 
     // Removes one previously committed snapshot, via _remove_snapshot()
     // above. Same MDS-unregisters-first, best-effort per-chunk cleanup
     // convention as remove() above.
     rawstd::Task<void> remove_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id,
-        const RawstdUUID& op_id
+        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id
     ) override;
 
     // `offset` is always 0 here -- a single mds:// URI is never
     // itself split into chunks (chunking happens one level down, inside
     // the object) -- see rawstor::Backend::resize()'s own doc comment.
     rawstd::Task<void> resize(
-        const RawstdUUID& id, uint64_t offset, uint64_t new_size,
-        const RawstdUUID& op_id
+        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t offset,
+        uint64_t new_size
     ) override;
 
     // MDS-orchestrated snapshot (docs/mds.md, "Snapshots (stage 2)"):
@@ -117,8 +117,8 @@ public:
     // is the writing client's own duty, not this call's. `offset`
     // is always 0, same reason as resize() above.
     rawstd::Task<void> create_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id,
-        const RawstdUUID& op_id
+        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id
     ) override;
 
     // Resolves `offset` to one of this object's own real chunks (its
