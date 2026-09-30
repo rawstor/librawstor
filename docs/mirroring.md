@@ -40,7 +40,7 @@ derived):
 stateDiagram-v2
     direction TB
     [*] --> CLEAN : created
-    CLEAN --> DIRTY : open for write (fsync before 1st ack)
+    CLEAN --> DIRTY : first write (fsync before its ack)
     DIRTY --> CLEAN : clean close (flush, fsync)
     DIRTY --> STALE : write/session failure (F1, F6)
     CLEAN --> STALE : missed writes while offline
@@ -146,7 +146,7 @@ flowchart TB
     Cmp -- "all equal" --> Same["identical: open"]
     Cmp -- "one is an ancestor<br/>of another" --> Anc["newest wins,<br/>ancestors are STALE:<br/>open + online resync"]
     Cmp -- "neither in the<br/>other's history" --> SB["split brain,<br/>ENOTRECOVERABLE<br/>(rawstor resolve)"]
-    Same --> Mark["mark every copy DIRTY (fsync)<br/>before the first write ack"]
+    Same --> Mark["on the first write: mark every<br/>copy DIRTY (fsync) before its ack"]
     Anc --> Mark
 ```
 
@@ -154,9 +154,10 @@ flowchart TB
 
 ## Write lifecycle (all mirrors healthy)
 
-1. **Open with write intent:** read metadata of all copies, verify identity, mark all copies `DIRTY` (fsync) before the first write is acknowledged.
-2. **Write:** fan out to all IN-SYNC mirrors, acknowledge when all complete.
-3. **Clean close:** flush data, set all copies `CLEAN` with the same `epoch`/`sync_id` (fsync).
+1. **Open:** read metadata of all copies, verify identity. The copies stay as they are (`CLEAN` after a clean close) -- opening alone, or a read-only session, never marks them.
+2. **First write** (or read-repair): mark all IN-SYNC copies `DIRTY` (fsync) before it is acknowledged; a changed membership (degraded open, stale copies) also gets a new `sync_id` here. Later writes skip this step.
+3. **Write:** fan out to all IN-SYNC mirrors, acknowledge when all complete.
+4. **Clean close:** flush data, set all copies `CLEAN` with the same `epoch`/`sync_id` (fsync).
 
 The same with a mirror failing mid-write (F1, N = 2):
 
