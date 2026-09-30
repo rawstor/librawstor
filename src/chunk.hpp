@@ -253,7 +253,7 @@ private:
     // needs-copy bit.
     struct FanOutWriteState;
     rawstd::Task<size_t> _fan_out_write(
-        off_t offset, size_t size,
+        uint64_t offset, size_t size,
         std::function<rawstd::Task<size_t>(Slot&)> issue
     );
     rawstd::Task<void> _fan_out_write_one(
@@ -316,11 +316,11 @@ private:
     // call sites -- so this function itself never needs to know whether
     // it's serving a flat buffer or an iovec array.
     rawstd::Task<size_t> _read(
-        off_t offset, std::function<rawstd::Task<size_t>(Slot&)> issue,
+        uint64_t offset, std::function<rawstd::Task<size_t>(Slot&)> issue,
         std::function<void(std::vector<char>&, size_t)> copy_to
     );
     rawstd::DetachedTask _read_repair(
-        size_t idx, off_t offset, std::vector<char> data,
+        size_t idx, uint64_t offset, std::vector<char> data,
         std::weak_ptr<void> alive
     );
     rawstd::DetachedTask
@@ -386,23 +386,23 @@ public:
     // object's total size without a separate wire round trip.
     inline const RawstorObjectSpec& spec() const noexcept { return _spec; }
 
-    rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset);
+    rawstd::Task<size_t> pread(void* buf, size_t size, uint64_t offset);
 
     rawstd::Task<size_t>
-    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset);
+    preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset);
 
     rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, off_t offset, bool sync);
+    pwrite(const void* buf, size_t size, uint64_t offset, bool sync);
 
     rawstd::Task<size_t> pwritev(
-        const iovec* iov, unsigned int niov, size_t size, off_t offset,
+        const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync
     );
 
-    rawstd::Task<size_t> discard(size_t size, off_t offset);
+    rawstd::Task<size_t> discard(size_t size, uint64_t offset);
 
     rawstd::Task<size_t>
-    write_zeroes(size_t size, off_t offset, bool unmap, bool sync);
+    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync);
 
     // Waits for every pwrite()/pwritev() issued before this call to
     // complete (see _flush_barrier above), then flushes every in-sync

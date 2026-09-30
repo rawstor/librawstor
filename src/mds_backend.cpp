@@ -31,7 +31,7 @@ RawstorFrameObjPolicy policy_of(const RawstorObjectSpec& sp) {
     ret.redundancy = RAWSTOR_OBJ_REDUNDANCY_MIRROR;
     ret.width = sp.width != 0 ? sp.width : 1;
     ret.failure_domain = sp.failure_domain != RAWSTOR_OBJ_DOMAIN_DEFAULT
-                             ? sp.failure_domain
+                             ? static_cast<uint8_t>(sp.failure_domain)
                              : RAWSTOR_OBJ_DOMAIN_SERVER;
     ret.stripe_width = sp.stripe_width;
     ret.placement_seed = 0;
@@ -593,32 +593,32 @@ rawstd::Task<void> Backend::close() {
     }
 }
 
-rawstd::Task<size_t> Backend::pread(void* buf, size_t size, off_t offset) {
+rawstd::Task<size_t> Backend::pread(void* buf, size_t size, uint64_t offset) {
     co_return co_await _opened().pread(buf, size, offset);
 }
 
 rawstd::Task<size_t>
-Backend::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
+Backend::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
     co_return co_await _opened().preadv(iov, niov, size, offset);
 }
 
 rawstd::Task<size_t>
-Backend::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
+Backend::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
     co_return co_await _opened().pwrite(buf, size, offset, sync);
 }
 
 rawstd::Task<size_t> Backend::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
+    const iovec* iov, unsigned int niov, size_t size, uint64_t offset, bool sync
 ) {
     co_return co_await _opened().pwritev(iov, niov, size, offset, sync);
 }
 
-rawstd::Task<size_t> Backend::discard(size_t size, off_t offset) {
+rawstd::Task<size_t> Backend::discard(size_t size, uint64_t offset) {
     co_return co_await _opened().discard(size, offset);
 }
 
 rawstd::Task<size_t>
-Backend::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
+Backend::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
     co_return co_await _opened().write_zeroes(size, offset, unmap, sync);
 }
 

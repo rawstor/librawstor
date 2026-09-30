@@ -56,7 +56,7 @@ void record_lat(TimePoint ns);
 // BackendOp with no memory of earlier attempts.
 void record_op(
     TimePoint lat, TimePoint slat, TimePoint rtt, TimePoint clat,
-    const char* op, size_t size, off_t offset
+    const char* op, size_t size, uint64_t offset
 );
 void op_started();
 void op_finished();
@@ -73,7 +73,7 @@ inline void record_clat(TimePoint) {
 inline void record_lat(TimePoint) {
 }
 inline void record_op(
-    TimePoint, TimePoint, TimePoint, TimePoint, const char*, size_t, off_t
+    TimePoint, TimePoint, TimePoint, TimePoint, const char*, size_t, uint64_t
 ) {
 }
 inline void op_started() {

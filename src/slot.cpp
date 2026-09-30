@@ -22,6 +22,7 @@
 #include <type_traits>
 
 #include <cerrno>
+#include <cinttypes>
 #include <cstdint>
 #include <cstring>
 
@@ -856,11 +857,10 @@ rawstd::Task<void> Slot::close() {
     _id = std::nullopt;
 }
 
-rawstd::Task<size_t> Slot::pread(void* buf, size_t size, off_t offset) {
+rawstd::Task<size_t> Slot::pread(void* buf, size_t size, uint64_t offset) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
-        (intmax_t)offset
+        'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
     );
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
@@ -877,11 +877,10 @@ rawstd::Task<size_t> Slot::pread(void* buf, size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Slot::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
+Slot::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
-        (intmax_t)offset
+        'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
     );
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
@@ -898,11 +897,10 @@ Slot::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Slot::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
+Slot::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
-        (intmax_t)offset
+        'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
     );
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
@@ -919,12 +917,11 @@ Slot::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
 }
 
 rawstd::Task<size_t> Slot::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
+    const iovec* iov, unsigned int niov, size_t size, uint64_t offset, bool sync
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
-        (intmax_t)offset
+        'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
     );
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
@@ -941,11 +938,10 @@ rawstd::Task<size_t> Slot::pwritev(
     }
 }
 
-rawstd::Task<size_t> Slot::discard(size_t size, off_t offset) {
+rawstd::Task<size_t> Slot::discard(size_t size, uint64_t offset) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'c', "%s(): size = %zu, offset = %jd\n", func_name, size,
-        (intmax_t)offset
+        'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
     );
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
@@ -962,11 +958,11 @@ rawstd::Task<size_t> Slot::discard(size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Slot::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
+Slot::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'c', "%s(): size = %zu, offset = %jd, unmap = %d, sync = %d\n",
-        func_name, size, (intmax_t)offset, unmap, sync
+        'c', "%s(): size = %zu, offset = %" PRIu64 ", unmap = %d, sync = %d\n",
+        func_name, size, offset, unmap, sync
     );
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 

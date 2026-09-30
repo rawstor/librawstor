@@ -93,8 +93,8 @@ protected:
     // check -- shared here since it's identical regardless of chunk
     // layout (a comparison, not the kind of per-call cost either
     // subclass otherwise avoids).
-    void _check_range(off_t offset, size_t size) const {
-        if (static_cast<uint64_t>(offset) + size > _size) {
+    void _check_range(uint64_t offset, size_t size) const {
+        if (offset > _size || size > _size - offset) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
     }
@@ -107,23 +107,23 @@ public:
     Object& operator=(Object&&) = delete;
 
     virtual rawstd::Task<size_t>
-    pread(void* buf, size_t size, off_t offset) = 0;
+    pread(void* buf, size_t size, uint64_t offset) = 0;
 
     virtual rawstd::Task<size_t>
-    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) = 0;
+    preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) = 0;
 
     virtual rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, off_t offset, bool sync) = 0;
+    pwrite(const void* buf, size_t size, uint64_t offset, bool sync) = 0;
 
     virtual rawstd::Task<size_t> pwritev(
-        const iovec* iov, unsigned int niov, size_t size, off_t offset,
+        const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync
     ) = 0;
 
-    virtual rawstd::Task<size_t> discard(size_t size, off_t offset) = 0;
+    virtual rawstd::Task<size_t> discard(size_t size, uint64_t offset) = 0;
 
     virtual rawstd::Task<size_t>
-    write_zeroes(size_t size, off_t offset, bool unmap, bool sync) = 0;
+    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) = 0;
 
     virtual rawstd::Task<void> flush() = 0;
 
@@ -155,23 +155,25 @@ private:
 public:
     ~SingleChunkObject() override;
 
-    rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;
+    rawstd::Task<size_t>
+    pread(void* buf, size_t size, uint64_t offset) override;
+
+    rawstd::Task<size_t> preadv(
+        iovec* iov, unsigned int niov, size_t size, uint64_t offset
+    ) override;
 
     rawstd::Task<size_t>
-    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) override;
-
-    rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, off_t offset, bool sync) override;
+    pwrite(const void* buf, size_t size, uint64_t offset, bool sync) override;
 
     rawstd::Task<size_t> pwritev(
-        const iovec* iov, unsigned int niov, size_t size, off_t offset,
+        const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync
     ) override;
 
-    rawstd::Task<size_t> discard(size_t size, off_t offset) override;
+    rawstd::Task<size_t> discard(size_t size, uint64_t offset) override;
 
     rawstd::Task<size_t>
-    write_zeroes(size_t size, off_t offset, bool unmap, bool sync) override;
+    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) override;
 
     rawstd::Task<void> flush() override;
 
@@ -187,8 +189,8 @@ private:
     // One I/O segment after splitting a request at chunk boundaries.
     // Offsets are chunk-local.
     struct ObjectSegment {
-        uint32_t index;     /* logical chunk */
-        off_t chunk_offset; /* offset within the chunk object */
+        uint32_t index;        /* logical chunk */
+        uint64_t chunk_offset; /* offset within the chunk object */
         size_t size;
         size_t buf_offset; /* offset within the caller's buffer */
     };
@@ -251,7 +253,7 @@ private:
     rawstd::Task<Chunk*> _chunk(uint32_t index);
 
     // Splits [offset, offset+size) at _chunk_size boundaries.
-    std::vector<ObjectSegment> _segments(off_t offset, size_t size) const;
+    std::vector<ObjectSegment> _segments(uint64_t offset, size_t size) const;
 
     // If [offset, offset+size) fits within a single chunk (the common
     // case: most I/O is small relative to chunk_size), returns true
@@ -259,7 +261,7 @@ private:
     // caller skip _segments()'s own per-call heap allocation and
     // _rw_segments()/_rwv_segments()'s gather() entirely for it.
     bool _single_segment(
-        off_t offset, size_t size, uint32_t& index, off_t& chunk_offset
+        uint64_t offset, size_t size, uint32_t& index, uint64_t& chunk_offset
     ) const noexcept;
 
     // Runs one coroutine per segment concurrently (rawstd::gather()),
@@ -289,23 +291,25 @@ private:
 public:
     ~MultiChunkObject() override;
 
-    rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;
+    rawstd::Task<size_t>
+    pread(void* buf, size_t size, uint64_t offset) override;
+
+    rawstd::Task<size_t> preadv(
+        iovec* iov, unsigned int niov, size_t size, uint64_t offset
+    ) override;
 
     rawstd::Task<size_t>
-    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) override;
-
-    rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, off_t offset, bool sync) override;
+    pwrite(const void* buf, size_t size, uint64_t offset, bool sync) override;
 
     rawstd::Task<size_t> pwritev(
-        const iovec* iov, unsigned int niov, size_t size, off_t offset,
+        const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync
     ) override;
 
-    rawstd::Task<size_t> discard(size_t size, off_t offset) override;
+    rawstd::Task<size_t> discard(size_t size, uint64_t offset) override;
 
     rawstd::Task<size_t>
-    write_zeroes(size_t size, off_t offset, bool unmap, bool sync) override;
+    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) override;
 
     rawstd::Task<void> flush() override;
 

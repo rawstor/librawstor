@@ -186,23 +186,25 @@ public:
 
     rawstd::Task<void> close() override;
 
-    rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;
+    rawstd::Task<size_t>
+    pread(void* buf, size_t size, uint64_t offset) override;
+
+    rawstd::Task<size_t> preadv(
+        iovec* iov, unsigned int niov, size_t size, uint64_t offset
+    ) override;
 
     rawstd::Task<size_t>
-    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) override;
-
-    rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, off_t offset, bool sync) override;
+    pwrite(const void* buf, size_t size, uint64_t offset, bool sync) override;
 
     rawstd::Task<size_t> pwritev(
-        const iovec* iov, unsigned int niov, size_t size, off_t offset,
+        const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync
     ) override;
 
-    rawstd::Task<size_t> discard(size_t size, off_t offset) override;
+    rawstd::Task<size_t> discard(size_t size, uint64_t offset) override;
 
     rawstd::Task<size_t>
-    write_zeroes(size_t size, off_t offset, bool unmap, bool sync) override;
+    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) override;
 
     rawstd::Task<void> flush() override;
 };

@@ -199,7 +199,7 @@ std::string read_file(const fs::path& path) {
 
 void object_write(
     Queue& queue, RawstorObject* object, const void* buf, size_t size,
-    off_t offset, int expected_error
+    uint64_t offset, int expected_error
 ) {
     bool completed = false;
     auto cb = std::make_unique<std::function<void(size_t, int)>>(
@@ -223,7 +223,7 @@ void object_write(
 }
 
 void object_read(
-    Queue& queue, RawstorObject* object, void* buf, size_t size, off_t offset
+    Queue& queue, RawstorObject* object, void* buf, size_t size, uint64_t offset
 ) {
     bool completed = false;
     auto cb = std::make_unique<std::function<void(size_t, int)>>(
@@ -258,7 +258,7 @@ void object_close_clean(Queue& queue, RawstorObject* object) {
 // reach for.
 void object_write_single(
     Queue& queue, const std::string& target, const void* buf, size_t size,
-    off_t offset
+    uint64_t offset
 ) {
     RawstorObject* member = nullptr;
     ASSERT_EQ(target_open(queue, target, &member), 0);
@@ -761,7 +761,7 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     for (uint64_t off = 0; off < size; off += 1ull << 20) {
         std::string block(4096, 'S');
         object_write_single(
-            queue, members.target(0), block.data(), block.size(), (off_t)off
+            queue, members.target(0), block.data(), block.size(), off
         );
     }
 
@@ -773,7 +773,7 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
         std::string block(4096, (char)('A' + k));
         object_write(
             queue, object, block.data(), block.size(),
-            (off_t)((uint64_t)k * (size / 16) + 512), 0
+            (uint64_t)k * (size / 16) + 512, 0
         );
     }
 

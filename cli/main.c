@@ -291,7 +291,7 @@ static int command_create(int argc, char** argv) {
         mirrors = (unsigned int)parsed_mirrors;
     }
 
-    uint8_t failure_domain = RAWSTOR_OBJ_DOMAIN_DEFAULT;
+    unsigned int failure_domain = RAWSTOR_OBJ_DOMAIN_DEFAULT;
     if (failure_domain_arg != NULL) {
         if (strcmp(failure_domain_arg, "dc") == 0) {
             failure_domain = RAWSTOR_OBJ_DOMAIN_DC;

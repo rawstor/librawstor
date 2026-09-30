@@ -108,7 +108,7 @@ protected:
     // a warning before falling back to an explicit zero-fill write loop
     // if the backing store doesn't support fallocate() at all.
     rawstd::Task<void>
-    _zero_fill(int target_fd, off_t offset, size_t size, bool unmap);
+    _zero_fill(int target_fd, uint64_t offset, size_t size, bool unmap);
 
     // True if `path` currently names something (any type) in the
     // backing store; false only for ENOENT. Shared by lvm::Backend/
@@ -205,25 +205,25 @@ public:
     // lvm::Backend/zfs::Backend each provide their own real implementation.
 
     rawstd::Task<size_t>
-    pread(void* buf, size_t size, off_t offset) override final;
+    pread(void* buf, size_t size, uint64_t offset) override final;
 
     rawstd::Task<size_t> preadv(
-        iovec* iov, unsigned int niov, size_t size, off_t offset
+        iovec* iov, unsigned int niov, size_t size, uint64_t offset
     ) override final;
 
     rawstd::Task<size_t> pwrite(
-        const void* buf, size_t size, off_t offset, bool sync
+        const void* buf, size_t size, uint64_t offset, bool sync
     ) override final;
 
     rawstd::Task<size_t> pwritev(
-        const iovec* iov, unsigned int niov, size_t size, off_t offset,
+        const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync
     ) override final;
 
-    rawstd::Task<size_t> discard(size_t size, off_t offset) override final;
+    rawstd::Task<size_t> discard(size_t size, uint64_t offset) override final;
 
     rawstd::Task<size_t> write_zeroes(
-        size_t size, off_t offset, bool unmap, bool sync
+        size_t size, uint64_t offset, bool unmap, bool sync
     ) override final;
 
     rawstd::Task<void> flush() override final;

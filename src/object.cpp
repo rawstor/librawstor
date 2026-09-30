@@ -29,39 +29,39 @@ SingleChunkObject::SingleChunkObject(
 SingleChunkObject::~SingleChunkObject() = default;
 
 rawstd::Task<size_t>
-SingleChunkObject::pread(void* buf, size_t size, off_t offset) {
+SingleChunkObject::pread(void* buf, size_t size, uint64_t offset) {
     _check_range(offset, size);
     co_return co_await _chunk->pread(buf, size, offset);
 }
 
 rawstd::Task<size_t> SingleChunkObject::preadv(
-    iovec* iov, unsigned int niov, size_t size, off_t offset
+    iovec* iov, unsigned int niov, size_t size, uint64_t offset
 ) {
     _check_range(offset, size);
     co_return co_await _chunk->preadv(iov, niov, size, offset);
 }
 
 rawstd::Task<size_t> SingleChunkObject::pwrite(
-    const void* buf, size_t size, off_t offset, bool sync
+    const void* buf, size_t size, uint64_t offset, bool sync
 ) {
     _check_range(offset, size);
     co_return co_await _chunk->pwrite(buf, size, offset, sync);
 }
 
 rawstd::Task<size_t> SingleChunkObject::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
+    const iovec* iov, unsigned int niov, size_t size, uint64_t offset, bool sync
 ) {
     _check_range(offset, size);
     co_return co_await _chunk->pwritev(iov, niov, size, offset, sync);
 }
 
-rawstd::Task<size_t> SingleChunkObject::discard(size_t size, off_t offset) {
+rawstd::Task<size_t> SingleChunkObject::discard(size_t size, uint64_t offset) {
     _check_range(offset, size);
     co_return co_await _chunk->discard(size, offset);
 }
 
 rawstd::Task<size_t> SingleChunkObject::write_zeroes(
-    size_t size, off_t offset, bool unmap, bool sync
+    size_t size, uint64_t offset, bool unmap, bool sync
 ) {
     _check_range(offset, size);
     co_return co_await _chunk->write_zeroes(size, offset, unmap, sync);
@@ -134,10 +134,10 @@ rawstd::Task<Chunk*> MultiChunkObject::_chunk(uint32_t index) {
 }
 
 std::vector<MultiChunkObject::ObjectSegment>
-MultiChunkObject::_segments(off_t offset, size_t size) const {
+MultiChunkObject::_segments(uint64_t offset, size_t size) const {
     std::vector<ObjectSegment> ret;
 
-    uint64_t at = static_cast<uint64_t>(offset);
+    uint64_t at = offset;
     size_t left = size;
     size_t buf_offset = 0;
 
@@ -151,7 +151,7 @@ MultiChunkObject::_segments(off_t offset, size_t size) const {
         ret.push_back(
             ObjectSegment{
                 static_cast<uint32_t>(index),
-                static_cast<off_t>(chunk_offset),
+                chunk_offset,
                 take,
                 buf_offset,
             }
@@ -166,7 +166,7 @@ MultiChunkObject::_segments(off_t offset, size_t size) const {
 }
 
 bool MultiChunkObject::_single_segment(
-    off_t offset, size_t size, uint32_t& index, off_t& chunk_offset
+    uint64_t offset, size_t size, uint32_t& index, uint64_t& chunk_offset
 ) const noexcept {
     // A zero-length request at an exact chunk boundary (e.g. offset ==
     // the object's own total size, itself a multiple of _chunk_size)
@@ -178,14 +178,14 @@ bool MultiChunkObject::_single_segment(
         return false;
     }
 
-    uint64_t at = static_cast<uint64_t>(offset);
+    uint64_t at = offset;
     uint64_t idx = at / _chunk_size;
     uint64_t co = at % _chunk_size;
     if (co + size > _chunk_size) {
         return false;
     }
     index = static_cast<uint32_t>(idx);
-    chunk_offset = static_cast<off_t>(co);
+    chunk_offset = co;
     return true;
 }
 
@@ -263,11 +263,11 @@ rawstd::Task<size_t> MultiChunkObject::_rwv_segments(
 }
 
 rawstd::Task<size_t>
-MultiChunkObject::pread(void* buf, size_t size, off_t offset) {
+MultiChunkObject::pread(void* buf, size_t size, uint64_t offset) {
     _check_range(offset, size);
 
     uint32_t index;
-    off_t chunk_offset;
+    uint64_t chunk_offset;
     if (_single_segment(offset, size, index, chunk_offset)) {
         Chunk* chunk = co_await _chunk(index);
         co_return co_await chunk->pread(buf, size, chunk_offset);
@@ -278,12 +278,12 @@ MultiChunkObject::pread(void* buf, size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t> MultiChunkObject::pwrite(
-    const void* buf, size_t size, off_t offset, bool sync
+    const void* buf, size_t size, uint64_t offset, bool sync
 ) {
     _check_range(offset, size);
 
     uint32_t index;
-    off_t chunk_offset;
+    uint64_t chunk_offset;
     if (_single_segment(offset, size, index, chunk_offset)) {
         Chunk* chunk = co_await _chunk(index);
         co_return co_await chunk->pwrite(buf, size, chunk_offset, sync);
@@ -296,12 +296,12 @@ rawstd::Task<size_t> MultiChunkObject::pwrite(
 }
 
 rawstd::Task<size_t> MultiChunkObject::preadv(
-    iovec* iov, unsigned int niov, size_t size, off_t offset
+    iovec* iov, unsigned int niov, size_t size, uint64_t offset
 ) {
     _check_range(offset, size);
 
     uint32_t index;
-    off_t chunk_offset;
+    uint64_t chunk_offset;
     if (_single_segment(offset, size, index, chunk_offset)) {
         Chunk* chunk = co_await _chunk(index);
         co_return co_await chunk->preadv(iov, niov, size, chunk_offset);
@@ -312,12 +312,12 @@ rawstd::Task<size_t> MultiChunkObject::preadv(
 }
 
 rawstd::Task<size_t> MultiChunkObject::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
+    const iovec* iov, unsigned int niov, size_t size, uint64_t offset, bool sync
 ) {
     _check_range(offset, size);
 
     uint32_t index;
-    off_t chunk_offset;
+    uint64_t chunk_offset;
     if (_single_segment(offset, size, index, chunk_offset)) {
         Chunk* chunk = co_await _chunk(index);
         co_return co_await chunk->pwritev(iov, niov, size, chunk_offset, sync);
@@ -327,11 +327,11 @@ rawstd::Task<size_t> MultiChunkObject::pwritev(
     co_return co_await _rwv_segments(segments, true, sync, iov, niov, size);
 }
 
-rawstd::Task<size_t> MultiChunkObject::discard(size_t size, off_t offset) {
+rawstd::Task<size_t> MultiChunkObject::discard(size_t size, uint64_t offset) {
     _check_range(offset, size);
 
     uint32_t index;
-    off_t chunk_offset;
+    uint64_t chunk_offset;
     if (_single_segment(offset, size, index, chunk_offset)) {
         Chunk* chunk = co_await _chunk(index);
         co_return co_await chunk->discard(size, chunk_offset);
@@ -358,12 +358,12 @@ rawstd::Task<size_t> MultiChunkObject::discard(size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t> MultiChunkObject::write_zeroes(
-    size_t size, off_t offset, bool unmap, bool sync
+    size_t size, uint64_t offset, bool unmap, bool sync
 ) {
     _check_range(offset, size);
 
     uint32_t index;
-    off_t chunk_offset;
+    uint64_t chunk_offset;
     if (_single_segment(offset, size, index, chunk_offset)) {
         Chunk* chunk = co_await _chunk(index);
         co_return co_await chunk->write_zeroes(size, chunk_offset, unmap, sync);
@@ -536,7 +536,7 @@ int rawstor_object_close(
 }
 
 int rawstor_object_pread(
-    RawstorObject* object, void* buf, size_t size, off_t offset,
+    RawstorObject* object, void* buf, size_t size, uint64_t offset,
     int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
     try {
@@ -560,7 +560,7 @@ int rawstor_object_pread(
 
 int rawstor_object_preadv(
     RawstorObject* object, iovec* iov, unsigned int niov, size_t size,
-    off_t offset, int (*cb)(size_t result, int error, void* data), void* data
+    uint64_t offset, int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
     try {
         launch_io_op(
@@ -584,7 +584,7 @@ int rawstor_object_preadv(
 }
 
 int rawstor_object_pwrite(
-    RawstorObject* object, const void* buf, size_t size, off_t offset,
+    RawstorObject* object, const void* buf, size_t size, uint64_t offset,
     bool sync, int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
     try {
@@ -610,7 +610,7 @@ int rawstor_object_pwrite(
 
 int rawstor_object_pwritev(
     RawstorObject* object, const iovec* iov, unsigned int niov, size_t size,
-    off_t offset, bool sync, int (*cb)(size_t result, int error, void* data),
+    uint64_t offset, bool sync, int (*cb)(size_t result, int error, void* data),
     void* data
 ) noexcept {
     try {
@@ -635,7 +635,7 @@ int rawstor_object_pwritev(
 }
 
 int rawstor_object_discard(
-    RawstorObject* object, size_t size, off_t offset,
+    RawstorObject* object, size_t size, uint64_t offset,
     int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
     try {
@@ -658,7 +658,7 @@ int rawstor_object_discard(
 }
 
 int rawstor_object_write_zeroes(
-    RawstorObject* object, size_t size, off_t offset, bool unmap, bool sync,
+    RawstorObject* object, size_t size, uint64_t offset, bool unmap, bool sync,
     int (*cb)(size_t result, int error, void* data), void* data
 ) noexcept {
     try {

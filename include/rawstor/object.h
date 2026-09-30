@@ -14,6 +14,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -100,7 +101,7 @@ int rawstor_object_close(
  * @see rawstor_object_pwrite
  */
 int rawstor_object_pread(
-    RawstorObject* object, void* buf, size_t size, off_t offset,
+    RawstorObject* object, void* buf, size_t size, uint64_t offset,
     int (*cb)(size_t result, int error, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
@@ -130,7 +131,7 @@ int rawstor_object_pread(
  */
 int rawstor_object_preadv(
     RawstorObject* object, struct iovec* iov, unsigned int niov, size_t size,
-    off_t offset, int (*cb)(size_t result, int error, void* data), void* data
+    uint64_t offset, int (*cb)(size_t result, int error, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -163,7 +164,7 @@ int rawstor_object_preadv(
  * @see rawstor_object_pread
  */
 int rawstor_object_pwrite(
-    RawstorObject* object, const void* buf, size_t size, off_t offset,
+    RawstorObject* object, const void* buf, size_t size, uint64_t offset,
     bool sync, int (*cb)(size_t result, int error, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
@@ -201,7 +202,7 @@ int rawstor_object_pwrite(
  */
 int rawstor_object_pwritev(
     RawstorObject* object, const struct iovec* iov, unsigned int niov,
-    size_t size, off_t offset, bool sync,
+    size_t size, uint64_t offset, bool sync,
     int (*cb)(size_t result, int error, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
@@ -230,7 +231,7 @@ int rawstor_object_pwritev(
  * @see rawstor_object_pwrite
  */
 int rawstor_object_discard(
-    RawstorObject* object, size_t size, off_t offset,
+    RawstorObject* object, size_t size, uint64_t offset,
     int (*cb)(size_t result, int error, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
@@ -266,7 +267,7 @@ int rawstor_object_discard(
  * @see rawstor_object_pwrite
  */
 int rawstor_object_write_zeroes(
-    RawstorObject* object, size_t size, off_t offset, bool unmap, bool sync,
+    RawstorObject* object, size_t size, uint64_t offset, bool unmap, bool sync,
     int (*cb)(size_t result, int error, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 

@@ -33,6 +33,7 @@
 
 #include <cassert>
 #include <cerrno>
+#include <cinttypes>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -183,7 +184,7 @@ protected:
     // telemetry::record_op() call.
     const char* _op_name;
     size_t _op_size;
-    off_t _op_offset;
+    uint64_t _op_offset;
 
     rawstd::TraceEvent _trace_event;
     // A strong reference, not just a back-pointer: a BackendOp can outlive
@@ -249,7 +250,7 @@ public:
     BackendOp(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const rawstd::TraceEvent& trace_event, const char* op_name,
-        size_t op_size, off_t op_offset
+        size_t op_size, uint64_t op_offset
     ) :
         _cid(cid),
         _dispatched(false),
@@ -317,7 +318,7 @@ private:
 public:
     BackendOpRead(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
-        void* buf, size_t size, off_t offset,
+        void* buf, size_t size, uint64_t offset,
         const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "pread", size, offset),
@@ -398,7 +399,7 @@ private:
 public:
     BackendOpReadV(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
-        iovec* iov, unsigned int niov, size_t size, off_t offset,
+        iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "preadv", size, offset),
@@ -477,7 +478,7 @@ private:
 public:
     BackendOpWrite(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
-        const void* buf, size_t size, off_t offset, bool sync,
+        const void* buf, size_t size, uint64_t offset, bool sync,
         const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "pwrite", size, offset),
@@ -551,7 +552,7 @@ private:
 public:
     BackendOpWriteV(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
-        const iovec* iov, unsigned int niov, size_t size, off_t offset,
+        const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync, const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "pwritev", size, offset),
@@ -627,8 +628,8 @@ protected:
 public:
     BackendOpNoPayloadIO(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
-        RawstorCommandType cmd, const char* op_name, size_t size, off_t offset,
-        uint8_t flags, const rawstd::TraceEvent& trace_event
+        RawstorCommandType cmd, const char* op_name, size_t size,
+        uint64_t offset, uint8_t flags, const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, op_name, size, offset),
         _cmd(cmd),
@@ -677,7 +678,7 @@ class BackendOpDiscard final : public BackendOpNoPayloadIO {
 public:
     BackendOpDiscard(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
-        size_t size, off_t offset, const rawstd::TraceEvent& trace_event
+        size_t size, uint64_t offset, const rawstd::TraceEvent& trace_event
     ) :
         BackendOpNoPayloadIO(
             backend, cid, RAWSTOR_CMD_DISCARD, "discard", size, offset, 0,
@@ -689,7 +690,7 @@ class BackendOpWriteZeroes final : public BackendOpNoPayloadIO {
 public:
     BackendOpWriteZeroes(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
-        size_t size, off_t offset, bool unmap, bool sync,
+        size_t size, uint64_t offset, bool unmap, bool sync,
         const rawstd::TraceEvent& trace_event
     ) :
         BackendOpNoPayloadIO(
@@ -845,7 +846,7 @@ public:
                 .size = sp.size,
                 .stripe_width = sp.stripe_width,
                 .chunk_shift = chunk_size_to_shift(sp.chunk_size),
-                .failure_domain = sp.failure_domain,
+                .failure_domain = (uint8_t)sp.failure_domain,
                 .width = (uint8_t)sp.width,
                 .member_role = (uint8_t)member_role,
             },
@@ -1819,9 +1820,9 @@ void Backend::_recv_pump_failed(const std::weak_ptr<Backend>& weak, int error) {
     backend->_read_event = nullptr;
 }
 
-rawstd::Task<size_t> Backend::pread(void* buf, size_t size, off_t offset) {
+rawstd::Task<size_t> Backend::pread(void* buf, size_t size, uint64_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
+        's', "fd = %d, size = %zu, offset = %" PRIu64 "\n", fd(), size, offset
     );
 
     std::shared_ptr<BackendOpRead> op = std::make_shared<BackendOpRead>(
@@ -1846,9 +1847,9 @@ rawstd::Task<size_t> Backend::pread(void* buf, size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Backend::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
+Backend::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
+        's', "fd = %d, size = %zu, offset = %" PRIu64 "\n", fd(), size, offset
     );
 
     std::shared_ptr<BackendOpReadV> op = std::make_shared<BackendOpReadV>(
@@ -1873,10 +1874,10 @@ Backend::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Backend::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
+Backend::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        's', "fd = %d, size = %zu, offset = %jd, sync = %d\n", fd(), size,
-        (intmax_t)offset, sync
+        's', "fd = %d, size = %zu, offset = %" PRIu64 ", sync = %d\n", fd(),
+        size, offset, sync
     );
 
     std::shared_ptr<BackendOpWrite> op = std::make_shared<BackendOpWrite>(
@@ -1901,11 +1902,11 @@ Backend::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
 }
 
 rawstd::Task<size_t> Backend::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
+    const iovec* iov, unsigned int niov, size_t size, uint64_t offset, bool sync
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        's', "fd = %d, size = %zu, offset = %jd, sync = %d\n", fd(), size,
-        (intmax_t)offset, sync
+        's', "fd = %d, size = %zu, offset = %" PRIu64 ", sync = %d\n", fd(),
+        size, offset, sync
     );
 
     std::shared_ptr<BackendOpWriteV> op = std::make_shared<BackendOpWriteV>(
@@ -1929,9 +1930,9 @@ rawstd::Task<size_t> Backend::pwritev(
     co_return co_await *op;
 }
 
-rawstd::Task<size_t> Backend::discard(size_t size, off_t offset) {
+rawstd::Task<size_t> Backend::discard(size_t size, uint64_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        's', "fd = %d, size = %zu, offset = %jd\n", fd(), size, (intmax_t)offset
+        's', "fd = %d, size = %zu, offset = %" PRIu64 "\n", fd(), size, offset
     );
 
     std::shared_ptr<BackendOpDiscard> op = std::make_shared<BackendOpDiscard>(
@@ -1956,10 +1957,11 @@ rawstd::Task<size_t> Backend::discard(size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Backend::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
+Backend::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        's', "fd = %d, size = %zu, offset = %jd, unmap = %d, sync = %d\n", fd(),
-        size, (intmax_t)offset, unmap, sync
+        's',
+        "fd = %d, size = %zu, offset = %" PRIu64 ", unmap = %d, sync = %d\n",
+        fd(), size, offset, unmap, sync
     );
 
     std::shared_ptr<BackendOpWriteZeroes> op =

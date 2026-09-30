@@ -159,7 +159,7 @@ int io_trampoline(size_t result, int error, void* data) {
 
 rawstd::Task<size_t> co_object_preadv(
     RawstorObject* object, iovec* iov, unsigned int niov, size_t size,
-    off_t offset
+    uint64_t offset
 ) {
     rawstd::CallbackAwaitable<size_t> awaiter;
     int res = rawstor_object_preadv(
@@ -173,7 +173,7 @@ rawstd::Task<size_t> co_object_preadv(
 
 rawstd::Task<size_t> co_object_pwritev(
     RawstorObject* object, const iovec* iov, unsigned int niov, size_t size,
-    off_t offset, bool sync
+    uint64_t offset, bool sync
 ) {
     rawstd::CallbackAwaitable<size_t> awaiter;
     int res = rawstor_object_pwritev(
@@ -186,7 +186,7 @@ rawstd::Task<size_t> co_object_pwritev(
 }
 
 rawstd::Task<size_t>
-co_object_discard(RawstorObject* object, size_t size, off_t offset) {
+co_object_discard(RawstorObject* object, size_t size, uint64_t offset) {
     rawstd::CallbackAwaitable<size_t> awaiter;
     int res =
         rawstor_object_discard(object, size, offset, io_trampoline, &awaiter);
@@ -197,7 +197,7 @@ co_object_discard(RawstorObject* object, size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t> co_object_write_zeroes(
-    RawstorObject* object, size_t size, off_t offset, bool unmap, bool sync
+    RawstorObject* object, size_t size, uint64_t offset, bool unmap, bool sync
 ) {
     rawstd::CallbackAwaitable<size_t> awaiter;
     int res = rawstor_object_write_zeroes(
@@ -436,8 +436,8 @@ rawstd::DetachedTask discard_task(std::unique_ptr<Request> req) {
         for (const virtio_blk_discard_write_zeroes& seg : segs) {
             size_t size = static_cast<size_t>(RAWSTD_LE32TOH(seg.num_sectors))
                           << VIRTIO_BLK_SECTOR_BITS;
-            off_t offset = static_cast<off_t>(RAWSTD_LE64TOH(seg.sector))
-                           << VIRTIO_BLK_SECTOR_BITS;
+            uint64_t offset = RAWSTD_LE64TOH(seg.sector)
+                              << VIRTIO_BLK_SECTOR_BITS;
             total +=
                 co_await co_object_discard(req->vq().object(), size, offset);
         }
@@ -471,8 +471,8 @@ rawstd::DetachedTask write_zeroes_task(std::unique_ptr<Request> req) {
         for (const virtio_blk_discard_write_zeroes& seg : segs) {
             size_t size = static_cast<size_t>(RAWSTD_LE32TOH(seg.num_sectors))
                           << VIRTIO_BLK_SECTOR_BITS;
-            off_t offset = static_cast<off_t>(RAWSTD_LE64TOH(seg.sector))
-                           << VIRTIO_BLK_SECTOR_BITS;
+            uint64_t offset = RAWSTD_LE64TOH(seg.sector)
+                              << VIRTIO_BLK_SECTOR_BITS;
             bool unmap = (RAWSTD_LE32TOH(seg.flags) &
                           VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP) != 0;
             total += co_await co_object_write_zeroes(

@@ -13,7 +13,7 @@
 typedef struct {
     RawstorObject* object;
     unsigned int index;
-    off_t offset;
+    uint64_t offset;
 
     struct iovec src_iov;
     struct iovec dst_iov;

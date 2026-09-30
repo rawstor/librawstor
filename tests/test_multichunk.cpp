@@ -102,7 +102,7 @@ TEST(MultiChunkTest, create_open_read_write_across_chunk_boundary) {
     for (size_t i = 0; i < pattern.size(); ++i) {
         pattern[i] = static_cast<char>('a' + i);
     }
-    off_t straddle_offset = static_cast<off_t>(chunk_size) - 8;
+    uint64_t straddle_offset = chunk_size - 8;
     size_t written =
         run(*queue,
             object->pwrite(
@@ -118,7 +118,7 @@ TEST(MultiChunkTest, create_open_read_write_across_chunk_boundary) {
     EXPECT_EQ(readback, pattern);
 
     // A write entirely inside the final chunk must also round-trip.
-    off_t last_chunk_offset = static_cast<off_t>(chunk_size) + 4;
+    uint64_t last_chunk_offset = chunk_size + 4;
     size_t written2 =
         run(*queue,
             object->pwrite(
@@ -185,7 +185,7 @@ TEST(MultiChunkTest, preadv_pwritev_across_chunk_boundary) {
     for (size_t i = 0; i < 24; ++i) {
         pattern.push_back(static_cast<char>('a' + i));
     }
-    off_t straddle_offset = static_cast<off_t>(chunk_size) - 8;
+    uint64_t straddle_offset = chunk_size - 8;
 
     std::array<char, 8> w0{}, w1{}, w2{};
     memcpy(w0.data(), pattern.data(), w0.size());
@@ -363,10 +363,10 @@ TEST(MultiChunkTest, single_uri_target_with_chunk_size_below_size) {
         run(*queue, target.open(*queue, 0));
     std::vector<char> pattern(16, 'x');
     size_t written =
-        run(*queue, object->pwrite(
-                        pattern.data(), pattern.size(),
-                        static_cast<off_t>(2 * chunk_size), /*sync=*/true
-                    ));
+        run(*queue,
+            object->pwrite(
+                pattern.data(), pattern.size(), 2 * chunk_size, /*sync=*/true
+            ));
     EXPECT_EQ(written, pattern.size());
     run(*queue, object->close());
 

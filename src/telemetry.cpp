@@ -38,7 +38,7 @@ struct Op {
     TimePoint clat;
     const char* op;
     size_t size;
-    off_t offset;
+    uint64_t offset;
 
     // Deliberately reversed (bigger lat sorts first): lets TopN drive
     // std::push_heap/pop_heap/sort with the default comparator, no
@@ -156,7 +156,7 @@ void record_lat(TimePoint ns) {
 
 void record_op(
     TimePoint lat, TimePoint slat, TimePoint rtt, TimePoint clat,
-    const char* op, size_t size, off_t offset
+    const char* op, size_t size, uint64_t offset
 ) {
     top_slow.add(Op{lat, slat, rtt, clat, op, size, offset});
 }
@@ -195,8 +195,7 @@ void dump() {
                 "    %2u. %-7s size=%-10s offset=%-12s "
                 "slat=%s rtt=%s clat=%s lat=%s usec\n",
                 i++, op.op, grouped(static_cast<uint64_t>(op.size)).c_str(),
-                grouped(static_cast<uint64_t>(op.offset)).c_str(),
-                grouped(usec(op.slat), 0).c_str(),
+                grouped(op.offset).c_str(), grouped(usec(op.slat), 0).c_str(),
                 grouped(usec(op.rtt), 0).c_str(),
                 grouped(usec(op.clat), 0).c_str(),
                 grouped(usec(op.lat), 0).c_str()

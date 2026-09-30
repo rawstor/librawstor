@@ -75,11 +75,11 @@ struct RawstorObjectSpec {
      * defaults that degenerate to a single-chunk, single-copy object --
      * which behaves exactly like a plain object.
      */
-    uint64_t chunk_size;    /**< Power of two dividing size; 0 = one
-                                  chunk spans the object. */
-    uint64_t stripe_width;  /**< K; 0 = spread every chunk, 1 =
-                                  object-local. */
-    uint8_t failure_domain; /**< RAWSTOR_OBJ_DOMAIN_*; 0 = default
+    uint64_t chunk_size;         /**< Power of two dividing size; 0 = one
+                                       chunk spans the object. */
+    uint64_t stripe_width;       /**< K; 0 = spread every chunk, 1 =
+                                       object-local. */
+    unsigned int failure_domain; /**< RAWSTOR_OBJ_DOMAIN_*; 0 = default
                                   (server). */
 };
 
