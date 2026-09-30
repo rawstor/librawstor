@@ -48,6 +48,10 @@ private:
         MemberState state;
         RawstorObjectMeta meta;
         bool reachable;
+        // The reconnect probe has already logged its attempt to bring this
+        // member back; reset once it is reachable again, so each outage
+        // is reported once rather than on every probe tick.
+        bool probe_announced;
     };
 
     rawio::Queue& _queue;
@@ -185,6 +189,9 @@ private:
     void _write_finished(unsigned int ticket) noexcept;
 
     size_t _in_sync_count() const noexcept;
+
+    // `m`'s own chunk, as a target URI (location/id/offset), for logs.
+    std::string _member_str(const Member& m) const;
 
     // Below-quorum writes freeze for N >= 3 only: with N = 2 a single
     // survivor may continue, because auto-open requires both members, so the

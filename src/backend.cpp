@@ -109,7 +109,7 @@ std::string Backend::str() const {
         return _location.str();
     }
     std::ostringstream oss;
-    oss << "fd " << _fd;
+    oss << _location.str() << " (fd " << _fd << ")";
     return oss.str();
 }
 

@@ -469,7 +469,8 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
             opened[i] ? MemberState::IN_SYNC : MemberState::STALE;
         members.push_back(
             Member{
-                std::move(slots[i]), locations[i], state, metas[i], opened[i]
+                std::move(slots[i]), locations[i], state, metas[i], opened[i],
+                false
             }
         );
         if (opened[i]) {
@@ -607,7 +608,10 @@ void Chunk::_reconcile_sync_set() {
     for (Member& m : _members) {
         if (m.reachable &&
             m.meta.sync_state.state == RAWSTOR_OBJECT_SYNC_STATE_SYNCING) {
-            rawstd_warning("Mirror member with interrupted resync is stale\n");
+            rawstd_warning(
+                "Mirror member with interrupted resync is stale: %s\n",
+                _member_str(m).c_str()
+            );
             m.state = MemberState::STALE;
         }
     }
@@ -663,7 +667,10 @@ void Chunk::_reconcile_sync_set() {
         for (Member& m : _members) {
             if (m.state == MemberState::IN_SYNC &&
                 m.meta.sync_state.sync_id != newest) {
-                rawstd_warning("Stale mirror member excluded from the set\n");
+                rawstd_warning(
+                    "Stale mirror member excluded from the set: %s\n",
+                    _member_str(m).c_str()
+                );
                 m.state = MemberState::STALE;
             }
         }
@@ -834,10 +841,21 @@ rawstd::Task<void> Chunk::_run_dirty_barrier() {
  * CLEAN nothing acknowledged can be lost, so the recording is deferred to
  * the dirty gate.
  */
+std::string Chunk::_member_str(const Member& m) const {
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&_id, &uuid_string);
+    std::ostringstream oss;
+    oss << std::hex << _offset;
+    return rawstd::URI(rawstd::URI(m.location, uuid_string), oss.str()).str();
+}
+
 rawstd::Task<void> Chunk::_degrade(std::vector<size_t> idxs) {
     for (size_t idx : idxs) {
         if (_members[idx].state == MemberState::IN_SYNC) {
-            rawstd_error("Mirror member degraded\n");
+            rawstd_warning(
+                "Mirror member degraded: %s\n",
+                _member_str(_members[idx]).c_str()
+            );
             _members[idx].state = MemberState::STALE;
             // The reconnect probe brings the member back for a resync.
             _members[idx].reachable = false;
@@ -1019,8 +1037,9 @@ rawstd::Task<void> Chunk::_fan_out_write_one(
         size_t result = co_await issue(*_members[idx].slot);
         st->any_success = true;
         st->result = std::min(st->result, result);
-    } catch (const std::system_error& e) {
-        rawstd_error("%s\n", strerror(e.code().value()));
+    } catch (const std::system_error&) {
+        // Already logged by the member's own Slot; _degrade() reports
+        // the exclusion itself.
         st->failed.push_back(idx);
     }
 }
@@ -1238,7 +1257,10 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
             co_return;
         }
 
-        rawstd_info("Mirror resync: bringing a stale member back...\n");
+        rawstd_info(
+            "Mirror resync: bringing a stale member back: %s\n",
+            _member_str(_members[idx]).c_str()
+        );
 
         // The SYNCING mark must be durable before the copy starts: a crash
         // mid-resync must leave the member recognizably untrusted
@@ -1475,7 +1497,10 @@ rawstd::DetachedTask Chunk::_resync_finish() {
     _members[idx].meta.spec.size = _size;
     _resync.reset();
 
-    rawstd_info("Mirror resync: the member rejoined the set\n");
+    rawstd_info(
+        "Mirror resync: the member rejoined the set: %s\n",
+        _member_str(_members[idx]).c_str()
+    );
 
     if (_writes_frozen && !_below_write_quorum(_in_sync_count())) {
         rawstd_info("Mirror write quorum restored: unfreezing writes\n");
@@ -1486,9 +1511,11 @@ rawstd::DetachedTask Chunk::_resync_finish() {
 }
 
 void Chunk::_resync_abort(const char* reason) noexcept {
-    rawstd_error("Mirror resync aborted: %s\n", reason);
-
     size_t idx = _resync->idx;
+    rawstd_error(
+        "Mirror resync aborted: %s: %s\n", _member_str(_members[idx]).c_str(),
+        reason
+    );
     _members[idx].state = MemberState::STALE;
     _members[idx].reachable = false;
 
@@ -1574,7 +1601,13 @@ rawstd::DetachedTask Chunk::_probe_tick() {
         co_return;
     }
 
-    rawstd_info("Mirror probe: reconnecting a stale member...\n");
+    if (!_members[idx].probe_announced) {
+        rawstd_info(
+            "Mirror probe: reconnecting a stale member: %s\n",
+            _member_str(_members[idx]).c_str()
+        );
+        _members[idx].probe_announced = true;
+    }
     _probe_pending = true;
 
     std::unique_ptr<Slot> slot;
@@ -1606,6 +1639,7 @@ rawstd::DetachedTask Chunk::_probe_tick() {
 
     _members[idx].slot = std::move(slot);
     _members[idx].reachable = true;
+    _members[idx].probe_announced = false;
     _resync_maybe_start();
 }
 
@@ -1664,8 +1698,8 @@ rawstd::Task<size_t> Chunk::_read(
         } catch (const std::system_error& e) {
             int error = e.code().value();
             rawstd_warning(
-                "Mirror member read failed: %s; trying next member\n",
-                strerror(error)
+                "Mirror member read failed: %s: %s; trying next member\n",
+                _member_str(_members[idx]).c_str(), strerror(error)
             );
             failures.push_back({idx, error});
             last_error = error;

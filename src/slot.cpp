@@ -318,11 +318,23 @@ rawstd::Task<T> Slot::_with_retry(
 
             ++attempt;
             if (!_transparent_retry || attempt >= rawstor_opts_io_attempts()) {
-                rawstd_error(
-                    "IO %s: error on %s: %s; attempt %u of %u; failing...\n",
-                    func_name, be->str().c_str(), std::strerror(error), attempt,
-                    rawstor_opts_io_attempts()
-                );
+                if (!_transparent_retry) {
+                    // A mirror member: the owning Chunk handles the
+                    // failure (degrade, reconnect probe), so there is no
+                    // retry budget here to report against.
+                    rawstd_warning(
+                        "IO %s: error on %s: %s; not retried (mirror "
+                        "member)\n",
+                        func_name, be->str().c_str(), std::strerror(error)
+                    );
+                } else {
+                    rawstd_error(
+                        "IO %s: error on %s: %s; attempt %u of %u; "
+                        "failing...\n",
+                        func_name, be->str().c_str(), std::strerror(error),
+                        attempt, rawstor_opts_io_attempts()
+                    );
+                }
                 // Not thrown here: `be` is presumed broken exactly like any
                 // other retryable failure and still needs closing below,
                 // or it leaks its recv-multishot registration -- but
