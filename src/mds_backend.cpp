@@ -579,6 +579,13 @@ rawstd::Task<void> Backend::set_snapshot(
     co_await _set_object(object_id, snapshot_id, RAWSTOR_READONLY);
 }
 
+Object& Backend::_opened() {
+    if (!_object) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+    }
+    return *_object;
+}
+
 rawstd::Task<void> Backend::close() {
     if (_object) {
         co_await _object->close();
@@ -587,36 +594,36 @@ rawstd::Task<void> Backend::close() {
 }
 
 rawstd::Task<size_t> Backend::pread(void* buf, size_t size, off_t offset) {
-    co_return co_await _object->pread(buf, size, offset);
+    co_return co_await _opened().pread(buf, size, offset);
 }
 
 rawstd::Task<size_t>
 Backend::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
-    co_return co_await _object->preadv(iov, niov, size, offset);
+    co_return co_await _opened().preadv(iov, niov, size, offset);
 }
 
 rawstd::Task<size_t>
 Backend::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
-    co_return co_await _object->pwrite(buf, size, offset, sync);
+    co_return co_await _opened().pwrite(buf, size, offset, sync);
 }
 
 rawstd::Task<size_t> Backend::pwritev(
     const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
 ) {
-    co_return co_await _object->pwritev(iov, niov, size, offset, sync);
+    co_return co_await _opened().pwritev(iov, niov, size, offset, sync);
 }
 
 rawstd::Task<size_t> Backend::discard(size_t size, off_t offset) {
-    co_return co_await _object->discard(size, offset);
+    co_return co_await _opened().discard(size, offset);
 }
 
 rawstd::Task<size_t>
 Backend::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
-    co_return co_await _object->write_zeroes(size, offset, unmap, sync);
+    co_return co_await _opened().write_zeroes(size, offset, unmap, sync);
 }
 
 rawstd::Task<void> Backend::flush() {
-    co_await _object->flush();
+    co_await _opened().flush();
 }
 
 } // namespace mds

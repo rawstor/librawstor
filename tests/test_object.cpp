@@ -305,6 +305,43 @@ TEST(ObjectListTest, lists_mds_objects) {
     }
 }
 
+// An mds:// Backend left with no nested object -- closed, or its re-open
+// failed -- reports every data-path call as a retryable ENOTCONN, the way
+// a closed socket does, so Slot's retry reconnects instead of crashing.
+TEST(ObjectCloseTest, mds_backend_io_after_close_is_enotconn) {
+    rawstor::tests::ObjectEnv env(8806, 8807);
+    const char* uuid = "018f4e2a-3000-7000-8000-000000000060";
+    std::string target = object_target(env, uuid);
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid_from_string(&id, uuid), 0);
+    std::shared_ptr<rawstor::Backend> backend =
+        run(*queue,
+            rawstor::Backend::create(*queue, rawstd::URI(env.location())));
+    run(*queue, backend->set_object(id, 0, 0));
+    run(*queue, backend->close());
+
+    auto expect_enotconn = [&](auto task) {
+        try {
+            run(*queue, std::move(task));
+            ADD_FAILURE() << "no error";
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), ENOTCONN);
+        }
+    };
+    char buf[4096] = {};
+    expect_enotconn(backend->flush());
+    expect_enotconn(backend->pread(buf, sizeof(buf), 0));
+    expect_enotconn(backend->pwrite(buf, sizeof(buf), 0, false));
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
 // OBJ_LIST_SNAPSHOTS end to end: an object with no committed snapshot
 // lists none, and an object the MDS doesn't know is ENOENT.
 TEST(ObjectSnapshotTest, list_snapshots_over_mds) {

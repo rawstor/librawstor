@@ -57,6 +57,12 @@ private:
     rawstd::Task<void>
     _set_object(const RawstdUUID& id, const RawstdUUID& snapshot_id, int flags);
 
+    // The nested Object every data-path method delegates to. Throws
+    // ENOTCONN when there is none (after close(), or a re-open that
+    // failed), the same retryable "not connected" failure a closed
+    // socket gives -- Slot's retry reconnects through a fresh Backend.
+    Object& _opened();
+
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
