@@ -214,8 +214,9 @@ Client::_exchange(const void* request, size_t size, RawstorCommandType cmd) {
 }
 
 rawstd::Task<uint64_t> Client::create(
-    const RawstdUUID& op_id, const RawstdUUID& id, uint64_t logical_size,
-    uint64_t chunk_size, const RawstorFrameObjPolicy& policy
+    const RawstdUUID& idempotency_key, const RawstdUUID& id,
+    uint64_t logical_size, uint64_t chunk_size,
+    const RawstorFrameObjPolicy& policy
 ) {
     RawstorFrameObjCreate request{
         .head =
@@ -227,7 +228,7 @@ rawstd::Task<uint64_t> Client::create(
         .payload = {},
     };
     uuid_to_bytes(id, request.payload.id);
-    uuid_to_bytes(op_id, request.payload.op_id);
+    uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
     request.payload.logical_size = logical_size;
     // mds::Backend::create() only gets here with a nonzero power-of-two
     // chunk_size (Target::create()'s own check).
@@ -265,7 +266,7 @@ Client::open(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
 }
 
 rawstd::Task<WireResized> Client::resize(
-    const RawstdUUID& op_id, const RawstdUUID& id, uint64_t new_size
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t new_size
 ) {
     RawstorFrameObjOp request{
         .head =
@@ -274,10 +275,12 @@ rawstd::Task<WireResized> Client::resize(
                 .cmd = RAWSTOR_CMD_OBJ_RESIZE,
                 .cid = _cid_counter++,
             },
-        .payload = {.id = {}, .op_id = {}, .snapshot_id = {}, .val = new_size},
+        .payload = {
+            .id = {}, .idempotency_key = {}, .snapshot_id = {}, .val = new_size
+        },
     };
     uuid_to_bytes(id, request.payload.id);
-    uuid_to_bytes(op_id, request.payload.op_id);
+    uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
 
     std::vector<unsigned char> data =
         co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_OBJ_RESIZE);
@@ -292,7 +295,7 @@ rawstd::Task<WireResized> Client::resize(
 }
 
 rawstd::Task<WireMap>
-Client::remove(const RawstdUUID& op_id, const RawstdUUID& id) {
+Client::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
     RawstorFrameObjOp request{
         .head =
             {
@@ -300,10 +303,12 @@ Client::remove(const RawstdUUID& op_id, const RawstdUUID& id) {
                 .cmd = RAWSTOR_CMD_OBJ_REMOVE,
                 .cid = _cid_counter++,
             },
-        .payload = {.id = {}, .op_id = {}, .snapshot_id = {}, .val = 0},
+        .payload = {
+            .id = {}, .idempotency_key = {}, .snapshot_id = {}, .val = 0
+        },
     };
     uuid_to_bytes(id, request.payload.id);
-    uuid_to_bytes(op_id, request.payload.op_id);
+    uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
 
     std::vector<unsigned char> data =
         co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_OBJ_REMOVE);
@@ -311,13 +316,13 @@ Client::remove(const RawstdUUID& op_id, const RawstdUUID& id) {
 }
 
 rawstd::Task<uint64_t> Client::snap_commit(
-    const RawstdUUID& op_id, const RawstdUUID& id,
+    const RawstdUUID& idempotency_key, const RawstdUUID& id,
     const RawstdUUID& snapshot_id, const std::vector<WireSnapMember>& members
 ) {
     RawstorFrameObjSnapCommitPayload payload{};
     uuid_to_bytes(id, payload.id);
     uuid_to_bytes(snapshot_id, payload.snapshot_id);
-    uuid_to_bytes(op_id, payload.op_id);
+    uuid_to_bytes(idempotency_key, payload.idempotency_key);
     payload.nmembers = static_cast<uint32_t>(members.size());
 
     RawstorFrameHead head{
@@ -350,7 +355,8 @@ rawstd::Task<uint64_t> Client::snap_commit(
 }
 
 rawstd::Task<std::vector<WireSnapMember>> Client::snap_remove(
-    const RawstdUUID& op_id, const RawstdUUID& id, const RawstdUUID& snapshot_id
+    const RawstdUUID& idempotency_key, const RawstdUUID& id,
+    const RawstdUUID& snapshot_id
 ) {
     RawstorFrameObjOp request{
         .head =
@@ -359,10 +365,12 @@ rawstd::Task<std::vector<WireSnapMember>> Client::snap_remove(
                 .cmd = RAWSTOR_CMD_OBJ_SNAP_REMOVE,
                 .cid = _cid_counter++,
             },
-        .payload = {.id = {}, .op_id = {}, .snapshot_id = {}, .val = 0},
+        .payload = {
+            .id = {}, .idempotency_key = {}, .snapshot_id = {}, .val = 0
+        },
     };
     uuid_to_bytes(id, request.payload.id);
-    uuid_to_bytes(op_id, request.payload.op_id);
+    uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
     uuid_to_bytes(snapshot_id, request.payload.snapshot_id);
 
     std::vector<unsigned char> data = co_await _exchange(

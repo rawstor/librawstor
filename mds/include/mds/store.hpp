@@ -116,24 +116,25 @@ public:
     void set_topology(Topology topology);
 
     /*
-     * Every mutating call takes an `op_id`: the client's idempotency key
-     * for one logical operation, the same across its retries (docs/mds.md,
+     * Every mutating call takes an `idempotency_key`: the client's idempotency
+     * key for one logical operation, the same across its retries (docs/mds.md,
      * "Idempotent mutations"). The first call that applies it records its
-     * result in the same transaction; a repeat of that op_id returns the
-     * recorded result instead of applying anything again (EINVAL if the
-     * op_id was recorded for a different call). A nil op_id opts out.
-     * Records are dropped after a day.
+     * result in the same transaction; a repeat of that idempotency_key returns
+     * the recorded result instead of applying anything again (EINVAL if the
+     * idempotency_key was recorded for a different call). A nil idempotency_key
+     * opts out. Records are dropped after a day.
      */
 
     /*
      * Places every chunk up front; the backends stay sparse. The object's
      * own id is client-generated (like every object id); EEXIST on reuse.
-     * A repeated op_id whose object has since been removed (the caller's
-     * own rollback) creates it afresh.
+     * A repeated idempotency_key whose object has since been removed (the
+     * caller's own rollback) creates it afresh.
      */
     ObjectDescriptor create(
-        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t logical_size,
-        uint64_t chunk_size, const PlacementPolicy& policy
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t logical_size, uint64_t chunk_size,
+        const PlacementPolicy& policy
     );
 
     /*
@@ -143,15 +144,17 @@ public:
     ObjectMap open(const RawstdUUID& id, const RawstdUUID& snapshot_id);
 
     /* Grow-only in v1. */
-    ResizeResult
-    resize(const RawstdUUID& op_id, const RawstdUUID& id, uint64_t new_size);
+    ResizeResult resize(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t new_size
+    );
 
     /*
      * EBUSY while snapshots exist: they must be removed explicitly.
      * Returns the map the object had, for the caller's fan-out destroy
      * of its chunks.
      */
-    ObjectMap remove(const RawstdUUID& op_id, const RawstdUUID& id);
+    ObjectMap remove(const RawstdUUID& idempotency_key, const RawstdUUID& id);
 
     /*
      * Registers the snapshot: members = exactly the chunk copies that
@@ -164,7 +167,7 @@ public:
      * into the snapshot. Returns the bumped map_epoch.
      */
     uint64_t snap_commit(
-        const RawstdUUID& op_id, const RawstdUUID& id,
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
         const RawstdUUID& snapshot_id, const std::vector<SnapMember>& members
     );
 
@@ -173,7 +176,7 @@ public:
      * registered: the member set for the caller's fan-out destroy.
      */
     std::vector<SnapMember> snap_remove(
-        const RawstdUUID& op_id, const RawstdUUID& id,
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
         const RawstdUUID& snapshot_id
     );
 

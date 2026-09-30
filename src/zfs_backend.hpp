@@ -85,17 +85,18 @@ public:
     ) override;
 
     rawstd::Task<void> create(
-        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectSpec& sp, RawstorMemberRole member_role
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstorObjectSpec& sp,
+        RawstorMemberRole member_role
     ) override;
 
     rawstd::Task<void> remove(
-        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t offset
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
     ) override;
 
     rawstd::Task<void> remove_snapshot(
-        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t offset,
-        const RawstdUUID& snapshot_id
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& snapshot_id
     ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
@@ -122,8 +123,8 @@ public:
     // own device node (/dev/zvol/.../<uuid>@s<id>) is openable -- one
     // mechanism, old zvols included, rather than per-snapshot.
     rawstd::Task<void> create_snapshot(
-        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t offset,
-        const RawstdUUID& snapshot_id
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& snapshot_id
     ) override;
 };
 

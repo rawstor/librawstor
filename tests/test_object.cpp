@@ -569,7 +569,7 @@ TEST(ObjectCreateTest, size_not_chunk_multiple_is_einval) {
     EXPECT_EQ(target_create(*queue, target, spec), -EINVAL);
 }
 
-// A resize whose reply got lost is retried with the same op_id
+// A resize whose reply got lost is retried with the same idempotency_key
 // (docs/mds.md, "Idempotent mutations"): the MDS has already grown the map,
 // so the retry must still materialize the new chunks it reserved --
 // not see a map that already has them and create none. The "lost" first
@@ -588,20 +588,20 @@ TEST(ObjectResizeTest, retried_after_lost_reply_materializes_new_chunks) {
 
     RawstdUUID id;
     ASSERT_EQ(rawstd_uuid_from_string(&id, uuid), 0);
-    RawstdUUID op_id;
-    ASSERT_EQ(rawstd_uuid7_init(&op_id), 0);
+    RawstdUUID idempotency_key;
+    ASSERT_EQ(rawstd_uuid7_init(&idempotency_key), 0);
     uint64_t new_size = 2 * spec.size;
 
     {
         rawstor::mds::Client client(*queue, rawstd::URI(env.location()));
         run(*queue, client.connect());
-        run(*queue, client.resize(op_id, id, new_size));
+        run(*queue, client.resize(idempotency_key, id, new_size));
     }
 
     std::shared_ptr<rawstor::Backend> backend =
         run(*queue,
             rawstor::Backend::create(*queue, rawstd::URI(env.location())));
-    run(*queue, backend->resize(op_id, id, 0, new_size));
+    run(*queue, backend->resize(idempotency_key, id, 0, new_size));
     run(*queue, backend->close());
 
     RawstorObjectSpec read_spec{};

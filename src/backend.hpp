@@ -111,15 +111,17 @@ public:
     // hardcodes it), a witness copy being a stage-3 operation on an
     // already-existing chunk's quorum, never a create() of its own.
     virtual rawstd::Task<void> create(
-        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectSpec& sp, RawstorMemberRole member_role
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstorObjectSpec& sp,
+        RawstorMemberRole member_role
     ) = 0;
 
     // Removes the live version of `id`/`offset`. A version
     // previously registered via create_snapshot() below is removed via
     // remove_snapshot() below instead.
-    virtual rawstd::Task<void>
-    remove(const RawstdUUID& op_id, const RawstdUUID& id, uint64_t offset) = 0;
+    virtual rawstd::Task<void> remove(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
+    ) = 0;
 
     // Removes one version previously registered via create_snapshot()
     // below (`snapshot_id`, never nil -- nil is the live version, removed via
@@ -130,8 +132,8 @@ public:
     // overrides it with its own MDS-orchestrated fan-out (see
     // mds_backend.cpp).
     virtual rawstd::Task<void> remove_snapshot(
-        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t offset,
-        const RawstdUUID& snapshot_id
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& snapshot_id
     );
 
     // The full creation-time shape (size/width/chunk_size) plus this
@@ -223,8 +225,8 @@ public:
     // mds::Backend overrides it with its own MDS-orchestrated fan-out
     // (see mds_backend.cpp).
     virtual rawstd::Task<void> create_snapshot(
-        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t offset,
-        const RawstdUUID& snapshot_id
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& snapshot_id
     );
 
     // Grows `id` to `new_size` (grow-only -- docs/mds.md: shrink
@@ -236,8 +238,8 @@ public:
     // `offset` is always 0 there (a single mds:// URI is never
     // itself split into chunks -- resize operates on the whole volume).
     virtual rawstd::Task<void> resize(
-        const RawstdUUID& op_id, const RawstdUUID& id, uint64_t offset,
-        uint64_t new_size
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, uint64_t new_size
     );
 
     virtual rawstd::Task<size_t>

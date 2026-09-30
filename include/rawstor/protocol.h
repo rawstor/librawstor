@@ -70,8 +70,8 @@ extern "C" {
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/open/
  * resize/remove a whole, possibly multi-chunk mds:// object. OBJ_OPEN
  * rides RawstorFrameBasicPayload (object_id = id, snapshot_id = the bound
- * version, nil = live). The mutating ones carry an op_id, the client's
- * idempotency key (docs/mds.md, "Idempotent mutations"): OBJ_RESIZE
+ * version, nil = live). The mutating ones carry an idempotency_key, the
+ * client's idempotency key (docs/mds.md, "Idempotent mutations"): OBJ_RESIZE
  * (val = the new size) and OBJ_REMOVE ride RawstorFrameObjOpPayload,
  * OBJ_CREATE its own payload.
  */
@@ -370,8 +370,8 @@ struct RawstorFrameObjPolicy {
  * an mds:// object's chunk_size is always a nonzero power of two.
  */
 struct RawstorFrameObjCreatePayload {
-    uint8_t id[16];    /* client-generated, like every object id */
-    uint8_t op_id[16]; /* idempotency key, see OBJ_* above */
+    uint8_t id[16];              /* client-generated, like every object id */
+    uint8_t idempotency_key[16]; /* idempotency key, see OBJ_* above */
     uint64_t logical_size;
     struct RawstorFrameObjPolicy policy;
     uint8_t chunk_shift;
@@ -389,13 +389,13 @@ struct RawstorFrameObjCreatedPayload {
 
 /*
  * OBJ_RESIZE / OBJ_REMOVE / OBJ_SNAP_REMOVE request payload: the object,
- * the op_id of this mutation, and the command's own argument (`val` = the
- * new size for OBJ_RESIZE; `snapshot_id` = the version for
- * OBJ_SNAP_REMOVE; unused fields are 0/nil).
+ * the idempotency_key of this mutation, and the command's own argument (`val` =
+ * the new size for OBJ_RESIZE; `snapshot_id` = the version for OBJ_SNAP_REMOVE;
+ * unused fields are 0/nil).
  */
 struct RawstorFrameObjOpPayload {
     uint8_t id[16];
-    uint8_t op_id[16];
+    uint8_t idempotency_key[16];
     uint8_t snapshot_id[16];
     uint64_t val;
 } RAWSTOR_PACKED;
@@ -465,7 +465,7 @@ struct RawstorFrameObjChunkSlot {
 struct RawstorFrameObjSnapCommitPayload {
     uint8_t id[16];
     uint8_t snapshot_id[16];
-    uint8_t op_id[16];
+    uint8_t idempotency_key[16];
     uint32_t nmembers;
 } RAWSTOR_PACKED;
 

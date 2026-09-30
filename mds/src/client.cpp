@@ -296,7 +296,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                 .seed = payload.policy.placement_seed,
             };
             ObjectDescriptor descriptor = store.create(
-                uuid_of(payload.op_id), uuid_of(payload.id),
+                uuid_of(payload.idempotency_key), uuid_of(payload.id),
                 payload.logical_size, 1ull << payload.chunk_shift, policy
             );
             out.map_epoch = descriptor.map_epoch;
@@ -342,7 +342,8 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         RawstorFrameObjResizedPayload out{};
         try {
             ResizeResult result = store.resize(
-                uuid_of(payload.op_id), uuid_of(payload.id), payload.val
+                uuid_of(payload.idempotency_key), uuid_of(payload.id),
+                payload.val
             );
             out.map_epoch = result.map_epoch;
             out.old_nchunks = static_cast<uint32_t>(result.old_nchunks);
@@ -364,8 +365,9 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         int32_t res = 0;
         std::vector<unsigned char> data;
         try {
-            ObjectMap map =
-                store.remove(uuid_of(payload.op_id), uuid_of(payload.id));
+            ObjectMap map = store.remove(
+                uuid_of(payload.idempotency_key), uuid_of(payload.id)
+            );
             data = encode_object_map(*store.topology(), map);
         } catch (const std::system_error& e) {
             res = -e.code().value();
@@ -406,7 +408,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                 );
             }
             out.map_epoch = store.snap_commit(
-                uuid_of(payload.op_id), uuid_of(payload.id),
+                uuid_of(payload.idempotency_key), uuid_of(payload.id),
                 uuid_of(payload.snapshot_id), members
             );
         } catch (const std::system_error& e) {
@@ -428,7 +430,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         std::vector<unsigned char> data;
         try {
             std::vector<SnapMember> members = store.snap_remove(
-                uuid_of(payload.op_id), uuid_of(payload.id),
+                uuid_of(payload.idempotency_key), uuid_of(payload.id),
                 uuid_of(payload.snapshot_id)
             );
             data.resize(

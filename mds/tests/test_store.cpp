@@ -196,17 +196,19 @@ TEST_F(ObjectStoreTest, set_topology_allows_dropping_unused_ost) {
     EXPECT_EQ(store.topology()->osts().size(), 1u);
 }
 
-// Idempotent mutations (docs/mds.md): a repeated op_id replays the
+// Idempotent mutations (docs/mds.md): a repeated idempotency_key replays the
 // first call's result instead of applying anything again.
-TEST_F(ObjectStoreTest, create_replays_repeated_op_id) {
+TEST_F(ObjectStoreTest, create_replays_repeated_idempotency_key) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    RawstdUUID op_id = make_id();
+    RawstdUUID idempotency_key = make_id();
 
-    ObjectDescriptor first =
-        store.create(op_id, id, chunk_size, chunk_size, make_policy(1));
-    ObjectDescriptor again =
-        store.create(op_id, id, chunk_size, chunk_size, make_policy(1));
+    ObjectDescriptor first = store.create(
+        idempotency_key, id, chunk_size, chunk_size, make_policy(1)
+    );
+    ObjectDescriptor again = store.create(
+        idempotency_key, id, chunk_size, chunk_size, make_policy(1)
+    );
     EXPECT_EQ(again.map_epoch, first.map_epoch);
 
     // A different op for the same id is a genuine second create.
@@ -219,23 +221,23 @@ TEST_F(ObjectStoreTest, create_replays_repeated_op_id) {
 TEST_F(ObjectStoreTest, create_replayed_after_rollback_creates_afresh) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    RawstdUUID op_id = make_id();
+    RawstdUUID idempotency_key = make_id();
 
-    store.create(op_id, id, chunk_size, chunk_size, make_policy(1));
+    store.create(idempotency_key, id, chunk_size, chunk_size, make_policy(1));
     store.remove(make_id(), id);
 
-    store.create(op_id, id, chunk_size, chunk_size, make_policy(1));
+    store.create(idempotency_key, id, chunk_size, chunk_size, make_policy(1));
     EXPECT_NO_THROW(store.open(id, RawstdUUID{}));
 }
 
-TEST_F(ObjectStoreTest, resize_replays_repeated_op_id) {
+TEST_F(ObjectStoreTest, resize_replays_repeated_idempotency_key) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    RawstdUUID op_id = make_id();
+    RawstdUUID idempotency_key = make_id();
     store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
 
-    ResizeResult first = store.resize(op_id, id, 3 * chunk_size);
-    ResizeResult again = store.resize(op_id, id, 3 * chunk_size);
+    ResizeResult first = store.resize(idempotency_key, id, 3 * chunk_size);
+    ResizeResult again = store.resize(idempotency_key, id, 3 * chunk_size);
 
     EXPECT_EQ(first.old_nchunks, 1u);
     EXPECT_EQ(again.old_nchunks, 1u);
@@ -248,11 +250,11 @@ TEST_F(ObjectStoreTest, resize_replays_repeated_op_id) {
 TEST_F(ObjectStoreTest, remove_replays_the_removed_map) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    RawstdUUID op_id = make_id();
+    RawstdUUID idempotency_key = make_id();
     store.create(RawstdUUID{}, id, 2 * chunk_size, chunk_size, make_policy(1));
 
-    ObjectMap first = store.remove(op_id, id);
-    ObjectMap again = store.remove(op_id, id);
+    ObjectMap first = store.remove(idempotency_key, id);
+    ObjectMap again = store.remove(idempotency_key, id);
 
     ASSERT_EQ(first.chunks.size(), 2u);
     ASSERT_EQ(again.chunks.size(), 2u);
@@ -267,11 +269,11 @@ TEST_F(ObjectStoreTest, remove_replays_the_removed_map) {
     }
     EXPECT_EQ(again.descriptor.logical_size, 2 * chunk_size);
 
-    // Without the op_id it's a plain remove of a missing object.
+    // Without the idempotency_key it's a plain remove of a missing object.
     EXPECT_THROW(store.remove(make_id(), id), std::system_error);
 }
 
-TEST_F(ObjectStoreTest, snapshots_replay_repeated_op_id) {
+TEST_F(ObjectStoreTest, snapshots_replay_repeated_idempotency_key) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
     RawstdUUID snapshot_id = make_id();
@@ -293,14 +295,14 @@ TEST_F(ObjectStoreTest, snapshots_replay_repeated_op_id) {
     EXPECT_EQ(rawstd_uuid_cmp(&again[0].ost_id, &removed[0].ost_id), 0);
 }
 
-TEST_F(ObjectStoreTest, op_id_reused_for_another_call_is_einval) {
+TEST_F(ObjectStoreTest, idempotency_key_reused_for_another_call_is_einval) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
-    RawstdUUID op_id = make_id();
-    store.create(op_id, id, chunk_size, chunk_size, make_policy(1));
+    RawstdUUID idempotency_key = make_id();
+    store.create(idempotency_key, id, chunk_size, chunk_size, make_policy(1));
 
     try {
-        store.resize(op_id, id, 2 * chunk_size);
+        store.resize(idempotency_key, id, 2 * chunk_size);
         FAIL() << "expected EINVAL";
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), EINVAL);

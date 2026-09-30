@@ -77,9 +77,9 @@ Ids (`object_id`, `snapshot_id`, `ost_id`, ...) are 16-byte UUIDs; a nil
 the client.
 
 Every mutating `OBJ_*` request (`OBJ_CREATE`, `OBJ_RESIZE`, `OBJ_REMOVE`,
-`OBJ_SNAP_COMMIT`, `OBJ_SNAP_REMOVE`) carries an `op_id`: a UUID the client
+`OBJ_SNAP_COMMIT`, `OBJ_SNAP_REMOVE`) carries an `idempotency_key`: a UUID the client
 generates once per operation and keeps across its retries. The MDS records
-the result of the first request that applies an `op_id` and answers any
+the result of the first request that applies an `idempotency_key` and answers any
 repeat of it with that same result instead of applying it again, so a
 request resent after a lost reply is safe (see
 [MDS design](mds.md), "Idempotent mutations"). Replies that a retry needs
@@ -351,7 +351,7 @@ a nonzero power of two, so 0 (and anything from 64 on) is rejected.
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  16  |                                                                                       |
-     |                                   uint8_t op_id[16]                                   |
+     |                              uint8_t idempotency_key[16]                              |
      |                                                                                       |
  24  |                                                                                       |
      |                                                                                       |
@@ -388,7 +388,7 @@ ObjCreated and ObjSnapCommitted are a single `uint64_t map_epoch`.
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  16  |                                                                                       |
-     |                                   uint8_t op_id[16]                                   |
+     |                              uint8_t idempotency_key[16]                              |
      |                                                                                       |
  24  |                                                                                       |
      |                                                                                       |
@@ -503,7 +503,7 @@ copies to destroy).
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  32  |                                                                                       |
-     |                                   uint8_t op_id[16]                                   |
+     |                              uint8_t idempotency_key[16]                              |
      |                                                                                       |
  40  |                                                                                       |
      |                                                                                       |

@@ -62,9 +62,9 @@ constexpr const char* SCHEMA =
     "  FOREIGN KEY (id, snapshot_id)"
     "    REFERENCES snapshots(id, snapshot_id) ON DELETE CASCADE"
     ") WITHOUT ROWID;"
-    /* Applied mutations by op_id, for replaying a retried request. */
-    "CREATE TABLE IF NOT EXISTS ops ("
-    "  op_id BLOB PRIMARY KEY,"
+    /* Applied mutations by idempotency_key, for replaying a retried request. */
+    "CREATE TABLE IF NOT EXISTS applied_mutations ("
+    "  idempotency_key BLOB PRIMARY KEY,"
     "  kind INTEGER NOT NULL,"
     "  id BLOB NOT NULL,"
     "  result BLOB NOT NULL,"
@@ -239,11 +239,11 @@ void insert_chunks(
 }
 
 /*
- * Idempotency records (ObjectStore's own doc comment on op_id). `kind`
- * tells the mutations apart, so an op_id replayed for a different call is
- * caught instead of answered with a foreign result.
+ * Idempotency records (ObjectStore's own doc comment on idempotency_key).
+ * `kind` tells the mutations apart, so an idempotency_key replayed for a
+ * different call is caught instead of answered with a foreign result.
  */
-enum class OpKind : unsigned {
+enum class MutationKind : unsigned {
     create = 1,
     resize = 2,
     remove = 3,
@@ -252,7 +252,7 @@ enum class OpKind : unsigned {
 };
 
 // How long a record is kept: far beyond any client's retry window.
-const uint64_t op_ttl_seconds = 24 * 60 * 60;
+const uint64_t mutation_record_ttl_seconds = 24 * 60 * 60;
 
 /* A recorded result, packed field by field in host byte order. */
 class ResultWriter final {
@@ -296,17 +296,21 @@ public:
 };
 
 /*
- * The recorded result of `op_id`, if it was already applied; EINVAL if it
- * was applied as a different call. A nil op_id never replays.
+ * The recorded result of `idempotency_key`, if it was already applied; EINVAL
+ * if it was applied as a different call. A nil idempotency_key never replays.
  */
-std::optional<std::vector<unsigned char>> replay_op(
-    sqlite3* db, const RawstdUUID& op_id, OpKind kind, const RawstdUUID& id
+std::optional<std::vector<unsigned char>> replay_mutation(
+    sqlite3* db, const RawstdUUID& idempotency_key, MutationKind kind,
+    const RawstdUUID& id
 ) {
-    if (rawstd_uuid_is_nil(&op_id)) {
+    if (rawstd_uuid_is_nil(&idempotency_key)) {
         return std::nullopt;
     }
-    Stmt select(db, "SELECT kind, id, result FROM ops WHERE op_id = ?;");
-    select.bind_blob(1, op_id.bytes, sizeof(op_id.bytes));
+    Stmt select(
+        db, "SELECT kind, id, result FROM applied_mutations WHERE "
+            "idempotency_key = ?;"
+    );
+    select.bind_blob(1, idempotency_key.bytes, sizeof(idempotency_key.bytes));
     if (!select.step()) {
         return std::nullopt;
     }
@@ -314,31 +318,39 @@ std::optional<std::vector<unsigned char>> replay_op(
     select.column_uuid(1, &recorded_id);
     if (select.column_int64(0) != static_cast<uint64_t>(kind) ||
         rawstd_uuid_cmp(&recorded_id, &id) != 0) {
-        rawstd_error("MDS store: op_id reused for a different request\n");
+        rawstd_error(
+            "MDS store: idempotency_key reused for a different request\n"
+        );
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     return select.column_blob(2);
 }
 
 /* Inside the mutation's own transaction; also drops expired records. */
-void record_op(
-    sqlite3* db, const RawstdUUID& op_id, OpKind kind, const RawstdUUID& id,
-    const std::vector<unsigned char>& result
+void record_mutation(
+    sqlite3* db, const RawstdUUID& idempotency_key, MutationKind kind,
+    const RawstdUUID& id, const std::vector<unsigned char>& result
 ) {
-    if (rawstd_uuid_is_nil(&op_id)) {
+    if (rawstd_uuid_is_nil(&idempotency_key)) {
         return;
     }
     uint64_t now = static_cast<uint64_t>(time(nullptr));
     {
-        Stmt expire(db, "DELETE FROM ops WHERE created_at < ?;");
-        expire.bind_int64(1, now > op_ttl_seconds ? now - op_ttl_seconds : 0)
+        Stmt expire(db, "DELETE FROM applied_mutations WHERE created_at < ?;");
+        expire
+            .bind_int64(
+                1, now > mutation_record_ttl_seconds
+                       ? now - mutation_record_ttl_seconds
+                       : 0
+            )
             .step();
     }
     Stmt insert(
-        db, "INSERT OR REPLACE INTO ops (op_id, kind, id, result, created_at)"
+        db, "INSERT OR REPLACE INTO applied_mutations (idempotency_key, kind, "
+            "id, result, created_at)"
             " VALUES (?, ?, ?, ?, ?);"
     );
-    insert.bind_blob(1, op_id.bytes, sizeof(op_id.bytes))
+    insert.bind_blob(1, idempotency_key.bytes, sizeof(idempotency_key.bytes))
         .bind_int64(2, static_cast<uint64_t>(kind))
         .bind_blob(3, id.bytes, sizeof(id.bytes))
         .bind_blob(4, result.data(), result.size())
@@ -510,13 +522,13 @@ void ObjectStore::set_topology(Topology topology) {
 }
 
 ObjectDescriptor ObjectStore::create(
-    const RawstdUUID& op_id, const RawstdUUID& id, uint64_t logical_size,
-    uint64_t chunk_size, const PlacementPolicy& policy
+    const RawstdUUID& idempotency_key, const RawstdUUID& id,
+    uint64_t logical_size, uint64_t chunk_size, const PlacementPolicy& policy
 ) {
     std::lock_guard<std::mutex> lock(_mutex);
     validate_geometry(logical_size, chunk_size);
 
-    if (replay_op(_db, op_id, OpKind::create, id)) {
+    if (replay_mutation(_db, idempotency_key, MutationKind::create, id)) {
         try {
             return _descriptor(id);
         } catch (const std::system_error& e) {
@@ -524,7 +536,7 @@ ObjectDescriptor ObjectStore::create(
                 throw;
             }
             // Created, then removed again by the caller's own rollback:
-            // this retry creates it afresh (record_op() below replaces
+            // this retry creates it afresh (record_mutation() below replaces
             // the stale record).
         }
     }
@@ -565,7 +577,7 @@ ObjectDescriptor ObjectStore::create(
 
     insert_chunks(_db, *_topology, ret.id, 0, nchunks, chunk_size, ret.policy);
 
-    record_op(_db, op_id, OpKind::create, id, {});
+    record_mutation(_db, idempotency_key, MutationKind::create, id, {});
 
     tx.commit();
 
@@ -631,11 +643,11 @@ ObjectMap ObjectStore::_open_live(const RawstdUUID& id) {
 }
 
 ResizeResult ObjectStore::resize(
-    const RawstdUUID& op_id, const RawstdUUID& id, uint64_t new_size
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t new_size
 ) {
     std::lock_guard<std::mutex> lock(_mutex);
     if (std::optional<std::vector<unsigned char>> recorded =
-            replay_op(_db, op_id, OpKind::resize, id)) {
+            replay_mutation(_db, idempotency_key, MutationKind::resize, id)) {
         ResultReader r(*recorded);
         ResizeResult ret{};
         ret.map_epoch = r.get<uint64_t>();
@@ -676,8 +688,8 @@ ResizeResult ObjectStore::resize(
         descriptor.policy
     );
 
-    record_op(
-        _db, op_id, OpKind::resize, id,
+    record_mutation(
+        _db, idempotency_key, MutationKind::resize, id,
         ResultWriter().put(map_epoch).put(old_chunks).data()
     );
 
@@ -851,10 +863,11 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
     );
 }
 
-ObjectMap ObjectStore::remove(const RawstdUUID& op_id, const RawstdUUID& id) {
+ObjectMap
+ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
     std::lock_guard<std::mutex> lock(_mutex);
     if (std::optional<std::vector<unsigned char>> recorded =
-            replay_op(_db, op_id, OpKind::remove, id)) {
+            replay_mutation(_db, idempotency_key, MutationKind::remove, id)) {
         return decode_map(*recorded);
     }
 
@@ -880,7 +893,9 @@ ObjectMap ObjectStore::remove(const RawstdUUID& op_id, const RawstdUUID& id) {
         del.bind_blob(1, id.bytes, sizeof(id.bytes)).step();
     }
 
-    record_op(_db, op_id, OpKind::remove, id, encode_map(ret));
+    record_mutation(
+        _db, idempotency_key, MutationKind::remove, id, encode_map(ret)
+    );
 
     tx.commit();
 
@@ -949,12 +964,13 @@ ObjectMap ObjectStore::_open_snapshot(
 }
 
 uint64_t ObjectStore::snap_commit(
-    const RawstdUUID& op_id, const RawstdUUID& id,
+    const RawstdUUID& idempotency_key, const RawstdUUID& id,
     const RawstdUUID& snapshot_id, const std::vector<SnapMember>& members
 ) {
     std::lock_guard<std::mutex> lock(_mutex);
-    if (std::optional<std::vector<unsigned char>> recorded =
-            replay_op(_db, op_id, OpKind::snap_commit, id)) {
+    if (std::optional<std::vector<unsigned char>> recorded = replay_mutation(
+            _db, idempotency_key, MutationKind::snap_commit, id
+        )) {
         return ResultReader(*recorded).get<uint64_t>();
     }
 
@@ -1027,8 +1043,8 @@ uint64_t ObjectStore::snap_commit(
             .step();
     }
 
-    record_op(
-        _db, op_id, OpKind::snap_commit, id,
+    record_mutation(
+        _db, idempotency_key, MutationKind::snap_commit, id,
         ResultWriter().put(map_epoch).data()
     );
 
@@ -1038,12 +1054,14 @@ uint64_t ObjectStore::snap_commit(
 }
 
 std::vector<SnapMember> ObjectStore::snap_remove(
-    const RawstdUUID& op_id, const RawstdUUID& id, const RawstdUUID& snapshot_id
+    const RawstdUUID& idempotency_key, const RawstdUUID& id,
+    const RawstdUUID& snapshot_id
 ) {
     std::lock_guard<std::mutex> lock(_mutex);
     std::vector<SnapMember> ret;
-    if (std::optional<std::vector<unsigned char>> recorded =
-            replay_op(_db, op_id, OpKind::snap_remove, id)) {
+    if (std::optional<std::vector<unsigned char>> recorded = replay_mutation(
+            _db, idempotency_key, MutationKind::snap_remove, id
+        )) {
         ResultReader r(*recorded);
         ret.resize(r.get<uint64_t>());
         for (SnapMember& m : ret) {
@@ -1090,7 +1108,9 @@ std::vector<SnapMember> ObjectStore::snap_remove(
     for (const SnapMember& m : ret) {
         w.put(m.logical_index).put(m.ost_id);
     }
-    record_op(_db, op_id, OpKind::snap_remove, id, w.data());
+    record_mutation(
+        _db, idempotency_key, MutationKind::snap_remove, id, w.data()
+    );
 
     tx.commit();
 
