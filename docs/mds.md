@@ -10,6 +10,28 @@ Status: **approved** (2026-07-06). Supersedes the earlier draft where the
 See also: [Architecture](architecture.md), [Protocol](protocol.md),
 `librawstor/docs/mirroring.md` (quorum rules the witness plugs into).
 
+At a glance: the MDS only answers *where* an object's chunks live; data
+never passes through it.
+
+```mermaid
+flowchart TB
+    Client(["Client<br/>librawstor, mds://mds:7776/U"])
+    MDS[("rawstor-mds<br/>object map, snapshots, witness<br/>(SQLite)")]
+    Topo[/"topology.conf<br/>OST roster, domains, weights"/]
+    subgraph OSTs ["rawstor-ost servers: the data"]
+        direction LR
+        A[("OST a")]
+        B[("OST b")]
+        C[("OST c")]
+    end
+
+    Topo -. "read at start / SIGHUP" .-> MDS
+    Client -- "control: OBJ_CREATE / OBJ_OPEN / OBJ_RESIZE /<br/>OBJ_REMOVE / OBJ_SNAP_*" --> MDS
+    MDS -- "chunk map: slots + OST locations" --> Client
+    Client == "data: READ / WRITE / ... to each chunk's OSTs<br/>(MDS not involved)" ==> OSTs
+    MDS -. "reconstruct: LIST + META" .-> OSTs
+```
+
 ## Requirements, in priority order
 
 0. **Allocation and tracking** — answer "which OST hosts which part of which
@@ -232,6 +254,60 @@ witness[id or (id, logical_index)] = {
 }
 ```
 
+The same model as a diagram: one descriptor per object, a `chunk_map`
+entry per chunk with `width` slots, each slot naming one OST from the
+topology; a snapshot records which slots hold it.
+
+```mermaid
+classDiagram
+    direction TB
+    object_descriptor "1" *-- "1" policy
+    object_descriptor "1" *-- "nchunks" chunk_map : logical_index
+    chunk_map "1" *-- "width" slot
+    object_descriptor "1" *-- "*" snapshot : snapshot_id
+    snapshot "1" o-- "*" slot : members
+    object_descriptor "1" *-- "0..*" witness
+    slot "*" --> "1" OST : ost_id
+    class object_descriptor {
+      <<MDS index, rebuildable>>
+      id
+      logical_size
+      chunk_size
+      map_epoch
+    }
+    class policy {
+      redundancy: mirror R | ec k+m
+      failure_domain: ost..dc
+      stripe_width
+      placement_seed
+    }
+    class chunk_map {
+      <<one per chunk>>
+      logical_index
+    }
+    class slot {
+      slot_index
+      ost_id
+    }
+    class snapshot {
+      <<registered after CoW>>
+      snapshot_id
+      created_at
+    }
+    class witness {
+      <<authoritative vote, not rebuildable>>
+      state
+      sync_id, sync_id_history
+      mirror_epoch
+    }
+    class OST {
+      <<from topology>>
+      ost_id
+      location
+      weight, domain path
+    }
+```
+
 Two classes of state, by recoverability:
 
 - `object_descriptor` / `chunk_map` / `snapshots` — an **index**; DR = rebuild
@@ -362,6 +438,36 @@ place(id, index):
   return [(slot_index, ost) ...]
 ```
 
+For example, `width = 2` with `failure_domain = rack`: HRW picks two
+distinct racks, then descends each to one OST (highlighted), so losing a
+whole rack loses at most one copy.
+
+```mermaid
+flowchart TB
+    root(["root"])
+    dc1["dc1"]
+    row1["row1"]
+    r1["rack1"]
+    r2["rack2"]
+    s1["server1"]
+    s2["server2"]
+    s3["server3"]
+    o1[("ost a")]
+    o2[("ost b")]
+    o3[("ost c")]
+    o4[("ost d")]
+    root --> dc1 --> row1
+    row1 --> r1 & r2
+    r1 --> s1 & s2
+    r2 --> s3
+    s1 --> o1
+    s2 --> o2
+    s3 --> o3 & o4
+
+    classDef chosen fill:#d4f7d4,stroke:#2e8b57,stroke-width:2px
+    class r1,r2,o2,o4 chosen
+```
+
 - **Locality knob: `stripe_width` stays a number `K`** (the draft's
   alternative `locality_level` is dropped — `K` already spans the whole
   spectrum and a level form can be layered later as sugar over K + topology).
@@ -414,6 +520,27 @@ client holds the cached map: which OST owns which (logical_index, slot)
 - **One connection per (OST, object)** serves all of that OST's chunks.
 - Client needs `chunk_size` only for **routing**, not for addressing inside an OST.
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant M as rawstor-mds
+    participant A as OST a
+    participant B as OST b
+    C->>M: OBJ_OPEN(id)
+    M-->>C: descriptor + chunk map (slots, locations)
+    Note over C: map cached, MDS is off the I/O path from here
+    par one connection per OST and object
+        C->>A: SET_OBJECT(id, chunk_offset)
+        C->>A: WRITE(offset, len) ... pipelined by cid
+    and in parallel
+        C->>B: SET_OBJECT(id, chunk_offset)
+        C->>B: WRITE(offset, len) ... pipelined by cid
+    end
+    A-->>C: res
+    B-->>C: res
+```
+
 ## epoch-fence
 
 One placement counter per object; the fence is a stored watermark of it, not
@@ -459,6 +586,24 @@ still talks to:
 4. (later) release the old slot
 ```
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant M as rawstor-mds
+    participant Old as old OST
+    participant New as new OST
+    participant S as stale client
+    M->>New: copy the slot (resync from an IN-SYNC slot)
+    M->>Old: fence = E' (= map_epoch + 1), fsync'd
+    S->>Old: WRITE with map_epoch < E'
+    Old-->>S: STALE
+    S->>M: re-read map (still old until the next step), retry
+    M->>M: chunk_map[index]: slot -> new ost_id, map_epoch = E'
+    S->>M: re-read map
+    S->>New: WRITE with map_epoch = E'
+    M->>Old: (later) release the old slot
+```
+
 Counterexample that fixes the order: fence only the *new* OST (or update the
 map first) and a client with a cached map keeps writing to the old OST
 indefinitely — nothing it touches ever says `STALE`, acknowledged writes land
@@ -496,6 +641,24 @@ snapshot(id, snapshot_id):
                              the snapshots table's own primary key) or nil (EINVAL, reserved
                              for the live version)
   read:   client SET_OBJECT(id, snapshot_id) -> OST serves that version
+```
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant A as OST a (IN-SYNC)
+    participant B as OST b (IN-SYNC)
+    participant M as rawstor-mds
+    Note over C: snapshot_id generated by the client
+    C->>C: drain in-flight I/O
+    C->>A: FLUSH
+    C->>B: FLUSH
+    C->>A: SNAPSHOT(snapshot_id): native CoW
+    C->>B: SNAPSHOT(snapshot_id): native CoW
+    C->>M: OBJ_SNAP_COMMIT(id, snapshot_id, members = {a, b})
+    M-->>C: map_epoch++
+    Note over C,M: later: SET_OBJECT(id, snapshot_id) reads that version
 ```
 
 A crash before commit leaves unregistered native snapshots on the OSTs —
@@ -731,6 +894,22 @@ rebuild the map:
                                  version = snapshot_id -> snapshot view
   within each group: order by logical_index
   -> reassembled maps (+ snapshot views)
+```
+
+```mermaid
+flowchart TB
+    T[/"topology: OST roster"/] --> Scan
+    subgraph Scan ["for each OST"]
+        direction LR
+        L["LIST: physical ids"] --> Me["META per id: chunk_meta"]
+    end
+    Scan --> W{"member_role<br/>= witness?"}
+    W -- yes --> Drop["dropped: metadata only, not a slot"]
+    W -- no --> G["group by (id, version)"]
+    G -- "nil version" --> Live["live chunk_map<br/>ordered by logical_index"]
+    G -- "snapshot_id" --> Snap["snapshot view"]
+    Live --> DB[("rebuilt MDS index")]
+    Snap --> DB
 ```
 
 No dedicated batch scan opcode: this is the same `LIST` + per-object `META`
