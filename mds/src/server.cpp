@@ -1,6 +1,6 @@
 #include <mds/server.hpp>
 
-#include <mds/session.hpp>
+#include <mds/client.hpp>
 
 #include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
@@ -59,7 +59,7 @@ Server::Server(
 }
 
 Server::~Server() {
-    _sessions.clear();
+    _clients.clear();
 
     if (_accept_event != nullptr) {
         int res = rawio_cancel(_queue, _accept_event);
@@ -110,11 +110,11 @@ int Server::bind_listen(const std::string& addr, unsigned int port) {
     return fd;
 }
 
-rawstd::Task<void> Server::_add_session(int fd) {
+rawstd::Task<void> Server::_add_client(int fd) {
     std::exception_ptr error;
-    std::shared_ptr<Session> session;
+    std::shared_ptr<Client> client;
     try {
-        session = co_await Session::create(_queue, *this, fd);
+        client = co_await Client::create(_queue, *this, fd);
     } catch (...) {
         error = std::current_exception();
     }
@@ -125,13 +125,13 @@ rawstd::Task<void> Server::_add_session(int fd) {
     }
 
     rawstd_info("MDS client connected: fd=%d\n", fd);
-    _sessions.emplace(fd, std::move(session));
+    _clients.emplace(fd, std::move(client));
 }
 
-rawstd::Task<void> Server::del_session(int fd) {
-    auto it = _sessions.find(fd);
-    if (it != _sessions.end()) {
-        _sessions.erase(it);
+rawstd::Task<void> Server::del_client(int fd) {
+    auto it = _clients.find(fd);
+    if (it != _clients.end()) {
+        _clients.erase(it);
         rawstd_info("MDS client disconnected: fd=%d\n", fd);
     }
     co_return;
@@ -158,7 +158,7 @@ rawstd::DetachedTask Server::_accept_task() {
         }
 
         try {
-            co_await _add_session(fd);
+            co_await _add_client(fd);
         } catch (const std::exception& e) {
             rawstd_error("%s\n", e.what());
         }

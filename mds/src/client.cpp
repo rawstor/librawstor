@@ -1,4 +1,4 @@
-#include <mds/session.hpp>
+#include <mds/client.hpp>
 
 #include <mds/server.hpp>
 
@@ -46,7 +46,7 @@ co_recv(RawIOQueue* queue, int fd, void* buf, size_t size) {
 
 // Reads exactly `size` bytes (looping over short reads); throws ECONNRESET
 // on a clean peer disconnect (0-byte read) or EPROTO on a torn-down
-// connection mid-frame -- either way, terminal for this Session.
+// connection mid-frame -- either way, terminal for this Client.
 rawstd::Task<void> recv_all(RawIOQueue* queue, int fd, void* buf, size_t size) {
     uint8_t* p = static_cast<uint8_t*>(buf);
     size_t got = 0;
@@ -172,28 +172,28 @@ encode_object_map(const Topology& topology, const ObjectMap& map) {
 namespace rawstor {
 namespace mds {
 
-rawstd::Task<std::shared_ptr<Session>>
-Session::create(RawIOQueue* queue, Server& server, int fd) {
-    std::shared_ptr<Session> session =
-        std::make_shared<Session>(Private(), queue, server, fd);
-    _recv_pump(session);
+rawstd::Task<std::shared_ptr<Client>>
+Client::create(RawIOQueue* queue, Server& server, int fd) {
+    std::shared_ptr<Client> client =
+        std::make_shared<Client>(Private(), queue, server, fd);
+    _recv_pump(client);
     rawstd::DetachedTask::rethrow_if_pending();
-    co_return session;
+    co_return client;
 }
 
-Session::Session(Private, RawIOQueue* queue, Server& server, int fd) :
+Client::Client(Private, RawIOQueue* queue, Server& server, int fd) :
     _queue(queue),
     _server(server),
     _fd(fd) {
 }
 
-Session::~Session() {
+Client::~Client() {
     if (_fd != -1) {
         ::close(_fd);
     }
 }
 
-rawstd::Task<void> Session::_send_response(
+rawstd::Task<void> Client::_send_response(
     RawstorCommandType type, uint16_t cid, int32_t res, const void* data,
     size_t size
 ) {
@@ -215,15 +215,15 @@ rawstd::Task<void> Session::_send_response(
     }
 }
 
-rawstd::DetachedTask Session::_recv_pump(std::weak_ptr<Session> weak) {
-    std::shared_ptr<Session> session = weak.lock();
-    if (session == nullptr) {
+rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak) {
+    std::shared_ptr<Client> client = weak.lock();
+    if (client == nullptr) {
         co_return;
     }
-    RawIOQueue* queue = session->_queue;
-    int fd = session->_fd;
-    Server& server = session->_server;
-    session.reset();
+    RawIOQueue* queue = client->_queue;
+    int fd = client->_fd;
+    Server& server = client->_server;
+    client.reset();
 
     try {
         while (true) {
@@ -237,8 +237,8 @@ rawstd::DetachedTask Session::_recv_pump(std::weak_ptr<Session> weak) {
         }
     } catch (const std::system_error& e) {
         // ECANCELED is the Server itself shutting down (SIGINT/SIGTERM):
-        // it is already tearing every session down, so there's nothing to
-        // report and no session left to delete.
+        // it is already tearing every client down, so there's nothing to
+        // report and no client left to delete.
         if (e.code().value() == ECANCELED) {
             co_return;
         }
@@ -249,18 +249,18 @@ rawstd::DetachedTask Session::_recv_pump(std::weak_ptr<Session> weak) {
         rawstd_error("fd %d: %s\n", fd, e.what());
     }
 
-    co_await server.del_session(fd);
+    co_await server.del_client(fd);
 }
 
 rawstd::Task<void>
-Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
-    std::shared_ptr<Session> session = weak.lock();
-    if (session == nullptr) {
+Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
+    std::shared_ptr<Client> client = weak.lock();
+    if (client == nullptr) {
         co_return;
     }
-    RawIOQueue* queue = session->_queue;
-    int fd = session->_fd;
-    ObjectStore& store = session->_server.store();
+    RawIOQueue* queue = client->_queue;
+    int fd = client->_fd;
+    ObjectStore& store = client->_server.store();
 
     // Every request below is served synchronously against ObjectStore
     // (docs/mds.md: "Calls are synchronous... a briefly blocked
@@ -275,7 +275,7 @@ Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
         // other server role, protocol.h).
         RawstorFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
-        co_await session->_send_response(head.cmd, head.cid, 0);
+        co_await client->_send_response(head.cmd, head.cid, 0);
         break;
     }
     case RAWSTOR_CMD_OBJ_CREATE: {
@@ -304,9 +304,9 @@ Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
             res = -e.code().value();
         }
         if (res < 0) {
-            co_await session->_send_response(head.cmd, head.cid, res);
+            co_await client->_send_response(head.cmd, head.cid, res);
         } else {
-            co_await session->_send_response(
+            co_await client->_send_response(
                 head.cmd, head.cid, sizeof(out), &out, sizeof(out)
             );
         }
@@ -326,9 +326,9 @@ Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
             res = -e.code().value();
         }
         if (res < 0) {
-            co_await session->_send_response(head.cmd, head.cid, res);
+            co_await client->_send_response(head.cmd, head.cid, res);
         } else {
-            co_await session->_send_response(
+            co_await client->_send_response(
                 head.cmd, head.cid, static_cast<int32_t>(data.size()),
                 data.data(), data.size()
             );
@@ -350,9 +350,9 @@ Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
             res = -e.code().value();
         }
         if (res < 0) {
-            co_await session->_send_response(head.cmd, head.cid, res);
+            co_await client->_send_response(head.cmd, head.cid, res);
         } else {
-            co_await session->_send_response(
+            co_await client->_send_response(
                 head.cmd, head.cid, sizeof(out), &out, sizeof(out)
             );
         }
@@ -371,9 +371,9 @@ Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
             res = -e.code().value();
         }
         if (res < 0) {
-            co_await session->_send_response(head.cmd, head.cid, res);
+            co_await client->_send_response(head.cmd, head.cid, res);
         } else {
-            co_await session->_send_response(
+            co_await client->_send_response(
                 head.cmd, head.cid, static_cast<int32_t>(data.size()),
                 data.data(), data.size()
             );
@@ -413,9 +413,9 @@ Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
             res = -e.code().value();
         }
         if (res < 0) {
-            co_await session->_send_response(head.cmd, head.cid, res);
+            co_await client->_send_response(head.cmd, head.cid, res);
         } else {
-            co_await session->_send_response(
+            co_await client->_send_response(
                 head.cmd, head.cid, sizeof(out), &out, sizeof(out)
             );
         }
@@ -449,9 +449,9 @@ Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
             res = -e.code().value();
         }
         if (res < 0) {
-            co_await session->_send_response(head.cmd, head.cid, res);
+            co_await client->_send_response(head.cmd, head.cid, res);
         } else {
-            co_await session->_send_response(
+            co_await client->_send_response(
                 head.cmd, head.cid, static_cast<int32_t>(data.size()),
                 data.data(), data.size()
             );
@@ -467,7 +467,7 @@ Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
         // requires the peer to close and reconnect, same as an OST's own
         // unknown-command handling.
         rawstd_error("fd %d: Unsupported command: %u\n", fd, head.cmd);
-        co_await session->_send_response(head.cmd, head.cid, -ENOSYS);
+        co_await client->_send_response(head.cmd, head.cid, -ENOSYS);
         RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
     }
 }

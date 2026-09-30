@@ -14,10 +14,10 @@
 namespace rawstor {
 namespace mds {
 
-class Session;
+class Client;
 
 // One MDS worker (docs/mds.md, "MDS server, v1"): its own RawIOQueue and
-// sessions, accepting on a listening socket it may share with other
+// clients, accepting on a listening socket it may share with other
 // workers' Servers -- same shape as ostserver::Server, each worker thread
 // registering its own accept_multishot on that one fd. Every worker shares
 // one ObjectStore (thread-safe, see its own doc comment); its calls are
@@ -30,10 +30,10 @@ private:
     bool _stop;
     ObjectStore& _store;
     RawIOEvent* _accept_event;
-    std::unordered_map<int, std::shared_ptr<Session>> _sessions;
+    std::unordered_map<int, std::shared_ptr<Client>> _clients;
 
     rawstd::DetachedTask _accept_task();
-    rawstd::Task<void> _add_session(int fd);
+    rawstd::Task<void> _add_client(int fd);
 
     // Only launched when `wake_fd` (the constructor's last argument) holds
     // a real fd -- same self-pipe shutdown mechanism as ost::Server's own
@@ -64,7 +64,7 @@ public:
 
     ObjectStore& store() noexcept { return _store; }
 
-    rawstd::Task<void> del_session(int fd);
+    rawstd::Task<void> del_client(int fd);
     void loop();
 };
 

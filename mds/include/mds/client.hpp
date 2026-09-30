@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_MDS_SESSION_HPP
-#define RAWSTOR_MDS_SESSION_HPP
+#ifndef RAWSTOR_MDS_CLIENT_HPP
+#define RAWSTOR_MDS_CLIENT_HPP
 
 #include "store.hpp"
 
@@ -26,7 +26,7 @@ class Server;
 // recv machinery: MDS traffic is low-rate control-plane only
 // (docs/mds.md, "Principles" -- "MDS is off the hot path"), and a
 // plain sequential single-shot recv loop is simpler and entirely adequate.
-class Session final : public std::enable_shared_from_this<Session> {
+class Client final : public std::enable_shared_from_this<Client> {
 private:
     struct Private {
         explicit Private() = default;
@@ -36,10 +36,10 @@ private:
     Server& _server;
     int _fd;
 
-    static rawstd::DetachedTask _recv_pump(std::weak_ptr<Session> weak);
+    static rawstd::DetachedTask _recv_pump(std::weak_ptr<Client> weak);
 
     static rawstd::Task<void>
-    _dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head);
+    _dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head);
 
     rawstd::Task<void> _send_response(
         RawstorCommandType type, uint16_t cid, int32_t res,
@@ -47,19 +47,19 @@ private:
     );
 
 public:
-    static rawstd::Task<std::shared_ptr<Session>>
+    static rawstd::Task<std::shared_ptr<Client>>
     create(RawIOQueue* queue, Server& server, int fd);
 
-    Session(Private, RawIOQueue* queue, Server& server, int fd);
-    Session(const Session&) = delete;
-    Session(Session&&) = delete;
-    ~Session();
+    Client(Private, RawIOQueue* queue, Server& server, int fd);
+    Client(const Client&) = delete;
+    Client(Client&&) = delete;
+    ~Client();
 
-    Session& operator=(const Session&) = delete;
-    Session& operator=(Session&&) = delete;
+    Client& operator=(const Client&) = delete;
+    Client& operator=(Client&&) = delete;
 };
 
 } // namespace mds
 } // namespace rawstor
 
-#endif // RAWSTOR_MDS_SESSION_HPP
+#endif // RAWSTOR_MDS_CLIENT_HPP

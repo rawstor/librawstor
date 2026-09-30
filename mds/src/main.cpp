@@ -267,7 +267,7 @@ void reload_topology(
 }
 
 // Each worker is a thread with its own rawstor::mds::Server (own
-// RawIOQueue and sessions), all sharing the one listening socket
+// RawIOQueue and clients), all sharing the one listening socket
 // bind_listen() opens here -- every worker registers its own
 // accept_multishot on it and the kernel wakes exactly one of them per
 // incoming connection, same as rawstor-ost -- and the one ObjectStore
