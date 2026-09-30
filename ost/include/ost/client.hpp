@@ -100,6 +100,10 @@ private:
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameBasicPayload payload
     );
+    static rawstd::DetachedTask _list_snapshots(
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameBasicPayload payload
+    );
     static rawstd::DetachedTask
     _info(std::weak_ptr<Client> weak, RawstorFrameHead head);
     static rawstd::DetachedTask _set_object(

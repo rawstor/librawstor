@@ -16,6 +16,7 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <rawstor/list.h>
 #include <rawstor/location.h>
 #include <rawstor/target.h>
 
@@ -211,7 +212,7 @@ TEST(ObjectSnapshotTest, snapshot_on_file_backend_returns_enotsup) {
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-// A snapshot attempt that never reaches OBJ_SNAP_COMMIT (every chunk
+// A snapshot attempt that never reaches OBJ_COMMIT_SNAPSHOT (every chunk
 // member failed the backend CoW) must leave the object exactly as
 // before -- spec() still answers normally, the failed attempt left no
 // visible trace on the live map.
@@ -234,9 +235,9 @@ TEST(ObjectSnapshotTest, failed_snapshot_leaves_object_intact) {
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-// snap_remove() on an id nothing ever committed fails cleanly with
+// remove_snapshot() on an id nothing ever committed fails cleanly with
 // -ENOENT (the MDS's own rejection), not a hang or a crash -- this is
-// the same case a crash mid-fan-out (before OBJ_SNAP_COMMIT) leaves
+// the same case a crash mid-fan-out (before OBJ_COMMIT_SNAPSHOT) leaves
 // behind (docs/mds.md: reconciled by the reconstruct scan, never by
 // remove_snapshot()).
 TEST(ObjectSnapshotTest, remove_snapshot_uncommitted_returns_enoent) {
@@ -259,6 +260,37 @@ TEST(ObjectSnapshotTest, remove_snapshot_uncommitted_returns_enoent) {
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
+// OBJ_LIST_SNAPSHOTS end to end: an object with no committed snapshot
+// lists none, and an object the MDS doesn't know is ENOENT.
+TEST(ObjectSnapshotTest, list_snapshots_over_mds) {
+    rawstor::tests::ObjectEnv env(8802, 8803);
+    std::string target =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000040");
+    std::string unknown =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000041");
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
+
+    auto list = [&](const std::string& t) {
+        RawstorStringList* snapshots = nullptr;
+        ssize_t res =
+            rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+                return rawstor_target_snapshots(
+                    queue.get(), t.c_str(), &snapshots, cb, data
+                );
+            });
+        rawstor_string_list_delete(snapshots);
+        return res;
+    };
+    EXPECT_EQ(list(target), 0);
+    EXPECT_EQ(list(unknown), -ENOENT);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
 // A plain (non-"mds://") target has no MDS orchestration at all --
 // create_snapshot() runs the same already-bound CoW dispatch for every
 // target, mds:// included, always against a real, already-known id: a
@@ -270,7 +302,7 @@ TEST(ObjectSnapshotTest, remove_snapshot_uncommitted_returns_enoent) {
 TEST(ObjectSnapshotTest, create_snapshot_on_plain_target_returns_enotsup) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
     std::string target = file_target(
-        "test_object_snap_assign_enotsup",
+        "test_object_snapshot_assign_enotsup",
         "018f4e2a-3000-7000-8000-000000000005"
     );
 
@@ -314,7 +346,7 @@ TEST(ObjectSnapshotTest, create_on_already_bound_target_is_einval) {
 TEST(ObjectSnapshotTest, uses_id_already_bound_in_target) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
     std::string target = file_target(
-        "test_object_snap_bound_id", "018f4e2a-3000-7000-8000-00000000000d"
+        "test_object_snapshot_bound_id", "018f4e2a-3000-7000-8000-00000000000d"
     );
 
     RawstorObjectSpec spec = one_chunk_spec();
@@ -342,7 +374,8 @@ TEST(ObjectSnapshotTest, uses_id_already_bound_in_target) {
 TEST(ObjectSnapshotTest, uses_explicit_id_for_plain_target) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
     std::string target = file_target(
-        "test_object_snap_explicit_id", "018f4e2a-3000-7000-8000-00000000000f"
+        "test_object_snapshot_explicit_id",
+        "018f4e2a-3000-7000-8000-00000000000f"
     );
 
     RawstorObjectSpec spec = one_chunk_spec();
@@ -373,7 +406,7 @@ TEST(ObjectSnapshotTest, uses_explicit_id_for_plain_target) {
 TEST(ObjectSnapshotTest, explicit_id_on_already_bound_target_is_einval) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
     std::string target = file_target(
-        "test_object_snap_conflict", "018f4e2a-3000-7000-8000-000000000011"
+        "test_object_snapshot_conflict", "018f4e2a-3000-7000-8000-000000000011"
     );
 
     RawstorObjectSpec spec = one_chunk_spec();

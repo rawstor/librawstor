@@ -18,6 +18,8 @@ static PyMethodDef librawstor_methods[] = {
     {"object_set_member_sync_state", py_rawstor_object_set_member_sync_state,
      METH_VARARGS, NULL},
     {"object_remove", py_rawstor_object_remove, METH_VARARGS, NULL},
+    {"object_chunks", py_rawstor_object_chunks, METH_VARARGS, NULL},
+    {"object_snapshots", py_rawstor_object_snapshots, METH_VARARGS, NULL},
     {"location_info", py_rawstor_location_info, METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL}
 };

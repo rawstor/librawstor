@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multi-chunk objects: `RawstorObjectSpec.chunk_size`/`rawstor create --chunk-size` splits an object into equal chunks (its size must be a multiple of it) addressed by offset, one target routing I/O across all of them; `rawstor_location_create()` lays them out itself and `rawstor_location_list()` returns each such object as a single target.
 - `rawstor-mds` metadata server ([design](docs/mds.md); own deb/rpm package with `rawstor-mds.service` on port 7776, `--without-sqlite3` to skip it) with `-w`/`--workers N` threads (default `4`), and `mds://host:port/<id>` objects (`--chunk-size` required), whose chunks it places across a static OST topology, usable anywhere a target is; plus `rawstor create --failure-domain`/`--stripe-width`, grow-only `rawstor resize` by whole chunks (`rawstor_target_resize()`), topology reload on `SIGHUP` (refused if it drops an OST still holding chunks, as is such a topology at startup) and `rawstor-mds --reconstruct` to rebuild a lost chunk map from the OSTs.
 - Native CoW snapshots (`zfs://` only, `-ENOTSUP` elsewhere; across every chunk of an `mds://` object): `rawstor snapshot TARGET [-u UUID]` (`rawstor_target_create_snapshot()`, pyrawstor `Target.create_snapshot()`) returns a `TARGET/SNAPSHOT_ID` target that opens only `RAWSTOR_READONLY` and is removed with `rawstor remove`; `rawstor_target_snapshot_id()` reads the version back.
+- `rawstor list-snapshots TARGET` (`rawstor_target_snapshots()`, pyrawstor `Target.snapshots()`) lists an object's snapshots, oldest first; pyrawstor also gains `Target.chunks()`.
 - `--readonly` for `rawstor-vhost`, `rawstor-vhost-qemu` and `rawstor-vduse`: advertises `VIRTIO_BLK_F_RO` and opens the target `RAWSTOR_READONLY`, which is also how a snapshot is exported.
 
 ### Changed
@@ -22,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The transitional `rawstor_object_*2()`/`rawio_*2()` functions are gone: their callback-based shapes (including `rawstor_object_pwrite()`/`pwritev()`'s `sync` argument and an `ssize_t` result for every `rawio_*()` callback) now live under the original names. Breaking C API change.
 - Target strings returned by `rawstor_location_list()`/`_create()` always carry an explicit chunk offset segment (`<uuid>/0`); a target without one still parses as offset 0.
 - `rawstor-vhost`/`rawstor-vhost-qemu`/`rawstor testio`'s `--queue-size` defaults raised from 256 to 4096, matching `rawstor-ost`.
-- The OST wire protocol changed incompatibly (`LIST` entries carry a chunk offset, `RELEASE` also removes a snapshot version, new `META`/`SET_SYNC_STATE`/`SNAPSHOT`/`OBJ_*` commands); `rawstor-ost` and its clients must be upgraded together.
+- The OST wire protocol changed incompatibly (`LIST` entries carry a chunk offset, `RELEASE` also removes a snapshot version, new `META`/`SET_SYNC_STATE`/`SNAPSHOT`/`LIST_SNAPSHOTS`/`OBJ_*` commands); `rawstor-ost` and its clients must be upgraded together.
 
 ### Removed
 - The deprecated synchronous `rawstor_object_spec()`/`_list()`/`_create()`/`_create_at()`/`_remove()`/`_open()`/`_id()`/`_location()`, in favor of the async `rawstor_target_*()`/`rawstor_location_*()` API.

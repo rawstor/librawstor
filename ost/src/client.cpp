@@ -15,6 +15,7 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <rawstor/list.h>
 #include <rawstor/location.h>
 #include <rawstor/object.h>
 #include <rawstor/protocol.h>
@@ -736,6 +737,20 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
+            case RAWSTOR_CMD_LIST_SNAPSHOTS: {
+                RawstorFrameBasicPayload basic;
+                co_await recv_frame(
+                    stream, &basic, sizeof(basic), fd, "request payload",
+                    &stream_failed
+                );
+                client = weak.lock();
+                if (client == nullptr) {
+                    co_return;
+                }
+                _list_snapshots(weak, head, basic);
+                rawstd::DetachedTask::rethrow_if_pending();
+                break;
+            }
             case RAWSTOR_CMD_LOCATION_INFO: {
                 RawstorFrameBasicPayload basic;
                 co_await recv_frame(
@@ -1310,6 +1325,80 @@ rawstd::DetachedTask Client::_meta(
     }
 }
 
+// Every snapshot of the object at `payload.object_id`/`payload.offset`
+// on this server's own locations, via rawstor_target_snapshots(): each
+// returned snapshot target string's own trailing id is one response row.
+rawstd::DetachedTask Client::_list_snapshots(
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameBasicPayload payload
+) {
+    std::shared_ptr<Client> client = weak.lock();
+    if (client == nullptr) {
+        co_return;
+    }
+
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
+
+    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
+
+    std::vector<unsigned char> data;
+    int result = 0;
+    RawstorStringList* snapshots = nullptr;
+    try {
+        std::string target = rawstd::URI::uris(targets);
+        rawstd::CallbackAwaitable<void> awaiter;
+        int res = rawstor_target_snapshots(
+            client->_queue, target.c_str(), &snapshots, result_trampoline,
+            &awaiter
+        );
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        co_await awaiter;
+
+        for (const char** it = rawstor_string_list_iter(snapshots);
+             it != nullptr; it = rawstor_string_list_next(it)) {
+            RawstdUUIDString id_string;
+            RawstorFrameSnapshotEntry entry{};
+            RawstdUUID snapshot_id;
+            if (rawstor_target_snapshot_id(*it, id_string, sizeof(id_string)) <
+                    0 ||
+                rawstd_uuid_from_string(&snapshot_id, id_string) < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            }
+            memcpy(
+                entry.snapshot_id, snapshot_id.bytes, sizeof(entry.snapshot_id)
+            );
+            size_t off = data.size();
+            data.resize(off + sizeof(entry));
+            memcpy(data.data() + off, &entry, sizeof(entry));
+        }
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    }
+    rawstor_string_list_delete(snapshots);
+
+    bool send_failed = false;
+    try {
+        if (result < 0) {
+            co_await client->_send_response(
+                RAWSTOR_CMD_LIST_SNAPSHOTS, head.cid, result, 0
+            );
+        } else {
+            co_await client->_send_response(
+                RAWSTOR_CMD_LIST_SNAPSHOTS, head.cid, data.size(), 0, data
+            );
+        }
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        send_failed = true;
+    }
+    if (send_failed) {
+        co_await client->_server.del_client(client->_fd);
+    }
+}
+
 rawstd::DetachedTask Client::_set_state(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameSyncStatePayload payload
@@ -1863,9 +1952,9 @@ std::vector<rawstd::URI> Client::_targets(
     offset_oss << std::hex << offset;
     std::string child = std::string(uuid_string) + "/" + offset_oss.str();
     if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        RawstdUUIDString snap_string;
-        rawstd_uuid_to_string(&snapshot_id, &snap_string);
-        child += "/" + std::string(snap_string);
+        RawstdUUIDString snapshot_string;
+        rawstd_uuid_to_string(&snapshot_id, &snapshot_string);
+        child += "/" + std::string(snapshot_string);
     }
 
     std::vector<rawstd::URI> ret;

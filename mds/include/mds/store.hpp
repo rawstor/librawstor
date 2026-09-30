@@ -56,7 +56,7 @@ struct ResizeResult {
 };
 
 /* One chunk copy holding a snapshot version. */
-struct SnapMember {
+struct SnapshotMember {
     uint64_t logical_index;
     RawstdUUID ost_id;
 };
@@ -166,16 +166,23 @@ public:
      * never registered — EINVAL). The object's logical size is frozen
      * into the snapshot. Returns the bumped map_epoch.
      */
-    uint64_t snap_commit(
+    uint64_t commit_snapshot(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        const RawstdUUID& snapshot_id, const std::vector<SnapMember>& members
+        const RawstdUUID& snapshot_id,
+        const std::vector<SnapshotMember>& members
     );
+
+    /*
+     * Every snapshot registered for `id`, oldest first (snapshot ids are
+     * UUID v7). ENOENT for an unknown object.
+     */
+    std::vector<RawstdUUID> list_snapshots(const RawstdUUID& id);
 
     /*
      * Unregisters the snapshot (no new readers) and returns what was
      * registered: the member set for the caller's fan-out destroy.
      */
-    std::vector<SnapMember> snap_remove(
+    std::vector<SnapshotMember> remove_snapshot(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         const RawstdUUID& snapshot_id
     );

@@ -76,9 +76,9 @@ rawstd::URI chunk_slot_target(
     oss << slot_location(slot).str() << "/" << uuid_string;
     oss << "/" << std::hex << (index * chunk_size);
     if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        RawstdUUIDString snap_string;
-        rawstd_uuid_to_string(&snapshot_id, &snap_string);
-        oss << "/" << snap_string;
+        RawstdUUIDString snapshot_string;
+        rawstd_uuid_to_string(&snapshot_id, &snapshot_string);
+        oss << "/" << snapshot_string;
     }
     return rawstd::URI(oss.str());
 }
@@ -380,7 +380,7 @@ rawstd::Task<void> Backend::create_snapshot(
      * scan can never mistake a partial leftover for a complete
      * (legitimately shorter, pre-resize) snapshot.
      */
-    std::vector<mds::WireSnapMember> members;
+    std::vector<mds::WireSnapshotMember> members;
     for (uint64_t i = map.chunks.size(); i-- > 0;) {
         bool any = false;
         std::exception_ptr last_error;
@@ -405,7 +405,7 @@ rawstd::Task<void> Backend::create_snapshot(
                         throw;
                     }
                 }
-                members.push_back(mds::WireSnapMember{i, slot.ost_id});
+                members.push_back(mds::WireSnapshotMember{i, slot.ost_id});
                 any = true;
             } catch (const std::exception& e) {
                 rawstd_error(
@@ -437,7 +437,7 @@ rawstd::Task<void> Backend::create_snapshot(
         }
     }
 
-    co_await _client.snap_commit(idempotency_key, id, snapshot_id, members);
+    co_await _client.commit_snapshot(idempotency_key, id, snapshot_id, members);
 }
 
 // Fan-out destroy of a previously committed snapshot -- the `snapshot_id`
@@ -450,8 +450,8 @@ rawstd::Task<void> Backend::_remove_snapshot(
     const RawstdUUID& idempotency_key, const RawstdUUID& id,
     const RawstdUUID& snapshot_id
 ) {
-    std::vector<mds::WireSnapMember> members =
-        co_await _client.snap_remove(idempotency_key, id, snapshot_id);
+    std::vector<mds::WireSnapshotMember> members =
+        co_await _client.remove_snapshot(idempotency_key, id, snapshot_id);
 
     /*
      * The MDS has already unregistered the snapshot above (no new
@@ -462,7 +462,7 @@ rawstd::Task<void> Backend::_remove_snapshot(
     WireMap map = co_await _client.open(id, RawstdUUID{});
 
     std::exception_ptr error;
-    for (const mds::WireSnapMember& m : members) {
+    for (const mds::WireSnapshotMember& m : members) {
         if (m.logical_index >= map.chunks.size()) {
             continue;
         }
@@ -514,6 +514,13 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     co_return co_await resolve_meta(
         _queue, chunk_locations(map, index), id, offset, snapshot_id
     );
+}
+
+// The MDS's own snapshot registry for the whole object -- a snapshot
+// covers every chunk, so `offset` plays no part.
+rawstd::Task<std::vector<RawstdUUID>>
+Backend::list_snapshots(const RawstdUUID& id, uint64_t) {
+    co_return co_await _client.list_snapshots(id);
 }
 
 rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(

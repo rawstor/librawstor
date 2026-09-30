@@ -26,7 +26,7 @@ flowchart TB
     end
 
     Topo -. "read at start / SIGHUP" .-> MDS
-    Client -- "control: OBJ_CREATE / OBJ_OPEN / OBJ_RESIZE /<br/>OBJ_REMOVE / OBJ_SNAP_*" --> MDS
+    Client -- "control: OBJ_CREATE / OBJ_OPEN / OBJ_RESIZE /<br/>OBJ_REMOVE / OBJ_*_SNAPSHOT*" --> MDS
     MDS -- "chunk map: slots + OST locations" --> Client
     Client == "data: READ / WRITE / ... to each chunk's OSTs<br/>(MDS not involved)" ==> OSTs
     MDS -. "reconstruct: LIST + META" .-> OSTs
@@ -150,7 +150,7 @@ Every chunk-level command (SET_OBJECT, RELEASE, SNAPSHOT, META, …) and
 OBJ_OPEN rides this payload; `snapshot_id` nil means "live" -- RELEASE
 removes the live version this way, and with a non-nil `snapshot_id` the
 same command removes that one snapshot. Commands that never bind a version
-leave it nil. OBJ_RESIZE, OBJ_REMOVE and OBJ_SNAP_REMOVE ride
+leave it nil. OBJ_RESIZE, OBJ_REMOVE and OBJ_REMOVE_SNAPSHOT ride
 `RawstorFrameObjOpPayload { id[16]; idempotency_key[16]; snapshot_id[16];
 val; }` instead (see *Idempotent mutations*).
 On-OST layout (the slot's home, also where `chunk_meta` lives). `version`
@@ -364,7 +364,7 @@ to create). So every mutating request is made idempotent:
 - **`idempotency_key`.** `Slot` generates a UUID once per mutating call (create, remove,
   resize, create_snapshot, remove_snapshot), before its retry loop, and every
   attempt carries that same one. `OBJ_CREATE`, `OBJ_RESIZE`, `OBJ_REMOVE`,
-  `OBJ_SNAP_COMMIT` and `OBJ_SNAP_REMOVE` send it ([protocol](protocol.md)).
+  `OBJ_COMMIT_SNAPSHOT` and `OBJ_REMOVE_SNAPSHOT` send it ([protocol](protocol.md)).
 - **The MDS records what it applied.** An `applied_mutations` table maps `idempotency_key` to the
   command, the object and the reply's result, written in the same SQLite
   transaction as the mutation itself -- a committed mutation always has its
@@ -418,7 +418,8 @@ reserved ranges per role:
 0x01..  data:            READ, WRITE, DISCARD, ALLOCATE, RELEASE, FLUSH
 0x20..  shared metadata: META, SET_STATE               // the witness subset
 0x40..  object (MDS):    OBJ_CREATE, OBJ_OPEN, OBJ_RESIZE, OBJ_REMOVE,
-                         OBJ_SNAP_COMMIT, OBJ_SNAP_REMOVE
+                         OBJ_COMMIT_SNAPSHOT, OBJ_REMOVE_SNAPSHOT,
+                         OBJ_LIST_SNAPSHOTS
 ```
 
 - `SET_OBJECT` is the mandatory first command on **every** connection and
@@ -692,7 +693,7 @@ a hole in):
 snapshot(id, snapshot_id):
   client: drain in-flight I/O, FLUSH all IN-SYNC members   (point-in-time barrier)
   OST*:   each IN-SYNC member -> backend CoW (zfs snapshot zvol@s<snapshot_id> / lvcreate -s)
-  MDS:    OBJ_SNAP_COMMIT -> record snapshots[snapshot_id] { members = the IN-SYNC set },
+  MDS:    OBJ_COMMIT_SNAPSHOT -> record snapshots[snapshot_id] { members = the IN-SYNC set },
                              map_epoch++ -- rejects a snapshot_id already registered (EEXIST,
                              the snapshots table's own primary key) or nil (EINVAL, reserved
                              for the live version)
@@ -712,7 +713,7 @@ sequenceDiagram
     C->>B: FLUSH
     C->>A: SNAPSHOT(snapshot_id): native CoW
     C->>B: SNAPSHOT(snapshot_id): native CoW
-    C->>M: OBJ_SNAP_COMMIT(id, snapshot_id, members = {a, b})
+    C->>M: OBJ_COMMIT_SNAPSHOT(id, snapshot_id, members = {a, b})
     M-->>C: map_epoch++
     Note over C,M: later: SET_OBJECT(id, snapshot_id) reads that version
 ```
@@ -765,7 +766,7 @@ reconstruct scan (below).
 - **The id can never alias a leftover of a crashed attempt**, without any
   reservation step: `snapshot_id` is a client-generated UUID (like every
   other id in this design), not a monotonic counter with a "next" value
-  a crash could leave pointing at something already used. `OBJ_SNAP_COMMIT`
+  a crash could leave pointing at something already used. `OBJ_COMMIT_SNAPSHOT`
   itself is the only uniqueness check that's needed — the `snapshots`
   table's own primary key rejects a duplicate `(id, snapshot_id)` with
   `EEXIST`.
@@ -963,9 +964,9 @@ flowchart TB
     W -- yes --> Drop["dropped: metadata only, not a slot"]
     W -- no --> G["group by (id, version)"]
     G -- "nil version" --> Live["live chunk_map<br/>ordered by logical_index"]
-    G -- "snapshot_id" --> Snap["snapshot view"]
+    G -- "snapshot_id" --> Snapshot["snapshot view"]
     Live --> DB[("rebuilt MDS index")]
-    Snap --> DB
+    Snapshot --> DB
 ```
 
 No dedicated batch scan opcode: this is the same `LIST` + per-object `META`
@@ -1034,7 +1035,7 @@ of normal opens/closes.
 1. **Chunking**: `CMD_OBJ_CREATE/OPEN/RESIZE/REMOVE`, HRW placement + topology config,
    explicit map in MDS (SQLite), client-side routing, `map_epoch` + fence watermark,
    `LIST` + per-object `META` reconstruct scan.
-2. **Snapshots**: `CMD_OBJ_SNAP_COMMIT/REMOVE`, client-generated UUID
+2. **Snapshots**: `CMD_OBJ_COMMIT_SNAPSHOT/REMOVE_SNAPSHOT/LIST_SNAPSHOTS`, client-generated UUID
    `version`/`snapshot_id` in chunk identity, member-set registry, deletion,
    `-ENOTSUP` on `file://`.
 3. **Witness**: metadata-only member in the target list, witness record kinds

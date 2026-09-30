@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from . import librawstor
 
 
@@ -88,6 +90,18 @@ class Target:
         member instead of relying on any fan-out here."""
         librawstor.object_set_member_sync_state(
             self._uri, sync_state, member_index, offset)
+
+    def chunks(self) -> list[int]:
+        """Every chunk offset this target's object has, ascending (see
+        rawstor_target_chunks(), <rawstor/target.h>)."""
+        return librawstor.object_chunks(self._uri)
+
+    def snapshots(self) -> Iterator["Target"]:
+        """Every snapshot of this target's object, oldest first, each as
+        its own Target (see rawstor_target_snapshots(),
+        <rawstor/target.h>)."""
+        for snapshot in librawstor.object_snapshots(self._uri):
+            yield Target(snapshot)
 
     def remove(self) -> None:
         librawstor.object_remove(self._uri)

@@ -247,8 +247,8 @@ enum class MutationKind : unsigned {
     create = 1,
     resize = 2,
     remove = 3,
-    snap_commit = 4,
-    snap_remove = 5,
+    commit_snapshot = 4,
+    remove_snapshot = 5,
 };
 
 // How long a record is kept: far beyond any client's retry window.
@@ -906,6 +906,24 @@ ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
     return ret;
 }
 
+std::vector<RawstdUUID> ObjectStore::list_snapshots(const RawstdUUID& id) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _descriptor(id);
+
+    Stmt select(
+        _db, "SELECT snapshot_id FROM snapshots WHERE id = ?"
+             " ORDER BY snapshot_id;"
+    );
+    select.bind_blob(1, id.bytes, sizeof(id.bytes));
+    std::vector<RawstdUUID> ret;
+    while (select.step()) {
+        RawstdUUID snapshot_id;
+        select.column_uuid(0, &snapshot_id);
+        ret.push_back(snapshot_id);
+    }
+    return ret;
+}
+
 ObjectMap ObjectStore::_open_snapshot(
     const RawstdUUID& id, const RawstdUUID& snapshot_id
 ) {
@@ -956,7 +974,7 @@ ObjectMap ObjectStore::_open_snapshot(
         ret.chunks[index].push_back(member);
     }
 
-    /* snap_commit() never registers a snapshot with an uncovered chunk. */
+    /* commit_snapshot() never registers a snapshot with an uncovered chunk. */
     for (size_t index = 0; index < ret.chunks.size(); ++index) {
         if (ret.chunks[index].empty()) {
             rawstd_error("MDS store: snapshot is missing a chunk\n");
@@ -967,13 +985,13 @@ ObjectMap ObjectStore::_open_snapshot(
     return ret;
 }
 
-uint64_t ObjectStore::snap_commit(
+uint64_t ObjectStore::commit_snapshot(
     const RawstdUUID& idempotency_key, const RawstdUUID& id,
-    const RawstdUUID& snapshot_id, const std::vector<SnapMember>& members
+    const RawstdUUID& snapshot_id, const std::vector<SnapshotMember>& members
 ) {
     std::lock_guard<std::mutex> lock(_mutex);
     if (std::optional<std::vector<unsigned char>> recorded = replay_mutation(
-            _db, idempotency_key, MutationKind::snap_commit, id
+            _db, idempotency_key, MutationKind::commit_snapshot, id
         )) {
         return ResultReader(*recorded).get<uint64_t>();
     }
@@ -993,7 +1011,7 @@ uint64_t ObjectStore::snap_commit(
      * per chunk than the policy width — recorded, not repaired.)
      */
     std::vector<bool> covered(nchunks, false);
-    for (const SnapMember& m : members) {
+    for (const SnapshotMember& m : members) {
         if (m.logical_index >= nchunks) {
             rawstd_error("Snapshot member out of object bounds\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -1030,7 +1048,7 @@ uint64_t ObjectStore::snap_commit(
                  " (id, snapshot_id, logical_index, ost_id)"
                  " VALUES (?, ?, ?, ?);"
         );
-        for (const SnapMember& m : members) {
+        for (const SnapshotMember& m : members) {
             insert.reset();
             insert.bind_blob(1, id.bytes, sizeof(id.bytes))
                 .bind_blob(2, snapshot_id.bytes, sizeof(snapshot_id.bytes))
@@ -1048,7 +1066,7 @@ uint64_t ObjectStore::snap_commit(
     }
 
     record_mutation(
-        _db, idempotency_key, MutationKind::snap_commit, id,
+        _db, idempotency_key, MutationKind::commit_snapshot, id,
         ResultWriter().put(map_epoch).data()
     );
 
@@ -1057,18 +1075,18 @@ uint64_t ObjectStore::snap_commit(
     return map_epoch;
 }
 
-std::vector<SnapMember> ObjectStore::snap_remove(
+std::vector<SnapshotMember> ObjectStore::remove_snapshot(
     const RawstdUUID& idempotency_key, const RawstdUUID& id,
     const RawstdUUID& snapshot_id
 ) {
     std::lock_guard<std::mutex> lock(_mutex);
-    std::vector<SnapMember> ret;
+    std::vector<SnapshotMember> ret;
     if (std::optional<std::vector<unsigned char>> recorded = replay_mutation(
-            _db, idempotency_key, MutationKind::snap_remove, id
+            _db, idempotency_key, MutationKind::remove_snapshot, id
         )) {
         ResultReader r(*recorded);
         ret.resize(r.get<uint64_t>());
-        for (SnapMember& m : ret) {
+        for (SnapshotMember& m : ret) {
             m.logical_index = r.get<uint64_t>();
             m.ost_id = r.get<RawstdUUID>();
         }
@@ -1086,7 +1104,7 @@ std::vector<SnapMember> ObjectStore::snap_remove(
         select.bind_blob(1, id.bytes, sizeof(id.bytes))
             .bind_blob(2, snapshot_id.bytes, sizeof(snapshot_id.bytes));
         while (select.step()) {
-            SnapMember m{};
+            SnapshotMember m{};
             m.logical_index = select.column_int64(0);
             select.column_uuid(1, &m.ost_id);
             ret.push_back(m);
@@ -1109,11 +1127,11 @@ std::vector<SnapMember> ObjectStore::snap_remove(
 
     ResultWriter w;
     w.put(static_cast<uint64_t>(ret.size()));
-    for (const SnapMember& m : ret) {
+    for (const SnapshotMember& m : ret) {
         w.put(m.logical_index).put(m.ost_id);
     }
     record_mutation(
-        _db, idempotency_key, MutationKind::snap_remove, id, w.data()
+        _db, idempotency_key, MutationKind::remove_snapshot, id, w.data()
     );
 
     tx.commit();

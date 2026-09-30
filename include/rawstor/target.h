@@ -7,6 +7,7 @@
 #ifndef RAWSTOR_TARGET_H
 #define RAWSTOR_TARGET_H
 
+#include <rawstor/list.h>
 #include <rawstor/object.h>
 #include <rawstor/rawio.h>
 #include <rawstor/rawstor.h>
@@ -674,6 +675,44 @@ int rawstor_target_location(
  */
 int rawstor_target_chunks(
     RawIOQueue* queue, const char* target, uint64_t* offsets, size_t size,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously list every snapshot of the object a target
+ *        addresses.
+ *
+ * Each snapshot is reported as its own target string: every URI of
+ * @p target (with any version it is bound to stripped off) followed by the
+ * snapshot's id -- the same string rawstor_target_create_snapshot() prints,
+ * ready for rawstor_target_open()/_spec()/_remove(). Oldest first
+ * (snapshot ids are UUID v7). For an mds:// target the MDS answers;
+ * otherwise every copy of the object's first chunk is asked and their
+ * answers merged, a copy that doesn't answer being skipped. A backend
+ * without snapshots (file://, classic LVM) reports none.
+ *
+ * @param queue      Queue used to drive the asynchronous lookup.
+ * @param target     Target string, see rawstor_target_id().
+ * @param snapshots  On success, receives a newly allocated list of snapshot
+ *                   target strings, possibly empty (free it with
+ *                   rawstor_string_list_delete()); left untouched on
+ *                   failure. Must stay valid until @p cb runs.
+ * @param cb         Callback invoked on completion.
+ *                   - @p result is the number of snapshots on success, or
+ *                     a negative errno on failure (e.g. @c -ENOTCONN if no
+ *                     copy answered, @c -ENOENT for an mds:// object the MDS
+ *                     doesn't know).
+ *                   - @p data is the same pointer passed as @p data below.
+ * @param data       User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the lookup was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked).
+ *
+ * @see rawstor_target_create_snapshot
+ * @see rawstor_string_list_delete
+ */
+int rawstor_target_snapshots(
+    RawIOQueue* queue, const char* target, RawstorStringList** snapshots,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 

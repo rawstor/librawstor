@@ -245,6 +245,14 @@ public:
         uint64_t offset, const RawstdUUID& snapshot_id
     );
 
+    // Every version (snapshot_id) `id`/`offset` has been snapshotted as,
+    // in no particular order. Default: an empty list, covering
+    // file::Backend and lvm::Backend, which hold no snapshots; zfs::Backend
+    // lists its own snapshot datasets, ost::Backend asks its server
+    // (LIST_SNAPSHOTS), mds::Backend asks the MDS (OBJ_LIST_SNAPSHOTS).
+    virtual rawstd::Task<std::vector<RawstdUUID>>
+    list_snapshots(const RawstdUUID& id, uint64_t offset);
+
     // Grows `id` to `new_size` (grow-only -- docs/mds.md: shrink
     // interacts with GC and snapshots, deferred past v1). Default:
     // ENOTSUP, covering every backend a plain (non-mds://) target

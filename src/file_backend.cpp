@@ -58,9 +58,9 @@ std::string get_target_dir(
 
     oss << location_path << "/" << uuid << "/" << std::hex << offset;
     if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        RawstdUUIDString snap_string;
-        rawstd_uuid_to_string(&snapshot_id, &snap_string);
-        oss << "/" << snap_string;
+        RawstdUUIDString snapshot_string;
+        rawstd_uuid_to_string(&snapshot_id, &snapshot_string);
+        oss << "/" << snapshot_string;
     }
 
     return oss.str();

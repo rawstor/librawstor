@@ -686,6 +686,25 @@ rawstd::Task<void> Slot::remove_snapshot(
     }
 }
 
+rawstd::Task<std::vector<RawstdUUID>>
+Slot::list_snapshots(const RawstdUUID& id, uint64_t offset) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        std::vector<RawstdUUID> result = co_await _with_retry(
+            func_name, trace_event, &Backend::list_snapshots, id, offset
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
 rawstd::Task<RawstorLocationInfo> Slot::info() {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =

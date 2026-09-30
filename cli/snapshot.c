@@ -76,3 +76,33 @@ int rawstor_cli_snapshot(const char* target, const char* uuid) {
 
     return EXIT_SUCCESS;
 }
+
+int rawstor_cli_list_snapshots(const char* target) {
+    RawstorCliOp op;
+    int res = rawstor_cli_op_init(&op);
+    if (res < 0) {
+        fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
+        return rawstd_exitcode_for_errno(-res);
+    }
+
+    RawstorStringList* snapshots = NULL;
+    int sres = rawstor_target_snapshots(
+        op.queue, target, &snapshots, rawstor_cli_op_cb, &op
+    );
+    ssize_t result = rawstor_cli_op_wait(&op, sres);
+    rawstor_cli_op_destroy(&op);
+    if (result < 0) {
+        fprintf(
+            stderr, "rawstor_target_snapshots() failed: %s\n",
+            strerror((int)-result)
+        );
+        return rawstd_exitcode_for_errno((int)-result);
+    }
+
+    for (const char** it = rawstor_string_list_iter(snapshots); it != NULL;
+         it = rawstor_string_list_next(it)) {
+        printf("%s\n", *it);
+    }
+    rawstor_string_list_delete(snapshots);
+    return EXIT_SUCCESS;
+}

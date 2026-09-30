@@ -8,6 +8,7 @@
 #include <rawio/queue.hpp>
 
 #include <rawstd/gpp.hpp>
+#include <rawstd/hash.h>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
@@ -17,6 +18,8 @@
 #include <rawstor/protocol.h>
 #include <rawstor/target.h>
 
+#include <sys/uio.h>
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -25,6 +28,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace {
@@ -671,9 +675,9 @@ TEST(OstLifecycleTest, meta_of_bound_snapshot_carries_snapshot_id) {
 
     rawstd::URI location_uri("ost://127.0.0.1:8755");
     std::string uuid = "00000000-0000-7000-8000-000000000004";
-    std::string snap = "00000000-0000-7000-8000-000000000005";
+    std::string snapshot_str = "00000000-0000-7000-8000-000000000005";
     std::string target =
-        rawstd::URI(rawstd::URI(location_uri, uuid), snap).str();
+        rawstd::URI(rawstd::URI(location_uri, uuid), snapshot_str).str();
 
     RawstorFrameMetaPayload meta_body = {
         .size = 1ull << 20,
@@ -711,7 +715,94 @@ TEST(OstLifecycleTest, meta_of_bound_snapshot_carries_snapshot_id) {
     EXPECT_EQ(meta.spec.size, 1ull << 20);
 
     RawstdUUID expected;
-    ASSERT_EQ(rawstd_uuid_from_string(&expected, snap.c_str()), 0);
+    ASSERT_EQ(rawstd_uuid_from_string(&expected, snapshot_str.c_str()), 0);
+    EXPECT_EQ(rawstd_uuid_cmp(requested.get(), &expected), 0);
+}
+
+// LIST_SNAPSHOTS asks the far end about the object's own chunk, and every
+// returned id becomes that version's own target string.
+TEST(OstLifecycleTest, snapshots_over_wire) {
+    rawstor::tests::Server server(8756, 256);
+
+    rawstd::URI location_uri("ost://127.0.0.1:8756");
+    std::string uuid = "00000000-0000-7000-8000-000000000006";
+    std::string target = rawstd::URI(location_uri, uuid).str();
+    std::string snapshots[2] = {
+        "00000000-0000-7000-8000-000000000007",
+        "00000000-0000-7000-8000-000000000008",
+    };
+
+    RawstorFrameSnapshotEntry entries[2];
+    for (size_t i = 0; i < 2; ++i) {
+        RawstdUUID snapshot_id;
+        ASSERT_EQ(
+            rawstd_uuid_from_string(&snapshot_id, snapshots[i].c_str()), 0
+        );
+        memcpy(
+            entries[i].snapshot_id, snapshot_id.bytes,
+            sizeof(entries[i].snapshot_id)
+        );
+    }
+
+    auto requested = std::make_shared<RawstdUUID>();
+    {
+        rawstor::tests::Session s(server);
+        server.read(
+            "RAWSTOR_CMD_LIST_SNAPSHOTS <<<", sizeof(RawstorFrameBasic),
+            [requested](const void* buf) {
+                const RawstorFrameBasic* frame =
+                    static_cast<const RawstorFrameBasic*>(buf);
+                memcpy(
+                    requested->bytes, frame->payload.object_id,
+                    sizeof(requested->bytes)
+                );
+            }
+        );
+        RawstorFrameResponse response = {
+            .head{
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_LIST_SNAPSHOTS,
+                .cid = 0,
+            },
+            .body = {
+                .hash = rawstd_hash_scalar(entries, sizeof(entries)),
+                .res = static_cast<int32_t>(sizeof(entries)),
+            },
+        };
+        iovec iov[2] = {
+            {.iov_base = &response, .iov_len = sizeof(response)},
+            {.iov_base = entries, .iov_len = sizeof(entries)},
+        };
+        server.writev("RAWSTOR_CMD_LIST_SNAPSHOTS >>>", iov, 2);
+    }
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorStringList* list = nullptr;
+    ssize_t res =
+        rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+            return rawstor_target_snapshots(
+                queue.get(), target.c_str(), &list, cb, data
+            );
+        });
+    ASSERT_EQ(res, 2);
+
+    std::vector<std::string> got;
+    for (const char** it = rawstor_string_list_iter(list); it != nullptr;
+         it = rawstor_string_list_next(it)) {
+        got.push_back(*it);
+    }
+    rawstor_string_list_delete(list);
+    ASSERT_EQ(got.size(), 2u);
+    EXPECT_EQ(
+        got[0], rawstd::URI(rawstd::URI(location_uri, uuid), snapshots[0]).str()
+    );
+    EXPECT_EQ(
+        got[1], rawstd::URI(rawstd::URI(location_uri, uuid), snapshots[1]).str()
+    );
+
+    RawstdUUID expected;
+    ASSERT_EQ(rawstd_uuid_from_string(&expected, uuid.c_str()), 0);
     EXPECT_EQ(rawstd_uuid_cmp(requested.get(), &expected), 0);
 }
 

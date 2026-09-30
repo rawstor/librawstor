@@ -46,6 +46,29 @@ class TestTarget(unittest.TestCase):
 
             target.remove()
 
+    def test_chunks(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            location = rawstor.Location(f"file://{temp_dir}")
+            target = location.create(
+                size=4 << 20, width=1, chunk_size=1 << 20)
+
+            self.assertEqual(
+                target.chunks(), [0, 1 << 20, 2 << 20, 3 << 20])
+
+            target.remove()
+
+    # file:// has no snapshots, so the listing is empty rather than an
+    # error.
+    def test_snapshots_empty(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000008")
+            target.create(size=1 << 20, width=1)
+
+            self.assertEqual(list(target.snapshots()), [])
+
+            target.remove()
+
     def test_create_twice(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             target = rawstor.Target(

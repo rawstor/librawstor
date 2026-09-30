@@ -263,7 +263,7 @@ whenever its target carries one -- there is no separate "assign" mode,
 mds:// included: two independent mechanisms use the same id, at different
 layers:
 
-- **mds:// object-level**: CoW-every-chunk/`OBJ_SNAP_COMMIT`
+- **mds:// object-level**: CoW-every-chunk/`OBJ_COMMIT_SNAPSHOT`
   (docs/mds.md, "Snapshots (stage 2)") registers the caller's id against
   the whole object, driven by `mds::Backend::create_snapshot()`.
 - **Per-slot native CoW**: a single backend's own thin-clone/snapshot

@@ -16,8 +16,8 @@ endif
 
 # After ost/mds: tests/ links against ost's libost.la unconditionally,
 # and mds's libmds.la/libmdsstore.la when sqlite3 is enabled
-# (Volume::snapshot()/snap_remove()'s real MDS+OST wire path,
-# tests/volume_env.*).
+# (mds::Backend's real MDS+OST wire path,
+# tests/object_env.*).
 if ENABLE_TESTS
     SUBDIRS += tests
 endif

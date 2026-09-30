@@ -243,6 +243,12 @@ public:
     // target, purely syntactic otherwise (see this method's own doc
     // comment in target.cpp).
     rawstd::Task<std::vector<uint64_t>> chunks(rawio::Queue& queue) const;
+    // Every version this object has been snapshotted as, oldest first
+    // (snapshot ids are UUID v7). Asks the backend, whichever version
+    // `this` is bound to: the MDS for an mds:// target, otherwise every
+    // copy of the object's first chunk, merged -- a snapshot taken on any
+    // copy is listed.
+    rawstd::Task<std::vector<RawstdUUID>> snapshots(rawio::Queue& queue) const;
     // Writes `sync_state` to exactly one real member of the chunk at
     // `offset` -- `member_index` into that chunk's own real member list,
     // the same order rawstor_target_meta()'s own per-chunk result reports

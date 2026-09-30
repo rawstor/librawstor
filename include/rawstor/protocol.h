@@ -65,6 +65,14 @@ extern "C" {
  * -ENOTSUP on backends without CoW (file://, classic LVM).
  */
 #define RAWSTOR_CMD_SNAPSHOT 0x0d
+/*
+ * Every version one stored object has been snapshotted as: rides
+ * RawstorFrameBasicPayload (object_id, offset = the chunk), its response
+ * payload is a packed array of RawstorFrameSnapshotEntry (body.res =
+ * count * sizeof(RawstorFrameSnapshotEntry)), in no particular order. An
+ * empty array on backends without snapshots (file://, classic LVM).
+ */
+#define RAWSTOR_CMD_LIST_SNAPSHOTS 0x0e
 
 /*
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/open/
@@ -83,13 +91,19 @@ extern "C" {
  * Object snapshots (docs/mds.md, "Snapshots"): the client generates
  * snapshot_id itself, like every object id, before taking any per-chunk CoW
  * copy -- COMMIT registers exactly who ends up holding them once every
- * reachable chunk has one (rides RawstorFrameObjSnapCommitPayload). REMOVE
+ * reachable chunk has one (rides RawstorFrameObjCommitSnapshotPayload). REMOVE
  * unregisters first (no new readers) and returns the member set for the
  * client's fan-out destroy (rides RawstorFrameObjOpPayload: snapshot_id =
  * the version to remove).
  */
-#define RAWSTOR_CMD_OBJ_SNAP_COMMIT 0x45
-#define RAWSTOR_CMD_OBJ_SNAP_REMOVE 0x46
+#define RAWSTOR_CMD_OBJ_COMMIT_SNAPSHOT 0x45
+#define RAWSTOR_CMD_OBJ_REMOVE_SNAPSHOT 0x46
+/*
+ * Every snapshot registered for an mds:// object: rides
+ * RawstorFrameBasicPayload (object_id = id), response as LIST_SNAPSHOTS's.
+ * -ENOENT for an object the MDS doesn't know.
+ */
+#define RAWSTOR_CMD_OBJ_LIST_SNAPSHOTS 0x47
 
 typedef uint16_t RawstorCommandType;
 
@@ -187,6 +201,11 @@ struct RawstorFrameList {
 struct RawstorFrameListEntry {
     uint8_t id[16];
     uint64_t chunk_offset;
+} RAWSTOR_PACKED;
+
+/* One LIST_SNAPSHOTS / OBJ_LIST_SNAPSHOTS response row. */
+struct RawstorFrameSnapshotEntry {
+    uint8_t snapshot_id[16];
 } RAWSTOR_PACKED;
 
 // Shared by READ/WRITE/DISCARD/WRITE_ZEROES: `hash` is only meaningful for
@@ -326,8 +345,8 @@ struct RawstorFrameMetaPayload {
  * Object (MDS) wire structs -- docs/mds.md, "Wire protocol" /
  * "MDS data model": a whole, possibly multi-chunk mds:// object. OBJ_OPEN
  * rides RawstorFrameBasicPayload (object_id = id, snapshot_id = the bound
- * version, nil = live); OBJ_RESIZE, OBJ_REMOVE and OBJ_SNAP_REMOVE ride
- * RawstorFrameObjOpPayload below; OBJ_CREATE and OBJ_SNAP_COMMIT have
+ * version, nil = live); OBJ_RESIZE, OBJ_REMOVE and OBJ_REMOVE_SNAPSHOT ride
+ * RawstorFrameObjOpPayload below; OBJ_CREATE and OBJ_COMMIT_SNAPSHOT have
  * their own payloads.
  */
 
@@ -387,10 +406,10 @@ struct RawstorFrameObjCreatedPayload {
 } RAWSTOR_PACKED;
 
 /*
- * OBJ_RESIZE / OBJ_REMOVE / OBJ_SNAP_REMOVE request payload: the object,
+ * OBJ_RESIZE / OBJ_REMOVE / OBJ_REMOVE_SNAPSHOT request payload: the object,
  * the idempotency_key of this mutation, and the command's own argument (`val` =
- * the new size for OBJ_RESIZE; `snapshot_id` = the version for OBJ_SNAP_REMOVE;
- * unused fields are 0/nil).
+ * the new size for OBJ_RESIZE; `snapshot_id` = the version for
+ * OBJ_REMOVE_SNAPSHOT; unused fields are 0/nil).
  */
 struct RawstorFrameObjOpPayload {
     uint8_t id[16];
@@ -449,32 +468,32 @@ struct RawstorFrameObjChunkSlot {
 } RAWSTOR_PACKED;
 
 /*
- * OBJ_SNAP_COMMIT request: the payload is followed by nmembers member
+ * OBJ_COMMIT_SNAPSHOT request: the payload is followed by nmembers member
  * records -- the chunk copies that actually hold the snapshot (the
  * IN-SYNC set at creation; a degraded object snapshots with less
  * redundancy, recorded, not repaired -- see Mds.md). snapshot_id is the
  * client's own already-generated version id (like every object id) --
  * never nil, nil is reserved for the live version.
  *
- * OBJ_SNAP_REMOVE rides RawstorFrameObjOpPayload (id, idempotency_key,
+ * OBJ_REMOVE_SNAPSHOT rides RawstorFrameObjOpPayload (id, idempotency_key,
  * snapshot_id = the version to remove); its response payload is `res`
- * RawstorFrameObjSnapMemberPayload records: what was registered, for the
+ * RawstorFrameObjSnapshotMemberPayload records: what was registered, for the
  * fan-out destroy.
  */
-struct RawstorFrameObjSnapCommitPayload {
+struct RawstorFrameObjCommitSnapshotPayload {
     uint8_t id[16];
     uint8_t snapshot_id[16];
     uint8_t idempotency_key[16];
     uint32_t nmembers;
 } RAWSTOR_PACKED;
 
-struct RawstorFrameObjSnapMemberPayload {
+struct RawstorFrameObjSnapshotMemberPayload {
     uint64_t logical_index;
     uint8_t ost_id[16];
 } RAWSTOR_PACKED;
 
-/* OBJ_SNAP_COMMIT response payload. */
-struct RawstorFrameObjSnapCommittedPayload {
+/* OBJ_COMMIT_SNAPSHOT response payload. */
+struct RawstorFrameObjSnapshotCommittedPayload {
     uint64_t map_epoch;
 } RAWSTOR_PACKED;
 
@@ -491,6 +510,7 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameHead, 8);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBasicPayload, 48);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 20);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 24);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSnapshotEntry, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 21);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncStatePayload, 73);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAllocatePayload, 44);
@@ -502,8 +522,8 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjOpPayload, 56);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjResizedPayload, 12);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjDescriptorPayload, 56);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjChunkSlot, 19);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjSnapCommitPayload, 52);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjSnapMemberPayload, 24);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjCommitSnapshotPayload, 52);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjSnapshotMemberPayload, 24);
 
 #ifdef __cplusplus
 }

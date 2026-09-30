@@ -39,7 +39,7 @@ struct WireResized {
 };
 
 /* One chunk copy holding a snapshot version. */
-struct WireSnapMember {
+struct WireSnapshotMember {
     uint64_t logical_index;
     RawstdUUID ost_id;
 };
@@ -98,14 +98,17 @@ public:
      * generated version id (like every object id). Returns the bumped
      * map_epoch.
      */
-    rawstd::Task<uint64_t> snap_commit(
+    rawstd::Task<uint64_t> commit_snapshot(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         const RawstdUUID& snapshot_id,
-        const std::vector<WireSnapMember>& members
+        const std::vector<WireSnapshotMember>& members
     );
 
+    /* Every snapshot registered for `id`, in no particular order. */
+    rawstd::Task<std::vector<RawstdUUID>> list_snapshots(const RawstdUUID& id);
+
     /* Unregisters and returns the member set for the fan-out destroy. */
-    rawstd::Task<std::vector<WireSnapMember>> snap_remove(
+    rawstd::Task<std::vector<WireSnapshotMember>> remove_snapshot(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         const RawstdUUID& snapshot_id
     );

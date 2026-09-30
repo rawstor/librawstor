@@ -1562,6 +1562,26 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     co_return std::vector<RawstorObjectMeta>{ret};
 }
 
+rawstd::Task<std::vector<RawstdUUID>>
+Backend::list_snapshots(const RawstdUUID& id, uint64_t offset) {
+    std::vector<char> response = co_await _basic_request(
+        RAWSTOR_CMD_LIST_SNAPSHOTS, "list_snapshots", id, offset
+    );
+    if (response.size() % sizeof(RawstorFrameSnapshotEntry) != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+    size_t n = response.size() / sizeof(RawstorFrameSnapshotEntry);
+    std::vector<RawstdUUID> ret(n);
+    for (size_t i = 0; i < n; ++i) {
+        memcpy(
+            ret[i].bytes,
+            response.data() + i * sizeof(RawstorFrameSnapshotEntry),
+            sizeof(ret[i].bytes)
+        );
+    }
+    co_return ret;
+}
+
 rawstd::Task<std::vector<rawstd::URI>>
 Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     co_return std::vector<rawstd::URI>{location()};

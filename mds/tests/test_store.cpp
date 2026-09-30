@@ -23,7 +23,7 @@ using rawstor::mdsserver::ObjectStore;
 using rawstor::mdsserver::PlacementPolicy;
 using rawstor::mdsserver::ResizeResult;
 using rawstor::mdsserver::ScanRecord;
-using rawstor::mdsserver::SnapMember;
+using rawstor::mdsserver::SnapshotMember;
 using rawstor::mdsserver::STRIPE_ALL;
 using rawstor::mdsserver::Topology;
 using rawstor::mdsserver::TopologyOST;
@@ -279,17 +279,19 @@ TEST_F(ObjectStoreTest, snapshots_replay_repeated_idempotency_key) {
     RawstdUUID snapshot_id = make_id();
     store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
     ObjectMap map = store.open(id, RawstdUUID{});
-    std::vector<SnapMember> members{{0, map.chunks[0][0].ost_id}};
+    std::vector<SnapshotMember> members{{0, map.chunks[0][0].ost_id}};
 
     RawstdUUID commit_op = make_id();
-    uint64_t first = store.snap_commit(commit_op, id, snapshot_id, members);
-    EXPECT_EQ(store.snap_commit(commit_op, id, snapshot_id, members), first);
+    uint64_t first = store.commit_snapshot(commit_op, id, snapshot_id, members);
+    EXPECT_EQ(
+        store.commit_snapshot(commit_op, id, snapshot_id, members), first
+    );
 
     RawstdUUID remove_op = make_id();
-    std::vector<SnapMember> removed =
-        store.snap_remove(remove_op, id, snapshot_id);
-    std::vector<SnapMember> again =
-        store.snap_remove(remove_op, id, snapshot_id);
+    std::vector<SnapshotMember> removed =
+        store.remove_snapshot(remove_op, id, snapshot_id);
+    std::vector<SnapshotMember> again =
+        store.remove_snapshot(remove_op, id, snapshot_id);
     ASSERT_EQ(removed.size(), 1u);
     ASSERT_EQ(again.size(), 1u);
     EXPECT_EQ(rawstd_uuid_cmp(&again[0].ost_id, &removed[0].ost_id), 0);
@@ -385,107 +387,143 @@ TEST_F(ObjectStoreTest, remove_rejects_while_snapshot_exists) {
     store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
     RawstdUUID snapshot_id = make_id();
     ObjectMap map = store.open(id, RawstdUUID{});
-    std::vector<SnapMember> members;
+    std::vector<SnapshotMember> members;
     for (size_t index = 0; index < map.chunks.size(); ++index) {
         for (const auto& slot : map.chunks[index]) {
-            members.push_back(SnapMember{index, slot.ost_id});
+            members.push_back(SnapshotMember{index, slot.ost_id});
         }
     }
-    store.snap_commit(RawstdUUID{}, id, snapshot_id, members);
+    store.commit_snapshot(RawstdUUID{}, id, snapshot_id, members);
 
     EXPECT_THROW(store.remove(RawstdUUID{}, id), std::system_error);
 
     // Removing the snapshot first clears the way.
-    store.snap_remove(RawstdUUID{}, id, snapshot_id);
+    store.remove_snapshot(RawstdUUID{}, id, snapshot_id);
     store.remove(RawstdUUID{}, id);
 }
 
-TEST_F(ObjectStoreTest, snap_commit_and_open_round_trip) {
+TEST_F(ObjectStoreTest, commit_snapshot_and_open_round_trip) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
     store.create(RawstdUUID{}, id, 2 * chunk_size, chunk_size, make_policy(1));
     ObjectMap live = store.open(id, RawstdUUID{});
     RawstdUUID snapshot_id = make_id();
 
-    std::vector<SnapMember> members;
+    std::vector<SnapshotMember> members;
     for (size_t index = 0; index < live.chunks.size(); ++index) {
         for (const auto& slot : live.chunks[index]) {
-            members.push_back(SnapMember{index, slot.ost_id});
+            members.push_back(SnapshotMember{index, slot.ost_id});
         }
     }
     uint64_t map_epoch =
-        store.snap_commit(RawstdUUID{}, id, snapshot_id, members);
+        store.commit_snapshot(RawstdUUID{}, id, snapshot_id, members);
     EXPECT_EQ(map_epoch, 2u);
 
-    ObjectMap snap = store.open(id, snapshot_id);
-    EXPECT_EQ(snap.descriptor.logical_size, 2 * chunk_size);
-    ASSERT_EQ(snap.chunks.size(), 2u);
-    for (size_t index = 0; index < snap.chunks.size(); ++index) {
-        ASSERT_EQ(snap.chunks[index].size(), 1u);
+    ObjectMap snapshot_map = store.open(id, snapshot_id);
+    EXPECT_EQ(snapshot_map.descriptor.logical_size, 2 * chunk_size);
+    ASSERT_EQ(snapshot_map.chunks.size(), 2u);
+    for (size_t index = 0; index < snapshot_map.chunks.size(); ++index) {
+        ASSERT_EQ(snapshot_map.chunks[index].size(), 1u);
         EXPECT_EQ(
             rawstd_uuid_cmp(
-                &snap.chunks[index][0].ost_id, &live.chunks[index][0].ost_id
+                &snapshot_map.chunks[index][0].ost_id,
+                &live.chunks[index][0].ost_id
             ),
             0
         );
     }
 }
 
-TEST_F(ObjectStoreTest, snap_commit_rejects_nil_snapshot_id) {
+TEST_F(ObjectStoreTest, list_snapshots_oldest_first) {
+    ObjectStore store = make_store();
+    RawstdUUID id = make_id();
+    store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
+    ObjectMap live = store.open(id, RawstdUUID{});
+    std::vector<SnapshotMember> members;
+    for (const auto& slot : live.chunks[0]) {
+        members.push_back(SnapshotMember{0, slot.ost_id});
+    }
+
+    EXPECT_TRUE(store.list_snapshots(id).empty());
+
+    RawstdUUID first = make_id();
+    RawstdUUID second = make_id();
+    // Committed newest first: the listing still comes back oldest first.
+    store.commit_snapshot(RawstdUUID{}, id, second, members);
+    store.commit_snapshot(RawstdUUID{}, id, first, members);
+
+    std::vector<RawstdUUID> snapshots = store.list_snapshots(id);
+    ASSERT_EQ(snapshots.size(), 2u);
+    EXPECT_EQ(rawstd_uuid_cmp(&snapshots[0], &first), 0);
+    EXPECT_EQ(rawstd_uuid_cmp(&snapshots[1], &second), 0);
+
+    try {
+        store.list_snapshots(make_id());
+        ADD_FAILURE() << "list_snapshots() of an unknown object succeeded";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOENT);
+    }
+}
+
+TEST_F(ObjectStoreTest, commit_snapshot_rejects_nil_snapshot_id) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
     store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
 
     EXPECT_THROW(
-        store.snap_commit(RawstdUUID{}, id, RawstdUUID{}, {}), std::system_error
+        store.commit_snapshot(RawstdUUID{}, id, RawstdUUID{}, {}),
+        std::system_error
     );
 }
 
-TEST_F(ObjectStoreTest, snap_commit_rejects_uncovered_chunk) {
+TEST_F(ObjectStoreTest, commit_snapshot_rejects_uncovered_chunk) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
     store.create(RawstdUUID{}, id, 2 * chunk_size, chunk_size, make_policy(1));
     ObjectMap live = store.open(id, RawstdUUID{});
 
     // Only chunk 0's own member -- chunk 1 is left uncovered.
-    std::vector<SnapMember> members{
-        SnapMember{0, live.chunks[0][0].ost_id},
+    std::vector<SnapshotMember> members{
+        SnapshotMember{0, live.chunks[0][0].ost_id},
     };
 
     EXPECT_THROW(
-        store.snap_commit(RawstdUUID{}, id, make_id(), members),
+        store.commit_snapshot(RawstdUUID{}, id, make_id(), members),
         std::system_error
     );
 }
 
-TEST_F(ObjectStoreTest, snap_commit_freezes_size_across_a_later_resize) {
+TEST_F(ObjectStoreTest, commit_snapshot_freezes_size_across_a_later_resize) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
     store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
     ObjectMap live = store.open(id, RawstdUUID{});
     RawstdUUID snapshot_id = make_id();
-    store.snap_commit(
-        RawstdUUID{}, id, snapshot_id, {SnapMember{0, live.chunks[0][0].ost_id}}
+    store.commit_snapshot(
+        RawstdUUID{}, id, snapshot_id,
+        {SnapshotMember{0, live.chunks[0][0].ost_id}}
     );
 
     store.resize(RawstdUUID{}, id, 3 * chunk_size);
 
-    ObjectMap snap = store.open(id, snapshot_id);
-    EXPECT_EQ(snap.descriptor.logical_size, chunk_size);
-    EXPECT_EQ(snap.chunks.size(), 1u);
+    ObjectMap snapshot_map = store.open(id, snapshot_id);
+    EXPECT_EQ(snapshot_map.descriptor.logical_size, chunk_size);
+    EXPECT_EQ(snapshot_map.chunks.size(), 1u);
 }
 
-TEST_F(ObjectStoreTest, snap_remove_returns_members_and_unregisters) {
+TEST_F(ObjectStoreTest, remove_snapshot_returns_members_and_unregisters) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
     store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
     ObjectMap live = store.open(id, RawstdUUID{});
     RawstdUUID snapshot_id = make_id();
     RawstdUUID ost_id = live.chunks[0][0].ost_id;
-    store.snap_commit(RawstdUUID{}, id, snapshot_id, {SnapMember{0, ost_id}});
+    store.commit_snapshot(
+        RawstdUUID{}, id, snapshot_id, {SnapshotMember{0, ost_id}}
+    );
 
-    std::vector<SnapMember> removed =
-        store.snap_remove(RawstdUUID{}, id, snapshot_id);
+    std::vector<SnapshotMember> removed =
+        store.remove_snapshot(RawstdUUID{}, id, snapshot_id);
 
     ASSERT_EQ(removed.size(), 1u);
     EXPECT_EQ(removed[0].logical_index, 0u);
@@ -493,13 +531,13 @@ TEST_F(ObjectStoreTest, snap_remove_returns_members_and_unregisters) {
     EXPECT_THROW(store.open(id, snapshot_id), std::system_error);
 }
 
-TEST_F(ObjectStoreTest, snap_remove_rejects_unknown_snapshot) {
+TEST_F(ObjectStoreTest, remove_snapshot_rejects_unknown_snapshot) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
     store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
 
     EXPECT_THROW(
-        store.snap_remove(RawstdUUID{}, id, make_id()), std::system_error
+        store.remove_snapshot(RawstdUUID{}, id, make_id()), std::system_error
     );
 }
 

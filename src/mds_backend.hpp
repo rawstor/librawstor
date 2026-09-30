@@ -132,6 +132,9 @@ public:
     // trusted outright there (mirrors == 1 at that level), taking this
     // method's own first entry as its answer (Backend::meta()'s own doc
     // comment).
+    rawstd::Task<std::vector<RawstdUUID>>
+    list_snapshots(const RawstdUUID& id, uint64_t offset) override;
+
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(
         const RawstdUUID& id, uint64_t offset,
         const RawstdUUID& snapshot_id = {}

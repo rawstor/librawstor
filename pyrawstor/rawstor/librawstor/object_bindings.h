@@ -34,6 +34,10 @@ py_rawstor_object_set_member_sync_state(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_remove(PyObject* self, PyObject* args);
 
+PyObject* py_rawstor_object_chunks(PyObject* self, PyObject* args);
+
+PyObject* py_rawstor_object_snapshots(PyObject* self, PyObject* args);
+
 PyObject* py_rawstor_location_info(PyObject* self, PyObject* args);
 
 #ifdef __cplusplus

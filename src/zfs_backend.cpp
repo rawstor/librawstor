@@ -66,9 +66,9 @@ std::string Backend::_dataset(
     std::ostringstream oss;
     oss << _parent_dataset << "/" << uuid_str << ":" << std::hex << offset;
     if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        RawstdUUIDString snap_str;
-        rawstd_uuid_to_string(&snapshot_id, &snap_str);
-        oss << "@s" << snap_str;
+        RawstdUUIDString snapshot_str;
+        rawstd_uuid_to_string(&snapshot_id, &snapshot_str);
+        oss << "@s" << snapshot_str;
     }
     return oss.str();
 }
@@ -155,9 +155,9 @@ rawstd::Task<void> Backend::list_chunks(
     }
     std::string snapshot_suffix;
     if (snapshot) {
-        RawstdUUIDString snap_str;
-        rawstd_uuid_to_string(&snapshot_id, &snap_str);
-        snapshot_suffix = std::string("s") + snap_str;
+        RawstdUUIDString snapshot_str;
+        rawstd_uuid_to_string(&snapshot_id, &snapshot_str);
+        snapshot_suffix = std::string("s") + snapshot_str;
     }
     RawstdUUID input_token = filtered ? RawstdUUID{} : token;
     chunks.clear();
@@ -489,6 +489,49 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     ret.sync_state = sync_state;
 
     co_return std::vector<RawstorObjectMeta>{ret};
+}
+
+// Every snapshot dataset of this chunk's own zvol that this backend
+// itself took ("<zvol>@s<snapshot_id>", _dataset()'s naming); any other
+// snapshot of it (e.g. one taken by hand) is skipped.
+rawstd::Task<std::vector<RawstdUUID>>
+Backend::list_snapshots(const RawstdUUID& id, uint64_t offset) {
+    std::string dataset = _dataset(id, offset);
+
+    // GCC 13 ICEs when a std::vector<std::string> argument is
+    // brace-initialized directly at the call site of a nested coroutine
+    // that's co_await-ed from within another coroutine -- naming the vector
+    // first works around it (see list_chunks()'s own comment).
+    std::vector<std::string> argv = {"zfs", "list",     "-H", "-o", "name",
+                                     "-t",  "snapshot", "-d", "1",  dataset};
+    std::string output;
+    try {
+        output = co_await rawstor::run_command_capture(_queue, std::move(argv));
+    } catch (const std::system_error& e) {
+        rawstd_error(
+            "zfs: failed to list snapshots of %s: %s\n", dataset.c_str(),
+            e.what()
+        );
+        throw;
+    }
+
+    std::string prefix = dataset + "@s";
+    std::vector<RawstdUUID> ret;
+    std::istringstream iss(output);
+    std::string line;
+    while (std::getline(iss, line)) {
+        if (line.compare(0, prefix.size(), prefix) != 0) {
+            continue;
+        }
+        RawstdUUID snapshot_id;
+        if (rawstd_uuid_from_string(
+                &snapshot_id, line.c_str() + prefix.size()
+            ) < 0) {
+            continue;
+        }
+        ret.push_back(snapshot_id);
+    }
+    co_return ret;
 }
 
 rawstd::Task<std::vector<rawstd::URI>>

@@ -1065,6 +1065,112 @@ PyObject* py_rawstor_object_remove(PyObject* Py_UNUSED(self), PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* py_rawstor_object_chunks(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* target;
+    if (!PyArg_ParseTuple(args, "s", &target)) {
+        return NULL;
+    }
+
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    /* A first call for the count, a second for the offsets themselves --
+     * rawstor_target_chunks()'s own NULL/0 convention. */
+    int sres = rawstor_target_chunks(
+        op.queue, target, NULL, 0, rawstor_sync_op_cb, &op
+    );
+    ssize_t count = rawstor_sync_op_wait(&op, sres);
+    uint64_t* offsets = NULL;
+    if (count > 0) {
+        offsets = (uint64_t*)malloc((size_t)count * sizeof(*offsets));
+        if (offsets == NULL) {
+            rawstor_sync_op_destroy(&op);
+            return PyErr_NoMemory();
+        }
+        op.done = 0;
+        sres = rawstor_target_chunks(
+            op.queue, target, offsets, (size_t)count, rawstor_sync_op_cb, &op
+        );
+        ssize_t filled = rawstor_sync_op_wait(&op, sres);
+        if (filled >= 0 && filled < count) {
+            count = filled;
+        } else if (filled < 0) {
+            count = filled;
+        }
+    }
+    rawstor_sync_op_destroy(&op);
+    if (count < 0) {
+        free(offsets);
+        set_os_error((int)-count);
+        return NULL;
+    }
+
+    PyObject* py_list = PyList_New(0);
+    if (py_list == NULL) {
+        free(offsets);
+        return NULL;
+    }
+    for (ssize_t i = 0; i < count; ++i) {
+        PyObject* py_offset = PyLong_FromUnsignedLongLong(offsets[i]);
+        if (py_offset == NULL || PyList_Append(py_list, py_offset) < 0) {
+            Py_XDECREF(py_offset);
+            Py_DECREF(py_list);
+            free(offsets);
+            return NULL;
+        }
+        Py_DECREF(py_offset);
+    }
+    free(offsets);
+    return py_list;
+}
+
+PyObject*
+py_rawstor_object_snapshots(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* target;
+    if (!PyArg_ParseTuple(args, "s", &target)) {
+        return NULL;
+    }
+
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    RawstorStringList* list = NULL;
+    int sres = rawstor_target_snapshots(
+        op.queue, target, &list, rawstor_sync_op_cb, &op
+    );
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
+    if (res < 0) {
+        set_os_error((int)-res);
+        return NULL;
+    }
+
+    PyObject* py_list = PyList_New(0);
+    if (py_list == NULL) {
+        rawstor_string_list_delete(list);
+        return NULL;
+    }
+    for (const char** it = rawstor_string_list_iter(list); it != NULL;
+         it = rawstor_string_list_next(it)) {
+        PyObject* py_target = PyUnicode_FromString(*it);
+        if (py_target == NULL || PyList_Append(py_list, py_target) < 0) {
+            Py_XDECREF(py_target);
+            Py_DECREF(py_list);
+            rawstor_string_list_delete(list);
+            return NULL;
+        }
+        Py_DECREF(py_target);
+    }
+    rawstor_string_list_delete(list);
+    return py_list;
+}
+
 PyObject* py_rawstor_location_info(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* location;
     if (!PyArg_ParseTuple(args, "s", &location)) {

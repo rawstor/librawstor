@@ -6,11 +6,13 @@
 #include "opts.h"
 #include "slot.hpp"
 
+#include <rawstor/list.h>
 #include <rawstor/target.h>
 
 #include <rawio/queue.hpp>
 
 #include <rawstd/gpp.hpp>
+#include <rawstd/list.h>
 #include <rawstd/logging.hpp>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
@@ -30,6 +32,8 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 namespace {
 
@@ -384,6 +388,27 @@ rawstd::Task<std::vector<uint64_t>> chunks_one(
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
     co_return std::move(groups.front().offsets);
+}
+
+// One location's worth of Target::snapshots() -- same one-off shape as
+// meta_one() above, for Slot::list_snapshots().
+rawstd::Task<std::vector<RawstdUUID>> snapshots_one(
+    rawio::Queue& queue, rawstd::URI location, RawstdUUID id, uint64_t offset
+) {
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, location, 1);
+    std::vector<RawstdUUID> ret;
+    std::exception_ptr error;
+    try {
+        ret = co_await slot->list_snapshots(id, offset);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    co_return ret;
 }
 
 // One location's worth of resolve_member_locations() below -- same
@@ -836,6 +861,76 @@ rawstd::DetachedTask launch_chunks_op_coro(
         rawstd_error("Unexpected error\n");
         result = -EINVAL;
     }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+// C ABI adapter for rawstor_target_snapshots(): every snapshot id becomes
+// that version's own target string -- every URI of `t`'s own live form
+// (any bound version stripped off first) with the id appended, the same
+// string rawstor_target_create_snapshot() prints.
+rawstd::DetachedTask launch_snapshots_op_coro(
+    rawstor::Target t, rawio::Queue* queue, RawstorStringList** snapshots,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    RawstorStringList* list = nullptr;
+    try {
+        std::vector<RawstdUUID> ids = co_await t.snapshots(*queue);
+
+        std::vector<rawstd::URI> live;
+        live.reserve(t.uris().size());
+        for (const auto& uri : t.uris()) {
+            live.push_back(
+                rawstd_uuid_is_nil(&t.snapshot_id()) ? uri : uri.parent()
+            );
+        }
+
+        list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
+        if (list == nullptr) {
+            throw std::bad_alloc();
+        }
+        for (const RawstdUUID& id : ids) {
+            RawstdUUIDString uuid_string;
+            rawstd_uuid_to_string(&id, &uuid_string);
+            std::vector<rawstd::URI> uris;
+            uris.reserve(live.size());
+            for (const auto& uri : live) {
+                uris.emplace_back(uri, std::string(uuid_string));
+            }
+            std::string target = rawstd::URI::uris(uris);
+
+            char* str = (char*)malloc(target.length() + 1);
+            if (str == nullptr) {
+                RAWSTD_THROW_ERRNO();
+            }
+            memcpy(str, target.c_str(), target.length() + 1);
+
+            char** it = (char**)rawstd_list_append((RawstdList*)list);
+            if (it == nullptr) {
+                free(str);
+                RAWSTD_THROW_ERRNO();
+            }
+            *it = str;
+        }
+
+        *snapshots = list;
+        list = nullptr;
+        result = static_cast<ssize_t>(ids.size());
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    rawstor_string_list_delete(list);
     int res = cb(result, data);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -1328,6 +1423,58 @@ rawstd::Task<std::vector<uint64_t>> Target::chunks(rawio::Queue& queue) const {
     );
 }
 
+// Every location is queried concurrently and their answers merged; a
+// location that doesn't answer is skipped, and only none answering at all
+// fails the call.
+rawstd::Task<std::vector<RawstdUUID>>
+Target::snapshots(rawio::Queue& queue) const {
+    bool opaque = is_opaque(_uris);
+    RawstdUUID id = uuid_from_target(_uris.front());
+    // A snapshot covers the whole object, so the first chunk's copies
+    // answer for it; an mds:// backend ignores the offset.
+    uint64_t offset = 0;
+    if (!opaque) {
+        std::vector<uint64_t> offsets = co_await chunks(queue);
+        offset = offsets.front();
+    }
+    std::vector<rawstd::URI> locations = locations_for(_uris, offset, opaque);
+
+    std::vector<rawstd::Task<std::vector<RawstdUUID>>> tasks;
+    tasks.reserve(locations.size());
+    for (const auto& location : locations) {
+        tasks.push_back(snapshots_one(queue, location, id, offset));
+    }
+
+    std::vector<RawstdUUID> ret;
+    bool answered = false;
+    int first_error = 0;
+    for (size_t i = 0; i < tasks.size(); ++i) {
+        try {
+            std::vector<RawstdUUID> ids = co_await tasks[i];
+            answered = true;
+            ret.insert(ret.end(), ids.begin(), ids.end());
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            if (first_error == 0) {
+                first_error = e.code().value();
+            }
+        }
+    }
+    if (!answered) {
+        RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
+    }
+
+    auto less = [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
+        return rawstd_uuid_cmp(&lhs, &rhs) < 0;
+    };
+    auto equal = [](const RawstdUUID& lhs, const RawstdUUID& rhs) {
+        return rawstd_uuid_cmp(&lhs, &rhs) == 0;
+    };
+    std::sort(ret.begin(), ret.end(), less);
+    ret.erase(std::unique(ret.begin(), ret.end(), equal), ret.end());
+    co_return ret;
+}
+
 // Only ever touches the chunk at `offset` (chunk_uris_at_offset() above)
 // -- never "every chunk"; a caller wanting that (e.g. rawstor resolve
 // with no explicit --offset) loops over every chunk's own offset itself.
@@ -1779,6 +1926,30 @@ int rawstor_target_chunks(
     }
 }
 
+int rawstor_target_snapshots(
+    RawIOQueue* queue, const char* target, RawstorStringList** snapshots,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Target t(rawstd::URI::uriv(target));
+        launch_snapshots_op_coro(
+            std::move(t), static_cast<rawio::Queue*>(queue), snapshots, cb, data
+        );
+        rawstd::DetachedTask::rethrow_if_pending();
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
 // Three ways the version id actually used is picked, all resolved
 // synchronously (no I/O needed for any of them) before `snapshot_target` is
 // written:
@@ -1839,7 +2010,7 @@ int rawstor_target_create_snapshot(
         // that target fresh -- the same way rawstor_location_create()
         // below builds a fresh Target under a caller-or-freshly-generated
         // id, rather than going through Location::create().
-        rawstor::Target snap_target = t;
+        rawstor::Target snapshot = t;
         if (rawstd_uuid_is_nil(&t.snapshot_id())) {
             RawstdUUIDString uuid_string;
             rawstd_uuid_to_string(&id, &uuid_string);
@@ -1848,12 +2019,12 @@ int rawstor_target_create_snapshot(
             for (const auto& uri : t.uris()) {
                 uris.emplace_back(uri, std::string(uuid_string));
             }
-            snap_target = rawstor::Target(uris);
+            snapshot = rawstor::Target(uris);
         }
 
         res = snprintf(
             snapshot_target, size, "%s",
-            rawstd::URI::uris(snap_target.uris()).c_str()
+            rawstd::URI::uris(snapshot.uris()).c_str()
         );
         if (res < 0) {
             return res;
@@ -1871,7 +2042,7 @@ int rawstor_target_create_snapshot(
         }
 
         launch_create_snapshot_op_coro(
-            std::move(snap_target), static_cast<rawio::Queue*>(queue), res, cb,
+            std::move(snapshot), static_cast<rawio::Queue*>(queue), res, cb,
             data
         );
         rawstd::DetachedTask::rethrow_if_pending();

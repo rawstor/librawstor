@@ -10,6 +10,10 @@ extern "C" {
  * or a caller-chosen UUID string (only valid when `target` is plain). */
 int rawstor_cli_snapshot(const char* target, const char* uuid);
 
+/* Prints every snapshot of `target`'s object, one target string per
+ * line, oldest first (rawstor_target_snapshots()). */
+int rawstor_cli_list_snapshots(const char* target);
+
 #ifdef __cplusplus
 }
 #endif

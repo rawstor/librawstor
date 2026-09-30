@@ -89,6 +89,11 @@ rawstd::Task<void> Backend::create_snapshot(
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
+rawstd::Task<std::vector<RawstdUUID>>
+Backend::list_snapshots(const RawstdUUID&, uint64_t) {
+    co_return std::vector<RawstdUUID>{};
+}
+
 rawstd::Task<void>
 Backend::resize(const RawstdUUID&, const RawstdUUID&, uint64_t, uint64_t) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);

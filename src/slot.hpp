@@ -156,6 +156,9 @@ public:
 
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset);
 
+    rawstd::Task<std::vector<RawstdUUID>>
+    list_snapshots(const RawstdUUID& id, uint64_t offset);
+
     rawstd::Task<void> remove_snapshot(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     );
