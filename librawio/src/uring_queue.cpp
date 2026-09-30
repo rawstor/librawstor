@@ -389,6 +389,34 @@ public:
         _pending_value = value;
         _pending_error = error;
     }
+
+    // Called after on_completion() for a successful completion without
+    // IORING_CQE_F_MORE: the kernel has ended this registration on its own
+    // (e.g. it couldn't post the next completion to a full completion
+    // ring), and its Completion is gone. Whatever was delivered stays
+    // delivered; the stream then fails with ENOBUFS -- the same overflow
+    // error it reports otherwise -- instead of waiting for completions
+    // that will never come.
+    void on_ended() {
+        _event = nullptr;
+        if (_closed || _terminated) {
+            return;
+        }
+        if (_has_pending) {
+            _pending_overflow = true;
+            return;
+        }
+        _terminated = true;
+        _terminal_error = ENOBUFS;
+        if (_waiter) {
+            auto h = std::exchange(_waiter, nullptr);
+            *_waiter_out = 0;
+            *_waiter_error = ENOBUFS;
+            _waiter_out = nullptr;
+            _waiter_error = nullptr;
+            h.resume();
+        }
+    }
 };
 
 using PollMultishotBackend =
@@ -415,9 +443,12 @@ public:
         Completion(std::move(trace_event)),
         _backend(std::move(backend)) {}
 
-    void complete(int raw_result, unsigned int /*flags*/) override {
+    void complete(int raw_result, unsigned int flags) override {
         if (raw_result >= 0) {
             _backend->on_completion(raw_result, 0);
+            if (!(flags & IORING_CQE_F_MORE)) {
+                _backend->on_ended();
+            }
         } else {
             _backend->on_completion(0, -raw_result);
         }
@@ -439,10 +470,13 @@ public:
         Completion(std::move(trace_event)),
         _backend(std::move(backend)) {}
 
-    void complete(int raw_result, unsigned int /*flags*/) override {
+    void complete(int raw_result, unsigned int flags) override {
         raw_result = setup_accepted_fd(raw_result);
         if (raw_result >= 0) {
             _backend->on_completion(raw_result, 0);
+            if (!(flags & IORING_CQE_F_MORE)) {
+                _backend->on_ended();
+            }
         } else {
             _backend->on_completion(0, -raw_result);
         }
@@ -468,9 +502,12 @@ public:
         Completion(std::move(trace_event)),
         _backend(std::move(backend)) {}
 
-    void complete(int raw_result, unsigned int /*flags*/) override {
+    void complete(int raw_result, unsigned int flags) override {
         if (raw_result == -ETIME || raw_result >= 0) {
             _backend->on_completion(0, 0);
+            if (!(flags & IORING_CQE_F_MORE)) {
+                _backend->on_ended();
+            }
         } else {
             _backend->on_completion(0, -raw_result);
         }

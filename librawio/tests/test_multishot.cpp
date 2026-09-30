@@ -737,4 +737,52 @@ TEST_F(MultishotTest, recv_ended_by_kernel_fails_instead_of_hanging) {
     EXPECT_NE(error, 0);
 }
 
+// Same as recv_ended_by_kernel_fails_instead_of_hanging, for
+// poll_multishot(): a registration the kernel ended on its own (a
+// completion without IORING_CQE_F_MORE) must end the stream too.
+TEST_F(MultishotTest, poll_ended_by_kernel_fails_instead_of_hanging) {
+    if (rawio::Queue::engine_name() != "uring") {
+        GTEST_SKIP() << "only io_uring ends a multishot registration itself";
+    }
+
+    rawio::PollStream stream = _queue->poll_multishot(_fd, POLLIN);
+
+    // Armed and delivering.
+    _server.write("dat0", 4);
+    _server.wait();
+    int result =
+        rawio::tests::run(*_queue, rawio::tests::wrap<int>(stream.next()));
+    ASSERT_EQ(result, POLLIN);
+
+    // Nobody reaps completions meanwhile, so this depth-1 queue's
+    // completion ring fills up and the kernel ends the registration.
+    for (int i = 0; i < 8; ++i) {
+        _server.write("datX", 4);
+        _server.wait();
+        usleep(5000);
+    }
+
+    int error = 0;
+    for (int i = 0; i < 16 && error == 0; ++i) {
+        rawstd::Task<int> t = rawio::tests::wrap<int>(stream.next());
+        for (int n = 0; n < 100 && !t.done(); ++n) {
+            try {
+                _queue->wait_timeout(10);
+            } catch (const std::system_error& e) {
+                if (e.code().value() != ETIME) {
+                    throw;
+                }
+            }
+        }
+        ASSERT_TRUE(t.done()) << "stream hangs on a registration the kernel "
+                                 "already ended";
+        try {
+            t.get();
+        } catch (const std::system_error& e) {
+            error = e.code().value();
+        }
+    }
+    EXPECT_NE(error, 0);
+}
+
 } // unnamed namespace
