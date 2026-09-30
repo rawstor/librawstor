@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rawstor-ost` now answers `-ENOSYS` for a command it doesn't recognize instead of just dropping the connection, so a newer client can tell "unsupported" apart from a transport failure.
 - The `rawstor-vduse` deb package (present since 0.2.10) was never actually built or published: CI's packaging job never copied its `.install`/`.postinst`/`.prerm` files into place.
 - With io_uring, a connection could hang forever when the kernel ended its multishot receive on its own (e.g. on a full completion ring); it now fails and reconnects.
+- With the `poll()` backend (`--without-liburing`, always on macOS), a `rawstor-ost`/`rawstor-mds` worker thread that lost the race for an incoming connection blocked inside `accept()`, so it stopped serving its clients and the server could not be stopped with Ctrl-C/SIGTERM.
 
 ## [0.2.12] - Unreleased
 

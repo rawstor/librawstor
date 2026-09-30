@@ -15,7 +15,13 @@
 #include <poll.h>
 #include <unistd.h>
 
+#include <atomic>
+#include <chrono>
+#include <future>
+#include <memory>
 #include <system_error>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -783,6 +789,89 @@ TEST_F(MultishotTest, poll_ended_by_kernel_fails_instead_of_hanging) {
         }
     }
     EXPECT_NE(error, 0);
+}
+
+// Several queues accepting on one listening socket, each on its own
+// thread -- a multi-worker server (rawstor-ost, rawstor-mds): every one
+// of them can see the socket readable, but only one wins a connection.
+// The others must keep waiting rather than block inside accept(), or they
+// never notice they were asked to stop.
+TEST(MultishotSharedListenTest, losing_queues_keep_waiting) {
+    rawio::tests::Socket listen_socket;
+    listen_socket.listen();
+
+    const int workers = 4;
+    std::atomic<bool> stop(false);
+    std::atomic<int> accepted(0);
+    std::vector<std::promise<void>> done(workers);
+    std::vector<std::future<void>> finished;
+    std::vector<std::thread> threads;
+    for (int i = 0; i < workers; ++i) {
+        finished.push_back(done[i].get_future());
+        threads.emplace_back([&, i]() {
+            std::unique_ptr<rawio::Queue> q = rawio::Queue::create(4);
+            rawio::AcceptStream stream =
+                q->accept_multishot(listen_socket.fd());
+            rawstd::Task<int> t = rawio::tests::wrap<int>(stream.next());
+            while (!stop) {
+                try {
+                    q->wait_timeout(20);
+                } catch (const std::system_error& e) {
+                    if (e.code().value() != ETIME) {
+                        throw;
+                    }
+                }
+                if (t.done()) {
+                    ::close(t.get());
+                    ++accepted;
+                    t = rawio::tests::wrap<int>(stream.next());
+                }
+            }
+            q->cancel(stream.event());
+            while (!t.done()) {
+                try {
+                    q->wait_timeout(20);
+                } catch (const std::system_error&) {
+                }
+            }
+            done[i].set_value();
+        });
+    }
+
+    // Let every queue reach its poll() first.
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    rawio::tests::Socket client;
+    sockaddr_un addr = {};
+    addr.sun_family = AF_UNIX;
+    snprintf(
+        addr.sun_path, sizeof(addr.sun_path), "%s", listen_socket.name().data()
+    );
+    ASSERT_EQ(
+        ::connect(
+            client.fd(), reinterpret_cast<sockaddr*>(&addr), sizeof(addr)
+        ),
+        0
+    );
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    stop = true;
+
+    bool all_finished = true;
+    for (std::future<void>& f : finished) {
+        if (f.wait_for(std::chrono::seconds(3)) != std::future_status::ready) {
+            all_finished = false;
+        }
+    }
+    EXPECT_TRUE(all_finished) << "a queue blocked inside accept()";
+    EXPECT_EQ(accepted, 1);
+    for (std::thread& thread : threads) {
+        if (all_finished) {
+            thread.join();
+        } else {
+            thread.detach();
+        }
+    }
 }
 
 } // unnamed namespace
