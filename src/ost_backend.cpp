@@ -1521,7 +1521,7 @@ rawstd::Task<void> Backend::create_snapshot(
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
-    rawstd_info("%s: Reading object metadata...\n", str().c_str());
+    rawstd_debug("%s: Reading object metadata...\n", str().c_str());
 
     RawstorObjectMeta ret = {};
     try {
@@ -1557,7 +1557,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    rawstd_info("%s: Object metadata successfully received\n", str().c_str());
+    rawstd_debug("%s: Object metadata successfully received\n", str().c_str());
 
     co_return std::vector<RawstorObjectMeta>{ret};
 }
@@ -1615,7 +1615,7 @@ rawstd::Task<void> Backend::set_sync_state(
 }
 
 rawstd::Task<RawstorLocationInfo> Backend::info() {
-    rawstd_info("%s: Reading location info...\n", str().c_str());
+    rawstd_debug("%s: Reading location info...\n", str().c_str());
 
     RawstorLocationInfo ret = {};
     try {
@@ -1635,7 +1635,7 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    rawstd_info("%s: Location info successfully received\n", str().c_str());
+    rawstd_debug("%s: Location info successfully received\n", str().c_str());
 
     co_return ret;
 }

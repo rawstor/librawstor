@@ -506,8 +506,12 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
 
     // Born degraded: fewer locations than the chunk's configured width
     // (`spec`, the first reachable member's META). Only a warning --
-    // quorum logic is keyed off _members.size(), not spec.width.
-    if (members.size() < spec.width) {
+    // quorum logic is keyed off _members.size(), not spec.width. A lone
+    // mds:// location stands for the whole object, every copy of every
+    // chunk behind it, so its width says nothing about this count.
+    bool whole_object =
+        locations.size() == 1 && locations.front().scheme() == "mds";
+    if (!whole_object && members.size() < spec.width) {
         rawstd_warning(
             "Chunk opened degraded: %zu of %u slots\n", members.size(),
             spec.width
