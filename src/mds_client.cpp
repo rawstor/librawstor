@@ -360,6 +360,28 @@ rawstd::Task<uint64_t> Client::commit_snapshot(
     co_return out.map_epoch;
 }
 
+rawstd::Task<RawstorLocationInfo> Client::location_info() {
+    RawstorFrameBasic request{
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_LOCATION_INFO,
+                .cid = _cid_counter++,
+            },
+        .payload = {.object_id = {}, .offset = 0, .snapshot_id = {}, .val = 0},
+    };
+
+    std::vector<unsigned char> data = co_await _exchange(
+        &request, sizeof(request), RAWSTOR_CMD_LOCATION_INFO
+    );
+    if (data.size() != sizeof(RawstorLocationInfo)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+    RawstorLocationInfo ret;
+    memcpy(&ret, data.data(), sizeof(ret));
+    co_return ret;
+}
+
 rawstd::Task<std::vector<RawstdUUID>>
 Client::list_objects(RawstdUUID& token, unsigned int limit) {
     RawstorFrameList request{
