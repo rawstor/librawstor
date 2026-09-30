@@ -20,6 +20,7 @@ fio \
   --name=randread \
   --iodepth=${IODEPTH} \
   --rw=randread \
+  --sync=1 \
   --bs=${BS} \
   --size=1G \
   --numjobs=${NUMJOBS} \
@@ -32,6 +33,7 @@ fio \
   --stonewall \
   --iodepth=${IODEPTH} \
   --rw=randwrite \
+  --sync=1 \
   --bs=${BS} \
   --size=1G \
   --numjobs=${NUMJOBS} \
