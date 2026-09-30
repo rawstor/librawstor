@@ -98,8 +98,9 @@ public:
     // chunk offset one object has (Target::chunks(),
     // rawstor_target_chunks()) when the target string itself doesn't
     // spell them out -- only an mds:// target asks the backend this way.
-    // mds::Backend, which can't enumerate objects at all (ENOTSUP for a
-    // nil `id`), answers the filtered form off its own WireMap.
+    // mds::Backend answers a nil `id` off the MDS's own object table (one
+    // group per object, offset 0) and the filtered form off its own
+    // WireMap.
     //
     // A non-nil `snapshot_id` (only with a non-nil `id`) lists the chunks
     // that version of `id` has instead of the live ones; ENOTSUP on a

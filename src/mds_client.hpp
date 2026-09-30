@@ -107,6 +107,14 @@ public:
     /* Every snapshot registered for `id`, in no particular order. */
     rawstd::Task<std::vector<RawstdUUID>> list_snapshots(const RawstdUUID& id);
 
+    /*
+     * One page of every object the MDS knows, ascending by id, strictly
+     * after `token` (nil: from the start); `token` is then set to the
+     * next page's cursor, nil once nothing is left.
+     */
+    rawstd::Task<std::vector<RawstdUUID>>
+    list_objects(RawstdUUID& token, unsigned int limit);
+
     /* Unregisters and returns the member set for the fan-out destroy. */
     rawstd::Task<std::vector<WireSnapshotMember>> remove_snapshot(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,

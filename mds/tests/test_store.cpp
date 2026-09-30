@@ -434,6 +434,26 @@ TEST_F(ObjectStoreTest, commit_snapshot_and_open_round_trip) {
     }
 }
 
+TEST_F(ObjectStoreTest, list_objects_pages_by_id) {
+    ObjectStore store = make_store();
+    std::vector<RawstdUUID> ids = {make_id(), make_id(), make_id()};
+    for (const RawstdUUID& id : ids) {
+        store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
+    }
+
+    bool more = true;
+    std::vector<RawstdUUID> page = store.list_objects(RawstdUUID{}, 2, &more);
+    ASSERT_EQ(page.size(), 2u);
+    EXPECT_TRUE(more);
+    EXPECT_EQ(rawstd_uuid_cmp(&page[0], &ids[0]), 0);
+    EXPECT_EQ(rawstd_uuid_cmp(&page[1], &ids[1]), 0);
+
+    page = store.list_objects(page.back(), 2, &more);
+    ASSERT_EQ(page.size(), 1u);
+    EXPECT_FALSE(more);
+    EXPECT_EQ(rawstd_uuid_cmp(&page[0], &ids[2]), 0);
+}
+
 TEST_F(ObjectStoreTest, list_snapshots_oldest_first) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();

@@ -25,6 +25,10 @@ using rawstor::mdsserver::PlacementSlot;
 using rawstor::mdsserver::SnapshotMember;
 using rawstor::mdsserver::Topology;
 
+// The most objects one LIST page carries; a request asking for more (or
+// for no particular number, 0) gets this many.
+const unsigned int list_limit = 1024;
+
 int recv_trampoline(ssize_t result, void* data) {
     size_t value = result < 0 ? 0 : static_cast<size_t>(result);
     int error = result < 0 ? static_cast<int>(-result) : 0;
@@ -322,6 +326,47 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                 uuid_of(payload.object_id), uuid_of(payload.snapshot_id)
             );
             data = encode_object_map(*store.topology(), map);
+        } catch (const std::system_error& e) {
+            res = -e.code().value();
+        }
+        if (res < 0) {
+            co_await client->_send_response(head.cmd, head.cid, res);
+        } else {
+            co_await client->_send_response(
+                head.cmd, head.cid, static_cast<int32_t>(data.size()),
+                data.data(), data.size()
+            );
+        }
+        break;
+    }
+    case RAWSTOR_CMD_LIST: {
+        // The same LIST an OST answers (protocol.h, RawstorFrameListEntry):
+        // one row per object (chunk_offset 0 -- an mds:// object is
+        // addressed whole), then the resume cursor row, the last id
+        // returned while any are left, nil once none are.
+        RawstorFrameListPayload payload;
+        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        unsigned int limit = payload.limit == 0 || payload.limit > list_limit
+                                 ? list_limit
+                                 : payload.limit;
+        int32_t res = 0;
+        std::vector<unsigned char> data;
+        try {
+            bool more = false;
+            std::vector<RawstdUUID> ids =
+                store.list_objects(uuid_of(payload.token_id), limit, &more);
+            std::vector<RawstorFrameListEntry> entries(ids.size() + 1);
+            for (size_t i = 0; i < ids.size(); ++i) {
+                memcpy(entries[i].id, ids[i].bytes, sizeof(entries[i].id));
+            }
+            if (more) {
+                memcpy(
+                    entries.back().id, ids.back().bytes,
+                    sizeof(entries.back().id)
+                );
+            }
+            data.resize(entries.size() * sizeof(RawstorFrameListEntry));
+            memcpy(data.data(), entries.data(), data.size());
         } catch (const std::system_error& e) {
             res = -e.code().value();
         }

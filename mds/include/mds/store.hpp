@@ -173,6 +173,14 @@ public:
     );
 
     /*
+     * One page of every object's id, ascending, strictly after `after`
+     * (nil: from the start), at most `limit` of them. `*more` says whether
+     * any are left past the page.
+     */
+    std::vector<RawstdUUID>
+    list_objects(const RawstdUUID& after, unsigned int limit, bool* more);
+
+    /*
      * Every snapshot registered for `id`, oldest first (snapshot ids are
      * UUID v7). ENOENT for an unknown object.
      */

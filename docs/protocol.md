@@ -58,7 +58,7 @@ keep `0x0b`/`0x0c`.
 | `0x03` | `DISCARD` | OST | IO | — |
 | `0x04` | `ALLOCATE` | OST | Allocate | — |
 | `0x05` | `RELEASE` | OST | Basic (non-nil `snapshot_id`: that version only) | — |
-| `0x06` | `LIST` | OST | List | List rows |
+| `0x06` | `LIST` | OST, MDS | List | List rows |
 | `0x08` | `LOCATION_INFO` | OST | Basic (unused) | `RawstorLocationInfo` |
 | `0x09` | `FLUSH` | OST | Basic (unused) | — |
 | `0x0a` | `WRITE_ZEROES` | OST | IO (`flags`: `SYNC`, `UNMAP`) | — |
@@ -261,7 +261,8 @@ chunk's placement identity, stored with it.
 ### List rows — 24 bytes each
 
 One row per (id, chunk offset); an id with several chunks spans consecutive
-rows. The **last** row is always the resume cursor for the next page (a nil id
+rows. The MDS answers one row per `mds://` object, chunk offset 0 (the
+object is addressed whole). The **last** row is always the resume cursor for the next page (a nil id
 once nothing is left), never a result. An empty payload means the far end is
 already exhausted.
 

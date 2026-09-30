@@ -188,20 +188,28 @@ rawstd::Task<void> Backend::_connect() {
     co_await _client.connect();
 }
 
-// Only the id-filtered form (Backend::list_chunks()'s own doc comment):
-// this object's own real chunk offsets -- or `snapshot_id`'s, when
-// non-nil -- off the matching WireMap. The MDS has
-// no way to enumerate every object it knows, so a nil `id` is ENOTSUP;
-// an `id` the MDS doesn't know comes back as an empty listing, same as
-// any other backend holding nothing of it.
+// A nil `id` lists every object the MDS knows, one page at a time (its
+// LIST): each as a group of just offset 0, since an mds:// object is
+// addressed whole (Location::list() builds its target with no offset
+// segment). A non-nil `id` is the filtered form (Backend::list_chunks()'s
+// own doc comment): this object's own real chunk offsets -- or
+// `snapshot_id`'s, when non-nil -- off the matching WireMap; an `id` the
+// MDS doesn't know comes back as an empty listing, same as any other
+// backend holding nothing of it.
 rawstd::Task<void> Backend::list_chunks(
-    RawstdUUID id, unsigned int, std::vector<ChunkGroup>& chunks,
+    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
     RawstdUUID& token, RawstdUUID snapshot_id
 ) {
-    if (rawstd_uuid_is_nil(&id)) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
-    }
     chunks.clear();
+    if (rawstd_uuid_is_nil(&id)) {
+        std::vector<RawstdUUID> ids =
+            co_await _client.list_objects(token, limit);
+        chunks.reserve(ids.size());
+        for (const RawstdUUID& object_id : ids) {
+            chunks.push_back(ChunkGroup{object_id, {0}});
+        }
+        co_return;
+    }
     token = {};
 
     WireMap map;

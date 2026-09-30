@@ -79,9 +79,8 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
 // directly, given exactly one whole-object call -- splitting or stamping
 // an offset here too would make Target::create()'s own per-group fan-out
 // call it more than once, each time with only that one group's own
-// reduced chunk_sp.size. mds::Backend::list_chunks() doesn't support
-// listing at all (ENOTSUP), so there's no create()/list() round-trip to
-// keep consistent for it either.
+// reduced chunk_sp.size. Location::list() likewise lists an mds:// object
+// as its id alone, so a created target and a listed one still match.
 std::vector<rawstd::URI> build_create_uris(
     const std::vector<rawstd::URI>& uris, const RawstdUUIDString& uuid_string,
     const RawstorObjectSpec& sp
@@ -398,11 +397,18 @@ rawstd::Task<void> Location::list(
     for (size_t i = 0; i < _uris.size(); ++i) {
         const rawstd::URI& location = _uris[i];
         const auto& [loc_groups, loc_token] = listings[i];
+        // An mds:// object is addressed whole (build_create_uris()'s own
+        // comment): its target names the id alone, no offset segment.
+        bool is_mds = location.scheme() == "mds";
         for (const auto& group : loc_groups) {
             std::vector<std::pair<uint64_t, rawstd::URI>>& entries =
                 targets_map[group.id];
             RawstdUUIDString uuid_string;
             rawstd_uuid_to_string(&group.id, &uuid_string);
+            if (is_mds) {
+                entries.emplace_back(0, rawstd::URI(location, uuid_string));
+                continue;
+            }
             for (uint64_t offset : group.offsets) {
                 // Always stamped, even "0" -- parsing still accepts a
                 // target string with no offset segment at all (implying

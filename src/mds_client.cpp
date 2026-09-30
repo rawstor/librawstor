@@ -361,6 +361,40 @@ rawstd::Task<uint64_t> Client::commit_snapshot(
 }
 
 rawstd::Task<std::vector<RawstdUUID>>
+Client::list_objects(RawstdUUID& token, unsigned int limit) {
+    RawstorFrameList request{
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_LIST,
+                .cid = _cid_counter++,
+            },
+        .payload = {.token_id = {}, .limit = limit},
+    };
+    uuid_to_bytes(token, request.payload.token_id);
+
+    std::vector<unsigned char> data =
+        co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_LIST);
+    // Every row but the last is an object, the last the resume cursor
+    // (RawstorFrameListEntry's own doc comment, protocol.h).
+    if (data.empty() || data.size() % sizeof(RawstorFrameListEntry) != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+    size_t n = data.size() / sizeof(RawstorFrameListEntry);
+    std::vector<RawstdUUID> ret(n - 1);
+    for (size_t i = 0; i < n; ++i) {
+        RawstorFrameListEntry entry;
+        memcpy(&entry, data.data() + i * sizeof(entry), sizeof(entry));
+        if (i + 1 < n) {
+            ret[i] = uuid_from_bytes(entry.id);
+        } else {
+            token = uuid_from_bytes(entry.id);
+        }
+    }
+    co_return ret;
+}
+
+rawstd::Task<std::vector<RawstdUUID>>
 Client::list_snapshots(const RawstdUUID& id) {
     RawstorFrameBasic request{
         .head =

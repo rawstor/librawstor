@@ -906,6 +906,31 @@ ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
     return ret;
 }
 
+std::vector<RawstdUUID> ObjectStore::list_objects(
+    const RawstdUUID& after, unsigned int limit, bool* more
+) {
+    std::lock_guard<std::mutex> lock(_mutex);
+
+    // One row past the page tells whether any are left.
+    Stmt select(
+        _db, "SELECT id FROM objects WHERE id > ? ORDER BY id LIMIT ?;"
+    );
+    select.bind_blob(1, after.bytes, sizeof(after.bytes))
+        .bind_int64(2, static_cast<uint64_t>(limit) + 1);
+    std::vector<RawstdUUID> ret;
+    *more = false;
+    while (select.step()) {
+        if (ret.size() == limit) {
+            *more = true;
+            break;
+        }
+        RawstdUUID id;
+        select.column_uuid(0, &id);
+        ret.push_back(id);
+    }
+    return ret;
+}
+
 std::vector<RawstdUUID> ObjectStore::list_snapshots(const RawstdUUID& id) {
     std::lock_guard<std::mutex> lock(_mutex);
     _descriptor(id);

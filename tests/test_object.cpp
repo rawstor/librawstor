@@ -260,6 +260,51 @@ TEST(ObjectSnapshotTest, remove_snapshot_uncommitted_returns_enoent) {
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
+// LIST against the MDS: every object it knows, each as the same id-only
+// mds:// target create() used, a page at a time.
+TEST(ObjectListTest, lists_mds_objects) {
+    rawstor::tests::ObjectEnv env(8804, 8805);
+    std::vector<std::string> targets = {
+        object_target(env, "018f4e2a-3000-7000-8000-000000000050"),
+        object_target(env, "018f4e2a-3000-7000-8000-000000000051"),
+    };
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    for (const std::string& target : targets) {
+        ASSERT_EQ(target_create(*queue, target, spec), 0);
+    }
+
+    std::string location = env.location();
+    std::vector<std::string> listed;
+    RawstorPaginationToken token = {};
+    size_t pages = 0;
+    do {
+        RawstorStringList* page = nullptr;
+        ssize_t res =
+            rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+                return rawstor_location_list(
+                    queue.get(), location.c_str(), 1, &page, &token, cb, data
+                );
+            });
+        ASSERT_EQ(res, 0);
+        for (const char** it = rawstor_string_list_iter(page); it != nullptr;
+             it = rawstor_string_list_next(it)) {
+            listed.push_back(*it);
+        }
+        rawstor_string_list_delete(page);
+        ++pages;
+    } while (!rawstor_pagination_token_empty(&token) && pages < 10);
+
+    EXPECT_EQ(listed, targets);
+    EXPECT_GE(pages, 2u);
+
+    for (const std::string& target : targets) {
+        EXPECT_EQ(target_remove(*queue, target), 0);
+    }
+}
+
 // OBJ_LIST_SNAPSHOTS end to end: an object with no committed snapshot
 // lists none, and an object the MDS doesn't know is ENOENT.
 TEST(ObjectSnapshotTest, list_snapshots_over_mds) {
