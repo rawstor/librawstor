@@ -86,6 +86,26 @@ flowchart TB
     class C bad
 ```
 
+### STALE copies
+
+A copy is **STALE** when it lacks acknowledged writes the rest of the sync
+set has: its content can't be trusted for reads and must be resynced
+before it counts as a full copy again. Nothing on the copy says so — its
+own record may well read `CLEAN` (a copy can't know locally what it missed
+while offline) — so staleness is always a verdict about a copy relative
+to the others, reached one of two ways:
+
+- **At open**, by the comparison rules above: an ancestor `sync_id`, a
+  `SYNCING` state, or a blank `sync_id` 0 next to an established sync set.
+- **At runtime**, when a write or the session to a member fails (F1, F6):
+  the survivors move to a new `sync_id` behind a barrier, and the failed
+  member — still on the old one — is marked STALE in memory.
+
+A STALE copy is excluded from reads and writes. Once it is reachable again
+(the reconnect probe, or the next open), an online resync copies the
+authoritative data onto it (`SYNCING`), and on completion it joins the
+current sync set as IN-SYNC.
+
 ### Durability rule
 
 Metadata transitions (marking `DIRTY`, epoch/`sync_id` bump, resync completion) are performed on the backend **with fsync**, and **before** any dependent operation is acknowledged to the caller. These transitions are rare, so this is cheap. Data writes are *not* fsynced per-request; the resulting exposure is covered by rule F6 below.
@@ -100,7 +120,18 @@ Key invariant: **every acknowledged write exists on a set of copies that interse
 - **Below quorum: manual approval only** (force-open via CLI/opts — not yet implemented). There is deliberately no "clean exception": `CLEAN` only means "I was closed correctly" — a copy cannot know locally that it did not miss anything while offline. Alternating offline periods of `CLEAN` copies would produce split brain.
 - **Runtime (chunk already open):**
   - N ≥ 3: degrade & continue while more than N/2 mirrors survive; at ≤ N/2 survivors **writes freeze** (policy: error to the caller or block until quorum returns). Otherwise "wrote on minority {A}, later auto-started on majority {B,C}" would orphan acknowledged data.
-  - N = 2: **continuing on a single survivor is allowed.** This is safe because auto-start requires both mirrors, and the abandoned peer remains `DIRTY`/ancestor and can never auto-start alone.
+  - N = 2: **continuing on a single survivor is allowed.** This is safe against split brain because auto-start requires both mirrors, and the abandoned peer remains `DIRTY`/ancestor and can never auto-start alone. It is not free of risk, though: while degraded, every acknowledged write lives on that one survivor only — see *Known limitation: two mirrors, one survivor*.
+- **What counts toward a quorum.** The open quorum counts every
+  reachable real copy, STALE ones included: the last acknowledged write
+  set was itself a majority (or, for N = 2, is guaranteed to be among the
+  reachable copies), so any reachable majority contains its newest
+  `sync_id`, and the comparison rules pick it out. An unreachable copy
+  doesn't count, and neither does a blank copy recreated at this very open
+  (F10): it holds none of the acknowledged writes, so letting it make up
+  the majority would break the intersection — a survivor that fell behind
+  could then be opened as authoritative. The runtime write quorum
+  (N ≥ 3) counts only IN-SYNC copies: a STALE or resyncing copy doesn't
+  hold the writes it would be vouching for.
 - **`sync_id_history` stays as defense in depth**: it catches consequences of a wrong manual force-open, an OST restored from backup, or bugs.
 - **Roadmap — MDS as witness.** A future MDS participates in quorum as a metadata-only member (stores `sync_id`/`epoch`, no data). This restores auto-start for 2 data mirrors with one OST down (2 of 3 votes). Not part of v1, but quorum rules and the metadata format are designed so a witness member fits without schema changes (quorum counts all members, including metadata-only ones).
 
@@ -226,6 +257,31 @@ open sees all copies `DIRTY` in the same sync set (F5) and the
 deterministic winner may be the member that lost data. Closing this window
 requires synchronous writes or a witness; it is accepted for now and
 bounded by the barrier latency.
+
+### Known limitation: two mirrors, one survivor
+
+A 2-way mirror keeps accepting writes on a single survivor when the other
+copy fails mid-session (F1), favoring availability: a single OST outage
+doesn't stall the guest. The price is that, until the failed copy is back
+and resynced, acknowledged writes have no redundancy. If the survivor is
+then lost as well — its disk replaced or pool recreated before the
+resync — those writes are gone:
+
+1. Copies A and B are in sync; B fails mid-session. A moves to a new
+   `sync_id` and keeps acknowledging writes; B stays `DIRTY` on the old
+   one.
+2. A's copy is lost (ENOENT) before B is resynced.
+3. B comes back, but it only holds the data from before step 1.
+
+Nothing can recover those writes, but the loss is never silent: B alone is
+not a majority, and a copy recreated in A's place never counts toward the
+quorum (F10), so the open is refused rather than served off B as if it were
+current. An operator who accepts B's content recreates A's copy by hand,
+and the next open resyncs it from B.
+
+Avoiding the window takes a third vote: three data copies (N = 3 freezes
+writes below a majority instead of continuing on one copy) or, for two data
+copies, a witness (*Roadmap — MDS as witness* above).
 
 ---
 
