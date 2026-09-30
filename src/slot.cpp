@@ -62,17 +62,6 @@ unsigned int backoff_delay_ms(
     return (delay - jitter_span) + dist(rng);
 }
 
-// A rejection retrying can never turn into success: the target object
-// doesn't exist (ENOENT), already exists where create() needs it not to
-// (EEXIST), the request itself is malformed (EINVAL), or the backend
-// permanently lacks a capability (ENOTSUP -- e.g. create_snapshot()/a
-// non-nil snapshot_id to remove() on file:// or classic LVM, docs/mds.md's
-// "Snapshots": no retry will ever make a backend grow native CoW support
-// it doesn't have).
-// Anything else defaults to retryable -- safer to spend a few pointless
-// retries on a genuinely transient rejection we don't recognize than to
-// silently give up on one that would have gone away on its own (e.g.
-// EBUSY, ENOSPC, EIO).
 // The idempotency key of one mutating call (create/remove/resize/
 // create_snapshot/remove_snapshot): generated once per Slot call, before
 // _with_retry(), so every retry of that call carries the same one. A
@@ -89,6 +78,17 @@ RawstdUUID new_idempotency_key() {
     return ret;
 }
 
+// A rejection retrying can never turn into success: the target object
+// doesn't exist (ENOENT), already exists where create() needs it not to
+// (EEXIST), the request itself is malformed (EINVAL), or the backend
+// permanently lacks a capability (ENOTSUP -- e.g. create_snapshot()/a
+// non-nil snapshot_id to remove() on file:// or classic LVM, docs/mds.md's
+// "Snapshots": no retry will ever make a backend grow native CoW support
+// it doesn't have).
+// Anything else defaults to retryable -- safer to spend a few pointless
+// retries on a genuinely transient rejection we don't recognize than to
+// silently give up on one that would have gone away on its own (e.g.
+// EBUSY, ENOSPC, EIO).
 bool is_permanent_backend_error(int error) {
     return error == ENOENT || error == EEXIST || error == EINVAL ||
            error == ENOTSUP;

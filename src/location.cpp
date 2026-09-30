@@ -121,15 +121,26 @@ void encode_token(const RawstdUUID& id, RawstorPaginationToken& token) {
 }
 
 // One URI's worth of Location::info() work: connect a single-session
-// Slot just for this call, do the one metadata op, close it again.
+// Slot just for this call, do the one metadata op, close it again --
+// failed or not (co_await isn't allowed inside a catch block, so the
+// failure is only recorded there and rethrown after the close).
 // Factored out so info()/list() can fan these out across every URI via
 // rawstd::gather() instead of awaiting them one at a time.
 rawstd::Task<RawstorLocationInfo>
 info_one(rawio::Queue& queue, const rawstd::URI& location) {
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location, 1);
-    RawstorLocationInfo ret = co_await slot->info();
+    RawstorLocationInfo ret{};
+    std::exception_ptr error;
+    try {
+        ret = co_await slot->info();
+    } catch (...) {
+        error = std::current_exception();
+    }
     co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
     co_return ret;
 }
 
@@ -147,10 +158,18 @@ rawstd::Task<std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID>> list_one(
     ret.second = token;
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location, 1);
-    co_await slot->list_chunks(
-        RawstdUUID{}, RawstdUUID{}, limit, ret.first, ret.second
-    );
+    std::exception_ptr error;
+    try {
+        co_await slot->list_chunks(
+            RawstdUUID{}, RawstdUUID{}, limit, ret.first, ret.second
+        );
+    } catch (...) {
+        error = std::current_exception();
+    }
     co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
     co_return ret;
 }
 

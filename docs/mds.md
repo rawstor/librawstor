@@ -16,7 +16,7 @@ never passes through it.
 ```mermaid
 flowchart TB
     Client(["Client<br/>librawstor, mds://mds:7776/U"])
-    MDS[("rawstor-mds<br/>object map, snapshots, witness<br/>(SQLite)")]
+    MDS[("rawstor-mds<br/>object map, snapshots<br/>(SQLite)")]
     Topo[/"topology.conf<br/>OST roster, domains, weights"/]
     subgraph OSTs ["rawstor-ost servers: the data"]
         direction LR
@@ -245,7 +245,7 @@ snapshots[snapshot_id] = {                   // snapshot_id: UUID, client-genera
   view: { logical_index -> version }     // cache over OST-side snapshots
 }
 
-witness[id or (id, logical_index)] = {
+witness[id or (id, logical_index)] = {  // stage 3, not implemented yet
   state,                                 // CLEAN | DIRTY_OPEN | DIRTY_DEGRADED
   sync_id, sync_id_history[4], mirror_epoch,
   survivors[]                            // only for DIRTY_DEGRADED
@@ -293,7 +293,7 @@ classDiagram
       created_at
     }
     class witness {
-      <<authoritative vote, not rebuildable>>
+      <<stage 3, not implemented yet>>
       state
       sync_id, sync_id_history
       mirror_epoch
@@ -310,7 +310,8 @@ Two classes of state, by recoverability:
 
 - `object_descriptor` / `chunk_map` / `snapshots` — an **index**; DR = rebuild
   by OST scan (below).
-- `witness` records — **not** rebuildable by scan (they *are* the extra vote).
+- `witness` records (stage 3, not implemented yet; the SQLite store has no
+  witness table) — **not** rebuildable by scan (they *are* the extra vote).
   Losing them degrades availability (auto-start falls back to plain N=2
   rules), never correctness; re-attach is defined in *Witness*.
 

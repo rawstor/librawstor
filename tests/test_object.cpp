@@ -600,6 +600,9 @@ TEST(ObjectResizeTest, retried_after_lost_reply_materializes_new_chunks) {
         run(*queue,
             rawstor::Backend::create(*queue, rawstd::URI(env.location())));
     run(*queue, backend->resize(idempotency_key, id, 0, new_size));
+    // Retried once more after every new copy already exists: each one's
+    // create() now answers EEXIST, which a retry counts as already done.
+    run(*queue, backend->resize(idempotency_key, id, 0, new_size));
     run(*queue, backend->close());
 
     RawstorObjectSpec read_spec{};

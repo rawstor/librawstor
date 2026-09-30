@@ -15,6 +15,7 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <algorithm>
 #include <exception>
 #include <map>
 #include <memory>
@@ -428,7 +429,21 @@ rawstd::Task<RawstorObjectSpec> resolve_spec(
         try {
             std::vector<RawstorObjectMeta> ms =
                 co_await meta_one(queue, location, id, offset, snapshot_id);
-            RawstorObjectSpec ret = ms.front().spec;
+            // An mds:// location reports every member of the chunk, a
+            // member that didn't answer as a zero-filled (UNREACHABLE)
+            // entry that may well come first: the spec is the first one
+            // that did answer, and none answering is this location's own
+            // failure.
+            auto answered = std::find_if(
+                ms.begin(), ms.end(), [](const RawstorObjectMeta& m) {
+                    return m.sync_state.state !=
+                           RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE;
+                }
+            );
+            if (answered == ms.end()) {
+                RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+            }
+            RawstorObjectSpec ret = answered->spec;
             if (locations.size() > 1 || ret.width == 0) {
                 ret.width = static_cast<unsigned int>(locations.size());
             }

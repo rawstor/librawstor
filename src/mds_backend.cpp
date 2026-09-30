@@ -25,18 +25,6 @@ using rawstor::mds::WireMap;
 using rawstor::mds::WireSlot;
 namespace mds = rawstor::mds;
 
-// An idempotency_key for a mutation of this backend's own making (a rollback),
-// separate from the caller's: it's applied once, never retried as part
-// of the caller's operation.
-RawstdUUID new_idempotency_key() {
-    RawstdUUID ret;
-    int res = rawstd_uuid7_init(&ret);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    return ret;
-}
-
 /* The wire policy from spec fields; zeros are the documented defaults. */
 RawstorFrameObjPolicy policy_of(const RawstorObjectSpec& sp) {
     RawstorFrameObjPolicy ret{};
@@ -276,7 +264,9 @@ rawstd::Task<void> Backend::create(
 
     if (error) {
         try {
-            co_await _client.remove(new_idempotency_key(), id);
+            // Applied once, never retried, so it needs no idempotency
+            // key of its own (a nil one is never recorded or replayed).
+            co_await _client.remove(RawstdUUID{}, id);
         } catch (const std::exception& e) {
             rawstd_error("Failed to rollback object: %s\n", e.what());
         }

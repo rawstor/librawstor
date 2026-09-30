@@ -1529,27 +1529,37 @@ void Chunk::_probe_setup() {
 // Nothing actively tears this stream down before then, though: this
 // coroutine frame just outlives the Chunk by up to one more interval,
 // notices alive.expired() and returns -- the same trade-off every other
-// alive-guarded DetachedTask in this file already makes.
+// alive-guarded DetachedTask in this file already makes. io_uring can end
+// the multishot timer on its own (e.g. on a full completion ring), which
+// the stream reports as ENOBUFS: the timer is then armed again, or
+// probing would stop for the rest of the Chunk's life.
 rawstd::DetachedTask Chunk::_probe_watch(std::weak_ptr<void> alive) {
     try {
         unsigned int ms = rawstor_opts_mirror_probe_interval();
-        rawio::TimeoutStream stream = _queue.timeout_multishot(ms * 1000u);
         for (;;) {
-            try {
-                co_await stream.next();
-            } catch (const std::system_error& e) {
+            rawio::TimeoutStream stream = _queue.timeout_multishot(ms * 1000u);
+            int error = 0;
+            while (error == 0) {
+                try {
+                    co_await stream.next();
+                } catch (const std::system_error& e) {
+                    error = e.code().value();
+                    if (!alive.expired() && error != ECANCELED &&
+                        error != ENOBUFS) {
+                        rawstd_warning(
+                            "Mirror probe timer failed: %s\n", e.what()
+                        );
+                    }
+                    break;
+                }
                 if (alive.expired()) {
                     co_return;
                 }
-                if (e.code().value() != ECANCELED) {
-                    rawstd_warning("Mirror probe timer failed: %s\n", e.what());
-                }
+                _probe_tick();
+            }
+            if (alive.expired() || error != ENOBUFS) {
                 co_return;
             }
-            if (alive.expired()) {
-                co_return;
-            }
-            _probe_tick();
         }
     } catch (const std::exception& e) {
         rawstd_warning("%s\n", e.what());
