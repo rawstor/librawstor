@@ -1256,6 +1256,16 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
             try {
                 co_await tasks[i];
                 created.push_back(uris[i]);
+            } catch (const std::exception& e) {
+                // Named here: the error itself says what failed, not
+                // where -- and for an mds:// object it surfaces as the MDS
+                // location's own failure, one level up.
+                rawstd_error(
+                    "Failed to create %s: %s\n", uris[i].str().c_str(), e.what()
+                );
+                if (!eptr) {
+                    eptr = std::current_exception();
+                }
             } catch (...) {
                 if (!eptr) {
                     eptr = std::current_exception();
