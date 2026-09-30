@@ -16,17 +16,17 @@
 
 namespace {
 
-using rawstor::mds::Level;
-using rawstor::mds::ObjectDescriptor;
-using rawstor::mds::ObjectMap;
-using rawstor::mds::ObjectStore;
-using rawstor::mds::PlacementPolicy;
-using rawstor::mds::ResizeResult;
-using rawstor::mds::ScanRecord;
-using rawstor::mds::SnapMember;
-using rawstor::mds::STRIPE_ALL;
-using rawstor::mds::Topology;
-using rawstor::mds::TopologyOST;
+using rawstor::mdsserver::Level;
+using rawstor::mdsserver::ObjectDescriptor;
+using rawstor::mdsserver::ObjectMap;
+using rawstor::mdsserver::ObjectStore;
+using rawstor::mdsserver::PlacementPolicy;
+using rawstor::mdsserver::ResizeResult;
+using rawstor::mdsserver::ScanRecord;
+using rawstor::mdsserver::SnapMember;
+using rawstor::mdsserver::STRIPE_ALL;
+using rawstor::mdsserver::Topology;
+using rawstor::mdsserver::TopologyOST;
 
 constexpr uint64_t chunk_size = 1ull << 16;
 
@@ -68,7 +68,7 @@ PlacementPolicy make_policy(unsigned width) {
 
 class ObjectStoreTest : public testing::Test {
 protected:
-    rawstor::mds::tests::TmpDir dir;
+    rawstor::mdsserver::tests::TmpDir dir;
 
     ObjectStore make_store() {
         return ObjectStore(dir.db_path(), make_topology());

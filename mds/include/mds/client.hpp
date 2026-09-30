@@ -11,7 +11,7 @@
 #include <memory>
 
 namespace rawstor {
-namespace mds {
+namespace mdsserver {
 
 class Server;
 
@@ -59,7 +59,7 @@ public:
     Client& operator=(Client&&) = delete;
 };
 
-} // namespace mds
+} // namespace mdsserver
 } // namespace rawstor
 
 #endif // RAWSTOR_MDS_CLIENT_HPP

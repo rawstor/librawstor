@@ -19,11 +19,11 @@
 
 namespace {
 
-using rawstor::mds::ObjectMap;
-using rawstor::mds::ObjectStore;
-using rawstor::mds::PlacementSlot;
-using rawstor::mds::SnapMember;
-using rawstor::mds::Topology;
+using rawstor::mdsserver::ObjectMap;
+using rawstor::mdsserver::ObjectStore;
+using rawstor::mdsserver::PlacementSlot;
+using rawstor::mdsserver::SnapMember;
+using rawstor::mdsserver::Topology;
 
 int recv_trampoline(ssize_t result, void* data) {
     size_t value = result < 0 ? 0 : static_cast<size_t>(result);
@@ -170,7 +170,7 @@ encode_object_map(const Topology& topology, const ObjectMap& map) {
 } // namespace
 
 namespace rawstor {
-namespace mds {
+namespace mdsserver {
 
 rawstd::Task<std::shared_ptr<Client>>
 Client::create(RawIOQueue* queue, Server& server, int fd) {
@@ -478,5 +478,5 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     }
 }
 
-} // namespace mds
+} // namespace mdsserver
 } // namespace rawstor

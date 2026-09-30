@@ -41,7 +41,7 @@ int wake_read_trampoline(ssize_t result, void* data) {
 } // namespace
 
 namespace rawstor {
-namespace mds {
+namespace mdsserver {
 
 Server::Server(
     unsigned int queue_size, int listen_fd, ObjectStore& store, int wake_fd
@@ -213,5 +213,5 @@ void Server::loop() {
     }
 }
 
-} // namespace mds
+} // namespace mdsserver
 } // namespace rawstor

@@ -9,7 +9,7 @@
 #include <vector>
 
 namespace rawstor {
-namespace mds {
+namespace mdsserver {
 
 /* K = STRIPE_ALL spreads every chunk independently (Ceph-like). */
 constexpr uint64_t STRIPE_ALL = 0;
@@ -46,7 +46,7 @@ std::vector<PlacementSlot> place(
     const PlacementPolicy& policy
 );
 
-} // namespace mds
+} // namespace mdsserver
 } // namespace rawstor
 
 #endif // RAWSTOR_MDS_PLACEMENT_HPP

@@ -1,5 +1,5 @@
 // mds::Backend::create_snapshot()/remove() (docs/mds.md, "Snapshots
-// (stage 2)"), exercised against a real rawstor::mds::Server +
+// (stage 2)"), exercised against a real rawstor::mdsserver::Server +
 // rawstor::ostserver::Server pair (object_env.hpp) -- the actual wire
 // path a `mds://` target goes through, not a hand-scripted mock of it.
 // The OST's only backend is file://, which has no native CoW, so every

@@ -124,7 +124,7 @@ ssize_t sync_op_wait(SyncOp& op, int res) {
 // partial scan is never silently accepted).
 void scan_ost(
     RawIOQueue* queue, const std::string& location, const RawstdUUID& ost_id,
-    std::vector<rawstor::mds::ScanRecord>& records
+    std::vector<rawstor::mdsserver::ScanRecord>& records
 ) {
     RawstorPaginationToken token = {};
     do {
@@ -217,7 +217,7 @@ void scan_ost(
                     continue;
                 }
 
-                rawstor::mds::ScanRecord record;
+                rawstor::mdsserver::ScanRecord record;
                 record.ost_id = ost_id;
                 record.obj_id = obj_id;
                 record.offset = offset;
@@ -238,7 +238,8 @@ void scan_ost(
 // (see scan_ost()'s own doc comment for the softer per-object tolerance
 // on META).
 void reconstruct(
-    const rawstor::mds::Topology& topology, rawstor::mds::ObjectStore& store
+    const rawstor::mdsserver::Topology& topology,
+    rawstor::mdsserver::ObjectStore& store
 ) {
     RawIOQueue* queue;
     int res = rawio_queue_create(256, &queue);
@@ -246,9 +247,9 @@ void reconstruct(
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    std::vector<rawstor::mds::ScanRecord> records;
+    std::vector<rawstor::mdsserver::ScanRecord> records;
     try {
-        for (const rawstor::mds::TopologyOST& ost : topology.osts()) {
+        for (const rawstor::mdsserver::TopologyOST& ost : topology.osts()) {
             const std::string& location = ost.location;
             RawstdUUIDString ost_id_string;
             rawstd_uuid_to_string(&ost.id, &ost_id_string);
@@ -277,10 +278,12 @@ void reconstruct(
 // unless it can't be parsed or drops an OST that still holds chunks
 // (ObjectStore::set_topology()) -- the current topology then stays.
 void reload_topology(
-    rawstor::mds::ObjectStore& store, const std::string& topology_path
+    rawstor::mdsserver::ObjectStore& store, const std::string& topology_path
 ) {
     try {
-        store.set_topology(rawstor::mds::Topology::parse_file(topology_path));
+        store.set_topology(
+            rawstor::mdsserver::Topology::parse_file(topology_path)
+        );
         rawstd_info("Topology reloaded from %s\n", topology_path.c_str());
     } catch (const std::exception& e) {
         rawstd_error(
@@ -290,7 +293,7 @@ void reload_topology(
     }
 }
 
-// Each worker is a thread with its own rawstor::mds::Server (own
+// Each worker is a thread with its own rawstor::mdsserver::Server (own
 // RawIOQueue and clients), all sharing the one listening socket
 // bind_listen() opens here -- every worker registers its own
 // accept_multishot on it and the kernel wakes exactly one of them per
@@ -320,8 +323,8 @@ void mds(
         );
     }
 
-    rawstor::mds::ObjectStore store(
-        db_path, rawstor::mds::Topology::parse_file(topology_path)
+    rawstor::mdsserver::ObjectStore store(
+        db_path, rawstor::mdsserver::Topology::parse_file(topology_path)
     );
     // --reconstruct rebuilds the map from the topology's own OSTs, so a
     // map referencing one no longer there is exactly what it replaces.
@@ -331,7 +334,7 @@ void mds(
         store.check_topology(*store.topology());
     }
 
-    ScopedFd listen_fd(rawstor::mds::Server::bind_listen(addr, port));
+    ScopedFd listen_fd(rawstor::mdsserver::Server::bind_listen(addr, port));
     rawstd_info(
         "Waiting for connections on %s:%u with %u worker(s)\n", addr.c_str(),
         port, workers
@@ -351,7 +354,7 @@ void mds(
                               fd = listen_fd.get(),
                               wake_fd = wake_pipes[i].read_fd()]() {
             try {
-                rawstor::mds::Server s(queue_size, fd, store, wake_fd);
+                rawstor::mdsserver::Server s(queue_size, fd, store, wake_fd);
                 s.loop();
             } catch (...) {
                 errors[i] = std::current_exception();

@@ -17,7 +17,7 @@
 struct sqlite3;
 
 namespace rawstor {
-namespace mds {
+namespace mdsserver {
 
 struct ObjectDescriptor {
     RawstdUUID id;
@@ -211,7 +211,7 @@ public:
     void reconstruct(const std::vector<ScanRecord>& records);
 };
 
-} // namespace mds
+} // namespace mdsserver
 } // namespace rawstor
 
 #endif // RAWSTOR_MDS_STORE_HPP

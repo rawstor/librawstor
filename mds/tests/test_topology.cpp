@@ -9,9 +9,9 @@
 
 namespace {
 
-using rawstor::mds::Level;
-using rawstor::mds::Topology;
-using rawstor::mds::TopologyOST;
+using rawstor::mdsserver::Level;
+using rawstor::mdsserver::Topology;
+using rawstor::mdsserver::TopologyOST;
 
 TEST(TopologyTest, parse_single_ost) {
     std::istringstream in(
@@ -216,10 +216,10 @@ TEST(TopologyTest, domain_identity_uses_full_path_not_last_component) {
 // 0 is RAWSTOR_OBJ_DOMAIN_DEFAULT, which the client resolves before it
 // ever reaches the MDS; anything past DC is not a level (yet).
 TEST(TopologyTest, level_of_rejects_default_and_unknown_levels) {
-    EXPECT_EQ(rawstor::mds::level_of(1), Level::OST);
-    EXPECT_EQ(rawstor::mds::level_of(5), Level::DC);
-    EXPECT_THROW(rawstor::mds::level_of(0), std::system_error);
-    EXPECT_THROW(rawstor::mds::level_of(6), std::system_error);
+    EXPECT_EQ(rawstor::mdsserver::level_of(1), Level::OST);
+    EXPECT_EQ(rawstor::mdsserver::level_of(5), Level::DC);
+    EXPECT_THROW(rawstor::mdsserver::level_of(0), std::system_error);
+    EXPECT_THROW(rawstor::mdsserver::level_of(6), std::system_error);
 }
 
 } // namespace

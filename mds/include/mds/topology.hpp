@@ -9,7 +9,7 @@
 #include <vector>
 
 namespace rawstor {
-namespace mds {
+namespace mdsserver {
 
 /*
  * Topology tree levels (docs/mds.md, "Placement function"):
@@ -72,7 +72,7 @@ public:
     const std::vector<TopologyOST>& osts() const noexcept { return _osts; }
 };
 
-} // namespace mds
+} // namespace mdsserver
 } // namespace rawstor
 
 #endif // RAWSTOR_MDS_TOPOLOGY_HPP

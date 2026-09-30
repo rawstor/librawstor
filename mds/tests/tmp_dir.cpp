@@ -5,7 +5,7 @@
 #include <unistd.h>
 
 namespace rawstor {
-namespace mds {
+namespace mdsserver {
 namespace tests {
 
 TmpDir::TmpDir() {
@@ -28,5 +28,5 @@ std::string TmpDir::db_path() const {
 }
 
 } // namespace tests
-} // namespace mds
+} // namespace mdsserver
 } // namespace rawstor

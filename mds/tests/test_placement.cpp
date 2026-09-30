@@ -14,13 +14,13 @@
 
 namespace {
 
-using rawstor::mds::Level;
-using rawstor::mds::place;
-using rawstor::mds::PlacementPolicy;
-using rawstor::mds::PlacementSlot;
-using rawstor::mds::STRIPE_ALL;
-using rawstor::mds::Topology;
-using rawstor::mds::TopologyOST;
+using rawstor::mdsserver::Level;
+using rawstor::mdsserver::place;
+using rawstor::mdsserver::PlacementPolicy;
+using rawstor::mdsserver::PlacementSlot;
+using rawstor::mdsserver::STRIPE_ALL;
+using rawstor::mdsserver::Topology;
+using rawstor::mdsserver::TopologyOST;
 
 TopologyOST make_ost(const char* id, uint64_t weight, const char* host) {
     TopologyOST ost{};

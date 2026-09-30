@@ -20,7 +20,7 @@
 
 namespace {
 
-using rawstor::mds::PlacementPolicy;
+using rawstor::mdsserver::PlacementPolicy;
 
 constexpr const char* SCHEMA =
     "CREATE TABLE IF NOT EXISTS objects ("
@@ -213,9 +213,9 @@ void validate_geometry(uint64_t logical_size, uint64_t chunk_size) {
 }
 
 void insert_chunks(
-    sqlite3* db, const rawstor::mds::Topology& topology, const RawstdUUID& id,
-    uint64_t first_index, uint64_t end_index, uint64_t chunk_size,
-    const PlacementPolicy& policy
+    sqlite3* db, const rawstor::mdsserver::Topology& topology,
+    const RawstdUUID& id, uint64_t first_index, uint64_t end_index,
+    uint64_t chunk_size, const PlacementPolicy& policy
 ) {
     (void)chunk_size;
     Stmt insert(
@@ -225,9 +225,9 @@ void insert_chunks(
     );
 
     for (uint64_t index = first_index; index < end_index; ++index) {
-        std::vector<rawstor::mds::PlacementSlot> slots =
-            rawstor::mds::place(topology, id, index, policy);
-        for (const rawstor::mds::PlacementSlot& slot : slots) {
+        std::vector<rawstor::mdsserver::PlacementSlot> slots =
+            rawstor::mdsserver::place(topology, id, index, policy);
+        for (const rawstor::mdsserver::PlacementSlot& slot : slots) {
             insert.reset();
             insert.bind_blob(1, id.bytes, sizeof(id.bytes))
                 .bind_int64(2, index)
@@ -358,9 +358,10 @@ void record_mutation(
         .step();
 }
 
-std::vector<unsigned char> encode_map(const rawstor::mds::ObjectMap& map) {
+std::vector<unsigned char>
+encode_map(const rawstor::mdsserver::ObjectMap& map) {
     ResultWriter w;
-    const rawstor::mds::ObjectDescriptor& d = map.descriptor;
+    const rawstor::mdsserver::ObjectDescriptor& d = map.descriptor;
     w.put(d.id)
         .put(d.logical_size)
         .put(d.chunk_size)
@@ -372,30 +373,31 @@ std::vector<unsigned char> encode_map(const rawstor::mds::ObjectMap& map) {
         .put(static_cast<uint64_t>(map.chunks.size()));
     for (const auto& slots : map.chunks) {
         w.put(static_cast<uint64_t>(slots.size()));
-        for (const rawstor::mds::PlacementSlot& slot : slots) {
+        for (const rawstor::mdsserver::PlacementSlot& slot : slots) {
             w.put(slot.slot_index).put(slot.ost_id);
         }
     }
     return w.data();
 }
 
-rawstor::mds::ObjectMap decode_map(const std::vector<unsigned char>& data) {
+rawstor::mdsserver::ObjectMap
+decode_map(const std::vector<unsigned char>& data) {
     ResultReader r(data);
-    rawstor::mds::ObjectMap map{};
-    rawstor::mds::ObjectDescriptor& d = map.descriptor;
+    rawstor::mdsserver::ObjectMap map{};
+    rawstor::mdsserver::ObjectDescriptor& d = map.descriptor;
     d.id = r.get<RawstdUUID>();
     d.logical_size = r.get<uint64_t>();
     d.chunk_size = r.get<uint64_t>();
     d.policy.width = static_cast<unsigned>(r.get<uint64_t>());
     d.policy.failure_domain =
-        rawstor::mds::level_of(static_cast<unsigned>(r.get<uint64_t>()));
+        rawstor::mdsserver::level_of(static_cast<unsigned>(r.get<uint64_t>()));
     d.policy.stripe_width = r.get<uint64_t>();
     d.policy.seed = r.get<uint64_t>();
     d.map_epoch = r.get<uint64_t>();
     map.chunks.resize(r.get<uint64_t>());
     for (auto& slots : map.chunks) {
         slots.resize(r.get<uint64_t>());
-        for (rawstor::mds::PlacementSlot& slot : slots) {
+        for (rawstor::mdsserver::PlacementSlot& slot : slots) {
             slot.slot_index = r.get<uint8_t>();
             slot.ost_id = r.get<RawstdUUID>();
         }
@@ -406,7 +408,7 @@ rawstor::mds::ObjectMap decode_map(const std::vector<unsigned char>& data) {
 } // namespace
 
 namespace rawstor {
-namespace mds {
+namespace mdsserver {
 
 ObjectStore::ObjectStore(const std::string& path, Topology topology) :
     _mutex(),
@@ -825,7 +827,9 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
                 .bind_int64(2, logical_size)
                 .bind_int64(3, o.chunk_size)
                 .bind_int64(4, o.width)
-                .bind_int64(5, static_cast<uint64_t>(rawstor::mds::Level::OST))
+                .bind_int64(
+                    5, static_cast<uint64_t>(rawstor::mdsserver::Level::OST)
+                )
                 .bind_int64(6, STRIPE_ALL)
                 .bind_int64(7, 0)
                 .bind_int64(8, 1)
@@ -1117,5 +1121,5 @@ std::vector<SnapMember> ObjectStore::snap_remove(
     return ret;
 }
 
-} // namespace mds
+} // namespace mdsserver
 } // namespace rawstor

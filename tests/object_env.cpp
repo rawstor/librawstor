@@ -54,8 +54,8 @@ ObjectEnv::ObjectEnv(unsigned int mds_port, unsigned int ost_port) :
     std::ostringstream ost_addr_oss;
     ost_addr_oss << "127.0.0.1:" << ost_port;
 
-    mds::Topology topology;
-    mds::TopologyOST ost{};
+    mdsserver::Topology topology;
+    mdsserver::TopologyOST ost{};
     ost.id = ost_id;
     ost.location = "ost://" + ost_addr_oss.str();
     ost.weight = 100;
@@ -93,7 +93,7 @@ ObjectEnv::ObjectEnv(unsigned int mds_port, unsigned int ost_port) :
         }
     );
 
-    _mds_listen_fd = mds::Server::bind_listen("127.0.0.1", mds_port);
+    _mds_listen_fd = mdsserver::Server::bind_listen("127.0.0.1", mds_port);
 
     rawstd::Pipe mds_wake(rawstd::Pipe::Mode::NonBlocking);
     _mds_wake_write_fd = mds_wake.release_write();
@@ -104,8 +104,8 @@ ObjectEnv::ObjectEnv(unsigned int mds_port, unsigned int ost_port) :
         [fd = _mds_listen_fd, mds_db, topology,
          mds_wake_read_fd](std::shared_ptr<std::promise<void>> ready) mutable {
             try {
-                mds::ObjectStore store(mds_db, std::move(topology));
-                mds::Server s(256, fd, store, mds_wake_read_fd);
+                mdsserver::ObjectStore store(mds_db, std::move(topology));
+                mdsserver::Server s(256, fd, store, mds_wake_read_fd);
                 ready->set_value();
                 s.loop();
             } catch (...) {
@@ -120,7 +120,7 @@ ObjectEnv::ObjectEnv(unsigned int mds_port, unsigned int ost_port) :
 }
 
 ObjectEnv::~ObjectEnv() {
-    // Wake both loop()s -- see mds::Server/ostserver::Server's own
+    // Wake both loop()s -- see mdsserver::Server/ostserver::Server's own
     // constructor doc comments: wake_fd is only ever read from, so the
     // one write byte each expects is exactly the "stop" signal
     // main.cpp's own SIGINT/SIGTERM handlers send in production.

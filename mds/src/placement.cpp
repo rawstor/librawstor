@@ -16,7 +16,7 @@
 
 namespace {
 
-using rawstor::mds::TopologyOST;
+using rawstor::mdsserver::TopologyOST;
 
 /* Domain-vs-leaf inputs must never collide on equal names. */
 constexpr uint8_t TAG_DOMAIN = 0xd0;
@@ -62,7 +62,7 @@ double hrw_score(uint64_t hash, uint64_t weight) {
 } // namespace
 
 namespace rawstor {
-namespace mds {
+namespace mdsserver {
 
 std::vector<PlacementSlot> place(
     const Topology& topology, const RawstdUUID& id, uint64_t index,
@@ -176,5 +176,5 @@ std::vector<PlacementSlot> place(
     return ret;
 }
 
-} // namespace mds
+} // namespace mdsserver
 } // namespace rawstor

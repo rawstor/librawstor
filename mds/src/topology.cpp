@@ -44,7 +44,7 @@ void split_path(const std::string& s, std::string (&out)[4]) {
 } // namespace
 
 namespace rawstor {
-namespace mds {
+namespace mdsserver {
 
 Level level_of(unsigned value) {
     switch (value) {
@@ -180,5 +180,5 @@ void Topology::add(const TopologyOST& ost) {
     _osts.push_back(ost);
 }
 
-} // namespace mds
+} // namespace mdsserver
 } // namespace rawstor

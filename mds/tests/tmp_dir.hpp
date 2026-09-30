@@ -5,7 +5,7 @@
 #include <string>
 
 namespace rawstor {
-namespace mds {
+namespace mdsserver {
 namespace tests {
 
 // A fresh, uniquely-named temporary directory, removed (recursively) when
@@ -34,7 +34,7 @@ public:
 };
 
 } // namespace tests
-} // namespace mds
+} // namespace mdsserver
 } // namespace rawstor
 
 #endif // RAWSTOR_MDS_TESTS_TMP_DIR_HPP

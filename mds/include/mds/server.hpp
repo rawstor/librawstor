@@ -12,7 +12,7 @@
 #include <unordered_map>
 
 namespace rawstor {
-namespace mds {
+namespace mdsserver {
 
 class Client;
 
@@ -68,7 +68,7 @@ public:
     void loop();
 };
 
-} // namespace mds
+} // namespace mdsserver
 } // namespace rawstor
 
 #endif // RAWSTOR_MDS_SERVER_HPP
