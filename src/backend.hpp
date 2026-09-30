@@ -112,14 +112,14 @@ public:
     // already-existing chunk's quorum, never a create() of its own.
     virtual rawstd::Task<void> create(
         const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        RawstorMemberRole member_role, const RawstdUUID& op_id
     ) = 0;
 
     // Removes the live version of `id`/`offset`. A version
     // previously registered via create_snapshot() below is removed via
     // remove_snapshot() below instead.
     virtual rawstd::Task<void>
-    remove(const RawstdUUID& id, uint64_t offset) = 0;
+    remove(const RawstdUUID& id, uint64_t offset, const RawstdUUID& op_id) = 0;
 
     // Removes one version previously registered via create_snapshot()
     // below (`snapshot_id`, never nil -- nil is the live version, removed via
@@ -130,7 +130,8 @@ public:
     // overrides it with its own MDS-orchestrated fan-out (see
     // mds_backend.cpp).
     virtual rawstd::Task<void> remove_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id,
+        const RawstdUUID& op_id
     );
 
     // The full creation-time shape (size/width/chunk_size) plus this
@@ -222,7 +223,8 @@ public:
     // mds::Backend overrides it with its own MDS-orchestrated fan-out
     // (see mds_backend.cpp).
     virtual rawstd::Task<void> create_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id,
+        const RawstdUUID& op_id
     );
 
     // Grows `id` to `new_size` (grow-only -- docs/mds.md: shrink
@@ -233,8 +235,10 @@ public:
     // (Object::resize()'s former per-chunk materialization logic);
     // `offset` is always 0 there (a single mds:// URI is never
     // itself split into chunks -- resize operates on the whole volume).
-    virtual rawstd::Task<void>
-    resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size);
+    virtual rawstd::Task<void> resize(
+        const RawstdUUID& id, uint64_t offset, uint64_t new_size,
+        const RawstdUUID& op_id
+    );
 
     virtual rawstd::Task<size_t>
     pread(void* buf, size_t size, off_t offset) = 0;

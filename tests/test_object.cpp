@@ -6,6 +6,8 @@
 // case here is a negative-path/error-propagation test: the positive CoW
 // path needs a live zfs pool and isn't reachable from a portable test
 // (see object_env.hpp's own doc comment).
+#include "backend.hpp"
+#include "mds_client.hpp"
 #include "object_env.hpp"
 #include "rawio_sync.hpp"
 
@@ -28,6 +30,16 @@
 #include <cerrno>
 
 namespace {
+
+// Drives one coroutine to completion on `q` (same helper as
+// test_multichunk.cpp's own).
+template <typename T>
+T run(rawio::Queue& q, rawstd::Task<T> t) {
+    while (!t.done()) {
+        q.wait();
+    }
+    return t.get();
+}
 
 // A plain file:// target -- no MDS, no OST, nothing to connect to except
 // the local filesystem -- for the tests below that verify Backend::
@@ -555,6 +567,56 @@ TEST(ObjectCreateTest, size_not_chunk_multiple_is_einval) {
     spec.chunk_size = spec.size / 4;
     spec.size += spec.chunk_size / 2;
     EXPECT_EQ(target_create(*queue, target, spec), -EINVAL);
+}
+
+// A resize whose reply got lost is retried with the same op_id
+// (docs/mds.md, "Idempotent mutations"): the MDS has already grown the map,
+// so the retry must still materialize the new chunks it reserved --
+// not see a map that already has them and create none. The "lost" first
+// attempt is an OBJ_RESIZE sent straight through an mds::Client, whose
+// reply is simply dropped.
+TEST(ObjectResizeTest, retried_after_lost_reply_materializes_new_chunks) {
+    rawstor::tests::ObjectEnv env(8800, 8801);
+    const char* uuid = "018f4e2a-3000-7000-8000-000000000030";
+    std::string target = object_target(env, uuid);
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    spec.chunk_size = spec.size / 2;
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid_from_string(&id, uuid), 0);
+    RawstdUUID op_id;
+    ASSERT_EQ(rawstd_uuid7_init(&op_id), 0);
+    uint64_t new_size = 2 * spec.size;
+
+    {
+        rawstor::mds::Client client(*queue, rawstd::URI(env.location()));
+        run(*queue, client.connect());
+        run(*queue, client.resize(id, op_id, new_size));
+    }
+
+    std::shared_ptr<rawstor::Backend> backend =
+        run(*queue,
+            rawstor::Backend::create(*queue, rawstd::URI(env.location())));
+    run(*queue, backend->resize(id, 0, new_size, op_id));
+    run(*queue, backend->close());
+
+    RawstorObjectSpec read_spec{};
+    ASSERT_EQ(target_spec(*queue, target, &read_spec), 0);
+    EXPECT_EQ(read_spec.size, new_size);
+
+    // Every chunk the resize added has its copy on the OST.
+    for (uint64_t offset = spec.size; offset < new_size;
+         offset += spec.chunk_size) {
+        RawstorObjectMeta meta{};
+        ASSERT_EQ(target_meta(*queue, target, offset, &meta, 1), 1) << offset;
+        EXPECT_EQ(meta.spec.size, spec.chunk_size) << offset;
+    }
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
 // resize() makes no sense against a plain (non-"mds://") target -- no

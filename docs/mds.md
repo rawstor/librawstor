@@ -353,6 +353,61 @@ ad hoc).
 > derive placement locally from `{descriptor + exception-list + topology}`,
 > pushing MDS even further off the path. Base design returns the explicit map.
 
+## Idempotent mutations
+
+A control connection can drop after the MDS committed a mutation but before
+its reply reached the client. The client's `Slot` then reconnects and retries
+the whole operation -- which, applied a second time, either fails for no real
+reason (`OBJ_CREATE` -> `EEXIST`, `OBJ_REMOVE` -> `ENOENT`) or, worse, silently
+does the wrong thing (a resize that already grew the map "sees" no chunks left
+to create). So every mutating request is made idempotent:
+
+- **`op_id`.** `Slot` generates a UUID once per mutating call (create, remove,
+  resize, create_snapshot, remove_snapshot), before its retry loop, and every
+  attempt carries that same one. `OBJ_CREATE`, `OBJ_RESIZE`, `OBJ_REMOVE`,
+  `OBJ_SNAP_COMMIT` and `OBJ_SNAP_REMOVE` send it ([protocol](protocol.md)).
+- **The MDS records what it applied.** An `ops` table maps `op_id` to the
+  command, the object and the reply's result, written in the same SQLite
+  transaction as the mutation itself -- a committed mutation always has its
+  record. A request whose `op_id` is recorded is not applied again: it gets the
+  recorded result. An `op_id` recorded for another command or object is
+  `EINVAL`. Only successes are recorded (a failed request changed nothing, so a
+  retry of it simply runs); records expire after a day, far beyond any retry.
+- **Replies carry what a retry needs to finish.** `OBJ_RESIZE` returns the
+  chunk count the object grew from, `OBJ_REMOVE` the map the object had --
+  both are gone from the MDS's live state once the first attempt applied them.
+- **The client's own part is resumable.**
+  - *create*: a failure while creating the chunks rolls back (copies, then the
+    object via its own `op_id`); a retry of the original `op_id` whose object is
+    gone creates it afresh.
+  - *resize*: creates the chunks from the returned count on, one copy at a
+    time; an `EEXIST` copy was made by an earlier attempt and counts as done.
+    No rollback: the chunks are in the map, and a retry fills in the rest.
+  - *remove*: destroys the chunks of the returned map (`ENOENT` tolerated).
+  - *snapshot*: a CoW copy that already exists (`EEXIST`) was taken by an
+    earlier attempt (the `snapshot_id` is unique to the call); the commit then
+    replays.
+  - *snapshot remove*: destroys the replayed member set.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client (Slot)
+    participant M as rawstor-mds
+    participant O as OSTs
+    Note over C: op_id generated once, before the retry loop
+    C->>M: OBJ_RESIZE(id, op_id, new_size)
+    M->>M: grow the map, record (op_id -> epoch, old_nchunks)<br/>in the same transaction
+    M--xC: reply lost (connection drops)
+    Note over C: reconnect, retry the same operation
+    C->>M: OBJ_RESIZE(id, op_id, new_size)
+    M->>M: op_id already applied: replay
+    M-->>C: the recorded epoch, old_nchunks
+    C->>M: OBJ_OPEN(id)
+    M-->>C: map with the new chunks
+    C->>O: create chunks old_nchunks.. (EEXIST = already there)
+```
+
 ## Wire protocol: one protocol, role subsets
 
 Same `rstr` magic, same frame heads, one response frame for everything

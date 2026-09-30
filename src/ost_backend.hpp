@@ -103,7 +103,7 @@ public:
 
     rawstd::Task<void> create(
         const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        RawstorMemberRole member_role, const RawstdUUID& op_id
     ) override;
 
     // Both relayed over the wire as a RAWSTOR_CMD_RELEASE request, nil vs.
@@ -112,10 +112,13 @@ public:
     // convention) -- the split here mirrors Backend::remove()/
     // remove_snapshot()'s own C++-level distinction, not a second wire
     // command.
-    rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset) override;
+    rawstd::Task<void> remove(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& op_id
+    ) override;
 
     rawstd::Task<void> remove_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id,
+        const RawstdUUID& op_id
     ) override;
 
     rawstd::Task<std::vector<RawstorObjectMeta>>
@@ -150,7 +153,8 @@ public:
     // forwards to its own local backend the same way (docs/mds.md,
     // "Snapshots").
     rawstd::Task<void> create_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id,
+        const RawstdUUID& op_id
     ) override;
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;

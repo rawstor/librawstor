@@ -73,6 +73,22 @@ unsigned int backoff_delay_ms(
 // retries on a genuinely transient rejection we don't recognize than to
 // silently give up on one that would have gone away on its own (e.g.
 // EBUSY, ENOSPC, EIO).
+// The idempotency key of one mutating call (create/remove/resize/
+// create_snapshot/remove_snapshot): generated once per Slot call, before
+// _with_retry(), so every retry of that call carries the same one. A
+// backend whose server applies mutations (the MDS, docs/mds.md,
+// "Idempotent mutations") replays the stored result of an op_id it has
+// already applied instead of applying it twice -- which is what makes
+// retrying after a lost reply safe; every other backend ignores it.
+RawstdUUID new_op_id() {
+    RawstdUUID ret;
+    int res = rawstd_uuid7_init(&ret);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    return ret;
+}
+
 bool is_permanent_backend_error(int error) {
     return error == ENOENT || error == EEXIST || error == EINVAL ||
            error == ENOTSUP;
@@ -583,7 +599,7 @@ rawstd::Task<void> Slot::create_snapshot(
     try {
         co_await _with_retry(
             func_name, trace_event, &Backend::create_snapshot, id, offset,
-            snapshot_id
+            snapshot_id, new_op_id()
         );
         _finish(t_call);
     } catch (...) {
@@ -601,7 +617,8 @@ Slot::resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size) {
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::resize, id, offset, new_size
+            func_name, trace_event, &Backend::resize, id, offset, new_size,
+            new_op_id()
         );
         _finish(t_call);
     } catch (...) {
@@ -622,7 +639,7 @@ rawstd::Task<void> Slot::create(
     try {
         co_await _with_retry(
             func_name, trace_event, &Backend::create, id, offset, sp,
-            member_role
+            member_role, new_op_id()
         );
         _finish(t_call);
     } catch (...) {
@@ -639,7 +656,7 @@ rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t offset) {
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::remove, id, offset
+            func_name, trace_event, &Backend::remove, id, offset, new_op_id()
         );
         _finish(t_call);
     } catch (...) {
@@ -659,7 +676,7 @@ rawstd::Task<void> Slot::remove_snapshot(
     try {
         co_await _with_retry(
             func_name, trace_event, &Backend::remove_snapshot, id, offset,
-            snapshot_id
+            snapshot_id, new_op_id()
         );
         _finish(t_call);
     } catch (...) {

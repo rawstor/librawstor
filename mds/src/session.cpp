@@ -297,7 +297,7 @@ Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
             };
             ObjectDescriptor descriptor = store.create(
                 uuid_of(payload.id), payload.logical_size,
-                1ull << payload.chunk_shift, policy
+                1ull << payload.chunk_shift, policy, uuid_of(payload.op_id)
             );
             out.map_epoch = descriptor.map_epoch;
         } catch (const std::system_error& e) {
@@ -336,13 +336,16 @@ Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
         break;
     }
     case RAWSTOR_CMD_OBJ_RESIZE: {
-        RawstorFrameBasicPayload payload;
+        RawstorFrameObjOpPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
         RawstorFrameObjResizedPayload out{};
         try {
-            out.map_epoch =
-                store.resize(uuid_of(payload.object_id), payload.val);
+            ResizeResult result = store.resize(
+                uuid_of(payload.id), payload.val, uuid_of(payload.op_id)
+            );
+            out.map_epoch = result.map_epoch;
+            out.old_nchunks = static_cast<uint32_t>(result.old_nchunks);
         } catch (const std::system_error& e) {
             res = -e.code().value();
         }
@@ -356,15 +359,25 @@ Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
         break;
     }
     case RAWSTOR_CMD_OBJ_REMOVE: {
-        RawstorFrameBasicPayload payload;
+        RawstorFrameObjOpPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
+        std::vector<unsigned char> data;
         try {
-            store.remove(uuid_of(payload.object_id));
+            ObjectMap map =
+                store.remove(uuid_of(payload.id), uuid_of(payload.op_id));
+            data = encode_object_map(*store.topology(), map);
         } catch (const std::system_error& e) {
             res = -e.code().value();
         }
-        co_await session->_send_response(head.cmd, head.cid, res);
+        if (res < 0) {
+            co_await session->_send_response(head.cmd, head.cid, res);
+        } else {
+            co_await session->_send_response(
+                head.cmd, head.cid, static_cast<int32_t>(data.size()),
+                data.data(), data.size()
+            );
+        }
         break;
     }
     case RAWSTOR_CMD_OBJ_SNAP_COMMIT: {
@@ -393,7 +406,8 @@ Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
                 );
             }
             out.map_epoch = store.snap_commit(
-                uuid_of(payload.id), uuid_of(payload.snapshot_id), members
+                uuid_of(payload.id), uuid_of(payload.snapshot_id), members,
+                uuid_of(payload.op_id)
             );
         } catch (const std::system_error& e) {
             res = -e.code().value();
@@ -408,13 +422,14 @@ Session::_dispatch(std::weak_ptr<Session> weak, const RawstorFrameHead& head) {
         break;
     }
     case RAWSTOR_CMD_OBJ_SNAP_REMOVE: {
-        RawstorFrameBasicPayload payload;
+        RawstorFrameObjOpPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
         std::vector<unsigned char> data;
         try {
             std::vector<SnapMember> members = store.snap_remove(
-                uuid_of(payload.object_id), uuid_of(payload.snapshot_id)
+                uuid_of(payload.id), uuid_of(payload.snapshot_id),
+                uuid_of(payload.op_id)
             );
             data.resize(
                 members.size() * sizeof(RawstorFrameObjSnapMemberPayload)

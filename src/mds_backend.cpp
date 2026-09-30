@@ -25,6 +25,18 @@ using rawstor::mds::WireMap;
 using rawstor::mds::WireSlot;
 namespace mds = rawstor::mds;
 
+// An op_id for a mutation of this backend's own making (a rollback),
+// separate from the caller's: it's applied once, never retried as part
+// of the caller's operation.
+RawstdUUID fresh_op_id() {
+    RawstdUUID ret;
+    int res = rawstd_uuid7_init(&ret);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+    return ret;
+}
+
 /* The wire policy from spec fields; zeros are the documented defaults. */
 RawstorFrameObjPolicy policy_of(const RawstorObjectSpec& sp) {
     RawstorFrameObjPolicy ret{};
@@ -253,7 +265,7 @@ rawstd::Task<void> Backend::list_chunks(
 
 rawstd::Task<void> Backend::create(
     const RawstdUUID& id, uint64_t, const RawstorObjectSpec& sp,
-    RawstorMemberRole
+    RawstorMemberRole, const RawstdUUID& op_id
 ) {
     // An mds:// object is always chunked: the MDS map is per-chunk, and
     // there is no single-chunk layout for it to fall back on.
@@ -263,7 +275,10 @@ rawstd::Task<void> Backend::create(
 
     RawstorFrameObjPolicy policy = policy_of(sp);
 
-    co_await _client.create(id, sp.size, sp.chunk_size, policy);
+    // Replayed, not re-applied, when this is a retry of a create whose
+    // reply got lost (docs/mds.md, "Idempotent mutations"); a retry after
+    // the rollback below creates the object afresh.
+    co_await _client.create(id, op_id, sp.size, sp.chunk_size, policy);
 
     /* Materialize every chunk object on its OSTs. */
     WireMap map = co_await _client.open(id, RawstdUUID{});
@@ -286,7 +301,7 @@ rawstd::Task<void> Backend::create(
 
     if (error) {
         try {
-            co_await _client.remove(id);
+            co_await _client.remove(id, fresh_op_id());
         } catch (const std::exception& e) {
             rawstd_error("Failed to rollback object: %s\n", e.what());
         }
@@ -295,23 +310,25 @@ rawstd::Task<void> Backend::create(
 }
 
 rawstd::Task<void> Backend::remove_snapshot(
-    const RawstdUUID& id, uint64_t, const RawstdUUID& snapshot_id
+    const RawstdUUID& id, uint64_t, const RawstdUUID& snapshot_id,
+    const RawstdUUID& op_id
 ) {
-    co_await _remove_snapshot(id, snapshot_id);
+    co_await _remove_snapshot(id, snapshot_id, op_id);
 }
 
-rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t) {
-    WireMap map = co_await _client.open(id, RawstdUUID{});
-
+rawstd::Task<void>
+Backend::remove(const RawstdUUID& id, uint64_t, const RawstdUUID& op_id) {
     /*
      * Unregister first (docs/mds.md, deletion order): the MDS is where
      * "the object still has snapshots" refuses with EBUSY -- before any
      * data is touched, not after -- and an unregistered map means no new
      * opens while the chunks below are destroyed. A crash in between
      * leaves unregistered chunk objects: the same garbage class as a
-     * crashed snapshot removal.
+     * crashed snapshot removal. The map to destroy comes back with the
+     * reply -- also on a retry whose first reply got lost, when the
+     * object is already gone (the MDS replays it by op_id).
      */
-    co_await _client.remove(id);
+    WireMap map = co_await _client.remove(id, op_id);
 
     // Target::remove() (target.hpp's own doc comment) already fans out
     // across every URI of every chunk group in build_target_uris()'s
@@ -325,15 +342,15 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t) {
     }
 }
 
-rawstd::Task<void>
-Backend::resize(const RawstdUUID& id, uint64_t, uint64_t new_size) {
+rawstd::Task<void> Backend::resize(
+    const RawstdUUID& id, uint64_t, uint64_t new_size, const RawstdUUID& op_id
+) {
     if (new_size == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    /* Chunk count before the resize -- everything from here on is new. */
+    /* For the chunk_size to validate new_size against. */
     WireMap before = co_await _client.open(id, RawstdUUID{});
-    uint64_t old_chunks = before.chunks.size();
 
     // Growth only ever adds whole chunks (create()'s own invariant: every
     // chunk is exactly chunk_size), and an object without a chunk_size
@@ -347,47 +364,36 @@ Backend::resize(const RawstdUUID& id, uint64_t, uint64_t new_size) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    co_await _client.resize(id, new_size);
+    // Replayed by op_id on a retry: `resized.old_nchunks` is always the
+    // count this resize grew from, even when the MDS already applied it.
+    mds::WireResized resized = co_await _client.resize(id, op_id, new_size);
 
     /* Re-fetch: the map now has whatever new chunks the MDS reserved. */
     WireMap after = co_await _client.open(id, RawstdUUID{});
 
-    uint64_t created = old_chunks;
-    std::exception_ptr error;
-    try {
-        for (uint64_t i = old_chunks; i < after.chunks.size(); ++i) {
-            Target chunk_target(chunk_targets(after, i));
-            co_await chunk_target.create(_queue, chunk_spec(after));
-            created = i + 1;
-        }
-    } catch (...) {
-        error = std::current_exception();
-    }
-
-    if (error) {
-        /*
-         * Roll back whatever new chunks were already created -- unlike
-         * create()'s own rollback, the object itself is not removed (it
-         * may already hold live data older than this resize) and the
-         * MDS's own logical_size is not reverted either (no such API in
-         * v1): a partial resize leaves the map epoch ahead of what's
-         * actually backed, the reconstruct scan's own garbage class.
-         */
-        while (created > old_chunks) {
-            --created;
+    /*
+     * Materialize the new chunks, one copy at a time: a copy that already
+     * exists was made by an earlier attempt of this same resize, so a
+     * retry only fills in what's still missing. No rollback -- the new
+     * chunks are in the map either way, and retrying the same op_id
+     * finishes the job.
+     */
+    for (uint64_t i = resized.old_nchunks; i < after.chunks.size(); ++i) {
+        for (const rawstd::URI& uri : chunk_targets(after, i)) {
             try {
-                Target chunk_target(chunk_targets(after, created));
-                co_await chunk_target.remove(_queue);
-            } catch (const std::exception& e) {
-                rawstd_error("Failed to rollback chunk create: %s\n", e.what());
+                co_await Target({uri}).create(_queue, chunk_spec(after));
+            } catch (const std::system_error& e) {
+                if (e.code().value() != EEXIST) {
+                    throw;
+                }
             }
         }
-        std::rethrow_exception(error);
     }
 }
 
 rawstd::Task<void> Backend::create_snapshot(
-    const RawstdUUID& id, uint64_t, const RawstdUUID& snapshot_id
+    const RawstdUUID& id, uint64_t, const RawstdUUID& snapshot_id,
+    const RawstdUUID& op_id
 ) {
     if (rawstd_uuid_is_nil(&snapshot_id)) {
         /* nil is the live version, never a snapshot. */
@@ -418,7 +424,15 @@ rawstd::Task<void> Backend::create_snapshot(
                 // create_snapshot()'s own already-bound branch takes it,
                 // never create() (create() is only ever for a fresh
                 // object, this class's own doc comment).
-                co_await t.create_snapshot(_queue);
+                try {
+                    co_await t.create_snapshot(_queue);
+                } catch (const std::system_error& e) {
+                    // Taken by an earlier attempt of this same call:
+                    // snapshot_id is unique to it.
+                    if (e.code().value() != EEXIST) {
+                        throw;
+                    }
+                }
                 members.push_back(mds::WireSnapMember{i, slot.ost_id});
                 any = true;
             } catch (const std::exception& e) {
@@ -451,7 +465,7 @@ rawstd::Task<void> Backend::create_snapshot(
         }
     }
 
-    co_await _client.snap_commit(id, snapshot_id, members);
+    co_await _client.snap_commit(id, snapshot_id, op_id, members);
 }
 
 // Fan-out destroy of a previously committed snapshot -- the `snapshot_id`
@@ -460,10 +474,11 @@ rawstd::Task<void> Backend::create_snapshot(
 // destroy below is therefore best-effort cleanup -- a member that can no
 // longer be resolved (location changed, OST replaced) is left for the
 // reconstruct scan.
-rawstd::Task<void>
-Backend::_remove_snapshot(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
+rawstd::Task<void> Backend::_remove_snapshot(
+    const RawstdUUID& id, const RawstdUUID& snapshot_id, const RawstdUUID& op_id
+) {
     std::vector<mds::WireSnapMember> members =
-        co_await _client.snap_remove(id, snapshot_id);
+        co_await _client.snap_remove(id, snapshot_id, op_id);
 
     /*
      * The MDS has already unregistered the snapshot above (no new

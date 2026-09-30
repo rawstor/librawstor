@@ -9,8 +9,10 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <cerrno>
 #include <cstring>
@@ -59,6 +61,14 @@ constexpr const char* SCHEMA =
     "  PRIMARY KEY (id, snapshot_id, logical_index, ost_id),"
     "  FOREIGN KEY (id, snapshot_id)"
     "    REFERENCES snapshots(id, snapshot_id) ON DELETE CASCADE"
+    ") WITHOUT ROWID;"
+    /* Applied mutations by op_id, for replaying a retried request. */
+    "CREATE TABLE IF NOT EXISTS ops ("
+    "  op_id BLOB PRIMARY KEY,"
+    "  kind INTEGER NOT NULL,"
+    "  id BLOB NOT NULL,"
+    "  result BLOB NOT NULL,"
+    "  created_at INTEGER NOT NULL"
     ") WITHOUT ROWID;";
 
 [[noreturn]] void throw_sqlite(sqlite3* db, const char* what) {
@@ -93,6 +103,10 @@ public:
     Stmt& operator=(const Stmt&) = delete;
 
     Stmt& bind_blob(int pos, const void* data, size_t size) {
+        // A null pointer would bind NULL, not an empty blob.
+        if (size == 0) {
+            data = "";
+        }
         if (sqlite3_bind_blob(_stmt, pos, data, size, SQLITE_STATIC) !=
             SQLITE_OK) {
             throw_sqlite(_db, "sqlite bind");
@@ -131,6 +145,13 @@ public:
 
     uint64_t column_int64(int pos) {
         return static_cast<uint64_t>(sqlite3_column_int64(_stmt, pos));
+    }
+
+    std::vector<unsigned char> column_blob(int pos) {
+        const unsigned char* data =
+            static_cast<const unsigned char*>(sqlite3_column_blob(_stmt, pos));
+        int size = sqlite3_column_bytes(_stmt, pos);
+        return std::vector<unsigned char>(data, data + size);
     }
 
     void column_uuid(int pos, RawstdUUID* out) {
@@ -215,6 +236,159 @@ void insert_chunks(
                 .step();
         }
     }
+}
+
+/*
+ * Idempotency records (ObjectStore's own doc comment on op_id). `kind`
+ * tells the mutations apart, so an op_id replayed for a different call is
+ * caught instead of answered with a foreign result.
+ */
+enum class OpKind : unsigned {
+    create = 1,
+    resize = 2,
+    remove = 3,
+    snap_commit = 4,
+    snap_remove = 5,
+};
+
+// How long a record is kept: far beyond any client's retry window.
+const uint64_t op_ttl_seconds = 24 * 60 * 60;
+
+/* A recorded result, packed field by field in host byte order. */
+class ResultWriter final {
+private:
+    std::vector<unsigned char> _data;
+
+public:
+    ResultWriter() : _data() {}
+
+    template <typename T>
+    ResultWriter& put(const T& value) {
+        const unsigned char* p = reinterpret_cast<const unsigned char*>(&value);
+        _data.insert(_data.end(), p, p + sizeof(value));
+        return *this;
+    }
+
+    const std::vector<unsigned char>& data() const noexcept { return _data; }
+};
+
+class ResultReader final {
+private:
+    const std::vector<unsigned char>& _data;
+    size_t _off;
+
+public:
+    explicit ResultReader(const std::vector<unsigned char>& data) :
+        _data(data),
+        _off(0) {}
+
+    template <typename T>
+    T get() {
+        T value;
+        if (sizeof(value) > _data.size() - _off) {
+            rawstd_error("MDS store: truncated op record\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+        memcpy(&value, _data.data() + _off, sizeof(value));
+        _off += sizeof(value);
+        return value;
+    }
+};
+
+/*
+ * The recorded result of `op_id`, if it was already applied; EINVAL if it
+ * was applied as a different call. A nil op_id never replays.
+ */
+std::optional<std::vector<unsigned char>> replay_op(
+    sqlite3* db, const RawstdUUID& op_id, OpKind kind, const RawstdUUID& id
+) {
+    if (rawstd_uuid_is_nil(&op_id)) {
+        return std::nullopt;
+    }
+    Stmt select(db, "SELECT kind, id, result FROM ops WHERE op_id = ?;");
+    select.bind_blob(1, op_id.bytes, sizeof(op_id.bytes));
+    if (!select.step()) {
+        return std::nullopt;
+    }
+    RawstdUUID recorded_id;
+    select.column_uuid(1, &recorded_id);
+    if (select.column_int64(0) != static_cast<uint64_t>(kind) ||
+        rawstd_uuid_cmp(&recorded_id, &id) != 0) {
+        rawstd_error("MDS store: op_id reused for a different request\n");
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    return select.column_blob(2);
+}
+
+/* Inside the mutation's own transaction; also drops expired records. */
+void record_op(
+    sqlite3* db, const RawstdUUID& op_id, OpKind kind, const RawstdUUID& id,
+    const std::vector<unsigned char>& result
+) {
+    if (rawstd_uuid_is_nil(&op_id)) {
+        return;
+    }
+    uint64_t now = static_cast<uint64_t>(time(nullptr));
+    {
+        Stmt expire(db, "DELETE FROM ops WHERE created_at < ?;");
+        expire.bind_int64(1, now > op_ttl_seconds ? now - op_ttl_seconds : 0)
+            .step();
+    }
+    Stmt insert(
+        db, "INSERT OR REPLACE INTO ops (op_id, kind, id, result, created_at)"
+            " VALUES (?, ?, ?, ?, ?);"
+    );
+    insert.bind_blob(1, op_id.bytes, sizeof(op_id.bytes))
+        .bind_int64(2, static_cast<uint64_t>(kind))
+        .bind_blob(3, id.bytes, sizeof(id.bytes))
+        .bind_blob(4, result.data(), result.size())
+        .bind_int64(5, now)
+        .step();
+}
+
+std::vector<unsigned char> encode_map(const rawstor::mds::ObjectMap& map) {
+    ResultWriter w;
+    const rawstor::mds::ObjectDescriptor& d = map.descriptor;
+    w.put(d.id)
+        .put(d.logical_size)
+        .put(d.chunk_size)
+        .put(static_cast<uint64_t>(d.policy.width))
+        .put(static_cast<uint64_t>(d.policy.failure_domain))
+        .put(d.policy.stripe_width)
+        .put(d.policy.seed)
+        .put(d.map_epoch)
+        .put(static_cast<uint64_t>(map.chunks.size()));
+    for (const auto& slots : map.chunks) {
+        w.put(static_cast<uint64_t>(slots.size()));
+        for (const rawstor::mds::PlacementSlot& slot : slots) {
+            w.put(slot.slot_index).put(slot.ost_id);
+        }
+    }
+    return w.data();
+}
+
+rawstor::mds::ObjectMap decode_map(const std::vector<unsigned char>& data) {
+    ResultReader r(data);
+    rawstor::mds::ObjectMap map{};
+    rawstor::mds::ObjectDescriptor& d = map.descriptor;
+    d.id = r.get<RawstdUUID>();
+    d.logical_size = r.get<uint64_t>();
+    d.chunk_size = r.get<uint64_t>();
+    d.policy.width = static_cast<unsigned>(r.get<uint64_t>());
+    d.policy.failure_domain =
+        rawstor::mds::level_of(static_cast<unsigned>(r.get<uint64_t>()));
+    d.policy.stripe_width = r.get<uint64_t>();
+    d.policy.seed = r.get<uint64_t>();
+    d.map_epoch = r.get<uint64_t>();
+    map.chunks.resize(r.get<uint64_t>());
+    for (auto& slots : map.chunks) {
+        slots.resize(r.get<uint64_t>());
+        for (rawstor::mds::PlacementSlot& slot : slots) {
+            slot.slot_index = r.get<uint8_t>();
+            slot.ost_id = r.get<RawstdUUID>();
+        }
+    }
+    return map;
 }
 
 } // namespace
@@ -337,10 +511,23 @@ void ObjectStore::set_topology(Topology topology) {
 
 ObjectDescriptor ObjectStore::create(
     const RawstdUUID& id, uint64_t logical_size, uint64_t chunk_size,
-    const PlacementPolicy& policy
+    const PlacementPolicy& policy, const RawstdUUID& op_id
 ) {
     std::lock_guard<std::mutex> lock(_mutex);
     validate_geometry(logical_size, chunk_size);
+
+    if (replay_op(_db, op_id, OpKind::create, id)) {
+        try {
+            return _descriptor(id);
+        } catch (const std::system_error& e) {
+            if (e.code().value() != ENOENT) {
+                throw;
+            }
+            // Created, then removed again by the caller's own rollback:
+            // this retry creates it afresh (record_op() below replaces
+            // the stale record).
+        }
+    }
 
     ObjectDescriptor ret{};
     ret.id = id;
@@ -378,6 +565,8 @@ ObjectDescriptor ObjectStore::create(
 
     insert_chunks(_db, *_topology, ret.id, 0, nchunks, chunk_size, ret.policy);
 
+    record_op(_db, op_id, OpKind::create, id, {});
+
     tx.commit();
 
     return ret;
@@ -389,7 +578,10 @@ ObjectStore::open(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
     if (!rawstd_uuid_is_nil(&snapshot_id)) {
         return _open_snapshot(id, snapshot_id);
     }
+    return _open_live(id);
+}
 
+ObjectMap ObjectStore::_open_live(const RawstdUUID& id) {
     ObjectMap ret{};
     ret.descriptor = _descriptor(id);
 
@@ -438,8 +630,19 @@ ObjectStore::open(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
     return ret;
 }
 
-uint64_t ObjectStore::resize(const RawstdUUID& id, uint64_t new_size) {
+ResizeResult ObjectStore::resize(
+    const RawstdUUID& id, uint64_t new_size, const RawstdUUID& op_id
+) {
     std::lock_guard<std::mutex> lock(_mutex);
+    if (std::optional<std::vector<unsigned char>> recorded =
+            replay_op(_db, op_id, OpKind::resize, id)) {
+        ResultReader r(*recorded);
+        ResizeResult ret{};
+        ret.map_epoch = r.get<uint64_t>();
+        ret.old_nchunks = r.get<uint64_t>();
+        return ret;
+    }
+
     ObjectDescriptor descriptor = _descriptor(id);
 
     validate_geometry(new_size, descriptor.chunk_size);
@@ -473,9 +676,14 @@ uint64_t ObjectStore::resize(const RawstdUUID& id, uint64_t new_size) {
         descriptor.policy
     );
 
+    record_op(
+        _db, op_id, OpKind::resize, id,
+        ResultWriter().put(map_epoch).put(old_chunks).data()
+    );
+
     tx.commit();
 
-    return map_epoch;
+    return ResizeResult{.map_epoch = map_epoch, .old_nchunks = old_chunks};
 }
 
 void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
@@ -643,8 +851,13 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
     );
 }
 
-void ObjectStore::remove(const RawstdUUID& id) {
+ObjectMap ObjectStore::remove(const RawstdUUID& id, const RawstdUUID& op_id) {
     std::lock_guard<std::mutex> lock(_mutex);
+    if (std::optional<std::vector<unsigned char>> recorded =
+            replay_op(_db, op_id, OpKind::remove, id)) {
+        return decode_map(*recorded);
+    }
+
     Transaction tx(_db);
 
     {
@@ -659,16 +872,19 @@ void ObjectStore::remove(const RawstdUUID& id) {
         }
     }
 
+    // ENOENT if there is no such object.
+    ObjectMap ret = _open_live(id);
+
     {
         Stmt del(_db, "DELETE FROM objects WHERE id = ?;");
         del.bind_blob(1, id.bytes, sizeof(id.bytes)).step();
     }
 
-    if (sqlite3_changes(_db) == 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
-    }
+    record_op(_db, op_id, OpKind::remove, id, encode_map(ret));
 
     tx.commit();
+
+    return ret;
 }
 
 ObjectMap ObjectStore::_open_snapshot(
@@ -734,9 +950,14 @@ ObjectMap ObjectStore::_open_snapshot(
 
 uint64_t ObjectStore::snap_commit(
     const RawstdUUID& id, const RawstdUUID& snapshot_id,
-    const std::vector<SnapMember>& members
+    const std::vector<SnapMember>& members, const RawstdUUID& op_id
 ) {
     std::lock_guard<std::mutex> lock(_mutex);
+    if (std::optional<std::vector<unsigned char>> recorded =
+            replay_op(_db, op_id, OpKind::snap_commit, id)) {
+        return ResultReader(*recorded).get<uint64_t>();
+    }
+
     ObjectDescriptor descriptor = _descriptor(id);
     uint64_t nchunks =
         nchunks_of(descriptor.logical_size, descriptor.chunk_size);
@@ -806,15 +1027,31 @@ uint64_t ObjectStore::snap_commit(
             .step();
     }
 
+    record_op(
+        _db, op_id, OpKind::snap_commit, id,
+        ResultWriter().put(map_epoch).data()
+    );
+
     tx.commit();
 
     return map_epoch;
 }
 
-std::vector<SnapMember>
-ObjectStore::snap_remove(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
+std::vector<SnapMember> ObjectStore::snap_remove(
+    const RawstdUUID& id, const RawstdUUID& snapshot_id, const RawstdUUID& op_id
+) {
     std::lock_guard<std::mutex> lock(_mutex);
     std::vector<SnapMember> ret;
+    if (std::optional<std::vector<unsigned char>> recorded =
+            replay_op(_db, op_id, OpKind::snap_remove, id)) {
+        ResultReader r(*recorded);
+        ret.resize(r.get<uint64_t>());
+        for (SnapMember& m : ret) {
+            m.logical_index = r.get<uint64_t>();
+            m.ost_id = r.get<RawstdUUID>();
+        }
+        return ret;
+    }
 
     Transaction tx(_db);
 
@@ -847,6 +1084,13 @@ ObjectStore::snap_remove(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
     if (sqlite3_changes(_db) == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
+
+    ResultWriter w;
+    w.put(static_cast<uint64_t>(ret.size()));
+    for (const SnapMember& m : ret) {
+        w.put(m.logical_index).put(m.ost_id);
+    }
+    record_op(_db, op_id, OpKind::snap_remove, id, w.data());
 
     tx.commit();
 

@@ -284,7 +284,7 @@ rawstd::Task<void> Backend::list_chunks(
 
 rawstd::Task<void> Backend::create(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-    RawstorMemberRole member_role
+    RawstorMemberRole member_role, const RawstdUUID&
 ) {
     std::string location_path = get_location_path(location());
     mkdir_or_exist(location_path);
@@ -466,7 +466,8 @@ rawstd::Task<void> Backend::create(
     co_return;
 }
 
-rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<void>
+Backend::remove(const RawstdUUID& id, uint64_t offset, const RawstdUUID&) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;

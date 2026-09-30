@@ -49,6 +49,12 @@ struct ScanRecord {
     RawstorObjectMeta meta;
 };
 
+/* What resize() did: the new map_epoch and the chunk count it grew from. */
+struct ResizeResult {
+    uint64_t map_epoch;
+    uint64_t old_nchunks;
+};
+
 /* One chunk copy holding a snapshot version. */
 struct SnapMember {
     uint64_t logical_index;
@@ -84,6 +90,7 @@ private:
 
     void _check_topology(const Topology& topology);
     ObjectDescriptor _descriptor(const RawstdUUID& id);
+    ObjectMap _open_live(const RawstdUUID& id);
     ObjectMap
     _open_snapshot(const RawstdUUID& id, const RawstdUUID& snapshot_id);
 
@@ -109,12 +116,24 @@ public:
     void set_topology(Topology topology);
 
     /*
+     * Every mutating call takes an `op_id`: the client's idempotency key
+     * for one logical operation, the same across its retries (docs/mds.md,
+     * "Idempotent mutations"). The first call that applies it records its
+     * result in the same transaction; a repeat of that op_id returns the
+     * recorded result instead of applying anything again (EINVAL if the
+     * op_id was recorded for a different call). A nil op_id opts out.
+     * Records are dropped after a day.
+     */
+
+    /*
      * Places every chunk up front; the backends stay sparse. The object's
      * own id is client-generated (like every object id); EEXIST on reuse.
+     * A repeated op_id whose object has since been removed (the caller's
+     * own rollback) creates it afresh.
      */
     ObjectDescriptor create(
         const RawstdUUID& id, uint64_t logical_size, uint64_t chunk_size,
-        const PlacementPolicy& policy
+        const PlacementPolicy& policy, const RawstdUUID& op_id = {}
     );
 
     /*
@@ -123,11 +142,17 @@ public:
      */
     ObjectMap open(const RawstdUUID& id, const RawstdUUID& snapshot_id);
 
-    /* Grow-only in v1; returns the new map_epoch. */
-    uint64_t resize(const RawstdUUID& id, uint64_t new_size);
+    /* Grow-only in v1. */
+    ResizeResult resize(
+        const RawstdUUID& id, uint64_t new_size, const RawstdUUID& op_id = {}
+    );
 
-    /* EBUSY while snapshots exist: they must be removed explicitly. */
-    void remove(const RawstdUUID& id);
+    /*
+     * EBUSY while snapshots exist: they must be removed explicitly.
+     * Returns the map the object had, for the caller's fan-out destroy
+     * of its chunks.
+     */
+    ObjectMap remove(const RawstdUUID& id, const RawstdUUID& op_id = {});
 
     /*
      * Registers the snapshot: members = exactly the chunk copies that
@@ -141,15 +166,17 @@ public:
      */
     uint64_t snap_commit(
         const RawstdUUID& id, const RawstdUUID& snapshot_id,
-        const std::vector<SnapMember>& members
+        const std::vector<SnapMember>& members, const RawstdUUID& op_id = {}
     );
 
     /*
      * Unregisters the snapshot (no new readers) and returns what was
      * registered: the member set for the caller's fan-out destroy.
      */
-    std::vector<SnapMember>
-    snap_remove(const RawstdUUID& id, const RawstdUUID& snapshot_id);
+    std::vector<SnapMember> snap_remove(
+        const RawstdUUID& id, const RawstdUUID& snapshot_id,
+        const RawstdUUID& op_id = {}
+    );
 
     /*
      * Rebuilds the whole map from a scan of every OST in the topology

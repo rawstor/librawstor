@@ -214,8 +214,8 @@ Client::_exchange(const void* request, size_t size, RawstorCommandType cmd) {
 }
 
 rawstd::Task<uint64_t> Client::create(
-    const RawstdUUID& id, uint64_t logical_size, uint64_t chunk_size,
-    const RawstorFrameObjPolicy& policy
+    const RawstdUUID& id, const RawstdUUID& op_id, uint64_t logical_size,
+    uint64_t chunk_size, const RawstorFrameObjPolicy& policy
 ) {
     RawstorFrameObjCreate request{
         .head =
@@ -227,6 +227,7 @@ rawstd::Task<uint64_t> Client::create(
         .payload = {},
     };
     uuid_to_bytes(id, request.payload.id);
+    uuid_to_bytes(op_id, request.payload.op_id);
     request.payload.logical_size = logical_size;
     // mds::Backend::create() only gets here with a nonzero power-of-two
     // chunk_size (Target::create()'s own check).
@@ -263,19 +264,20 @@ Client::open(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
     co_return decode_object_map(data);
 }
 
-rawstd::Task<uint64_t> Client::resize(const RawstdUUID& id, uint64_t new_size) {
-    RawstorFrameBasic request{
+rawstd::Task<WireResized> Client::resize(
+    const RawstdUUID& id, const RawstdUUID& op_id, uint64_t new_size
+) {
+    RawstorFrameObjOp request{
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
                 .cmd = RAWSTOR_CMD_OBJ_RESIZE,
                 .cid = _cid_counter++,
             },
-        .payload = {
-            .object_id = {}, .offset = 0, .snapshot_id = {}, .val = new_size
-        },
+        .payload = {.id = {}, .op_id = {}, .snapshot_id = {}, .val = new_size},
     };
-    uuid_to_bytes(id, request.payload.object_id);
+    uuid_to_bytes(id, request.payload.id);
+    uuid_to_bytes(op_id, request.payload.op_id);
 
     std::vector<unsigned char> data =
         co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_OBJ_RESIZE);
@@ -284,31 +286,38 @@ rawstd::Task<uint64_t> Client::resize(const RawstdUUID& id, uint64_t new_size) {
     }
     RawstorFrameObjResizedPayload out;
     memcpy(&out, data.data(), sizeof(out));
-    co_return out.map_epoch;
+    co_return WireResized{
+        .map_epoch = out.map_epoch, .old_nchunks = out.old_nchunks
+    };
 }
 
-rawstd::Task<void> Client::remove(const RawstdUUID& id) {
-    RawstorFrameBasic request{
+rawstd::Task<WireMap>
+Client::remove(const RawstdUUID& id, const RawstdUUID& op_id) {
+    RawstorFrameObjOp request{
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
                 .cmd = RAWSTOR_CMD_OBJ_REMOVE,
                 .cid = _cid_counter++,
             },
-        .payload = {.object_id = {}, .offset = 0, .snapshot_id = {}, .val = 0},
+        .payload = {.id = {}, .op_id = {}, .snapshot_id = {}, .val = 0},
     };
-    uuid_to_bytes(id, request.payload.object_id);
+    uuid_to_bytes(id, request.payload.id);
+    uuid_to_bytes(op_id, request.payload.op_id);
 
-    co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_OBJ_REMOVE);
+    std::vector<unsigned char> data =
+        co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_OBJ_REMOVE);
+    co_return decode_object_map(data);
 }
 
 rawstd::Task<uint64_t> Client::snap_commit(
     const RawstdUUID& id, const RawstdUUID& snapshot_id,
-    const std::vector<WireSnapMember>& members
+    const RawstdUUID& op_id, const std::vector<WireSnapMember>& members
 ) {
     RawstorFrameObjSnapCommitPayload payload{};
     uuid_to_bytes(id, payload.id);
     uuid_to_bytes(snapshot_id, payload.snapshot_id);
+    uuid_to_bytes(op_id, payload.op_id);
     payload.nmembers = static_cast<uint32_t>(members.size());
 
     RawstorFrameHead head{
@@ -340,18 +349,20 @@ rawstd::Task<uint64_t> Client::snap_commit(
     co_return out.map_epoch;
 }
 
-rawstd::Task<std::vector<WireSnapMember>>
-Client::snap_remove(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
-    RawstorFrameBasic request{
+rawstd::Task<std::vector<WireSnapMember>> Client::snap_remove(
+    const RawstdUUID& id, const RawstdUUID& snapshot_id, const RawstdUUID& op_id
+) {
+    RawstorFrameObjOp request{
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
                 .cmd = RAWSTOR_CMD_OBJ_SNAP_REMOVE,
                 .cid = _cid_counter++,
             },
-        .payload = {.object_id = {}, .offset = 0, .snapshot_id = {}, .val = 0},
+        .payload = {.id = {}, .op_id = {}, .snapshot_id = {}, .val = 0},
     };
-    uuid_to_bytes(id, request.payload.object_id);
+    uuid_to_bytes(id, request.payload.id);
+    uuid_to_bytes(op_id, request.payload.op_id);
     uuid_to_bytes(snapshot_id, request.payload.snapshot_id);
 
     std::vector<unsigned char> data = co_await _exchange(

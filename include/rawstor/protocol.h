@@ -68,11 +68,12 @@ extern "C" {
 
 /*
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/open/
- * resize/remove a whole, possibly multi-chunk mds:// object. OBJ_OPEN,
- * OBJ_RESIZE and OBJ_REMOVE all ride RawstorFrameBasicPayload
- * (object_id = id; val = the new size for resize, unused for open/
- * remove; snapshot_id = the bound version for open, nil = live, unused
- * for resize/remove).
+ * resize/remove a whole, possibly multi-chunk mds:// object. OBJ_OPEN
+ * rides RawstorFrameBasicPayload (object_id = id, snapshot_id = the bound
+ * version, nil = live). The mutating ones carry an op_id, the client's
+ * idempotency key (docs/mds.md, "Idempotent mutations"): OBJ_RESIZE
+ * (val = the new size) and OBJ_REMOVE ride RawstorFrameObjOpPayload,
+ * OBJ_CREATE its own payload.
  */
 #define RAWSTOR_CMD_OBJ_CREATE 0x40
 #define RAWSTOR_CMD_OBJ_OPEN 0x41
@@ -84,8 +85,8 @@ extern "C" {
  * copy -- COMMIT registers exactly who ends up holding them once every
  * reachable chunk has one (rides RawstorFrameObjSnapCommitPayload). REMOVE
  * unregisters first (no new readers) and returns the member set for the
- * client's fan-out destroy (rides RawstorFrameBasicPayload: object_id =
- * id, snapshot_id = the version to remove).
+ * client's fan-out destroy (rides RawstorFrameObjOpPayload: snapshot_id =
+ * the version to remove).
  */
 #define RAWSTOR_CMD_OBJ_SNAP_COMMIT 0x45
 #define RAWSTOR_CMD_OBJ_SNAP_REMOVE 0x46
@@ -369,7 +370,8 @@ struct RawstorFrameObjPolicy {
  * an mds:// object's chunk_size is always a nonzero power of two.
  */
 struct RawstorFrameObjCreatePayload {
-    uint8_t id[16]; /* client-generated, like every object id */
+    uint8_t id[16];    /* client-generated, like every object id */
+    uint8_t op_id[16]; /* idempotency key, see OBJ_* above */
     uint64_t logical_size;
     struct RawstorFrameObjPolicy policy;
     uint8_t chunk_shift;
@@ -385,14 +387,38 @@ struct RawstorFrameObjCreatedPayload {
     uint64_t map_epoch;
 } RAWSTOR_PACKED;
 
-/* OBJ_RESIZE response payload. */
-struct RawstorFrameObjResizedPayload {
-    uint64_t map_epoch;
+/*
+ * OBJ_RESIZE / OBJ_REMOVE / OBJ_SNAP_REMOVE request payload: the object,
+ * the op_id of this mutation, and the command's own argument (`val` = the
+ * new size for OBJ_RESIZE; `snapshot_id` = the version for
+ * OBJ_SNAP_REMOVE; unused fields are 0/nil).
+ */
+struct RawstorFrameObjOpPayload {
+    uint8_t id[16];
+    uint8_t op_id[16];
+    uint8_t snapshot_id[16];
+    uint64_t val;
+} RAWSTOR_PACKED;
+
+struct RawstorFrameObjOp {
+    struct RawstorFrameHead head;
+    struct RawstorFrameObjOpPayload payload;
 } RAWSTOR_PACKED;
 
 /*
- * OBJ_OPEN response payload: the descriptor followed by nchunks chunk
- * entries, each entry followed by its width slots
+ * OBJ_RESIZE response payload: `old_nchunks` is the chunk count the
+ * object grew from, so a retried resize still knows which chunks it has
+ * to materialize.
+ */
+struct RawstorFrameObjResizedPayload {
+    uint64_t map_epoch;
+    uint32_t old_nchunks;
+} RAWSTOR_PACKED;
+
+/*
+ * OBJ_OPEN (and OBJ_REMOVE: the map the object had, for the client's
+ * fan-out destroy of its chunks) response payload: the descriptor
+ * followed by nchunks chunk entries, each entry followed by its width slots
  * (RawstorFrameObjChunkEntry, then that many RawstorFrameObjChunkSlot
  * records).
  */
@@ -439,6 +465,7 @@ struct RawstorFrameObjChunkSlot {
 struct RawstorFrameObjSnapCommitPayload {
     uint8_t id[16];
     uint8_t snapshot_id[16];
+    uint8_t op_id[16];
     uint32_t nmembers;
 } RAWSTOR_PACKED;
 
@@ -471,10 +498,12 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAllocatePayload, 44);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameResponseBody, 12);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 60);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjPolicy, 19);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjCreatePayload, 44);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjCreatePayload, 60);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjOpPayload, 56);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjResizedPayload, 12);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjDescriptorPayload, 56);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjChunkSlot, 19);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjSnapCommitPayload, 36);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjSnapCommitPayload, 52);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjSnapMemberPayload, 24);
 
 #ifdef __cplusplus

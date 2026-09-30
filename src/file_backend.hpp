@@ -33,10 +33,12 @@ public:
 
     rawstd::Task<void> create(
         const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        RawstorMemberRole member_role, const RawstdUUID& op_id
     ) override;
 
-    rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset) override;
+    rawstd::Task<void> remove(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& op_id
+    ) override;
 
     // size comes straight from the object's own "data" file (stat());
     // the rest (member_role/width/chunk_size, plus the mirror consistency

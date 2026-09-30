@@ -32,6 +32,12 @@ struct WireMap {
     std::vector<std::vector<WireSlot>> chunks;
 };
 
+/* What OBJ_RESIZE did: the new map_epoch and the chunk count it grew from. */
+struct WireResized {
+    uint64_t map_epoch;
+    uint64_t old_nchunks;
+};
+
 /* One chunk copy holding a snapshot version. */
 struct WireSnapMember {
     uint64_t logical_index;
@@ -42,7 +48,10 @@ struct WireSnapMember {
  * Control-plane client for the object commands of an MDS
  * (docs/mds.md). One connection, plain request/response
  * exchanges (no pipelining: object operations are rare and serialized by
- * the caller).
+ * the caller). Every mutating call takes the caller's `op_id`, its
+ * idempotency key: resending a request with the same op_id (e.g. after a
+ * lost reply) gets the result of the first one, never a second
+ * application (docs/mds.md, "Idempotent mutations").
  */
 class Client final {
 private:
@@ -67,16 +76,18 @@ public:
     rawstd::Task<void> connect();
 
     rawstd::Task<uint64_t> create(
-        const RawstdUUID& id, uint64_t logical_size, uint64_t chunk_size,
-        const RawstorFrameObjPolicy& policy
+        const RawstdUUID& id, const RawstdUUID& op_id, uint64_t logical_size,
+        uint64_t chunk_size, const RawstorFrameObjPolicy& policy
     );
 
     rawstd::Task<WireMap>
     open(const RawstdUUID& id, const RawstdUUID& snapshot_id);
 
-    rawstd::Task<uint64_t> resize(const RawstdUUID& id, uint64_t new_size);
+    rawstd::Task<WireResized>
+    resize(const RawstdUUID& id, const RawstdUUID& op_id, uint64_t new_size);
 
-    rawstd::Task<void> remove(const RawstdUUID& id);
+    /* Returns the map the object had, for the fan-out destroy. */
+    rawstd::Task<WireMap> remove(const RawstdUUID& id, const RawstdUUID& op_id);
 
     /*
      * Registers the snapshot; snapshot_id is the caller's own already-
@@ -85,12 +96,14 @@ public:
      */
     rawstd::Task<uint64_t> snap_commit(
         const RawstdUUID& id, const RawstdUUID& snapshot_id,
-        const std::vector<WireSnapMember>& members
+        const RawstdUUID& op_id, const std::vector<WireSnapMember>& members
     );
 
     /* Unregisters and returns the member set for the fan-out destroy. */
-    rawstd::Task<std::vector<WireSnapMember>>
-    snap_remove(const RawstdUUID& id, const RawstdUUID& snapshot_id);
+    rawstd::Task<std::vector<WireSnapMember>> snap_remove(
+        const RawstdUUID& id, const RawstdUUID& snapshot_id,
+        const RawstdUUID& op_id
+    );
 };
 
 } // namespace mds

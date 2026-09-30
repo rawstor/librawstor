@@ -77,17 +77,20 @@ Backend::set_snapshot(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
-rawstd::Task<void>
-Backend::remove_snapshot(const RawstdUUID&, uint64_t, const RawstdUUID&) {
+rawstd::Task<void> Backend::remove_snapshot(
+    const RawstdUUID&, uint64_t, const RawstdUUID&, const RawstdUUID&
+) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
+rawstd::Task<void> Backend::create_snapshot(
+    const RawstdUUID&, uint64_t, const RawstdUUID&, const RawstdUUID&
+) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
 rawstd::Task<void>
-Backend::create_snapshot(const RawstdUUID&, uint64_t, const RawstdUUID&) {
-    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
-}
-
-rawstd::Task<void> Backend::resize(const RawstdUUID&, uint64_t, uint64_t) {
+Backend::resize(const RawstdUUID&, uint64_t, uint64_t, const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
