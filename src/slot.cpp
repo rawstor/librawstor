@@ -84,14 +84,15 @@ RawstdUUID new_idempotency_key() {
 // permanently lacks a capability (ENOTSUP -- e.g. create_snapshot()/a
 // non-nil snapshot_id to remove() on file:// or classic LVM, docs/mds.md's
 // "Snapshots": no retry will ever make a backend grow native CoW support
-// it doesn't have).
+// it doesn't have), or the server doesn't know the command at all (ENOSYS
+// -- e.g. an older rawstor-ost/rawstor-mds).
 // Anything else defaults to retryable -- safer to spend a few pointless
 // retries on a genuinely transient rejection we don't recognize than to
 // silently give up on one that would have gone away on its own (e.g.
 // EBUSY, ENOSPC, EIO).
 bool is_permanent_backend_error(int error) {
     return error == ENOENT || error == EEXIST || error == EINVAL ||
-           error == ENOTSUP;
+           error == ENOTSUP || error == ENOSYS;
 }
 
 // Binds `backend` to `id`/`offset`'s live version, or one previously

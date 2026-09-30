@@ -36,7 +36,10 @@ int info_trampoline(ssize_t result, void* data) {
 
 // Every OST in the topology's own used/total, asked concurrently and
 // summed: they are distinct stores, not mirrors of one. An OST that
-// doesn't answer is skipped (logged); none answering is ENOTCONN.
+// doesn't answer is skipped (logged here, in the MDS) rather than failing
+// the whole call: the MDS itself did answer, and any error would only send
+// the client retrying against it. An empty topology, or one with no OST
+// answering, sums to 0/0.
 rawstd::Task<RawstorLocationInfo>
 topology_info(RawIOQueue* queue, std::shared_ptr<const Topology> topology) {
     const std::vector<TopologyOST>& osts = topology->osts();
@@ -53,7 +56,6 @@ topology_info(RawIOQueue* queue, std::shared_ptr<const Topology> topology) {
     }
 
     RawstorLocationInfo ret{};
-    bool answered = false;
     for (size_t i = 0; i < osts.size(); ++i) {
         int error = results[i] < 0 ? -results[i] : 0;
         if (error == 0) {
@@ -70,12 +72,8 @@ topology_info(RawIOQueue* queue, std::shared_ptr<const Topology> topology) {
             );
             continue;
         }
-        answered = true;
         ret.used += infos[i].used;
         ret.total += infos[i].total;
-    }
-    if (!answered) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
     co_return ret;
 }
