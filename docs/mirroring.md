@@ -33,6 +33,27 @@ Each backend stores, next to the chunk's data, a metadata record (an extension o
 
 `STALE` is not stored — it is derived by comparing copies.
 
+A copy's life cycle (`STALE` included for clarity, though it is only ever
+derived):
+
+```mermaid
+stateDiagram-v2
+    direction TB
+    [*] --> CLEAN : created
+    CLEAN --> DIRTY : open for write (fsync before 1st ack)
+    DIRTY --> CLEAN : clean close (flush, fsync)
+    DIRTY --> STALE : write/session failure (F1, F6)
+    CLEAN --> STALE : missed writes while offline
+    STALE --> SYNCING : rejoin, resync starts (F7)
+    SYNCING --> SYNCING : crash mid-resync, restart (F8)
+    SYNCING --> DIRTY : resync done, source sync_id (IN-SYNC)
+    note right of STALE
+        derived, never stored:
+        an ancestor sync_id,
+        excluded from I/O
+    end note
+```
+
 At the API level (`include/rawstor/target.h`) this record is split by cost and mutability: `RawstorObjectSpec` (`size`, `width`) is the cheap, always-fail-over-safe half read by `rawstor_target_spec()`; `RawstorObjectSyncState` (`state`/`epoch`/`sync_id`/`sync_id_history`) is the mirror consistency half, read via `rawstor_target_meta()` (which returns both, composed as `RawstorObjectMeta{spec, sync_state}`, one entry per URI of the one chunk named by its own explicit `offset` parameter — unlike `spec()`'s single-answer fail-over, so a caller can see every copy of that chunk's own state; a URI that doesn't answer gets a zero-filled entry, see its own doc comment). The writer, `rawstor_target_set_member_sync_state()`, addresses one real member of one chunk at a time (its own `offset` and `member_index` parameters, the same order `meta()` reports that chunk's own members in), and is part of the public API too, but is a sharp tool: it exists for `rawstor-ost` (to relay an incoming `SET_SYNC_STATE` wire command to its own locally configured locations, one call per member), this project's own tests, and future tooling that already understands this model (e.g. `rawstor resolve`'s own split-brain recovery flow) — setting mirror consistency state by hand can desynchronize a target's copies in ways the library's own quorum/reconciliation logic isn't designed to recover from automatically, so it isn't meant for routine application use. On an `mds://` object target (docs/mds.md) — which has many chunks, each with its own slots, not addressable through any flat per-URI `_uris` list at all — both calls resolve `offset` to that object's own real chunk via a live MDS round trip first (`-ENOENT` if the object has no chunk there), then operate on that chunk's own real members exactly as for a plain target: the real per-chunk DIRTY/CLEAN state lives one level down, but is fully reachable through the object-level target, not synthesized.
 
 ### Comparison rules (at open)
@@ -43,6 +64,27 @@ At the API level (`include/rawstor/target.h`) this record is split by cost and m
 | `sync_id` of copy A appears in history of copy B | A is an ancestor → A is stale, resync A ← B |
 | Different `sync_id`s, neither is an ancestor of the other | **Split brain** — automatic resync forbidden. Unreachable through automatic paths thanks to quorum rules (below); kept as defense in depth |
 | `state == SYNCING` | Copy is untrusted (interrupted resync) — always stale |
+
+How the lineage decides it: copy B's `sync_id` is in copy A's history, so
+B is an ancestor (stale, resynced from A); copies A and C forked after
+`s2`, so neither is an ancestor of the other — split brain.
+
+```mermaid
+flowchart TB
+    s1(["sync_id s1"]) --> s2(["sync_id s2"])
+    s2 --> s3(["sync_id s3"])
+    s2 --> s4(["sync_id s4"])
+    A["copy A<br/>sync_id s3, history s2, s1"] -.-> s3
+    B["copy B<br/>sync_id s2"] -.-> s2
+    C["copy C<br/>sync_id s4, history s2, s1"] -.-> s4
+
+    classDef ok fill:#d4f7d4,stroke:#2e8b57
+    classDef stale fill:#fff4cc,stroke:#b8860b
+    classDef bad fill:#ffd6d6,stroke:#b22222
+    class A ok
+    class B stale
+    class C bad
+```
 
 ### Durability rule
 
@@ -62,6 +104,21 @@ Key invariant: **every acknowledged write exists on a set of copies that interse
 - **`sync_id_history` stays as defense in depth**: it catches consequences of a wrong manual force-open, an OST restored from backup, or bugs.
 - **Roadmap — MDS as witness.** A future MDS participates in quorum as a metadata-only member (stores `sync_id`/`epoch`, no data). This restores auto-start for 2 data mirrors with one OST down (2 of 3 votes). Not part of v1, but quorum rules and the metadata format are designed so a witness member fits without schema changes (quorum counts all members, including metadata-only ones).
 
+The open decision, put together:
+
+```mermaid
+flowchart TB
+    Open(["open(target)"]) --> Meta["read metadata of every copy"]
+    Meta --> Q{"reachable > N/2?"}
+    Q -- no --> NoQ["refused, ENOTCONN<br/>(force-open: manual only)"]
+    Q -- yes --> Cmp{"compare sync_id<br/>of reachable copies"}
+    Cmp -- "all equal" --> Same["identical: open"]
+    Cmp -- "one is an ancestor<br/>of another" --> Anc["newest wins,<br/>ancestors are STALE:<br/>open + online resync"]
+    Cmp -- "neither in the<br/>other's history" --> SB["split brain,<br/>ENOTRECOVERABLE<br/>(rawstor resolve)"]
+    Same --> Mark["mark every copy DIRTY (fsync)<br/>before the first write ack"]
+    Anc --> Mark
+```
+
 ---
 
 ## Write lifecycle (all mirrors healthy)
@@ -69,6 +126,35 @@ Key invariant: **every acknowledged write exists on a set of copies that interse
 1. **Open with write intent:** read metadata of all copies, verify identity, mark all copies `DIRTY` (fsync) before the first write is acknowledged.
 2. **Write:** fan out to all IN-SYNC mirrors, acknowledge when all complete.
 3. **Clean close:** flush data, set all copies `CLEAN` with the same `epoch`/`sync_id` (fsync).
+
+The same with a mirror failing mid-write (F1, N = 2):
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as caller
+    participant C as client (chunk)
+    participant A as mirror A
+    participant B as mirror B
+    C->>A: META
+    C->>B: META
+    Note over C: same sync_id: identical
+    C->>A: mark DIRTY (fsync)
+    C->>B: mark DIRTY (fsync)
+    App->>C: write
+    par fan out
+        C->>A: WRITE
+    and
+        C->>B: WRITE
+    end
+    A-->>C: ok
+    B--xC: error (F1)
+    Note over C: suspend acks
+    C->>A: epoch+1, new sync_id, old one to history (fsync)
+    Note over C: B is STALE, excluded from I/O
+    C-->>App: ack (resume acks)
+    Note over B,C: B returns later: online resync (F7)
+```
 
 ---
 
@@ -100,6 +186,33 @@ Requirements: no downtime, and regions already rewritten by the client onto all 
 3. A sweeper walks the bitmap: for each set bit it reads the chunk from a source mirror, writes it to the SYNCING copy, clears the bit. Rate limiting (option) protects foreground I/O.
 4. **Ordering hazard, sweeper × client write to the same chunk:** a per-chunk lock in client memory (single writer, cheap) — a client write to a chunk currently being copied waits for the chunk copy to finish (or vice versa). Otherwise the sweeper could overwrite a fresh client write with stale source data.
 5. Bitmap empty → drain in-flight I/O → the SYNCING copy's metadata is set to the source's `sync_id`/`epoch` (fsync) → the mirror is IN-SYNC.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as caller
+    participant C as client (bitmap, region locks)
+    participant Src as IN-SYNC mirror
+    participant Dst as SYNCING copy
+    Note over C: every bit set: whole chunk to copy
+    loop sweeper, for each set bit
+        C->>C: lock region
+        C->>Src: READ region
+        C->>Dst: WRITE region
+        C->>C: clear bit, unlock
+    end
+    App->>C: write covering a whole region
+    C->>C: wait for that region's lock
+    par
+        C->>Src: WRITE
+    and
+        C->>Dst: WRITE
+    end
+    C->>C: clear its bit (already identical)
+    Note over C: bitmap empty: drain in-flight I/O
+    C->>Dst: metadata = source sync_id / epoch (fsync)
+    Note over Dst: IN-SYNC, serves reads
+```
 
 If the client or the target OST crashes mid-resync, the copy remains `SYNCING` and the resync restarts from scratch (F8). A persistent write-intent bitmap (v2) makes it resumable and shrinks the F5 full resync to recently-touched regions.
 
