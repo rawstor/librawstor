@@ -422,9 +422,10 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     sync_state.sync_id_history[2] = 2;
     sync_state.sync_id_history[3] = 3;
 
-    rawstor::blk::Backend::ChunkIdentity identity;
+    rawstor::blk::Backend::ChunkIdentity identity{};
     identity.member_role = RAWSTOR_MEMBER_WITNESS;
     identity.width = 3;
+    identity.chunk_size = 0x1000;
 
     std::string encoded =
         rawstor::blk::Backend::meta_encode(sync_state, identity);
@@ -451,6 +452,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     );
     EXPECT_EQ(decoded_identity.member_role, identity.member_role);
     EXPECT_EQ(decoded_identity.width, identity.width);
+    EXPECT_EQ(decoded_identity.chunk_size, identity.chunk_size);
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_empty_string) {

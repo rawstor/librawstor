@@ -53,18 +53,6 @@ static void print_sync_id_history(
  * needs to cover one chunk's own width, not the whole object at once. */
 enum { MAX_MIRRORS = 256 };
 
-/* How many distinct chunks `target` actually has -- purely syntactic for
- * an ordinary target (rawstor_target_chunks(), no I/O, its own doc
- * comment), a real MDS round trip for an mds:// one. `op` is the same one
- * show_meta() below reuses for every chunk's own meta -- NULL/0 asks for
- * the count alone. */
-static ssize_t count_chunks(RawstorCliOp* op, const char* target) {
-    int sres = rawstor_target_chunks(
-        op->queue, target, NULL, 0, rawstor_cli_op_cb, op
-    );
-    return rawstor_cli_op_wait(op, sres);
-}
-
 static int
 show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
     struct RawstorObjectMeta metas[MAX_MIRRORS];
@@ -129,7 +117,7 @@ show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
     return EXIT_SUCCESS;
 }
 
-static int show_meta(const char* target, const struct RawstorObjectSpec* spec) {
+static int show_meta(const char* target) {
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);
     if (res < 0) {
@@ -137,7 +125,8 @@ static int show_meta(const char* target, const struct RawstorObjectSpec* spec) {
         return rawstd_exitcode_for_errno(-res);
     }
 
-    ssize_t chunk_count = count_chunks(&op, target);
+    uint64_t* offsets;
+    ssize_t chunk_count = rawstor_cli_op_chunks(&op, target, &offsets);
     if (chunk_count < 0) {
         fprintf(
             stderr, "rawstor_target_chunks() failed: %s\n",
@@ -148,13 +137,14 @@ static int show_meta(const char* target, const struct RawstorObjectSpec* spec) {
     }
 
     int ret = EXIT_SUCCESS;
-    for (uint64_t i = 0; i < (uint64_t)chunk_count; i++) {
-        ret = show_chunk_meta(&op, target, i * spec->chunk_size);
+    for (ssize_t i = 0; i < chunk_count; i++) {
+        ret = show_chunk_meta(&op, target, offsets[i]);
         if (ret != EXIT_SUCCESS) {
             break;
         }
     }
 
+    free(offsets);
     rawstor_cli_op_destroy(&op);
     return ret;
 }
@@ -191,5 +181,5 @@ int rawstor_cli_show(const char* target, int verbose) {
         return EXIT_SUCCESS;
     }
 
-    return show_meta(target, &spec);
+    return show_meta(target);
 }

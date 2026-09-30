@@ -237,28 +237,23 @@ rawstd::Task<void> Backend::list_chunks(
             // (RawstdUUIDString) -- a fixed prefix, since the UUID itself
             // already embeds dashes (8-4-4-4-12), unlike this backend's
             // own "-<offset>" suffix, which can't be told apart
-            // from those by splitting on the last '-' alone.
-            if (name.size() < 36) {
+            // from those by splitting on the last '-' alone. The suffix is
+            // mandatory: _lv_name() always writes it, so a bare-UUID LV is
+            // not one this backend could open.
+            if (name.size() <= 37 || name[36] != '-') {
                 continue;
             }
             std::string uuid_part = name.substr(0, 36);
-            uint64_t offset = 0;
-            if (name.size() > 36) {
-                if (name[36] != '-') {
-                    continue;
-                }
-                // Anything left over after the hex digits (an LV name this
-                // backend never creates itself, but lvs -- reports whatever
-                // exists in the VG) is rejected rather than silently
-                // truncated to whatever prefix strtoull() did parse.
-                char* endptr = nullptr;
+            // Anything left over after the hex digits (an LV name this
+            // backend never creates itself, but lvs -- reports whatever
+            // exists in the VG) is rejected rather than silently
+            // truncated to whatever prefix strtoull() did parse.
+            char* endptr = nullptr;
+            errno = 0;
+            uint64_t offset = strtoull(name.c_str() + 37, &endptr, 16);
+            if (errno != 0 || endptr == name.c_str() + 37 || *endptr != '\0') {
                 errno = 0;
-                offset = strtoull(name.c_str() + 37, &endptr, 16);
-                if (errno != 0 || endptr == name.c_str() + 37 ||
-                    *endptr != '\0') {
-                    errno = 0;
-                    continue;
-                }
+                continue;
             }
 
             RawstdUUID uuid;

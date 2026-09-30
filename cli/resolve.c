@@ -209,9 +209,9 @@ static int resolve_chunk(
             return rawstd_exitcode_for_errno((int)-sresult);
         }
 
-        /* sync_id in hex, epoch in decimal -- same base each one is
-         * displayed in everywhere else (rawstor show -v, meta_encode()'s
-         * own on-disk encoding). */
+        /* sync_id in hex, as rawstor show -v and meta_encode()'s on-disk
+         * encoding print it; epoch in decimal, as rawstor show -v prints
+         * it. */
         printf(
             "chunk[%llx]: mirror[%zu] is now authoritative: sync_id %llx "
             "-> %llx, epoch %llu -> %llu\n",
@@ -229,25 +229,6 @@ static int resolve_chunk(
     );
 
     return EXIT_SUCCESS;
-}
-
-/* How many distinct chunks `target` actually has -- purely syntactic for
- * an ordinary target (rawstor_target_chunks(), no I/O, its own doc
- * comment), a real MDS round trip for an mds:// one. Own self-contained
- * queue, same convention as resolve_chunk() below. */
-static ssize_t count_chunks(const char* target) {
-    RawstorCliOp op;
-    int res = rawstor_cli_op_init(&op);
-    if (res < 0) {
-        return res;
-    }
-
-    int sres = rawstor_target_chunks(
-        op.queue, target, NULL, 0, rawstor_cli_op_cb, &op
-    );
-    ssize_t result = rawstor_cli_op_wait(&op, sres);
-    rawstor_cli_op_destroy(&op);
-    return result;
 }
 
 int rawstor_cli_resolve(
@@ -277,7 +258,14 @@ int rawstor_cli_resolve(
         return resolve_chunk(target, winners, num_winners, offset);
     }
 
-    ssize_t chunk_count = count_chunks(target);
+    res = rawstor_cli_op_init(&op);
+    if (res < 0) {
+        fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
+        return rawstd_exitcode_for_errno(-res);
+    }
+    uint64_t* offsets;
+    ssize_t chunk_count = rawstor_cli_op_chunks(&op, target, &offsets);
+    rawstor_cli_op_destroy(&op);
     if (chunk_count < 0) {
         fprintf(
             stderr, "rawstor_target_chunks() failed: %s\n",
@@ -286,12 +274,13 @@ int rawstor_cli_resolve(
         return rawstd_exitcode_for_errno((int)-chunk_count);
     }
 
-    for (uint64_t i = 0; i < (uint64_t)chunk_count; i++) {
-        int ret =
-            resolve_chunk(target, winners, num_winners, i * spec.chunk_size);
+    int ret = EXIT_SUCCESS;
+    for (ssize_t i = 0; i < chunk_count; i++) {
+        ret = resolve_chunk(target, winners, num_winners, offsets[i]);
         if (ret != EXIT_SUCCESS) {
-            return ret;
+            break;
         }
     }
-    return EXIT_SUCCESS;
+    free(offsets);
+    return ret;
 }

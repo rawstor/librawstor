@@ -50,6 +50,18 @@ RawstorFrameObjPolicy policy_of(const RawstorObjectSpec& sp) {
     return ret;
 }
 
+// A chunk slot's own bare location -- no object identity of its own
+// appended yet. Chunk::create()/resolve_meta() (like Target's own direct
+// Slot lookups) take bare locations and the identity (id/offset) as
+// separate parameters instead of a single identity-bearing URI.
+rawstd::URI slot_location(const WireSlot& slot) {
+    if (slot.location.empty()) {
+        rawstd_error("Chunk slot without a resolved OST location\n");
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    return rawstd::URI(slot.location);
+}
+
 // One chunk slot's own target URI: "<uuid>/<offset>[/<snapshot_id>]"
 // (Target's own doc comment) -- `uuid` is the whole object's own id,
 // unchanged for every one of its chunks (docs/mds.md, "Chunk identity":
@@ -65,18 +77,6 @@ RawstorFrameObjPolicy policy_of(const RawstorObjectSpec& sp) {
 // reads back, omitted when nil (live). Throws if the MDS could not
 // resolve the OST: refuse loudly instead of silently opening
 // under-protected.
-// A chunk slot's own bare location -- no object identity of its own
-// appended yet. Chunk::create()/meta() (like Target's own direct
-// Slot lookups) take bare locations and the identity (id/offset) as
-// separate parameters instead of a single identity-bearing URI.
-rawstd::URI slot_location(const WireSlot& slot) {
-    if (slot.location.empty()) {
-        rawstd_error("Chunk slot without a resolved OST location\n");
-        RAWSTD_THROW_SYSTEM_ERROR(EIO);
-    }
-    return rawstd::URI(slot.location);
-}
-
 rawstd::URI chunk_slot_target(
     const RawstdUUID& id, uint64_t index, const WireSlot& slot,
     uint64_t chunk_size, const RawstdUUID& snapshot_id = {}
@@ -96,7 +96,7 @@ rawstd::URI chunk_slot_target(
 }
 
 // Every real member's own bare location of the chunk at `index` -- for
-// Backend::meta()'s own fan-out below, unlike chunk_targets() below
+// Backend::meta()/resolve_locations() below, unlike chunk_targets() below
 // (identity-bearing target URIs, for the client-facing multi-chunk
 // Target build_target_uris() builds).
 std::vector<rawstd::URI> chunk_locations(const WireMap& map, uint64_t index) {
@@ -106,33 +106,6 @@ std::vector<rawstd::URI> chunk_locations(const WireMap& map, uint64_t index) {
         ret.push_back(slot_location(slot));
     }
     return ret;
-}
-
-// One real member's own worth of Backend::meta()'s own fan-out below:
-// connect a single-backend Slot just for this call, meta() it, close it
-// again -- same one-off connect/close shape Target's own resolve_meta()
-// uses directly for a plain target's mirror set (target.cpp), duplicated
-// here rather than shared: `location` is already a bare, resolved OST
-// location by the time chunk_locations() above builds it, with nothing
-// left of this class's own WireMap resolution for a shared helper to
-// still do.
-rawstd::Task<std::vector<RawstorObjectMeta>> member_meta_one(
-    rawio::Queue& queue, rawstd::URI location, RawstdUUID id, uint64_t offset
-) {
-    std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, location, 1);
-    std::vector<RawstorObjectMeta> ret;
-    std::exception_ptr error;
-    try {
-        ret = co_await slot->meta(id, offset);
-    } catch (...) {
-        error = std::current_exception();
-    }
-    co_await slot->close();
-    if (error) {
-        std::rethrow_exception(error);
-    }
-    co_return ret;
 }
 
 // `offset` resolved to its own real chunk index -- shared by meta()/
@@ -169,10 +142,9 @@ std::vector<rawstd::URI> chunk_targets(
 RawstorObjectSpec chunk_spec(const WireMap& map) {
     RawstorObjectSpec sp{};
     sp.size = map.chunk_size;
-    // The chunk's own placement identity: the target string's own
-    // id/offset segment (chunk_slot_target() above) -- no separate
-    // id/logical_index/snapshot_id fields to stamp here any more (see
-    // RawstorObjectSpec's own doc comment in target.h). member_role
+    // The chunk's own placement identity is the target string's own
+    // id/offset segment (chunk_slot_target() above), not a field of the
+    // spec (RawstorObjectSpec's own doc comment in target.h). member_role
     // itself lives on RawstorObjectMeta, not here (its own doc comment)
     // -- create_one() (target.cpp) always creates RAWSTOR_MEMBER_DATA.
     sp.chunk_size = map.chunk_size;
@@ -535,40 +507,20 @@ rawstd::Task<void> Backend::_remove_snapshot(
 
 // Resolves `offset` to one of this object's own real chunks, then
 // queries every one of that chunk's own real member locations
-// concurrently (chunk_locations() above builds them) -- same "every
-// location queried, none skipped for an earlier one's failure, a
-// zero-filled entry for one that doesn't answer" convention as Target's
-// own resolve_meta() (target.cpp's own doc comment); every location
-// here is already a bare ost:// member, never itself mds://, so there's
-// no further flattening to do. `offset` not landing on a real chunk
-// boundary (including a WireMap whose own chunk_size is somehow 0) is
-// -ENOENT, same as a plain target's own chunk_uris_at_offset()
-// (target.cpp) finding no chunk there.
+// concurrently through Target's own resolve_meta() (target.cpp): every
+// location queried, a zero-filled entry for one that doesn't answer.
+// Every location here is already a bare ost:// member, never itself
+// mds://, so there's no further flattening to do. `offset` not landing on a
+// real chunk boundary (including a WireMap whose own chunk_size is somehow 0)
+// is -ENOENT, same as a plain target's own chunk_uris_at_offset() (target.cpp)
+// finding no chunk there.
 rawstd::Task<std::vector<RawstorObjectMeta>>
 Backend::meta(const RawstdUUID& id, uint64_t offset) {
     WireMap map = co_await _client.open(id, RawstdUUID{});
     uint64_t index = chunk_index_at(map, offset);
-    std::vector<rawstd::URI> locations = chunk_locations(map, index);
-
-    std::vector<rawstd::Task<std::vector<RawstorObjectMeta>>> tasks;
-    tasks.reserve(locations.size());
-    for (const auto& location : locations) {
-        tasks.push_back(member_meta_one(_queue, location, id, offset));
-    }
-
-    std::vector<RawstorObjectMeta> ret;
-    ret.reserve(locations.size());
-    for (size_t i = 0; i < tasks.size(); ++i) {
-        try {
-            std::vector<RawstorObjectMeta> ms = co_await tasks[i];
-            ret.insert(ret.end(), ms.begin(), ms.end());
-        } catch (const std::system_error& e) {
-            rawstd_warning("Mirror member unreachable: %s\n", e.what());
-            ret.push_back(RawstorObjectMeta{});
-        }
-    }
-
-    co_return ret;
+    co_return co_await resolve_meta(
+        _queue, chunk_locations(map, index), id, offset
+    );
 }
 
 rawstd::Task<std::vector<rawstd::URI>>
@@ -581,7 +533,8 @@ Backend::resolve_locations(const RawstdUUID& id, uint64_t offset) {
 rawstd::Task<void> Backend::set_sync_state(
     const RawstdUUID&, uint64_t, const RawstorObjectSyncState&
 ) {
-    // No-op, for the same reason meta() above is synthetic.
+    // No-op: every real per-chunk sync state is persisted by the member's
+    // own backend (mds_backend.hpp's own comment).
     co_return;
 }
 

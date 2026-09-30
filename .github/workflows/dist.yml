@@ -344,7 +344,10 @@ jobs:
     - name: test-rawstor-vhost
       run: |
         TARGET=$(rawstor create --size=1M --mirrors=1 ost://127.0.0.1:7777)
-        UUID=${TARGET##*/}
+        # TARGET is ost://host:port/<uuid>/<offset> -- the uuid is the
+        # second-to-last path segment.
+        CHUNK=${TARGET%/*}
+        UUID=${CHUNK##*/}
         sudo systemctl enable --now rawstor-vhost@${UUID}.service
         sleep 1
         systemctl is-active rawstor-vhost@${UUID}.service

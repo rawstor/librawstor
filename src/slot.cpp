@@ -762,10 +762,19 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // location, so any one of them answers the same as the rest --
     // set_object() itself doesn't return it (see its own doc comment),
     // so this is always its own separate call, win or lose above.
-    // meta()'s own first entry is this location's own answer (its own
-    // doc comment) -- it never comes back empty without having already
-    // thrown (Backend::meta()'s own contract).
+    // meta() never comes back empty without having already thrown
+    // (Backend::meta()'s own contract). Its first answering entry is this
+    // location's own answer: one entry for every backend but
+    // mds::Backend, whose per-member list may lead with an unreachable
+    // (zero-filled) member.
     std::vector<RawstorObjectMeta> metas = co_await meta(id, offset);
+    const RawstorObjectMeta* answer = &metas.front();
+    for (const RawstorObjectMeta& m : metas) {
+        if (m.sync_state.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+            answer = &m;
+            break;
+        }
+    }
 
     // A witness holds no data and is never a valid target for real I/O
     // (docs/mds.md, "Witness (stage 3)": "data I/O and resync skip it")
@@ -778,7 +787,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // all -- it talks to meta()/chunks()/resolve_locations() directly on
     // a Slot that was never open()ed -- so a witness stays fully
     // queryable; only a real data open is refused.
-    if (metas.front().member_role == RAWSTOR_MEMBER_WITNESS) {
+    if (answer->member_role == RAWSTOR_MEMBER_WITNESS) {
         RawstdUUIDString id_string;
         rawstd_uuid_to_string(&id, &id_string);
         rawstd_error(
@@ -789,7 +798,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
 
-    co_return metas.front();
+    co_return *answer;
 }
 
 rawstd::Task<void> Slot::close() {

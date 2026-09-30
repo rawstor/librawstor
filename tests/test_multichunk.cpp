@@ -16,12 +16,14 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cerrno>
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace {
@@ -217,4 +219,213 @@ TEST(MultiChunkTest, preadv_pwritev_across_chunk_boundary) {
 
     run(*queue, object->close());
     run(*queue, target.remove(*queue));
+}
+
+// meta()/set_member_sync_state() address the chunk named by their own
+// offset: a nonzero one reaches the second chunk only, and an offset with
+// no chunk behind it is ENOENT.
+TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_offset) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    const uint64_t chunk_size = 64 * 1024;
+    rawstor::Target target(two_chunk_target(location, uuid_string, chunk_size));
+
+    RawstorObjectSpec spec{
+        .size = 2 * chunk_size,
+        .width = 1,
+        .chunk_size = chunk_size,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    run(*queue, target.create(*queue, spec));
+
+    std::vector<RawstorObjectMeta> metas =
+        run(*queue, target.meta(*queue, chunk_size));
+    ASSERT_EQ(metas.size(), 1u);
+    EXPECT_EQ(metas[0].spec.size, chunk_size);
+    EXPECT_EQ(metas[0].spec.chunk_size, chunk_size);
+
+    RawstorObjectSyncState sync_state = metas[0].sync_state;
+    sync_state.epoch += 1;
+    sync_state.sync_id = 0x1234;
+    sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    run(*queue,
+        target.set_member_sync_state(*queue, chunk_size, 0, sync_state));
+
+    metas = run(*queue, target.meta(*queue, chunk_size));
+    ASSERT_EQ(metas.size(), 1u);
+    EXPECT_EQ(metas[0].sync_state.sync_id, 0x1234u);
+    EXPECT_EQ(metas[0].sync_state.epoch, sync_state.epoch);
+
+    // Chunk 0 keeps its own state.
+    metas = run(*queue, target.meta(*queue, 0));
+    ASSERT_EQ(metas.size(), 1u);
+    EXPECT_NE(metas[0].sync_state.sync_id, 0x1234u);
+
+    try {
+        run(*queue, target.meta(*queue, 3 * chunk_size));
+        ADD_FAILURE() << "meta() at an offset with no chunk succeeded";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOENT);
+    }
+    try {
+        run(*queue, target.set_member_sync_state(
+                        *queue, 3 * chunk_size, 0, sync_state
+                    ));
+        ADD_FAILURE()
+            << "set_member_sync_state() at an offset with no chunk succeeded";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOENT);
+    }
+
+    run(*queue, target.remove(*queue));
+}
+
+// open() checks every chunk of a multi-chunk target sits at its expected
+// position, the last one included: chunks at 0 and 2 * chunk_size would
+// otherwise route logical chunk 1 to the physical chunk at 2 * chunk_size.
+TEST(MultiChunkTest, open_rejects_misplaced_last_chunk) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    const uint64_t chunk_size = 64 * 1024;
+    rawstd::URI id_uri(location, uuid_string);
+    rawstor::Target target(
+        std::vector<rawstd::URI>{
+            rawstd::URI(id_uri, "0"),
+            rawstd::URI(id_uri, hex_offset(2 * chunk_size))
+        }
+    );
+
+    RawstorObjectSpec spec{
+        .size = 3 * chunk_size,
+        .width = 1,
+        .chunk_size = chunk_size,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    run(*queue, target.create(*queue, spec));
+
+    try {
+        run(*queue, target.open(*queue, 0));
+        ADD_FAILURE() << "open() accepted a misplaced last chunk";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EINVAL);
+    }
+
+    run(*queue, target.remove(*queue));
+}
+
+// A single-URI target is one chunk whatever its chunk_size policy: its
+// size is that chunk's own size, not chunk_size times one.
+TEST(MultiChunkTest, single_uri_target_with_chunk_size_below_size) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    const uint64_t chunk_size = 64 * 1024;
+    const uint64_t total_size = 4 * chunk_size;
+    rawstor::Target target(
+        std::vector<rawstd::URI>{rawstd::URI(location, uuid_string)}
+    );
+
+    RawstorObjectSpec spec{
+        .size = total_size,
+        .width = 1,
+        .chunk_size = chunk_size,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    run(*queue, target.create(*queue, spec));
+
+    RawstorObjectSpec got = run(*queue, target.spec(*queue));
+    EXPECT_EQ(got.size, total_size);
+
+    std::unique_ptr<rawstor::Object> object =
+        run(*queue, target.open(*queue, 0));
+    std::vector<char> pattern(16, 'x');
+    size_t written =
+        run(*queue, object->pwrite(
+                        pattern.data(), pattern.size(),
+                        static_cast<off_t>(2 * chunk_size), /*sync=*/true
+                    ));
+    EXPECT_EQ(written, pattern.size());
+    run(*queue, object->close());
+
+    run(*queue, target.remove(*queue));
+}
+
+// Target::create() width rules: never 0, never above what the wire can
+// carry, and exactly the URI count for a multi-URI mirror set -- which is
+// then what every copy's own META reports.
+TEST(TargetCreateTest, width_rules) {
+    rawstor::tests::TmpDir dir1;
+    rawstor::tests::TmpDir dir2;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    rawstor::Target single(
+        std::vector<rawstd::URI>{
+            rawstd::URI(rawstd::URI(dir1.uri()), uuid_string)
+        }
+    );
+    rawstor::Target mirrored(
+        std::vector<rawstd::URI>{
+            rawstd::URI(rawstd::URI(dir1.uri()), uuid_string),
+            rawstd::URI(rawstd::URI(dir2.uri()), uuid_string)
+        }
+    );
+
+    RawstorObjectSpec spec{
+        .size = 64 * 1024,
+        .width = 0,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+
+    auto expect_einval = [&](const rawstor::Target& target, unsigned width) {
+        spec.width = width;
+        try {
+            run(*queue, target.create(*queue, spec));
+            ADD_FAILURE() << "create() accepted width " << width;
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), EINVAL);
+        }
+    };
+    expect_einval(single, 0);
+    expect_einval(single, 256);
+    expect_einval(mirrored, 1);
+
+    spec.width = 2;
+    run(*queue, mirrored.create(*queue, spec));
+    std::vector<RawstorObjectMeta> metas =
+        run(*queue, mirrored.meta(*queue, 0));
+    ASSERT_EQ(metas.size(), 2u);
+    EXPECT_EQ(metas[0].spec.width, 2u);
+    EXPECT_EQ(metas[1].spec.width, 2u);
+
+    run(*queue, mirrored.remove(*queue));
 }

@@ -385,13 +385,17 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     case RAWSTOR_CMD_OBJ_SNAP_COMMIT: {
         RawstorFrameObjSnapCommitPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
-        std::vector<RawstorFrameObjSnapMemberPayload> wire_members(
-            payload.nmembers
-        );
-        if (payload.nmembers > 0) {
+        // Grown batch by batch as member records actually arrive, never
+        // sized by the peer-supplied count up front: a bogus nmembers
+        // can't force an allocation bigger than what was really sent.
+        std::vector<RawstorFrameObjSnapMemberPayload> wire_members;
+        while (wire_members.size() < payload.nmembers) {
+            size_t done = wire_members.size();
+            size_t n = std::min<size_t>(256, payload.nmembers - done);
+            wire_members.resize(done + n);
             co_await recv_all(
-                queue, fd, wire_members.data(),
-                wire_members.size() * sizeof(RawstorFrameObjSnapMemberPayload)
+                queue, fd, wire_members.data() + done,
+                n * sizeof(RawstorFrameObjSnapMemberPayload)
             );
         }
         int32_t res = 0;

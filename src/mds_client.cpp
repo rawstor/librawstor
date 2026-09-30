@@ -58,7 +58,7 @@ RawstdUUID uuid_from_bytes(const uint8_t bytes[16]) {
 
 // Deserializes an OBJ_OPEN response payload (descriptor + per-chunk
 // entries + slots -- docs/mds.md, "Wire protocol"; the exact inverse of
-// mds/session.cpp's encode_object_map()) into a WireMap.
+// mds/client.cpp's encode_object_map()) into a WireMap.
 WireMap decode_object_map(const std::vector<unsigned char>& data) {
     WireMap map;
     size_t off = 0;
@@ -86,15 +86,20 @@ WireMap decode_object_map(const std::vector<unsigned char>& data) {
     map.chunk_size = 1ull << descriptor.chunk_shift;
     map.policy = descriptor.policy;
     map.map_epoch = descriptor.map_epoch;
+    // Every chunk entry takes at least sizeof(RawstorFrameObjChunkEntry)
+    // bytes, so a count the remaining payload can't hold is malformed --
+    // rejected before it sizes an allocation.
+    if (descriptor.nchunks >
+        (data.size() - off) / sizeof(RawstorFrameObjChunkEntry)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
     map.chunks.resize(descriptor.nchunks);
 
     for (uint32_t i = 0; i < descriptor.nchunks; ++i) {
         RawstorFrameObjChunkEntry entry;
         take(&entry, sizeof(entry));
-        // entry.width is all this carries now (RawstorFrameObjChunkEntry's
-        // own doc comment) -- v1 never opens anything but the live view
-        // per chunk, so there was never a distinct per-chunk snapshot_id to
-        // decode here in the first place.
+        // entry.width is all an entry carries: a chunk is always opened at
+        // the object's own version, so there is no per-chunk snapshot_id.
 
         std::vector<WireSlot>& slots = map.chunks[i];
         slots.resize(entry.width);

@@ -182,11 +182,16 @@ Chunk::~Chunk() {
 // Slot::create()'s own backend pool.
 namespace {
 
+// An mds:// location gets exactly one backend: each mds::Backend opens
+// its own nested whole-object Target (with its own mirror state machine
+// per chunk), so a pool of them would run several independent state
+// machines over the same members. Its inner per-OST slots are pooled
+// as usual.
 rawstd::Task<std::unique_ptr<rawstor::Slot>>
 connect_one(rawio::Queue& queue, const rawstd::URI& location) {
-    co_return co_await rawstor::Slot::create(
-        queue, location, rawstor_opts_sessions()
-    );
+    unsigned int sessions =
+        location.scheme() == "mds" ? 1 : rawstor_opts_sessions();
+    co_return co_await rawstor::Slot::create(queue, location, sessions);
 }
 
 // F10 (docs/mirroring.md): a member whose own copy is missing
@@ -201,7 +206,7 @@ connect_one(rawio::Queue& queue, const rawstd::URI& location) {
 // held data, so that stays an error rather than a silent blank chunk.
 // Never for a read-only open (it writes nothing) or a bound snapshot
 // version (a CoW version can't be regenerated from live data). A member
-// whose recreate fails just stays unreachable, as before.
+// whose recreate fails just stays unreachable.
 rawstd::Task<void> recreate_missing(
     rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
     const RawstdUUID& id, uint64_t offset, int flags,
@@ -284,24 +289,17 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     const RawstdUUID& id, uint64_t offset, int flags,
     const RawstdUUID& snapshot_id
 ) {
-    // Same two checks a Target's own constructor used to run on its own
-    // uris on this factory's behalf -- now run here instead, since
-    // Object's own lazy per-chunk opening (and tests/) call this
-    // directly, without a Target in between to have validated the list
-    // already. Nothing left to check that every location agrees on one
-    // identity: a bare location carries none -- `id`/`offset`/`snapshot_id`
-    // are already single, explicit parameters here, not derived from
-    // `locations` itself.
+    // Object's lazy per-chunk opening and tests/ call this directly, so
+    // the location list is validated here. Identity needs no check: it
+    // arrives as the explicit `id`/`offset`/`snapshot_id` parameters.
     validate_not_empty(locations);
     validate_different_uris(locations);
 
     // Every location's Slot goes out concurrently instead of one at a
-    // time -- just Slot::create(), kept in a plain local vector
-    // (parallel to `locations`, not the eventual member list yet: that's
-    // assembled only once spec()/open() below have actually run -- see
-    // their own comments on why member count/identity isn't simply
-    // locations.size()). connect_one()'s own comment on why SET_OBJECT
-    // is a separate, later step.
+    // time -- just Slot::create(), kept in a plain local vector parallel
+    // to `locations`; the Member list is built from it only once every
+    // connect/open below has settled. connect_one()'s own comment on why
+    // SET_OBJECT is a separate, later step.
     std::vector<rawstd::Task<std::unique_ptr<Slot>>> connect_tasks;
     connect_tasks.reserve(locations.size());
     for (const auto& location : locations) {
@@ -486,31 +484,14 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         RAWSTD_THROW_SYSTEM_ERROR(all_missing ? ENOENT : ENOTCONN);
     }
 
-    // Born degraded: this chunk's own membership (`locations`, the
-    // caller's own mirror set) already has fewer slots than the
-    // target's own configured redundancy -- checked once, here, against
-    // the first reachable member's own META answer (every member of the
-    // same chunk agrees on it by construction, so one answer is
-    // enough). An unreachable member's own meta is zero-filled, not a
-    // real answer, so it's skipped by its own `reachable` flag rather
-    // than inferred from a width of 0 -- Target::create() never
-    // persists that for a real target, width is always the caller's
-    // own explicit, non-zero choice. Unlike `spec.width` itself, this
-    // is purely a warning: the constructor's own quorum/shortcut logic
-    // below is keyed off `_members.size()`, not `spec.width`, so a
-    // caller opening fewer locations than the configured policy still
-    // gets a working Chunk, just a degraded one.
-    for (const Member& m : members) {
-        if (!m.reachable) {
-            continue;
-        }
-        if (members.size() < m.meta.spec.width) {
-            rawstd_warning(
-                "Chunk opened degraded: %zu of %u slots\n", members.size(),
-                m.meta.spec.width
-            );
-        }
-        break;
+    // Born degraded: fewer locations than the chunk's configured width
+    // (`spec`, the first reachable member's META). Only a warning --
+    // quorum logic is keyed off _members.size(), not spec.width.
+    if (members.size() < spec.width) {
+        rawstd_warning(
+            "Chunk opened degraded: %zu of %u slots\n", members.size(),
+            spec.width
+        );
     }
 
     // Everything Chunk needs to exist is gathered -- deciding whether

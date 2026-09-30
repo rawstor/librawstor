@@ -27,6 +27,7 @@
 #include <vector>
 
 #include <cerrno>
+#include <cstdint>
 #include <cstdio>
 
 namespace {
@@ -439,6 +440,10 @@ rawstd::Task<RawstorObjectSpec> resolve_spec(
     RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
 }
 
+} // namespace
+
+namespace rawstor {
+
 // Unlike resolve_spec() above, every location is queried, not just the
 // first reachable one: a caller asking for mirror consistency state
 // wants to see each copy's own state (docs/mirroring.md), not one
@@ -485,8 +490,12 @@ rawstd::Task<std::vector<RawstorObjectMeta>> resolve_meta(
     co_return ret;
 }
 
+} // namespace rawstor
+
+namespace {
+
 // Every distinct chunk offset the object at `id` actually has,
-// backend-verified (rawstor_target_chunks(), Backend::chunks()'s own doc
+// backend-verified (rawstor_target_chunks(), Backend::list_chunks()'s own doc
 // comment) -- same first-reachable-wins fail-over tolerance as
 // resolve_spec() above, since every location of one chunk answers the
 // same either way (this is a property of the chunk/object as a whole,
@@ -662,12 +671,11 @@ rawstd::DetachedTask launch_remove_op_coro(
 // step, once `t` is already the exact target to snapshot (rawstor_target_
 // create_snapshot() itself resolves the version id and, unless `t` was
 // already bound, splices it onto every URI -- so `t` here is always
-// already bound, and t.create_snapshot(queue) below always takes its own
-// already-bound branch). `length` is threaded through as the success
-// result -- rawstor_target_create_snapshot() keeps its snprintf()-style
-// contract (the resulting target string's length, always < the buffer
-// size on success) even though the actual snapshot is asynchronous, same
-// shape as location.cpp's own launch_create_op_coro() for
+// already bound, as t.create_snapshot(queue) below requires). `length` is
+// threaded through as the success result -- rawstor_target_create_snapshot()
+// keeps its snprintf()-style contract (the resulting target string's length,
+// always < the buffer size on success) even though the actual snapshot is
+// asynchronous, same shape as location.cpp's own launch_create_op_coro() for
 // rawstor_location_create().
 rawstd::DetachedTask launch_create_snapshot_op_coro(
     rawstor::Target t, rawio::Queue* queue, ssize_t length,
@@ -1032,7 +1040,12 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     // before any I/O at all. A chunk with more than one URI is
     // unambiguously an ordinary mirror set and must match sp.width
     // exactly; a lone URI's own width is the caller's chosen redundancy
-    // (never 0).
+    // (never 0). Every persisted/wire width is a uint8_t, so anything
+    // wider is rejected rather than silently truncated.
+    if (sp.width > UINT8_MAX) {
+        rawstd_error("Spec width (%u) is too large\n", sp.width);
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     for (const std::vector<rawstd::URI>& chunk_uris : chunks) {
         if (chunk_uris.size() > 1) {
             if (sp.width != chunk_uris.size()) {
@@ -1160,85 +1173,56 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     }
 }
 
-rawstd::Task<RawstdUUID> Target::create_snapshot(rawio::Queue& queue) const {
-    if (!rawstd_uuid_is_nil(&_snapshot_id)) {
-        // `this` already names a specific version -- nothing to generate;
-        // take the CoW snapshot as that exact version directly, on every
-        // URI of every chunk, so the version covers the whole object.
-        // ENOTSUP on a backend without native CoW (file://, classic LVM).
-        //
-        // Every URI is attempted even if an earlier one fails, the first
-        // error encountered reported -- but this can't just gather() them:
-        // on failure, the URIs THIS call did snapshot are rolled back (same
-        // reasoning as create()'s own rollback), or a partial failure would
-        // leave snapshots behind that nobody knows about. The URI that
-        // failed is not rolled back, since it may name a pre-existing
-        // snapshot this call didn't create.
-        std::vector<rawstd::Task<void>> tasks;
-        tasks.reserve(_uris.size());
-        for (const auto& uri : _uris) {
-            tasks.push_back(create_snapshot_one(queue, uri, _snapshot_id));
-        }
-
-        // co_await isn't allowed inside a catch block, so the failure is
-        // only recorded here; rolling back happens just below.
-        std::vector<rawstd::URI> created;
-        std::exception_ptr eptr;
-        for (size_t i = 0; i < _uris.size(); ++i) {
-            try {
-                co_await tasks[i];
-                created.push_back(_uris[i]);
-            } catch (...) {
-                if (!eptr) {
-                    eptr = std::current_exception();
-                }
-            }
-        }
-
-        if (eptr) {
-            if (!created.empty()) {
-                try {
-                    co_await remove_many(queue, created);
-                } catch (const std::exception& e) {
-                    rawstd_error(
-                        "Failed to rollback create_snapshot operation: %s\n",
-                        e.what()
-                    );
-                }
-            }
-            std::rethrow_exception(eptr);
-        }
-        co_return _snapshot_id;
-    }
-
-    RawstdUUID id;
-    int res = rawstd_uuid7_init(&id);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    co_await create_snapshot(queue, id);
-    co_return id;
-}
-
-rawstd::Task<void> Target::create_snapshot(
-    rawio::Queue& queue, const RawstdUUID& snapshot_id
-) const {
-    if (!rawstd_uuid_is_nil(&_snapshot_id)) {
+rawstd::Task<void> Target::create_snapshot(rawio::Queue& queue) const {
+    if (rawstd_uuid_is_nil(&_snapshot_id)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    RawstdUUIDString snapshot_id_string;
-    rawstd_uuid_to_string(&snapshot_id, &snapshot_id_string);
-
-    std::vector<rawstd::URI> uris;
-    uris.reserve(_uris.size());
+    // Take the CoW snapshot as that exact version on every URI, so the
+    // version covers the whole chunk. ENOTSUP on a backend without native
+    // CoW (file://, classic LVM).
+    //
+    // Every URI is attempted even if an earlier one fails, the first
+    // error encountered reported -- but this can't just gather() them:
+    // on failure, the URIs THIS call did snapshot are rolled back (same
+    // reasoning as create()'s own rollback), or a partial failure would
+    // leave snapshots behind that nobody knows about. The URI that
+    // failed is not rolled back, since it may name a pre-existing
+    // snapshot this call didn't create.
+    std::vector<rawstd::Task<void>> tasks;
+    tasks.reserve(_uris.size());
     for (const auto& uri : _uris) {
-        uris.emplace_back(uri, std::string(snapshot_id_string));
+        tasks.push_back(create_snapshot_one(queue, uri, _snapshot_id));
     }
 
-    Target snap_target(uris);
-    co_await snap_target.create_snapshot(queue);
+    // co_await isn't allowed inside a catch block, so the failure is
+    // only recorded here; rolling back happens just below.
+    std::vector<rawstd::URI> created;
+    std::exception_ptr eptr;
+    for (size_t i = 0; i < _uris.size(); ++i) {
+        try {
+            co_await tasks[i];
+            created.push_back(_uris[i]);
+        } catch (...) {
+            if (!eptr) {
+                eptr = std::current_exception();
+            }
+        }
+    }
+
+    if (eptr) {
+        if (!created.empty()) {
+            try {
+                co_await remove_many(queue, created);
+            } catch (const std::exception& e) {
+                rawstd_error(
+                    "Failed to rollback create_snapshot operation: %s\n",
+                    e.what()
+                );
+            }
+        }
+        std::rethrow_exception(eptr);
+    }
 }
 
 // Only ever touches the target's own first real chunk -- a multi-chunk
@@ -1252,10 +1236,11 @@ rawstd::Task<void> Target::create_snapshot(
 // ordinary, self-describing target -- no extra round trip there).
 //
 // size, unlike width, does generalize: it's the whole object's own
-// total, the same derivation Target::open() uses (its own comment) --
-// chunk_size times the chunk count, every chunk being exactly chunk_size
-// (create()'s own size check). An object with no chunk_size (0: one
-// chunk, never split) takes that one chunk's own size instead.
+// total -- chunk_size times the chunk count, every chunk being exactly
+// chunk_size (create()'s own size check), for a multi-chunk or opaque
+// (mds://, whose member specs are per-chunk) target. A single-chunk
+// plain target takes that one chunk's own size instead, whatever its
+// chunk_size.
 rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
     bool opaque = is_opaque(_uris);
     RawstdUUID id = uuid_from_target(_uris.front());
@@ -1266,7 +1251,7 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
         queue, locations_for(_uris, offsets.front(), opaque), id,
         offsets.front()
     );
-    if (ret.chunk_size != 0) {
+    if (ret.chunk_size != 0 && (opaque || offsets.size() > 1)) {
         ret.size = ret.chunk_size * offsets.size();
     }
 
@@ -1426,10 +1411,13 @@ Target::resize(rawio::Queue& queue, uint64_t new_size) const {
 // create() -- Target::create()'s own comment), so there's nothing chunk
 // 0 could tell this call that the last chunk doesn't already answer
 // itself. Every other chunk, index 0 included, stays lazily opened
-// (MultiChunkObject::_chunk()). The total size is chunk_size times N,
-// every chunk being exactly chunk_size (create()'s own size check); an
-// object with no chunk_size (0: one chunk, never split) takes that one
-// chunk's own spec().size instead.
+// (MultiChunkObject::_chunk()). The total size of a multi-chunk target
+// is chunk_size times N, every chunk being exactly chunk_size (create()'s
+// own size check); a single-chunk target takes that chunk's own
+// spec().size instead, whatever its chunk_size. An opaque (mds://)
+// target is a single URI whose own Chunk only reports chunk 0's member
+// spec, so its size comes from spec() instead, the same whole-object
+// derivation rawstor_target_spec() reports.
 //
 // A bound snapshot is a frozen, immutable copy, so it can only be opened
 // RAWSTOR_READONLY (nothing to write, nothing to reconcile); `flags` and
@@ -1467,6 +1455,14 @@ Target::open(rawio::Queue& queue, int flags) const {
         chunk_locations.push_back(std::move(locations));
     }
 
+    // Fetched before any Chunk is opened, so a failure here has nothing
+    // to close.
+    uint64_t opaque_size = 0;
+    if (is_opaque(_uris)) {
+        RawstorObjectSpec whole = co_await spec(queue);
+        opaque_size = whole.size;
+    }
+
     RawstdUUID last_id = uuid_from_target(chunks.back().front());
     uint64_t last_offset = extract_offset(chunks.back().front());
     RawstdUUID last_snapshot_id = extract_snapshot_id(chunks.back().front());
@@ -1476,8 +1472,16 @@ Target::open(rawio::Queue& queue, int flags) const {
     );
 
     uint64_t chunk_size = last->spec().chunk_size;
-    uint64_t size =
-        chunk_size != 0 ? chunk_size * chunks.size() : last->spec().size;
+    uint64_t size = last->spec().size;
+    if (is_opaque(_uris)) {
+        size = opaque_size;
+    } else if (chunks.size() > 1) {
+        size = chunk_size * chunks.size();
+    }
+
+    // Every check below runs with `last` already open: a failure records
+    // its errno and closes `last` before throwing.
+    int error = 0;
 
     // MultiChunkObject routes I/O purely positionally (chunk index =
     // logical offset / chunk_size) -- a real, multi-chunk target's own
@@ -1493,15 +1497,17 @@ Target::open(rawio::Queue& queue, int flags) const {
             "chunk_size (%llu) is not a nonzero power of two\n",
             (unsigned long long)chunk_size
         );
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        error = EINVAL;
     }
 
-    // Verify every chunk but the last actually sits where that scheme
-    // expects, before trusting it, so a target string whose own offsets
-    // don't land on exact chunk_size multiples fails here instead of
-    // silently addressing the wrong physical chunk on the next
-    // read/write.
-    for (size_t i = 0; i + 1 < chunks.size(); ++i) {
+    // Verify every chunk of a multi-chunk target actually sits where that
+    // scheme expects, before trusting it, so a target string whose own
+    // offsets don't land on exact chunk_size multiples fails here instead
+    // of silently addressing the wrong physical chunk on the next
+    // read/write. A single-chunk target may name one physical chunk
+    // directly by its offset.
+    for (size_t i = 0; error == 0 && chunks.size() > 1 && i < chunks.size();
+         ++i) {
         uint64_t expected = chunk_size * i;
         uint64_t actual = extract_offset(chunks[i].front());
         if (actual != expected) {
@@ -1510,8 +1516,13 @@ Target::open(rawio::Queue& queue, int flags) const {
                 "position (%llu)\n",
                 i, (unsigned long long)actual, (unsigned long long)expected
             );
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            error = EINVAL;
         }
+    }
+
+    if (error != 0) {
+        co_await last->close();
+        RAWSTD_THROW_SYSTEM_ERROR(error);
     }
 
     if (chunks.size() == 1) {

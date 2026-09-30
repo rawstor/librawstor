@@ -89,10 +89,9 @@ ssize_t target_remove(rawio::Queue& queue, const std::string& target) {
 }
 
 // Appends `snapshot_id` as a bound-snapshot path segment to `target`
-// (rawstor_target_snapshot_id()'s own convention) -- the caller now
-// builds this combined target itself before calling rawstor_target_
-// create()/_remove(), since neither takes a separate snapshot_id
-// parameter any more.
+// (rawstor_target_snapshot_id()'s own convention) -- the caller binds
+// the snapshot into the target string itself; rawstor_target_create()/
+// _remove() take no separate snapshot_id parameter.
 std::string
 bind_snapshot_id(const std::string& target, const RawstdUUID& snapshot_id) {
     RawstdUUIDString uuid_string;
@@ -460,8 +459,7 @@ TEST(ObjectMetaTest, set_member_sync_state_on_object_target_is_real) {
 
 // Growing a multi-chunk object reserves placement for the new chunks on
 // the MDS and materializes exactly those on the OST -- spec() reflects
-// the new size, and the object stays fully readable/writable across the
-// old/new chunk boundary afterward.
+// the new size.
 TEST(ObjectResizeTest, grows_and_creates_new_chunks) {
     rawstor::tests::ObjectEnv env(8778, 8779);
     std::string target =
@@ -620,8 +618,8 @@ TEST(ObjectResizeTest, retried_after_lost_reply_materializes_new_chunks) {
 }
 
 // resize() makes no sense against a plain (non-"mds://") target -- no
-// MDS to reserve placement with. Unified dispatch (target.cpp) no longer
-// rejects this client-side by scheme -- it reaches the target's own
+// MDS to reserve placement with. Unified dispatch (target.cpp) does not
+// reject this client-side by scheme: it reaches the target's own
 // backend (file::Backend here) and gets Backend::resize()'s own ENOTSUP
 // default, the same real-backend-error shape as
 // create_snapshot_on_plain_target_returns_enotsup above.

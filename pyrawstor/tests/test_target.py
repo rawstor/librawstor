@@ -33,6 +33,19 @@ class TestTarget(unittest.TestCase):
 
             self.assertRaises(FileNotFoundError, target.remove)
 
+    def test_create_chunk_size(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000007")
+
+            target.create(size=4 << 20, width=1, chunk_size=1 << 20)
+
+            read_spec = target.spec()
+            self.assertEqual(read_spec.size, 4 << 20)
+            self.assertEqual(read_spec.chunk_size, 1 << 20)
+
+            target.remove()
+
     def test_create_twice(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             target = rawstor.Target(

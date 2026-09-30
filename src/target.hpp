@@ -74,6 +74,15 @@ struct TargetPath {
 // or an offset segment isn't a valid hexadecimal number.
 TargetPath parse_target_path(const std::string& path);
 
+// Every location's own mirror consistency state for the chunk at `id`/
+// `offset`, queried concurrently -- a location that doesn't answer gets a
+// zero-filled (UNREACHABLE) entry instead of failing the call (target.cpp's
+// own comment).
+rawstd::Task<std::vector<RawstorObjectMeta>> resolve_meta(
+    rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
+    uint64_t offset
+);
+
 class Location;
 // Only named here as std::unique_ptr<Object>'s pointee (open()'s return
 // type) -- Object itself needs Target's full definition (open() calls
@@ -101,10 +110,9 @@ class Object;
 // for their own, always-first-and-only chunk. Deliberately lightweight
 // -- unlike Chunk, it never holds a Slot between calls; every method
 // below opens a Slot per URI just for that one call and closes it again
-// before returning, same as the code they replace used to do.
-// create()/remove() work across every chunk (see each one's own comment
-// -- create()'s own bound-snapshot branch is the exception, touching
-// only the first chunk) -- spec() only ever operates on the target's own
+// before returning.
+// create()/remove() work across every chunk (see each one's own
+// comment) -- spec() only ever operates on the target's own
 // first chunk, and meta()/set_member_sync_state() each touch exactly one
 // chunk, the one named by their own explicit `offset` parameter
 // (chunk_uris_at_offset() in target.cpp) -- never "every chunk"; a
@@ -195,54 +203,31 @@ public:
     // last chunk), share begins. On any chunk's failure, every URI
     // actually created so far (earlier chunks in full, plus whichever of
     // the failing chunk's own mirrors got that far) is rolled back before
-    // the error is rethrown -- same all-or-nothing contract as the
-    // single-chunk case used to have, just spanning every chunk instead
-    // of one. This is only ever for a plain target: throws EINVAL if
-    // `this` already names its own bound version (snapshot_id() above,
-    // non-nil) -- taking a snapshot of an existing object is
-    // create_snapshot()'s own job below, never this method's, so there is
-    // no dispatch on snapshot_id() here at all.
+    // the error is rethrown -- all-or-nothing across every chunk. This is only
+    // ever for a plain target: throws EINVAL if `this` already names its own
+    // bound version (snapshot_id() above, non-nil) -- taking a snapshot of an
+    // existing object is create_snapshot()'s own job below, never this
+    // method's, so there is no dispatch on snapshot_id() here at all.
     rawstd::Task<void>
     create(rawio::Queue& queue, const RawstorObjectSpec& sp) const;
 
-    // Takes a native CoW snapshot of the live version, returning the id
-    // actually used -- the only entry point for this (create() above
-    // never does it). Two cases, both driven by whether `this` already
-    // names a specific version (snapshot_id() above):
-    // - Already bound (a caller-typed target string of the form
-    //   <id>/<snapshot_id>): that version id IS the one to use -- nothing
-    //   to generate, so this takes the CoW snapshot as that exact version
-    //   directly and returns snapshot_id() back. Only the target's own
-    //   first chunk is touched (see spec()'s own comment on why), and
-    //   every URI in it is still attempted even if an earlier one fails,
-    //   the first error encountered reported. ENOTSUP on a backend
-    //   without native CoW (file://, classic LVM). Not generalized across
-    //   every chunk of a multi-chunk string: mds::Backend's own create_
-    //   snapshot() override already does that itself, in descending
-    //   logical-index order (docs/mds.md) -- chunk_uris_by_offset()
-    //   (target.cpp) always walks a target string's own chunks in
-    //   ascending offset order, ascending logical-index order, so this
-    //   method has no way to express that descending order even if it did
-    //   fan out across every chunk.
-    // - Not bound (a plain target): generates a fresh UUID v7 itself
-    //   (this class's own single point of generation, like
-    //   Location::create() above) and delegates to the explicit-id
-    //   overload below.
-    rawstd::Task<RawstdUUID> create_snapshot(rawio::Queue& queue) const;
-
-    // Same, but under the caller-supplied snapshot_id rather than one this
-    // class picks itself -- splices it onto every URI in `_uris` and lets
-    // the resulting Target's own create_snapshot() (the already-bound
-    // case above) do the actual CoW fan-out, the same way Location::
-    // create(uuid, sp) above delegates the actual per-URI CREATE to a
-    // fresh Target too. Throws EINVAL if `this` already names its own
-    // bound version (snapshot_id() above, non-nil) -- combining that with
-    // a second, caller-supplied one here would be ambiguous, and splicing
-    // one on top of the other would just produce an invalid, doubly-nested
-    // path; a caller in that situation wants the no-argument overload
-    // above instead.
-    rawstd::Task<void>
-    create_snapshot(rawio::Queue& queue, const RawstdUUID& snapshot_id) const;
+    // Takes a native CoW snapshot of the live version as the version
+    // `this` is bound to (snapshot_id() above, a target string of the form
+    // <id>/<snapshot_id>) -- the only entry point for this (create() above
+    // never does it). Throws EINVAL for an unbound target: picking or
+    // splicing the version id is the caller's job
+    // (rawstor_target_create_snapshot()). Only the target's own URIs are
+    // touched, and every one of them is still attempted even if an
+    // earlier one fails, the first error encountered reported. ENOTSUP
+    // on a backend without native CoW (file://, classic LVM). Not
+    // generalized across every chunk of a multi-chunk string:
+    // mds::Backend's own create_snapshot() override already does that
+    // itself, in descending logical-index order (docs/mds.md) --
+    // chunk_uris_by_offset() (target.cpp) always walks a target string's
+    // own chunks in ascending offset order, so this method has no way to
+    // express that descending order even if it did fan out across every
+    // chunk.
+    rawstd::Task<void> create_snapshot(rawio::Queue& queue) const;
 
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue) const;
     // One RawstorObjectMeta per URI of the chunk at `offset`, same order

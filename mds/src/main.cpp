@@ -113,12 +113,12 @@ ssize_t sync_op_wait(SyncOp& op, int res) {
 
 // One OST's own share of --reconstruct's scan: every object it stores,
 // full metadata included -- the same LIST + META per object a caller
-// composing this from the public API would do anyway (there used to be a
-// dedicated LIST_CHUNKS wire command for it; see protocol.h's own comment
-// on why it was retired), just paid here at O(n) round trips instead of
-// one. An object whose own META fails is skipped (logged) rather than
-// aborting the whole scan -- salvaging the readable copies, every skipped
-// copy covered by its mirrors (docs/mds.md, "Reconstruct / DR"); a LIST
+// composing this from the public API would do anyway, paid at O(n)
+// round trips. A chunk whose own META fails is skipped (logged) rather
+// than aborting the whole scan -- salvaging the readable copies, every
+// skipped copy covered by its mirrors (docs/mds.md, "Reconstruct / DR").
+// One listed target carries every chunk this OST holds of that object,
+// so each of its offsets gets its own META and record. A LIST
 // failure, in contrast, means this OST didn't answer at all and aborts
 // the whole reconstruct (see reconstruct()'s own doc comment on why a
 // partial scan is never silently accepted).
@@ -158,48 +158,72 @@ void scan_ost(
                 continue;
             }
 
-            // `target` names one specific physical chunk directly, never
-            // an mds:// one (this scan walks physical objects one OST at
-            // a time) -- purely syntactic, no I/O (rawstor_target_chunks()'s
-            // own doc comment).
-            uint64_t offset = 0;
-            SyncOp offset_op;
-            offset_op.queue = queue;
-            ssize_t or_ = sync_op_wait(
-                offset_op, rawstor_target_chunks(
-                               queue, target, &offset, 1, sync_op_cb, &offset_op
-                           )
+            // `target` names physical chunks directly, never an mds://
+            // one (this scan walks physical objects one OST at a time) --
+            // purely syntactic, no I/O (rawstor_target_chunks()'s own doc
+            // comment): a first call for the count, a second for the
+            // offsets themselves.
+            SyncOp count_op;
+            count_op.queue = queue;
+            ssize_t n = sync_op_wait(
+                count_op, rawstor_target_chunks(
+                              queue, target, nullptr, 0, sync_op_cb, &count_op
+                          )
             );
-            if (or_ < 0) {
+            std::vector<uint64_t> offsets(n > 0 ? static_cast<size_t>(n) : 0);
+            if (n > 0) {
+                SyncOp offsets_op;
+                offsets_op.queue = queue;
+                n = sync_op_wait(
+                    offsets_op, rawstor_target_chunks(
+                                    queue, target, offsets.data(),
+                                    offsets.size(), sync_op_cb, &offsets_op
+                                )
+                );
+            }
+            if (n < 0) {
                 rawstd_error("reconstruct: malformed target: %s\n", target);
                 continue;
             }
 
-            // `offset` -- already resolved above -- is exactly the chunk
-            // META below asks for.
-            RawstorObjectMeta meta{};
-            SyncOp meta_op;
-            meta_op.queue = queue;
-            ssize_t mr = sync_op_wait(
-                meta_op,
-                rawstor_target_meta(
-                    queue, target, offset, &meta, 1, sync_op_cb, &meta_op
-                )
-            );
-            if (mr < 0) {
-                rawstd_error(
-                    "reconstruct: skipping %s: unreadable metadata: %s\n",
-                    target, strerror(static_cast<int>(-mr))
+            for (uint64_t offset : offsets) {
+                RawstorObjectMeta meta{};
+                SyncOp meta_op;
+                meta_op.queue = queue;
+                ssize_t mr = sync_op_wait(
+                    meta_op,
+                    rawstor_target_meta(
+                        queue, target, offset, &meta, 1, sync_op_cb, &meta_op
+                    )
                 );
-                continue;
-            }
+                if (mr < 0) {
+                    rawstd_error(
+                        "reconstruct: skipping %s at offset %llx: unreadable "
+                        "metadata: %s\n",
+                        target, (unsigned long long)offset,
+                        strerror(static_cast<int>(-mr))
+                    );
+                    continue;
+                }
+                // rawstor_target_meta() reports a copy that didn't answer
+                // as a zero-filled UNREACHABLE entry, not an error.
+                if (meta.sync_state.state ==
+                    RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+                    rawstd_error(
+                        "reconstruct: skipping %s at offset %llx: unreadable "
+                        "metadata\n",
+                        target, (unsigned long long)offset
+                    );
+                    continue;
+                }
 
-            rawstor::mds::ScanRecord record;
-            record.ost_id = ost_id;
-            record.obj_id = obj_id;
-            record.offset = offset;
-            record.meta = meta;
-            records.push_back(record);
+                rawstor::mds::ScanRecord record;
+                record.ost_id = ost_id;
+                record.obj_id = obj_id;
+                record.offset = offset;
+                record.meta = meta;
+                records.push_back(record);
+            }
         }
 
         rawstor_string_list_delete(targets);

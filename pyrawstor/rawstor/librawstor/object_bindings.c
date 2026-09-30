@@ -905,6 +905,7 @@ PyObject* py_rawstor_object_spec(PyObject* Py_UNUSED(self), PyObject* args) {
     }
     py_spec->size = spec.size;
     py_spec->width = spec.width;
+    py_spec->chunk_size = spec.chunk_size;
 
     return (PyObject*)py_spec;
 }

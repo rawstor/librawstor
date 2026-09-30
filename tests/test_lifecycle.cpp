@@ -584,7 +584,7 @@ TEST(OstLifecycleTest, create_spec_remove) {
         .sync_id = 0x1122334455667788ull,
         .sync_id_history = {0xaabbccddeeff0011ull, 0, 0, 0},
         .state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
-        .chunk_shift = 0,
+        .chunk_shift = 20,
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
     };
@@ -641,6 +641,7 @@ TEST(OstLifecycleTest, create_spec_remove) {
         ssize_t res = target_meta(*queue, target, &meta);
         EXPECT_EQ(res, 0);
         EXPECT_EQ(meta.spec.size, 1ull << 20);
+        EXPECT_EQ(meta.spec.chunk_size, 1ull << 20);
         EXPECT_EQ(meta.sync_state.epoch, 7u);
         EXPECT_EQ(meta.sync_state.sync_id, 0x1122334455667788ull);
         EXPECT_EQ(meta.sync_state.sync_id_history[0], 0xaabbccddeeff0011ull);

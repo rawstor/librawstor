@@ -272,7 +272,7 @@ static int command_create(int argc, char** argv) {
             fprintf(stderr, "mirrors must be greater than 0\n");
             return EX_USAGE;
         }
-        if (parsed_mirrors > UINT_MAX) {
+        if (parsed_mirrors > UINT8_MAX) {
             fprintf(stderr, "mirrors value too large: %s\n", mirrors_arg);
             return EX_USAGE;
         }

@@ -194,29 +194,25 @@ rawstd::Task<void> Backend::list_chunks(
         // A UUID's own string form is always exactly 36 characters
         // (RawstdUUIDString) -- a fixed prefix, since the UUID itself
         // already embeds dashes (8-4-4-4-12), unlike this backend's own
-        // ":<offset>" suffix.
-        if (name.size() < 36) {
+        // ":<offset>" suffix. The suffix is mandatory: _dataset() always
+        // writes it, so a bare-UUID dataset is not one this backend could
+        // open.
+        if (name.size() <= 37 || name[36] != ':') {
             continue;
         }
         std::string uuid_part = name.substr(0, 36);
-        uint64_t offset = 0;
-        if (name.size() > 36) {
-            if (name[36] != ':') {
-                continue;
-            }
-            // `listsnapshots=on` interleaves each dataset's own snapshots
-            // (name "<uuid>:<offset>@<snapshot>") into this same listing --
-            // strtoull() silently stops at '@', so an unchecked parse would
-            // read "<offset>@<snapshot>" as if it were a second, spurious
-            // chunk at the same offset. Anything left over after the hex
-            // digits is rejected instead of ignored.
-            char* endptr = nullptr;
+        // `listsnapshots=on` interleaves each dataset's own snapshots
+        // (name "<uuid>:<offset>@<snapshot>") into this same listing --
+        // strtoull() silently stops at '@', so an unchecked parse would
+        // read "<offset>@<snapshot>" as if it were a second, spurious
+        // chunk at the same offset. Anything left over after the hex
+        // digits is rejected instead of ignored.
+        char* endptr = nullptr;
+        errno = 0;
+        uint64_t offset = strtoull(name.c_str() + 37, &endptr, 16);
+        if (errno != 0 || endptr == name.c_str() + 37 || *endptr != '\0') {
             errno = 0;
-            offset = strtoull(name.c_str() + 37, &endptr, 16);
-            if (errno != 0 || endptr == name.c_str() + 37 || *endptr != '\0') {
-                errno = 0;
-                continue;
-            }
+            continue;
         }
 
         RawstdUUID uuid;
