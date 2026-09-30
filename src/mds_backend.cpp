@@ -195,8 +195,8 @@ rawstd::Task<void> Backend::_connect() {
 // an `id` the MDS doesn't know comes back as an empty listing, same as
 // any other backend holding nothing of it.
 rawstd::Task<void> Backend::list_chunks(
-    RawstdUUID id, RawstdUUID snapshot_id, unsigned int,
-    std::vector<ChunkGroup>& chunks, RawstdUUID& token
+    RawstdUUID id, unsigned int, std::vector<ChunkGroup>& chunks,
+    RawstdUUID& token, RawstdUUID snapshot_id
 ) {
     if (rawstd_uuid_is_nil(&id)) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);

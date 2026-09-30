@@ -372,7 +372,7 @@ rawstd::Task<std::vector<uint64_t>> chunks_one(
     RawstdUUID token{};
     std::exception_ptr error;
     try {
-        co_await slot->list_chunks(id, snapshot_id, 0, groups, token);
+        co_await slot->list_chunks(id, 0, groups, token, snapshot_id);
     } catch (...) {
         error = std::current_exception();
     }

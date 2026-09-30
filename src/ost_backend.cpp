@@ -1340,8 +1340,8 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
 }
 
 rawstd::Task<void> Backend::list_chunks(
-    RawstdUUID id, RawstdUUID snapshot_id, unsigned int limit,
-    std::vector<ChunkGroup>& chunks, RawstdUUID& token
+    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+    RawstdUUID& token, RawstdUUID snapshot_id
 ) {
     // LIST only ever lists live objects (RawstorFrameListEntry's own doc
     // comment, protocol.h). A version's own chunks are only ever asked

@@ -151,8 +151,7 @@ void expect_chunks_of_multichunk_object(const rawstd::URI& location) {
 
     std::vector<rawstor::ChunkGroup> groups;
     RawstdUUID token{};
-    run(*queue,
-        slot->list_chunks(target.object_id(), RawstdUUID{}, 0, groups, token));
+    run(*queue, slot->list_chunks(target.object_id(), 0, groups, token));
     ASSERT_EQ(groups.size(), 1u);
     RawstdUUID target_id = target.object_id();
     EXPECT_EQ(rawstd_uuid_cmp(&groups.front().id, &target_id), 0);
@@ -164,7 +163,7 @@ void expect_chunks_of_multichunk_object(const rawstd::URI& location) {
     // Nothing of it here at all: an empty listing, not an error.
     RawstdUUID missing;
     ASSERT_EQ(rawstd_uuid7_init(&missing), 0);
-    run(*queue, slot->list_chunks(missing, RawstdUUID{}, 0, groups, token));
+    run(*queue, slot->list_chunks(missing, 0, groups, token));
     EXPECT_TRUE(groups.empty());
 
     run(*queue, slot->close());

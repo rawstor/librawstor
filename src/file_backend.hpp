@@ -27,8 +27,8 @@ public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     rawstd::Task<void> list_chunks(
-        RawstdUUID id, RawstdUUID snapshot_id, unsigned int limit,
-        std::vector<ChunkGroup>& chunks, RawstdUUID& token
+        RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+        RawstdUUID& token, RawstdUUID snapshot_id = {}
     ) override;
 
     rawstd::Task<void> create(
@@ -51,14 +51,16 @@ public:
     // before this existed) is not trusted as legacy-CLEAN: meta() fails
     // ENOENT rather than fabricating a state.
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
     ) override;
 
     // Trivial (Backend::resolve_locations()'s own doc comment): this is a
     // plain, single-copy backend, already the one real member of whatever
     // offset it's asked about.
     rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
     ) override;
 
     rawstd::Task<void> set_sync_state(

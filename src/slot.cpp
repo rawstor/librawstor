@@ -568,8 +568,8 @@ const rawstd::URI* Slot::location() const noexcept {
 }
 
 rawstd::Task<void> Slot::list_chunks(
-    RawstdUUID id, RawstdUUID snapshot_id, unsigned int limit,
-    std::vector<ChunkGroup>& chunks, RawstdUUID& token
+    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+    RawstdUUID& token, RawstdUUID snapshot_id
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -578,8 +578,8 @@ rawstd::Task<void> Slot::list_chunks(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::list_chunks, id, snapshot_id,
-            limit, chunks, token
+            func_name, trace_event, &Backend::list_chunks, id, limit, chunks,
+            token, snapshot_id
         );
         _finish(t_call);
     } catch (...) {

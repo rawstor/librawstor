@@ -160,9 +160,7 @@ rawstd::Task<std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID>> list_one(
         co_await rawstor::Slot::create(queue, location, 1);
     std::exception_ptr error;
     try {
-        co_await slot->list_chunks(
-            RawstdUUID{}, RawstdUUID{}, limit, ret.first, ret.second
-        );
+        co_await slot->list_chunks(RawstdUUID{}, limit, ret.first, ret.second);
     } catch (...) {
         error = std::current_exception();
     }

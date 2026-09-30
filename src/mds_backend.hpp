@@ -63,8 +63,8 @@ public:
     // Id-filtered form only (a nil `id` is ENOTSUP): that one object's
     // own real chunk offsets, off its own WireMap.
     rawstd::Task<void> list_chunks(
-        RawstdUUID id, RawstdUUID snapshot_id, unsigned int limit,
-        std::vector<ChunkGroup>& chunks, RawstdUUID& token
+        RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+        RawstdUUID& token, RawstdUUID snapshot_id = {}
     ) override;
 
     // `member_role` is unused: an mds:// object is always created whole,
@@ -133,7 +133,8 @@ public:
     // method's own first entry as its answer (Backend::meta()'s own doc
     // comment).
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
     ) override;
 
     // Real: this chunk's own real members' own bare locations, off the
@@ -142,7 +143,8 @@ public:
     // real member directly (rawstor resolve's own --winner), which no
     // target string naming this mds:// object could ever do on its own.
     rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
     ) override;
 
     // No-op, for the same reason meta() above never persists anything of

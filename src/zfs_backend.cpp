@@ -140,8 +140,8 @@ rawstd::Task<int> Backend::_open_snapshot(
 }
 
 rawstd::Task<void> Backend::list_chunks(
-    RawstdUUID id, RawstdUUID snapshot_id, unsigned int limit,
-    std::vector<ChunkGroup>& chunks, RawstdUUID& token
+    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+    RawstdUUID& token, RawstdUUID snapshot_id
 ) {
     // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc
     // comment): every other uuid's own zvols are skipped while grouping,

@@ -164,8 +164,8 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
 }
 
 rawstd::Task<void> Backend::list_chunks(
-    RawstdUUID id, RawstdUUID snapshot_id, unsigned int limit,
-    std::vector<ChunkGroup>& chunks, RawstdUUID& token
+    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+    RawstdUUID& token, RawstdUUID snapshot_id
 ) {
     if (!rawstd_uuid_is_nil(&snapshot_id)) {
         // No snapshots on this backend (Backend::remove_snapshot()'s own

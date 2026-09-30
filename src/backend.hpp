@@ -105,8 +105,8 @@ public:
     // that version of `id` has instead of the live ones; ENOTSUP on a
     // backend without snapshots.
     virtual rawstd::Task<void> list_chunks(
-        RawstdUUID id, RawstdUUID snapshot_id, unsigned int limit,
-        std::vector<ChunkGroup>& chunks, RawstdUUID& token
+        RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+        RawstdUUID& token, RawstdUUID snapshot_id = {}
     ) = 0;
 
     // `member_role` is the copy being created's own placement identity
@@ -171,7 +171,8 @@ public:
     // through the mirror state machine, so nothing acts on it). ENOTSUP
     // on a backend without snapshots.
     virtual rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
     ) = 0;
 
     // Every real member's own bare location of the chunk at `offset` --
@@ -190,7 +191,8 @@ public:
     // locations, in the same order meta() above reports their state in --
     // for `snapshot_id`'s own members when it's non-nil.
     virtual rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
     ) = 0;
 
     virtual rawstd::Task<void> set_sync_state(
