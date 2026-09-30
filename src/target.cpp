@@ -1037,29 +1037,19 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     std::vector<std::vector<rawstd::URI>> chunks = chunk_uris_by_offset(_uris);
 
     // No implicit width, ever: the caller must always state it, checked
-    // before any I/O at all. A chunk with more than one URI is
-    // unambiguously an ordinary mirror set and must match sp.width
-    // exactly; a lone URI's own width is the caller's chosen redundancy
-    // (never 0). Every persisted/wire width is a uint8_t, so anything
-    // wider is rejected rather than silently truncated.
+    // before any I/O at all. It is the object's redundancy policy,
+    // persisted verbatim on every copy, and need not equal a chunk's own
+    // URI count: e.g. rawstor-ost relaying one copy of an object onto
+    // several local locations stamps each of them with the object's own
+    // width. Every persisted/wire width is a uint8_t, so anything wider is
+    // rejected rather than silently truncated.
+    if (sp.width == 0) {
+        rawstd_error("Spec width must be set (0 is not a valid width)\n");
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     if (sp.width > UINT8_MAX) {
         rawstd_error("Spec width (%u) is too large\n", sp.width);
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    for (const std::vector<rawstd::URI>& chunk_uris : chunks) {
-        if (chunk_uris.size() > 1) {
-            if (sp.width != chunk_uris.size()) {
-                rawstd_error(
-                    "Spec width (%u) does not match target's URI count "
-                    "(%zu)\n",
-                    sp.width, chunk_uris.size()
-                );
-                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-            }
-        } else if (sp.width == 0) {
-            rawstd_error("Spec width must be set (0 is not a valid width)\n");
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
     }
 
     // sp.chunk_size backs a wire chunk_shift (RawstorFrameAllocate-
@@ -1271,13 +1261,10 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
 // resolves which locations to ask (throwing ENOENT itself for a
 // non-opaque target with no chunk at `offset` -- an opaque one instead
 // leaves that to its own Backend). Every answering entry's own
-// spec.width is trusted verbatim, no override: Target::create() already
-// guarantees it's persisted correctly on every member (exactly the
-// chunk's own URI count for an ordinary multi-URI mirror set, or a real,
-// always non-zero value otherwise -- its own comment), and every chunk
-// of one object shares the same policy width by construction
-// (docs/mds.md), so there's nothing left for this call to compute from
-// URI counts itself.
+// spec.width is trusted verbatim, no override: it is the width
+// Target::create() persisted on every member (the object's own policy,
+// always non-zero -- its own comment), and every chunk of one object
+// shares the same policy width by construction (docs/mds.md).
 rawstd::Task<std::vector<RawstorObjectMeta>>
 Target::meta(rawio::Queue& queue, uint64_t offset) const {
     if (!rawstd_uuid_is_nil(&_snapshot_id)) {

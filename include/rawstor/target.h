@@ -137,10 +137,9 @@ struct RawstorObjectSyncState {
  * rawstor_target_spec()/_create(), which is used both ways) plus this
  * copy's mirror consistency identity (sync_state, the part
  * rawstor_target_set_member_sync_state() can actually change) and its own
- * member_role. `spec.width` is that copy's own persisted width, reported
- * verbatim (rawstor_target_create() stamps it as the chunk's URI count for
- * a multi-URI mirror set, or the configured redundancy for an mds://
- * object); unlike rawstor_target_spec(), nothing is recomputed locally.
+ * member_role. `spec.width` is that copy's own persisted width -- the
+ * width rawstor_target_create() was given -- reported verbatim; unlike
+ * rawstor_target_spec(), nothing is recomputed locally.
  *
  * member_role lives here rather than on RawstorObjectSpec: unlike every
  * field RawstorObjectSpec actually carries, it isn't something every
@@ -381,16 +380,16 @@ int rawstor_target_set_member_sync_state(
  * @param spec      Pointer to a RawstorObjectSpec structure containing the
  *                  desired object shape. The size field must be set to the
  *                  expected size of the object. width is mandatory too (@c
- *                  -EINVAL if left at 0): it must equal @p target's own URI
- *                  count when @p target names more than one, or the
- *                  caller's own chosen redundancy otherwise. Only read
+ *                  -EINVAL if 0 or above 255): the object's redundancy
+ *                  policy, persisted verbatim on every copy -- normally
+ *                  @p target's own URI count when it names more than one,
+ *                  but not required to be. Only read
  *                  while this call is being queued -- need not stay valid
  *                  until @p cb runs.
  * @param cb        Callback invoked on completion.
  *                  - @p result is zero on success, or a negative errno on
- *                    failure (e.g. @c -EINVAL for invalid target or spec, a
- *                    width that doesn't match @p target's own URI count, or
- *                    @p target carrying a bound snapshot version; @c -EIO
+ *                    failure (e.g. @c -EINVAL for invalid target or spec,
+ *                    or @p target carrying a bound snapshot version; @c -EIO
  *                    if no chunk member survived, mds:// target only; @c
  *                    -ENOMEM, etc; implementation‑defined beyond that).
  *                  - @p data is the same pointer passed as @p data below.

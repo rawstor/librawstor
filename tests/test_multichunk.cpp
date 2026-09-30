@@ -374,8 +374,8 @@ TEST(MultiChunkTest, single_uri_target_with_chunk_size_below_size) {
 }
 
 // Target::create() width rules: never 0, never above what the wire can
-// carry, and exactly the URI count for a multi-URI mirror set -- which is
-// then what every copy's own META reports.
+// carry, and not tied to the URI count -- every copy's own META reports
+// the width it was created with.
 TEST(TargetCreateTest, width_rules) {
     rawstor::tests::TmpDir dir1;
     rawstor::tests::TmpDir dir2;
@@ -417,15 +417,17 @@ TEST(TargetCreateTest, width_rules) {
     };
     expect_einval(single, 0);
     expect_einval(single, 256);
-    expect_einval(mirrored, 1);
+    expect_einval(mirrored, 0);
 
-    spec.width = 2;
+    // Two local copies of an object whose own policy is a single copy
+    // (rawstor-ost relaying onto two locations).
+    spec.width = 1;
     run(*queue, mirrored.create(*queue, spec));
     std::vector<RawstorObjectMeta> metas =
         run(*queue, mirrored.meta(*queue, 0));
     ASSERT_EQ(metas.size(), 2u);
-    EXPECT_EQ(metas[0].spec.width, 2u);
-    EXPECT_EQ(metas[1].spec.width, 2u);
+    EXPECT_EQ(metas[0].spec.width, 1u);
+    EXPECT_EQ(metas[1].spec.width, 1u);
 
     run(*queue, mirrored.remove(*queue));
 }
