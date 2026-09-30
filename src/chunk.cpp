@@ -1420,12 +1420,22 @@ rawstd::DetachedTask Chunk::_resync_sweep() {
         co_return;
     }
 
+    // An all-zero block (typically never written) goes out as
+    // write_zeroes(): no payload on the wire, and the target stays sparse
+    // (unmap) instead of being filled with explicit zeros.
+    const char* data = buf->data();
+    bool zero = data[0] == 0 && memcmp(data, data + 1, len - 1) == 0;
+
     size_t wresult = 0;
     int werror = 0;
     try {
-        wresult = co_await _members[_resync->idx].slot->pwrite(
-            buf->data(), len, (off_t)off, false
-        );
+        Slot& target = *_members[_resync->idx].slot;
+        if (zero) {
+            wresult =
+                co_await target.write_zeroes(len, (off_t)off, true, false);
+        } else {
+            wresult = co_await target.pwrite(data, len, (off_t)off, false);
+        }
     } catch (const std::system_error& e) {
         werror = e.code().value();
     }

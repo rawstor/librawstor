@@ -484,6 +484,63 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
     EXPECT_EQ(object_close(queue, member), 0);
 }
 
+// Resync copies all-zero blocks as write_zeroes() and the rest as data:
+// both must leave the rejoined member byte-identical to the fresh one,
+// even over a stale member holding garbage everywhere.
+TEST(MirrorQuorumTest, stale_arm_resynced_zero_blocks) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000c0");
+
+    const size_t size = 2ull << 20;
+    RawstorObjectSpec spec{
+        .size = size,
+        .width = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObjectSyncState fresh{};
+    fresh.epoch = 2;
+    fresh.sync_id = 0x1111111111111111ull;
+    fresh.sync_id_history[0] = 0x2222222222222222ull;
+    fresh.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    ASSERT_EQ(target_set_sync_state(queue, members.target(0), fresh), 0);
+
+    RawstorObjectSyncState stale{};
+    stale.epoch = 1;
+    stale.sync_id = 0x2222222222222222ull;
+    stale.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    ASSERT_EQ(target_set_sync_state(queue, members.target(1), stale), 0);
+
+    // Fresh: "ping" in the first block, the second block never written.
+    std::string ping = "ping";
+    object_write_single(queue, members.target(0), ping.data(), ping.size(), 0);
+    // Stale: garbage over both blocks.
+    std::string garbage(size, 'x');
+    object_write_single(
+        queue, members.target(1), garbage.data(), garbage.size(), 0
+    );
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    EXPECT_TRUE(
+        wait_member_synced(queue, members.target(0), members.target(1))
+    );
+    object_close_clean(queue, object);
+
+    std::string expected(size, '\0');
+    memcpy(expected.data(), ping.data(), ping.size());
+
+    RawstorObject* member = nullptr;
+    ASSERT_EQ(target_open(queue, members.target(1), &member), 0);
+    std::string data(size, 'y');
+    object_read(queue, member, data.data(), data.size(), 0);
+    EXPECT_TRUE(data == expected);
+    EXPECT_EQ(object_close(queue, member), 0);
+}
+
 TEST(MirrorQuorumTest, split_brain_refused) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a3");
