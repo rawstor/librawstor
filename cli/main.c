@@ -114,8 +114,7 @@ static void command_create_usage(void) {
         "                        Default: one chunk spans the whole "
         "object.\n"
         "\n"
-        "chunk placement (mds:// targets only -- docs/mds.md; ignored "
-        "otherwise):\n"
+        "chunk placement (mds:// only -- docs/mds.md; an error otherwise):\n"
         "  --failure-domain LEVEL  Placement failure domain: dc, row, "
         "rack,\n"
         "                        server (default), ost.\n"
@@ -235,6 +234,18 @@ static int command_create(int argc, char** argv) {
 
     if (location_arg == NULL && target_arg == NULL) {
         fprintf(stderr, "location or target required\n");
+        return EX_USAGE;
+    }
+
+    // Placement is the MDS's own job: no other backend has anything to
+    // apply these to, so asking for them there is a mistake, not a no-op.
+    const char* dest = target_arg != NULL ? target_arg : location_arg;
+    if ((failure_domain_arg != NULL || stripe_width_arg != NULL) &&
+        strncmp(dest, "mds://", strlen("mds://")) != 0) {
+        fprintf(
+            stderr, "--failure-domain/--stripe-width are only valid for "
+                    "mds://\n"
+        );
         return EX_USAGE;
     }
 
