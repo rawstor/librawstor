@@ -860,24 +860,20 @@ namespace rawstor {
 //
 // A location's own path can end in an arbitrary number of segments
 // before the identity even starts (e.g. file:///a/b/<uuid>), so the
-// identity is always read off the *end*: find the longest trailing run
-// of UUID-shaped segments (a snapshot chain candidate, deepest link
-// last; empty if the last segment isn't UUID-shaped at all). If the run
-// is non-empty and a valid hexadecimal offset, with another UUID (the
-// id) right before that, precede it, it's the physical-with-snapshot
-// shape -- offset from that hexadecimal segment, id from the UUID before
-// it, the run itself purely the snapshot chain. If the run is non-empty
-// but isn't preceded that way, it's the logical shape instead: the run's
-// own leftmost segment is the id, and -- only when the run is more than
-// one segment long -- its rightmost is the snapshot chain. A lone
-// trailing UUID (chain length 1, the common case) falls out of this same
-// rule as simply a bare id with no snapshot: its only element is both
-// leftmost and rightmost, and "more than one segment long" is false. If
-// the run is empty (the last segment is hexadecimal, not a UUID), the
-// only remaining possibility is the physical-live shape: that
-// hexadecimal segment is the offset, and the UUID right before it is the
-// id, with no snapshot segment anywhere -- anything else at this point
-// is malformed. Hex, not decimal: every other numeric field this
+// identity is always read off the *end*: find the trailing run of
+// UUID-shaped segments (empty if the last segment isn't UUID-shaped at
+// all). A target binds at most one snapshot, so a run longer than two
+// segments is EINVAL. If the run is non-empty and a valid hexadecimal
+// offset, with another UUID (the id) right before that, precede it, it's
+// the physical-with-snapshot shape -- offset from that hexadecimal
+// segment, id from the UUID before it, and the run (exactly one segment
+// here) the snapshot_id. If the run is non-empty but isn't preceded that
+// way, it's the logical shape instead: the run's first segment is the id
+// and its second, if any, the snapshot_id. If the run is empty (the last
+// segment is hexadecimal, not a UUID), the only remaining possibility is the
+// physical-live shape: that hexadecimal segment is the offset, and the UUID
+// right before it is the id, with no snapshot segment anywhere -- anything else
+// at this point is malformed. Hex, not decimal: every other numeric field this
 // codebase persists or transmits alongside a chunk's own identity
 // (meta_encode()'s own chunk_size, epoch, sync_id, ...) is already hex,
 // so a human reading a target string, a backend's own physical path, or
@@ -899,6 +895,12 @@ TargetPath parse_target_path(const std::string& path) {
         }
         ++chain;
     }
+    if (chain > 2) {
+        rawstd_error(
+            "Target path binds more than one snapshot: %s\n", path.c_str()
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
 
     TargetPath ret{};
 
@@ -910,6 +912,13 @@ TargetPath parse_target_path(const std::string& path) {
         uint64_t offset = 0;
         if ((iss >> std::hex >> offset) && iss.eof() &&
             rawstd_uuid_from_string(&ret.id, id_segment.c_str()) == 0) {
+            if (chain > 1) {
+                rawstd_error(
+                    "Target path binds more than one snapshot: %s\n",
+                    path.c_str()
+                );
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
             ret.offset = offset;
             rawstd_uuid_from_string(&ret.snapshot_id, segments.back().c_str());
             ret.segments = static_cast<unsigned int>(chain + 2);
@@ -919,11 +928,8 @@ TargetPath parse_target_path(const std::string& path) {
 
     if (chain > 0) {
         // No valid offset precedes the trailing UUID run -- the logical
-        // shape (TargetPath's own doc comment): the run's own leftmost
-        // segment is the id, and its rightmost is the bound snapshot
-        // version, unless the run is only one segment long, in which
-        // case that one segment is simply the id and there is no
-        // snapshot at all.
+        // shape (TargetPath's own doc comment): the run's first segment
+        // is the id, and its second, if any, the bound snapshot version.
         rawstd_uuid_from_string(
             &ret.id, segments[segments.size() - chain].c_str()
         );

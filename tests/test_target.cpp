@@ -81,3 +81,20 @@ TEST(TargetParsePathTest, malformed_path_throws_einval) {
         rawstor::parse_target_path("/data/not-a-uuid"), std::system_error
     );
 }
+
+// A target binds at most one snapshot: two snapshot segments, with or
+// without an offset in front of them, are rejected.
+TEST(TargetParsePathTest, more_than_one_snapshot_throws_einval) {
+    EXPECT_THROW(
+        rawstor::parse_target_path(
+            "/data/" + id_str + "/" + snap_str + "/" + snap_str
+        ),
+        std::system_error
+    );
+    EXPECT_THROW(
+        rawstor::parse_target_path(
+            "/data/" + id_str + "/2a/" + snap_str + "/" + snap_str
+        ),
+        std::system_error
+    );
+}

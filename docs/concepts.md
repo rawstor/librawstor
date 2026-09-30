@@ -294,13 +294,15 @@ right after the UUID: `ost://host:port/<uuid>/100000` (hexadecimal --
 Offset and snapshot are told apart from an arbitrary preceding location
 path by shape alone (a UUID-shaped segment vs. a hexadecimal one):
 `parse_target_path()` (src/target.hpp) reads the identity off the
-*end* of the path. A trailing run of UUID-shaped segments is a snapshot
-chain candidate only if a valid hexadecimal offset (and another UUID,
-the id) precede it — the *physical, with a bound snapshot* shape above;
-otherwise the run's own leftmost segment is the id and its rightmost (if
-the run is more than one segment long) is the snapshot instead — the
-*logical* shape, offset implied 0. If the last segment isn't UUID-shaped
-at all (no snapshot chain to find), it must instead be the hexadecimal
+*end* of the path. A target binds at most one snapshot, so the trailing
+run of UUID-shaped segments is at most two long (longer is rejected). A
+single trailing UUID preceded by a valid hexadecimal offset (and another
+UUID, the id) is the snapshot — the *physical, with a bound snapshot*
+shape above; otherwise the run's first segment is the id and its second
+(if any) the snapshot — the *logical* shape, offset implied 0. A
+location path that itself ends in a UUID-shaped directory is therefore
+ambiguous and not supported. If the last segment isn't UUID-shaped at
+all (no snapshot to find), it must instead be the hexadecimal
 offset itself, with the id right before it — `ost://host:port/<uuid>/
 100000` above, the *physical, live* shape: an explicit offset with no
 snapshot anywhere in the path. A chunk's own offset is always spelled

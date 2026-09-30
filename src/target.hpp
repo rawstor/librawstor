@@ -16,7 +16,7 @@
 namespace rawstor {
 
 // A target URI's own trailing path identity, in one of three shapes:
-// - Physical, with a bound snapshot: `/<uuid>/<offset>/<snapshot_id>...`
+// - Physical, with a bound snapshot: `/<uuid>/<offset>/<snapshot_id>`
 //   -- offset always an explicit segment (even "0"), the convention
 //   every internal builder in this codebase uses (mds_backend.cpp's
 //   chunk_slot_target(), ost/src/client.cpp's _targets(), Target's own
@@ -26,29 +26,29 @@ namespace rawstor {
 // - Physical, live: `/<uuid>/<offset>` -- same convention, no bound
 //   snapshot at all; the common case for one chunk of a larger mds://
 //   object that has never been snapshotted.
-// - Logical: `/<uuid>[/<snapshot_id>...]` -- no offset segment at all,
+// - Logical: `/<uuid>[/<snapshot_id>]` -- no offset segment at all,
 //   implied 0. This is the shape a caller types by hand to name a plain
 //   (non-mds://-chunk) target's own bound snapshot -- there is no
 //   chunk-offset concept to name at that level, so spelling one out
 //   just to satisfy a parsing rule would be pure noise. A bare
 //   `/<uuid>`, with no offset and no snapshot at all, is this same
-//   shape with an empty snapshot chain.
+//   shape without the snapshot segment.
 //
 // All three are really the same grammar read from the *end* (a target's
 // own location can itself carry an arbitrary path, e.g. file:///a/b, so
-// the identity can't be found any other way): find the longest trailing
-// run of UUID-shaped segments -- a snapshot chain candidate, deepest
-// link last, ready for a future ".../snap1/snap2" hierarchy (only the
-// leaf is exposed as `snapshot_id` today, since nothing constructs a
-// longer one yet). If a valid hexadecimal offset segment, and another
-// UUID (the id) right before that, precede the whole run, it's the
-// physical-with-snapshot shape: offset comes from that hexadecimal
-// segment, the id from the UUID before it, and the run itself is purely
-// the snapshot chain. If the run isn't preceded that way but is still
-// non-empty, it's the logical shape instead: the run's own leftmost
-// segment is the id, and -- only if the run is more than one segment
-// long -- its rightmost is the snapshot chain (a lone trailing UUID, the
-// common case, is simply a bare id with no snapshot at all). If the
+// the identity can't be found any other way): find the trailing run of
+// UUID-shaped segments. A target binds at most one snapshot, so the run
+// is at most two segments long (id, snapshot_id) -- or one, when an
+// offset segment separates the id from the snapshot; anything longer is
+// EINVAL. If a valid hexadecimal offset segment, and another UUID (the
+// id) right before that, precede the run, it's the physical-with-snapshot
+// shape: offset comes from that hexadecimal segment, the id from the
+// UUID before it, and the run is the snapshot_id. If the run isn't
+// preceded that way but is still non-empty, it's the logical shape
+// instead: its first segment is the id and its second, if any, the
+// snapshot_id (a lone trailing UUID, the common case, is simply a bare id
+// with no snapshot at all). A location path that itself ends in a
+// UUID-shaped directory is therefore ambiguous and not supported. If the
 // *last* segment isn't UUID-shaped at all (the run is empty), it must be
 // a hexadecimal offset with a UUID id right before it -- the
 // physical-live shape, no snapshot anywhere in the path. See
