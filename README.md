@@ -2,6 +2,13 @@
 
 [![Unit Test Status](https://github.com/rawstor/librawstor/actions/workflows/dist.yml/badge.svg)](https://github.com/rawstor/librawstor/actions/workflows/dist.yml)
 
+> 📖 **Documentation: [docs/](https://github.com/rawstor/librawstor/blob/main/docs/README.md)** —
+> [Concepts](https://github.com/rawstor/librawstor/blob/main/docs/concepts.md) ·
+> [Architecture](https://github.com/rawstor/librawstor/blob/main/docs/architecture.md) ·
+> [Protocol](https://github.com/rawstor/librawstor/blob/main/docs/protocol.md) ·
+> [MDS design](https://github.com/rawstor/librawstor/blob/main/docs/mds.md) ·
+> [Mirroring](https://github.com/rawstor/librawstor/blob/main/docs/mirroring.md)
+
 ## TL;DR
 ```
 PREFIX=${HOME}/local
