@@ -23,13 +23,14 @@ The two headline consumers are:
   server speaking the OST wire protocol) and `file:///path` (local
   filesystem). Multiple comma-separated locations mean either mirroring
   (two `ost://`) or data locality (a `file://` cache in front of an
-  `ost://` remote). See `docs/locations_and_targets.md`.
+  `ost://` remote). See `docs/concepts.md`.
 - **Target**: a Location with a UUID appended to each URI — addresses one
   specific object, possibly replicated across the backends in the list.
-- **OST protocol**: the binary wire protocol `rawstor-ost` speaks and
-  `librawstor`'s client implements. Frame layout (magic, command, cid) is
-  in `include/rawstor/protocol.h`; the authoritative spec lives in the
-  separate `rawstor/rawstor_docs` repo (`Protocol.md`), not in this repo.
+- **OST protocol**: the binary wire protocol `rawstor-ost` and
+  `rawstor-mds` speak and `librawstor`'s client implements.
+  `include/rawstor/protocol.h` is authoritative (every wire struct's size
+  is static_asserted there); `docs/protocol.md` describes the same
+  layouts and must be kept in sync with it.
 - **RawIO**: `librawio`'s internal async I/O abstraction (`rawio::Queue`),
   with two interchangeable backends selected at `configure` time:
   `rawio::uring` (io_uring, default, requires liburing >= 2.3) and
@@ -82,8 +83,9 @@ librawstor/
 │                     natively (no vendored qemu libvduse or other third-party library)
 ├── pyrawstor/        Python 3 bindings (location/target helpers)
 ├── tests/            top-level librawstor integration/unit tests (own in-process test server)
-└── docs/             locations_and_targets.md (the OST wire protocol itself is documented
-                       upstream in rawstor/rawstor_docs, not here)
+└── docs/             README.md, concepts.md, architecture.md, protocol.md
+                       (wire protocol, mirrors include/rawstor/protocol.h),
+                       mds.md, mirroring.md
 ```
 
 Most component directories follow the same `src/` + `include/` + `tests/`
@@ -116,7 +118,6 @@ Notable `configure` flags:
 | `--without-libxxhash` | disable xxhash support |
 | `--without-python3` | skip `pyrawstor` |
 | `--disable-tests` | skip building all `tests/` subdirs |
-| `--disable-ost-backend` | skip building `rawstor-ost` |
 
 liburing must be `>= 2.3` (Ubuntu 22.04's 2.1 is too old and is
 unsupported for that reason).
@@ -168,6 +169,14 @@ backends and the io_uring/poll RawIO backends.
   `const char* const udev_sync_config = ...`) — no Hungarian-notation-style
   prefix (no `k` for constants, no `m_`/`_` for members beyond the
   existing leading-underscore convention already covered above).
+- No historical notes in new code comments — don't explain what a
+  function/member/wire command used to be, used to do, or was renamed/
+  merged/removed from; describe only the current shape and its current
+  rationale. A reader of the code will never see the old behavior, so a
+  "used to be X" comparison only orients someone who already knows the
+  history — that context belongs in the commit message instead. Applies
+  to comments being written now, not a mandate to rewrite pre-existing
+  ones on sight.
 
 ## Git conventions
 

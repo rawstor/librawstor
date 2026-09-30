@@ -60,35 +60,48 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
 // rawstor_location_create()'s C ABI below (which can't just call
 // Location::create() itself -- it needs the built string's own length
 // synchronously, before any I/O, for its snprintf()-style contract).
-// sp.chunk_size splits sp.size into ceil(size / chunk_size) chunks, each
+// sp.chunk_size splits sp.size into size / chunk_size chunks, each
 // mirrored across every URI in `uris` at its own offset -- the same
 // (offset, mirror) shape a hand-built multi-offset -t/--target TARGET
 // already names, so Target::create() (target.cpp) handles the actual
-// per-chunk size split (and the chunk_size-must-be-a-power-of-two check)
-// identically either way; a chunk_size that doesn't divide sp.size
-// evenly just gives the last chunk a smaller share, same as the
-// hand-built case. 0 (the default) or a value >= sp.size means the
+// per-chunk size split (and the chunk_size-must-be-a-power-of-two-
+// dividing-size checks) identically either way. 0 (the default) means the
 // ordinary single-chunk case, one chunk spanning the whole object.
 // Every offset is stamped explicitly, even "0" -- Location::list()'s own
 // returned target strings always do (its own doc comment above), and a
 // caller comparing a freshly created target against one just listed
 // (pyrawstor's own Target.__eq__, a raw string compare) needs the two to
 // actually match.
+//
+// Never split (or offset-stamped) for mds://: an mds:// URI already
+// names a whole object (docs/mds.md), and mds::Backend::create() does
+// its own placement-driven chunking internally, off sp.size/sp.chunk_size
+// directly, given exactly one whole-object call -- splitting or stamping
+// an offset here too would make Target::create()'s own per-group fan-out
+// call it more than once, each time with only that one group's own
+// reduced chunk_sp.size. Location::list() likewise lists an mds:// object
+// as its id alone, so a created target and a listed one still match.
 std::vector<rawstd::URI> build_create_uris(
     const std::vector<rawstd::URI>& uris, const RawstdUUIDString& uuid_string,
     const RawstorObjectSpec& sp
 ) {
-    uint64_t num_chunks = (sp.chunk_size != 0 && sp.chunk_size < sp.size)
-                              ? (sp.size + sp.chunk_size - 1) / sp.chunk_size
-                              : 1;
+    bool is_mds = !uris.empty() && uris.front().scheme() == "mds";
+    uint64_t num_chunks =
+        (!is_mds && sp.chunk_size != 0 && sp.chunk_size < sp.size)
+            ? sp.size / sp.chunk_size
+            : 1;
 
     std::vector<rawstd::URI> ret;
     ret.reserve(uris.size() * num_chunks);
     for (uint64_t i = 0; i < num_chunks; ++i) {
         for (const auto& uri : uris) {
-            std::ostringstream oss;
-            oss << std::hex << i * sp.chunk_size;
-            ret.emplace_back(rawstd::URI(uri, uuid_string), oss.str());
+            rawstd::URI target(uri, uuid_string);
+            if (!is_mds) {
+                std::ostringstream oss;
+                oss << std::hex << i * sp.chunk_size;
+                target = rawstd::URI(target, oss.str());
+            }
+            ret.push_back(std::move(target));
         }
     }
     return ret;
@@ -107,15 +120,26 @@ void encode_token(const RawstdUUID& id, RawstorPaginationToken& token) {
 }
 
 // One URI's worth of Location::info() work: connect a single-session
-// Slot just for this call, do the one metadata op, close it again.
+// Slot just for this call, do the one metadata op, close it again --
+// failed or not (co_await isn't allowed inside a catch block, so the
+// failure is only recorded there and rethrown after the close).
 // Factored out so info()/list() can fan these out across every URI via
 // rawstd::gather() instead of awaiting them one at a time.
 rawstd::Task<RawstorLocationInfo>
 info_one(rawio::Queue& queue, const rawstd::URI& location) {
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location, 1);
-    RawstorLocationInfo ret = co_await slot->info();
+    RawstorLocationInfo ret{};
+    std::exception_ptr error;
+    try {
+        ret = co_await slot->info();
+    } catch (...) {
+        error = std::current_exception();
+    }
     co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
     co_return ret;
 }
 
@@ -133,8 +157,16 @@ rawstd::Task<std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID>> list_one(
     ret.second = token;
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location, 1);
-    co_await slot->list_chunks(limit, ret.first, ret.second);
+    std::exception_ptr error;
+    try {
+        co_await slot->list_chunks(RawstdUUID{}, limit, ret.first, ret.second);
+    } catch (...) {
+        error = std::current_exception();
+    }
     co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
     co_return ret;
 }
 
@@ -296,13 +328,15 @@ void launch_create_op(
 
 namespace rawstor {
 
+// Validated once, here: _uris never changes after construction, so
+// nothing past this point can un-validate it, and no public method below
+// needs to re-check it (same pattern as Target's own constructor).
 Location::Location(const std::vector<rawstd::URI>& uris) : _uris(uris) {
+    validate_not_empty(_uris);
+    validate_different_uris(_uris);
 }
 
 rawstd::Task<RawstorLocationInfo> Location::info(rawio::Queue& queue) const {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-
     std::vector<rawstd::Task<RawstorLocationInfo>> tasks;
     tasks.reserve(_uris.size());
     for (const auto& location : _uris) {
@@ -329,8 +363,6 @@ rawstd::Task<void> Location::list(
     rawio::Queue& queue, unsigned int limit, std::list<Target>& targets,
     RawstorPaginationToken& token
 ) const {
-    validate_not_empty(_uris);
-
     RawstdUUID token_id = decode_token(token);
 
     // Every URI's LIST goes out concurrently instead of one at a time;
@@ -365,11 +397,18 @@ rawstd::Task<void> Location::list(
     for (size_t i = 0; i < _uris.size(); ++i) {
         const rawstd::URI& location = _uris[i];
         const auto& [loc_groups, loc_token] = listings[i];
+        // An mds:// object is addressed whole (build_create_uris()'s own
+        // comment): its target names the id alone, no offset segment.
+        bool is_mds = location.scheme() == "mds";
         for (const auto& group : loc_groups) {
-            RawstdUUIDString uuid_string;
-            rawstd_uuid_to_string(&group.id, &uuid_string);
             std::vector<std::pair<uint64_t, rawstd::URI>>& entries =
                 targets_map[group.id];
+            RawstdUUIDString uuid_string;
+            rawstd_uuid_to_string(&group.id, &uuid_string);
+            if (is_mds) {
+                entries.emplace_back(0, rawstd::URI(location, uuid_string));
+                continue;
+            }
             for (uint64_t offset : group.offsets) {
                 // Always stamped, even "0" -- parsing still accepts a
                 // target string with no offset segment at all (implying
@@ -405,7 +444,6 @@ rawstd::Task<void> Location::list(
             capped = true;
             break;
         }
-
         // Each id's own chunks, sorted by offset -- stable, so two
         // entries sharing one offset (real mirrors of that chunk) keep
         // the order their own locations were listed in, matching every
@@ -455,9 +493,6 @@ Location::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
 rawstd::Task<Target> Location::create(
     rawio::Queue& queue, const RawstdUUID& uuid, const RawstorObjectSpec& sp
 ) const {
-    validate_not_empty(_uris);
-    validate_different_uris(_uris);
-
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
 

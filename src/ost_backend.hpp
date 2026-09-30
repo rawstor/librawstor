@@ -36,27 +36,36 @@ private:
     rawio::Event* _read_event;
     std::unordered_map<uint16_t, std::shared_ptr<BackendOp>> _ops;
 
+    // Running for as long as _recv_pump() is: begun by _connect() when it
+    // launches the pump, ended by the pump itself on its way out. close()
+    // settles on it after cancelling the pump's own recv registration --
+    // that cancel only resolves once the cancel request itself is
+    // processed, not once the pump has actually seen its registration's
+    // final ECANCELED completion and returned, and a pump still suspended
+    // on that when the queue goes away is never freed.
+    rawstd::Gate _pump;
+
     rawstd::Task<void> _connect() override;
     // The cid-dispatched counterpart of the old basic_request_async():
-    // sends a RawstorOSTFrameBasic-shaped request (create/remove/spec/
-    // info/set_object/set_snapshot/create_snapshot all share this shape;
-    // LIST has its own dedicated shape instead, see BackendOpList in the
-    // .cpp) and awaits its response through the same _ops demultiplex
-    // mechanism as every other op -- requires _recv_pump to already be
-    // running, i.e. _connect() to have completed. `val`/`snapshot_id` are
-    // never both meaningful for the same command (protocol.h's own doc
-    // comment on RawstorOSTFrameBasicPayload); a caller that only needs
-    // one leaves the other at its default (0/nil).
+    // sends a RawstorFrameBasic-shaped request (remove/meta/info/
+    // set_object/set_snapshot/create_snapshot all share this shape; LIST
+    // has its own dedicated shape instead, see BackendOpList in the .cpp)
+    // and awaits its response through the same _ops demultiplex mechanism
+    // as every other op -- requires _recv_pump to already be running,
+    // i.e. _connect() to have completed. `val`/`snapshot_id` are never
+    // both meaningful for the same command (protocol.h's own doc comment
+    // on RawstorFrameBasicPayload); a caller that only needs one
+    // leaves the other at its default (0/nil).
     template <typename T = char>
     rawstd::Task<std::vector<T>> _basic_request(
-        RawstorOSTCommandType cmd, const char* op_name, const RawstdUUID& id,
+        RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
         uint64_t offset, uint64_t val = 0, const RawstdUUID& snapshot_id = {}
     );
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
     // response can legitimately race with Slot::_op() already having
     // failed and retried that same op on a different backend (e.g. after a
-    // send-side error on this slot), in which case the cid was
+    // send-side error on this connection), in which case the cid was
     // already unregistered and the response is stale, not a corrupted
     // stream.
     BackendOp* _find_op(uint16_t cid);
@@ -75,6 +84,11 @@ private:
         std::weak_ptr<Backend> weak, rawio::RecvStream stream,
         rawstd::TraceEvent trace_event
     );
+    // _recv_pump()'s own way out on a stream it can no longer trust: fails
+    // everything still in flight with `error`, if the backend is still
+    // around.
+    static void
+    _recv_pump_failed(const std::weak_ptr<Backend>& weak, int error);
 
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
@@ -83,26 +97,46 @@ public:
     rawstd::Task<void> close() override;
 
     rawstd::Task<void> list_chunks(
-        unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
+        RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+        RawstdUUID& token, RawstdUUID snapshot_id = {}
     ) override;
 
     rawstd::Task<void> create(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstorObjectSpec& sp,
+        RawstorMemberRole member_role
     ) override;
 
     // Both relayed over the wire as a RAWSTOR_CMD_RELEASE request, nil vs.
     // non-nil `snapshot_id` (protocol.h widened this command's own payload for
-    // exactly this, same as SET_OBJECT's own nil-means-live convention)
-    // -- the split here mirrors Backend::remove()/remove_snapshot()'s own
-    // C++-level distinction, not a second wire command.
-    rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset) override;
-
-    rawstd::Task<void> remove_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    // exactly this, same as SET_OBJECT/OBJ_OPEN's own nil-means-live
+    // convention) -- the split here mirrors Backend::remove()/
+    // remove_snapshot()'s own C++-level distinction, not a second wire
+    // command.
+    rawstd::Task<void> remove(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
     ) override;
 
-    rawstd::Task<RawstorObjectMeta>
-    meta(const RawstdUUID& id, uint64_t offset) override;
+    rawstd::Task<void> remove_snapshot(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& snapshot_id
+    ) override;
+
+    rawstd::Task<std::vector<RawstdUUID>>
+    list_snapshots(const RawstdUUID& id, uint64_t offset) override;
+
+    rawstd::Task<std::vector<RawstorObjectMeta>> meta(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
+    ) override;
+
+    // Trivial (Backend::resolve_locations()'s own doc comment): this is a
+    // plain, single-copy backend, already the one real member of whatever
+    // offset it's asked about.
+    rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
+    ) override;
 
     rawstd::Task<void> set_sync_state(
         const RawstdUUID& id, uint64_t offset,
@@ -124,9 +158,11 @@ public:
     ) override;
 
     // Relays RAWSTOR_CMD_SNAPSHOT over the wire -- the remote rawstor-ost
-    // forwards to its own local backend the same way.
+    // forwards to its own local backend the same way (docs/mds.md,
+    // "Snapshots").
     rawstd::Task<void> create_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& snapshot_id
     ) override;
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset) override;

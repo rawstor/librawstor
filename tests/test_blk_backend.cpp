@@ -1,5 +1,7 @@
 #include "blk_backend.hpp"
 #include "chunk.hpp"
+#include "location.hpp"
+#include "object_env.hpp"
 #include "opts.h"
 #include "slot.hpp"
 #include "target.hpp"
@@ -17,6 +19,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <system_error>
@@ -98,23 +101,72 @@ rawstor::blk::Backend* open_blk_backend(
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
-    rawstor::Target target({rawstd::URI(location, uuid_string)});
+    rawstd::URI uri(location, uuid_string);
+    rawstor::Target target({uri});
 
     RawstorObjectSpec spec{
         .size = 1u << 20,
         .width = 1,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
     };
     run(queue, target.create(queue, spec));
 
     object =
         run(queue,
-            rawstor::Chunk::create({location}, queue, id, 0, 0, RawstdUUID{}));
+            rawstor::Chunk::create(queue, {location}, id, 0, 0, RawstdUUID{}));
 
     slot = run(queue, rawstor::Slot::create(queue, location, 1));
     run(queue, slot->open(id, 0, 0, RawstdUUID{}));
 
     return static_cast<rawstor::blk::Backend*>(slot->get_next_backend().get());
+}
+
+// Backend::list_chunks() filtered by one id, against `location`: a
+// one-chunk object created before and after the multi-chunk one under
+// test, so the filter really has to drop a smaller and a larger id rather
+// than getting lucky with a location holding nothing else.
+void expect_chunks_of_multichunk_object(const rawstd::URI& location) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(16);
+    rawstor::Location loc({location});
+
+    RawstorObjectSpec one_chunk{
+        .size = 1u << 20,
+        .width = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    RawstorObjectSpec three_chunks = one_chunk;
+    three_chunks.size = 3u << 20;
+    three_chunks.chunk_size = 1u << 20;
+
+    run(*queue, loc.create(*queue, one_chunk));
+    rawstor::Target target = run(*queue, loc.create(*queue, three_chunks));
+    run(*queue, loc.create(*queue, one_chunk));
+
+    std::unique_ptr<rawstor::Slot> slot =
+        run(*queue, rawstor::Slot::create(*queue, location, 1));
+
+    std::vector<rawstor::ChunkGroup> groups;
+    RawstdUUID token{};
+    run(*queue, slot->list_chunks(target.object_id(), 0, groups, token));
+    ASSERT_EQ(groups.size(), 1u);
+    RawstdUUID target_id = target.object_id();
+    EXPECT_EQ(rawstd_uuid_cmp(&groups.front().id, &target_id), 0);
+    EXPECT_EQ(
+        groups.front().offsets, (std::vector<uint64_t>{0, 1u << 20, 2u << 20})
+    );
+    EXPECT_TRUE(rawstd_uuid_is_nil(&token));
+
+    // Nothing of it here at all: an empty listing, not an error.
+    RawstdUUID missing;
+    ASSERT_EQ(rawstd_uuid7_init(&missing), 0);
+    run(*queue, slot->list_chunks(missing, 0, groups, token));
+    EXPECT_TRUE(groups.empty());
+
+    run(*queue, slot->close());
 }
 
 } // namespace
@@ -371,13 +423,15 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     sync_state.sync_id_history[3] = 3;
 
     rawstor::blk::Backend::ChunkIdentity identity{};
+    identity.member_role = RAWSTOR_MEMBER_WITNESS;
     identity.width = 3;
+    identity.chunk_size = 0x1000;
 
     std::string encoded =
         rawstor::blk::Backend::meta_encode(sync_state, identity);
 
-    RawstorObjectSyncState decoded_sync_state{};
-    rawstor::blk::Backend::ChunkIdentity decoded_identity{};
+    RawstorObjectSyncState decoded_sync_state;
+    rawstor::blk::Backend::ChunkIdentity decoded_identity;
     rawstor::blk::Backend::meta_decode(
         encoded, &decoded_sync_state, &decoded_identity
     );
@@ -396,14 +450,16 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     EXPECT_EQ(
         decoded_sync_state.sync_id_history[3], sync_state.sync_id_history[3]
     );
+    EXPECT_EQ(decoded_identity.member_role, identity.member_role);
     EXPECT_EQ(decoded_identity.width, identity.width);
+    EXPECT_EQ(decoded_identity.chunk_size, identity.chunk_size);
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_empty_string) {
     /* A missing property/tag/record must never be mistaken for a valid
      * one. */
-    RawstorObjectSyncState sync_state{};
-    rawstor::blk::Backend::ChunkIdentity identity{};
+    RawstorObjectSyncState sync_state;
+    rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
         rawstor::blk::Backend::meta_decode("", &sync_state, &identity),
         std::system_error
@@ -413,8 +469,8 @@ TEST(BlkBackendTest, meta_decode_rejects_empty_string) {
 TEST(BlkBackendTest, meta_decode_rejects_dash) {
     /* ZFS's own "property never set" marker -- must not be mistaken for a
      * valid record either. */
-    RawstorObjectSyncState sync_state{};
-    rawstor::blk::Backend::ChunkIdentity identity{};
+    RawstorObjectSyncState sync_state;
+    rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
         rawstor::blk::Backend::meta_decode("-", &sync_state, &identity),
         std::system_error
@@ -422,8 +478,8 @@ TEST(BlkBackendTest, meta_decode_rejects_dash) {
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_malformed_string) {
-    RawstorObjectSyncState sync_state{};
-    rawstor::blk::Backend::ChunkIdentity identity{};
+    RawstorObjectSyncState sync_state;
+    rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
         rawstor::blk::Backend::meta_decode(
             "not the right format", &sync_state, &identity
@@ -435,14 +491,123 @@ TEST(BlkBackendTest, meta_decode_rejects_malformed_string) {
 TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
     /* A record from a format version this build no longer understands (or
      * ever wrote) must not be mistaken for a valid one. */
-    RawstorObjectSyncState sync_state{};
-    rawstor::blk::Backend::ChunkIdentity identity{};
+    RawstorObjectSyncState sync_state;
+    rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
         rawstor::blk::Backend::meta_decode(
             "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
-            "width=0",
+            "member_role=0:width=0:chunk_size=0",
             &sync_state, &identity
         ),
         std::system_error
     );
+}
+
+// A witness (docs/mds.md, "Witness (stage 3)") isn't reachable through
+// any public API yet -- no placement code anywhere ever passes
+// RAWSTOR_MEMBER_WITNESS to Slot::create()/Backend::create() -- so this
+// goes straight to Slot::create() itself, the same way Target::create()'s
+// own create_one() (target.cpp) would if a witness-attach path existed.
+TEST(BlkBackendTest, witness_member_holds_no_data_and_refuses_real_io) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .width = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+
+    std::unique_ptr<rawstor::Slot> slot =
+        run(*queue, rawstor::Slot::create(*queue, location, 1));
+    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_WITNESS));
+
+    // Holds no data: its own "data" file exists (still enumerable --
+    // e.g. rawstor-mds's reconstruct scan, which tells it apart from a
+    // data chunk by its own meta's member_role, not by whether the file
+    // is there at all) but is empty -- no real fallocate()/storage ever
+    // happened for it (file_backend.cpp's own create() comment).
+    RawstdUUIDString id_string;
+    rawstd_uuid_to_string(&id, &id_string);
+    std::filesystem::path data_path = dir.path() / id_string / "0" / "data";
+    ASSERT_TRUE(std::filesystem::exists(data_path));
+    EXPECT_EQ(std::filesystem::file_size(data_path), 0u);
+
+    // Never a valid target for real I/O (same doc comment: "data I/O and
+    // resync skip it") -- Slot::open() refuses it outright rather than
+    // silently handing back a live fd onto that empty file.
+    bool threw = false;
+    try {
+        run(*queue, slot->open(id, 0, 0, RawstdUUID{}));
+    } catch (const std::system_error& e) {
+        threw = true;
+        EXPECT_EQ(e.code().value(), ENOTSUP);
+    }
+    EXPECT_TRUE(threw);
+}
+
+TEST(BackendChunksTest, file_reports_every_offset_of_id) {
+    rawstor::tests::TmpDir dir;
+    expect_chunks_of_multichunk_object(rawstd::URI(dir.uri()));
+}
+
+// Same, over ost:// -- the remote rawstor-ost answers through its own
+// existing LIST command, no chunks-specific wire command needed.
+TEST(BackendChunksTest, ost_reports_every_offset_of_id) {
+    rawstor::tests::ObjectEnv env(8792, 8793);
+    expect_chunks_of_multichunk_object(rawstd::URI("ost://127.0.0.1:8793"));
+}
+
+// F10 (docs/mirroring.md) across the wire: a real rawstor-ost missing
+// its own copy reports it as ENOENT (its own local open finds no copy at
+// all), not ENOTCONN, so a client opening a file:// + file:// + ost://
+// mirror recreates that copy through the OST like any other missing
+// member (the two file:// copies being the surviving majority).
+TEST(ChunkF10Test, missing_copy_recreated_over_ost) {
+    rawstor::tests::ObjectEnv env(8794, 8795);
+    rawstor::tests::TmpDir dir;
+    rawstor::tests::TmpDir dir2;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(16);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    rawstd::URI file_location(dir.uri());
+    rawstd::URI file_location2(dir2.uri());
+    rawstd::URI ost_location("ost://127.0.0.1:8795");
+    rawstd::URI ost_uri(ost_location, uuid_string);
+
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    run(*queue,
+        rawstor::Target({rawstd::URI(file_location, uuid_string),
+                         rawstd::URI(file_location2, uuid_string), ost_uri})
+            .create(*queue, spec));
+
+    run(*queue, rawstor::Target({ost_uri}).remove(*queue));
+
+    std::unique_ptr<rawstor::Chunk> chunk =
+        run(*queue, rawstor::Chunk::create(
+                        *queue, {file_location, file_location2, ost_location},
+                        id, 0, 0, RawstdUUID{}
+                    ));
+    run(*queue, chunk->close());
+
+    std::vector<RawstorObjectMeta> metas =
+        run(*queue, rawstor::Target({ost_uri}).meta(*queue, 0));
+    ASSERT_EQ(metas.size(), 1u);
+    EXPECT_EQ(metas.front().spec.size, spec.size);
 }

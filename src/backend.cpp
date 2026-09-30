@@ -3,11 +3,13 @@
 #include "config.h"
 #include "file_backend.hpp"
 #include "lvm_backend.hpp"
+#include "mds_backend.hpp"
 #include "ost_backend.hpp"
 #include "zfs_backend.hpp"
 
 #include <rawstd/logging.h>
 #include <rawstd/uri.hpp>
+#include <rawstd/uuid.h>
 
 #include <sstream>
 #include <stdexcept>
@@ -24,21 +26,6 @@ Backend::Backend(Private, rawio::Queue& queue, const rawstd::URI& location) :
     _location(location),
     _fd(-1),
     _queue(queue) {
-}
-
-rawstd::Task<void>
-Backend::set_snapshot(const RawstdUUID&, uint64_t, const RawstdUUID&) {
-    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
-}
-
-rawstd::Task<void>
-Backend::create_snapshot(const RawstdUUID&, uint64_t, const RawstdUUID&) {
-    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
-}
-
-rawstd::Task<void>
-Backend::remove_snapshot(const RawstdUUID&, uint64_t, const RawstdUUID&) {
-    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
 Backend::~Backend() {
@@ -70,6 +57,9 @@ Backend::create(rawio::Queue& queue, const rawstd::URI& location) {
     } else if (location.scheme() == "zfs") {
         backend =
             std::make_shared<rawstor::zfs::Backend>(Private(), queue, location);
+    } else if (location.scheme() == "mds") {
+        backend =
+            std::make_shared<rawstor::mds::Backend>(Private(), queue, location);
     } else {
         rawstd_error("Unexpected URI scheme: %s\n", location.str().c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -82,6 +72,33 @@ Backend::create(rawio::Queue& queue, const rawstd::URI& location) {
     co_return backend;
 }
 
+rawstd::Task<void>
+Backend::set_snapshot(const RawstdUUID&, uint64_t, const RawstdUUID&) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
+rawstd::Task<void> Backend::remove_snapshot(
+    const RawstdUUID&, const RawstdUUID&, uint64_t, const RawstdUUID&
+) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
+rawstd::Task<void> Backend::create_snapshot(
+    const RawstdUUID&, const RawstdUUID&, uint64_t, const RawstdUUID&
+) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
+rawstd::Task<std::vector<RawstdUUID>>
+Backend::list_snapshots(const RawstdUUID&, uint64_t) {
+    co_return std::vector<RawstdUUID>{};
+}
+
+rawstd::Task<void>
+Backend::resize(const RawstdUUID&, const RawstdUUID&, uint64_t, uint64_t) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
 std::string Backend::str() const {
     // Only ost::Backend ever calls set_fd() -- file/lvm/zfs backends have
     // no socket of their own, so _fd stays at its constructor default of
@@ -92,7 +109,7 @@ std::string Backend::str() const {
         return _location.str();
     }
     std::ostringstream oss;
-    oss << "fd " << _fd;
+    oss << _location.str() << " (fd " << _fd << ")";
     return oss.str();
 }
 

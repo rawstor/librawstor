@@ -187,11 +187,21 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
 }
 
 rawstd::Task<void> Backend::list_chunks(
-    unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
+    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+    RawstdUUID& token, RawstdUUID snapshot_id
 ) {
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
+        // No snapshots on this backend (Backend::remove_snapshot()'s own
+        // default).
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
     co_await _cleanup_staging_lvs();
 
-    RawstdUUID input_token = token;
+    // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc
+    // comment): every other uuid's own LVs are skipped while grouping,
+    // and `token` plays no part.
+    bool filtered = !rawstd_uuid_is_nil(&id);
+    RawstdUUID input_token = filtered ? RawstdUUID{} : token;
     chunks.clear();
     token = {};
 
@@ -231,33 +241,31 @@ rawstd::Task<void> Backend::list_chunks(
             // A UUID's own string form is always exactly 36 characters
             // (RawstdUUIDString) -- a fixed prefix, since the UUID itself
             // already embeds dashes (8-4-4-4-12), unlike this backend's
-            // own "-<offset>" suffix, which can't be told apart from
-            // those by splitting on the last '-' alone.
-            if (name.size() < 36) {
+            // own "-<offset>" suffix, which can't be told apart
+            // from those by splitting on the last '-' alone. The suffix is
+            // mandatory: _lv_name() always writes it, so a bare-UUID LV is
+            // not one this backend could open.
+            if (name.size() <= 37 || name[36] != '-') {
                 continue;
             }
             std::string uuid_part = name.substr(0, 36);
-            uint64_t offset = 0;
-            if (name.size() > 36) {
-                if (name[36] != '-') {
-                    continue;
-                }
-                // Anything left over after the hex digits (an LV name this
-                // backend never creates itself, but lvs -- reports whatever
-                // exists in the VG) is rejected rather than silently
-                // truncated to whatever prefix strtoull() did parse.
-                char* endptr = nullptr;
+            // Anything left over after the hex digits (an LV name this
+            // backend never creates itself, but lvs -- reports whatever
+            // exists in the VG) is rejected rather than silently
+            // truncated to whatever prefix strtoull() did parse.
+            char* endptr = nullptr;
+            errno = 0;
+            uint64_t offset = strtoull(name.c_str() + 37, &endptr, 16);
+            if (errno != 0 || endptr == name.c_str() + 37 || *endptr != '\0') {
                 errno = 0;
-                offset = strtoull(name.c_str() + 37, &endptr, 16);
-                if (errno != 0 || endptr == name.c_str() + 37 ||
-                    *endptr != '\0') {
-                    errno = 0;
-                    continue;
-                }
+                continue;
             }
 
             RawstdUUID uuid;
             if (rawstd_uuid_from_string(&uuid, uuid_part.c_str()) < 0) {
+                continue;
+            }
+            if (filtered && rawstd_uuid_cmp(&uuid, &id) != 0) {
                 continue;
             }
             grouped[uuid].push_back(offset);
@@ -381,7 +389,8 @@ rawstd::Task<void> Backend::_cleanup_staging_lvs() {
 }
 
 rawstd::Task<void> Backend::create(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
     if (sp.size == 0) {
         rawstd_error("lvm: object size must be positive\n");
@@ -446,7 +455,8 @@ rawstd::Task<void> Backend::create(
     // window -- staged or revealed -- where the LV exists without one.
     RawstorObjectSyncState sync_state{};
     sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    ChunkIdentity identity{};
+    Backend::ChunkIdentity identity;
+    identity.member_role = member_role;
     identity.width = static_cast<uint8_t>(sp.width);
     identity.chunk_size = sp.chunk_size;
     std::string tag =
@@ -463,7 +473,7 @@ rawstd::Task<void> Backend::create(
     // the whole thing -- a thick LV's freshly allocated extents can
     // otherwise still hold whatever a previous LV in this VG left on
     // them. Revealing it under its real name only now means every access
-    // path (set_object()/spec()/pread() -- not just list(), which
+    // path (set_object()/meta()/pread() -- not just list(), which
     // already skips a non-UUID name on its own) sees plain ENOENT until
     // zeroing has actually finished, instead of a still-partially-zeroed
     // device. It also survives this process crashing mid-fill: the LV
@@ -549,7 +559,8 @@ rawstd::Task<void> Backend::create(
     co_return;
 }
 
-rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<void>
+Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
     co_await _cleanup_staging_lvs();
 
     std::string path = _device_path(id, offset);
@@ -660,8 +671,14 @@ rawstd::Task<std::string> Backend::_lv_tags(const std::string& path) {
     }
 }
 
-rawstd::Task<RawstorObjectMeta>
-Backend::meta(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
+        // No snapshots on this backend (Backend::remove_snapshot()'s own
+        // default).
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
     std::string path = _device_path(id, offset);
     std::string tags = co_await _lv_tags(path);
     std::string tag = find_tag(tags, rawstor_tag_prefix);
@@ -671,7 +688,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     // CLEAN -- the caller treats any error here as "member stale, needs a
     // resync" (docs/mirroring.md, case F10).
     RawstorObjectSyncState sync_state;
-    ChunkIdentity identity{};
+    Backend::ChunkIdentity identity;
     try {
         meta_decode(tag, &sync_state, &identity);
     } catch (const std::system_error&) {
@@ -684,12 +701,18 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     // a value that could go stale if the LV were ever resized outside
     // rawstor.
     RawstorObjectMeta ret{};
-    ret.spec.size = co_await _blk_size(id, offset);
+    ret.spec.size = co_await _blk_size(id, offset, snapshot_id);
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
+    ret.member_role = identity.member_role;
     ret.sync_state = sync_state;
 
-    co_return ret;
+    co_return std::vector<RawstorObjectMeta>{ret};
+}
+
+rawstd::Task<std::vector<rawstd::URI>>
+Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
+    co_return std::vector<rawstd::URI>{location()};
 }
 
 rawstd::Task<void> Backend::set_sync_state(
@@ -701,16 +724,17 @@ rawstd::Task<void> Backend::set_sync_state(
     std::string tags = co_await _lv_tags(path);
     std::string old_tag = find_tag(tags, rawstor_tag_prefix);
 
-    // identity is stamped once at create() and never changed again --
-    // preserve it across this rewrite. An LV that predates this feature
-    // (no tag, or one meta_decode() can't parse) has no identity to
+    // The placement identity is immutable once stamped at create() --
+    // carry the existing tag's through unchanged rather than clobber it
+    // with a zeroed one. An empty/unrecorded old_tag (an LV created
+    // before this feature, or by something else) has no identity to
     // preserve; it degenerates to the all-zero default.
-    ChunkIdentity identity{};
-    RawstorObjectSyncState old_sync_state{};
+    Backend::ChunkIdentity identity;
+    RawstorObjectSyncState old_sync_state;
     try {
         meta_decode(old_tag, &old_sync_state, &identity);
     } catch (const std::system_error&) {
-        identity = ChunkIdentity{};
+        identity = Backend::ChunkIdentity{};
     }
 
     std::string new_tag =

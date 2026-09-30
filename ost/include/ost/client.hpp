@@ -79,71 +79,74 @@ private:
     _close_current_object(std::weak_ptr<Client> weak);
 
     static rawstd::DetachedTask _list(
-        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameListPayload payload
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameListPayload payload
     );
     static rawstd::DetachedTask _allocate(
-        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameAllocatePayload payload
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameAllocatePayload payload
     );
+    // `payload.snapshot_id` nil for the live version, non-nil for one
+    // previously snapshotted (protocol.h's own doc comment on RELEASE).
     static rawstd::DetachedTask _release(
-        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameBasicPayload payload
     );
-    // SNAPSHOT: forwarded to the same rawstor_target_create() this
-    // server's own local backend(s) implement -- the bound snapshot_id
-    // baked into the target's own path (_targets()'s own `snapshot_id`
-    // parameter) makes it take a CoW snapshot instead of creating a fresh
-    // object, same shape as _release() above.
     static rawstd::DetachedTask _create_snapshot(
-        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameBasicPayload payload
     );
     static rawstd::DetachedTask _meta(
-        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameBasicPayload payload
+    );
+    static rawstd::DetachedTask _list_snapshots(
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameBasicPayload payload
     );
     static rawstd::DetachedTask
-    _info(std::weak_ptr<Client> weak, RawstorOSTFrameHead head);
+    _info(std::weak_ptr<Client> weak, RawstorFrameHead head);
     static rawstd::DetachedTask _set_object(
-        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameBasicPayload payload
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameBasicPayload payload
     );
     static rawstd::DetachedTask _read(
-        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameIOPayload payload
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameIOPayload payload
     );
     static rawstd::DetachedTask _write(
-        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameIOPayload payload,
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameIOPayload payload,
         std::shared_ptr<std::vector<unsigned char>> data
     );
     // Issues a validated WRITE to storage -- rawstor_object_pwrite()'s
     // underlying blk::Backend applies write-throttling itself (see
     // blk_backend.hpp's _throttle_acquire()), so this just dispatches.
     static rawstd::DetachedTask _dispatch_write(
-        std::weak_ptr<Client> weak, RawstorOSTFrameHead head, uint64_t offset,
+        std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t offset,
         bool sync, std::shared_ptr<std::vector<unsigned char>> data
     );
     static rawstd::DetachedTask _discard(
-        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameIOPayload payload
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameIOPayload payload
     );
     static rawstd::DetachedTask _write_zeroes(
-        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameIOPayload payload
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameIOPayload payload
     );
     static rawstd::DetachedTask
-    _flush(std::weak_ptr<Client> weak, RawstorOSTFrameHead head);
+    _flush(std::weak_ptr<Client> weak, RawstorFrameHead head);
     static rawstd::DetachedTask _set_state(
-        std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-        RawstorOSTFrameSyncStatePayload payload
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameSyncStatePayload payload
     );
-    // Builds this server's own local target string for `uuid`/`offset`,
-    // with `snapshot_id` appended as a bound-snapshot path segment when
-    // non-nil (nil, the default, addresses the live version).
+    // Every configured location's own URI for `uuid`, with `offset`/
+    // `snapshot_id` folded into each one's own path as
+    // "<uuid>[/<offset>[/<snapshot_id>]]" (TargetPath's own doc comment,
+    // src/target.hpp) -- the same self-describing name every backend on
+    // the receiving end already expects (docs/mds.md, "Chunk identity").
     std::vector<rawstd::URI> _targets(
-        const RawstdUUID& uuid, uint64_t offset,
+        const RawstdUUID& uuid, uint64_t offset = 0,
         const RawstdUUID& snapshot_id = {}
     );
 
@@ -155,11 +158,11 @@ private:
     // Server::del_client(), the same way it already handles any other
     // failure.
     rawstd::Task<void> _send_response(
-        const RawstorOSTCommandType& type, uint16_t cid, int32_t result,
+        const RawstorCommandType& type, uint16_t cid, int32_t result,
         uint64_t hash
     );
     rawstd::Task<void> _send_response(
-        const RawstorOSTCommandType& type, uint16_t cid, int32_t result,
+        const RawstorCommandType& type, uint16_t cid, int32_t result,
         uint64_t hash, const std::vector<unsigned char>& data
     );
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from . import librawstor
 
 
@@ -75,15 +77,31 @@ class Target:
         None for a mirror that didn't answer."""
         return librawstor.object_meta(self._uri, offset)
 
-    def set_sync_state(
+    def set_member_sync_state(
             self, sync_state: librawstor.ObjectSyncState,
-            offset: int = 0) -> None:
-        """Write mirror consistency state to every mirror of the chunk at
+            member_index: int = 0, offset: int = 0) -> None:
+        """Write mirror consistency state to one real member (position
+        `member_index` in meta()'s own per-chunk order) of the chunk at
         `offset` (0 for an ordinary, single-chunk target). A sharp tool:
         setting this by hand can desynchronize a target's copies in ways
         the library's own quorum/reconciliation logic isn't designed to
-        recover from automatically -- not meant for routine use."""
-        librawstor.object_set_sync_state(self._uri, sync_state, offset)
+        recover from automatically -- not meant for routine use. A caller
+        wanting every member of the chunk written calls this once per
+        member instead of relying on any fan-out here."""
+        librawstor.object_set_member_sync_state(
+            self._uri, sync_state, member_index, offset)
+
+    def chunks(self) -> list[int]:
+        """Every chunk offset this target's object has, ascending (see
+        rawstor_target_chunks(), <rawstor/target.h>)."""
+        return librawstor.object_chunks(self._uri)
+
+    def snapshots(self) -> Iterator["Target"]:
+        """Every snapshot of this target's object, oldest first, each as
+        its own Target (see rawstor_target_snapshots(),
+        <rawstor/target.h>)."""
+        for snapshot in librawstor.object_snapshots(self._uri):
+            yield Target(snapshot)
 
     def remove(self) -> None:
         librawstor.object_remove(self._uri)

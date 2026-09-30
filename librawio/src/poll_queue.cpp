@@ -26,6 +26,19 @@ namespace {
 
 std::string engine_name = "poll";
 
+// A listening socket is often polled by several queues at once (one per
+// server worker thread): every one of them sees it readable, but only one
+// wins the connection. accept() is only safe to try then on a
+// non-blocking socket -- a losing queue gets EAGAIN and keeps waiting
+// (EventSimplexAccept's own comment), instead of blocking its whole thread
+// inside accept() until some later connection happens to arrive.
+void set_listen_nonblock(int fd) {
+    int res = rawstd_socket_set_nonblock(fd);
+    if (res) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
 } // namespace
 
 namespace rawio {
@@ -496,6 +509,7 @@ rawio::PollStream Queue::poll_multishot(int fd, unsigned int mask) {
 rawio::Awaitable<int>
 Queue::accept(int fd, sockaddr* addr, socklen_t* addrlen) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
+    set_listen_nonblock(fd);
     Session& s = _get_session(fd);
 
     std::unique_ptr<EventSimplexAcceptOneshot> event =
@@ -510,6 +524,7 @@ Queue::accept(int fd, sockaddr* addr, socklen_t* addrlen) {
 
 rawio::AcceptStream Queue::accept_multishot(int fd) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
+    set_listen_nonblock(fd);
     Session& s = _get_session(fd);
 
     auto backend =

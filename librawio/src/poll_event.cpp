@@ -124,6 +124,7 @@ void EventSimplexPollMultishot::dispatch() {
 
 ssize_t EventSimplexAcceptOneshot::process() noexcept {
     RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "accept()");
+    _would_block = false;
     ssize_t res = ::accept(_fd, _addr, _addrlen);
     if (res >= 0) {
         try {
@@ -151,6 +152,10 @@ ssize_t EventSimplexAcceptOneshot::process() noexcept {
     } else {
         int error = errno;
         errno = 0;
+        if (would_block(error)) {
+            _would_block = true;
+            return 0;
+        }
         set_error(error);
     }
     return res;
@@ -158,6 +163,7 @@ ssize_t EventSimplexAcceptOneshot::process() noexcept {
 
 ssize_t EventSimplexAcceptMultishot::process() noexcept {
     RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "accept()");
+    _would_block = false;
     ssize_t res = ::accept(_fd, nullptr, nullptr);
     if (res >= 0) {
         try {
@@ -185,6 +191,10 @@ ssize_t EventSimplexAcceptMultishot::process() noexcept {
     } else {
         int error = errno;
         errno = 0;
+        if (would_block(error)) {
+            _would_block = true;
+            return 0;
+        }
         set_error(error);
     }
     return res;

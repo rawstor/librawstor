@@ -32,13 +32,15 @@ private:
     // Slot is only ever used for metadata (list/create/remove/
     // meta/info), which needs no SET_OBJECT step of its own.
     std::optional<RawstdUUID> _id;
-    // The chunk offset open() bound _id to -- meaningless while _id is
-    // unset; carried alongside it so invalidate_backend()'s own
-    // reconnect-and-set_object() replay (below) doesn't need open()'s
-    // caller to hand it back in a second time.
+    // The chunk offset/version open() bound _id to -- 0/0 (whole object,
+    // live) unless open() was called otherwise (docs/mds.md, "Chunk
+    // identity"/"Snapshots"). Meaningless while _id is unset; carried
+    // alongside it so a reconnected backend's own set_object()
+    // (invalidate_backend()) rebinds to the same chunk/version, not
+    // silently back to the whole object's own live one.
     uint64_t _offset;
-    // The flags/bound snapshot version (nil: live) open() bound _id with
-    // -- carried alongside _id/_offset for the same replay reason.
+    // The open flags (RAWSTOR_READONLY or 0) open() bound _id with --
+    // carried alongside _id/_offset/_snapshot_id for the same replay reason.
     int _flags;
     RawstdUUID _snapshot_id;
 
@@ -136,21 +138,40 @@ public:
     // methods they wrap, since a connect()ed Slot is (like a
     // Backend) already bound to one location.
     rawstd::Task<void> list_chunks(
-        unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
+        RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+        RawstdUUID& token, RawstdUUID snapshot_id = {}
+    );
+
+    rawstd::Task<void> create_snapshot(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     );
 
     rawstd::Task<void>
-    create(const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp);
+    resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size);
+
+    rawstd::Task<void> create(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
+        RawstorMemberRole member_role
+    );
 
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset);
 
-    // Removes one version previously registered via create_snapshot()
-    // below (`snapshot_id`, never nil).
+    rawstd::Task<std::vector<RawstdUUID>>
+    list_snapshots(const RawstdUUID& id, uint64_t offset);
+
     rawstd::Task<void> remove_snapshot(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
     );
 
-    rawstd::Task<RawstorObjectMeta> meta(const RawstdUUID& id, uint64_t offset);
+    rawstd::Task<std::vector<RawstorObjectMeta>> meta(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
+    );
+
+    rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
+    );
 
     rawstd::Task<void> set_sync_state(
         const RawstdUUID& id, uint64_t offset,
@@ -158,12 +179,6 @@ public:
     );
 
     rawstd::Task<RawstorLocationInfo> info();
-
-    // Native CoW snapshot of the live version as `snapshot_id` (never nil).
-    // ENOTSUP on a backend without native CoW (file://, classic LVM).
-    rawstd::Task<void> create_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
-    );
 
     // set_object()s every backend in the pool create() populated --
     // must be called (at most once) after create(), before any data-path
@@ -174,12 +189,17 @@ public:
     // (retrying against another on failure) rather than target every
     // backend the way this needs to. Returns a separate meta() read
     // against whichever backend the pool now has (set_object() itself
-    // doesn't return it, see its own doc comment) -- spec.width on it
-    // is this copy's own local share, not the target-wide count.
-    // `flags` (RAWSTOR_READONLY or 0) goes to every Backend::set_object();
-    // a non-nil `snapshot_id` binds every backend to that previously
-    // snapshotted version instead (Backend::set_snapshot(), read-only by
-    // nature).
+    // doesn't return it, see its own doc comment) -- spec.width on it is
+    // this copy's own persisted identity, not the target-wide count.
+    // meta()'s own first entry is this location's own answer (its own
+    // doc comment: every backend but mds::Backend only ever has the one
+    // to give anyway). `flags` (RAWSTOR_READONLY or 0) goes to every
+    // Backend::set_object() (a non-nil `snapshot_id` binds via
+    // set_snapshot() instead, read-only by nature). Throws ENOTSUP if
+    // that answer's own member_role is RAWSTOR_MEMBER_WITNESS -- a
+    // witness holds no data and is never a valid target for real I/O
+    // (docs/mds.md, "Witness (stage 3)"); its own .cpp doc comment on
+    // why this is the one place that needs to check.
     rawstd::Task<RawstorObjectMeta> open(
         const RawstdUUID& id, uint64_t offset, int flags,
         const RawstdUUID& snapshot_id

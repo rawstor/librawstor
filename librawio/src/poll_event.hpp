@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include <cerrno>
 #include <cstddef>
 #include <cstring>
 
@@ -594,17 +595,31 @@ public:
 };
 
 class EventSimplexAccept : public EventSimplex {
+protected:
+    // Set by process() when accept() found nothing to take (EAGAIN on a
+    // non-blocking listening socket): several queues polling one socket
+    // all see it readable, and only one of them wins the connection. The
+    // event then stays armed (is_completed() is false) instead of
+    // completing with an error.
+    bool _would_block;
+
+    // accept() found nothing to take: see _would_block.
+    static inline bool would_block(int error) noexcept {
+        return error == EAGAIN || error == EWOULDBLOCK;
+    }
+
 public:
     EventSimplexAccept(
         Queue& q, int fd, const rawstd::TraceEvent& trace_event
     ) :
-        EventSimplex(q, fd, trace_event) {}
+        EventSimplex(q, fd, trace_event),
+        _would_block(false) {}
 
     virtual ~EventSimplexAccept() override = default;
 
     inline void set_result(ssize_t result) noexcept { _result = result; }
 
-    bool is_completed() const noexcept override final { return true; }
+    bool is_completed() const noexcept override final { return !_would_block; }
     bool is_poll() const noexcept override final { return false; }
     bool is_accept() const noexcept override final { return true; }
     bool is_read() const noexcept override final { return false; }

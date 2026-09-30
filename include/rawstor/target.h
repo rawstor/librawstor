@@ -7,6 +7,7 @@
 #ifndef RAWSTOR_TARGET_H
 #define RAWSTOR_TARGET_H
 
+#include <rawstor/list.h>
 #include <rawstor/object.h>
 #include <rawstor/rawio.h>
 #include <rawstor/rawstor.h>
@@ -18,6 +19,12 @@
 extern "C" {
 #endif
 
+/** Chunk member roles (docs/mds.md, chunk_meta.member_role). */
+enum RawstorMemberRole {
+    RAWSTOR_MEMBER_DATA = 0,
+    RAWSTOR_MEMBER_WITNESS = 1, /**< Metadata-only quorum member; stage 3. */
+};
+
 /**
  * @brief Object specification structure.
  *
@@ -28,36 +35,52 @@ extern "C" {
  * when creating a new object (via rawstor_target_create()).
  *
  * When used with rawstor_target_create(), the size field must be set to the
- * desired size of the object to be created. width is mandatory, never a
- * convenience the caller can opt out of (leaving it 0 always fails the
- * create with -EINVAL): for a target string naming more than one URI, it
- * must equal that count exactly (a caller that doesn't already know it can
- * derive it by counting the ','-separated entries in its own target/
- * location string); for a lone URI, any nonzero value is accepted as the
- * caller's own chosen redundancy for that one copy, not required to equal
- * 1. chunk_size only matters for a target string naming more than one
- * chunk's own uris (see docs/locations_and_targets.md): it must be a
- * nonzero power of two, the whole object's own per-chunk share, every
- * chunk exactly that size except the last (whatever remains of size);
- * ignored (and 0 is a valid, if meaningless, value) for the ordinary
- * single-chunk case.
+ * desired size of the object to be created; width is mandatory too, and
+ * never defaulted or derived: for a comma-separated target string with more
+ * than one URI, it must equal that count exactly (@c -EINVAL otherwise,
+ * including when left at 0); for a single-URI target it's the caller's own
+ * chosen redundancy -- 1 for an ordinary single-copy object, or an mds://
+ * object's own real width -- but it must be stated (0 is refused, never
+ * silently treated as 1). chunk_size, when nonzero, must be a power of
+ * two and size a multiple of it (@c -EINVAL otherwise): every chunk is
+ * exactly chunk_size. It is mandatory for an mds:// object, and for a
+ * target string naming more than one chunk's own uris (see
+ * docs/concepts.md); 0 means one chunk spans the whole object, which then
+ * can't be resized (rawstor_target_resize() only ever adds whole chunks).
  *
- * When used with rawstor_target_spec(), all three fields are filled with
- * the actual shape of the existing object: its size in bytes, the number
- * of URIs configured for it, and the per-chunk share it was created
- * with (0 for the ordinary single-chunk case) -- rawstor_target_spec()
- * only ever touches the target's own first chunk, but chunk_size is the
- * whole object's own chunking policy, persisted identically on every
- * chunk at create() time, so any one of them answers it correctly.
+ * When used with rawstor_target_spec(), the fields are filled with the
+ * actual shape of the existing object: its size in bytes, the number of
+ * copies configured for it -- the number of URIs in the target string
+ * for a plain target, or an mds:// object's own configured redundancy
+ * (never derivable by counting URIs, since an mds:// target is always a
+ * single URI) -- and the per-chunk share it was created with (0 for the
+ * ordinary single-chunk case). rawstor_target_spec() only ever touches
+ * the target's own first chunk, but chunk_size is the whole object's own
+ * chunking policy, persisted identically on every chunk at create()
+ * time, so any one of them answers it correctly.
  *
  * @see rawstor_target_spec
  * @see rawstor_target_create
  */
+
 struct RawstorObjectSpec {
     uint64_t size;      /**< Size of the object in bytes. */
-    unsigned int width; /**< Number of URIs configured for the target. */
-    /** Per-chunk share of a multi-chunk target; see above. */
-    uint64_t chunk_size;
+    unsigned int width; /**< Copies per chunk: the number of URIs in a plain
+                              target, or an mds:// object's own configured
+                              redundancy. Mandatory at create() time -- see
+                              rawstor_target_create()'s own doc comment. */
+
+    /*
+     * Object policy, mds:// targets only (docs/mds.md). Zeros are
+     * defaults that degenerate to a single-chunk, single-copy object --
+     * which behaves exactly like a plain object.
+     */
+    uint64_t chunk_size;    /**< Power of two dividing size; 0 = one
+                                  chunk spans the object. */
+    uint64_t stripe_width;  /**< K; 0 = spread every chunk, 1 =
+                                  object-local. */
+    uint8_t failure_domain; /**< RAWSTOR_OBJ_DOMAIN_*; 0 = default
+                                  (server). */
 };
 
 /**
@@ -91,7 +114,7 @@ enum RawstorObjectSyncStateValue {
  * @brief Settable mirror consistency identity of a single object copy.
  *
  * Everything about a copy's consistency state that can actually be changed
- * (see docs/mirroring.md) -- the fields rawstor_target_set_sync_state()
+ * (see docs/mirroring.md) -- the fields rawstor_target_set_member_sync_state()
  * persists. A sync_id of 0 marks a legacy copy that has never been part of
  * an established sync set; such copies are treated as CLEAN and identical
  * right after creation.
@@ -114,20 +137,26 @@ struct RawstorObjectSyncState {
  * this record -- unlike a RawstorObjectSpec obtained through
  * rawstor_target_spec()/_create(), which is used both ways) plus this
  * copy's mirror consistency identity (sync_state, the part
- * rawstor_target_set_sync_state() can actually change). `spec.width`
- * is filled in by rawstor_target_meta() itself the same way
- * rawstor_target_spec() fills its own -- the target's own per-chunk
- * copy count: computed locally (the number of URIs in the target
- * string) for an ordinary multi-URI mirror set, or trusted from
- * whichever copy answered for a single-URI target (its own configured
- * redundancy, which no URI count could reveal).
+ * rawstor_target_set_member_sync_state() can actually change) and its own
+ * member_role. `spec.width` is that copy's own persisted width -- the
+ * width rawstor_target_create() was given -- reported verbatim; unlike
+ * rawstor_target_spec(), nothing is recomputed locally.
+ *
+ * member_role lives here rather than on RawstorObjectSpec: unlike every
+ * field RawstorObjectSpec actually carries, it isn't something every
+ * copy of a chunk agrees on by construction -- a witness (docs/mds.md,
+ * "Witness", stage 3) is a metadata-only member of the same chunk a
+ * RAWSTOR_MEMBER_DATA copy also belongs to, so it's a property of one
+ * particular copy, exactly like sync_state, not of the chunk's own
+ * shape.
  *
  * @see rawstor_target_meta
- * @see rawstor_target_set_sync_state
+ * @see rawstor_target_set_member_sync_state
  */
 struct RawstorObjectMeta {
     struct RawstorObjectSpec spec;
     struct RawstorObjectSyncState sync_state;
+    enum RawstorMemberRole member_role;
 };
 
 /**
@@ -135,10 +164,9 @@ struct RawstorObjectMeta {
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
  * this function fills a RawstorObjectSpec structure with information about
- * the object: its size, and the number of copies configured for it
- * (width -- computed locally from @p target's own URI count for an
- * ordinary multi-URI mirror set, or the object's own configured
- * redundancy, trusted from the answering copy, for a single-URI target).
+ * the object: its size, and the number of copies configured for it (width
+ * -- computed locally from @p target's own URI count for a plain target,
+ * or the object's own configured redundancy for an mds:// one).
  *
  * The target may be a single location‑UUID pair or a comma‑separated list of
  * such pairs (mirroring / data locality). All UUIDs in a list must be
@@ -176,7 +204,7 @@ struct RawstorObjectMeta {
  *
  * @see RawstorObjectSpec
  * @see Location and Target documentation in Rawstor user guide:
- * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 int rawstor_target_spec(
     RawIOQueue* queue, const char* target, struct RawstorObjectSpec* spec,
@@ -196,16 +224,23 @@ int rawstor_target_spec(
  * RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE` rather than failing the whole
  * call or being left out -- the entry's own position in @p metas is what
  * ties it back to that URI, so skipping it would lose that. `spec.width`
- * in every entry that did answer is filled in the same way
- * rawstor_target_spec() fills its own -- the chunk's own per-copy count,
- * computed locally (for an ordinary multi-URI mirror set, simply the
- * number of URIs in it) or trusted from the answering copy itself for a
- * single-URI chunk.
+ * in every entry that did answer is that copy's own persisted width,
+ * reported verbatim (see RawstorObjectMeta).
  *
  * Legacy copies created before metadata support report size only, with
  * state CLEAN, epoch 0 and sync_id 0 -- distinguishable from a URI that
  * didn't answer at all by `state` alone (`RAWSTOR_OBJECT_SYNC_STATE_CLEAN`
  * vs `_UNREACHABLE`).
+ *
+ * An mds://host:port/<id> @p target is, from this call's own
+ * point of view, an ordinary single-URI target -- it succeeds with one
+ * synthetic entry at @p offset 0 only (any other offset is @c -ENOENT,
+ * even though `spec`'s own `size`/`chunk_size` describe a real,
+ * multi-chunk object): `spec` reflects the object's own logical
+ * size/chunk_size/policy, `sync_state` a "legacy copy" CLEAN/epoch-0/
+ * sync_id-0 answer. The real per-chunk DIRTY/CLEAN state (many chunks,
+ * each with its own slots) is tracked one level down and not exposed
+ * through the object-level target at all.
  *
  * This function returns immediately; the actual result is reported via
  * @p cb once the operation completes.
@@ -253,16 +288,20 @@ int rawstor_target_meta(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously write the mirror consistency identity of every
- *        copy of one chunk of a target.
+ * @brief Asynchronously write the mirror consistency identity of exactly
+ *        one real member of one chunk of a target.
  *
  * Unlike rawstor_target_spec()/rawstor_target_meta(), this writes rather
- * than reads: it sets @p sync_state on every URI of the chunk at
- * @p offset concurrently (fsynced on the backend before it is
- * acknowledged, per docs/mirroring.md's durability rule) -- every URI of
- * that chunk is still attempted even if an earlier one fails, so a
- * partial failure leaves as many copies updated as possible rather than
- * none.
+ * than reads: it sets @p sync_state on the chunk at @p offset's own
+ * real member @p member_index (fsynced on the backend before it is
+ * acknowledged, per docs/mirroring.md's durability rule) -- the same
+ * order rawstor_target_meta()'s own per-chunk result reports their state
+ * in, so an index read off one call names the same member in the other.
+ * A caller wanting every member of the chunk written (rather than one)
+ * calls this once per member instead -- every real member's own real
+ * count comes from rawstor_target_meta() (a caller-driven fan-out, still
+ * attempting every member even if an earlier one failed, leaves that
+ * choice to the caller instead of baking one fixed policy in here).
  *
  * @warning Setting mirror consistency state by hand can desynchronize a
  * target's copies in ways the library's own quorum/reconciliation logic
@@ -272,29 +311,35 @@ int rawstor_target_meta(
  * `rawstor-ost` relaying an incoming wire `SET_SYNC_STATE` command), not
  * for routine application use.
  *
+ * An mds://host:port/<id> @p target's own real per-chunk members aren't
+ * nameable by any target string at all -- its own WireMap is consulted
+ * instead, the same real round trip rawstor_target_meta() makes for a
+ * real chunk.
+ *
  * This function returns immediately; the actual result is reported via
  * @p cb once the operation completes.
  *
- * @param queue       Queue used to drive the asynchronous write.
- * @param target      Target string, see rawstor_target_spec().
- * @param offset      The chunk's own byte offset within @p target, see
- *                    rawstor_target_meta().
- * @param sync_state  The mirror consistency identity to write to every
- *                    copy of that chunk. Only read while this call is
- *                    being queued -- need not stay valid until @p cb
- *                    runs.
- * @param cb          Callback invoked on completion.
- *                    - @p result is zero on success, or a negative errno
- *                      on failure (@c -EINVAL for invalid target syntax,
- *                      @c -ENOENT for no chunk at @p offset, or the
- *                      first error any URI's own write failed with).
- *                    - @p data is the same pointer passed as @p data
- *                      below.
- *                    - Return zero on success. A negative errno value
- *                      signals an error back into the I/O completion
- *                      machinery.
- * @param data        User-defined context pointer passed unchanged to
- *                    @p cb.
+ * @param queue         Queue used to drive the asynchronous write.
+ * @param target        Target string, see rawstor_target_spec().
+ * @param offset        The chunk's own byte offset within @p target, see
+ *                      rawstor_target_meta().
+ * @param member_index  Which real member of that chunk to write to, 0-based.
+ * @param sync_state    The mirror consistency identity to write. Only
+ *                      read while this call is being queued -- need not
+ *                      stay valid until @p cb runs.
+ * @param cb            Callback invoked on completion.
+ *                      - @p result is zero on success, or a negative
+ *                        errno on failure (@c -EINVAL for invalid target
+ *                        syntax or @p member_index naming no real member
+ *                        of the chunk, @c -ENOENT for no chunk at
+ *                        @p offset).
+ *                      - @p data is the same pointer passed as @p data
+ *                        below.
+ *                      - Return zero on success. A negative errno value
+ *                        signals an error back into the I/O completion
+ *                        machinery.
+ * @param data          User-defined context pointer passed unchanged to
+ *                      @p cb.
  *
  * @return 0 if the write was successfully queued; negative errno on
  *         immediate failure (in which case @p cb is never invoked).
@@ -302,8 +347,8 @@ int rawstor_target_meta(
  * @see RawstorObjectSyncState
  * @see rawstor_target_meta
  */
-int rawstor_target_set_sync_state(
-    RawIOQueue* queue, const char* target, uint64_t offset,
+int rawstor_target_set_member_sync_state(
+    RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
     const struct RawstorObjectSyncState* sync_state,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
@@ -335,18 +380,19 @@ int rawstor_target_set_sync_state(
  *                  version (see above).
  * @param spec      Pointer to a RawstorObjectSpec structure containing the
  *                  desired object shape. The size field must be set to the
- *                  expected size of the object. width is mandatory
- *                  and must equal the number of URIs in @p target (@c
- *                  -EINVAL otherwise, including when left 0). Only read
+ *                  expected size of the object. width is mandatory too (@c
+ *                  -EINVAL if 0 or above 255): the object's redundancy
+ *                  policy, persisted verbatim on every copy -- normally
+ *                  @p target's own URI count when it names more than one,
+ *                  but not required to be. Only read
  *                  while this call is being queued -- need not stay valid
  *                  until @p cb runs.
  * @param cb        Callback invoked on completion.
  *                  - @p result is zero on success, or a negative errno on
  *                    failure (e.g. @c -EINVAL for invalid target or spec,
- *                    a width value that doesn't match @p target's own URI
- *                    count, or @p target carrying a bound snapshot version;
- *                    @c -ENOMEM, @c -EIO, etc; implementation‑defined
- *                    beyond that).
+ *                    or @p target carrying a bound snapshot version; @c -EIO
+ *                    if no chunk member survived, mds:// target only; @c
+ *                    -ENOMEM, etc; implementation‑defined beyond that).
  *                  - @p data is the same pointer passed as @p data below.
  *                  - Return zero on success. A negative errno value signals
  *                    an error back into the I/O completion machinery.
@@ -360,7 +406,7 @@ int rawstor_target_set_sync_state(
  * @see rawstor_target_create_snapshot
  * @see rawstor_target_snapshot_id
  * @see Locations and Targets:
- * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 int rawstor_target_create(
     RawIOQueue* queue, const char* target, const struct RawstorObjectSpec* spec,
@@ -377,16 +423,22 @@ int rawstor_target_create(
  * the object is removed from every backend in the list.
  *
  * A @p target that carries a bound snapshot version (its own trailing
- * "/<snapshot_id>" path segment, see rawstor_target_snapshot_id()) instead
- * destroys that one version -- there is no separate function for it: which
- * identity gets removed is already whatever @p target itself names, live
- * object or a specific snapshot.
+ * "/<offset>/<snapshot_id>" path segments, present only alongside an explicit
+ * offset -- see rawstor_target_snapshot_id()) instead destroys that one
+ * version -- there is no separate function for it: which identity gets
+ * removed is already whatever @p target itself names, live object or a
+ * specific snapshot. For an mds://host:port/<id> @p target naming a
+ * snapshot version, the MDS unregisters it (no new readers) before a
+ * best-effort per-member fan-out destroy runs -- a member that can no
+ * longer be resolved (location changed, OST replaced) is left for the
+ * reconstruct scan rather than failing the call.
  *
  * This function returns immediately; the actual result is reported via
  * @p cb once the operation completes.
  *
  * @param queue   Queue used to drive the asynchronous remove.
- * @param target  Target string identifying the object to remove, e.g.:
+ * @param target  Target string identifying the object (or bound snapshot)
+ *                to remove, e.g.:
  *                - "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00"
  *                - "file:///var/rawstor/019cbfad-a389-7d42-a0f6-c29993ac8c00"
  *                - "ost://host1:9090/abc,ost://host2:9090/abc"  (mirroring)
@@ -409,7 +461,7 @@ int rawstor_target_create(
  *
  * @see RawstorObjectSpec
  * @see Locations and Targets:
- * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 int rawstor_target_remove(
     RawIOQueue* queue, const char* target,
@@ -478,7 +530,7 @@ int rawstor_target_remove(
  * @see RawstorObject
  * @see rawstor_object_close
  * @see Locations and Targets:
- * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 int rawstor_target_open(
     RawIOQueue* queue, const char* target, int flags, RawstorObject** object,
@@ -525,149 +577,16 @@ int rawstor_target_id(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Retrieve every distinct chunk offset a target string names.
- *
- * Given a target string (as defined in the Rawstor location/target syntax),
- * this function writes the byte offset of each of its own chunks into the
- * provided array, ascending, one entry per chunk -- a URI that shares its
- * own offset with an earlier one (a mirror of that same chunk, not a
- * distinct one) contributes no entry of its own. An ordinary, single-chunk
- * target (no URI names an offset at all) reports exactly one entry, 0. This
- * is purely a syntactic operation on @p target -- no backend is contacted,
- * and the target need not exist.
- *
- * If the array is too small, the output is truncated but the return value
- * indicates the number of offsets that actually exist, similar to
- * snprintf().
- *
- * @param target   Target string, see rawstor_target_id().
- * @param offsets  Output array that will receive each chunk's own offset,
- *                 ascending. Can be NULL if only the required array length
- *                 is needed.
- * @param size     Capacity of @p offsets, in elements. If size is 0, no
- *                 data is written, but the required length is still
- *                 returned.
- *
- * @return On success, returns the number of chunks @p target actually
- *         names. If this value is greater than @p size, only the first
- *         @p size entries were actually written to @p offsets. A negative
- *         errno is returned if @p target is not valid target syntax.
- *
- * @see rawstor_target_id
- */
-int rawstor_target_offsets(
-    const char* target, uint64_t* offsets, size_t size
-) RAWSTOR_NOEXCEPT;
-
-/**
- * @brief Retrieve the snapshot version bound to a target string.
- *
- * Given a target string (as defined in the Rawstor location/target syntax),
- * this function reads the trailing snapshot path segment (if any) off
- * @p target's own path (`<uuid>/<snapshot_id>`). This is purely a syntactic
- * operation on @p target -- no backend is contacted, and the target need
- * not exist.
- *
- * @param target   Target string, e.g.:
- *                 - "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00"
- *                 -
- * "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00/019cbfad-..."
- * @param buf      Output buffer for the bound version's UUID string, or an
- *                 empty string if @p target carries no bound snapshot
- *                 (the live version). Same truncation convention as
- *                 rawstor_target_id().
- * @param size     Size of the output buffer in bytes (including space for the
- *                 terminating null byte). If size is 0, no data is written,
- *                 but the required length is still returned.
- *
- * @return On success, the number of characters that would have been written
- *         to buf (excluding the terminating null byte; 0 for the live
- *         version). A negative errno if @p target is not valid target
- *         syntax.
- *
- * @see rawstor_target_create
- * @see rawstor_target_remove
- */
-int rawstor_target_snapshot_id(
-    const char* target, char* buf, size_t size
-) RAWSTOR_NOEXCEPT;
-
-/**
- * @brief Asynchronously take a snapshot of a target, under whichever
- *        version id @p target/@p snapshot_id together resolve to, and
- *        return the resulting target string.
- *
- * Every version id is client-generated, like every object id (see
- * rawstor_location_create()). Three ways the id actually used is picked,
- * all resolved synchronously (no I/O needed for any of them):
- * - @p target already names a specific version of its own (its own path
- *   carries a trailing snapshot_id -- e.g. as read back by
- *   rawstor_target_snapshot_id(), or as this same function itself already
- *   printed into a previous @p snapshot_target) and @p snapshot_id here is
- *   NULL: that bound version IS the one taken -- @p target itself is
- *   already the snapshot's own target string.
- * - @p target names a plain object and @p snapshot_id here is NULL: a
- *   fresh id is generated (rawstd_uuid7_init(), the same single point of
- *   generation a fresh object id comes from -- rawstor_location_create()).
- * - @p snapshot_id here is non-NULL: that caller-chosen version id is used
- *   verbatim -- but only if @p target names a plain object; combining it
- *   with a @p target that already carries its own bound version is
- *   ambiguous and fails with @c -EINVAL instead.
- *
- * This then takes a plain native CoW snapshot as that exact version on
- * every URI in @p target (every URI is still attempted even if an earlier
- * one fails, and the first error encountered is reported); the caller
- * owns crash consistency -- all acknowledged writes must be flushed
- * before this call. The resulting target string -- @p target itself when
- * already bound, or @p target with the id actually used spliced onto every
- * URI otherwise, i.e. exactly what rawstor_target_snapshot_id() would read
- * back off it -- is written into @p snapshot_target, the same synchronous,
- * before-any-I/O, snprintf()-style convention as rawstor_location_create()'s
- * own @p target/@p size.
- *
- * @param queue    Queue used to drive the asynchronous snapshot.
- * @param target   Target string, see rawstor_target_spec().
- * @param snapshot_id  The version id's UUID string, or NULL -- see above.
- * @param snapshot_target  Output buffer for the snapshot's own target
- *                 string, written synchronously before this call returns
- *                 -- same truncation convention as
- *                 rawstor_location_create()'s own @p target (size it the
- *                 same way, e.g. 65536 bytes, not rawstor_target_id()'s
- *                 much smaller UUID-sized buffer).
- * @param size     Size of @p snapshot_target in bytes (including space for
- *                 the terminating null byte).
- * @param cb       Callback invoked on completion.
- *                 - @p result is zero on success, or a negative errno on
- *                   failure (@c -EINVAL if @p target already names its own
- *                   bound version and @p snapshot_id is also non-NULL --
- *                   see above; @c -ENOTSUP if a backend has no CoW --
- *                   file://, classic LVM -- no fallback copies are made
- *                   behind the caller's back).
- *                 - @p data is the same pointer passed as @p data below.
- * @param data     User-defined context pointer passed unchanged to @p cb.
- *
- * @return The number of characters written to @p snapshot_target (see
- *         rawstor_location_create()) if the snapshot was successfully
- *         queued; negative errno on immediate failure (in which case
- *         @p cb is never invoked).
- *
- * @see rawstor_target_create
- * @see rawstor_target_remove
- */
-int rawstor_target_create_snapshot(
-    RawIOQueue* queue, const char* target, const char* snapshot_id,
-    char* snapshot_target, size_t size, int (*cb)(ssize_t result, void* data),
-    void* data
-) RAWSTOR_NOEXCEPT;
-
-/**
  * @brief Retrieve the location part of a target string.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
  * this function writes a comma‑separated list of location URIs (i.e. @p target
  * with the UUID path segment stripped back off each URI) into the provided
- * buffer. This is purely a syntactic operation on @p target -- no backend is
- * contacted, and the target need not exist.
+ * buffer -- every URI @p target names, deduplicated (a plain target's own
+ * URIs are already all distinct, but an mds://-internal multi-chunk string
+ * can legitimately repeat the same backend across different chunks). This
+ * is purely a syntactic operation on @p target -- no backend is contacted,
+ * and the target need not exist.
  *
  * The format is the same as the location part of a target string, for example:
  *
@@ -699,10 +618,254 @@ int rawstor_target_create_snapshot(
  *
  * @see rawstor_target_id
  * @see Locations and Targets:
- * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 int rawstor_target_location(
     const char* target, char* buf, size_t size
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously retrieve every distinct chunk offset a target
+ *        actually has.
+ *
+ * Given a target string (as defined in the Rawstor location/target syntax),
+ * this function writes the byte offset of each of its own chunks into the
+ * provided array, ascending, one entry per chunk -- a URI that shares its
+ * own offset with an earlier one (a mirror of that same chunk, not a
+ * distinct one) contributes no entry of its own. For an ordinary target
+ * (every URI already names its own offset, or there is exactly one URI
+ * with none) this is purely syntactic, off @p target's own shape -- no
+ * backend is contacted, and the target need not exist. An
+ * mds://host:port/<id> target is the one exception: its own real
+ * per-chunk shape isn't reflected in its single URI at all, so this
+ * contacts the MDS instead and reports every one of the object's own
+ * real chunk offsets.
+ *
+ * This function returns immediately; the actual result is reported via
+ * @p cb once the operation completes.
+ *
+ * @param queue    Queue used to drive the asynchronous lookup.
+ * @param target   Target string, see rawstor_target_id().
+ * @param offsets  Output array that will receive each chunk's own offset,
+ *                 ascending, immediately before @p cb is invoked. Can be
+ *                 NULL if only the required array length is needed. Left
+ *                 untouched on error, and never written at all if the
+ *                 lookup is never queued (see the return value below).
+ * @param size     Capacity of @p offsets, in elements. If size is 0, no
+ *                 data is written, but the required length is still
+ *                 reported.
+ * @param cb       Callback invoked on completion.
+ *                 - @p result is the number of chunks @p target actually
+ *                   has on success -- same truncation convention as
+ *                   rawstor_target_id()/_location(): if it is greater than
+ *                   @p size, only the first @p size entries were actually
+ *                   written to @p offsets -- or a negative errno on
+ *                   failure (@c -EINVAL for invalid target syntax, @c
+ *                   -ENOMEM).
+ *                 - @p data is the same pointer passed as @p data below.
+ *                 - Return zero on success. A negative errno value signals
+ *                   an error back into the I/O completion machinery.
+ * @param data     User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the lookup was successfully queued; negative errno on
+ *         immediate failure (in which case neither @p offsets nor @p cb is
+ *         ever touched).
+ *
+ * @see rawstor_target_id
+ */
+int rawstor_target_chunks(
+    RawIOQueue* queue, const char* target, uint64_t* offsets, size_t size,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously list every snapshot of the object a target
+ *        addresses.
+ *
+ * Each snapshot is reported as its own target string: every URI of
+ * @p target (with any version it is bound to stripped off) followed by the
+ * snapshot's id -- the same string rawstor_target_create_snapshot() prints,
+ * ready for rawstor_target_open()/_spec()/_remove(). Oldest first
+ * (snapshot ids are UUID v7). For an mds:// target the MDS answers;
+ * otherwise every copy of the object's first chunk is asked and their
+ * answers merged, a copy that doesn't answer being skipped. A backend
+ * without snapshots (file://, classic LVM) reports none.
+ *
+ * @param queue      Queue used to drive the asynchronous lookup.
+ * @param target     Target string, see rawstor_target_id().
+ * @param snapshots  On success, receives a newly allocated list of snapshot
+ *                   target strings, possibly empty (free it with
+ *                   rawstor_string_list_delete()); left untouched on
+ *                   failure. Must stay valid until @p cb runs.
+ * @param cb         Callback invoked on completion.
+ *                   - @p result is the number of snapshots on success, or
+ *                     a negative errno on failure (e.g. @c -ENOTCONN if no
+ *                     copy answered, @c -ENOENT for an mds:// object the MDS
+ *                     doesn't know).
+ *                   - @p data is the same pointer passed as @p data below.
+ * @param data       User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the lookup was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked).
+ *
+ * @see rawstor_target_create_snapshot
+ * @see rawstor_string_list_delete
+ */
+int rawstor_target_snapshots(
+    RawIOQueue* queue, const char* target, RawstorStringList** snapshots,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Retrieve the snapshot version bound to a target string.
+ *
+ * Given a target string (as defined in the Rawstor location/target syntax),
+ * this function reads the trailing snapshot path segment (if any) off
+ * @p target's own path, in either of two equivalent shapes: logical
+ * (`<uuid>/<snapshot_id>`, the shape a caller types for a plain target's own
+ * bound snapshot -- no chunk-offset concept to name at that level) or
+ * physical (`<uuid>/<offset>/<snapshot_id>`, offset never omitted even "0" --
+ * the shape internally used for one chunk of a larger mds:// object). This
+ * is purely a syntactic operation on @p target -- no backend is contacted,
+ * and the target need not exist.
+ *
+ * @param target   Target string, e.g.:
+ *                 - "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00"
+ *                 -
+ * "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00/019cbfad-..."
+ * @param buf      Output buffer for the bound version's UUID string, or an
+ *                 empty string if @p target carries no bound snapshot
+ *                 (the live version). Same truncation convention as
+ *                 rawstor_target_id().
+ * @param size     Size of the output buffer in bytes (including space for the
+ *                 terminating null byte). If size is 0, no data is written,
+ *                 but the required length is still returned.
+ *
+ * @return On success, the number of characters that would have been written
+ *         to buf (excluding the terminating null byte; 0 for the live
+ *         version). A negative errno if @p target is not valid target
+ *         syntax.
+ *
+ * @see rawstor_target_create
+ * @see rawstor_target_remove
+ * @see rawstor_target_chunks
+ */
+int rawstor_target_snapshot_id(
+    const char* target, char* buf, size_t size
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously take a snapshot of a target, under whichever
+ *        version id @p target/@p snapshot_id together resolve to, and
+ *        return the resulting target string.
+ *
+ * Every version id is client-generated, like every object id (see
+ * rawstor_location_create()) -- there is no MDS-assigned mode: an
+ * mds://host:port/<id> @p target's own MDS just registers whichever id
+ * the caller already generated and embedded in the resulting target, once every
+ * reachable chunk member has been backend-CoW'd under it (docs/mds.md,
+ * "Snapshots (stage 2)"). Three ways the id actually used is picked, all
+ * resolved synchronously (no I/O needed for any of them):
+ * - @p target already names a specific version of its own (its own path
+ *   carries a trailing snapshot_id -- e.g. as read back by
+ *   rawstor_target_snapshot_id(), or as this same function itself already
+ *   printed into a previous @p snapshot_target) and @p snapshot_id here is
+ *   NULL: that bound version IS the one taken -- @p target itself is
+ *   already the snapshot's own target string.
+ * - @p target names a plain object and @p snapshot_id here is NULL: a
+ *   fresh id is generated (rawstd_uuid7_init(), the same single point of
+ *   generation a fresh object id comes from -- rawstor_location_create()).
+ * - @p snapshot_id here is non-NULL: that caller-chosen version id is used
+ *   verbatim -- but only if @p target names a plain object; combining it
+ *   with a @p target that already carries its own bound version is
+ *   ambiguous and fails with @c -EINVAL instead.
+ *
+ * This then takes a plain native CoW snapshot as that exact version on
+ * every URI in @p target (every URI is still attempted even if an earlier
+ * one fails, and the first error encountered is reported); the caller
+ * owns crash consistency -- all acknowledged writes must be flushed
+ * before this call. The resulting target string -- @p target itself when
+ * already bound, or @p target with the id actually used spliced onto every
+ * URI otherwise, i.e. exactly what rawstor_target_snapshot_id() would read
+ * back off it -- is written into @p snapshot_target, the same synchronous,
+ * before-any-I/O, snprintf()-style convention as rawstor_location_create()'s
+ * own @p target/@p size:
+ * - If the string fits, it is written before this call returns, the
+ *   snapshot is queued, and @p cb eventually reports the string's length
+ *   (excluding the terminating null; always less than @p size) once the
+ *   snapshot is taken, or a negative errno if that fails.
+ * - If @p snapshot_target is too small, no snapshot is taken and @p cb is
+ *   invoked synchronously, from within this same call, with the required
+ *   length (excluding the terminating null; always >= @p size).
+ *
+ * @param queue    Queue used to drive the asynchronous snapshot.
+ * @param target   Target string, see rawstor_target_spec().
+ * @param snapshot_id  The version id's UUID string, or NULL -- see above.
+ * @param snapshot_target  Output buffer for the snapshot's own target
+ *                 string (may be NULL when @p size is 0), written
+ *                 synchronously before this call returns
+ *                 -- same truncation convention as
+ *                 rawstor_location_create()'s own @p target (size it the
+ *                 same way, e.g. 65536 bytes, not rawstor_target_id()'s
+ *                 much smaller UUID-sized buffer).
+ * @param size     Size of @p snapshot_target in bytes (including space for
+ *                 the terminating null byte).
+ * @param cb       Callback invoked on completion.
+ *                 - @p result is the snapshot target string's length (see
+ *                   above) on success or when @p snapshot_target was too
+ *                   small, or a negative errno on failure (@c -ENOTSUP if a
+ *                   backend has no CoW --
+ *                   file://, classic LVM -- no fallback copies are made
+ *                   behind the caller's back; @c -EIO if no chunk member
+ *                   survived, mds:// target only).
+ *                 - @p data is the same pointer passed as @p data below.
+ * @param data     User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if @p cb has been (or will be) invoked -- synchronously
+ *         (buffer too small) or once the snapshot completes; negative errno
+ *         on immediate failure (e.g. @c -EINVAL if @p target already names
+ *         its own bound version and @p snapshot_id is also non-NULL), in
+ *         which case @p cb is never invoked.
+ *
+ * @see rawstor_target_create
+ * @see rawstor_target_remove
+ */
+int rawstor_target_create_snapshot(
+    RawIOQueue* queue, const char* target, const char* snapshot_id,
+    char* snapshot_target, size_t size, int (*cb)(ssize_t result, void* data),
+    void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously grow an mds:// object to a new logical size.
+ *
+ * Grow-only: a @p new_size smaller than the object's current size fails
+ * with -EINVAL (docs/mds.md -- shrink interacts with GC and
+ * snapshots, deferred past v1). Reserves placement for whatever new
+ * chunks the larger size needs on the MDS, then materializes exactly
+ * those (not the whole map) on their OSTs -- existing chunks and their
+ * data are untouched.
+ *
+ * @param queue     Queue used to drive the asynchronous resize.
+ * @param target    An mds://host:port/<id> target; anything else
+ *                  fails with -EINVAL (a plain target has no notion of
+ *                  growing -- its size is fixed at create()).
+ * @param new_size  The object's new logical size in bytes; must be
+ *                  greater than or equal to its current size and a
+ *                  multiple of its chunk_size (@c -EINVAL otherwise).
+ * @param cb        Callback invoked on completion.
+ *                  - @p result is zero on success, or a negative errno on
+ *                    failure.
+ *                  - @p data is the same pointer passed as @p data below.
+ * @param data      User-defined context pointer passed unchanged to
+ *                  @p cb.
+ *
+ * @return 0 if the resize was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked).
+ */
+int rawstor_target_resize(
+    RawIOQueue* queue, const char* target, uint64_t new_size,
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 #ifdef __cplusplus

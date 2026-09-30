@@ -24,13 +24,12 @@ namespace lvm {
  * Location URI: lvm://<vg>
  *   Example:    lvm://rawstor_vg
  *
- * Each object is a Logical Volume named after its UUID inside the Volume
- * Group -- self-describing: `id` is the same id every chunk of that id
- * carries, `offset` disambiguates which one, as an explicit
- * "-<offset>" LV-name suffix (0 for a plain object, same as every other
- * chunk) -- LVM's own naming forbids ':'; hex, like every other offset
- * this codebase carries in a physical name or a target URI's own path
- * segment. Device path: /dev/<vg>/<uuid>-<offset>.
+ * Group -- self-describing (docs/mds.md, "Chunk identity"): `id` is the
+ * volume's own id for every one of its chunks, `offset` disambiguates
+ * which one, as an explicit "-<offset>" LV-name suffix (0 for a plain
+ * object, same as every other chunk) -- LVM's own naming forbids ':';
+ * hex, like every other offset this codebase carries in a physical name
+ * or a target URI's own path segment. Device path: /dev/<vg>/<uuid>-<offset>.
  *
  * Requires lvcreate/lvremove/lvs/vgs to be available in PATH and sufficient
  * privileges.
@@ -65,21 +64,36 @@ public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     rawstd::Task<void> list_chunks(
-        unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
+        RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+        RawstdUUID& token, RawstdUUID snapshot_id = {}
     ) override;
 
     rawstd::Task<void> create(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstorObjectSpec& sp,
+        RawstorMemberRole member_role
     ) override;
 
-    rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset) override;
+    rawstd::Task<void> remove(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
+    ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
     // Native per-copy mirror metadata, stored in the LV's own
     // "rawstor.meta=..." tag -- see blk::Backend::meta_encode().
-    rawstd::Task<RawstorObjectMeta>
-    meta(const RawstdUUID& id, uint64_t offset) override;
+    rawstd::Task<std::vector<RawstorObjectMeta>> meta(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
+    ) override;
+
+    // Trivial (Backend::resolve_locations()'s own doc comment): this is a
+    // plain, single-copy backend, already the one real member of whatever
+    // offset it's asked about.
+    rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& snapshot_id = {}
+    ) override;
 
     rawstd::Task<void> set_sync_state(
         const RawstdUUID& id, uint64_t offset,

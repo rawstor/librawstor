@@ -154,16 +154,16 @@ TEST(OstClientTest, simple_success) {
     // ALLOCATE: creates the object file:// will open next.
     client.send_allocate(id, 4096, 1);
     ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));
-    RawstorOSTFrameResponse response = client.recv_response();
+    RawstorFrameResponse response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_ALLOCATE);
     EXPECT_EQ(response.body.res, 0);
 
     // SET_OBJECT: opens it for this client's subsequent READ/WRITE.
     client.send_set_object(id);
     ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
@@ -173,7 +173,7 @@ TEST(OstClientTest, simple_success) {
     std::string payload = "ping";
     client.send_write(0, payload.data(), payload.size(), false);
     ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_WRITE);
@@ -185,7 +185,7 @@ TEST(OstClientTest, simple_success) {
     client.send_read(0, static_cast<uint32_t>(payload.size()));
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >=
-               sizeof(RawstorOSTFrameResponse) + payload.size();
+               sizeof(RawstorFrameResponse) + payload.size();
     }));
     std::string read_back(payload.size(), '\0');
     response = client.recv_response(read_back.data(), read_back.size());
@@ -210,9 +210,9 @@ TEST(OstClientTest, discard_and_write_zeroes) {
     // ALLOCATE: creates the object file:// will open next.
     client.send_allocate(id, 4096, 1);
     ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));
-    RawstorOSTFrameResponse response = client.recv_response();
+    RawstorFrameResponse response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_ALLOCATE);
     EXPECT_EQ(response.body.res, 0);
 
@@ -220,7 +220,7 @@ TEST(OstClientTest, discard_and_write_zeroes) {
     // WRITE_ZEROES/READ.
     client.send_set_object(id);
     ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
@@ -230,7 +230,7 @@ TEST(OstClientTest, discard_and_write_zeroes) {
     std::string payload(64, 'x');
     client.send_write(0, payload.data(), payload.size(), false);
     ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_WRITE);
@@ -242,7 +242,7 @@ TEST(OstClientTest, discard_and_write_zeroes) {
         /*sync=*/true
     );
     ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_WRITE_ZEROES);
@@ -253,7 +253,7 @@ TEST(OstClientTest, discard_and_write_zeroes) {
     client.send_read(0, static_cast<uint32_t>(payload.size()));
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >=
-               sizeof(RawstorOSTFrameResponse) + payload.size();
+               sizeof(RawstorFrameResponse) + payload.size();
     }));
     std::string read_back(payload.size(), '\xff');
     response = client.recv_response(read_back.data(), read_back.size());
@@ -271,7 +271,7 @@ TEST(OstClientTest, discard_and_write_zeroes) {
     // and reports the requested size back.
     client.send_discard(0, static_cast<uint32_t>(payload.size()));
     ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_DISCARD);
@@ -294,9 +294,9 @@ TEST(OstClientTest, set_object_twice_does_not_crash) {
     // ALLOCATE: creates the object file:// will open next.
     client.send_allocate(id, 4096, 1);
     ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));
-    RawstorOSTFrameResponse response = client.recv_response();
+    RawstorFrameResponse response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_ALLOCATE);
     EXPECT_EQ(response.body.res, 0);
 
@@ -304,7 +304,7 @@ TEST(OstClientTest, set_object_twice_does_not_crash) {
     // exercises rawstor_target_open() (same as simple_success above).
     client.send_set_object(id);
     ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
@@ -325,7 +325,7 @@ TEST(OstClientTest, set_object_twice_does_not_crash) {
     // place, so this must still complete cleanly.
     client.send_set_object(id);
     ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));
     response = client.recv_response();
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
@@ -334,7 +334,7 @@ TEST(OstClientTest, set_object_twice_does_not_crash) {
 
 // A command code the server doesn't recognize is answered with -ENOSYS
 // instead of a bare disconnect, so a client can tell "unsupported" apart
-// from a transport failure -- but RawstorOSTFrameHead carries no length
+// from a transport failure -- but RawstorFrameHead carries no length
 // field, so the server has no way to know how many payload bytes this
 // unrecognized request's body holds, to skip past and resynchronize with
 // whatever request might follow it on the wire. It closes the connection
@@ -352,9 +352,9 @@ TEST(OstClientTest, unknown_command_answers_enosys_then_closes) {
 
     uint16_t cid = client.send_unknown_command();
     ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorOSTFrameResponse);
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));
-    RawstorOSTFrameResponse response = client.recv_response();
+    RawstorFrameResponse response = client.recv_response();
     EXPECT_EQ(response.head.cid, cid);
     EXPECT_EQ(response.body.res, -ENOSYS);
 
@@ -495,7 +495,7 @@ int create_cb(ssize_t result, void* data) {
 
 // A multi-chunk object -- two chunks of the same id, at offset 0 and a
 // second, non-adjacent offset -- must come back over the wire as one row
-// per offset (RawstorOSTFrameListEntry's own doc comment, protocol.h),
+// per offset (RawstorFrameListEntry's own doc comment, protocol.h),
 // not just its first chunk's own offset repeated or dropped.
 TEST(OstClientTest, list_reports_every_chunk_offset) {
     rawstor::ostserver::tests::TmpDir dir;
@@ -524,6 +524,8 @@ TEST(OstClientTest, list_reports_every_chunk_offset) {
         .size = 4096,
         .width = 1,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
     };
 
     CreateResult res0;
@@ -544,14 +546,13 @@ TEST(OstClientTest, list_reports_every_chunk_offset) {
 
     // Two real rows (one per offset) plus the trailing resume cursor.
     const size_t expected_rows = 3;
-    const size_t payload_size =
-        expected_rows * sizeof(RawstorOSTFrameListEntry);
+    const size_t payload_size = expected_rows * sizeof(RawstorFrameListEntry);
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >=
-               sizeof(RawstorOSTFrameResponse) + payload_size;
+               sizeof(RawstorFrameResponse) + payload_size;
     }));
-    std::vector<RawstorOSTFrameListEntry> entries(expected_rows);
-    RawstorOSTFrameResponse response =
+    std::vector<RawstorFrameListEntry> entries(expected_rows);
+    RawstorFrameResponse response =
         client.recv_response(entries.data(), payload_size);
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_LIST);
     EXPECT_EQ(response.body.res, static_cast<int32_t>(payload_size));

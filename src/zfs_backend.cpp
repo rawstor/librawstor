@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <sstream>
 #include <string>
@@ -53,29 +54,29 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     _parent_dataset(parse_parent_dataset(location)) {
 }
 
-std::string Backend::_device_path(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
-) const {
-    return "/dev/zvol/" + _dataset(id, offset, snapshot_id);
-}
-
 std::string Backend::_dataset(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
+
     // Hex, not decimal -- see parse_target_path()'s own doc comment
     // (target.cpp) for why every physical, offset-carrying name in this
     // codebase agrees on one base.
-    char offset_str[17];
-    snprintf(offset_str, sizeof(offset_str), "%" PRIx64, offset);
-    std::string name = std::string(uuid_str) + ":" + offset_str;
+    std::ostringstream oss;
+    oss << _parent_dataset << "/" << uuid_str << ":" << std::hex << offset;
     if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        RawstdUUIDString snap_str;
-        rawstd_uuid_to_string(&snapshot_id, &snap_str);
-        name += "@s" + std::string(snap_str);
+        RawstdUUIDString snapshot_str;
+        rawstd_uuid_to_string(&snapshot_id, &snapshot_str);
+        oss << "@s" << snapshot_str;
     }
-    return _parent_dataset + "/" + name;
+    return oss.str();
+}
+
+std::string Backend::_device_path(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) const {
+    return "/dev/zvol/" + _dataset(id, offset, snapshot_id);
 }
 
 rawstd::Task<void> Backend::_wait_for_blockdev(
@@ -130,17 +131,35 @@ rawstd::Task<int> Backend::_open_snapshot(
     std::string path = _device_path(id, offset, snapshot_id);
 
     // O_RDONLY, not O_RDWR: a snapshot device is read-only at the device
-    // level too, so a write against one fails as soon as the fd itself is
-    // wrong, before ever reaching pwrite(). See _open_object() above for
-    // O_NONBLOCK/O_CLOEXEC's own reasoning, unchanged here.
+    // level too (docs/mds.md, "Snapshots"), so a write against one fails
+    // as soon as the fd itself is wrong, before ever reaching pwrite().
+    // See _open_object() above for O_NONBLOCK/O_CLOEXEC's own reasoning,
+    // unchanged here.
     int fd = co_await _queue.open(path.c_str(), O_RDONLY | O_CLOEXEC, 0);
     co_return fd;
 }
 
 rawstd::Task<void> Backend::list_chunks(
-    unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
+    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+    RawstdUUID& token, RawstdUUID snapshot_id
 ) {
-    RawstdUUID input_token = token;
+    // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc
+    // comment): every other uuid's own zvols are skipped while grouping,
+    // and `token` plays no part. A non-nil `snapshot_id` lists that
+    // version's own snapshot datasets ("<zvol>@s<snapshot_id>") instead of
+    // the live zvols.
+    bool filtered = !rawstd_uuid_is_nil(&id);
+    bool snapshot = !rawstd_uuid_is_nil(&snapshot_id);
+    if (snapshot && !filtered) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    std::string snapshot_suffix;
+    if (snapshot) {
+        RawstdUUIDString snapshot_str;
+        rawstd_uuid_to_string(&snapshot_id, &snapshot_str);
+        snapshot_suffix = std::string("s") + snapshot_str;
+    }
+    RawstdUUID input_token = filtered ? RawstdUUID{} : token;
     chunks.clear();
     token = {};
 
@@ -157,8 +176,17 @@ rawstd::Task<void> Backend::list_chunks(
     // argument is brace-initialized directly at the call site of a nested
     // coroutine that's co_await-ed from within another coroutine -- naming
     // the vector first works around it.
-    std::vector<std::string> list_argv = {"zfs",  "list", "-H",           "-o",
-                                          "name", "-r",   _parent_dataset};
+    std::vector<std::string> list_argv = {
+        "zfs",
+        "list",
+        "-H",
+        "-o",
+        "name",
+        "-t",
+        snapshot ? "snapshot" : "volume",
+        "-r",
+        _parent_dataset
+    };
     std::string output;
     try {
         output =
@@ -183,37 +211,42 @@ rawstd::Task<void> Backend::list_chunks(
         if (name.find('/') != std::string::npos) {
             continue; // Not a direct child of the parent dataset.
         }
+        size_t at = name.find('@');
+        if (snapshot) {
+            if (at == std::string::npos ||
+                name.compare(at + 1, std::string::npos, snapshot_suffix) != 0) {
+                continue;
+            }
+            name.resize(at);
+        } else if (at != std::string::npos) {
+            continue;
+        }
 
         // A UUID's own string form is always exactly 36 characters
         // (RawstdUUIDString) -- a fixed prefix, since the UUID itself
         // already embeds dashes (8-4-4-4-12), unlike this backend's own
-        // ":<offset>" suffix.
-        if (name.size() < 36) {
+        // ":<offset>" suffix. The suffix is mandatory: _dataset() always
+        // writes it, so a bare-UUID dataset is not one this backend could
+        // open.
+        if (name.size() <= 37 || name[36] != ':') {
             continue;
         }
         std::string uuid_part = name.substr(0, 36);
-        uint64_t offset = 0;
-        if (name.size() > 36) {
-            if (name[36] != ':') {
-                continue;
-            }
-            // `listsnapshots=on` interleaves each dataset's own snapshots
-            // (name "<uuid>:<offset>@<snapshot>") into this same listing --
-            // strtoull() silently stops at '@', so an unchecked parse would
-            // read "<offset>@<snapshot>" as if it were a second, spurious
-            // chunk at the same offset. Anything left over after the hex
-            // digits is rejected instead of ignored.
-            char* endptr = nullptr;
+        // Anything left over after the hex digits is rejected instead of
+        // silently truncated to whatever prefix strtoull() did parse.
+        char* endptr = nullptr;
+        errno = 0;
+        uint64_t offset = strtoull(name.c_str() + 37, &endptr, 16);
+        if (errno != 0 || endptr == name.c_str() + 37 || *endptr != '\0') {
             errno = 0;
-            offset = strtoull(name.c_str() + 37, &endptr, 16);
-            if (errno != 0 || endptr == name.c_str() + 37 || *endptr != '\0') {
-                errno = 0;
-                continue;
-            }
+            continue;
         }
 
         RawstdUUID uuid;
         if (rawstd_uuid_from_string(&uuid, uuid_part.c_str()) < 0) {
+            continue;
+        }
+        if (filtered && rawstd_uuid_cmp(&uuid, &id) != 0) {
             continue;
         }
         grouped[uuid].push_back(offset);
@@ -255,7 +288,8 @@ rawstd::Task<void> Backend::list_chunks(
 }
 
 rawstd::Task<void> Backend::create(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
     // zfs-create(8) rejects volume sizes that are not a multiple of
     // volblocksize (16 KiB by default, 8 KiB on older OpenZFS), so round
@@ -301,7 +335,8 @@ rawstd::Task<void> Backend::create(
     // the zvol exists without one.
     RawstorObjectSyncState sync_state{};
     sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    ChunkIdentity identity{};
+    Backend::ChunkIdentity identity;
+    identity.member_role = member_role;
     identity.width = static_cast<uint8_t>(sp.width);
     identity.chunk_size = sp.chunk_size;
     std::string prop =
@@ -332,7 +367,8 @@ rawstd::Task<void> Backend::create(
     co_return;
 }
 
-rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<void>
+Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
     // Matches file::Backend::remove()'s own convention: a nonexistent
     // zvol is ENOENT specifically (permanent -- never retried by
     // Slot::_with_retry()'s is_permanent_backend_error()), not the
@@ -401,9 +437,13 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-rawstd::Task<RawstorObjectMeta>
-Backend::meta(const RawstdUUID& id, uint64_t offset) {
-    std::string dataset = _dataset(id, offset);
+rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
+    // A snapshot's own dataset (`<zvol>@s<snapshot_id>`) answers the same
+    // property query, and its device the same size query, as the live
+    // zvol's.
+    std::string dataset = _dataset(id, offset, snapshot_id);
 
     std::vector<std::string> argv = {"zfs",  "get",   "-H",
                                      "-o",   "value", rawstor_property,
@@ -429,7 +469,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     // trusted as CLEAN -- the caller treats any error here as "member
     // stale, needs a resync" (docs/mirroring.md, case F10).
     RawstorObjectSyncState sync_state;
-    ChunkIdentity identity{};
+    Backend::ChunkIdentity identity;
     try {
         meta_decode(output, &sync_state, &identity);
     } catch (const std::system_error&) {
@@ -442,12 +482,69 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     // trust a value that could go stale if the zvol were ever resized
     // outside rawstor.
     RawstorObjectMeta ret{};
-    ret.spec.size = co_await _blk_size(id, offset);
+    ret.spec.size = co_await _blk_size(id, offset, snapshot_id);
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
+    ret.member_role = identity.member_role;
     ret.sync_state = sync_state;
 
+    co_return std::vector<RawstorObjectMeta>{ret};
+}
+
+// Every snapshot dataset of this chunk's own zvol that this backend
+// itself took ("<zvol>@s<snapshot_id>", _dataset()'s naming); any other
+// snapshot of it (e.g. one taken by hand) is skipped.
+rawstd::Task<std::vector<RawstdUUID>>
+Backend::list_snapshots(const RawstdUUID& id, uint64_t offset) {
+    // Same ENOENT convention as remove(): a nonexistent zvol is permanent,
+    // not the retryable EIO "zfs list" itself would produce.
+    std::string device_path = _device_path(id, offset);
+    if (!co_await _exists(device_path)) {
+        rawstd_error("zfs: zvol %s does not exist\n", device_path.c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+
+    std::string dataset = _dataset(id, offset);
+
+    // GCC 13 ICEs when a std::vector<std::string> argument is
+    // brace-initialized directly at the call site of a nested coroutine
+    // that's co_await-ed from within another coroutine -- naming the vector
+    // first works around it (see list_chunks()'s own comment).
+    std::vector<std::string> argv = {"zfs", "list",     "-H", "-o", "name",
+                                     "-t",  "snapshot", "-d", "1",  dataset};
+    std::string output;
+    try {
+        output = co_await rawstor::run_command_capture(_queue, std::move(argv));
+    } catch (const std::system_error& e) {
+        rawstd_error(
+            "zfs: failed to list snapshots of %s: %s\n", dataset.c_str(),
+            e.what()
+        );
+        throw;
+    }
+
+    std::string prefix = dataset + "@s";
+    std::vector<RawstdUUID> ret;
+    std::istringstream iss(output);
+    std::string line;
+    while (std::getline(iss, line)) {
+        if (line.compare(0, prefix.size(), prefix) != 0) {
+            continue;
+        }
+        RawstdUUID snapshot_id;
+        if (rawstd_uuid_from_string(
+                &snapshot_id, line.c_str() + prefix.size()
+            ) < 0) {
+            continue;
+        }
+        ret.push_back(snapshot_id);
+    }
     co_return ret;
+}
+
+rawstd::Task<std::vector<rawstd::URI>>
+Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
+    co_return std::vector<rawstd::URI>{location()};
 }
 
 rawstd::Task<void> Backend::set_sync_state(
@@ -456,15 +553,16 @@ rawstd::Task<void> Backend::set_sync_state(
 ) {
     std::string dataset = _dataset(id, offset);
 
-    // identity is stamped once at create() and never changed again --
-    // read the existing property first so overwriting sync_state here
-    // doesn't clobber it. A zvol that predates this feature (property
-    // never set, or unparseable) has no identity to preserve; it
-    // degenerates to the all-zero default.
+    // The placement identity is immutable once stamped at create() --
+    // read the existing property first and carry it through unchanged
+    // rather than clobber it with a zeroed one. A missing/unrecorded
+    // property (a zvol created before this feature, or by something
+    // else) has no identity to preserve; it degenerates to the all-zero
+    // default.
     std::vector<std::string> get_argv = {"zfs",  "get",   "-H",
                                          "-o",   "value", rawstor_property,
                                          dataset};
-    ChunkIdentity identity{};
+    Backend::ChunkIdentity identity;
     try {
         std::string old_output =
             co_await rawstor::run_command_capture(_queue, std::move(get_argv));
@@ -472,10 +570,10 @@ rawstd::Task<void> Backend::set_sync_state(
                (old_output.back() == '\n' || old_output.back() == '\r')) {
             old_output.pop_back();
         }
-        RawstorObjectSyncState old_sync_state{};
+        RawstorObjectSyncState old_sync_state;
         meta_decode(old_output, &old_sync_state, &identity);
     } catch (const std::system_error&) {
-        identity = ChunkIdentity{};
+        identity = Backend::ChunkIdentity{};
     }
 
     std::string prop =
@@ -496,7 +594,8 @@ rawstd::Task<void> Backend::set_sync_state(
 }
 
 rawstd::Task<void> Backend::create_snapshot(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& snapshot_id
 ) {
     if (rawstd_uuid_is_nil(&snapshot_id)) {
         /* nil is the live version, never a snapshot. */
@@ -534,6 +633,15 @@ rawstd::Task<void> Backend::create_snapshot(
         throw;
     }
 
+    // Same O_EXCL convention as create(): a snapshot a previous,
+    // unacknowledged attempt already took is EEXIST (permanent, and what
+    // a retried object snapshot counts as already taken), not the
+    // generic, pointlessly retried error "zfs snapshot" would give.
+    if (co_await _exists(_device_path(id, offset, snapshot_id))) {
+        rawstd_error("zfs: snapshot %s already exists\n", snapshot.c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(EEXIST);
+    }
+
     std::vector<std::string> snapshot_argv = {"zfs", "snapshot", snapshot};
     try {
         co_await rawstor::run_command(_queue, std::move(snapshot_argv));
@@ -547,7 +655,8 @@ rawstd::Task<void> Backend::create_snapshot(
 }
 
 rawstd::Task<void> Backend::remove_snapshot(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& snapshot_id
 ) {
     std::string snapshot = _dataset(id, offset, snapshot_id);
 

@@ -30,22 +30,38 @@
 
 namespace {
 
-// One chunk's own directory: <location>/<uuid>/<offset> --
-// self-describing: `uuid` is the same id every chunk of that id carries,
-// `offset` (0 for a plain object) disambiguates which chunk of that
-// id this is. Two files live directly under this directory: `data` (the
-// object's own bytes) and `meta` (get_target_meta_path() below). `offset`
-// is hex, not decimal -- same base as the target URI's own offset path
-// segment (parse_target_path()'s own doc comment) and every numeric
-// field meta_encode() persists alongside it, so a directory listing and
-// its own meta record read the same way.
+// One chunk's own directory: <location>/<uuid>/<offset>[/<snapshot_id>]
+// -- self-describing (docs/mds.md, "Chunk identity"): `uuid` is the
+// volume's own id for every one of its chunks, `offset` (0 for a plain object
+// or a volume's own chunk 0 -- the two are indistinguishable at this layer by
+// design) disambiguates which chunk of that id this is, always its own path
+// component (never omitted, unlike the id/offset/snapshot_id path *target
+// strings* use -- see TargetPath's own doc comment in target.hpp for why
+// those stay optional; a physical directory layout has no such
+// ambiguity to worry about, so there's nothing to gain from omitting
+// it), and hex, not decimal -- same base as the target URI's own offset
+// path segment (parse_target_path()'s own doc comment) and every
+// numeric field meta_encode() persists alongside it, so a directory
+// listing and its own meta record read the same way. `snapshot_id`, when
+// bound, is one directory deeper still -- file:// never actually creates
+// one (its own _open_object() below has no snapshot_id parameter at all,
+// and it never overrides _open_snapshot(), whose blk::Backend default
+// rejects every call with ENOTSUP -- no native CoW), but the layout is
+// already shaped for a backend that could. Two
+// files live directly under this directory: `data` (the object's own
+// bytes) and `meta` (get_target_meta_path() below).
 std::string get_target_dir(
     const std::string& location_path, const RawstdUUIDString& uuid,
-    uint64_t offset
+    uint64_t offset, const RawstdUUID& snapshot_id = {}
 ) {
     std::ostringstream oss;
 
     oss << location_path << "/" << uuid << "/" << std::hex << offset;
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
+        RawstdUUIDString snapshot_string;
+        rawstd_uuid_to_string(&snapshot_id, &snapshot_string);
+        oss << "/" << snapshot_string;
+    }
 
     return oss.str();
 }
@@ -112,19 +128,55 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
     // target concurrently, src/target.cpp), whose create()/remove() shell
     // out via fork()+exec() (src/subprocess.cpp) -- without it, this fd
     // would leak into those children.
-    int fd = co_await _queue.open(
-        target_path.c_str(),
-        ((flags & RAWSTOR_READONLY) != 0 ? O_RDONLY : O_RDWR) | O_NONBLOCK |
-            O_CLOEXEC,
-        0
-    );
+    //
+    // ENOENT means this one copy is missing from a location that's still
+    // there (docs/mirroring.md, case F10) -- Chunk::create() recreates it
+    // from a surviving mirror. A location directory that's missing
+    // altogether is a different case: the store itself isn't there (e.g.
+    // an unmounted disk, whose empty mountpoint is all that's left), so
+    // it's reported as unreachable (ENOTCONN) instead, never mistaken for
+    // one missing copy to recreate onto whatever filesystem sits
+    // underneath.
+    bool missing = false;
+    int fd = -1;
+    try {
+        fd = co_await _queue.open(
+            target_path.c_str(),
+            ((flags & RAWSTOR_READONLY) != 0 ? O_RDONLY : O_RDWR) | O_NONBLOCK |
+                O_CLOEXEC,
+            0
+        );
+    } catch (const std::system_error& e) {
+        if (e.code().value() != ENOENT) {
+            throw;
+        }
+        missing = true;
+    }
+    if (missing) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(location_path, ec)) {
+            rawstd_error("Location unavailable: %s\n", location_path.c_str());
+            RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+        }
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
     co_return fd;
 }
 
 rawstd::Task<void> Backend::list_chunks(
-    unsigned int limit, std::vector<ChunkGroup>& chunks, RawstdUUID& token
+    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+    RawstdUUID& token, RawstdUUID snapshot_id
 ) {
-    RawstdUUID input_token = token;
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
+        // No snapshots on this backend (Backend::remove_snapshot()'s own
+        // default).
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
+    // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc
+    // comment): only that one uuid's own offset directories get scanned
+    // below, and `token` plays no part.
+    bool filtered = !rawstd_uuid_is_nil(&id);
+    RawstdUUID input_token = filtered ? RawstdUUID{} : token;
     chunks.clear();
     token = {};
     try {
@@ -132,11 +184,14 @@ rawstd::Task<void> Backend::list_chunks(
 
         // Two levels deep: <location>/<uuid>/<offset>/data -- every
         // offset directory under one uuid becomes that uuid's own single
-        // ChunkGroup entry (its own offsets sorted ascending); an offset
-        // directory missing its own `data` file (mid-create(), or a
-        // leftover empty one after remove()) is silently skipped rather
-        // than reported as a malformed name. `offset` is hex, matching
-        // get_target_dir()'s own doc comment.
+        // ChunkGroup entry (its own offsets sorted ascending).
+        // list_chunks() only ever enumerates live objects (docs/mds.md,
+        // "Snapshot-version records are skipped (stage 2)"), so a third,
+        // snapshot-named level (get_target_dir()'s own doc comment) never
+        // applies here; an offset directory missing its own `data` file
+        // (mid-create(), or a leftover empty one after remove()) is
+        // silently skipped rather than reported as a malformed name.
+        // `offset` is hex, matching get_target_dir()'s own doc comment.
         std::vector<ChunkGroup> found;
         for (const auto& uuid_entry :
              std::filesystem::directory_iterator(location_path)) {
@@ -151,6 +206,9 @@ rawstd::Task<void> Backend::list_chunks(
                     "%s: %s\n", strerror(-res),
                     uuid_entry.path().string().c_str()
                 );
+                continue;
+            }
+            if (filtered && rawstd_uuid_cmp(&uuid, &id) != 0) {
                 continue;
             }
 
@@ -229,7 +287,8 @@ rawstd::Task<void> Backend::list_chunks(
 }
 
 rawstd::Task<void> Backend::create(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
     std::string location_path = get_location_path(location());
     mkdir_or_exist(location_path);
@@ -254,54 +313,70 @@ rawstd::Task<void> Backend::create(
 
     std::exception_ptr create_error;
     try {
-        // fallocate() actually reserves real blocks -- this file backs a
-        // virtio-blk-style virtual disk, so a write into unallocated
-        // territory otherwise depends on the filesystem's own delayed
-        // allocation, which under ext4's data=ordered journaling must
-        // land before the next journal commit. Many concurrent writes
-        // into a still-sparse object (a fresh, mostly-unwritten one is
-        // the common case) can then back up behind that commit interval
-        // -- multiple seconds under sustained load even with the stock
-        // 5s commit interval, tens of seconds observed with an
-        // unusually long one. Preallocating up front removes writes
-        // from that dependency entirely; mode 0 (no FALLOC_FL_KEEP_SIZE)
-        // also extends the file to sp.size, so nothing else needs to on
-        // that path.
-        try {
-            co_await _queue.fallocate(fd, 0, 0, static_cast<off_t>(sp.size));
-        } catch (const std::system_error& e) {
+        // A witness holds no data (docs/mds.md, "Witness (stage 3)") --
+        // skips the whole real-storage dance below entirely, leaving
+        // `target_path` at the 0 bytes O_CREAT just gave it. This still
+        // needs to be a real (if empty) file rather than none at all:
+        // meta() below stat()s it for spec.size, and list_chunks()
+        // checks its own existence to enumerate this id/offset at all
+        // (both stay correct -- a witness's own logical size is 0, and
+        // it's still meant to be enumerable, just distinguishable from a
+        // data chunk once its own meta's member_role is read back).
+        // Slot::open() is what actually refuses real I/O against it
+        // (its own doc comment) -- this is just what makes that refusal
+        // free of cost rather than merely free of use.
+        if (member_role != RAWSTOR_MEMBER_WITNESS) {
+            // fallocate() actually reserves real blocks -- this file backs a
+            // virtio-blk-style virtual disk, so a write into unallocated
+            // territory otherwise depends on the filesystem's own delayed
+            // allocation, which under ext4's data=ordered journaling must
+            // land before the next journal commit. Many concurrent writes
+            // into a still-sparse object (a fresh, mostly-unwritten one is
+            // the common case) can then back up behind that commit interval
+            // -- multiple seconds under sustained load even with the stock
+            // 5s commit interval, tens of seconds observed with an
+            // unusually long one. Preallocating up front removes writes
+            // from that dependency entirely; mode 0 (no FALLOC_FL_KEEP_SIZE)
+            // also extends the file to sp.size, so nothing else needs to on
+            // that path.
+            try {
+                co_await _queue.fallocate(
+                    fd, 0, 0, static_cast<off_t>(sp.size)
+                );
+            } catch (const std::system_error& e) {
 #if defined(RAWSTD_ON_MACOS)
-            if (e.code().value() != ENOSYS) {
-                throw;
-            }
-            // Queue::fallocate() has no macOS equivalent of Linux's
-            // fallocate() to call (see its own doc comment,
-            // librawio/include/rawio/queue.hpp) -- F_PREALLOCATE is
-            // APFS/HFS+'s, same reasoning as above, but it only reserves
-            // the blocks, so ftruncate() still follows to make the file
-            // report the requested size. F_ALLOCATECONTIG (contiguous,
-            // best-effort) is tried first; falling back to
-            // F_ALLOCATEALL (fragmentation allowed) matches the common
-            // pattern for this call, since contiguous space this large
-            // is often unavailable.
-            fstore_t fstore = {
-                .fst_flags = F_ALLOCATECONTIG,
-                .fst_posmode = F_PEOFPOSMODE,
-                .fst_offset = 0,
-                .fst_length = static_cast<off_t>(sp.size),
-            };
-            if (fcntl(fd, F_PREALLOCATE, &fstore) == -1) {
-                fstore.fst_flags = F_ALLOCATEALL;
+                if (e.code().value() != ENOSYS) {
+                    throw;
+                }
+                // Queue::fallocate() has no macOS equivalent of Linux's
+                // fallocate() to call (see its own doc comment,
+                // librawio/include/rawio/queue.hpp) -- F_PREALLOCATE is
+                // APFS/HFS+'s, same reasoning as above, but it only reserves
+                // the blocks, so ftruncate() still follows to make the file
+                // report the requested size. F_ALLOCATECONTIG (contiguous,
+                // best-effort) is tried first; falling back to
+                // F_ALLOCATEALL (fragmentation allowed) matches the common
+                // pattern for this call, since contiguous space this large
+                // is often unavailable.
+                fstore_t fstore = {
+                    .fst_flags = F_ALLOCATECONTIG,
+                    .fst_posmode = F_PEOFPOSMODE,
+                    .fst_offset = 0,
+                    .fst_length = static_cast<off_t>(sp.size),
+                };
                 if (fcntl(fd, F_PREALLOCATE, &fstore) == -1) {
+                    fstore.fst_flags = F_ALLOCATEALL;
+                    if (fcntl(fd, F_PREALLOCATE, &fstore) == -1) {
+                        RAWSTD_THROW_ERRNO();
+                    }
+                }
+                if (ftruncate(fd, sp.size) == -1) {
                     RAWSTD_THROW_ERRNO();
                 }
-            }
-            if (ftruncate(fd, sp.size) == -1) {
-                RAWSTD_THROW_ERRNO();
-            }
 #else
-            throw;
+                throw;
 #endif
+            }
         }
 
         co_await _queue.close(fd);
@@ -346,7 +421,11 @@ rawstd::Task<void> Backend::create(
             RawstorObjectSyncState sync_state{};
             sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
 
-            ChunkIdentity identity{};
+            // The placement identity (docs/mds.md, chunk_meta) is
+            // stamped now, from the caller's own spec, and never touched
+            // again -- set_sync_state() below preserves it unchanged.
+            ChunkIdentity identity;
+            identity.member_role = member_role;
             identity.width = static_cast<uint8_t>(sp.width);
             identity.chunk_size = sp.chunk_size;
 
@@ -391,7 +470,8 @@ rawstd::Task<void> Backend::create(
     co_return;
 }
 
-rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<void>
+Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
@@ -414,7 +494,9 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
 
     // Best-effort cleanup of the now-empty directory chain -- rmdir()
     // fails ENOTEMPTY, silently tolerated, the moment a sibling still
-    // lives there: another offset under the same uuid directory.
+    // lives there: another offset under the same uuid (the uuid
+    // directory), or -- once a backend actually creates one -- a
+    // surviving snapshot under this same offset (this directory).
     if (rmdir(target_dir.c_str()) == -1) {
         errno = 0;
     } else if (rmdir((location_path + "/" + uuid_string).c_str()) == -1) {
@@ -422,8 +504,14 @@ rawstd::Task<void> Backend::remove(const RawstdUUID& id, uint64_t offset) {
     }
 }
 
-rawstd::Task<RawstorObjectMeta>
-Backend::meta(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
+    if (!rawstd_uuid_is_nil(&snapshot_id)) {
+        // No snapshots on this backend (Backend::remove_snapshot()'s own
+        // default).
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
     std::string location_path = get_location_path(location());
 
     RawstdUUIDString uuid_string;
@@ -440,7 +528,7 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     int fd = co_await _queue.open(meta_path.c_str(), O_RDONLY | O_CLOEXEC, 0);
 
     RawstorObjectSyncState sync_state{};
-    ChunkIdentity identity{};
+    ChunkIdentity identity;
     std::exception_ptr eptr;
     try {
         std::array<char, META_MAX_SIZE> disk{};
@@ -467,9 +555,15 @@ Backend::meta(const RawstdUUID& id, uint64_t offset) {
     ret.spec.size = static_cast<uint64_t>(st.st_size);
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
+    ret.member_role = identity.member_role;
     ret.sync_state = sync_state;
 
-    co_return ret;
+    co_return std::vector<RawstorObjectMeta>{ret};
+}
+
+rawstd::Task<std::vector<rawstd::URI>>
+Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
+    co_return std::vector<rawstd::URI>{location()};
 }
 
 rawstd::Task<void> Backend::set_sync_state(
@@ -491,12 +585,12 @@ rawstd::Task<void> Backend::set_sync_state(
 
     std::exception_ptr eptr;
     try {
-        // Read the existing record first so overwriting sync_state here
-        // doesn't clobber its own identity.
-        std::array<char, META_MAX_SIZE> old_disk{};
-        size_t old_rval =
-            co_await _queue.pread(fd, old_disk.data(), old_disk.size(), 0);
-        if (old_rval != old_disk.size()) {
+        // The placement identity is immutable once stamped at create() --
+        // read the existing record first and carry it through unchanged,
+        // rather than clobbering it with a zeroed one.
+        std::array<char, META_MAX_SIZE> disk{};
+        size_t got = co_await _queue.pread(fd, disk.data(), disk.size(), 0);
+        if (got != disk.size()) {
             rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
@@ -508,9 +602,7 @@ rawstd::Task<void> Backend::set_sync_state(
         RawstorObjectSyncState old_sync_state{};
         ChunkIdentity identity{};
         try {
-            meta_decode(
-                std::string(old_disk.data()), &old_sync_state, &identity
-            );
+            meta_decode(std::string(disk.data()), &old_sync_state, &identity);
         } catch (const std::system_error&) {
             identity = ChunkIdentity{};
         }
@@ -520,7 +612,7 @@ rawstd::Task<void> Backend::set_sync_state(
         // across every rewrite -- required here specifically, since this
         // is an in-place overwrite without O_TRUNC (see above).
         std::string encoded = meta_encode(sync_state, identity);
-        std::array<char, META_MAX_SIZE> disk{};
+        disk.fill('\0');
         memcpy(disk.data(), encoded.data(), encoded.size());
 
         size_t rval =
@@ -554,8 +646,11 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
         // readdir/getdents opcode to make that part async too, only
         // IORING_OP_STATX for the per-entry stat() below (already async
         // via _queue.stat()). Recursive now that each object's own
-        // `data`/`meta` live a directory deep (get_target_dir()'s own
-        // doc comment) rather than directly under location_path.
+        // `data`/`meta` live a directory (or two) deep
+        // (get_target_dir()'s own doc comment) rather than directly
+        // under location_path -- every directory level along the way is
+        // skipped by the is_regular_file() check, only the leaf files
+        // themselves are stat()ed and summed.
         for (const auto& entry :
              std::filesystem::recursive_directory_iterator(location_path)) {
             if (!entry.is_regular_file()) {

@@ -24,10 +24,11 @@ namespace {
 
 // A freshly-created, clean object's META answer -- used by every
 // OstIOTest that opens an object via the local Object class below:
-// Target::open() fetches this from Slot::open()'s own combined
-// SET_OBJECT+META step (see its own comment), for every reachable
-// member.
-const RawstorOSTFrameMetaPayload clean_meta_1mb = {
+// Target::open() fetches this from the META Slot::open() sends right
+// after SET_OBJECT (see its own comment), for every reachable
+// member -- Chunk::create()'s own overall spec comes straight out of
+// that same answer, no separate round trip.
+const RawstorFrameMetaPayload clean_meta_1mb = {
     .size = 1ull << 20,
     .epoch = 0,
     .sync_id = 0,
@@ -35,8 +36,7 @@ const RawstorOSTFrameMetaPayload clean_meta_1mb = {
     .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
     .chunk_shift = 0,
     .width = 1,
-    .reserved1 = 0,
-    .reserved2 = 0,
+    .member_role = RAWSTOR_MEMBER_DATA,
 };
 
 int callback(size_t result, int error, void* data) {
@@ -137,6 +137,8 @@ public:
             .size = size,
             .width = 1,
             .chunk_size = 0,
+            .stripe_width = 0,
+            .failure_domain = 0,
         };
         ssize_t res =
             rawstor::tests::sync_run(_queue, [&](auto cb, void* data) {
@@ -484,7 +486,8 @@ TEST(OstIOTest, set_object_fail) {
     // same single failing SET_OBJECT: Slot::open()'s own first attempt
     // (against the backend create() already connected) plus
     // invalidate_backend()'s own internal retry (rawstor_opts_io_attempts()
-    // attempts) -- one more than io_attempts total sessions.
+    // attempts) -- one more than io_attempts total sessions, every one
+    // starting with a fresh SET_OBJECT (cid 0).
     for (unsigned int i = 0; i < rawstor_opts_io_attempts() + 1; ++i) {
         rawstor::tests::Session s(server);
         s.cmd_set_object(0, 0, 0);
@@ -506,17 +509,22 @@ TEST(OstIOTest, set_object_error) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // See set_object_fail above for why this is one more than
-    // rawstor_opts_io_attempts(), and why every session here is the same
-    // single SET_OBJECT.
-    for (unsigned int i = 0; i < rawstor_opts_io_attempts() + 1; ++i) {
+    // Unlike set_object_fail above, a SET_OBJECT the server answers with
+    // ENOENT means its copy is missing (docs/mirroring.md, case F10), not
+    // a connectivity problem: Slot::open() doesn't reconnect and retry it,
+    // so there's exactly one session. With no other member to recreate it
+    // from, the open fails ENOENT itself.
+    {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, -ENOENT);
     }
 
-    EXPECT_THROW(
-        { Object object(queue, target, 1ull << 20); }, std::system_error
-    );
+    try {
+        Object object(queue, target, 1ull << 20);
+        ADD_FAILURE() << "expected the open to fail";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOENT);
+    }
 }
 
 TEST(OstIOTest, set_object_disconnect) {
@@ -558,13 +566,11 @@ TEST(OstIOTest, write_fail) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // The first session is the one Target::open() itself drives: its own
-    // combined SET_OBJECT+META (Backend::set_object(), see its own
-    // comment) succeeds. Every session after it is a lower-level
-    // reconnect from the write retry below, which never goes through
-    // Target::open()/Slot::open() again (Slot::invalidate_backend()
-    // instead -- see its own comment), but it still gets that same
-    // SET_OBJECT+META round trip.
+    // The first session is the one Target::open() itself drives:
+    // Slot::open() sends SET_OBJECT (Backend::set_object()) and then META
+    // (Backend::meta()). Every session after it is a lower-level
+    // reconnect from the write retry below via Slot::invalidate_backend(),
+    // which sends the same SET_OBJECT, META pair.
     {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -602,7 +608,7 @@ TEST(OstIOTest, write_error) {
     }
 
     // ENOENT is a permanent backend rejection (see Slot::_with_retry()'s
-    // is_permanent_backend_error()): the slot is fine, so this
+    // is_permanent_backend_error()): the connection is fine, so this
     // never reconnects, and retrying can never turn ENOENT into success,
     // so it doesn't retry at all -- exactly one session handles
     // SET_OBJECT, META, and the WRITE.
@@ -638,9 +644,9 @@ TEST(OstIOTest, write_busy_retries_without_reconnect) {
 
     // A single session handles SET_OBJECT, META, an EBUSY response to
     // the first WRITE, and a second WRITE that succeeds -- all on the SAME
-    // slot. If the retry reconnected instead (like it does for
+    // connection. If the retry reconnected instead (like it does for
     // every other error), this session would never see that second WRITE
-    // and the test would hang waiting for a slot nothing here
+    // and the test would hang waiting for a connection nothing here
     // accepts.
     {
         rawstor::tests::Session s(server);
@@ -670,10 +676,10 @@ TEST(OstIOTest, write_busy_retries_without_reconnect) {
 // (non-EBUSY) backend rejection -- ENOSPC here, retryable since it's not
 // in Slot::_with_retry()'s is_permanent_backend_error() list.
 // Confirms reconnect-before-every-retry is the general behavior now, not
-// something special-cased to a hash mismatch/dropped slot alone:
+// something special-cased to a hash mismatch/dropped connection alone:
 // the first session only ever sees ONE WRITE -- if the retry reused it
 // instead of reconnecting, this session would see a second WRITE next
-// and the real (never-scripted) one would hang waiting for a slot
+// and the real (never-scripted) one would hang waiting for a connection
 // nothing accepts.
 TEST(OstIOTest, write_backend_error_retries_with_reconnect) {
     Queue queue(16);
@@ -686,12 +692,11 @@ TEST(OstIOTest, write_backend_error_retries_with_reconnect) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // The first session is the one Target::open() itself drives: its own
-    // combined SET_OBJECT+META (Backend::set_object(), see its own
-    // comment). The reconnect session below goes through
-    // invalidate_backend() instead (Backend::create() + set_object(),
-    // just like Target::open() itself does), so it gets that same
-    // SET_OBJECT+META round trip too.
+    // The first session is the one Target::open() itself drives:
+    // Slot::open() sends SET_OBJECT (Backend::set_object()) and then META
+    // (Backend::meta()). The reconnect session below goes through
+    // Slot::invalidate_backend() instead, which sends the same
+    // SET_OBJECT, META pair.
     {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -727,7 +732,7 @@ TEST(OstIOTest, write_backend_error_retries_with_reconnect) {
 // next frame header begins. The first session only ever sees
 // ONE WRITE -- if the retry reused it instead of reconnecting, this
 // session would see a second WRITE next and the real (never-scripted)
-// one would hang waiting for a slot nothing accepts.
+// one would hang waiting for a connection nothing accepts.
 TEST(OstIOTest, write_hash_mismatch_reconnects) {
     Queue queue(16);
     rawstor::tests::Server server(8753, 256);
@@ -739,12 +744,11 @@ TEST(OstIOTest, write_hash_mismatch_reconnects) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // The first session is the one Target::open() itself drives: its own
-    // combined SET_OBJECT+META (Backend::set_object(), see its own
-    // comment). The reconnect session below goes through
-    // invalidate_backend() instead (Backend::create() + set_object(),
-    // just like Target::open() itself does), so it gets that same
-    // SET_OBJECT+META round trip too.
+    // The first session is the one Target::open() itself drives:
+    // Slot::open() sends SET_OBJECT (Backend::set_object()) and then META
+    // (Backend::meta()). The reconnect session below goes through
+    // Slot::invalidate_backend() instead, which sends the same
+    // SET_OBJECT, META pair.
     {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -784,11 +788,11 @@ TEST(OstIOTest, write_disconnect) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // The first session is the one Target::open() itself drives: its own
-    // combined SET_OBJECT+META (Backend::set_object(), see its own
-    // comment). Every lower-level reconnect from the write retry below
-    // goes through Backend::set_object() too, so it also gets that same
-    // SET_OBJECT+META round trip.
+    // The first session is the one Target::open() itself drives:
+    // Slot::open() sends SET_OBJECT (Backend::set_object()) and then META
+    // (Backend::meta()). Every lower-level reconnect from the write retry
+    // below goes through Slot::invalidate_backend(), which sends the same
+    // SET_OBJECT, META pair.
     {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -825,17 +829,16 @@ TEST(OstIOTest, write_disconnect_concurrent) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // The object-open backend answers its own combined SET_OBJECT+META
-    // (Backend::set_object(), see its own comment) and *then*
-    // disconnects -- before either concurrent write further down is even
-    // attempted on it -- same as every one of its retries below.
-    // Both rawstor_object_pwrite() calls below are issued back to back
-    // with no rawio_wait_timeout() in between, so Backend::_add_op() runs
-    // for both before the client's event loop has had any chance to
-    // deliver either op's own request send completion. This is the
-    // window a stranded op used to fall into: registered in
-    // Backend::_ops, but not yet "in flight" by BackendOp::in_flight()'s
-    // old (now removed) definition.
+    // The object-open backend answers SET_OBJECT and then META (both sent
+    // by Slot::open(), see its own comment) and *then* disconnects -- before
+    // either concurrent write further down is even attempted on it -- same as
+    // every one of its retries below. Both rawstor_object_pwrite() calls below
+    // are issued back to back with no rawio_wait_timeout() in between, so
+    // Backend::_add_op() runs for both before the client's event loop has had
+    // any chance to deliver either op's own request send completion. This is
+    // the window a stranded op used to fall into: registered in Backend::_ops,
+    // but not yet "in flight" by BackendOp::in_flight()'s old (now removed)
+    // definition.
     {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -890,7 +893,7 @@ TEST(OstIOTest, write_disconnect_concurrent) {
     // Object::write() helper: an orphaned op would otherwise hang this
     // loop -- and the whole test binary -- forever instead of failing
     // the test. A write whose send() happens to succeed against an
-    // already-dead slot (a real possibility: the RST from the
+    // already-dead connection (a real possibility: the RST from the
     // server closing early can still be in flight when the client's own
     // send() call goes out, so the kernel briefly accepts the data) has
     // no way to fail until TCP_USER_TIMEOUT gives up on it -- so this
@@ -926,33 +929,32 @@ TEST(OstIOTest, write_disconnect_concurrent) {
 //
 // Every write left dirty (rawstor_object_pwrite() is called with
 // sync=false below) makes Object::close() issue one real FLUSH over this
-// same slot before closing it -- answered here once it arrives.
+// same connection before closing it -- answered here once it arrives.
 // Object::close() itself never sends a wire-level RELEASE (Backend::close()
 // is a local socket close, not a protocol op); that only happens
 // afterwards, when ~Object() calls rawstor_target_remove(), which opens
 // its own brand new single-backend Slot to send it -- so once the
-// object's slot is closed from this side too (mirroring the real
+// object's connection is closed from this side too (mirroring the real
 // client, which does the same right after flush() returns), this scripts
-// a fresh accept() and answers that RELEASE on the new slot.
+// a fresh accept() and answers that RELEASE on the new connection.
 void auto_respond_writes_then_flush_and_release(
     rawstor::tests::Server& server, size_t write_payload_size,
     int32_t write_res, int32_t flush_res, int32_t release_res
 ) {
     server.read(
-        "OST frame head <<<", sizeof(RawstorOSTFrameHead),
+        "OST frame head <<<", sizeof(RawstorFrameHead),
         [&server, write_payload_size, write_res, flush_res,
          release_res](const void* buf) {
-            RawstorOSTFrameHead head =
-                *static_cast<const RawstorOSTFrameHead*>(buf);
+            RawstorFrameHead head = *static_cast<const RawstorFrameHead*>(buf);
             if (head.cmd == RAWSTOR_CMD_WRITE) {
-                size_t rest_size = sizeof(RawstorOSTFrameIO) -
-                                   sizeof(RawstorOSTFrameHead) +
+                size_t rest_size = sizeof(RawstorFrameIO) -
+                                   sizeof(RawstorFrameHead) +
                                    write_payload_size;
                 server.read(
                     "RAWSTOR_CMD_WRITE (rest) <<<", rest_size,
                     [&server, head, write_res, write_payload_size, flush_res,
                      release_res](const void*) {
-                        RawstorOSTFrameResponse response = {
+                        RawstorFrameResponse response = {
                             .head{
                                 .magic = RAWSTOR_MAGIC,
                                 .cmd = RAWSTOR_CMD_WRITE,
@@ -971,11 +973,11 @@ void auto_respond_writes_then_flush_and_release(
                 );
             } else if (head.cmd == RAWSTOR_CMD_FLUSH) {
                 size_t rest_size =
-                    sizeof(RawstorOSTFrameBasic) - sizeof(RawstorOSTFrameHead);
+                    sizeof(RawstorFrameBasic) - sizeof(RawstorFrameHead);
                 server.read(
                     "RAWSTOR_CMD_FLUSH (rest) <<<", rest_size,
                     [&server, head, flush_res, release_res](const void*) {
-                        RawstorOSTFrameResponse response = {
+                        RawstorFrameResponse response = {
                             .head{
                                 .magic = RAWSTOR_MAGIC,
                                 .cmd = RAWSTOR_CMD_FLUSH,
@@ -990,9 +992,9 @@ void auto_respond_writes_then_flush_and_release(
                         server.accept("SESSION <<< (target remove)");
                         server.read(
                             "RAWSTOR_CMD_RELEASE <<<",
-                            sizeof(RawstorOSTFrameBasic), [](const void*) {}
+                            sizeof(RawstorFrameBasic), [](const void*) {}
                         );
-                        RawstorOSTFrameResponse release_response = {
+                        RawstorFrameResponse release_response = {
                             .head{
                                 .magic = RAWSTOR_MAGIC,
                                 .cmd = RAWSTOR_CMD_RELEASE,
@@ -1021,20 +1023,20 @@ void auto_respond_writes_then_flush_and_release(
 
 // Regression: two writes share one backend. The first gets a well-formed
 // response carrying an unexpected cmd (a plain std::system_error, not a
-// dropped slot: nothing about the wire ever looks broken, no
+// dropped connection: nothing about the wire ever looks broken, no
 // FIN/RST at any point), which Slot::_with_retry() reacts to by
 // calling invalidate_backend(): swap in a fresh backend, then
 // Backend::close() the old one. The second write is already sitting in
 // that same old backend's _ops, purely waiting on a response of its own,
 // when this happens -- _recv_pump has nothing of its own to ever notice
-// here (the slot was never actually broken), so it can't be what
+// here (the connection was never actually broken), so it can't be what
 // rescues it. Backend::close() must fail whatever is still in _ops
 // itself, or the second write has nothing left watching it and hangs
 // forever.
 //
 // This is deliberately built around a same-backend *framing* error
-// rather than a dropped slot: on a real loopback socket, closing
-// the slot also sends the second write's own recv_pump a FIN it
+// rather than a dropped connection: on a real loopback socket, closing
+// the connection also sends the second write's own recv_pump a FIN it
 // can (and, empirically, reliably does) notice on its own first, via the
 // *pre-existing* correct handling of a genuine transport error --
 // resolving the second write correctly regardless of the fix under test
@@ -1057,22 +1059,21 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
 
     // Scripted with the raw Server API instead of Session: Session's
     // destructor unconditionally queues an actual close() of the
-    // slot, which would send a FIN -- exactly what this test needs
+    // connection, which would send a FIN -- exactly what this test needs
     // to avoid (see the TEST's own doc comment above). This backend is
     // instead left to the client's own invalidate_backend() to tear
     // down; the server side only ever forget()s its bookkeeping of it
     // (see forget()'s own doc comment in server.hpp).
     server.accept("SESSION <<<");
-    // set_object() is the combined SET_OBJECT+META step now
-    // (Backend::set_object(), see its own comment) -- replicated by hand
-    // here since this test can't use Session (see the comment above),
-    // matching Session::cmd_set_object_response()/cmd_meta_response()'s
-    // own wire shape.
+    // Slot::open() sends SET_OBJECT then META (see its own comment) --
+    // replicated by hand here since this test can't use Session (see the
+    // comment above), matching
+    // Session::cmd_set_object_response()/cmd_meta_response()'s own wire shape.
     server.read(
-        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameBasic),
+        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameBasic),
         [](const void*) {}
     );
-    RawstorOSTFrameResponse set_object_response = {
+    RawstorFrameResponse set_object_response = {
         .head{
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_SET_OBJECT,
@@ -1085,9 +1086,9 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
         sizeof(set_object_response)
     );
     server.read(
-        "RAWSTOR_CMD_META <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
+        "RAWSTOR_CMD_META <<<", sizeof(RawstorFrameBasic), [](const void*) {}
     );
-    RawstorOSTFrameResponse meta_response = {
+    RawstorFrameResponse meta_response = {
         .head{
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_META,
@@ -1101,8 +1102,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     iovec meta_iov[2] = {
         {.iov_base = &meta_response, .iov_len = sizeof(meta_response)},
         {
-            .iov_base =
-                const_cast<RawstorOSTFrameMetaPayload*>(&clean_meta_1mb),
+            .iov_base = const_cast<RawstorFrameMetaPayload*>(&clean_meta_1mb),
             .iov_len = sizeof(clean_meta_1mb),
         },
     };
@@ -1110,14 +1110,14 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
         "RAWSTOR_CMD_META >>>", meta_iov, sizeof(meta_iov) / sizeof(meta_iov[0])
     );
     server.read(
-        "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorOSTFrameIO) + 4,
+        "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorFrameIO) + 4,
         [&server](const void* buf) {
-            uint16_t cid = static_cast<const RawstorOSTFrameIO*>(buf)->head.cid;
+            uint16_t cid = static_cast<const RawstorFrameIO*>(buf)->head.cid;
             // A well-formed response with the wrong cmd -- validate_cmd()
             // rejects it as EPROTO, a same-backend *framing* error rather
-            // than a dropped slot (see this TEST's own doc comment
+            // than a dropped connection (see this TEST's own doc comment
             // for why that distinction matters here).
-            RawstorOSTFrameResponse wrong_cmd_response = {
+            RawstorFrameResponse wrong_cmd_response = {
                 .head{
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_FLUSH,
@@ -1139,13 +1139,13 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
             // reach the error response above at all. Scripted here,
             // after that response is already queued to go out, it's
             // guaranteed to sit behind it.
-            server.forget("SESSION (forgotten, slot left for the OS)");
+            server.forget("SESSION (forgotten, connection left for the OS)");
             server.accept("SESSION <<< (retry target)");
             server.read(
-                "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameBasic),
+                "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameBasic),
                 [](const void*) {}
             );
-            RawstorOSTFrameResponse retry_set_object_response = {
+            RawstorFrameResponse retry_set_object_response = {
                 .head{
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_SET_OBJECT,
@@ -1161,10 +1161,10 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
             // set_object() same as Target::open() itself, so this retry
             // target also gets a META round trip.
             server.read(
-                "RAWSTOR_CMD_META <<<", sizeof(RawstorOSTFrameBasic),
+                "RAWSTOR_CMD_META <<<", sizeof(RawstorFrameBasic),
                 [](const void*) {}
             );
-            RawstorOSTFrameResponse retry_meta_response = {
+            RawstorFrameResponse retry_meta_response = {
                 .head{
                     .magic = RAWSTOR_MAGIC,
                     .cmd = RAWSTOR_CMD_META,
@@ -1181,9 +1181,8 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
                 {.iov_base = &retry_meta_response,
                  .iov_len = sizeof(retry_meta_response)},
                 {
-                    .iov_base = const_cast<RawstorOSTFrameMetaPayload*>(
-                        &clean_meta_1mb
-                    ),
+                    .iov_base =
+                        const_cast<RawstorFrameMetaPayload*>(&clean_meta_1mb),
                     .iov_len = sizeof(clean_meta_1mb),
                 },
             };
@@ -1196,7 +1195,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
             // land) with its own cid echoed back, then the one FLUSH and
             // RELEASE the Object destructor and rawstor_target_remove()
             // send at the very end of this test, the latter on its own
-            // fresh slot.
+            // fresh connection.
             auto_respond_writes_then_flush_and_release(server, 4, 4, 0, 0);
         }
     );
@@ -1261,7 +1260,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
 }
 
 // Regression: many writes share one backend, all lose it at once (a
-// genuine close, matching a real dropped slot). Backend::
+// genuine close, matching a real dropped connection). Backend::
 // _fail_in_flight() force-fails every one of them synchronously, in a
 // single loop, so their Slot::_with_retry() coroutines all resume
 // in a tight burst -- each one's own invalidate_backend(be) call races
@@ -1271,7 +1270,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
 // against the same io_uring ring before any of them has had a chance to
 // pump a completion. This is the exact concurrency shape a real host
 // under load produces (many in-flight guest writes, one dropped OST
-// slot) -- and the shape this test exists to stress, since nothing
+// connection) -- and the shape this test exists to stress, since nothing
 // above exercises more than two concurrent ops at once.
 //
 // Genuinely requires RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE to be nonzero,
@@ -1308,16 +1307,15 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
     // Session's destructor (which would queue it too early, before any
     // of these kWrites requests has actually arrived).
     server.accept("SESSION <<<");
-    // set_object() is the combined SET_OBJECT+META step now
-    // (Backend::set_object(), see its own comment) -- replicated by hand
-    // here since this test can't use Session (see the comment above),
-    // matching Session::cmd_set_object_response()/cmd_meta_response()'s
-    // own wire shape.
+    // Slot::open() sends SET_OBJECT then META (see its own comment) --
+    // replicated by hand here since this test can't use Session (see the
+    // comment above), matching
+    // Session::cmd_set_object_response()/cmd_meta_response()'s own wire shape.
     server.read(
-        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorOSTFrameBasic),
+        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameBasic),
         [](const void*) {}
     );
-    RawstorOSTFrameResponse set_object_response = {
+    RawstorFrameResponse set_object_response = {
         .head{
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_SET_OBJECT,
@@ -1330,9 +1328,9 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
         sizeof(set_object_response)
     );
     server.read(
-        "RAWSTOR_CMD_META <<<", sizeof(RawstorOSTFrameBasic), [](const void*) {}
+        "RAWSTOR_CMD_META <<<", sizeof(RawstorFrameBasic), [](const void*) {}
     );
-    RawstorOSTFrameResponse meta_response = {
+    RawstorFrameResponse meta_response = {
         .head{
             .magic = RAWSTOR_MAGIC,
             .cmd = RAWSTOR_CMD_META,
@@ -1346,8 +1344,7 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
     iovec meta_iov[2] = {
         {.iov_base = &meta_response, .iov_len = sizeof(meta_response)},
         {
-            .iov_base =
-                const_cast<RawstorOSTFrameMetaPayload*>(&clean_meta_1mb),
+            .iov_base = const_cast<RawstorFrameMetaPayload*>(&clean_meta_1mb),
             .iov_len = sizeof(clean_meta_1mb),
         },
     };
@@ -1357,21 +1354,21 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
     // Reads every one of the kWrites requests -- none of them ever gets
     // a response -- then closes on the last one, guaranteeing all
     // kWrites were fully sent (and are sitting in _ops) before the
-    // slot dies out from under all of them at once.
+    // connection dies out from under all of them at once.
     auto remaining = std::make_shared<int>(kWrites);
     for (int i = 0; i < kWrites; ++i) {
         server.read(
-            "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorOSTFrameIO) + 4,
+            "RAWSTOR_CMD_WRITE <<<", sizeof(RawstorFrameIO) + 4,
             [&server, remaining](const void*) {
                 if (--*remaining == 0) {
                     server.close("SESSION >>> (after all writes, unanswered)");
 
                     server.accept("SESSION <<< (retry target)");
                     server.read(
-                        "RAWSTOR_CMD_SET_OBJECT <<<",
-                        sizeof(RawstorOSTFrameBasic), [](const void*) {}
+                        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameBasic),
+                        [](const void*) {}
                     );
-                    RawstorOSTFrameResponse retry_set_object_response = {
+                    RawstorFrameResponse retry_set_object_response = {
                         .head{
                             .magic = RAWSTOR_MAGIC,
                             .cmd = RAWSTOR_CMD_SET_OBJECT,
@@ -1388,10 +1385,10 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
                     // + set_object() same as Target::open() itself, so
                     // this retry target also gets a META round trip.
                     server.read(
-                        "RAWSTOR_CMD_META <<<", sizeof(RawstorOSTFrameBasic),
+                        "RAWSTOR_CMD_META <<<", sizeof(RawstorFrameBasic),
                         [](const void*) {}
                     );
-                    RawstorOSTFrameResponse retry_meta_response = {
+                    RawstorFrameResponse retry_meta_response = {
                         .head{
                             .magic = RAWSTOR_MAGIC,
                             .cmd = RAWSTOR_CMD_META,
@@ -1408,7 +1405,7 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
                         {.iov_base = &retry_meta_response,
                          .iov_len = sizeof(retry_meta_response)},
                         {
-                            .iov_base = const_cast<RawstorOSTFrameMetaPayload*>(
+                            .iov_base = const_cast<RawstorFrameMetaPayload*>(
                                 &clean_meta_1mb
                             ),
                             .iov_len = sizeof(clean_meta_1mb),
@@ -1422,7 +1419,7 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
                     // land) with its own cid echoed back, then the one
                     // FLUSH and RELEASE the Object destructor and
                     // rawstor_target_remove() send at the very end of
-                    // this test, the latter on its own fresh slot.
+                    // this test, the latter on its own fresh connection.
                     auto_respond_writes_then_flush_and_release(
                         server, 4, 4, 0, 0
                     );
@@ -1441,7 +1438,7 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
     // same reasoning as write_orphaned_by_sibling_error_response above,
     // just kWrites-wide instead of two: every one of them is sitting in
     // _ops, on the one backend they all share, before any of their sends
-    // -- let alone the slot dying -- has had a chance to run.
+    // -- let alone the connection dying -- has had a chance to run.
     for (int i = 0; i < kWrites; ++i) {
         auto cb = std::make_unique<std::function<void(size_t, int)>>(
             [&done, &err, i](size_t, int error) {

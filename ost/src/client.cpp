@@ -2,6 +2,10 @@
 
 #include <ost/server.hpp>
 
+#include "target.hpp"
+
+#include <rawio/queue.hpp>
+
 #include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
@@ -11,6 +15,7 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <rawstor/list.h>
 #include <rawstor/location.h>
 #include <rawstor/object.h>
 #include <rawstor/protocol.h>
@@ -25,6 +30,7 @@
 #include <vector>
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -50,7 +56,7 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
     return EIO;
 }
 
-// RawstorOSTFrameAllocatePayload::chunk_shift's own doc comment on why a
+// RawstorFrameAllocatePayload::chunk_shift's own doc comment on why a
 // shift, not the full value -- `chunk_size` is always a power of two
 // (RawstorObjectSpec's own doc comment, target.h), 0 meaning no chunking.
 uint8_t chunk_size_to_shift(uint64_t chunk_size) noexcept {
@@ -73,13 +79,20 @@ uint64_t chunk_shift_to_size(uint8_t chunk_shift) {
 
 // One LIST response row per distinct chunk offset a target string
 // rawstor_location_list() returned actually names -- a target string can
-// join more than one URI with a comma, but rawstor_target_offsets() already
-// collapses same-offset mirrors down to one entry per distinct chunk --
-// matching RawstorOSTFrameListEntry's own doc comment (protocol.h): one row
-// per offset, all sharing that id, for the receiving end to group back into
-// one rawstor::ChunkGroup.
+// join more than one URI with a comma, each already carrying its own
+// offset segment (or none at all, for an ordinary single-chunk one), so
+// this is purely a syntactic read of `target`'s own shape (parse_target_
+// path(), src/target.hpp), not rawstor_target_chunks()'s own (possibly
+// backend-verified, e.g. for an mds:// target) real answer -- `target`
+// here always already names this OST's own local, self-describing
+// storage, never an mds:// one, so there is nothing to verify: whatever
+// offsets its own comma-joined URIs literally spell out are all there
+// is to report. Same-offset mirrors collapse down to one entry per
+// distinct chunk -- matching RawstorFrameListEntry's own doc comment
+// (protocol.h): one row per offset, all sharing that id, for the
+// receiving end to group back into one rawstor::ChunkGroup.
 void append_list_entries(
-    const char* target, std::vector<RawstorOSTFrameListEntry>& out
+    const char* target, std::vector<RawstorFrameListEntry>& out
 ) {
     RawstdUUIDString id_buf;
     int res = rawstor_target_id(target, id_buf, sizeof(id_buf));
@@ -92,21 +105,19 @@ void append_list_entries(
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
 
-    RawstorOSTFrameListEntry base{};
+    RawstorFrameListEntry base{};
     memcpy(base.id, id.bytes, sizeof(base.id));
 
-    int count = rawstor_target_offsets(target, nullptr, 0);
-    if (count < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-count);
-    }
-    std::vector<uint64_t> offsets(static_cast<size_t>(count));
-    res = rawstor_target_offsets(target, offsets.data(), offsets.size());
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    std::vector<uint64_t> offsets;
+    for (const rawstd::URI& uri : rawstd::URI::uriv(target)) {
+        uint64_t offset = rawstor::parse_target_path(uri.path().str()).offset;
+        if (offsets.empty() || offsets.back() != offset) {
+            offsets.push_back(offset);
+        }
     }
 
     for (uint64_t offset : offsets) {
-        RawstorOSTFrameListEntry entry = base;
+        RawstorFrameListEntry entry = base;
         entry.chunk_offset = offset;
         out.push_back(entry);
     }
@@ -123,30 +134,25 @@ void append_list_entries(
 // comment for the general shape this follows.
 // ---------------------------------------------------------------------
 
-// Same shape as close_trampoline() below -- rawstor_target_open() writes
-// the opened object directly to `*object` (an out-parameter, see
-// co_target_open() below) rather than delivering it as one of the C
-// callback's own arguments, so there's nothing left for this one to hand
-// to complete() beyond the result.
+// rawstor_target_open()'s callback delivers a single ssize_t (0 or
+// negative errno) -- same shape as close_trampoline()/flush_trampoline()/
+// close_fd_trampoline()/result_trampoline() below.
 int open_trampoline(ssize_t result, void* data) {
     static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
     return 0;
 }
 
-// `target` is taken by value (not `const std::string&`): a coroutine
-// parameter declared as a reference is *not* lifetime-extended past the
-// initiating call the way an ordinary function's would be, so a caller
-// passing a temporary (e.g. rawstd::URI::uris(...)) needs this to make its
-// own copy, safely owned by the coroutine frame across suspension.
+// `target` already has any bound version folded into its own trailing
+// path segment (Client::_targets()'s own `snapshot_id` parameter, called
+// by _set_object() below) -- rawstor_target_open()'s `flags` is the only
+// other input this needs (a bound-version target can only be opened
+// RAWSTOR_READONLY, docs/mds.md, "Snapshots"). Taken by value: a
+// coroutine parameter declared as a reference is not lifetime-extended
+// past the initiating call the way an ordinary function's would be.
 rawstd::Task<RawstorObject*>
 co_target_open(RawIOQueue* queue, std::string target, int flags) {
-    // rawstor_target_open() writes `object` before open_trampoline() ever
-    // runs (see its own doc comment), and open_trampoline() only fires
-    // once co_await awaiter below resumes -- so `object` is always
-    // already valid, whether it took a real suspension or completed
-    // synchronously, by the time it's read here.
-    RawstorObject* object = nullptr;
     rawstd::CallbackAwaitable<void> awaiter;
+    RawstorObject* object = nullptr;
     int res = rawstor_target_open(
         queue, target.c_str(), flags, &object, open_trampoline, &awaiter
     );
@@ -588,7 +594,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
     // sustained load and burning through rawstor_opts_io_attempts() for
     // real.
     int res = rawio_recv_multishot(
-        queue, fd, 1u << 17, 64 * 16, sizeof(RawstorOSTFrameHead), 0,
+        queue, fd, 1u << 17, 64 * 16, sizeof(RawstorFrameHead), 0,
         recv_trampoline, stream, &event
     );
     if (res < 0) {
@@ -625,7 +631,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
     try {
         while (true) {
             // --- read and parse this request's frame head ---
-            RawstorOSTFrameHead head;
+            RawstorFrameHead head;
             co_await recv_frame(
                 stream, &head, sizeof(head), fd, "request head", &stream_failed
             );
@@ -648,7 +654,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
             // --- read this request's frame payload and dispatch it ---
             switch (head.cmd) {
             case RAWSTOR_CMD_SET_OBJECT: {
-                RawstorOSTFrameBasicPayload basic;
+                RawstorFrameBasicPayload basic;
                 co_await recv_frame(
                     stream, &basic, sizeof(basic), fd, "request payload",
                     &stream_failed
@@ -662,7 +668,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 break;
             }
             case RAWSTOR_CMD_ALLOCATE: {
-                RawstorOSTFrameAllocatePayload spec;
+                RawstorFrameAllocatePayload spec;
                 co_await recv_frame(
                     stream, &spec, sizeof(spec), fd, "request payload",
                     &stream_failed
@@ -676,7 +682,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 break;
             }
             case RAWSTOR_CMD_RELEASE: {
-                RawstorOSTFrameBasicPayload basic;
+                RawstorFrameBasicPayload basic;
                 co_await recv_frame(
                     stream, &basic, sizeof(basic), fd, "request payload",
                     &stream_failed
@@ -690,7 +696,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 break;
             }
             case RAWSTOR_CMD_SNAPSHOT: {
-                RawstorOSTFrameBasicPayload basic;
+                RawstorFrameBasicPayload basic;
                 co_await recv_frame(
                     stream, &basic, sizeof(basic), fd, "request payload",
                     &stream_failed
@@ -704,7 +710,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 break;
             }
             case RAWSTOR_CMD_LIST: {
-                RawstorOSTFrameListPayload list_payload;
+                RawstorFrameListPayload list_payload;
                 co_await recv_frame(
                     stream, &list_payload, sizeof(list_payload), fd,
                     "request payload", &stream_failed
@@ -718,7 +724,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 break;
             }
             case RAWSTOR_CMD_META: {
-                RawstorOSTFrameBasicPayload basic;
+                RawstorFrameBasicPayload basic;
                 co_await recv_frame(
                     stream, &basic, sizeof(basic), fd, "request payload",
                     &stream_failed
@@ -731,8 +737,22 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
+            case RAWSTOR_CMD_LIST_SNAPSHOTS: {
+                RawstorFrameBasicPayload basic;
+                co_await recv_frame(
+                    stream, &basic, sizeof(basic), fd, "request payload",
+                    &stream_failed
+                );
+                client = weak.lock();
+                if (client == nullptr) {
+                    co_return;
+                }
+                _list_snapshots(weak, head, basic);
+                rawstd::DetachedTask::rethrow_if_pending();
+                break;
+            }
             case RAWSTOR_CMD_LOCATION_INFO: {
-                RawstorOSTFrameBasicPayload basic;
+                RawstorFrameBasicPayload basic;
                 co_await recv_frame(
                     stream, &basic, sizeof(basic), fd, "request payload",
                     &stream_failed
@@ -746,7 +766,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 break;
             }
             case RAWSTOR_CMD_FLUSH: {
-                RawstorOSTFrameBasicPayload basic;
+                RawstorFrameBasicPayload basic;
                 co_await recv_frame(
                     stream, &basic, sizeof(basic), fd, "request payload",
                     &stream_failed
@@ -760,7 +780,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 break;
             }
             case RAWSTOR_CMD_SET_SYNC_STATE: {
-                RawstorOSTFrameSyncStatePayload sync_state_payload;
+                RawstorFrameSyncStatePayload sync_state_payload;
                 co_await recv_frame(
                     stream, &sync_state_payload, sizeof(sync_state_payload), fd,
                     "request payload", &stream_failed
@@ -774,7 +794,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 break;
             }
             case RAWSTOR_CMD_READ: {
-                RawstorOSTFrameIOPayload io;
+                RawstorFrameIOPayload io;
                 co_await recv_frame(
                     stream, &io, sizeof(io), fd, "request payload",
                     &stream_failed
@@ -788,7 +808,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 break;
             }
             case RAWSTOR_CMD_DISCARD: {
-                RawstorOSTFrameIOPayload io;
+                RawstorFrameIOPayload io;
                 co_await recv_frame(
                     stream, &io, sizeof(io), fd, "request payload",
                     &stream_failed
@@ -802,7 +822,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 break;
             }
             case RAWSTOR_CMD_WRITE_ZEROES: {
-                RawstorOSTFrameIOPayload io;
+                RawstorFrameIOPayload io;
                 co_await recv_frame(
                     stream, &io, sizeof(io), fd, "request payload",
                     &stream_failed
@@ -816,7 +836,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 break;
             }
             case RAWSTOR_CMD_WRITE: {
-                RawstorOSTFrameIOPayload io;
+                RawstorFrameIOPayload io;
                 co_await recv_frame(
                     stream, &io, sizeof(io), fd, "request payload",
                     &stream_failed
@@ -870,7 +890,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 // -ENOSYS instead of a bare disconnect, so the client can
                 // tell "unsupported" apart from a transport failure. This
                 // still ends the connection right after --
-                // RawstorOSTFrameHead carries no length field, so there is
+                // RawstorFrameHead carries no length field, so there is
                 // no way to know how many payload bytes this request's
                 // body is, to skip past and resynchronize with whatever
                 // request follows it on the wire.
@@ -945,8 +965,8 @@ Client::_close_current_object(std::weak_ptr<Client> weak) {
 }
 
 rawstd::DetachedTask Client::_list(
-    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameListPayload payload
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameListPayload payload
 ) {
     std::shared_ptr<Client> client = co_await _close_current_object(weak);
     if (client == nullptr) {
@@ -993,20 +1013,20 @@ rawstd::DetachedTask Client::_list(
     // and del_client() (only on failure) after that.
     bool send_failed = false;
     try {
-        std::vector<RawstorOSTFrameListEntry> entries;
+        std::vector<RawstorFrameListEntry> entries;
         for (const char** in_it = rawstor_string_list_iter(targets);
              in_it != NULL; in_it = rawstor_string_list_next(in_it)) {
             append_list_entries(*in_it, entries);
         }
         // The final row is always the resume cursor, never a real result
-        // (RawstorOSTFrameListEntry's own doc comment, protocol.h) --
+        // (RawstorFrameListEntry's own doc comment, protocol.h) --
         // chunk_offset stays 0, unused by a cursor row.
-        RawstorOSTFrameListEntry cursor{};
+        RawstorFrameListEntry cursor{};
         memcpy(cursor.id, token.bytes, sizeof(cursor.id));
         entries.push_back(cursor);
 
         std::vector<unsigned char> data(
-            sizeof(RawstorOSTFrameListEntry) * entries.size()
+            sizeof(RawstorFrameListEntry) * entries.size()
         );
         memcpy(data.data(), entries.data(), data.size());
         co_await client->_send_response(
@@ -1024,8 +1044,8 @@ rawstd::DetachedTask Client::_list(
 }
 
 rawstd::DetachedTask Client::_allocate(
-    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameAllocatePayload payload
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameAllocatePayload payload
 ) {
     std::shared_ptr<Client> client = co_await _close_current_object(weak);
     if (client == nullptr) {
@@ -1040,17 +1060,24 @@ rawstd::DetachedTask Client::_allocate(
 
     int result = 0;
     try {
-        // Target::create() requires width to exactly match the target's
-        // own URI count -- here, that's this server's own locations(),
-        // not whatever the incoming request's payload.width happens to
-        // be (the caller's target-wide URI count, which has no reason to
-        // match this server's own location count for a relay/multi-
-        // location rawstor-ost). chunk_shift_to_size() can throw on a
+        // width is forwarded straight through: it's the object's own
+        // configured policy (persisted per-copy for reconstruct,
+        // docs/mds.md, chunk_meta), not a statement about how many URIs
+        // this relay/multi-location rawstor-ost happens to have
+        // configured locally. chunk_shift_to_size() can throw on a
         // malformed chunk_shift, so it needs to run inside this try too.
+        // payload.member_role isn't forwarded: rawstor_target_create()
+        // itself always creates RAWSTOR_MEMBER_DATA members (create_one()'s
+        // own comment, target.cpp) -- a witness (docs/mds.md, "Witness",
+        // stage 3) is a metadata-only member attached to an
+        // already-existing chunk's own quorum, never something ALLOCATE
+        // itself builds.
         RawstorObjectSpec spec{
             .size = payload.size,
-            .width = static_cast<unsigned int>(targets.size()),
+            .width = payload.width,
             .chunk_size = chunk_shift_to_size(payload.chunk_shift),
+            .stripe_width = payload.stripe_width,
+            .failure_domain = payload.failure_domain,
         };
 
         std::string target = rawstd::URI::uris(targets);
@@ -1081,8 +1108,8 @@ rawstd::DetachedTask Client::_allocate(
 }
 
 rawstd::DetachedTask Client::_release(
-    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicPayload payload
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameBasicPayload payload
 ) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
@@ -1126,14 +1153,14 @@ rawstd::DetachedTask Client::_release(
     }
 }
 
-// SNAPSHOT: forwarded to the same rawstor_target_create() this server's
-// own local backend(s) implement -- the bound snapshot_id baked into the
-// target's own path (_targets()'s own `snapshot_id` parameter) makes it
-// take a CoW snapshot instead of creating a fresh object, same shape as
-// _release() above.
+// SNAPSHOT (docs/mds.md, "Snapshots"): forwarded to the same
+// rawstor_target_create() this server's own local backend(s) implement --
+// the bound snapshot_id baked into the target's own path (_targets()'s
+// own `snapshot_id` parameter) makes it take a CoW snapshot instead of
+// creating a fresh object, same shape as _release() above.
 rawstd::DetachedTask Client::_create_snapshot(
-    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicPayload payload
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameBasicPayload payload
 ) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
@@ -1154,12 +1181,33 @@ rawstd::DetachedTask Client::_create_snapshot(
     int result = 0;
     try {
         std::string target = rawstd::URI::uris(targets);
+        // `target` already carries the bound snapshot_id (_targets() above)
+        // -- rawstor_target_create_snapshot() takes that as-is (its own
+        // mode 1, doc comment) and does the actual CoW; it is the only
+        // entry point for this (create() rejects a bound target with
+        // -EINVAL). The resulting target string it also returns is
+        // discarded -- this wire command only reports success/failure.
+        //
+        // NULL/0 asks for the snapshot target string's own length alone --
+        // the same snprintf(NULL, 0, ...) idiom rawstor_target_create_
+        // snapshot() itself just forwards to (target.cpp), needing no I/O
+        // and creating nothing. send_trampoline() (above) already matches
+        // its callback shape (ssize_t result/data). The second call, into
+        // a buffer sized exactly for that length, does the real CoW.
+        rawstd::CallbackAwaitable<size_t> length_awaiter;
+        int lres = rawstor_target_create_snapshot(
+            client->_queue, target.c_str(), nullptr, nullptr, 0,
+            send_trampoline, &length_awaiter
+        );
+        if (lres < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-lres);
+        }
+        std::vector<char> snapshot_target(co_await length_awaiter + 1);
+
         rawstd::CallbackAwaitable<void> awaiter;
-        // spec is meaningless for a CoW snapshot (the version's shape
-        // comes from the live object) -- NULL, per rawstor_target_
-        // create()'s own doc comment.
-        int res = rawstor_target_create(
-            client->_queue, target.c_str(), nullptr, result_trampoline, &awaiter
+        int res = rawstor_target_create_snapshot(
+            client->_queue, target.c_str(), nullptr, snapshot_target.data(),
+            snapshot_target.size(), result_trampoline, &awaiter
         );
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -1184,10 +1232,11 @@ rawstd::DetachedTask Client::_create_snapshot(
 }
 
 // The full per-copy mirror consistency record: size/width/chunk_size plus
-// state/epoch/sync_id, via rawstor_target_meta().
+// state/epoch/sync_id, via rawstor_target_meta() -- of the version
+// `payload.snapshot_id` names, or the live one when it's nil.
 rawstd::DetachedTask Client::_meta(
-    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicPayload payload
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameBasicPayload payload
 ) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
@@ -1197,7 +1246,10 @@ rawstd::DetachedTask Client::_meta(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
+    RawstdUUID snapshot_id;
+    memcpy(snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id));
+    std::vector<rawstd::URI> targets =
+        client->_targets(uuid, payload.offset, snapshot_id);
 
     // rawstor_target_meta() now reports one entry per URI (a URI that
     // didn't answer is zero-filled, RawstorObjectSyncStateValue's own doc
@@ -1243,17 +1295,16 @@ rawstd::DetachedTask Client::_meta(
                 RAWSTOR_CMD_META, head.cid, result, 0
             );
         } else {
-            RawstorOSTFrameMetaPayload body_out{
+            RawstorFrameMetaPayload body_out{
                 .size = meta.spec.size,
                 .epoch = meta.sync_state.epoch,
                 .sync_id = meta.sync_state.sync_id,
                 .sync_id_history = {},
                 .state =
-                    static_cast<RawstorOSTSyncStateType>(meta.sync_state.state),
+                    static_cast<RawstorSyncStateType>(meta.sync_state.state),
                 .chunk_shift = chunk_size_to_shift(meta.spec.chunk_size),
                 .width = static_cast<uint8_t>(meta.spec.width),
-                .reserved1 = 0,
-                .reserved2 = 0,
+                .member_role = static_cast<uint8_t>(meta.member_role),
             };
             memcpy(
                 body_out.sync_id_history, meta.sync_state.sync_id_history,
@@ -1274,9 +1325,83 @@ rawstd::DetachedTask Client::_meta(
     }
 }
 
+// Every snapshot of the object at `payload.object_id`/`payload.offset`
+// on this server's own locations, via rawstor_target_snapshots(): each
+// returned snapshot target string's own trailing id is one response row.
+rawstd::DetachedTask Client::_list_snapshots(
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameBasicPayload payload
+) {
+    std::shared_ptr<Client> client = weak.lock();
+    if (client == nullptr) {
+        co_return;
+    }
+
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
+
+    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
+
+    std::vector<unsigned char> data;
+    int result = 0;
+    RawstorStringList* snapshots = nullptr;
+    try {
+        std::string target = rawstd::URI::uris(targets);
+        rawstd::CallbackAwaitable<void> awaiter;
+        int res = rawstor_target_snapshots(
+            client->_queue, target.c_str(), &snapshots, result_trampoline,
+            &awaiter
+        );
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+        co_await awaiter;
+
+        for (const char** it = rawstor_string_list_iter(snapshots);
+             it != nullptr; it = rawstor_string_list_next(it)) {
+            RawstdUUIDString id_string;
+            RawstorFrameSnapshotEntry entry{};
+            RawstdUUID snapshot_id;
+            if (rawstor_target_snapshot_id(*it, id_string, sizeof(id_string)) <
+                    0 ||
+                rawstd_uuid_from_string(&snapshot_id, id_string) < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            }
+            memcpy(
+                entry.snapshot_id, snapshot_id.bytes, sizeof(entry.snapshot_id)
+            );
+            size_t off = data.size();
+            data.resize(off + sizeof(entry));
+            memcpy(data.data() + off, &entry, sizeof(entry));
+        }
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    }
+    rawstor_string_list_delete(snapshots);
+
+    bool send_failed = false;
+    try {
+        if (result < 0) {
+            co_await client->_send_response(
+                RAWSTOR_CMD_LIST_SNAPSHOTS, head.cid, result, 0
+            );
+        } else {
+            co_await client->_send_response(
+                RAWSTOR_CMD_LIST_SNAPSHOTS, head.cid, data.size(), 0, data
+            );
+        }
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        send_failed = true;
+    }
+    if (send_failed) {
+        co_await client->_server.del_client(client->_fd);
+    }
+}
+
 rawstd::DetachedTask Client::_set_state(
-    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameSyncStatePayload payload
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameSyncStatePayload payload
 ) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
@@ -1298,20 +1423,31 @@ rawstd::DetachedTask Client::_set_state(
     );
     sync_state.state = static_cast<RawstorObjectSyncStateValue>(payload.state);
 
+    // Every one of this server's own configured locations gets the same
+    // identity -- rawstor_target_set_member_sync_state() only ever
+    // writes to one, so every member is its own call here, `targets`'
+    // own index order (the same one rawstor_target_meta() reports their
+    // state in). Every member is still attempted even if an earlier one
+    // fails, keeping the first error -- "partial failure leaves as many
+    // copies updated as possible" rather than none.
     int result = 0;
-    try {
-        std::string target = rawstd::URI::uris(targets);
-        rawstd::CallbackAwaitable<void> awaiter;
-        int res = rawstor_target_set_sync_state(
-            client->_queue, target.c_str(), payload.chunk_offset, &sync_state,
-            result_trampoline, &awaiter
-        );
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
+    std::string target = rawstd::URI::uris(targets);
+    for (size_t i = 0; i < targets.size(); ++i) {
+        try {
+            rawstd::CallbackAwaitable<void> awaiter;
+            int res = rawstor_target_set_member_sync_state(
+                client->_queue, target.c_str(), payload.chunk_offset, i,
+                &sync_state, result_trampoline, &awaiter
+            );
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
+            co_await awaiter;
+        } catch (const std::system_error& e) {
+            if (result == 0) {
+                result = -e.code().value();
+            }
         }
-        co_await awaiter;
-    } catch (const std::system_error& e) {
-        result = -e.code().value();
     }
 
     bool send_failed = false;
@@ -1329,7 +1465,7 @@ rawstd::DetachedTask Client::_set_state(
 }
 
 rawstd::DetachedTask
-Client::_info(std::weak_ptr<Client> weak, RawstorOSTFrameHead head) {
+Client::_info(std::weak_ptr<Client> weak, RawstorFrameHead head) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
         co_return;
@@ -1374,8 +1510,8 @@ Client::_info(std::weak_ptr<Client> weak, RawstorOSTFrameHead head) {
 }
 
 rawstd::DetachedTask Client::_set_object(
-    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameBasicPayload payload
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameBasicPayload payload
 ) {
     RawIOQueue* queue;
     std::string target;
@@ -1388,8 +1524,8 @@ rawstd::DetachedTask Client::_set_object(
 
         RawstdUUID uuid;
         memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-        // snapshot_id carries the bound version -- nil for live, or a
-        // previously snapshotted id.
+        // snapshot_id is the bound version -- nil for live, or a previously
+        // snapshotted id (docs/mds.md, "Snapshots").
         RawstdUUID snapshot_id;
         memcpy(
             snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id)
@@ -1436,8 +1572,8 @@ rawstd::DetachedTask Client::_set_object(
 }
 
 rawstd::DetachedTask Client::_read(
-    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameIOPayload payload
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameIOPayload payload
 ) {
     RawstorObject* object;
     {
@@ -1516,8 +1652,8 @@ rawstd::DetachedTask Client::_read(
 }
 
 rawstd::DetachedTask Client::_write(
-    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameIOPayload payload,
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameIOPayload payload,
     std::shared_ptr<std::vector<unsigned char>> data
 ) {
     std::shared_ptr<Client> client = weak.lock();
@@ -1581,7 +1717,7 @@ rawstd::DetachedTask Client::_write(
 }
 
 rawstd::DetachedTask Client::_dispatch_write(
-    std::weak_ptr<Client> weak, RawstorOSTFrameHead head, uint64_t offset,
+    std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t offset,
     bool sync, std::shared_ptr<std::vector<unsigned char>> data
 ) {
     RawstorObject* object;
@@ -1627,7 +1763,7 @@ rawstd::DetachedTask Client::_dispatch_write(
 }
 
 rawstd::DetachedTask
-Client::_flush(std::weak_ptr<Client> weak, RawstorOSTFrameHead head) {
+Client::_flush(std::weak_ptr<Client> weak, RawstorFrameHead head) {
     RawstorObject* object;
     {
         std::shared_ptr<Client> client = weak.lock();
@@ -1681,8 +1817,8 @@ Client::_flush(std::weak_ptr<Client> weak, RawstorOSTFrameHead head) {
 }
 
 rawstd::DetachedTask Client::_discard(
-    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameIOPayload payload
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameIOPayload payload
 ) {
     RawstorObject* object;
     {
@@ -1740,8 +1876,8 @@ rawstd::DetachedTask Client::_discard(
 }
 
 rawstd::DetachedTask Client::_write_zeroes(
-    std::weak_ptr<Client> weak, RawstorOSTFrameHead head,
-    RawstorOSTFrameIOPayload payload
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameIOPayload payload
 ) {
     RawstorObject* object;
     {
@@ -1816,9 +1952,9 @@ std::vector<rawstd::URI> Client::_targets(
     offset_oss << std::hex << offset;
     std::string child = std::string(uuid_string) + "/" + offset_oss.str();
     if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        RawstdUUIDString snap_string;
-        rawstd_uuid_to_string(&snapshot_id, &snap_string);
-        child += "/" + std::string(snap_string);
+        RawstdUUIDString snapshot_string;
+        rawstd_uuid_to_string(&snapshot_id, &snapshot_string);
+        child += "/" + std::string(snapshot_string);
     }
 
     std::vector<rawstd::URI> ret;
@@ -1831,10 +1967,9 @@ std::vector<rawstd::URI> Client::_targets(
 }
 
 rawstd::Task<void> Client::_send_response(
-    const RawstorOSTCommandType& type, uint16_t cid, int32_t result,
-    uint64_t hash
+    const RawstorCommandType& type, uint16_t cid, int32_t result, uint64_t hash
 ) {
-    RawstorOSTFrameResponse response{
+    RawstorFrameResponse response{
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
@@ -1857,10 +1992,10 @@ rawstd::Task<void> Client::_send_response(
 }
 
 rawstd::Task<void> Client::_send_response(
-    const RawstorOSTCommandType& type, uint16_t cid, int32_t result,
-    uint64_t hash, const std::vector<unsigned char>& data
+    const RawstorCommandType& type, uint16_t cid, int32_t result, uint64_t hash,
+    const std::vector<unsigned char>& data
 ) {
-    RawstorOSTFrameResponse response{
+    RawstorFrameResponse response{
         .head =
             {
                 .magic = RAWSTOR_MAGIC,

@@ -1,0 +1,48 @@
+[Unit]
+Description=Rawstor MDS server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rawstor
+Group=rawstor
+WorkingDirectory=/var/lib/rawstor-mds
+StateDirectory=rawstor-mds
+ConfigurationDirectory=rawstor-mds
+# Below rawstor-ost's own default (7777): a host typically runs one MDS
+# but several OSTs, each needing its own port (7777, 7778, ... upward).
+Environment=BIND_ADDR=0.0.0.0:7776
+# rawstor-mds's own --queue-size/--workers (see its --help); override in
+# /etc/rawstor-mds.conf below rather than editing this file.
+Environment=QUEUE_SIZE=4096
+Environment=WORKERS=4
+# SQLite database file (created if missing). Override in
+# /etc/rawstor-mds.conf below.
+Environment=DB_PATH=/var/lib/rawstor-mds/mds.db
+# Static topology config (docs/mds.md): the OSTs and placement domains for
+# this cluster. The package installs it with a commented-out example and
+# no OSTs, so the service starts but can't place anything until the admin
+# lists the OSTs there and reloads (systemctl reload rawstor-mds).
+Environment=TOPOLOGY_PATH=/etc/rawstor-mds/topology.conf
+EnvironmentFile=-/etc/rawstor-mds.conf
+ExecStart=/usr/bin/rawstor-mds --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --db=${DB_PATH} --topology=${TOPOLOGY_PATH}
+# Re-reads TOPOLOGY_PATH without a restart (SIGHUP); a topology that
+# drops an OST still holding chunks is refused and the current one kept.
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+# sysexits.h codes rawstor-mds exits with when retrying won't help:
+# EX_NOINPUT (66) e.g. a missing topology file and EX_NOPERM (77)
+# permission denied. Leave the unit failed instead of restart-looping.
+RestartPreventExitStatus=66 77
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

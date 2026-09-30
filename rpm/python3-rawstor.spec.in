@@ -30,7 +30,7 @@ Rawstor python bindings.
 # Only pyrawstor/config.py is needed from this -- librawstor itself is
 # already installed via the librawstor-devel BuildRequires above, so skip
 # the checks for its own build dependencies (liburing, libxxhash, gtest).
-%configure --without-liburing --without-libxxhash --disable-tests
+%configure --without-liburing --without-libxxhash --without-sqlite3 --disable-tests
 
 %install
 rm -rf %{buildroot}

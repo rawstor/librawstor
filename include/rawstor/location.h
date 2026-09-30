@@ -78,7 +78,7 @@ struct RawstorLocationInfo {
  *
  * @see RawstorLocationInfo
  * @see Location and Target documentation in Rawstor user guide:
- * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 int rawstor_location_info(
     RawIOQueue* queue, const char* location, struct RawstorLocationInfo* info,
@@ -181,7 +181,7 @@ int rawstor_location_info(
  * @see rawstor_pagination_token_empty
  * @see rawstor_location_create
  * @see Locations and Targets:
- * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 int rawstor_location_list(
     RawIOQueue* queue, const char* location, unsigned int limit,
@@ -240,7 +240,8 @@ int rawstor_location_list(
  *                  Only read while this call is being queued -- need not
  *                  stay valid until @p cb runs.
  * @param target    Output buffer that will receive the full target string
- *                  (e.g., "ost://host:port/<uuid>"). Must not be NULL. Filled
+ *                  (e.g., "ost://host:port/<uuid>"). May be NULL only when
+ *                  @p size is 0. Filled
  *                  synchronously (before this call returns) whenever the
  *                  string fits, whether or not the create itself later
  *                  succeeds.
@@ -271,7 +272,7 @@ int rawstor_location_list(
  * @see RawstorObjectSpec
  * @see rawstor_target_create
  * @see Locations and Targets:
- * https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md
+ * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 int rawstor_location_create(
     RawIOQueue* queue, const char* location, const char* uuid,

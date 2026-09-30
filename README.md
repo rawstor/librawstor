@@ -2,6 +2,13 @@
 
 [![Unit Test Status](https://github.com/rawstor/librawstor/actions/workflows/dist.yml/badge.svg)](https://github.com/rawstor/librawstor/actions/workflows/dist.yml)
 
+> 📖 **Documentation:**
+> [Concepts](docs/concepts.md) ·
+> [Architecture](docs/architecture.md) ·
+> [Protocol](docs/protocol.md) ·
+> [MDS design](docs/mds.md) ·
+> [Mirroring](docs/mirroring.md)
+
 ## TL;DR
 ```
 PREFIX=${HOME}/local
@@ -12,6 +19,7 @@ make -j$(nproc)
 make install
 
 OST_ADDR=192.168.0.1:7777
+MDS_ADDR=192.168.0.1:7776
 
 ##
 # OST Server
@@ -25,9 +33,29 @@ rawstor-ost \
     file://${OST_DATADIR}
 
 ##
+# MDS Server (optional: only for chunked mds:// objects)
+#
+MDS_DATADIR=/var/lib/rawstor-mds
+
+mkdir -p ${MDS_DATADIR}
+
+# One line per OST: <uuid> <location> <weight> <server>[/<rack>[/<row>[/<dc>]]]
+cat > ${MDS_DATADIR}/topology.conf <<EOF
+$(cat /proc/sys/kernel/random/uuid) ost://${OST_ADDR} 100 host1/rack1/row1/dc1
+EOF
+
+rawstor-mds \
+    --bind ${MDS_ADDR} \
+    --db ${MDS_DATADIR}/mds.db \
+    --topology ${MDS_DATADIR}/topology.conf
+
+##
 # Client
 #
-OBJECT_TARGET=$(rawstor create ost://${OST_ADDR} --size=1G --mirrors=1)
+# An object split into 256M chunks, placed across the OSTs by the MDS...
+OBJECT_TARGET=$(rawstor create mds://${MDS_ADDR} --size=1G --chunk-size=256M --mirrors=1)
+# ...or a plain object stored whole on one OST, no MDS needed:
+# OBJECT_TARGET=$(rawstor create ost://${OST_ADDR} --size=1G --mirrors=1)
 
 VHOST_RUNDIR=${PREFIX}/var/run/rawstor
 
@@ -72,7 +100,7 @@ Default values are shown below.
 
 ## rawstor-ost – OST Protocol Server
 
-`rawstor-ost` implements the **OST protocol** (see [Protocol.md](https://github.com/rawstor/rawstor_docs/blob/main/Protocol.md)), handling network connections and providing access to data stored in **locations** (as defined in the [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md) documentation).
+`rawstor-ost` implements the **OST protocol** (see [Protocol](https://github.com/rawstor/librawstor/blob/main/docs/protocol.md)), handling network connections and providing access to data stored in **locations** (as defined in the [Concepts](https://github.com/rawstor/librawstor/blob/main/docs/concepts.md) documentation).
 
 - `file://` scheme → serves data directly from the local filesystem.
 - `ost://` scheme → acts as a proxy to an underlying OST backend.
@@ -139,8 +167,8 @@ multiple in-flight requests on a virtqueue may complete out of order.
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
 | `-s, --socket-path PATH` | Location of the vhost-user Unix domain socket. |
-| `TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). |
-| `--queue-size SIZE` | RawIO queue (`io_uring`) depth of each virtqueue's own queue. Default: `256`. |
+| `TARGET` | Comma‑separated list of rawstor backend targets (see [Concepts](https://github.com/rawstor/librawstor/blob/main/docs/concepts.md)). |
+| `--queue-size SIZE` | RawIO queue (`io_uring`) depth of each virtqueue's own queue. Default: `4096`. |
 | `--num-queues N` | Number of virtqueues advertised to the guest, each serviced by its own thread and its own connection to `TARGET`. The guest picks how many of these it actually uses (typically up to its vCPU count) via QEMU's own `num-queues=`. Default: `4`. |
 | `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest; write-through makes every write durable on completion, writeback relies on the guest issuing an explicit flush. |
 | `--readonly` | Export the object read-only: advertises `VIRTIO_BLK_F_RO` to the guest and opens `TARGET` with `RAWSTOR_READONLY` (no mirror write quorum needed; writes fail). Required to export a snapshot target. |
@@ -270,7 +298,7 @@ vhost-user.
 | Option | Description |
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
-| `TARGET` | Comma‑separated list of rawstor backend targets (see [Locations and Targets](https://github.com/rawstor/librawstor/blob/main/docs/locations_and_targets.md)). Creates `/dev/vduse/UUID`, where `UUID` is the target object's own UUID -- there is no separate name to pick, since the UUID already uniquely and stably identifies it. |
+| `TARGET` | Comma‑separated list of rawstor backend targets (see [Concepts](https://github.com/rawstor/librawstor/blob/main/docs/concepts.md)). Creates `/dev/vduse/UUID`, where `UUID` is the target object's own UUID -- there is no separate name to pick, since the UUID already uniquely and stably identifies it. |
 | `--queue-size SIZE` | Virtqueue size, a power of two, of each virtqueue's own queue. Default: `256`, max `1024`. |
 | `--num-queues N` | Number of virtqueues advertised to the guest, each serviced by its own thread and its own connection to `TARGET`. Default: `16`. |
 | `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest. |
@@ -357,6 +385,66 @@ Creating a VDUSE device requires the `vduse` kernel module (`modprobe
 vduse`), and attaching it to the vDPA bus requires the `vdpa` tool
 (`iproute2`) and `CAP_NET_ADMIN` -- neither is something `rawstor-vduse`
 itself does; both are external, one-time-per-device administrative steps.
+
+## rawstor-mds – Metadata Server
+
+`rawstor-mds` is the metadata server behind `mds://<host>:<port>/<uuid>`
+targets: a logical object split into fixed-size chunks, each independently
+placed (and optionally mirrored) across a static OST topology, opened/
+read/written through the same `rawstor_target_*()`/`rawstor` CLI surface
+as a plain object (see [MDS design](https://github.com/rawstor/librawstor/blob/main/docs/mds.md)). A single instance owns the explicit
+chunk map (SQLite, WAL journal) and the static topology config for its own
+cluster; it is not in the data path -- `rawstor_target_open()` talks to
+the placed OSTs directly once it has resolved an object's own chunk map.
+
+### Usage
+
+`rawstor-mds [options] -b ADDR -d DBPATH -t TOPOLOGY`
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `-h, --help` | Show help message and exit. |
+| `-b, --bind ADDR` | Bind address in `<ip>:<port>` format (e.g., `127.0.0.1:7776`). |
+| `-d, --db PATH` | SQLite database file holding the chunk map (created if missing). |
+| `-t, --topology PATH` | Static topology config file: one `<uuid> <location> <weight> <server>[/<rack>[/<row>[/<dc>]]]` line per OST, `<location>` being a single location URI (`ost://host:port`; a client-local one such as `file://` only makes sense on a single host; to put several stores under one entry, list a `rawstor-ost` serving them all) (see [MDS design](https://github.com/rawstor/librawstor/blob/main/docs/mds.md)). |
+| `--queue-size SIZE` | RawIO queue (`io_uring`) depth. Default: `4096`. |
+| `-w, --workers N` | Number of worker threads, each with its own client connections and I/O queue, all accepting on the same listening socket and sharing one database (default: `4`). |
+| `-r, --reconstruct` | Rebuild the chunk map from a LIST+META scan of every OST in the topology before serving -- for recovering from a lost or corrupted database. |
+
+### Examples
+
+Serve a topology of two OSTs:
+```bash
+cat > topology.conf <<EOF
+018f4e2a-1000-7000-8000-000000000001 ost://host1:7777 100 host1/rack1/row1/dc1
+018f4e2a-1000-7000-8000-000000000002 ost://host2:7777 100 host2/rack1/row1/dc1
+EOF
+rawstor-mds -b 0.0.0.0:7776 -d /var/lib/rawstor-mds/mds.db -t topology.conf
+```
+
+Create and grow an `mds://` object:
+```bash
+rawstor create -t mds://127.0.0.1:7776/018f4e2a-2000-7000-8000-000000000001 --size=1G --chunk-size=256M --mirrors=1
+rawstor resize mds://127.0.0.1:7776/018f4e2a-2000-7000-8000-000000000001 --size=2G
+```
+
+Add an OST: append its line to `topology.conf` and send `SIGHUP`
+(`systemctl reload rawstor-mds`). New chunks may then be placed on it;
+existing ones stay where they are. A topology that drops an OST still
+holding chunks is refused, both on reload (the current one is kept) and at
+startup.
+
+### Packaging
+
+`rawstor-mds` ships in its own `rawstor-mds` deb/rpm package (needs
+`sqlite3`; skip building it with `--without-sqlite3`), along with the
+`rawstor-mds.service` systemd unit and `/etc/rawstor-mds/topology.conf`,
+a commented-out example with no OSTs. The service starts with it, but
+can't place any chunk until the admin lists the cluster's OSTs there and
+runs `systemctl reload rawstor-mds`. Local edits to it survive package
+upgrades.
 
 ## Testing
 
@@ -519,3 +607,27 @@ CVE-2024-35880, CVE-2025-21836; see
 There's no known `sysctl`/`ulimit` fix for it; running the affected tests
 against a different kernel (a genuine upstream stable release, or a different
 distribution's) is the only known way around it so far.
+
+### Known issue: ASan heap-use-after-free inside a coroutine's own destruction (GCC 15)
+
+Seen when building with `--enable-asan` (e.g. `configure --enable-asan
+--without-python3`) under GCC 15 (Ubuntu 26.04's default `g++`), on any code
+path where a self-destroying coroutine (`rawstd::DetachedTask`) `co_await`s a
+`rawstd::Task<T>` that completes synchronously -- no genuine suspension
+anywhere in the awaited chain, e.g. `Target::create()`'s own bound-snapshot
+branch against a `file://` backend's default `ENOTSUP` throw. The ASan trace shows the same
+coroutine's own frame appearing recursively around
+`coroutine_handle<promise_type>::destroy()` and
+`final_awaiter::await_suspend()`.
+
+This reproduces with a minimal, `librawstor`-independent example (a
+`DetachedTask` awaiting a `Task` that finishes via a bare `co_return`, no
+exception involved) and is a known, already-filed, already-assigned upstream
+regression: [GCC PR c++/116880](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=116880),
+"too early coroutine destruction of `co_await`", bisected to a change in
+GCC 15's coroutine lowering. It reproduces on GCC 15.2.0 and is absent on
+GCC 13.4.0 and Clang 21.1.8 -- CI's ASan job runs on `ubuntu-latest`,
+currently Ubuntu 24.04 with GCC 13, so it doesn't hit it yet. There
+is no code-level workaround (naming the awaited `Task` as a local variable,
+or removing the `try`/`catch`, both still crash); use GCC 13 (or Clang) for
+local ASan builds until upstream fixes PR 116880.

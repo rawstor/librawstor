@@ -49,21 +49,9 @@ static void print_sync_id_history(
 
 /* rawstor_target_meta()'s own buffer capacity for one chunk's own
  * mirrors, not the number of chunks the object has -- show_meta() below
- * calls it once per chunk (rawstor_cli_chunk_count()), so this only ever
+ * calls it once per chunk (count_chunks()), so this only ever
  * needs to cover one chunk's own width, not the whole object at once. */
 enum { MAX_MIRRORS = 256 };
-
-/* The object's own chunk count, computed from spec()'s own size/
- * chunk_size the same way MultiChunkObject routes I/O (chunk_size == 0
- * meaning the ordinary, single-chunk case every plain target is, one
- * chunk at offset 0 -- object.cpp's own doc comment on why chunk_size is
- * otherwise always a real, nonzero value). */
-static uint64_t rawstor_cli_chunk_count(const struct RawstorObjectSpec* spec) {
-    if (spec->chunk_size == 0) {
-        return 1;
-    }
-    return (spec->size + spec->chunk_size - 1) / spec->chunk_size;
-}
 
 static int
 show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
@@ -98,7 +86,7 @@ show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
      * --offset takes, and target's own comma-separated order, not a
      * value this command has to re-parse target to print. Hex, not
      * decimal -- same base the offset segment itself uses in a target
-     * string (Target::parse_path()'s own doc comment, target.hpp). */
+     * string (parse_target_path()'s own doc comment, target.hpp). */
     printf("chunk[%llx]:\n", (unsigned long long)offset);
     for (ssize_t i = 0; i < result; i++) {
         const struct RawstorObjectMeta* meta = &metas[i];
@@ -129,7 +117,7 @@ show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
     return EXIT_SUCCESS;
 }
 
-static int show_meta(const char* target, const struct RawstorObjectSpec* spec) {
+static int show_meta(const char* target) {
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);
     if (res < 0) {
@@ -137,15 +125,26 @@ static int show_meta(const char* target, const struct RawstorObjectSpec* spec) {
         return rawstd_exitcode_for_errno(-res);
     }
 
-    uint64_t chunk_count = rawstor_cli_chunk_count(spec);
+    uint64_t* offsets;
+    ssize_t chunk_count = rawstor_cli_op_chunks(&op, target, &offsets);
+    if (chunk_count < 0) {
+        fprintf(
+            stderr, "rawstor_target_chunks() failed: %s\n",
+            strerror((int)-chunk_count)
+        );
+        rawstor_cli_op_destroy(&op);
+        return rawstd_exitcode_for_errno((int)-chunk_count);
+    }
+
     int ret = EXIT_SUCCESS;
-    for (uint64_t i = 0; i < chunk_count; i++) {
-        ret = show_chunk_meta(&op, target, i * spec->chunk_size);
+    for (ssize_t i = 0; i < chunk_count; i++) {
+        ret = show_chunk_meta(&op, target, offsets[i]);
         if (ret != EXIT_SUCCESS) {
             break;
         }
     }
 
+    free(offsets);
     rawstor_cli_op_destroy(&op);
     return ret;
 }
@@ -182,5 +181,5 @@ int rawstor_cli_show(const char* target, int verbose) {
         return EXIT_SUCCESS;
     }
 
-    return show_meta(target, &spec);
+    return show_meta(target);
 }

@@ -16,27 +16,50 @@
 #include <cstddef>
 #include <cstdint>
 
+// Opaque tag behind the C handle: rawstor::Object (a client-facing
+// entity made of one or more Chunks, docs/mds.md: "Object = group of
+// chunks") is its sole implementation. Every component that merely
+// passes a RawstorObject* around (ost/, vhost/, vduse/, ...) never
+// dereferences it at all; object.cpp's own C ABI adapters (the only code
+// that does) static_cast<Object*> first, including to destroy it
+// (`delete static_cast<Object*>(object);`, launch_close_op_coro()) --
+// Object's own virtual destructor handles dispatching to whichever of
+// SingleChunkObject/MultiChunkObject it actually is, so nothing here
+// needs to be virtual, or declared at all.
 struct RawstorObject {};
 
 namespace rawstor {
 
 class Target;
+
+// Forward-declared rather than #include "chunk.hpp": Object only ever
+// names Chunk by pointer here (ChunkEntry::chunk, _chunk()'s return
+// type), never needs its complete definition in this header, and
+// chunk.hpp itself #includes <rawstor/object.h> for RawstorObjectMeta/
+// RawstorObjectSyncState. object.cpp includes "chunk.hpp" directly for
+// the complete type its own method bodies need.
 class Chunk;
 
 /*
- * The client-facing entity a target addresses: routes I/O onto one or
+ * The client-facing entity a target addresses (`architecture.md`:
+ * "Object = group of chunks"): routes I/O onto one or
  * more lazily opened, per-chunk (possibly mirrored) Chunks. Built only
  * by Target::open() (a friend of its two concrete subclasses below,
  * since it's the one place that actually parses a target string into
  * per-chunk uris and builds Chunks from them) -- never this base class
  * itself, which exists purely to give the C API one polymorphic handle
- * type.
+ * type. A plain, non-mds:// target (e.g. ost://a,ost://b/<uuid>) becomes
+ * a SingleChunkObject; an mds://host:port/<volume_id> one is opened by
+ * mds::Backend building the same multi-chunk target string this class
+ * already knows how to open (see target.hpp) and handing back the
+ * resulting MultiChunkObject -- neither subclass itself needs to know
+ * anything about MDS or WireMap.
  *
  * Two concrete subclasses, not one class dispatching through an
  * internal strategy object: SingleChunkObject (a plain, single-chunk
  * target -- the overwhelming majority of objects) and MultiChunkObject
  * (a target string naming more than one chunk's own uris,
- * docs/locations_and_targets.md) each implement every I/O method
+ * docs/concepts.md) each implement every I/O method
  * against their own actual shape directly, so the common single-chunk
  * case never pays for machinery (segment splitting, a chunk lookup by
  * index, a per-call heap allocation) it has no use for. Some
@@ -45,18 +68,25 @@ class Chunk;
 class Object : public RawstorObject {
 protected:
     rawio::Queue& _queue;
-    // The object's own id -- the same for every chunk (Target's own
-    // constructor already validates this), unlike a chunk's own
-    // backend locations, which nothing requires to match another
-    // chunk's own (a multi-chunk target may place each chunk on its own
-    // backend, e.g. per-chunk tiering) -- so locations live per chunk
-    // instead (MultiChunkObject::ChunkEntry), not here.
+    // The object's own id and bound snapshot version -- the same for
+    // every chunk (Target's own constructor already validates this),
+    // unlike a chunk's own backend locations, which nothing requires to
+    // match another chunk's own (a multi-chunk target may place each
+    // chunk on its own backend, e.g. per-chunk tiering) -- so locations
+    // live per chunk instead (MultiChunkObject::ChunkEntry), not here.
+    // `_snapshot_id` is non-nil only for a snapshot opened RAWSTOR_READONLY
+    // (Target::open()'s own doc comment).
     RawstdUUID _id;
+    RawstdUUID _snapshot_id;
     uint64_t _size;
 
-    Object(rawio::Queue& queue, const RawstdUUID& id, uint64_t size) noexcept :
+    Object(
+        rawio::Queue& queue, const RawstdUUID& id,
+        const RawstdUUID& snapshot_id, uint64_t size
+    ) noexcept :
         _queue(queue),
         _id(id),
+        _snapshot_id(snapshot_id),
         _size(size) {}
 
     // Every I/O entry point below starts with the same logical-range
@@ -115,7 +145,8 @@ private:
     // MultiChunkObject, this class never reopens a chunk on its own, so
     // it never needs to remember its own locations past this call.
     SingleChunkObject(
-        rawio::Queue& queue, const RawstdUUID& id, uint64_t size,
+        rawio::Queue& queue, const RawstdUUID& id,
+        const RawstdUUID& snapshot_id, uint64_t size,
         std::unique_ptr<Chunk> chunk
     );
 
@@ -148,7 +179,7 @@ public:
 };
 
 // A target string naming more than one chunk's own uris
-// (docs/locations_and_targets.md): splits every I/O request at chunk
+// (docs/concepts.md): splits every I/O request at chunk
 // boundaries and dispatches each piece to its own, lazily opened Chunk,
 // concurrently.
 class MultiChunkObject final : public Object {
@@ -186,11 +217,10 @@ private:
     };
 
     uint64_t _chunk_size;
-    // Open flags/bound snapshot version (nil: live) every lazily opened
-    // chunk is opened with -- the same ones Target::open() opened the
-    // eagerly opened last chunk with.
+    // Open flags every lazily opened chunk is opened with (together with
+    // the base Object's own `_snapshot_id`) -- the same ones Target::open()
+    // opened the eagerly opened last chunk with.
     int _flags;
-    RawstdUUID _snapshot_id;
     std::vector<ChunkEntry> _chunks;
 
     // Object is only ever built by Target::open() (a friend), which has
@@ -198,25 +228,26 @@ private:
     // `size`/`chunk_size`-shaped object, each sitting at its expected
     // positional offset (Target::open()'s own comment). `chunk_locations`
     // holds one entry per chunk, in order -- sized the same as `_chunks`
-    // below, so `_chunks[i].locations = chunk_locations[i]`. `id` is
-    // passed straight through to Object's own constructor. `last_chunk`,
-    // the last chunk, already eagerly opened by Target::open() (its own
-    // doc comment), is placed straight into `_chunks.back()` here; every
-    // other entry starts unopened, lazily opened on first touch.
+    // below, so `_chunks[i].locations = chunk_locations[i]`. `id`/
+    // `snapshot_id` are passed straight through to Object's own constructor.
+    // `last_chunk`, the last chunk, already eagerly opened by
+    // Target::open() (its own doc comment), is placed straight into
+    // `_chunks.back()` here; every other entry starts unopened, lazily
+    // opened on first touch.
     MultiChunkObject(
-        rawio::Queue& queue, const RawstdUUID& id, uint64_t size,
-        uint64_t chunk_size, int flags, const RawstdUUID& snapshot_id,
-        std::vector<std::vector<rawstd::URI>> chunk_locations,
+        rawio::Queue& queue, const RawstdUUID& id,
+        const RawstdUUID& snapshot_id, uint64_t size, uint64_t chunk_size,
+        int flags, std::vector<std::vector<rawstd::URI>> chunk_locations,
         std::unique_ptr<Chunk> last_chunk
     );
 
     // Returns the chunk's already-open (or freshly opened) Chunk. A
     // pointer, not a reference: rawstd::Task<T> stores T in a
     // std::variant, which requires an object type. A fresh open uses
-    // this entry's own `locations`, `_id`, and `index * _chunk_size` as
-    // this chunk's own offset -- the positional addressing scheme
-    // Target::open() already validated the target string against before
-    // ever constructing this object.
+    // this entry's own `locations`, `_id`/`_snapshot_id`, and
+    // `index * _chunk_size` as this chunk's own offset -- the positional
+    // addressing scheme Target::open() already validated the target
+    // string against before ever constructing this object.
     rawstd::Task<Chunk*> _chunk(uint32_t index);
 
     // Splits [offset, offset+size) at _chunk_size boundaries.

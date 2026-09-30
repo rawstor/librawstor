@@ -7,6 +7,7 @@
 #include <rawstd/gcc.h>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
+#include <rawstd/uuid.h>
 
 #include <sys/ioctl.h>
 #include <sys/stat.h>
@@ -22,6 +23,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 #if defined(RAWSTD_ON_LINUX)
 #include <linux/falloc.h>
@@ -192,10 +194,13 @@ rawstd::Task<void> Backend::set_snapshot(
     set_fd(fd);
 }
 
-rawstd::Task<uint64_t>
-Backend::_blk_size(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<uint64_t> Backend::_blk_size(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+) {
 #if defined(RAWSTD_ON_LINUX)
-    int f = co_await _open_object(id, offset, 0);
+    int f = rawstd_uuid_is_nil(&snapshot_id)
+                ? co_await _open_object(id, offset, 0)
+                : co_await _open_snapshot(id, offset, snapshot_id);
 
     uint64_t size = 0;
     if (ioctl(f, BLKGETSIZE64, &size) == -1) {
@@ -210,6 +215,7 @@ Backend::_blk_size(const RawstdUUID& id, uint64_t offset) {
 #else
     (void)id;
     (void)offset;
+    (void)snapshot_id;
     RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
 #endif
 }
@@ -222,12 +228,12 @@ std::string Backend::meta_encode(
         buf, sizeof(buf),
         "version=%u:state=%u:epoch=%" PRIx64 ":sync_id=%" PRIx64 ":h0=%" PRIx64
         ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64
-        ":width=%u:chunk_size=%" PRIx64,
+        ":member_role=%u:width=%u:chunk_size=%" PRIx64,
         META_FORMAT_VERSION, (unsigned int)sync_state.state, sync_state.epoch,
         sync_state.sync_id, sync_state.sync_id_history[0],
         sync_state.sync_id_history[1], sync_state.sync_id_history[2],
-        sync_state.sync_id_history[3], (unsigned int)identity.width,
-        identity.chunk_size
+        sync_state.sync_id_history[3], (unsigned int)identity.member_role,
+        (unsigned int)identity.width, identity.chunk_size
     );
     return std::string(buf);
 }
@@ -240,23 +246,25 @@ void Backend::meta_decode(
     *identity = ChunkIdentity{};
     unsigned int version = 0;
     unsigned int state = 0;
+    unsigned int member_role = 0;
     unsigned int width = 0;
 
     int n = sscanf(
         trim(value).c_str(),
         "version=%u:state=%u:epoch=%" SCNx64 ":sync_id=%" SCNx64 ":h0=%" SCNx64
         ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64
-        ":width=%u:chunk_size=%" SCNx64,
+        ":member_role=%u:width=%u:chunk_size=%" SCNx64,
         &version, &state, &sync_state->epoch, &sync_state->sync_id,
         &sync_state->sync_id_history[0], &sync_state->sync_id_history[1],
         &sync_state->sync_id_history[2], &sync_state->sync_id_history[3],
-        &width, &identity->chunk_size
+        &member_role, &width, &identity->chunk_size
     );
-    if (n != 10 || version != META_FORMAT_VERSION) {
+    if (n != 11 || version != META_FORMAT_VERSION) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
 
     sync_state->state = static_cast<RawstorObjectSyncStateValue>(state);
+    identity->member_role = static_cast<RawstorMemberRole>(member_role);
     identity->width = static_cast<uint8_t>(width);
 }
 

@@ -1,8 +1,6 @@
 #ifndef RAWSTOR_CLI_SNAPSHOT_H
 #define RAWSTOR_CLI_SNAPSHOT_H
 
-#include <stddef.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -11,6 +9,10 @@ extern "C" {
  * one, or a freshly generated one -- see rawstor_target_create_snapshot()),
  * or a caller-chosen UUID string (only valid when `target` is plain). */
 int rawstor_cli_snapshot(const char* target, const char* uuid);
+
+/* Prints every snapshot of `target`'s object, one target string per
+ * line, oldest first (rawstor_target_snapshots()). */
+int rawstor_cli_list_snapshots(const char* target);
 
 #ifdef __cplusplus
 }

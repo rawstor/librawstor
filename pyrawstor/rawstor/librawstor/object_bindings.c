@@ -220,8 +220,9 @@ static PyType_Spec PyLocationInfo_spec = {
 PyTypeObject* PyLocationInfoType = NULL;
 
 // The settable half of a mirror's metadata (see RawstorObjectSyncState) --
-// input to Target.set_sync_state() (object_set_sync_state() below), same
-// shape/pattern as ObjectSpec above (constructible, with setters) since a
+// input to Target.set_member_sync_state() (object_set_member_sync_state()
+// below), same shape/pattern as ObjectSpec above (constructible, with
+// setters) since a
 // caller builds one of these and passes it in, unlike ObjectMeta/
 // LocationInfo below which are output-only.
 typedef struct {
@@ -459,8 +460,8 @@ PyTypeObject* PyObjectSyncStateType = NULL;
 // (object_meta() below). Output-only, like LocationInfo above -- no
 // Py_tp_new/_init/setters -- there is no legitimate way for a Python
 // caller to construct one and pass it back: the writer, Target.
-// set_sync_state() (object_set_sync_state() below), takes an
-// ObjectSyncState instead, the settable subset of these same fields.
+// set_member_sync_state() (object_set_member_sync_state() below), takes
+// an ObjectSyncState instead, the settable subset of these same fields.
 typedef struct {
     PyObject_HEAD unsigned long long size;
     unsigned int width;
@@ -806,6 +807,30 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
     return py_target;
 }
 
+// One rawstor_target_create_snapshot() attempt against a fresh queue,
+// driven to completion synchronously -- returns its own result unchanged
+// (the snapshot target string's own length on success, negative errno on
+// failure; rawstor_sync_op_init()'s own failure already comes back in
+// that same shape, a negative errno).
+static ssize_t try_create_snapshot(
+    const char* target, const char* snapshot_id, char* snapshot_target,
+    size_t size
+) {
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        return ires;
+    }
+
+    int sres = rawstor_target_create_snapshot(
+        op.queue, target, snapshot_id, snapshot_target, size,
+        rawstor_sync_op_cb, &op
+    );
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
+    return res;
+}
+
 // `snapshot_id` NULL (Python None): the version id is either already bound
 // in `target`'s own path, a caller-chosen one, or a freshly generated one
 // -- see rawstor_target_create_snapshot()'s own doc comment for the three
@@ -820,33 +845,35 @@ py_rawstor_object_create_snapshot(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
 
-    char snapshot_target[65536];
-
-    RawstorSyncOp op;
-    int ires = rawstor_sync_op_init(&op);
-    if (ires < 0) {
-        set_os_error(-ires);
-        return NULL;
-    }
-    int sres = rawstor_target_create_snapshot(
-        op.queue, target, snapshot_id, snapshot_target, sizeof(snapshot_target),
-        rawstor_sync_op_cb, &op
-    );
-    ssize_t res = rawstor_sync_op_wait(&op, sres);
-    rawstor_sync_op_destroy(&op);
+    // NULL/0 asks for the snapshot target string's own length alone --
+    // the same snprintf(NULL, 0, ...) idiom rawstor_target_create_snapshot()
+    // itself just forwards to (target.cpp), needing no I/O and creating
+    // nothing. The second call, into a buffer sized exactly for that
+    // length, does the real CoW.
+    ssize_t res = try_create_snapshot(target, snapshot_id, NULL, 0);
     if (res < 0) {
         set_os_error((int)-res);
         return NULL;
     }
-    if ((size_t)res >= sizeof(snapshot_target)) {
-        PyErr_SetString(
-            PyExc_ValueError,
-            "rawstor_target_create_snapshot(): output truncated"
-        );
+
+    char* snapshot_target = malloc((size_t)res + 1);
+    if (!snapshot_target) {
+        PyErr_NoMemory();
         return NULL;
     }
 
-    return PyUnicode_FromString(snapshot_target);
+    res = try_create_snapshot(
+        target, snapshot_id, snapshot_target, (size_t)res + 1
+    );
+    if (res < 0) {
+        free(snapshot_target);
+        set_os_error((int)-res);
+        return NULL;
+    }
+
+    PyObject* py_result = PyUnicode_FromString(snapshot_target);
+    free(snapshot_target);
+    return py_result;
 }
 
 PyObject* py_rawstor_object_spec(PyObject* Py_UNUSED(self), PyObject* args) {
@@ -878,6 +905,7 @@ PyObject* py_rawstor_object_spec(PyObject* Py_UNUSED(self), PyObject* args) {
     }
     py_spec->size = spec.size;
     py_spec->width = spec.width;
+    py_spec->chunk_size = spec.chunk_size;
 
     return (PyObject*)py_spec;
 }
@@ -912,9 +940,8 @@ PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
 
-    /* Same ','-separated URI count rawstor_target_create()'s own doc
-     * comment describes deriving width from -- rawstor_target_meta()
-     * requires its own `count` to equal this exactly. */
+    /* rawstor_target_meta() returns one entry per ','-separated URI in
+     * `target` -- `count` must match that exactly. */
     size_t count = 1;
     for (const char* p = target; *p != '\0'; p++) {
         if (*p == ',') {
@@ -964,12 +991,16 @@ PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
     return list;
 }
 
-PyObject*
-py_rawstor_object_set_sync_state(PyObject* Py_UNUSED(self), PyObject* args) {
+PyObject* py_rawstor_object_set_member_sync_state(
+    PyObject* Py_UNUSED(self), PyObject* args
+) {
     const char* target;
     PyObject* sync_state_obj;
+    unsigned long long member_index = 0;
     unsigned long long offset = 0;
-    if (!PyArg_ParseTuple(args, "sO|K", &target, &sync_state_obj, &offset)) {
+    if (!PyArg_ParseTuple(
+            args, "sO|KK", &target, &sync_state_obj, &member_index, &offset
+        )) {
         return NULL;
     }
 
@@ -997,8 +1028,9 @@ py_rawstor_object_set_sync_state(PyObject* Py_UNUSED(self), PyObject* args) {
         set_os_error(-ires);
         return NULL;
     }
-    int sres = rawstor_target_set_sync_state(
-        op.queue, target, offset, &sync_state, rawstor_sync_op_cb, &op
+    int sres = rawstor_target_set_member_sync_state(
+        op.queue, target, offset, (size_t)member_index, &sync_state,
+        rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);
     rawstor_sync_op_destroy(&op);
@@ -1031,6 +1063,112 @@ PyObject* py_rawstor_object_remove(PyObject* Py_UNUSED(self), PyObject* args) {
     }
 
     Py_RETURN_NONE;
+}
+
+PyObject* py_rawstor_object_chunks(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* target;
+    if (!PyArg_ParseTuple(args, "s", &target)) {
+        return NULL;
+    }
+
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    /* A first call for the count, a second for the offsets themselves --
+     * rawstor_target_chunks()'s own NULL/0 convention. */
+    int sres = rawstor_target_chunks(
+        op.queue, target, NULL, 0, rawstor_sync_op_cb, &op
+    );
+    ssize_t count = rawstor_sync_op_wait(&op, sres);
+    uint64_t* offsets = NULL;
+    if (count > 0) {
+        offsets = (uint64_t*)malloc((size_t)count * sizeof(*offsets));
+        if (offsets == NULL) {
+            rawstor_sync_op_destroy(&op);
+            return PyErr_NoMemory();
+        }
+        op.done = 0;
+        sres = rawstor_target_chunks(
+            op.queue, target, offsets, (size_t)count, rawstor_sync_op_cb, &op
+        );
+        ssize_t filled = rawstor_sync_op_wait(&op, sres);
+        if (filled >= 0 && filled < count) {
+            count = filled;
+        } else if (filled < 0) {
+            count = filled;
+        }
+    }
+    rawstor_sync_op_destroy(&op);
+    if (count < 0) {
+        free(offsets);
+        set_os_error((int)-count);
+        return NULL;
+    }
+
+    PyObject* py_list = PyList_New(0);
+    if (py_list == NULL) {
+        free(offsets);
+        return NULL;
+    }
+    for (ssize_t i = 0; i < count; ++i) {
+        PyObject* py_offset = PyLong_FromUnsignedLongLong(offsets[i]);
+        if (py_offset == NULL || PyList_Append(py_list, py_offset) < 0) {
+            Py_XDECREF(py_offset);
+            Py_DECREF(py_list);
+            free(offsets);
+            return NULL;
+        }
+        Py_DECREF(py_offset);
+    }
+    free(offsets);
+    return py_list;
+}
+
+PyObject*
+py_rawstor_object_snapshots(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* target;
+    if (!PyArg_ParseTuple(args, "s", &target)) {
+        return NULL;
+    }
+
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    RawstorStringList* list = NULL;
+    int sres = rawstor_target_snapshots(
+        op.queue, target, &list, rawstor_sync_op_cb, &op
+    );
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
+    if (res < 0) {
+        set_os_error((int)-res);
+        return NULL;
+    }
+
+    PyObject* py_list = PyList_New(0);
+    if (py_list == NULL) {
+        rawstor_string_list_delete(list);
+        return NULL;
+    }
+    for (const char** it = rawstor_string_list_iter(list); it != NULL;
+         it = rawstor_string_list_next(it)) {
+        PyObject* py_target = PyUnicode_FromString(*it);
+        if (py_target == NULL || PyList_Append(py_list, py_target) < 0) {
+            Py_XDECREF(py_target);
+            Py_DECREF(py_list);
+            rawstor_string_list_delete(list);
+            return NULL;
+        }
+        Py_DECREF(py_target);
+    }
+    rawstor_string_list_delete(list);
+    return py_list;
 }
 
 PyObject* py_rawstor_location_info(PyObject* Py_UNUSED(self), PyObject* args) {

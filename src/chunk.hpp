@@ -23,9 +23,11 @@ namespace rawstor {
 
 class Slot;
 
-// Not a RawstorObject itself: only Object is ever handed out as a
-// top-level handle (see object.hpp); Chunk is built and consumed
-// entirely inside Target::open()/Object, via the create() factory below.
+// Chunk mirrors a single logical chunk (1..N slots, one per replica) over
+// its own Slot pool -- the sole building block Object routes I/O to. Not a
+// RawstorObject itself: only Object is ever handed out as a top-level
+// handle (see object.hpp); Chunk is built and consumed entirely inside
+// Target::open()/Object, via the create() factory below.
 class Chunk final {
 private:
     struct ResyncState;
@@ -46,19 +48,28 @@ private:
         MemberState state;
         RawstorObjectMeta meta;
         bool reachable;
+        // The reconnect probe has already logged its attempt to bring this
+        // member back; reset once it is reachable again, so each outage
+        // is reported once rather than on every probe tick.
+        bool probe_announced;
     };
 
     rawio::Queue& _queue;
     RawstdUUID _id;
-    // The chunk's own offset within its object (0 for a plain,
-    // non-chunked object) -- self-describing, together with `_id`: every
-    // wire/backend call this Chunk makes states both, rather than
-    // needing a Target of its own to derive them from.
+    // The chunk offset this Chunk was open()ed at -- 0 for a plain,
+    // non-volume object or a volume's own chunk 0 (docs/mds.md, "Chunk
+    // identity"). Carried alongside _id so a reconnected member's own
+    // set_object() (Slot::invalidate_backend()) and the reconnect probe's
+    // own re-open() (_probe_tick()) rebind to the same chunk, not
+    // silently chunk 0's.
     uint64_t _offset;
 
-    // The spec() fetched at open() time (see create()'s own comment) --
-    // kept around for any future caller that needs it. _spec.width is
-    // the configured mirror width N (the chunk's own URI count).
+    // The spec derived at create() time (see its own comment) -- kept
+    // around for any future caller that needs it. The live member count
+    // is _members.size() below, not _spec.width (this object's own
+    // configured policy width): an opener may legitimately name fewer
+    // locations than that -- rawstor-ost opens only its own copy, an
+    // mds:// location stands for the whole object.
     RawstorObjectSpec _spec;
     std::vector<Member> _members;
 
@@ -179,6 +190,9 @@ private:
 
     size_t _in_sync_count() const noexcept;
 
+    // `m`'s own chunk, as a target URI (location/id/offset), for logs.
+    std::string _member_str(const Member& m) const;
+
     // Below-quorum writes freeze for N >= 3 only: with N = 2 a single
     // survivor may continue, because auto-open requires both members, so the
     // abandoned peer can never auto-start alone (docs/mirroring.md,
@@ -190,7 +204,7 @@ private:
     // sync_id, refuses a split brain -- demoting members as needed, and
     // deriving this object's own sync-set identity (_epoch/_size/
     // _sync_id/_sync_id_history) from whichever end up IN_SYNC. Called
-    // by the constructor below, for every width >= 2 open (width ==
+    // by the constructor below, for every mirrors >= 2 open (mirrors ==
     // 1 skips it -- see the constructor's own comment) -- a throw here
     // (quorum lost, split brain, no trusted member left) aborts
     // construction, same as Slot::create()'s own all-or-nothing
@@ -330,8 +344,8 @@ private:
 public:
     // Connects every reachable backend in `locations` (all mirrors of the
     // one chunk `id`/`offset` names -- bare addresses, with no identity
-    // of their own: the caller already knows `id`/`offset`, so there's
-    // nothing left for a location to carry that isn't already a
+    // of their own: the caller already knows `id`/`offset`/`snapshot_id`, so
+    // there's nothing left for a location to carry that isn't already a
     // parameter here) into a Slot (Slot::create()), SET_OBJECT+meta()-s
     // every connected member, then builds the Chunk itself -- deciding
     // whether the result is actually trustworthy enough to serve from is
@@ -345,11 +359,13 @@ public:
     // if one is already due). `flags` is RAWSTOR_READONLY or 0
     // (<rawstor/target.h>): READONLY drops the quorum requirement (any
     // one reachable member is enough) and all background maintenance,
-    // and makes every write fail with EROFS. `snapshot_id` non-nil binds
-    // every member to that previously snapshotted version instead of the
-    // live one (only ever with READONLY, Target::open()'s own check).
+    // and makes every write fail with EROFS. `offset` is 0 for a plain,
+    // non-volume object or a volume's own chunk 0; `snapshot_id` is nil
+    // for the live version, or a version id previously registered via
+    // Target::create_snapshot() (docs/mds.md, "Snapshots") -- only ever
+    // opened with READONLY (Target::open()'s own check).
     static rawstd::Task<std::unique_ptr<Chunk>> create(
-        const std::vector<rawstd::URI>& locations, rawio::Queue& queue,
+        rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
         const RawstdUUID& id, uint64_t offset, int flags,
         const RawstdUUID& snapshot_id
     );
@@ -364,15 +380,10 @@ public:
     Chunk& operator=(const Chunk&) = delete;
     Chunk& operator=(Chunk&&) = delete;
 
-    // This Chunk's own identity -- the same id/offset it was
-    // built from.
-    inline const RawstdUUID& id() const noexcept { return _id; }
-    inline uint64_t offset() const noexcept { return _offset; }
-
-    // The spec() fetched at create() time (see create()'s own comment)
-    // -- Target::open() reads spec().size off the first/last chunk of a
-    // multi-chunk target to learn chunk_size/the object's total size
-    // without a separate wire round trip.
+    // The first reachable member's META spec, taken at create() time (see
+    // create()'s own comment). Target::open() reads chunk_size off the
+    // last chunk -- or size, for an unchunked object -- to learn the
+    // object's total size without a separate wire round trip.
     inline const RawstorObjectSpec& spec() const noexcept { return _spec; }
 
     rawstd::Task<size_t> pread(void* buf, size_t size, off_t offset);

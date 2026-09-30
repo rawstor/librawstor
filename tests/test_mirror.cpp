@@ -112,13 +112,16 @@ target_meta(Queue& queue, const std::string& target, RawstorObjectMeta* meta) {
                : 0;
 }
 
+// Every call site here passes a Members::target(i) -- a single-URI
+// target naming exactly one mirror member -- so that member is always
+// index 0.
 ssize_t target_set_sync_state(
     Queue& queue, const std::string& target,
     const RawstorObjectSyncState& sync_state
 ) {
     return rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
-        return rawstor_target_set_sync_state(
-            queue, target.c_str(), 0, &sync_state, cb, data
+        return rawstor_target_set_member_sync_state(
+            queue, target.c_str(), 0, 0, &sync_state, cb, data
         );
     });
 }
@@ -172,7 +175,13 @@ public:
         return oss.str();
     }
 
+    // The whole location gone (e.g. an unmounted disk): the member is
+    // unreachable.
     void drop(size_t i) const { fs::remove_all(_dirs[i]); }
+
+    // Only this object's own copy gone, its location still there
+    // (docs/mirroring.md, case F10).
+    void drop_copy(size_t i) const { fs::remove_all(_dirs[i] / _uuid); }
 
     // file::Backend keeps one chunk directory per object,
     // <uuid>/<offset>/, holding a "data" file and a "meta" file
@@ -292,6 +301,8 @@ TEST(MirrorQuorumTest, open_refused_without_quorum_n2) {
         .size = 1ull << 20,
         .width = 2,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -322,6 +333,8 @@ TEST(MirrorQuorumTest, all_mirrors_down_at_open_refused) {
         .size = 1ull << 20,
         .width = 3,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -341,11 +354,9 @@ TEST(MirrorQuorumTest, readonly_open_without_quorum_n2) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000b0");
 
-    RawstorObjectSpec spec{
-        .size = 1ull << 20,
-        .width = 2,
-        .chunk_size = 0,
-    };
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    spec.width = 2;
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
     RawstorObject* writer = nullptr;
@@ -378,6 +389,8 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
         .size = 1ull << 20,
         .width = 3,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -421,6 +434,8 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
         .size = 1ull << 20,
         .width = 2,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -469,6 +484,63 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
     EXPECT_EQ(object_close(queue, member), 0);
 }
 
+// Resync copies all-zero blocks as write_zeroes() and the rest as data:
+// both must leave the rejoined member byte-identical to the fresh one,
+// even over a stale member holding garbage everywhere.
+TEST(MirrorQuorumTest, stale_arm_resynced_zero_blocks) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000c0");
+
+    const size_t size = 2ull << 20;
+    RawstorObjectSpec spec{
+        .size = size,
+        .width = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObjectSyncState fresh{};
+    fresh.epoch = 2;
+    fresh.sync_id = 0x1111111111111111ull;
+    fresh.sync_id_history[0] = 0x2222222222222222ull;
+    fresh.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    ASSERT_EQ(target_set_sync_state(queue, members.target(0), fresh), 0);
+
+    RawstorObjectSyncState stale{};
+    stale.epoch = 1;
+    stale.sync_id = 0x2222222222222222ull;
+    stale.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    ASSERT_EQ(target_set_sync_state(queue, members.target(1), stale), 0);
+
+    // Fresh: "ping" in the first block, the second block never written.
+    std::string ping = "ping";
+    object_write_single(queue, members.target(0), ping.data(), ping.size(), 0);
+    // Stale: garbage over both blocks.
+    std::string garbage(size, 'x');
+    object_write_single(
+        queue, members.target(1), garbage.data(), garbage.size(), 0
+    );
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    EXPECT_TRUE(
+        wait_member_synced(queue, members.target(0), members.target(1))
+    );
+    object_close_clean(queue, object);
+
+    std::string expected(size, '\0');
+    memcpy(expected.data(), ping.data(), ping.size());
+
+    RawstorObject* member = nullptr;
+    ASSERT_EQ(target_open(queue, members.target(1), &member), 0);
+    std::string data(size, 'y');
+    object_read(queue, member, data.data(), data.size(), 0);
+    EXPECT_TRUE(data == expected);
+    EXPECT_EQ(object_close(queue, member), 0);
+}
+
 TEST(MirrorQuorumTest, split_brain_refused) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a3");
@@ -477,6 +549,8 @@ TEST(MirrorQuorumTest, split_brain_refused) {
         .size = 1ull << 20,
         .width = 2,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -509,6 +583,8 @@ TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
         .size = 1ull << 20,
         .width = 2,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -546,6 +622,8 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
         .size = 1ull << 20,
         .width = 2,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -597,6 +675,8 @@ TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
         .size = 1ull << 20,
         .width = 2,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -659,6 +739,8 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
         .size = size,
         .width = 2,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -721,6 +803,8 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
         .size = 1ull << 20,
         .width = 3,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -738,6 +822,8 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
         .size = 1ull << 20,
         .width = 1,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
     };
     ASSERT_EQ(target_create(queue, members.target(2), member_spec), 0);
 
@@ -762,6 +848,179 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     EXPECT_EQ(object_close(queue, member), 0);
 }
 
+// F10 (docs/mirroring.md): one member's copy is missing from a location
+// that's still there -- with the other two a majority on their own,
+// open() recreates it blank from a survivor's own spec, and online
+// resync fills it back in.
+TEST(MirrorQuorumTest, missing_copy_recreated_and_resynced) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000aa");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* writer = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &writer), 0);
+    std::string ping = "ping";
+    object_write(queue, writer, ping.data(), ping.size(), 0, 0);
+    object_close_clean(queue, writer);
+
+    members.drop_copy(2);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    EXPECT_TRUE(
+        wait_member_synced(queue, members.target(0), members.target(2))
+    );
+    object_close_clean(queue, object);
+
+    RawstorObjectMeta a{};
+    RawstorObjectMeta c{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
+    ASSERT_EQ(target_meta(queue, members.target(2), &c), 0);
+    EXPECT_EQ(a.sync_state.sync_id, c.sync_state.sync_id);
+    EXPECT_EQ(c.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(c.spec.size, spec.size);
+
+    RawstorObject* member = nullptr;
+    ASSERT_EQ(target_open(queue, members.target(2), &member), 0);
+    std::string data(4, '\0');
+    object_read(queue, member, data.data(), data.size(), 0);
+    EXPECT_EQ(data, "ping");
+    EXPECT_EQ(object_close(queue, member), 0);
+}
+
+// A recreated blank copy never counts toward the quorum: with one copy
+// missing and another unreachable, the lone survivor is not a majority,
+// so nothing is recreated and the open fails -- the unreachable copy may
+// hold writes the survivor never saw.
+TEST(MirrorQuorumTest, recreated_copy_does_not_make_quorum) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000ad");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    members.drop_copy(1);
+    members.drop(2);
+
+    RawstorObject* object = nullptr;
+    ssize_t res = target_open(queue, members.target_all(), &object);
+    EXPECT_EQ(res, -ENOTCONN);
+    EXPECT_EQ(object, nullptr);
+    EXPECT_FALSE(fs::exists(members.dat(1)));
+}
+
+// Two copies, one missing: the survivor alone is not a majority, so the
+// missing copy is not recreated automatically and the open fails. Once
+// the copy is recreated by hand, the next open resyncs it from the
+// survivor.
+TEST(MirrorQuorumTest, two_way_missing_copy_recreated_by_hand) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000ae");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* writer = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &writer), 0);
+    std::string ping = "ping";
+    object_write(queue, writer, ping.data(), ping.size(), 0, 0);
+    object_close_clean(queue, writer);
+
+    members.drop_copy(1);
+
+    RawstorObject* object = nullptr;
+    EXPECT_EQ(target_open(queue, members.target_all(), &object), -ENOTCONN);
+    EXPECT_EQ(object, nullptr);
+    EXPECT_FALSE(fs::exists(members.dat(1)));
+
+    ASSERT_EQ(target_create(queue, members.target(1), spec), 0);
+
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    EXPECT_TRUE(
+        wait_member_synced(queue, members.target(0), members.target(1))
+    );
+    object_close_clean(queue, object);
+
+    RawstorObject* member = nullptr;
+    ASSERT_EQ(target_open(queue, members.target(1), &member), 0);
+    std::string data(4, '\0');
+    object_read(queue, member, data.data(), data.size(), 0);
+    EXPECT_EQ(data, "ping");
+    EXPECT_EQ(object_close(queue, member), 0);
+}
+
+// Every copy missing: nothing survives to vouch the chunk never held
+// data, so nothing is recreated -- reported as missing (ENOENT), not as
+// unreachable.
+TEST(MirrorQuorumTest, all_copies_missing_not_recreated) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000ab");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    members.drop_copy(0);
+    members.drop_copy(1);
+
+    RawstorObject* object = nullptr;
+    ssize_t res = target_open(queue, members.target_all(), &object);
+    EXPECT_EQ(res, -ENOENT);
+    EXPECT_EQ(object, nullptr);
+    EXPECT_FALSE(fs::exists(members.dat(0)));
+    EXPECT_FALSE(fs::exists(members.dat(1)));
+}
+
+// A read-only open writes nothing, so a missing copy stays missing: the
+// open itself still succeeds off the survivor alone (no quorum needed).
+TEST(MirrorQuorumTest, readonly_open_does_not_recreate_missing_copy) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000ac");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    members.drop_copy(1);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(
+        target_open(queue, members.target_all(), &object, RAWSTOR_READONLY), 0
+    );
+    EXPECT_EQ(object_close(queue, object), 0);
+    EXPECT_FALSE(fs::exists(members.dat(1)));
+}
+
 TEST(MirrorQuorumTest, clean_close_stable_identity) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a6");
@@ -770,6 +1029,8 @@ TEST(MirrorQuorumTest, clean_close_stable_identity) {
         .size = 1ull << 20,
         .width = 2,
         .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -810,7 +1071,7 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         "ost://127.0.0.1:8753/00000000-0000-7000-8000-0000000000b0,"
         "ost://127.0.0.1:8754/00000000-0000-7000-8000-0000000000b0";
 
-    RawstorOSTFrameMetaPayload legacy = {
+    RawstorFrameMetaPayload legacy = {
         .size = 1ull << 20,
         .epoch = 0,
         .sync_id = 0,
@@ -818,23 +1079,23 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
         .width = 1,
-        .reserved1 = 0,
-        .reserved2 = 0,
+        .member_role = RAWSTOR_MEMBER_DATA,
     };
 
     /*
-     * The object is CLEAN, so the slot layer still retries reads
+     * The object is CLEAN, so the connection layer still retries reads
      * transparently: the member serves the error on the initial session and
      * on two reopened ones before the read fails over to the second member.
      * The repair then lands on the last reopened session.
      */
-    // Chunk::create() opens every reachable slot concurrently (see its
-    // own comment) -- both server1's and server2's own first session
-    // get their own combined SET_OBJECT+META (Slot::open()'s own
-    // comment). Every later low-level reconnect (invalidate_backend())
-    // goes through Backend::set_object() too, folding its own META
-    // fetch in on success, so each reopened session below still gets
-    // its own SET_OBJECT+META pair.
+    // Both members go through Slot::open()'s own combined SET_OBJECT+META
+    // step (see its own comment), concurrently, on their first session --
+    // Chunk::create()'s own overall spec comes straight out of that same
+    // META answer (see its own comment), no separate round trip. Every
+    // later low-level reconnect (invalidate_backend()) goes through
+    // Backend::set_object() only, but it always folds its own META fetch
+    // in on success too, so each reopened session below still gets its
+    // own SET_OBJECT+META pair.
     {
         rawstor::tests::Session s(server1);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -892,7 +1153,7 @@ TEST(MirrorOstTest, degrade_and_continue) {
         "ost://127.0.0.1:8753/00000000-0000-7000-8000-0000000000b1,"
         "ost://127.0.0.1:8754/00000000-0000-7000-8000-0000000000b1";
 
-    RawstorOSTFrameMetaPayload legacy = {
+    RawstorFrameMetaPayload legacy = {
         .size = 1ull << 20,
         .epoch = 0,
         .sync_id = 0,
@@ -900,13 +1161,13 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
         .width = 1,
-        .reserved1 = 0,
-        .reserved2 = 0,
+        .member_role = RAWSTOR_MEMBER_DATA,
     };
 
-    // Chunk::create() opens every reachable slot concurrently (see its
-    // own comment) -- both server1's and server2's own session get
-    // their own combined SET_OBJECT+META (Slot::open()'s own comment).
+    // Both members go through Slot::open()'s own combined SET_OBJECT+META
+    // step (see its own comment), concurrently -- Chunk::create()'s own
+    // overall spec comes straight out of that same META answer (see its
+    // own comment), no separate round trip.
     {
         rawstor::tests::Session s(server1);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -975,7 +1236,7 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
         "ost://127.0.0.1:8755/00000000-0000-7000-8000-0000000000b2,"
         "ost://127.0.0.1:8756/00000000-0000-7000-8000-0000000000b2";
 
-    RawstorOSTFrameMetaPayload legacy = {
+    RawstorFrameMetaPayload legacy = {
         .size = 1ull << 20,
         .epoch = 0,
         .sync_id = 0,
@@ -983,8 +1244,7 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
         .width = 1,
-        .reserved1 = 0,
-        .reserved2 = 0,
+        .member_role = RAWSTOR_MEMBER_DATA,
     };
 
     {
@@ -1042,7 +1302,7 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         "ost://127.0.0.1:8757/00000000-0000-7000-8000-0000000000b3,"
         "ost://127.0.0.1:8758/00000000-0000-7000-8000-0000000000b3";
 
-    RawstorOSTFrameMetaPayload legacy = {
+    RawstorFrameMetaPayload legacy = {
         .size = 1ull << 20,
         .epoch = 0,
         .sync_id = 0,
@@ -1050,8 +1310,7 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
         .width = 1,
-        .reserved1 = 0,
-        .reserved2 = 0,
+        .member_role = RAWSTOR_MEMBER_DATA,
     };
 
     {

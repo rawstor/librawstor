@@ -48,17 +48,21 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         location.hpp \
                         lvm_backend.cpp \
                         lvm_backend.hpp \
+                        mds_backend.cpp \
+                        mds_backend.hpp \
+                        mds_client.cpp \
+                        mds_client.hpp \
                         object.cpp \
                         object.hpp \
-                        ost_backend.cpp \
-                        ost_backend.hpp \
                         opts.c \
                         opts.h \
+                        ost_backend.cpp \
+                        ost_backend.hpp \
+                        rawstor.cpp \
                         slot.cpp \
                         slot.hpp \
                         subprocess.cpp \
                         subprocess.hpp \
-                        rawstor.cpp \
                         target.cpp \
                         target.hpp \
                         telemetry.cpp \

@@ -15,7 +15,13 @@
 #include <poll.h>
 #include <unistd.h>
 
+#include <atomic>
+#include <chrono>
+#include <future>
+#include <memory>
 #include <system_error>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -683,6 +689,189 @@ TEST_F(MultishotTest, recv_cancel_in_cb) {
     }
 
     EXPECT_NO_THROW(_queue->cancel(stream.event()));
+}
+
+// io_uring ends a multishot recv on its own when a completion can't be
+// posted (e.g. the completion ring is full): the last completion still
+// carries data but no IORING_CQE_F_MORE. The stream must then deliver
+// what arrived and fail -- not wait for data a dead registration will
+// never deliver.
+TEST_F(MultishotTest, recv_ended_by_kernel_fails_instead_of_hanging) {
+    if (rawio::Queue::engine_name() != "uring") {
+        GTEST_SKIP() << "only io_uring ends a multishot registration itself";
+    }
+
+    rawio::RecvStream stream = _queue->recv_multishot(_fd, 4, 16, 4, 0);
+
+    // Armed and delivering.
+    _server.write("dat0", 4);
+    _server.wait();
+    std::vector<MultishotVectorItem> items;
+    pull(*_queue, stream, 4, items);
+    ASSERT_EQ(items.size(), 1u);
+    ASSERT_EQ(items[0].error(), 0);
+
+    // Nobody reaps completions meanwhile, so this depth-1 queue's
+    // completion ring fills up and the kernel ends the registration.
+    for (int i = 0; i < 8; ++i) {
+        _server.write("datX", 4);
+        _server.wait();
+        usleep(5000);
+    }
+
+    int error = 0;
+    for (int i = 0; i < 16 && error == 0; ++i) {
+        rawstd::Task<rawio::RecvStream::Item> t =
+            rawio::tests::wrap<rawio::RecvStream::Item>(stream.next(4));
+        for (int n = 0; n < 100 && !t.done(); ++n) {
+            try {
+                _queue->wait_timeout(10);
+            } catch (const std::system_error& e) {
+                if (e.code().value() != ETIME) {
+                    throw;
+                }
+            }
+        }
+        ASSERT_TRUE(t.done()) << "stream hangs on a registration the kernel "
+                                 "already ended";
+        try {
+            t.get();
+        } catch (const std::system_error& e) {
+            error = e.code().value();
+        }
+    }
+    EXPECT_NE(error, 0);
+}
+
+// Same as recv_ended_by_kernel_fails_instead_of_hanging, for
+// poll_multishot(): a registration the kernel ended on its own (a
+// completion without IORING_CQE_F_MORE) must end the stream too.
+TEST_F(MultishotTest, poll_ended_by_kernel_fails_instead_of_hanging) {
+    if (rawio::Queue::engine_name() != "uring") {
+        GTEST_SKIP() << "only io_uring ends a multishot registration itself";
+    }
+
+    rawio::PollStream stream = _queue->poll_multishot(_fd, POLLIN);
+
+    // Armed and delivering.
+    _server.write("dat0", 4);
+    _server.wait();
+    int result =
+        rawio::tests::run(*_queue, rawio::tests::wrap<int>(stream.next()));
+    ASSERT_EQ(result, POLLIN);
+
+    // Nobody reaps completions meanwhile, so this depth-1 queue's
+    // completion ring fills up and the kernel ends the registration.
+    for (int i = 0; i < 8; ++i) {
+        _server.write("datX", 4);
+        _server.wait();
+        usleep(5000);
+    }
+
+    int error = 0;
+    for (int i = 0; i < 16 && error == 0; ++i) {
+        rawstd::Task<int> t = rawio::tests::wrap<int>(stream.next());
+        for (int n = 0; n < 100 && !t.done(); ++n) {
+            try {
+                _queue->wait_timeout(10);
+            } catch (const std::system_error& e) {
+                if (e.code().value() != ETIME) {
+                    throw;
+                }
+            }
+        }
+        ASSERT_TRUE(t.done()) << "stream hangs on a registration the kernel "
+                                 "already ended";
+        try {
+            t.get();
+        } catch (const std::system_error& e) {
+            error = e.code().value();
+        }
+    }
+    EXPECT_NE(error, 0);
+}
+
+// Several queues accepting on one listening socket, each on its own
+// thread -- a multi-worker server (rawstor-ost, rawstor-mds): every one
+// of them can see the socket readable, but only one wins a connection.
+// The others must keep waiting rather than block inside accept(), or they
+// never notice they were asked to stop.
+TEST(MultishotSharedListenTest, losing_queues_keep_waiting) {
+    rawio::tests::Socket listen_socket;
+    listen_socket.listen();
+
+    const int workers = 4;
+    std::atomic<bool> stop(false);
+    std::atomic<int> accepted(0);
+    std::vector<std::promise<void>> done(workers);
+    std::vector<std::future<void>> finished;
+    std::vector<std::thread> threads;
+    for (int i = 0; i < workers; ++i) {
+        finished.push_back(done[i].get_future());
+        threads.emplace_back([&, i]() {
+            std::unique_ptr<rawio::Queue> q = rawio::Queue::create(4);
+            rawio::AcceptStream stream =
+                q->accept_multishot(listen_socket.fd());
+            rawstd::Task<int> t = rawio::tests::wrap<int>(stream.next());
+            while (!stop) {
+                try {
+                    q->wait_timeout(20);
+                } catch (const std::system_error& e) {
+                    if (e.code().value() != ETIME) {
+                        throw;
+                    }
+                }
+                if (t.done()) {
+                    ::close(t.get());
+                    ++accepted;
+                    t = rawio::tests::wrap<int>(stream.next());
+                }
+            }
+            q->cancel(stream.event());
+            while (!t.done()) {
+                try {
+                    q->wait_timeout(20);
+                } catch (const std::system_error&) {
+                }
+            }
+            done[i].set_value();
+        });
+    }
+
+    // Let every queue reach its poll() first.
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    rawio::tests::Socket client;
+    sockaddr_un addr = {};
+    addr.sun_family = AF_UNIX;
+    snprintf(
+        addr.sun_path, sizeof(addr.sun_path), "%s", listen_socket.name().data()
+    );
+    ASSERT_EQ(
+        ::connect(
+            client.fd(), reinterpret_cast<sockaddr*>(&addr), sizeof(addr)
+        ),
+        0
+    );
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    stop = true;
+
+    bool all_finished = true;
+    for (std::future<void>& f : finished) {
+        if (f.wait_for(std::chrono::seconds(3)) != std::future_status::ready) {
+            all_finished = false;
+        }
+    }
+    EXPECT_TRUE(all_finished) << "a queue blocked inside accept()";
+    EXPECT_EQ(accepted, 1);
+    for (std::thread& thread : threads) {
+        if (all_finished) {
+            thread.join();
+        } else {
+            thread.detach();
+        }
+    }
 }
 
 } // unnamed namespace

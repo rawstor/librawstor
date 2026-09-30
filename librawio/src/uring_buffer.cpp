@@ -188,6 +188,17 @@ void BufferRing::on_arrival(int result, unsigned int flags) {
         _terminal_error = -result;
     }
 
+    // Without IORING_CQE_F_MORE the kernel has ended this registration on
+    // its own even though this completion still carries data (e.g. it
+    // couldn't post the next completion to a full completion ring): what's
+    // pending is the last that will ever arrive. Delivered first, then
+    // ENOBUFS -- the same overflow error the other multishot streams
+    // report -- instead of waiting for data that will never come.
+    if (!(flags & IORING_CQE_F_MORE) && !_has_terminal) {
+        _has_terminal = true;
+        _terminal_error = ENOBUFS;
+    }
+
     if (_waiter) {
         rawio::RecvStream::Item out;
         int out_error = 0;

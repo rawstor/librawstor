@@ -7,6 +7,7 @@
 #include "opts.h"
 #include "ost_backend.hpp"
 #include "slot.hpp"
+#include "target.hpp"
 
 #include <rawio/awaitable.hpp>
 #include <rawio/stream.hpp>
@@ -14,6 +15,7 @@
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
+#include <rawstd/uri.hpp>
 
 #include <algorithm>
 #include <exception>
@@ -22,9 +24,13 @@
 #include <new>
 #include <optional>
 #include <random>
+#include <set>
+#include <sstream>
+#include <string>
 #include <system_error>
 #include <utility>
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -32,6 +38,30 @@
 #include <unordered_map>
 
 namespace {
+
+void validate_not_empty(const std::vector<rawstd::URI>& uris) {
+    if (!uris.empty()) {
+        return;
+    }
+
+    rawstd_error("Empty uri list\n");
+    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+}
+
+void validate_different_uris(const std::vector<rawstd::URI>& uris) {
+    if (uris.empty()) {
+        return;
+    }
+
+    std::set<rawstd::URI> seen;
+    for (const auto& uri : uris) {
+        if (seen.find(uri) != seen.end()) {
+            rawstd_error("Different uris expected\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        seen.insert(uri);
+    }
+}
 
 // A nonzero random sync-set id; zero is reserved for legacy copies.
 uint64_t random_sync_id() {
@@ -76,16 +106,15 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
 
 namespace rawstor {
 
-// The heavy async work -- standing up a Slot per URI, fetching
-// spec()/meta() from each -- still lives in Target::open(), the one
-// place that actually constructs a Chunk (by analogy with
-// Slot(Private, queue)): a constructor can't co_await, so none of
-// that can live here. Deciding whether the result is trustworthy enough
-// to open from (_reconcile_sync_set(), or the mirrors == 1 shortcut)
-// CAN safely live here instead, now that `spec`/`members` already
-// reflect a completed connect+spec+open round -- same as
-// _reconcile_sync_set()'s own doc comment on why a refusal here is
-// safe to let unwind through a throwing constructor.
+// The heavy async work -- standing up a Slot per URI, meta()-ing each --
+// still lives in create() below, the one place that actually constructs
+// a Chunk (by analogy with Slot(Private, queue)): a constructor can't
+// co_await, so none of that can live here. Deciding whether the result
+// is trustworthy enough to open from (_reconcile_sync_set(), or the
+// mirrors == 1 shortcut) CAN safely live here instead, now that
+// `spec`/`members` already reflect a completed connect+open round --
+// same as _reconcile_sync_set()'s own doc comment on why a refusal here
+// is safe to let unwind through a throwing constructor.
 Chunk::Chunk(
     Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
     bool readonly, RawstorObjectSpec spec, std::vector<Member> members
@@ -153,27 +182,145 @@ Chunk::~Chunk() {
 // Slot::create()'s own backend pool.
 namespace {
 
+// An mds:// location gets exactly one backend: each mds::Backend opens
+// its own nested whole-object Target (with its own mirror state machine
+// per chunk), so a pool of them would run several independent state
+// machines over the same members. Its inner per-OST slots are pooled
+// as usual.
 rawstd::Task<std::unique_ptr<rawstor::Slot>>
 connect_one(rawio::Queue& queue, const rawstd::URI& location) {
-    co_return co_await rawstor::Slot::create(
-        queue, location, rawstor_opts_sessions()
-    );
+    unsigned int sessions =
+        location.scheme() == "mds" ? 1 : rawstor_opts_sessions();
+    co_return co_await rawstor::Slot::create(queue, location, sessions);
+}
+
+// F10 (docs/mirroring.md): a member whose own copy is missing
+// (`missing`, its open failed ENOENT on a location that's still there)
+// gets that copy recreated on a fresh Slot and opened again, turning it
+// into a reachable, blank member (sync_id 0) -- _reconcile_sync_set()
+// then marks it STALE next to any established sync set, and online
+// resync fills it from a survivor, same as any other stale member (or
+// keeps it IN_SYNC alongside survivors that were never written either).
+// Only rebuilt when the surviving copies alone are a majority of the
+// chunk's members (more than half): a blank copy holds none of the
+// acknowledged writes, so it must never be what makes up a quorum --
+// otherwise a surviving copy that fell behind could be opened as the
+// authoritative one and the newer, lost copy's writes silently dropped.
+// Below that (e.g. one of two copies left), the open fails the ordinary
+// quorum check and the missing copy is recreated by hand once the
+// survivor is known to be current. With every copy missing there's
+// nothing to vouch that the chunk never held data either. The survivors'
+// own META gives the recreated copy's size.
+// Never for a read-only open (it writes nothing) or a bound snapshot
+// version (a CoW version can't be regenerated from live data). A member
+// whose recreate fails just stays unreachable.
+rawstd::Task<void> recreate_missing(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
+    const RawstdUUID& id, uint64_t offset, int flags,
+    const RawstdUUID& snapshot_id,
+    std::vector<std::unique_ptr<rawstor::Slot>>& slots,
+    std::vector<RawstorObjectMeta>& metas, std::vector<bool>& opened,
+    const std::vector<bool>& missing
+) {
+    if ((flags & RAWSTOR_READONLY) != 0 || !rawstd_uuid_is_nil(&snapshot_id)) {
+        co_return;
+    }
+
+    // The largest surviving copy's size, not just the first's: a smaller
+    // one is itself F11-stale (_reconcile_sync_set()'s own comment), and
+    // a recreated copy sized off it would be too.
+    const RawstorObjectMeta* survivor = nullptr;
+    uint64_t size = 0;
+    for (size_t i = 0; i < locations.size(); ++i) {
+        if (!opened[i]) {
+            continue;
+        }
+        if (survivor == nullptr) {
+            survivor = &metas[i];
+        }
+        size = std::max(size, metas[i].spec.size);
+    }
+    if (survivor == nullptr ||
+        std::find(missing.begin(), missing.end(), true) == missing.end()) {
+        co_return;
+    }
+
+    size_t survivors =
+        static_cast<size_t>(std::count(opened.begin(), opened.end(), true));
+    if (survivors * 2 <= locations.size()) {
+        rawstd_error(
+            "Mirror member copy missing, not recreated: only %zu of %zu "
+            "copies survive, not a majority; recreate it explicitly "
+            "(rawstor create on its location) once the surviving copy is "
+            "known to be current\n",
+            survivors, locations.size()
+        );
+        co_return;
+    }
+
+    RawstorObjectSpec sp{};
+    sp.size = size;
+    sp.width = survivor->spec.width;
+    sp.chunk_size = survivor->spec.chunk_size;
+
+    for (size_t i = 0; i < locations.size(); ++i) {
+        if (!missing[i]) {
+            continue;
+        }
+        rawstd_warning(
+            "Mirror member copy missing, recreating it: %s\n",
+            locations[i].str().c_str()
+        );
+
+        // co_await isn't allowed inside a catch block, so the failure is
+        // only recorded here; closing the connection happens just below,
+        // outside the handler.
+        std::unique_ptr<rawstor::Slot> slot;
+        RawstorObjectMeta meta{};
+        bool failed = false;
+        try {
+            slot = co_await connect_one(queue, locations[i]);
+            co_await slot->create(id, offset, sp, RAWSTOR_MEMBER_DATA);
+            meta = co_await slot->open(id, offset, flags, snapshot_id);
+        } catch (const std::system_error& e) {
+            rawstd_warning("Mirror member recreate failed: %s\n", e.what());
+            failed = true;
+        }
+
+        if (!failed) {
+            slots[i] = std::move(slot);
+            metas[i] = meta;
+            opened[i] = true;
+            continue;
+        }
+        if (slot) {
+            try {
+                co_await slot->close();
+            } catch (const std::exception& e) {
+                rawstd_warning("Chunk::create(): %s\n", e.what());
+            }
+        }
+    }
 }
 
 } // namespace
 
 rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
-    const std::vector<rawstd::URI>& locations, rawio::Queue& queue,
+    rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
     const RawstdUUID& id, uint64_t offset, int flags,
     const RawstdUUID& snapshot_id
 ) {
+    // Object's lazy per-chunk opening and tests/ call this directly, so
+    // the location list is validated here. Identity needs no check: it
+    // arrives as the explicit `id`/`offset`/`snapshot_id` parameters.
+    validate_not_empty(locations);
+    validate_different_uris(locations);
+
     // Every location's Slot goes out concurrently instead of one at a
-    // time -- just Slot::create(), kept in a plain local vector
-    // (parallel to `locations`, not the eventual member list yet: that's
-    // assembled only once spec()/open() below have actually run -- see
-    // their own comments on why member count/identity isn't simply
-    // locations.size()). connect_one()'s own comment on why SET_OBJECT
-    // is a separate, later step.
+    // time -- just Slot::create(), kept in a plain local vector parallel
+    // to `locations`; the Member list is built from it only once every
+    // connect/open below has settled. connect_one()'s own comment on why
+    // SET_OBJECT is a separate, later step.
     std::vector<rawstd::Task<std::unique_ptr<Slot>>> connect_tasks;
     connect_tasks.reserve(locations.size());
     for (const auto& location : locations) {
@@ -191,9 +338,9 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // Anything else is unexpected (not a normal connectivity failure)
     // and aborts outright, even if every other member succeeded --
     // `fatal` marks that. Either way, co_await isn't allowed inside a
-    // catch block, so a failure is only recorded here; closing the slots
-    // that DID succeed happens just below, outside the handler, same
-    // shape as Target::create()'s own rollback.
+    // catch block, so a failure is only recorded here; closing the
+    // connections that DID succeed happens just below, outside the
+    // handler, same shape as Target::create()'s own rollback.
     std::exception_ptr eptr;
     bool fatal = false;
     std::vector<std::unique_ptr<Slot>> slots(locations.size());
@@ -203,7 +350,10 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
             slots[i] = co_await connect_tasks[i];
             ++reachable;
         } catch (const std::system_error& e) {
-            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            rawstd_warning(
+                "Mirror member unreachable: %s: %s\n",
+                locations[i].str().c_str(), strerror(e.code().value())
+            );
             if (!eptr) {
                 eptr = std::current_exception();
             }
@@ -254,20 +404,30 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
 
     std::vector<RawstorObjectMeta> metas(locations.size());
     std::vector<bool> opened(locations.size(), false);
+    // Whether a member's own open failed because its copy is missing
+    // (ENOENT -- docs/mirroring.md, case F10) rather than for any other
+    // reason: only such a member can be recreated below, and only if
+    // every member failed this way is the chunk reported missing
+    // (ENOENT) rather than unreachable (ENOTCONN).
+    std::vector<bool> missing(locations.size(), false);
     for (size_t i = 0; i < open_tasks.size(); ++i) {
         if (!open_tasks[i]) {
             continue;
         }
 
         // co_await isn't allowed inside a catch block, so the failure is
-        // only recorded here; closing the slot happens just below,
+        // only recorded here; closing the connection happens just below,
         // outside the handler.
         bool unavailable = false;
         try {
             metas[i] = co_await *open_tasks[i];
         } catch (const std::system_error& e) {
-            rawstd_warning("Mirror member unavailable: %s\n", e.what());
+            rawstd_warning(
+                "Mirror member unavailable: %s: %s\n",
+                locations[i].str().c_str(), strerror(e.code().value())
+            );
             unavailable = true;
+            missing[i] = e.code().value() == ENOENT;
         }
 
         if (!unavailable) {
@@ -283,34 +443,41 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         slots[i].reset();
     }
 
+    co_await recreate_missing(
+        queue, locations, id, offset, flags, snapshot_id, slots, metas, opened,
+        missing
+    );
+
     // Members are assembled only now, with connect/open all already
     // settled -- one slot per location (the only member identity this
-    // codebase knows today). A local vector, not Chunk's own _members:
-    // no Chunk exists yet to hold it -- see the constructor's own doc
-    // comment on why that's now deferred to the very end. Slot indices
-    // must stay stable from here on (the reconnect probe addresses
-    // members by index): no reallocation after handing it to Chunk
-    // below. This factory's own overall spec (handed to Chunk's own
-    // constructor below) is whichever reachable member's own META
-    // answered first, in `locations`' own order -- every member of the
-    // same chunk agrees on it by construction, so there's no separate
-    // spec-fetch round trip to run first; metas[] already has it.
-    std::vector<Chunk::Member> members;
+    // codebase knows today; see Backend::meta()'s own doc comment
+    // (backend.hpp) on why that isn't necessarily the whole story
+    // forever). Slot indices must stay stable from here on (the
+    // reconnect probe addresses members by index): no reallocation
+    // after handing it to Chunk below. This
+    // factory's own overall spec (handed to Chunk's own constructor
+    // below) is whichever reachable member's own META answered first, in
+    // `locations`' own order -- every member of the same chunk agrees on
+    // it by construction (docs/mds.md, chunk_meta), so there's no
+    // separate spec-fetch round trip to run first; metas[] already has
+    // it.
+    std::vector<Member> members;
     members.reserve(locations.size());
     reachable = 0;
     RawstorObjectSpec spec{};
     bool got_spec = false;
     for (size_t i = 0; i < locations.size(); ++i) {
-        // Chunk's own constructor (_reconcile_sync_set(), for width
-        // >= 2) only ever downgrades a member (e.g. an interrupted
+        // Chunk's own constructor (_reconcile_sync_set(), for more than
+        // one member) only ever downgrades a member (e.g. an interrupted
         // resync makes it STALE) -- it never upgrades one from the
         // STALE default, so a successfully opened member is marked
         // IN_SYNC up front.
-        Chunk::MemberState state =
-            opened[i] ? Chunk::MemberState::IN_SYNC : Chunk::MemberState::STALE;
+        MemberState state =
+            opened[i] ? MemberState::IN_SYNC : MemberState::STALE;
         members.push_back(
-            Chunk::Member{
-                std::move(slots[i]), locations[i], state, metas[i], opened[i]
+            Member{
+                std::move(slots[i]), locations[i], state, metas[i], opened[i],
+                false
             }
         );
         if (opened[i]) {
@@ -324,47 +491,31 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
 
     // reachable == 0 (not just below quorum) is the one precondition
     // Chunk's own constructor can't check itself: a member with no
-    // Slot at all is meaningless to it even for the trivial
-    // single-member case (there's nothing there to trust), unlike a real
+    // Slot at all is meaningless to it even for the trivial single-
+    // member case (there's nothing there to trust), unlike a real
     // quorum shortfall, which _reconcile_sync_set() already checks on
     // its own -- see it, and the constructor's own comment, for why a
     // refusal there is safe to let unwind through it rather than
     // checked redundantly here first.
     if (reachable == 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+        // Every member reachable but holding no copy at all is a missing
+        // chunk, not an unreachable one -- e.g. rawstor-ost's own local
+        // open of a copy it doesn't have, which a client above it can
+        // then recreate like any other F10 member.
+        bool all_missing = true;
+        for (size_t i = 0; i < locations.size(); ++i) {
+            if (!missing[i]) {
+                all_missing = false;
+                break;
+            }
+        }
+        RAWSTD_THROW_SYSTEM_ERROR(all_missing ? ENOENT : ENOTCONN);
     }
 
-    // Born degraded: this chunk's own membership (`locations`, the
-    // caller's own mirror set) already has fewer slots than the
-    // target's own configured redundancy -- checked once, here, against
-    // the first reachable member's own META answer (every member of the
-    // same chunk agrees on it by construction, so one answer is
-    // enough). An unreachable member's own meta is zero-filled, not a
-    // real answer, so it's skipped by its own `reachable` flag rather
-    // than inferred from a width of 0 -- Target::create() never
-    // persists that for a real target, width is always the caller's
-    // own explicit, non-zero choice. Unlike `spec.width` itself, this
-    // is purely a warning: the constructor's own quorum/shortcut logic
-    // below is keyed off `_members.size()`, not `spec.width`, so a
-    // caller opening fewer locations than the configured policy still
-    // gets a working Chunk, just a degraded one.
-    for (const Member& m : members) {
-        if (!m.reachable) {
-            continue;
-        }
-        if (members.size() < m.meta.spec.width) {
-            rawstd_warning(
-                "Chunk opened degraded: %zu of %u slots\n", members.size(),
-                m.meta.spec.width
-            );
-        }
-        break;
-    }
-
-    // Everything the constructor needs is gathered -- deciding whether
+    // Everything Chunk needs to exist is gathered -- deciding whether
     // it's actually trustworthy enough to open from (the single-member
     // shortcut, or _reconcile_sync_set()'s own quorum/split-brain/no-
-    // trusted-member analysis) is its own job from here.
+    // trusted-member analysis) is the constructor's own job from here.
     co_return std::make_unique<Chunk>(
         Private(), queue, id, offset, (flags & RAWSTOR_READONLY) != 0,
         std::move(spec), std::move(members)
@@ -464,7 +615,10 @@ void Chunk::_reconcile_sync_set() {
     for (Member& m : _members) {
         if (m.reachable &&
             m.meta.sync_state.state == RAWSTOR_OBJECT_SYNC_STATE_SYNCING) {
-            rawstd_warning("Mirror member with interrupted resync is stale\n");
+            rawstd_warning(
+                "Mirror member with interrupted resync is stale: %s\n",
+                _member_str(m).c_str()
+            );
             m.state = MemberState::STALE;
         }
     }
@@ -520,7 +674,10 @@ void Chunk::_reconcile_sync_set() {
         for (Member& m : _members) {
             if (m.state == MemberState::IN_SYNC &&
                 m.meta.sync_state.sync_id != newest) {
-                rawstd_warning("Stale mirror member excluded from the set\n");
+                rawstd_warning(
+                    "Stale mirror member excluded from the set: %s\n",
+                    _member_str(m).c_str()
+                );
                 m.state = MemberState::STALE;
             }
         }
@@ -691,10 +848,21 @@ rawstd::Task<void> Chunk::_run_dirty_barrier() {
  * CLEAN nothing acknowledged can be lost, so the recording is deferred to
  * the dirty gate.
  */
+std::string Chunk::_member_str(const Member& m) const {
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&_id, &uuid_string);
+    std::ostringstream oss;
+    oss << std::hex << _offset;
+    return rawstd::URI(rawstd::URI(m.location, uuid_string), oss.str()).str();
+}
+
 rawstd::Task<void> Chunk::_degrade(std::vector<size_t> idxs) {
     for (size_t idx : idxs) {
         if (_members[idx].state == MemberState::IN_SYNC) {
-            rawstd_error("Mirror member degraded\n");
+            rawstd_warning(
+                "Mirror member degraded: %s\n",
+                _member_str(_members[idx]).c_str()
+            );
             _members[idx].state = MemberState::STALE;
             // The reconnect probe brings the member back for a resync.
             _members[idx].reachable = false;
@@ -876,8 +1044,9 @@ rawstd::Task<void> Chunk::_fan_out_write_one(
         size_t result = co_await issue(*_members[idx].slot);
         st->any_success = true;
         st->result = std::min(st->result, result);
-    } catch (const std::system_error& e) {
-        rawstd_error("%s\n", strerror(e.code().value()));
+    } catch (const std::system_error&) {
+        // Already logged by the member's own Slot; _degrade() reports
+        // the exclusion itself.
         st->failed.push_back(idx);
     }
 }
@@ -1095,7 +1264,10 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
             co_return;
         }
 
-        rawstd_info("Mirror resync: bringing a stale member back...\n");
+        rawstd_info(
+            "Mirror resync: bringing a stale member back: %s\n",
+            _member_str(_members[idx]).c_str()
+        );
 
         // The SYNCING mark must be durable before the copy starts: a crash
         // mid-resync must leave the member recognizably untrusted
@@ -1255,12 +1427,22 @@ rawstd::DetachedTask Chunk::_resync_sweep() {
         co_return;
     }
 
+    // An all-zero block (typically never written) goes out as
+    // write_zeroes(): no payload on the wire, and the target stays sparse
+    // (unmap) instead of being filled with explicit zeros.
+    const char* data = buf->data();
+    bool zero = data[0] == 0 && memcmp(data, data + 1, len - 1) == 0;
+
     size_t wresult = 0;
     int werror = 0;
     try {
-        wresult = co_await _members[_resync->idx].slot->pwrite(
-            buf->data(), len, (off_t)off, false
-        );
+        Slot& target = *_members[_resync->idx].slot;
+        if (zero) {
+            wresult =
+                co_await target.write_zeroes(len, (off_t)off, true, false);
+        } else {
+            wresult = co_await target.pwrite(data, len, (off_t)off, false);
+        }
     } catch (const std::system_error& e) {
         werror = e.code().value();
     }
@@ -1332,7 +1514,10 @@ rawstd::DetachedTask Chunk::_resync_finish() {
     _members[idx].meta.spec.size = _size;
     _resync.reset();
 
-    rawstd_info("Mirror resync: the member rejoined the set\n");
+    rawstd_info(
+        "Mirror resync: the member rejoined the set: %s\n",
+        _member_str(_members[idx]).c_str()
+    );
 
     if (_writes_frozen && !_below_write_quorum(_in_sync_count())) {
         rawstd_info("Mirror write quorum restored: unfreezing writes\n");
@@ -1343,9 +1528,11 @@ rawstd::DetachedTask Chunk::_resync_finish() {
 }
 
 void Chunk::_resync_abort(const char* reason) noexcept {
-    rawstd_error("Mirror resync aborted: %s\n", reason);
-
     size_t idx = _resync->idx;
+    rawstd_error(
+        "Mirror resync aborted: %s: %s\n", _member_str(_members[idx]).c_str(),
+        reason
+    );
     _members[idx].state = MemberState::STALE;
     _members[idx].reachable = false;
 
@@ -1376,27 +1563,37 @@ void Chunk::_probe_setup() {
 // Nothing actively tears this stream down before then, though: this
 // coroutine frame just outlives the Chunk by up to one more interval,
 // notices alive.expired() and returns -- the same trade-off every other
-// alive-guarded DetachedTask in this file already makes.
+// alive-guarded DetachedTask in this file already makes. io_uring can end
+// the multishot timer on its own (e.g. on a full completion ring), which
+// the stream reports as ENOBUFS: the timer is then armed again, or
+// probing would stop for the rest of the Chunk's life.
 rawstd::DetachedTask Chunk::_probe_watch(std::weak_ptr<void> alive) {
     try {
         unsigned int ms = rawstor_opts_mirror_probe_interval();
-        rawio::TimeoutStream stream = _queue.timeout_multishot(ms * 1000u);
         for (;;) {
-            try {
-                co_await stream.next();
-            } catch (const std::system_error& e) {
+            rawio::TimeoutStream stream = _queue.timeout_multishot(ms * 1000u);
+            int error = 0;
+            while (error == 0) {
+                try {
+                    co_await stream.next();
+                } catch (const std::system_error& e) {
+                    error = e.code().value();
+                    if (!alive.expired() && error != ECANCELED &&
+                        error != ENOBUFS) {
+                        rawstd_warning(
+                            "Mirror probe timer failed: %s\n", e.what()
+                        );
+                    }
+                    break;
+                }
                 if (alive.expired()) {
                     co_return;
                 }
-                if (e.code().value() != ECANCELED) {
-                    rawstd_warning("Mirror probe timer failed: %s\n", e.what());
-                }
+                _probe_tick();
+            }
+            if (alive.expired() || error != ENOBUFS) {
                 co_return;
             }
-            if (alive.expired()) {
-                co_return;
-            }
-            _probe_tick();
         }
     } catch (const std::exception& e) {
         rawstd_warning("%s\n", e.what());
@@ -1421,7 +1618,13 @@ rawstd::DetachedTask Chunk::_probe_tick() {
         co_return;
     }
 
-    rawstd_info("Mirror probe: reconnecting a stale member...\n");
+    if (!_members[idx].probe_announced) {
+        rawstd_info(
+            "Mirror probe: reconnecting a stale member: %s\n",
+            _member_str(_members[idx]).c_str()
+        );
+        _members[idx].probe_announced = true;
+    }
     _probe_pending = true;
 
     std::unique_ptr<Slot> slot;
@@ -1453,6 +1656,7 @@ rawstd::DetachedTask Chunk::_probe_tick() {
 
     _members[idx].slot = std::move(slot);
     _members[idx].reachable = true;
+    _members[idx].probe_announced = false;
     _resync_maybe_start();
 }
 
@@ -1511,8 +1715,8 @@ rawstd::Task<size_t> Chunk::_read(
         } catch (const std::system_error& e) {
             int error = e.code().value();
             rawstd_warning(
-                "Mirror member read failed: %s; trying next member\n",
-                strerror(error)
+                "Mirror member read failed: %s: %s; trying next member\n",
+                _member_str(_members[idx]).c_str(), strerror(error)
             );
             failures.push_back({idx, error});
             last_error = error;
