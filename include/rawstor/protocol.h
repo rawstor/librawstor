@@ -270,7 +270,6 @@ struct RawstorFrameAllocatePayload {
     uint8_t failure_domain; /* RAWSTOR_OBJ_DOMAIN_* */
     uint8_t width;          /* redundancy: copies per chunk */
     uint8_t member_role;    /* enum RawstorMemberRole, <rawstor/target.h> */
-    uint32_t reserved2;
 } RAWSTOR_PACKED;
 
 /* ALLOCATE request */
@@ -322,7 +321,6 @@ struct RawstorFrameMetaPayload {
      */
     uint8_t width;       /* redundancy: copies per chunk */
     uint8_t member_role; /* enum RawstorMemberRole, <rawstor/target.h> */
-    uint32_t reserved2;
 } RAWSTOR_PACKED;
 
 /*
@@ -355,8 +353,8 @@ struct RawstorFrameMetaPayload {
 /*
  * The 64-bit fields lead, so they stay 8-byte aligned wherever this is
  * embedded at an 8-byte offset (RawstorFrameObjCreatePayload,
- * RawstorFrameObjDescriptorPayload); `reserved` rounds it to 4 bytes past
- * them, so a 32-bit field right after it stays aligned too.
+ * RawstorFrameObjDescriptorPayload); its 3 trailing bytes are rounded out
+ * to 4 by the chunk_shift that follows it in both.
  */
 struct RawstorFrameObjPolicy {
     uint64_t stripe_width;
@@ -364,7 +362,6 @@ struct RawstorFrameObjPolicy {
     uint8_t redundancy; /* RAWSTOR_OBJ_REDUNDANCY_* */
     uint8_t width;      /* slots per chunk: mirror R */
     uint8_t failure_domain;
-    uint8_t reserved;
 } RAWSTOR_PACKED;
 
 /*
@@ -404,8 +401,8 @@ struct RawstorFrameObjDescriptorPayload {
     uint64_t logical_size;
     uint64_t map_epoch;
     struct RawstorFrameObjPolicy policy;
-    uint32_t nchunks;
     uint8_t chunk_shift; /* log2(chunk_size), see OBJ_CREATE's */
+    uint32_t nchunks;
 } RAWSTOR_PACKED;
 
 struct RawstorFrameObjChunkEntry {
@@ -470,12 +467,12 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 20);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 24);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 21);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncStatePayload, 73);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAllocatePayload, 48);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAllocatePayload, 44);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameResponseBody, 12);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 64);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjPolicy, 20);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjCreatePayload, 45);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjDescriptorPayload, 57);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 60);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjPolicy, 19);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjCreatePayload, 44);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjDescriptorPayload, 56);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjChunkSlot, 19);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjSnapCommitPayload, 36);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjSnapMemberPayload, 24);

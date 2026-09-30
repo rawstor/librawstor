@@ -1288,7 +1288,6 @@ rawstd::DetachedTask Client::_meta(
                 .chunk_shift = chunk_size_to_shift(meta.spec.chunk_size),
                 .width = static_cast<uint8_t>(meta.spec.width),
                 .member_role = static_cast<uint8_t>(meta.member_role),
-                .reserved2 = 0,
             };
             memcpy(
                 body_out.sync_id_history, meta.sync_state.sync_id_history,

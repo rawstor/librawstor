@@ -37,7 +37,6 @@ const RawstorFrameMetaPayload clean_meta_1mb = {
     .chunk_shift = 0,
     .width = 1,
     .member_role = RAWSTOR_MEMBER_DATA,
-    .reserved2 = 0,
 };
 
 int callback(size_t result, int error, void* data) {

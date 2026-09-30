@@ -949,7 +949,6 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         .chunk_shift = 0,
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
-        .reserved2 = 0,
     };
 
     /*
@@ -1032,7 +1031,6 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .chunk_shift = 0,
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
-        .reserved2 = 0,
     };
 
     // Both members go through Slot::open()'s own combined SET_OBJECT+META
@@ -1116,7 +1114,6 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
         .chunk_shift = 0,
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
-        .reserved2 = 0,
     };
 
     {
@@ -1183,7 +1180,6 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         .chunk_shift = 0,
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
-        .reserved2 = 0,
     };
 
     {

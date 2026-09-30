@@ -587,7 +587,6 @@ TEST(OstLifecycleTest, create_spec_remove) {
         .chunk_shift = 0,
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
-        .reserved2 = 0,
     };
 
     {
@@ -679,7 +678,6 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
         .chunk_shift = 0,
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
-        .reserved2 = 0,
     };
 
     {
@@ -746,7 +744,6 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
         .chunk_shift = 0,
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
-        .reserved2 = 0,
     };
 
     {

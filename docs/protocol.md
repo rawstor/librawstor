@@ -7,9 +7,9 @@ this page describes the same layouts for a reader.
 
 - **Transport:** a stateful TCP connection.
 - **Byte order:** host order, i.e. little-endian on every supported platform.
-- **Structs:** packed (no padding), with every multi-byte field on its natural
-  alignment inside the struct; the few `reserved` fields exist only to keep a
-  following field aligned. Every struct's size is checked at compile time.
+- **Structs:** packed (no padding, no reserved fields), with every multi-byte
+  field on its natural alignment inside the struct. Every struct's size is
+  checked at compile time.
 - **Magic:** `0x72737472` (`"rstr"` in ASCII) opens every frame, as a sanity
   and endianness check.
 - **Names:** `RawstorFrame*` for frames and payloads any role may use,
@@ -236,7 +236,7 @@ Sets one copy's mirror consistency state (see [mirroring](mirroring.md)).
      +--------------+
 ```
 
-### Allocate — 48 bytes
+### Allocate — 44 bytes
 
 Creates one copy of one chunk. `chunk_shift` is `log2(chunk_size)`, 0 for an
 unchunked object; `stripe_width`/`failure_domain`/`width`/`member_role` are the
@@ -267,8 +267,6 @@ chunk's placement identity, stored with it.
      +--------------+--------------+--------------+--------------+
  40  | chunk_shift  |failure_domain|    width     | member_role  |
      +--------------+--------------+--------------+--------------+
- 44  |                    uint32_t reserved2                     |
-     +-----------------------------------------------------------+
 ```
 
 ## Response payloads
@@ -297,7 +295,7 @@ already exhausted.
      +-----------------------------------------------------------+
 ```
 
-### Meta — 64 bytes
+### Meta — 60 bytes
 
 Everything about one stored copy: its size, its placement identity and its
 mirror consistency state.
@@ -335,8 +333,6 @@ mirror consistency state.
      +--------------+--------------+--------------+--------------+
  56  |    state     | chunk_shift  |    width     | member_role  |
      +--------------+--------------+--------------+--------------+
- 60  |                    uint32_t reserved2                     |
-     +-----------------------------------------------------------+
 ```
 
 ### RawstorLocationInfo — 16 bytes
@@ -345,10 +341,11 @@ mirror consistency state.
 
 ## Object (MDS) payloads
 
-### ObjPolicy — 20 bytes
+### ObjPolicy — 19 bytes
 
-Embedded in ObjCreate and ObjDescriptor. `reserved` rounds it to a 4-byte
-boundary so a 32-bit field right after it stays aligned.
+Embedded in ObjCreate and ObjDescriptor, at an 8-byte offset in both; the
+`chunk_shift` that follows it there rounds its 3 trailing bytes out to 4, so
+ObjDescriptor's `nchunks` stays aligned.
 
 ```text
      +0             +1             +2             +3
@@ -361,11 +358,11 @@ boundary so a 32-bit field right after it stays aligned.
      |                                                           |
  12  |                                                           |
      +--------------+--------------+--------------+--------------+
- 16  |  redundancy  |    width     |failure_domain|   reserved   |
-     +--------------+--------------+--------------+--------------+
+ 16  |  redundancy  |    width     |failure_domain|
+     +--------------+--------------+--------------+
 ```
 
-### ObjCreate — 45 bytes
+### ObjCreate — 44 bytes
 
 `chunk_shift` is `log2(chunk_size)`; an mds:// object's `chunk_size` is always
 a nonzero power of two, so 0 (and anything from 64 on) is rejected.
@@ -393,15 +390,13 @@ a nonzero power of two, so 0 (and anything from 64 on) is rejected.
      |                                                           |
  36  |                                                           |
      +--------------+--------------+--------------+--------------+
- 40  |  redundancy  |    width     |failure_domain|   reserved   |
+ 40  |  redundancy  |    width     |failure_domain| chunk_shift  |
      +--------------+--------------+--------------+--------------+
- 44  | chunk_shift  |
-     +--------------+
 ```
 
 ObjCreated, ObjResized and ObjSnapCommitted are a single `uint64_t map_epoch`.
 
-### ObjDescriptor — 57 bytes, then the chunk map
+### ObjDescriptor — 56 bytes, then the chunk map
 
 `OBJ_OPEN`'s reply: the descriptor, then `nchunks` chunk entries, each a
 `uint8_t width` followed by `width` slots. A slot is 19 bytes followed by
@@ -436,12 +431,10 @@ OST.
      |                                                           |
  44  |                                                           |
      +--------------+--------------+--------------+--------------+
- 48  |  redundancy  |    width     |failure_domain|   reserved   |
+ 48  |  redundancy  |    width     |failure_domain| chunk_shift  |
      +--------------+--------------+--------------+--------------+
  52  |                     uint32_t nchunks                      |
-     +--------------+--------------------------------------------+
- 56  | chunk_shift  |
-     +--------------+
+     +-----------------------------------------------------------+
 ```
 
 Each chunk entry:

@@ -123,7 +123,6 @@ encode_object_map(const Topology& topology, const ObjectMap& map) {
         .width = static_cast<uint8_t>(map.descriptor.policy.width),
         .failure_domain =
             static_cast<uint8_t>(map.descriptor.policy.failure_domain),
-        .reserved = 0,
     };
     // The store only ever holds a nonzero power-of-two chunk_size
     // (validate_geometry(), store.cpp).

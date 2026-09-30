@@ -848,7 +848,6 @@ public:
                 .failure_domain = sp.failure_domain,
                 .width = (uint8_t)sp.width,
                 .member_role = (uint8_t)member_role,
-                .reserved2 = 0,
             },
         }) {
         memcpy(
