@@ -7,7 +7,6 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
-#include <rawstor/location.h>
 #include <rawstor/protocol.h>
 
 #include <string>
@@ -115,9 +114,6 @@ public:
      */
     rawstd::Task<std::vector<RawstdUUID>>
     list_objects(RawstdUUID& token, unsigned int limit);
-
-    /* Used/total space summed over every OST in the MDS's topology. */
-    rawstd::Task<RawstorLocationInfo> location_info();
 
     /* Unregisters and returns the member set for the fan-out destroy. */
     rawstd::Task<std::vector<WireSnapshotMember>> remove_snapshot(

@@ -11,10 +11,7 @@
 
 #include <unistd.h>
 
-#include <rawstor/location.h>
-
 #include <algorithm>
-#include <memory>
 #include <system_error>
 #include <vector>
 
@@ -27,56 +24,6 @@ using rawstor::mdsserver::ObjectStore;
 using rawstor::mdsserver::PlacementSlot;
 using rawstor::mdsserver::SnapshotMember;
 using rawstor::mdsserver::Topology;
-using rawstor::mdsserver::TopologyOST;
-
-int info_trampoline(ssize_t result, void* data) {
-    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
-    return 0;
-}
-
-// Every OST in the topology's own used/total, asked concurrently and
-// summed: they are distinct stores, not mirrors of one. An OST that
-// doesn't answer is skipped (logged here, in the MDS) rather than failing
-// the whole call: the MDS itself did answer, and any error would only send
-// the client retrying against it. An empty topology, or one with no OST
-// answering, sums to 0/0.
-rawstd::Task<RawstorLocationInfo>
-topology_info(RawIOQueue* queue, std::shared_ptr<const Topology> topology) {
-    const std::vector<TopologyOST>& osts = topology->osts();
-    std::vector<RawstorLocationInfo> infos(osts.size());
-    std::vector<std::unique_ptr<rawstd::CallbackAwaitable<void>>> awaiters;
-    std::vector<int> results(osts.size(), 0);
-    awaiters.reserve(osts.size());
-    for (size_t i = 0; i < osts.size(); ++i) {
-        awaiters.push_back(std::make_unique<rawstd::CallbackAwaitable<void>>());
-        results[i] = rawstor_location_info(
-            queue, osts[i].location.c_str(), &infos[i], info_trampoline,
-            awaiters[i].get()
-        );
-    }
-
-    RawstorLocationInfo ret{};
-    for (size_t i = 0; i < osts.size(); ++i) {
-        int error = results[i] < 0 ? -results[i] : 0;
-        if (error == 0) {
-            try {
-                co_await *awaiters[i];
-            } catch (const std::system_error& e) {
-                error = e.code().value();
-            }
-        }
-        if (error != 0) {
-            rawstd_warning(
-                "Location info: OST %s unreachable: %s\n",
-                osts[i].location.c_str(), strerror(error)
-            );
-            continue;
-        }
-        ret.used += infos[i].used;
-        ret.total += infos[i].total;
-    }
-    co_return ret;
-}
 
 // The most objects one LIST page carries; a request asking for more (or
 // for no particular number, 0) gets this many.
@@ -429,26 +376,6 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
             co_await client->_send_response(
                 head.cmd, head.cid, static_cast<int32_t>(data.size()),
                 data.data(), data.size()
-            );
-        }
-        break;
-    }
-    case RAWSTOR_CMD_LOCATION_INFO: {
-        RawstorFrameBasicPayload payload;
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
-        int32_t res = 0;
-        RawstorLocationInfo info{};
-        try {
-            info = co_await topology_info(queue, store.topology());
-        } catch (const std::system_error& e) {
-            res = -e.code().value();
-        }
-        if (res < 0) {
-            co_await client->_send_response(head.cmd, head.cid, res);
-        } else {
-            co_await client->_send_response(
-                head.cmd, head.cid, static_cast<int32_t>(sizeof(info)), &info,
-                sizeof(info)
             );
         }
         break;

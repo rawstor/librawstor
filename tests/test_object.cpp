@@ -260,29 +260,6 @@ TEST(ObjectSnapshotTest, remove_snapshot_uncommitted_returns_enoent) {
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-// LOCATION_INFO against the MDS: every OST in its topology, summed --
-// here the one OST, so exactly what that OST reports itself.
-TEST(ObjectListTest, mds_location_info_sums_its_osts) {
-    rawstor::tests::ObjectEnv env(8806, 8807);
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
-
-    auto info = [&](const std::string& location, RawstorLocationInfo* out) {
-        return rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
-            return rawstor_location_info(
-                queue.get(), location.c_str(), out, cb, data
-            );
-        });
-    };
-
-    RawstorLocationInfo mds_info{};
-    RawstorLocationInfo ost_info{};
-    ASSERT_EQ(info(env.location(), &mds_info), 0);
-    ASSERT_EQ(info("ost://127.0.0.1:8807", &ost_info), 0);
-    EXPECT_GT(mds_info.total, 0u);
-    EXPECT_EQ(mds_info.total, ost_info.total);
-    EXPECT_EQ(mds_info.used, ost_info.used);
-}
-
 // LIST against the MDS: every object it knows, each as the same id-only
 // mds:// target create() used, a page at a time.
 TEST(ObjectListTest, lists_mds_objects) {

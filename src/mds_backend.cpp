@@ -547,10 +547,8 @@ rawstd::Task<void> Backend::set_sync_state(
     co_return;
 }
 
-// The MDS sums every OST in its topology (docs/mds.md): raw space, before
-// any redundancy -- a width-3 object takes three times its size of it.
 rawstd::Task<RawstorLocationInfo> Backend::info() {
-    co_return co_await _client.location_info();
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
 rawstd::Task<void> Backend::_set_object(

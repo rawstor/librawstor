@@ -59,7 +59,7 @@ keep `0x0b`/`0x0c`.
 | `0x04` | `ALLOCATE` | OST | Allocate | — |
 | `0x05` | `RELEASE` | OST | Basic (non-nil `snapshot_id`: that version only) | — |
 | `0x06` | `LIST` | OST, MDS | List | List rows |
-| `0x08` | `LOCATION_INFO` | OST, MDS | Basic (unused) | `RawstorLocationInfo` (the MDS sums every OST in its topology that answers) |
+| `0x08` | `LOCATION_INFO` | OST | Basic (unused) | `RawstorLocationInfo` |
 | `0x09` | `FLUSH` | OST | Basic (unused) | — |
 | `0x0a` | `WRITE_ZEROES` | OST | IO (`flags`: `SYNC`, `UNMAP`) | — |
 | `0x0b` | `SET_SYNC_STATE` | OST | SyncState | — |
