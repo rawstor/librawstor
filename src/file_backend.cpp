@@ -32,10 +32,9 @@ namespace {
 
 // One chunk's own directory: <location>/<uuid>/<offset>[/<snapshot_id>]
 // -- self-describing (docs/mds.md, "Chunk identity"): `uuid` is the
-// volume's own id for every one of its chunks (mds::Backend no longer
-// scrambles it), `offset` (0 for a plain object or a volume's own
-// chunk 0 -- the two are indistinguishable at this layer by design)
-// disambiguates which chunk of that id this is, always its own path
+// volume's own id for every one of its chunks, `offset` (0 for a plain object
+// or a volume's own chunk 0 -- the two are indistinguishable at this layer by
+// design) disambiguates which chunk of that id this is, always its own path
 // component (never omitted, unlike the id/offset/snapshot_id path *target
 // strings* use -- see TargetPath's own doc comment in target.hpp for why
 // those stay optional; a physical directory layout has no such

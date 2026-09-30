@@ -1168,12 +1168,10 @@ rawstd::DetachedTask Client::_create_snapshot(
         std::string target = rawstd::URI::uris(targets);
         // `target` already carries the bound snapshot_id (_targets() above)
         // -- rawstor_target_create_snapshot() takes that as-is (its own
-        // mode 1, doc comment) and does the actual CoW; create() itself no
-        // longer accepts a bound target at all (rejects it with -EINVAL,
-        // its own doc comment) now that create_snapshot() is the only
-        // entry point for this. The resulting target string it also
-        // returns is discarded -- this wire command only reports
-        // success/failure.
+        // mode 1, doc comment) and does the actual CoW; it is the only
+        // entry point for this (create() rejects a bound target with
+        // -EINVAL). The resulting target string it also returns is
+        // discarded -- this wire command only reports success/failure.
         //
         // NULL/0 asks for the snapshot target string's own length alone --
         // the same snprintf(NULL, 0, ...) idiom rawstor_target_create_

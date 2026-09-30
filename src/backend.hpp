@@ -87,7 +87,7 @@ public:
     // (ChunkGroups), not individual offsets: a concrete backend never
     // splits one id's own offsets across two pages. A concrete backend
     // implements this by re-deriving its own full, sorted-by-id listing
-    // each call (as today) and resuming from the first id strictly
+    // each call and resuming from the first id strictly
     // greater than `token` (e.g. std::upper_bound).
     //
     // A non-nil `id` filters the listing down to that one id (nil lists
@@ -96,9 +96,10 @@ public:
     // and `token`/`limit` play no part (`token` comes back nil, nothing
     // left to page through). This is how a caller learns every real
     // chunk offset one object has (Target::chunks(),
-    // rawstor_target_chunks()), without a separate lookup of its own.
+    // rawstor_target_chunks()) when the target string itself doesn't
+    // spell them out -- only an mds:// target asks the backend this way.
     // mds::Backend, which can't enumerate objects at all (ENOTSUP for a
-    // nil `id`), answers the filtered form off its own WireMap instead.
+    // nil `id`), answers the filtered form off its own WireMap.
     virtual rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
         RawstdUUID& token
@@ -232,10 +233,9 @@ public:
     // Grows `id` to `new_size` (grow-only -- docs/mds.md: shrink
     // interacts with GC and snapshots, deferred past v1). Default:
     // ENOTSUP, covering every backend a plain (non-mds://) target
-    // addresses directly -- their own size is fixed at create() time,
-    // same as today. mds::Backend overrides this with the real thing
-    // (Object::resize()'s former per-chunk materialization logic);
-    // `offset` is always 0 there (a single mds:// URI is never
+    // addresses directly -- their own size is fixed at create() time.
+    // mds::Backend overrides this with the real per-chunk
+    // materialization; `offset` is always 0 there (a single mds:// URI is never
     // itself split into chunks -- resize operates on the whole volume).
     virtual rawstd::Task<void> resize(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,

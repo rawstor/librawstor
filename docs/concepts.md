@@ -293,7 +293,7 @@ right after the UUID: `ost://host:port/<uuid>/100000` (hexadecimal --
 `ost://host:port/<uuid>/100000/018f4e2a-3000-7000-8000-000000000001`).
 Offset and snapshot are told apart from an arbitrary preceding location
 path by shape alone (a UUID-shaped segment vs. a hexadecimal one):
-`Target::parse_path()` (src/target.hpp) reads the identity off the
+`parse_target_path()` (src/target.hpp) reads the identity off the
 *end* of the path. A trailing run of UUID-shaped segments is a snapshot
 chain candidate only if a valid hexadecimal offset (and another UUID,
 the id) precede it — the *physical, with a bound snapshot* shape above;

@@ -140,9 +140,8 @@ Topology Topology::parse(std::istream& in) {
             );
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
-        // One URI per entry: several comma-separated URIs would make one
-        // placement slot several copies, which nothing downstream
-        // accounts for yet.
+        // One URI per entry: an entry is one placement slot, i.e. one
+        // member with one vote in the mirror quorum (docs/mds.md).
         if (rawstd::URI::uriv(location.c_str()).size() != 1) {
             rawstd_error(
                 "Topology line %zu: expected a single location URI: %s\n",

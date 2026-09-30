@@ -104,11 +104,10 @@ public:
     // MDS-orchestrated snapshot (docs/mds.md, "Snapshots (stage 2)"):
     // `snapshot_id` is the caller's own already-generated version id (like
     // every object id -- client-generated, single point of generation,
-    // Target::create()'s own bound-snapshot contract, target.h). No more
-    // separate "assign" step (there used to be one, back when the MDS
-    // itself handed out a monotonic counter's next value): a client-
-    // generated id can never collide with a crashed attempt's leftovers,
-    // so there's nothing left for the MDS to reserve ahead of time.
+    // rawstor_target_create_snapshot(), target.h). There is no separate
+    // "assign" step: a client-generated id can never collide with a
+    // crashed attempt's leftovers, so there's nothing for the MDS to
+    // reserve ahead of time.
     // backend-CoWs every reachable chunk member under it (descending
     // logical index, so a crash midway always leaves a hole at the low
     // indices -- the reconstruct scan tells that apart from a
@@ -126,11 +125,8 @@ public:
     // own WireMap), then reports every one of that chunk's own real
     // members' real mirror consistency state -- querying every one of
     // that chunk's own real member locations concurrently, the same
-    // direct-to-Slot fan-out Target's own resolve_meta() uses for a
-    // plain target's mirror set (target.cpp's own comment; duplicated
-    // here rather than shared, since this call's own locations are
-    // already resolved off a live WireMap, with nothing left of that
-    // resolution for a shared helper to still do). `id`/`offset` at the
+    // resolve_meta() (target.hpp) a plain target's mirror set uses.
+    // `id`/`offset` at the
     // *outer* Target level (Slot::open()/Chunk::create(), see this
     // class's own doc comment) is always chunk 0's -- the whole object
     // trusted outright there (mirrors == 1 at that level), taking this

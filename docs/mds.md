@@ -120,7 +120,7 @@ in four places and spent on one addition:
 | Explicit stored map (not CRUSH-computed) | Keep | ≤ 1024 entries/TiB; placement function stays the generator |
 | Weighted rendezvous (HRW) placement | Keep | deterministic, minimal reshuffle, stateless, O(N) fine at this scale |
 | Hand-rolled packed structs, count prefixes, `format_version` | Keep | codebase idiom, no new dependency |
-| Chunk identity rides `RawstorFrameBasicBody` unchanged | Keep | see *Chunk identity* |
+| Chunk identity rides `RawstorFrameBasicPayload` unchanged | Keep | see *Chunk identity* |
 | Opaque stable `ost_id` (UUID), resolved via topology | Keep | required for HRW stability |
 | epoch-fence (client cache vs per-chunk hard gate) | Keep, **collapsed + renamed** | one counter `map_epoch` per object; the per-slot fence is a stored *watermark* of it, not a second counter; the mirroring per-copy `mirror_epoch` (already shipped) provably cannot be merged in — see *epoch-fence* |
 | Shard by `id`; primary + replicated log per shard; reads from any replica | **Replaced in v1: single MDS instance** | witness availability does not require MDS replication (a dead witness = one lost vote); the map is rebuildable by scan; replication is v2, the epoch/CAS model below is compatible with primary+log |
@@ -134,24 +134,25 @@ physical chunk_id = (id, chunk_offset, version, slot_index)
 
 A logical chunk has `width` slots (`slot_index` 0..width-1); see *Redundancy*.
 `version` is a UUID (`snapshot_id`, client-generated like every other id --
-never a monotonic counter), so it no longer fits the plain `uint64_t val`
-field the id/chunk_offset-only commands (META, OBJ_RESIZE,
-OBJ_REMOVE) still share via `RawstorFrameBasicBody`:
+never a monotonic counter), carried in its own field of the one payload
+every chunk-level command shares:
 
 ```c
-struct RawstorFrameBasicBody {
-    uint8_t  obj_id[16];   // = id
-    uint64_t offset;       // = chunk_offset (logical_index * chunk_size)
-    uint64_t val;          // no version component -- these commands never bind one
+struct RawstorFrameBasicPayload {
+    uint8_t  object_id[16];  // = id
+    uint64_t offset;         // = chunk_offset (logical_index * chunk_size)
+    uint8_t  snapshot_id[16]; // = version; nil = live
+    uint64_t val;
 } __attribute__((packed));
 ```
 
-Every command that *does* carry a `version` (SET_OBJECT, RELEASE,
-OBJ_OPEN, SNAPSHOT, OBJ_SNAP_REMOVE) instead rides its own
-`RawstorFrameSnapBody { obj_id[16]; offset; snapshot_id[16]; }`, with
-`snapshot_id` nil for "live" -- RELEASE removes the live version this way,
-non-nil the same command instead removes that one snapshot (the former
-separate SNAP_REMOVE command, retired: protocol.h's own doc comment).
+Every chunk-level command (SET_OBJECT, RELEASE, SNAPSHOT, META, …) and
+OBJ_OPEN rides this payload; `snapshot_id` nil means "live" -- RELEASE
+removes the live version this way, and with a non-nil `snapshot_id` the
+same command removes that one snapshot. Commands that never bind a version
+leave it nil. OBJ_RESIZE, OBJ_REMOVE and OBJ_SNAP_REMOVE ride
+`RawstorFrameObjOpPayload { id[16]; idempotency_key[16]; snapshot_id[16];
+val; }` instead (see *Idempotent mutations*).
 On-OST layout (the slot's home, also where `chunk_meta` lives). `version`
 is part of the *logical* identity only: on CoW backends a version materializes as
 a **native snapshot of the slot's live volume**, not a separately named one —
@@ -162,15 +163,13 @@ number:
 | Backend | Slot home + metadata | Versions (`snapshot_id`) |
 |---------|----------------------|----------------------|
 | `file://` | dir `<id>/<offset>/`, `data` + `meta` inside it | `-ENOTSUP` in v1 |
-| `lvm://`  | thin LV `<id>[-<offset>]`, meta in LVM tags | thin snapshot LV |
-| `zfs://`  | zvol `<id>[:<offset>]`, meta in user properties | `@s<snapshot_id>` |
+| `lvm://`  | thin LV `<id>-<offset>`, meta in LVM tags | thin snapshot LV |
+| `zfs://`  | zvol `<id>:<offset>`, meta in user properties | `@s<snapshot_id>` |
 
-(`file://`'s own `<offset>` directory is never omitted, even "0" --
-unlike the target-string syntax's own offset path segment
-(docs/concepts.md, "Chunk offset"), a physical directory
-layout has no ambiguity to avoid by omitting it, so there's nothing to
-gain from doing so; `lvm://`/`zfs://` still omit it when 0, same as
-before. `slot_index` isn't part of the physical name at all: each
+(The physical `<offset>` is never omitted, even "0" -- unlike the
+target-string syntax's own offset path segment (docs/concepts.md, "Chunk
+offset"), a physical name has no ambiguity to avoid by omitting it.
+`slot_index` isn't part of the physical name at all: each
 mirror of one chunk gets its own URI in the target string that
 addresses it -- comma-separated, same as any plain mirrored target --
 rather than a naming-scheme component; `-` is LVM's own separator since
@@ -180,21 +179,20 @@ its naming forbids `:`.)
 
 Mirroring (implemented) already stores a per-copy consistency tuple on every
 backend (`.spec` / LVM tags / ZFS user properties) and moves it over the wire
-as `RawstorFrameMetaBody { size, epoch, sync_id, sync_id_history[4],
-state }`. `chunk_meta` **extends** that record with placement identity instead
+as `RawstorFrameMetaPayload { size, epoch, sync_id, sync_id_history[4],
+state, … }`. `chunk_meta` **extends** that record with placement identity instead
 of inventing a second one:
 
 ```
 chunk_meta {
   magic, format_version
-  // placement identity (new). id/logical_index are no longer
-  // stored here as of the self-describing rename (v1, implemented):
-  // obj_id already *is* id (see above), logical_index is
-  // chunk_offset / chunk_size, and chunk_offset already rides the wire
-  // unconditionally (RawstorFrameBasicBody.offset above / its own
-  // dedicated field on ALLOCATE) -- only chunk_size is still worth
-  // storing here (needed to invert chunk_offset back into logical_index
-  // without a separate lookup).
+  // placement identity. id/logical_index are not stored here:
+  // object_id already *is* id (see above), logical_index is
+  // chunk_offset / chunk_size, and chunk_offset rides the wire
+  // unconditionally (RawstorFrameBasicPayload.offset above / its own
+  // dedicated field on ALLOCATE) -- only chunk_size is stored (needed
+  // to invert chunk_offset back into logical_index without a separate
+  // lookup).
   chunk_size
   version                  // snapshot_id this slot belongs to; nil = live
   redundancy               // mirror{R} | ec{k,m} — how to decode
@@ -755,8 +753,8 @@ reconstruct scan (below).
   offset segment is mandatory once a snapshot follows it,
   docs/concepts.md's own "Chunk offset"), `snapshot_id` a UUID
   string; the wire carries it in SET_OBJECT's/OBJ_OPEN's own
-  `snapshot_id[16]` field (`RawstorFrameSnapPayload`) -- META never carried
-  a version at all, it only ever answers about the live object. Opening a
+  `snapshot_id[16]` field (`RawstorFrameBasicPayload`) -- META leaves it
+  nil, it only ever answers about the live object. Opening a
   snapshot **bypasses the mirror state machine
   entirely** — no metadata compare, no quorum, no barriers, no resync, no
   probe. That is not just an optimization: the frozen copy state is DIRTY
@@ -972,10 +970,8 @@ flowchart TB
 No dedicated batch scan opcode: this is the same `LIST` + per-object `META`
 a caller composing the scan itself would do anyway, at O(n) round trips
 per OST rather than one — an acceptable cost for a scan that only runs on
-`rawstor-mds --reconstruct`, not a hot path (an earlier version of this
-design had a single-round-trip `CMD_LIST_CHUNKS` batch opcode; retired for
-the code path it duplicated without a use case that needed the round-trip
-savings badly enough to justify it).
+`rawstor-mds --reconstruct`, not a hot path -- no use case needs the
+round-trip savings badly enough to justify a second code path.
 
 This same scan doubles as a scrub / consistency check. Witness records are
 **not** reconstructed (see the two state classes); after a from-scratch

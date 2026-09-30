@@ -750,10 +750,10 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
 
-        // logical_index is no longer carried on the wire directly -- it's
-        // derived from the chunk's own byte offset (rawstor_target_
-        // offset(), ScanRecord's own doc comment), the same formula
-        // chunk_slot_target() in mds_backend.cpp used to stamp it.
+        // logical_index is not carried on the wire -- it's derived from
+        // the chunk's own byte offset (rawstor_target_offset(),
+        // ScanRecord's own doc comment), the inverse of the formula
+        // chunk_slot_target() in mds_backend.cpp stamps the offset with.
         uint64_t logical_index = r.offset / o.chunk_size;
 
         Chunk& c = o.chunks[logical_index];

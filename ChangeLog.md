@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rawstor_target_open()` gains an `int flags` argument (`0` or `RAWSTOR_READONLY`: no write quorum needed, every write fails `-EROFS`). Breaking C API change.
 - The transitional `rawstor_object_*2()`/`rawio_*2()` functions are gone: their callback-based shapes (including `rawstor_object_pwrite()`/`pwritev()`'s `sync` argument and an `ssize_t` result for every `rawio_*()` callback) now live under the original names. Breaking C API change.
 - Target strings returned by `rawstor_location_list()`/`_create()` always carry an explicit chunk offset segment (`<uuid>/0`); a target without one still parses as offset 0.
+- `rawstor-vhost`/`rawstor-vhost-qemu`/`rawstor testio`'s `--queue-size` defaults raised from 256 to 4096, matching `rawstor-ost`.
 - The OST wire protocol changed incompatibly (`LIST` entries carry a chunk offset, `RELEASE` also removes a snapshot version, new `META`/`SET_SYNC_STATE`/`SNAPSHOT`/`OBJ_*` commands); `rawstor-ost` and its clients must be upgraded together.
 
 ### Removed
@@ -92,7 +93,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `rawstor-ost --queue-size`'s default raised from 256 to 4096, now that per-session write concurrency is bounded (see Fixed below) and no longer needs a small ring to keep worst-case exposure in check.
-- `rawstor-vhost`/`rawstor-vhost-qemu`/`rawstor-mds`/`rawstor testio`'s own `--queue-size` defaults raised from 256 to 4096 to match `rawstor-ost`'s own default above.
 - `rawstor-ost.service` exposes `--queue-size`/`--write-throttle-limit`/`--write-backlog-capacity` as the `QUEUE_SIZE`/`WRITE_THROTTLE_LIMIT`/`WRITE_BACKLOG_CAPACITY` environment variables, overridable in `/etc/rawstor-ost.conf` like the rest of its tuning knobs.
 
 ### Fixed

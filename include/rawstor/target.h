@@ -137,12 +137,10 @@ struct RawstorObjectSyncState {
  * rawstor_target_spec()/_create(), which is used both ways) plus this
  * copy's mirror consistency identity (sync_state, the part
  * rawstor_target_set_member_sync_state() can actually change) and its own
- * member_role. `spec.width` is filled in by rawstor_target_meta() itself
- * the same way rawstor_target_spec() fills its own -- the target's own
- * per-chunk copy count: computed locally (the number of URIs in the
- * target string) for a plain target, or trusted from whichever copy
- * answered for an mds:// one (its own configured redundancy, which no
- * URI count could reveal -- an mds:// target is always a single URI).
+ * member_role. `spec.width` is that copy's own persisted width, reported
+ * verbatim (rawstor_target_create() stamps it as the chunk's URI count for
+ * a multi-URI mirror set, or the configured redundancy for an mds://
+ * object); unlike rawstor_target_spec(), nothing is recomputed locally.
  *
  * member_role lives here rather than on RawstorObjectSpec: unlike every
  * field RawstorObjectSpec actually carries, it isn't something every
@@ -226,11 +224,8 @@ int rawstor_target_spec(
  * RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE` rather than failing the whole
  * call or being left out -- the entry's own position in @p metas is what
  * ties it back to that URI, so skipping it would lose that. `spec.width`
- * in every entry that did answer is filled in the same way
- * rawstor_target_spec() fills its own -- the chunk's own per-copy count,
- * computed locally (for an ordinary multi-URI mirror set, simply the
- * number of URIs in it) or trusted from the answering copy itself for a
- * single-URI chunk (including an mds:// one -- see below).
+ * in every entry that did answer is that copy's own persisted width,
+ * reported verbatim (see RawstorObjectMeta).
  *
  * Legacy copies created before metadata support report size only, with
  * state CLEAN, epoch 0 and sync_id 0 -- distinguishable from a URI that
@@ -728,12 +723,11 @@ int rawstor_target_snapshot_id(
  *
  * Every version id is client-generated, like every object id (see
  * rawstor_location_create()) -- there is no MDS-assigned mode: an
- * mds://host:port/<id> @p target's own MDS no longer hands out the id
- * itself, it just registers whichever one the caller already generated
- * and embedded in the resulting target, once every reachable chunk member
- * has been backend-CoW'd under it (docs/mds.md, "Snapshots (stage 2)").
- * Three ways the id actually used is picked, all resolved synchronously
- * (no I/O needed for any of them):
+ * mds://host:port/<id> @p target's own MDS just registers whichever id
+ * the caller already generated and embedded in the resulting target, once every
+ * reachable chunk member has been backend-CoW'd under it (docs/mds.md,
+ * "Snapshots (stage 2)"). Three ways the id actually used is picked, all
+ * resolved synchronously (no I/O needed for any of them):
  * - @p target already names a specific version of its own (its own path
  *   carries a trailing snapshot_id -- e.g. as read back by
  *   rawstor_target_snapshot_id(), or as this same function itself already
@@ -757,13 +751,21 @@ int rawstor_target_snapshot_id(
  * URI otherwise, i.e. exactly what rawstor_target_snapshot_id() would read
  * back off it -- is written into @p snapshot_target, the same synchronous,
  * before-any-I/O, snprintf()-style convention as rawstor_location_create()'s
- * own @p target/@p size.
+ * own @p target/@p size:
+ * - If the string fits, it is written before this call returns, the
+ *   snapshot is queued, and @p cb eventually reports the string's length
+ *   (excluding the terminating null; always less than @p size) once the
+ *   snapshot is taken, or a negative errno if that fails.
+ * - If @p snapshot_target is too small, no snapshot is taken and @p cb is
+ *   invoked synchronously, from within this same call, with the required
+ *   length (excluding the terminating null; always >= @p size).
  *
  * @param queue    Queue used to drive the asynchronous snapshot.
  * @param target   Target string, see rawstor_target_spec().
  * @param snapshot_id  The version id's UUID string, or NULL -- see above.
  * @param snapshot_target  Output buffer for the snapshot's own target
- *                 string, written synchronously before this call returns
+ *                 string (may be NULL when @p size is 0), written
+ *                 synchronously before this call returns
  *                 -- same truncation convention as
  *                 rawstor_location_create()'s own @p target (size it the
  *                 same way, e.g. 65536 bytes, not rawstor_target_id()'s
@@ -771,20 +773,21 @@ int rawstor_target_snapshot_id(
  * @param size     Size of @p snapshot_target in bytes (including space for
  *                 the terminating null byte).
  * @param cb       Callback invoked on completion.
- *                 - @p result is zero on success, or a negative errno on
- *                   failure (@c -EINVAL if @p target already names its own
- *                   bound version and @p snapshot_id is also non-NULL --
- *                   see above; @c -ENOTSUP if a backend has no CoW --
+ *                 - @p result is the snapshot target string's length (see
+ *                   above) on success or when @p snapshot_target was too
+ *                   small, or a negative errno on failure (@c -ENOTSUP if a
+ *                   backend has no CoW --
  *                   file://, classic LVM -- no fallback copies are made
  *                   behind the caller's back; @c -EIO if no chunk member
  *                   survived, mds:// target only).
  *                 - @p data is the same pointer passed as @p data below.
  * @param data     User-defined context pointer passed unchanged to @p cb.
  *
- * @return The number of characters written to @p snapshot_target (see
- *         rawstor_location_create()) if the snapshot was successfully
- *         queued; negative errno on immediate failure (in which case
- *         @p cb is never invoked).
+ * @return 0 if @p cb has been (or will be) invoked -- synchronously
+ *         (buffer too small) or once the snapshot completes; negative errno
+ *         on immediate failure (e.g. @c -EINVAL if @p target already names
+ *         its own bound version and @p snapshot_id is also non-NULL), in
+ *         which case @p cb is never invoked.
  *
  * @see rawstor_target_create
  * @see rawstor_target_remove

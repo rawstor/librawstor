@@ -24,8 +24,8 @@ namespace {
 
 // A freshly-created, clean object's META answer -- used by every
 // OstIOTest that opens an object via the local Object class below:
-// Target::open() fetches this from Slot::open()'s own combined
-// SET_OBJECT+META step (see its own comment), for every reachable
+// Target::open() fetches this from the META Slot::open() sends right
+// after SET_OBJECT (see its own comment), for every reachable
 // member -- Chunk::create()'s own overall spec comes straight out of
 // that same answer, no separate round trip.
 const RawstorFrameMetaPayload clean_meta_1mb = {
@@ -566,13 +566,11 @@ TEST(OstIOTest, write_fail) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // The first session is the one Target::open() itself drives: its own
-    // combined SET_OBJECT+META (Backend::set_object(), see its own
-    // comment) succeeds. Every session after it is a lower-level
-    // reconnect from the write retry below, which never goes through
-    // Target::open()/Slot::open() again (Slot::invalidate_backend()
-    // instead -- see its own comment), but it still gets that same
-    // SET_OBJECT+META round trip.
+    // The first session is the one Target::open() itself drives:
+    // Slot::open() sends SET_OBJECT (Backend::set_object()) and then META
+    // (Backend::meta()). Every session after it is a lower-level
+    // reconnect from the write retry below via Slot::invalidate_backend(),
+    // which sends the same SET_OBJECT, META pair.
     {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -694,12 +692,11 @@ TEST(OstIOTest, write_backend_error_retries_with_reconnect) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // The first session is the one Target::open() itself drives: its own
-    // combined SET_OBJECT+META (Backend::set_object(), see its own
-    // comment). The reconnect session below goes through
-    // invalidate_backend() instead (Backend::create() + set_object(),
-    // just like Target::open() itself does), so it gets that same
-    // SET_OBJECT+META round trip too.
+    // The first session is the one Target::open() itself drives:
+    // Slot::open() sends SET_OBJECT (Backend::set_object()) and then META
+    // (Backend::meta()). The reconnect session below goes through
+    // Slot::invalidate_backend() instead, which sends the same
+    // SET_OBJECT, META pair.
     {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -747,12 +744,11 @@ TEST(OstIOTest, write_hash_mismatch_reconnects) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // The first session is the one Target::open() itself drives: its own
-    // combined SET_OBJECT+META (Backend::set_object(), see its own
-    // comment). The reconnect session below goes through
-    // invalidate_backend() instead (Backend::create() + set_object(),
-    // just like Target::open() itself does), so it gets that same
-    // SET_OBJECT+META round trip too.
+    // The first session is the one Target::open() itself drives:
+    // Slot::open() sends SET_OBJECT (Backend::set_object()) and then META
+    // (Backend::meta()). The reconnect session below goes through
+    // Slot::invalidate_backend() instead, which sends the same
+    // SET_OBJECT, META pair.
     {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -792,11 +788,11 @@ TEST(OstIOTest, write_disconnect) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // The first session is the one Target::open() itself drives: its own
-    // combined SET_OBJECT+META (Backend::set_object(), see its own
-    // comment). Every lower-level reconnect from the write retry below
-    // goes through Backend::set_object() too, so it also gets that same
-    // SET_OBJECT+META round trip.
+    // The first session is the one Target::open() itself drives:
+    // Slot::open() sends SET_OBJECT (Backend::set_object()) and then META
+    // (Backend::meta()). Every lower-level reconnect from the write retry
+    // below goes through Slot::invalidate_backend(), which sends the same
+    // SET_OBJECT, META pair.
     {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -833,17 +829,16 @@ TEST(OstIOTest, write_disconnect_concurrent) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
-    // The object-open backend answers its own combined SET_OBJECT+META
-    // (Backend::set_object(), see its own comment) and *then*
-    // disconnects -- before either concurrent write further down is even
-    // attempted on it -- same as every one of its retries below.
-    // Both rawstor_object_pwrite() calls below are issued back to back
-    // with no rawio_wait_timeout() in between, so Backend::_add_op() runs
-    // for both before the client's event loop has had any chance to
-    // deliver either op's own request send completion. This is the
-    // window a stranded op used to fall into: registered in
-    // Backend::_ops, but not yet "in flight" by BackendOp::in_flight()'s
-    // old (now removed) definition.
+    // The object-open backend answers SET_OBJECT and then META (both sent
+    // by Slot::open(), see its own comment) and *then* disconnects -- before
+    // either concurrent write further down is even attempted on it -- same as
+    // every one of its retries below. Both rawstor_object_pwrite() calls below
+    // are issued back to back with no rawio_wait_timeout() in between, so
+    // Backend::_add_op() runs for both before the client's event loop has had
+    // any chance to deliver either op's own request send completion. This is
+    // the window a stranded op used to fall into: registered in Backend::_ops,
+    // but not yet "in flight" by BackendOp::in_flight()'s old (now removed)
+    // definition.
     {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -1070,11 +1065,10 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     // down; the server side only ever forget()s its bookkeeping of it
     // (see forget()'s own doc comment in server.hpp).
     server.accept("SESSION <<<");
-    // set_object() is the combined SET_OBJECT+META step now
-    // (Backend::set_object(), see its own comment) -- replicated by hand
-    // here since this test can't use Session (see the comment above),
-    // matching Session::cmd_set_object_response()/cmd_meta_response()'s
-    // own wire shape.
+    // Slot::open() sends SET_OBJECT then META (see its own comment) --
+    // replicated by hand here since this test can't use Session (see the
+    // comment above), matching
+    // Session::cmd_set_object_response()/cmd_meta_response()'s own wire shape.
     server.read(
         "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameBasic),
         [](const void*) {}
@@ -1313,11 +1307,10 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
     // Session's destructor (which would queue it too early, before any
     // of these kWrites requests has actually arrived).
     server.accept("SESSION <<<");
-    // set_object() is the combined SET_OBJECT+META step now
-    // (Backend::set_object(), see its own comment) -- replicated by hand
-    // here since this test can't use Session (see the comment above),
-    // matching Session::cmd_set_object_response()/cmd_meta_response()'s
-    // own wire shape.
+    // Slot::open() sends SET_OBJECT then META (see its own comment) --
+    // replicated by hand here since this test can't use Session (see the
+    // comment above), matching
+    // Session::cmd_set_object_response()/cmd_meta_response()'s own wire shape.
     server.read(
         "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameBasic),
         [](const void*) {}

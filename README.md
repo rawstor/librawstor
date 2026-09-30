@@ -624,7 +624,8 @@ exception involved) and is a known, already-filed, already-assigned upstream
 regression: [GCC PR c++/116880](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=116880),
 "too early coroutine destruction of `co_await`", bisected to a change in
 GCC 15's coroutine lowering. It reproduces on GCC 15.2.0 and is absent on
-GCC 13.4.0 and Clang 21.1.8 -- CI (Ubuntu 24.04, GCC 13) never hits it. There
+GCC 13.4.0 and Clang 21.1.8 -- CI's ASan job runs on `ubuntu-latest`,
+currently Ubuntu 24.04 with GCC 13, so it doesn't hit it yet. There
 is no code-level workaround (naming the awaited `Task` as a local variable,
 or removing the `try`/`catch`, both still crash); use GCC 13 (or Clang) for
 local ASan builds until upstream fixes PR 116880.

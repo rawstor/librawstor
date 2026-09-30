@@ -118,20 +118,18 @@ struct RawstorFrameHead {
  * non-chunked object) for META; unused (0) for LOCATION_INFO/FLUSH.
  * `snapshot_id` binds to a previously snapshotted version instead of the
  * live one, for the handful of commands that use it (SET_OBJECT, RELEASE,
- * SNAPSHOT, OBJ_OPEN, OBJ_SNAP_REMOVE -- each command's own doc comment
- * above says which; nil means "the live version" where that's a
- * meaningful state for the command, SET_OBJECT/RELEASE/OBJ_OPEN, while
- * SNAPSHOT/OBJ_SNAP_REMOVE always carry a real, non-nil version); left
- * nil (unused) by every other command. `val` is command-specific (e.g.
- * the new size for OBJ_RESIZE, the open flags -- RAWSTOR_READONLY,
+ * SNAPSHOT, OBJ_OPEN -- each command's own doc comment above says which;
+ * nil means "the live version" where that's a meaningful state for the
+ * command, SET_OBJECT/RELEASE/OBJ_OPEN, while SNAPSHOT always carries a
+ * real, non-nil version); left nil (unused) by every other command. `val`
+ * is command-specific (e.g. the open flags -- RAWSTOR_READONLY,
  * <rawstor/target.h>, or 0 -- for SET_OBJECT, which a bound snapshot
- * always carries); unused (0) for RELEASE/SNAPSHOT/OBJ_OPEN/
- * OBJ_SNAP_REMOVE. `snapshot_id` and `val` are otherwise never both
- * meaningful on the same command (SET_OBJECT is the one exception), but
- * living in one struct means
- * every command that carries object_id/offset shares one wire shape and
- * one C++-side request path (Backend::_basic_request(), ost_backend.cpp)
- * instead of two nearly identical ones.
+ * always carries); unused (0) for RELEASE/SNAPSHOT/OBJ_OPEN. `snapshot_id` and
+ * `val` are otherwise never both meaningful on the same command (SET_OBJECT is
+ * the one exception), but living in one struct means every command that carries
+ * object_id/offset shares one wire shape and one C++-side request path
+ * (Backend::_basic_request(), ost_backend.cpp) instead of two nearly identical
+ * ones.
  */
 struct RawstorFrameBasicPayload {
     uint8_t object_id[16];
@@ -254,12 +252,11 @@ struct RawstorFrameSyncState {
  * value -- Target::create() already rejects a non-power-of-two chunk_size
  * before it ever reaches the wire, so a shift always round-trips exactly,
  * and it's cheaper on the wire besides; 0 means no chunking, same meaning
- * as chunk_size == 0. Unlike an earlier version of this payload, no
- * volume_id/logical_index/snapshot_id fields are carried here any more --
- * object_id already *is* the volume's own id for every one of its chunks
+ * as chunk_size == 0. No volume_id/logical_index/snapshot_id fields are
+ * carried: object_id is the volume's own id for every one of its chunks
  * (docs/mds.md, "Chunk identity": obj_id = volume_id), chunk_offset
- * disambiguates which chunk, and this backend's own snapshot_id is always 0
- * at create time (RAWSTOR_CMD_SNAPSHOT registers one afterwards) -- see
+ * disambiguates which chunk, and snapshot_id is always nil at create
+ * time (RAWSTOR_CMD_SNAPSHOT registers one afterwards) -- see
  * RawstorObjectSpec's own doc comment in target.h.
  */
 struct RawstorFrameAllocatePayload {
@@ -326,10 +323,11 @@ struct RawstorFrameMetaPayload {
 
 /*
  * Object (MDS) wire structs -- docs/mds.md, "Wire protocol" /
- * "MDS data model": a whole, possibly multi-chunk mds:// object. OBJ_OPEN,
- * OBJ_RESIZE and OBJ_REMOVE ride RawstorFrameBasicPayload (object_id =
- * id; val = snapshot_id for open, the new size for resize) and need no
- * struct of their own.
+ * "MDS data model": a whole, possibly multi-chunk mds:// object. OBJ_OPEN
+ * rides RawstorFrameBasicPayload (object_id = id, snapshot_id = the bound
+ * version, nil = live); OBJ_RESIZE, OBJ_REMOVE and OBJ_SNAP_REMOVE ride
+ * RawstorFrameObjOpPayload below; OBJ_CREATE and OBJ_SNAP_COMMIT have
+ * their own payloads.
  */
 
 /* Redundancy is a policy, not a wire concept: mirror in v1. */
@@ -457,7 +455,7 @@ struct RawstorFrameObjChunkSlot {
  * client's own already-generated version id (like every object id) --
  * never nil, nil is reserved for the live version.
  *
- * OBJ_SNAP_REMOVE rides RawstorFrameBasicPayload (object_id = id,
+ * OBJ_SNAP_REMOVE rides RawstorFrameObjOpPayload (id, idempotency_key,
  * snapshot_id = the version to remove); its response payload is `res`
  * RawstorFrameObjSnapMemberPayload records: what was registered, for the
  * fan-out destroy.

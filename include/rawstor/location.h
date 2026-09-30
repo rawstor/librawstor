@@ -240,7 +240,8 @@ int rawstor_location_list(
  *                  Only read while this call is being queued -- need not
  *                  stay valid until @p cb runs.
  * @param target    Output buffer that will receive the full target string
- *                  (e.g., "ost://host:port/<uuid>"). Must not be NULL. Filled
+ *                  (e.g., "ost://host:port/<uuid>"). May be NULL only when
+ *                  @p size is 0. Filled
  *                  synchronously (before this call returns) whenever the
  *                  string fits, whether or not the create itself later
  *                  succeeds.
