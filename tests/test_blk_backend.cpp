@@ -567,11 +567,13 @@ TEST(BackendChunksTest, ost_reports_every_offset_of_id) {
 
 // F10 (docs/mirroring.md) across the wire: a real rawstor-ost missing
 // its own copy reports it as ENOENT (its own local open finds no copy at
-// all), not ENOTCONN, so a client opening a file:// + ost:// mirror
-// recreates that copy through the OST like any other missing member.
+// all), not ENOTCONN, so a client opening a file:// + file:// + ost://
+// mirror recreates that copy through the OST like any other missing
+// member (the two file:// copies being the surviving majority).
 TEST(ChunkF10Test, missing_copy_recreated_over_ost) {
     rawstor::tests::ObjectEnv env(8794, 8795);
     rawstor::tests::TmpDir dir;
+    rawstor::tests::TmpDir dir2;
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(16);
 
     RawstdUUID id;
@@ -580,27 +582,29 @@ TEST(ChunkF10Test, missing_copy_recreated_over_ost) {
     rawstd_uuid_to_string(&id, &uuid_string);
 
     rawstd::URI file_location(dir.uri());
+    rawstd::URI file_location2(dir2.uri());
     rawstd::URI ost_location("ost://127.0.0.1:8795");
     rawstd::URI ost_uri(ost_location, uuid_string);
 
     RawstorObjectSpec spec{
         .size = 1u << 20,
-        .width = 2,
+        .width = 3,
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
     };
     run(*queue,
-        rawstor::Target({rawstd::URI(file_location, uuid_string), ost_uri})
+        rawstor::Target({rawstd::URI(file_location, uuid_string),
+                         rawstd::URI(file_location2, uuid_string), ost_uri})
             .create(*queue, spec));
 
     run(*queue, rawstor::Target({ost_uri}).remove(*queue));
 
     std::unique_ptr<rawstor::Chunk> chunk =
-        run(*queue,
-            rawstor::Chunk::create(
-                *queue, {file_location, ost_location}, id, 0, 0, RawstdUUID{}
-            ));
+        run(*queue, rawstor::Chunk::create(
+                        *queue, {file_location, file_location2, ost_location},
+                        id, 0, 0, RawstdUUID{}
+                    ));
     run(*queue, chunk->close());
 
     std::vector<RawstorObjectMeta> metas =

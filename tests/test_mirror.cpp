@@ -792,11 +792,87 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
 }
 
 // F10 (docs/mirroring.md): one member's copy is missing from a location
-// that's still there -- open() recreates it blank from the survivor's
-// own spec, and online resync fills it back in.
+// that's still there -- with the other two a majority on their own,
+// open() recreates it blank from a survivor's own spec, and online
+// resync fills it back in.
 TEST(MirrorQuorumTest, missing_copy_recreated_and_resynced) {
     Queue queue(16);
-    Members members(2, "00000000-0000-7000-8000-0000000000aa");
+    Members members(3, "00000000-0000-7000-8000-0000000000aa");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* writer = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &writer), 0);
+    std::string ping = "ping";
+    object_write(queue, writer, ping.data(), ping.size(), 0, 0);
+    object_close_clean(queue, writer);
+
+    members.drop_copy(2);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    EXPECT_TRUE(
+        wait_member_synced(queue, members.target(0), members.target(2))
+    );
+    object_close_clean(queue, object);
+
+    RawstorObjectMeta a{};
+    RawstorObjectMeta c{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
+    ASSERT_EQ(target_meta(queue, members.target(2), &c), 0);
+    EXPECT_EQ(a.sync_state.sync_id, c.sync_state.sync_id);
+    EXPECT_EQ(c.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(c.spec.size, spec.size);
+
+    RawstorObject* member = nullptr;
+    ASSERT_EQ(target_open(queue, members.target(2), &member), 0);
+    std::string data(4, '\0');
+    object_read(queue, member, data.data(), data.size(), 0);
+    EXPECT_EQ(data, "ping");
+    EXPECT_EQ(object_close(queue, member), 0);
+}
+
+// A recreated blank copy never counts toward the quorum: with one copy
+// missing and another unreachable, the lone survivor is not a majority,
+// so nothing is recreated and the open fails -- the unreachable copy may
+// hold writes the survivor never saw.
+TEST(MirrorQuorumTest, recreated_copy_does_not_make_quorum) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000ad");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    members.drop_copy(1);
+    members.drop(2);
+
+    RawstorObject* object = nullptr;
+    ssize_t res = target_open(queue, members.target_all(), &object);
+    EXPECT_EQ(res, -ENOTCONN);
+    EXPECT_EQ(object, nullptr);
+    EXPECT_FALSE(fs::exists(members.dat(1)));
+}
+
+// Two copies, one missing: the survivor alone is not a majority, so the
+// missing copy is not recreated automatically and the open fails. Once
+// the copy is recreated by hand, the next open resyncs it from the
+// survivor.
+TEST(MirrorQuorumTest, two_way_missing_copy_recreated_by_hand) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000ae");
 
     RawstorObjectSpec spec{
         .size = 1ull << 20,
@@ -816,19 +892,17 @@ TEST(MirrorQuorumTest, missing_copy_recreated_and_resynced) {
     members.drop_copy(1);
 
     RawstorObject* object = nullptr;
+    EXPECT_EQ(target_open(queue, members.target_all(), &object), -ENOTCONN);
+    EXPECT_EQ(object, nullptr);
+    EXPECT_FALSE(fs::exists(members.dat(1)));
+
+    ASSERT_EQ(target_create(queue, members.target(1), spec), 0);
+
     ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
     EXPECT_TRUE(
         wait_member_synced(queue, members.target(0), members.target(1))
     );
     object_close_clean(queue, object);
-
-    RawstorObjectMeta a{};
-    RawstorObjectMeta b{};
-    ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
-    ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
-    EXPECT_EQ(a.sync_state.sync_id, b.sync_state.sync_id);
-    EXPECT_EQ(b.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
-    EXPECT_EQ(b.spec.size, spec.size);
 
     RawstorObject* member = nullptr;
     ASSERT_EQ(target_open(queue, members.target(1), &member), 0);

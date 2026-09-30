@@ -201,9 +201,16 @@ connect_one(rawio::Queue& queue, const rawstd::URI& location) {
 // then marks it STALE next to any established sync set, and online
 // resync fills it from a survivor, same as any other stale member (or
 // keeps it IN_SYNC alongside survivors that were never written either).
-// Only rebuilt from a surviving copy, whose own META gives its size:
-// with every copy missing there's nothing to vouch that the chunk never
-// held data, so that stays an error rather than a silent blank chunk.
+// Only rebuilt when the surviving copies alone are a majority of the
+// chunk's members (more than half): a blank copy holds none of the
+// acknowledged writes, so it must never be what makes up a quorum --
+// otherwise a surviving copy that fell behind could be opened as the
+// authoritative one and the newer, lost copy's writes silently dropped.
+// Below that (e.g. one of two copies left), the open fails the ordinary
+// quorum check and the missing copy is recreated by hand once the
+// survivor is known to be current. With every copy missing there's
+// nothing to vouch that the chunk never held data either. The survivors'
+// own META gives the recreated copy's size.
 // Never for a read-only open (it writes nothing) or a bound snapshot
 // version (a CoW version can't be regenerated from live data). A member
 // whose recreate fails just stays unreachable.
@@ -234,6 +241,19 @@ rawstd::Task<void> recreate_missing(
         size = std::max(size, metas[i].spec.size);
     }
     if (survivor == nullptr) {
+        co_return;
+    }
+
+    size_t survivors =
+        static_cast<size_t>(std::count(opened.begin(), opened.end(), true));
+    if (survivors * 2 <= locations.size()) {
+        rawstd_error(
+            "Mirror member copy missing, not recreated: only %zu of %zu "
+            "copies survive, not a majority; recreate it explicitly "
+            "(rawstor create on its location) once the surviving copy is "
+            "known to be current\n",
+            survivors, locations.size()
+        );
         co_return;
     }
 
