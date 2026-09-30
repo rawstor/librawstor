@@ -240,7 +240,8 @@ rawstd::Task<void> recreate_missing(
         }
         size = std::max(size, metas[i].spec.size);
     }
-    if (survivor == nullptr) {
+    if (survivor == nullptr ||
+        std::find(missing.begin(), missing.end(), true) == missing.end()) {
         co_return;
     }
 
@@ -349,7 +350,10 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
             slots[i] = co_await connect_tasks[i];
             ++reachable;
         } catch (const std::system_error& e) {
-            rawstd_warning("Mirror member unreachable: %s\n", e.what());
+            rawstd_warning(
+                "Mirror member unreachable: %s: %s\n",
+                locations[i].str().c_str(), strerror(e.code().value())
+            );
             if (!eptr) {
                 eptr = std::current_exception();
             }
@@ -418,7 +422,10 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         try {
             metas[i] = co_await *open_tasks[i];
         } catch (const std::system_error& e) {
-            rawstd_warning("Mirror member unavailable: %s\n", e.what());
+            rawstd_warning(
+                "Mirror member unavailable: %s: %s\n",
+                locations[i].str().c_str(), strerror(e.code().value())
+            );
             unavailable = true;
             missing[i] = e.code().value() == ENOENT;
         }
