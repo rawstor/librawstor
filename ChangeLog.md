@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `SPEC` OST wire command (added in 0.2.3), superseded by `META`; a `rawstor-ost` from this release rejects it with `-ENOSYS`.
 
 ### Fixed
+- Object I/O now rejects ranges whose offset plus size would overflow, preventing access to the beginning of a multi-chunk object.
 - `rawstor-ost` now answers `-ENOSYS` for a command it doesn't recognize instead of just dropping the connection, so a newer client can tell "unsupported" apart from a transport failure.
 - The `rawstor-vduse` deb package (present since 0.2.10) was never actually built or published: CI's packaging job never copied its `.install`/`.postinst`/`.prerm` files into place.
 - With io_uring, a connection could hang forever when the kernel ended its multishot receive on its own (e.g. on a full completion ring); it now fails and reconnects.

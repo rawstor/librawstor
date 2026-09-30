@@ -24,6 +24,7 @@
 #include <memory>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -141,6 +142,58 @@ TEST(MultiChunkTest, create_open_read_write_across_chunk_boundary) {
         run(*queue, object->pread(oob.data(), oob.size(), total_size)),
         std::system_error
     );
+
+    run(*queue, object->close());
+    run(*queue, target.remove(*queue));
+}
+
+TEST(MultiChunkTest, rejects_wrapping_io_range) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    const uint64_t chunk_size = 64 * 1024;
+    rawstor::Target target(two_chunk_target(location, uuid_string, chunk_size));
+    RawstorObjectSpec spec{
+        .size = 2 * chunk_size,
+        .width = 1,
+        .chunk_size = chunk_size,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    run(*queue, target.create(*queue, spec));
+    std::unique_ptr<rawstor::Object> object =
+        run(*queue, target.open(*queue, 0));
+
+    std::array<char, 1024> pattern;
+    pattern.fill('x');
+    const uint64_t offset = UINT64_MAX - 511;
+    auto expect_einval = [&](rawstd::Task<size_t> task) {
+        try {
+            run(*queue, std::move(task));
+            ADD_FAILURE() << "I/O accepted a wrapping range";
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), EINVAL);
+        } catch (const std::exception& e) {
+            ADD_FAILURE() << "I/O failed with an unexpected error: "
+                          << e.what();
+        }
+    };
+    expect_einval(object->pwrite(pattern.data(), pattern.size(), offset, true));
+    std::array<char, 1024> readback{};
+    expect_einval(object->pread(readback.data(), readback.size(), offset));
+
+    // A rejected write must not modify the beginning of the object.
+    ASSERT_EQ(
+        run(*queue, object->pread(readback.data(), readback.size(), 0)),
+        readback.size()
+    );
+    EXPECT_EQ(readback, (std::array<char, 1024>{}));
 
     run(*queue, object->close());
     run(*queue, target.remove(*queue));
@@ -418,6 +471,16 @@ TEST(TargetCreateTest, width_rules) {
     expect_einval(single, 0);
     expect_einval(single, 256);
     expect_einval(mirrored, 0);
+
+    spec.width = 1;
+    spec.failure_domain = 256;
+    try {
+        run(*queue, single.create(*queue, spec));
+        ADD_FAILURE() << "create() accepted failure_domain 256";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EINVAL);
+    }
+    spec.failure_domain = 0;
 
     // Two local copies of an object whose own policy is a single copy
     // (rawstor-ost relaying onto two locations).
