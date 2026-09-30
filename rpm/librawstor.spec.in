@@ -118,6 +118,8 @@ install -m 644 systemd/rawstor-ost.service %{buildroot}%{_unitdir}/rawstor-ost.s
 install -m 644 systemd/rawstor-vhost@.service %{buildroot}%{_unitdir}/rawstor-vhost@.service
 install -m 644 systemd/rawstor-vduse@.service %{buildroot}%{_unitdir}/rawstor-vduse@.service
 install -m 644 systemd/rawstor-mds.service %{buildroot}%{_unitdir}/rawstor-mds.service
+mkdir -p %{buildroot}%{_sysconfdir}/rawstor-mds
+install -m 644 mds/topology.conf %{buildroot}%{_sysconfdir}/rawstor-mds/topology.conf
 mkdir -p %{buildroot}/usr/lib/udev/rules.d
 install -m 644 udev/60-rawstor-vduse.rules %{buildroot}/usr/lib/udev/rules.d/60-rawstor-vduse.rules
 mkdir -p %{buildroot}/var/lib/rawstor
@@ -168,4 +170,6 @@ mkdir -p %{buildroot}/var/lib/rawstor-mds
 %files -n rawstor-mds
 %{_bindir}/rawstor-mds
 %{_unitdir}/rawstor-mds.service
+%dir %{_sysconfdir}/rawstor-mds
+%config(noreplace) %{_sysconfdir}/rawstor-mds/topology.conf
 %dir %attr(0755, rawstor, rawstor) /var/lib/rawstor-mds

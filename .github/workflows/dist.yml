@@ -362,11 +362,13 @@ jobs:
     - name: test-rawstor-vduse
       run: rawstor-vduse --version
     - name: install-rawstor-mds
+      # The package ships /etc/rawstor-mds/topology.conf as a commented-out
+      # example with no OSTs: install first, then list the one OST there.
       run: |
-        sudo mkdir -p /etc/rawstor-mds
-        echo "018f4e2a-1111-7000-8000-000000000001 ost://127.0.0.1:7777 100 host1/rack1/row1/dc1" | sudo tee /etc/rawstor-mds/topology.conf
         sudo apt install -y ./librawstor.deb/rawstor-mds_*.deb
-        sudo systemctl start rawstor-mds.service
+        grep -q '^# 018f4e2a' /etc/rawstor-mds/topology.conf
+        echo "018f4e2a-1111-7000-8000-000000000001 ost://127.0.0.1:7777 100 host1/rack1/row1/dc1" | sudo tee /etc/rawstor-mds/topology.conf
+        sudo systemctl restart rawstor-mds.service
     - name: test-rawstor-mds
       # rawstor-ost.service (started above) is still running -- reuse it
       # as the mds:// volume's one chunk member.
@@ -559,7 +561,9 @@ jobs:
       # confirm-it-runs-only reasoning as rawstor-vhost above.
       run: rawstor-vduse --version
     - name: install-rawstor-mds
-      run: dnf -y install ./librawstor.rpm/rawstor-mds-[0-9]*.rpm
+      run: |
+        dnf -y install ./librawstor.rpm/rawstor-mds-[0-9]*.rpm
+        grep -q '^# 018f4e2a' /etc/rawstor-mds/topology.conf
     - name: test-rawstor-mds
       # containers have no systemd/PID 1, so the .service unit cannot be
       # started via systemctl here -- run the same command it would, by

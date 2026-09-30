@@ -20,9 +20,10 @@ Environment=WORKERS=4
 # SQLite database file (created if missing). Override in
 # /etc/rawstor-mds.conf below.
 Environment=DB_PATH=/var/lib/rawstor-mds/mds.db
-# Static topology config (docs/mds.md) -- the admin must author this file
-# (the OSTs and placement domains for this cluster) before the first
-# start; ConfigurationDirectory above creates /etc/rawstor-mds for it.
+# Static topology config (docs/mds.md): the OSTs and placement domains for
+# this cluster. The package installs it with a commented-out example and
+# no OSTs, so the service starts but can't place anything until the admin
+# lists the OSTs there and reloads (systemctl reload rawstor-mds).
 Environment=TOPOLOGY_PATH=/etc/rawstor-mds/topology.conf
 EnvironmentFile=-/etc/rawstor-mds.conf
 ExecStart=/usr/bin/rawstor-mds --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --db=${DB_PATH} --topology=${TOPOLOGY_PATH}

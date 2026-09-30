@@ -440,9 +440,11 @@ startup.
 
 `rawstor-mds` ships in its own `rawstor-mds` deb/rpm package (needs
 `sqlite3`; skip building it with `--without-sqlite3`), along with the
-`rawstor-mds.service` systemd unit. The admin must author the topology
-config (the OSTs and placement domains for the cluster) before the
-service's first start.
+`rawstor-mds.service` systemd unit and `/etc/rawstor-mds/topology.conf`,
+a commented-out example with no OSTs. The service starts with it, but
+can't place any chunk until the admin lists the cluster's OSTs there and
+runs `systemctl reload rawstor-mds`. Local edits to it survive package
+upgrades.
 
 ## Testing
 

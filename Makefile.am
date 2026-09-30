@@ -74,6 +74,7 @@ EXTRA_DIST = deb/librawstor/compat \
              systemd/rawstor-vhost@.service \
              systemd/rawstor-vduse@.service \
              systemd/rawstor-mds.service \
+             mds/topology.conf \
              udev/60-rawstor-vduse.rules \
              .github/tools/deb-changelog.sh \
              ChangeLog.md \
