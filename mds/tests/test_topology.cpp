@@ -16,7 +16,7 @@ using rawstor::mds::TopologyOST;
 TEST(TopologyTest, parse_single_ost) {
     std::istringstream in(
         "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:8753 100 "
-        "dc1/row1/rack1/host1\n"
+        "host1/rack1/row1/dc1\n"
     );
 
     Topology t = Topology::parse(in);
@@ -36,7 +36,7 @@ TEST(TopologyTest, parse_skips_comments_and_blank_lines) {
         "# a comment\n"
         "\n"
         "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:8753 100 "
-        "dc1/row1/rack1/host1 # trailing comment\n"
+        "host1/rack1/row1/dc1 # trailing comment\n"
     );
 
     Topology t = Topology::parse(in);
@@ -47,9 +47,9 @@ TEST(TopologyTest, parse_skips_comments_and_blank_lines) {
 TEST(TopologyTest, parse_multiple_osts) {
     std::istringstream in(
         "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:8753 100 "
-        "dc1/row1/rack1/host1\n"
+        "host1/rack1/row1/dc1\n"
         "00000000-0000-7000-8000-000000000002 ost://127.0.0.1:8754 100 "
-        "dc1/row1/rack1/host2\n"
+        "host2/rack1/row1/dc1\n"
     );
 
     Topology t = Topology::parse(in);
@@ -60,7 +60,7 @@ TEST(TopologyTest, parse_multiple_osts) {
 TEST(TopologyTest, parse_accepts_any_backend_location) {
     std::istringstream in(
         "00000000-0000-7000-8000-000000000001 file:///srv/ost1 100 "
-        "dc1/row1/rack1/host1\n"
+        "host1/rack1/row1/dc1\n"
     );
 
     Topology t = Topology::parse(in);
@@ -72,7 +72,7 @@ TEST(TopologyTest, parse_accepts_any_backend_location) {
 TEST(TopologyTest, parse_rejects_multiple_location_uris) {
     std::istringstream in(
         "00000000-0000-7000-8000-000000000001 "
-        "ost://127.0.0.1:8753,ost://127.0.0.1:8754 100 dc1/row1/rack1/host1\n"
+        "ost://127.0.0.1:8753,ost://127.0.0.1:8754 100 host1/rack1/row1/dc1\n"
     );
 
     EXPECT_THROW(Topology::parse(in), std::system_error);
@@ -89,7 +89,7 @@ TEST(TopologyTest, parse_rejects_malformed_entry) {
 TEST(TopologyTest, parse_rejects_trailing_tokens) {
     std::istringstream in(
         "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:8753 100 "
-        "dc1/row1/rack1/host1 extra\n"
+        "host1/rack1/row1/dc1 extra\n"
     );
 
     EXPECT_THROW(Topology::parse(in), std::system_error);
@@ -97,19 +97,56 @@ TEST(TopologyTest, parse_rejects_trailing_tokens) {
 
 TEST(TopologyTest, parse_rejects_malformed_ost_id) {
     std::istringstream in(
-        "not-a-uuid ost://127.0.0.1:8753 100 dc1/row1/rack1/host1\n"
+        "not-a-uuid ost://127.0.0.1:8753 100 host1/rack1/row1/dc1\n"
     );
 
     EXPECT_THROW(Topology::parse(in), std::system_error);
 }
 
-TEST(TopologyTest, parse_rejects_short_path) {
+// The path goes leaf first and only the server is required: a level an
+// entry leaves out is one implicit domain shared by every entry that
+// leaves it out too.
+TEST(TopologyTest, parse_accepts_path_without_tail) {
     std::istringstream in(
         "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:8753 100 "
-        "dc1/row1/rack1\n"
+        "host1/rack1\n"
+        "00000000-0000-7000-8000-000000000002 ost://127.0.0.1:8754 100 "
+        "host2/rack2\n"
+        "00000000-0000-7000-8000-000000000003 ost://127.0.0.1:8755 100 "
+        "host3\n"
     );
 
-    EXPECT_THROW(Topology::parse(in), std::system_error);
+    Topology t = Topology::parse(in);
+
+    ASSERT_EQ(t.osts().size(), 3u);
+    const TopologyOST& a = t.osts()[0];
+    const TopologyOST& b = t.osts()[1];
+    const TopologyOST& c = t.osts()[2];
+    EXPECT_EQ(a.path[3], "host1");
+    EXPECT_EQ(a.path[2], "rack1");
+    EXPECT_EQ(a.path[1], "");
+    EXPECT_EQ(a.path[0], "");
+    // No row/dc given anywhere: one shared row and dc.
+    EXPECT_EQ(a.domain(Level::DC), b.domain(Level::DC));
+    EXPECT_EQ(a.domain(Level::Row), b.domain(Level::Row));
+    EXPECT_NE(a.domain(Level::Rack), b.domain(Level::Rack));
+    // No rack given for c: its own implicit rack, not a's or b's.
+    EXPECT_NE(c.domain(Level::Rack), a.domain(Level::Rack));
+    EXPECT_NE(c.domain(Level::Rack), b.domain(Level::Rack));
+}
+
+TEST(TopologyTest, parse_rejects_malformed_path) {
+    for (const char* path :
+         {"host1//row1", "host1/rack1/row1/dc1/region1", "/rack1", "host1/"}) {
+        std::istringstream in(
+            std::string(
+                "00000000-0000-7000-8000-000000000001 "
+                "ost://127.0.0.1:8753 100 "
+            ) +
+            path + "\n"
+        );
+        EXPECT_THROW(Topology::parse(in), std::system_error) << path;
+    }
 }
 
 TEST(TopologyTest, add_rejects_duplicate_ost_id) {

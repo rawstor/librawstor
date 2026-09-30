@@ -361,7 +361,7 @@ jobs:
     - name: install-rawstor-mds
       run: |
         sudo mkdir -p /etc/rawstor-mds
-        echo "018f4e2a-1111-7000-8000-000000000001 ost://127.0.0.1:7777 100 dc1/row1/rack1/host1" | sudo tee /etc/rawstor-mds/topology.conf
+        echo "018f4e2a-1111-7000-8000-000000000001 ost://127.0.0.1:7777 100 host1/rack1/row1/dc1" | sudo tee /etc/rawstor-mds/topology.conf
         sudo apt install -y ./librawstor.deb/rawstor-mds_*.deb
         sudo systemctl start rawstor-mds.service
     - name: test-rawstor-mds
@@ -567,7 +567,7 @@ jobs:
         rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor &
         OST_PID=$!
         sleep 10
-        echo "018f4e2a-1111-7000-8000-000000000001 ost://127.0.0.1:7777 100 dc1/row1/rack1/host1" > /tmp/topology.conf
+        echo "018f4e2a-1111-7000-8000-000000000001 ost://127.0.0.1:7777 100 host1/rack1/row1/dc1" > /tmp/topology.conf
         rawstor-mds --bind=127.0.0.1:7776 --db=/tmp/mds.db --topology=/tmp/topology.conf &
         MDS_PID=$!
         sleep 5

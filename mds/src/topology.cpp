@@ -13,22 +13,31 @@
 
 namespace {
 
+// Splits a leaf-first path, "server[/rack[/row[/dc]]]", into `out`'s
+// outermost-first dc, row, rack, server slots. Only the server is
+// required; a level left out stays empty, so every entry that leaves it
+// out shares that one implicit domain.
 void split_path(const std::string& s, std::string (&out)[4]) {
+    std::string parts[4];
+    size_t n = 0;
     size_t begin = 0;
-    for (int i = 0; i < 4; ++i) {
+    while (true) {
         size_t end = s.find('/', begin);
-        if ((end == std::string::npos) != (i == 3)) {
-            rawstd_error("Malformed topology path: %s\n", s.c_str());
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-        out[i] = s.substr(
+        std::string part = s.substr(
             begin, end == std::string::npos ? std::string::npos : end - begin
         );
-        if (out[i].empty()) {
+        if (part.empty() || n == 4) {
             rawstd_error("Malformed topology path: %s\n", s.c_str());
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
+        parts[n++] = part;
+        if (end == std::string::npos) {
+            break;
+        }
         begin = end + 1;
+    }
+    for (size_t i = 0; i < 4; ++i) {
+        out[3 - i] = i < n ? parts[i] : std::string();
     }
 }
 

@@ -421,7 +421,9 @@ generator.
   weighted, minimal reshuffle on topology change, distinct slots = top-N, no
   state. O(N) per lookup is fine (small N, rare lookups).
 - **Topology = tree**: `root -> dc -> row -> rack -> server -> ost(leaf)`
-  (a topology line's path is `dc/row/rack/server`). Levels are numbered from
+  (a topology line's path is `server[/rack[/row[/dc]]]`, leaf first; a
+  level left out is one implicit domain shared by every entry leaving it
+  out). Levels are numbered from
   the leaf up (`RAWSTOR_OBJ_DOMAIN_OST = 1` ... `DC = 5`, 0 = unset, i.e. the
   client's default, server), so a wider level such as a region only ever
   takes the next number. Weights

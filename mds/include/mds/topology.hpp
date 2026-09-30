@@ -35,7 +35,7 @@ struct TopologyOST {
      * the chunks this OST holds through it. */
     std::string location;
     uint64_t weight;
-    std::string path[4]; /* dc, row, rack, server */
+    std::string path[4]; /* dc, row, rack, server; "" = not given */
 
     /* Domain identity at a level: the full path prefix (not the last
      * component alone: two "host1" in different racks are different
@@ -47,9 +47,12 @@ struct TopologyOST {
  * The static topology config, v1 of the MGS role of docs/mds.md.
  * Line-based:
  *
- *   # <ost-uuid> <location> <weight> <dc>/<row>/<rack>/<server>
- *   00000000-0000-7000-8000-000000000001 ost://host1:7777 100 dc1/w1/r1/host1
+ *   # <ost-uuid> <location> <weight> <server>[/<rack>[/<row>[/<dc>]]]
+ *   00000000-0000-7000-8000-000000000001 ost://host1:7777 100 host1/r1/w1/dc1
  *
+ * The path goes from the leaf up and only the server is required: a level
+ * an entry leaves out is one implicit domain shared by every entry that
+ * leaves it out too.
  * <location> is a single rawstor location URI of any scheme; it is
  * handed to clients as is, so a client-local one (file://, lvm://, zfs://)
  * only makes sense on a single host. '#' comments and blank lines are
