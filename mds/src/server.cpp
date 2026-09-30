@@ -138,29 +138,45 @@ rawstd::Task<void> Server::del_client(int fd) {
 }
 
 rawstd::DetachedTask Server::_accept_task() {
-    rawstd::CallbackStream<int> stream;
-    int res = rawio_accept_multishot(
-        _queue, _fd, accept_trampoline, &stream, &_accept_event
-    );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
+    // io_uring can end a multishot accept on its own (e.g. on a full
+    // completion ring), which the stream reports as ENOBUFS: the
+    // registration is then armed again rather than leaving the server
+    // deaf to new connections.
     while (true) {
-        int fd;
-        try {
-            fd = co_await stream.next();
-        } catch (const std::system_error& e) {
-            if (e.code().value() != ECANCELED) {
-                rawstd_error("%s\n", e.what());
-            }
-            co_return;
+        rawstd::CallbackStream<int> stream;
+        int res = rawio_accept_multishot(
+            _queue, _fd, accept_trampoline, &stream, &_accept_event
+        );
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
 
-        try {
-            co_await _add_client(fd);
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
+        int error = 0;
+        while (error == 0) {
+            int fd;
+            try {
+                fd = co_await stream.next();
+            } catch (const std::system_error& e) {
+                error = e.code().value();
+                // ECANCELED is ~Server()'s own rawio_cancel() -- an
+                // ordinary, silent shutdown, not a failure worth logging.
+                if (error == ENOBUFS) {
+                    rawstd_warning("%s; re-arming accept\n", e.what());
+                } else if (error != ECANCELED) {
+                    rawstd_error("%s\n", e.what());
+                }
+                break;
+            }
+
+            try {
+                co_await _add_client(fd);
+            } catch (const std::exception& e) {
+                rawstd_error("%s\n", e.what());
+            }
+        }
+
+        if (error != ENOBUFS) {
+            co_return;
         }
     }
 }
