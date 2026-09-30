@@ -63,9 +63,9 @@ private:
     // The spec derived at create() time (see its own comment) -- kept
     // around for any future caller that needs it. The live member count
     // is _members.size() below, not _spec.width (this object's own
-    // configured policy width, checked once against _members.size() at
-    // create() time -- see its own "born degraded" comment -- but never
-    // consulted again afterward).
+    // configured policy width): an opener may legitimately name fewer
+    // locations than that -- rawstor-ost opens only its own copy, an
+    // mds:// location stands for the whole object.
     RawstorObjectSpec _spec;
     std::vector<Member> _members;
 
