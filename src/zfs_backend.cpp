@@ -496,6 +496,14 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
 // snapshot of it (e.g. one taken by hand) is skipped.
 rawstd::Task<std::vector<RawstdUUID>>
 Backend::list_snapshots(const RawstdUUID& id, uint64_t offset) {
+    // Same ENOENT convention as remove(): a nonexistent zvol is permanent,
+    // not the retryable EIO "zfs list" itself would produce.
+    std::string device_path = _device_path(id, offset);
+    if (!co_await _exists(device_path)) {
+        rawstd_error("zfs: zvol %s does not exist\n", device_path.c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+
     std::string dataset = _dataset(id, offset);
 
     // GCC 13 ICEs when a std::vector<std::string> argument is
