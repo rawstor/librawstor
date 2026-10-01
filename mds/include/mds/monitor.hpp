@@ -22,8 +22,10 @@ namespace mdsserver {
  * Location::info() calls. Every call includes Slot's connect/I/O retries.
  * Shutdown stops new probes and drains the calls already in flight. */
 class Monitor final {
-private:
+public:
     using Clock = std::chrono::steady_clock;
+
+private:
     struct Pending {
         TopologyOST ost;
         Clock::time_point due;
@@ -47,6 +49,7 @@ private:
     std::unordered_set<std::string> _inflight;
     std::unordered_set<std::string> _current;
     std::unordered_map<std::string, Clock::time_point> _due;
+    Clock::time_point _epoch;
 
     static std::string _key(const TopologyOST& ost);
     rawstd::Task<void> _probe(TopologyOST ost);
@@ -55,6 +58,18 @@ private:
     void _wait(unsigned int milliseconds);
 
 public:
+    /* An OST's fixed offset within the polling interval, derived from its
+     * id and location, so repeated probes of a large topology spread
+     * evenly over the interval instead of following one burst. */
+    static Clock::duration phase(const TopologyOST& ost, unsigned int interval);
+    /* The first time at the OST's phase that is at least half an interval
+     * after `completed`. Probes shorter than half an interval then keep
+     * exactly one interval between starts. */
+    static Clock::time_point next_due(
+        Clock::time_point epoch, Clock::duration phase,
+        Clock::duration interval, Clock::time_point completed
+    );
+
     Monitor(ObjectStore& store, Opts opts, int wake_fd);
     Monitor(const Monitor&) = delete;
     Monitor& operator=(const Monitor&) = delete;

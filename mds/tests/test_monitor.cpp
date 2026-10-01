@@ -112,6 +112,59 @@ TEST(MonitorTest, follows_reload_failure_and_recovery) {
     EXPECT_EQ(store.info().total, 0u);
 }
 
+TEST(MonitorTest, phases_spread_over_interval) {
+    constexpr unsigned interval = 300000;
+    constexpr unsigned buckets = 10;
+    constexpr unsigned osts = 5000;
+    unsigned counts[buckets] = {};
+    for (unsigned i = 1; i <= osts; ++i) {
+        auto ost = ost_at("ost://10.0.0.1:8080", i);
+        auto phase = Monitor::phase(ost, interval);
+        EXPECT_EQ(phase, Monitor::phase(ost, interval));
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(phase)
+                      .count();
+        ASSERT_GE(ms, 0);
+        ASSERT_LT(ms, interval);
+        ++counts[ms * buckets / interval];
+    }
+    for (unsigned count : counts) {
+        EXPECT_GT(count, osts / buckets * 8 / 10);
+        EXPECT_LT(count, osts / buckets * 12 / 10);
+    }
+}
+
+TEST(MonitorTest, next_due_keeps_phase_and_interval) {
+    using namespace std::chrono_literals;
+    Monitor::Clock::time_point epoch{};
+    Monitor::Clock::duration interval = 300s;
+    Monitor::Clock::duration phase = 70s;
+
+    // A probe finishing shortly after its slot runs again one interval
+    // after that slot.
+    EXPECT_EQ(
+        Monitor::next_due(epoch, phase, interval, epoch + phase + 2s),
+        epoch + phase + interval
+    );
+    EXPECT_EQ(
+        Monitor::next_due(epoch, phase, interval, epoch + 1000s),
+        epoch + phase + 4 * interval
+    );
+    // The first probe runs at startup; the next one waits at least half an
+    // interval, then joins its phase.
+    EXPECT_EQ(
+        Monitor::next_due(epoch, phase, interval, epoch + 1s),
+        epoch + phase + interval
+    );
+    EXPECT_EQ(
+        Monitor::next_due(epoch, 200s, interval, epoch + 1s), epoch + 200s
+    );
+    // A probe slower than half an interval skips to the following slot.
+    EXPECT_EQ(
+        Monitor::next_due(epoch, phase, interval, epoch + phase + 200s),
+        epoch + phase + 2 * interval
+    );
+}
+
 // The largest accepted concurrency must still fit the queue it sizes.
 TEST(MonitorTest, starts_with_max_concurrency) {
     tests::TmpDir dir;

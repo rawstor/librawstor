@@ -9,7 +9,7 @@ struct Opts {
     // io_uring depth (16384) below the kernel's 32768-entry limit.
     static constexpr unsigned int max_info_concurrency = 1024;
 
-    unsigned int info_interval = 60000; // milliseconds
+    unsigned int info_interval = 300000; // milliseconds
     unsigned int info_concurrency = 128;
 
     static Opts from_env();

@@ -1082,11 +1082,17 @@ available OSTs; existing chunk maps and snapshot members are unchanged.
 
 | Environment variable | Default | Meaning |
 |---|---|---|
-| `RAWSTOR_MDS_OPTS_INFO_INTERVAL` | `60000` | Milliseconds between completion of an OST probe and its next probe. Must be positive. |
+| `RAWSTOR_MDS_OPTS_INFO_INTERVAL` | `300000` | Milliseconds between consecutive probes of one OST. Must be positive. |
 | `RAWSTOR_MDS_OPTS_INFO_CONCURRENCY` | `128` | Maximum in-flight probes, including retries (1–1024). |
 
-The 60-second default avoids continuous metadata/space scans while still
-refreshing availability regularly. Concurrency bounds sockets, queue events
+The 5-minute default avoids continuous metadata/space scans while still
+refreshing availability regularly. Each OST is probed as soon as it appears
+in the topology (at startup, or after its location changes), since it stays
+unavailable until then. Later probes run at a fixed per-OST offset within the
+interval, derived from a hash of the OST's id and location, so a large
+topology is polled evenly across the interval rather than in one burst. A
+probe's next run is the first such slot at least half an interval after it
+finishes. Concurrency bounds sockets, queue events
 and coroutine memory for large topologies (e.g. 5000 OSTs). Probes refill
 independently as requests finish; a slow OST does not create a batch barrier.
 When many OSTs are unavailable, retries consume probe slots and can delay the
