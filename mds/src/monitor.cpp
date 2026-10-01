@@ -260,7 +260,10 @@ rawstd::Task<void> Monitor::_control() {
     _watches.clear();
     co_await _retire(std::move(all));
     for (auto& watch : _retired) {
-        co_await watch->task;
+        // Awaiting `watch->task` directly crashes GCC 13 (internal
+        // compiler error); a named reference compiles everywhere.
+        rawstd::Task<void>& task = watch->task;
+        co_await task;
     }
     _retired.clear();
 }
