@@ -1,5 +1,8 @@
 #include "mds_client.hpp"
 
+#include "deadline.hpp"
+#include "opts.h"
+
 #include <rawio/awaitable.hpp>
 
 #include <rawstd/gpp.hpp>
@@ -11,6 +14,8 @@
 
 #include <unistd.h>
 
+#include <exception>
+#include <system_error>
 #include <utility>
 
 #include <cerrno>
@@ -149,6 +154,16 @@ rawstd::Task<void> Client::connect() {
     }
 
     std::exception_ptr connect_error;
+    rawio::Event* timer_event = nullptr;
+    bool expired = false;
+    unsigned int connect_timeout = rawstor_opts_so_sndtimeo();
+    auto cancel_connect = [&]() { return _queue.cancel(fd); };
+    rawstd::Task<void> timer;
+    if (connect_timeout != 0) {
+        timer = rawstor::deadline(
+            _queue, connect_timeout, timer_event, expired, cancel_connect
+        );
+    }
     try {
         rawio::Queue::setup_fd(fd);
 
@@ -170,6 +185,18 @@ rawstd::Task<void> Client::connect() {
         );
     } catch (...) {
         connect_error = std::current_exception();
+    }
+
+    if (timer_event != nullptr) {
+        co_await _queue.cancel(timer_event);
+    }
+    if (connect_timeout != 0) {
+        co_await timer;
+    }
+    if (expired) {
+        connect_error = std::make_exception_ptr(
+            std::system_error(ETIMEDOUT, std::generic_category())
+        );
     }
 
     if (connect_error) {
@@ -195,11 +222,14 @@ rawstd::Task<void> Client::connect() {
             },
         .payload = {.object_id = {}, .offset = 0, .snapshot_id = {}, .val = 0},
     };
-    co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_SET_OBJECT);
+    co_await _timed_exchange(
+        &request, sizeof(request), RAWSTOR_CMD_SET_OBJECT, 0
+    );
 }
 
-rawstd::Task<std::vector<unsigned char>>
-Client::_exchange(const void* request, size_t size, RawstorCommandType cmd) {
+rawstd::Task<std::vector<unsigned char>> Client::_exchange(
+    const void* request, size_t size, RawstorCommandType cmd, size_t max_size
+) {
     co_await send_all(_queue, _fd, request, size);
 
     RawstorFrameResponse response;
@@ -210,10 +240,52 @@ Client::_exchange(const void* request, size_t size, RawstorCommandType cmd) {
     if (response.body.res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-response.body.res);
     }
+    if (static_cast<size_t>(response.body.res) > max_size) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
 
     std::vector<unsigned char> data(response.body.res);
     if (!data.empty()) {
         co_await recv_all(_queue, _fd, data.data(), data.size());
+    }
+    co_return data;
+}
+
+rawstd::Task<std::vector<unsigned char>> Client::_timed_exchange(
+    const void* request, size_t size, RawstorCommandType cmd, size_t max_size
+) {
+    std::vector<unsigned char> data;
+    std::exception_ptr error;
+    rawio::Event* timer_event = nullptr;
+    bool expired = false;
+    unsigned int response_timeout = rawstor_opts_so_rcvtimeo();
+    // The exchange is always suspended on a send or recv of _fd while the
+    // timer can fire, so cancelling _fd's requests unblocks it.
+    auto cancel_exchange = [this]() { return _queue.cancel(_fd); };
+    rawstd::Task<void> timer;
+    if (response_timeout != 0) {
+        timer = rawstor::deadline(
+            _queue, response_timeout, timer_event, expired, cancel_exchange
+        );
+    }
+    try {
+        data = co_await _exchange(request, size, cmd, max_size);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    if (timer_event != nullptr) {
+        co_await _queue.cancel(timer_event);
+    }
+    if (response_timeout != 0) {
+        co_await timer;
+    }
+    if (expired) {
+        // A late reply would desynchronize the next exchange.
+        ::close(std::exchange(_fd, -1));
+        RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
+    }
+    if (error) {
+        std::rethrow_exception(error);
     }
     co_return data;
 }
@@ -226,8 +298,9 @@ rawstd::Task<RawstorLocationInfo> Client::info() {
              .cid = _cid_counter++},
         .payload = {},
     };
-    auto data = co_await _exchange(
-        &request, sizeof(request), RAWSTOR_CMD_LOCATION_INFO
+    auto data = co_await _timed_exchange(
+        &request, sizeof(request), RAWSTOR_CMD_LOCATION_INFO,
+        sizeof(RawstorLocationInfo)
     );
     if (data.size() != sizeof(RawstorLocationInfo)) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
@@ -260,8 +333,10 @@ rawstd::Task<uint64_t> Client::create(
         static_cast<uint8_t>(__builtin_ctzll(chunk_size));
     request.payload.policy = policy;
 
-    std::vector<unsigned char> data =
-        co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_OBJ_CREATE);
+    std::vector<unsigned char> data = co_await _exchange(
+        &request, sizeof(request), RAWSTOR_CMD_OBJ_CREATE,
+        sizeof(RawstorFrameObjCreatedPayload)
+    );
     if (data.size() != sizeof(RawstorFrameObjCreatedPayload)) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
@@ -306,8 +381,10 @@ rawstd::Task<WireResized> Client::resize(
     uuid_to_bytes(id, request.payload.id);
     uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
 
-    std::vector<unsigned char> data =
-        co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_OBJ_RESIZE);
+    std::vector<unsigned char> data = co_await _exchange(
+        &request, sizeof(request), RAWSTOR_CMD_OBJ_RESIZE,
+        sizeof(RawstorFrameObjResizedPayload)
+    );
     if (data.size() != sizeof(RawstorFrameObjResizedPayload)) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
@@ -369,7 +446,8 @@ rawstd::Task<uint64_t> Client::commit_snapshot(
     }
 
     std::vector<unsigned char> data = co_await _exchange(
-        request.data(), request.size(), RAWSTOR_CMD_OBJ_COMMIT_SNAPSHOT
+        request.data(), request.size(), RAWSTOR_CMD_OBJ_COMMIT_SNAPSHOT,
+        sizeof(RawstorFrameObjSnapshotCommittedPayload)
     );
     if (data.size() != sizeof(RawstorFrameObjSnapshotCommittedPayload)) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);

@@ -61,8 +61,17 @@ private:
     int _fd;
     uint16_t _cid_counter;
 
-    rawstd::Task<std::vector<unsigned char>>
-    _exchange(const void* request, size_t size, RawstorCommandType cmd);
+    // `max_size` bounds the response body before it sizes an allocation.
+    rawstd::Task<std::vector<unsigned char>> _exchange(
+        const void* request, size_t size, RawstorCommandType cmd,
+        size_t max_size = SIZE_MAX
+    );
+    // _exchange() bounded by RAWSTOR_OPTS_SO_RCVTIMEO: a silent peer fails
+    // with ETIMEDOUT and leaves this client disconnected.
+    rawstd::Task<std::vector<unsigned char>> _timed_exchange(
+        const void* request, size_t size, RawstorCommandType cmd,
+        size_t max_size
+    );
 
 public:
     Client(rawio::Queue& queue, const rawstd::URI& location);

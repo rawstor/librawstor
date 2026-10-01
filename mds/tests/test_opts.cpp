@@ -47,7 +47,9 @@ TEST(MdsOptsTest, defaults_and_overrides) {
     setenv("RAWSTOR_MDS_OPTS_INFO_INTERVAL", "0", 1);
     EXPECT_THROW(rawstor::mdsserver::Opts::from_env(), std::system_error);
     setenv("RAWSTOR_MDS_OPTS_INFO_INTERVAL", "2500", 1);
-    setenv("RAWSTOR_MDS_OPTS_INFO_CONCURRENCY", "4097", 1);
+    setenv("RAWSTOR_MDS_OPTS_INFO_CONCURRENCY", "1024", 1);
+    EXPECT_EQ(rawstor::mdsserver::Opts::from_env().info_concurrency, 1024u);
+    setenv("RAWSTOR_MDS_OPTS_INFO_CONCURRENCY", "1025", 1);
     EXPECT_THROW(rawstor::mdsserver::Opts::from_env(), std::system_error);
 }
 
