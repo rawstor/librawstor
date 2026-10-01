@@ -1060,3 +1060,51 @@ of normal opens/closes.
   today (rule 3); a finer rule would need the degrade chain recorded on the
   witness synchronously, which conflicts with the hot-path requirement.
   Revisit only if N≥3 witness-assisted starts turn out to matter.
+
+## Backend health and location information
+
+`rawstor info mds://host:port` sends `LOCATION_INFO` to the MDS and reads
+cached space accounting from its SQLite database. `used` and `total` are
+sums of the latest successful INFO samples from the OSTs in the current
+topology. They are physical backend counters, without dividing by mirror
+width. An OST without a sample contributes zero; an unavailable OST keeps
+its last successful counters, so losing connectivity does not erase its
+space usage from the report. A request never polls OSTs synchronously.
+
+One collector runs for the whole MDS. It polls each configured backend
+through librawstor's `Location::info()` and `Slot`, including their existing
+connect/I/O retries, reconnects, exponential backoff and jitter. Final
+success or failure updates the database's availability and check time;
+success also replaces the space counters and sample time. Unsampled OSTs
+are unavailable. At MDS startup persisted counters are kept, but availability
+is cleared until probes succeed. Create and grow place new chunks only on
+available OSTs; existing chunk maps and snapshot members are unchanged.
+
+| Environment variable | Default | Meaning |
+|---|---|---|
+| `RAWSTOR_MDS_OPTS_INFO_INTERVAL` | `60000` | Milliseconds between completion of an OST probe and its next probe. Must be positive. |
+| `RAWSTOR_MDS_OPTS_INFO_CONCURRENCY` | `128` | Maximum in-flight probes, including retries (1–4096). |
+
+The 60-second default avoids continuous metadata/space scans while still
+refreshing availability regularly. Concurrency bounds sockets, queue events
+and coroutine memory for large topologies (e.g. 5000 OSTs). Probes refill
+independently as requests finish; a slow OST does not create a batch barrier.
+When many OSTs are unavailable, retries consume probe slots and can delay the
+next probe beyond the configured interval. The oldest due probe runs first.
+The collector stops submitting probes on shutdown and drains in-flight calls.
+Retry budgets and timeouts use the `RAWSTOR_OPTS_*` knobs documented in README.
+OST connections start with a 32KiB receive ring. Binding an object or a
+snapshot grows it to the data-path size; variable-sized listings also grow
+it before sending a request. INFO polling needs only the initial ring.
+Connect and INFO reply deadlines use `RAWSTOR_OPTS_SO_SNDTIMEO` and
+`RAWSTOR_OPTS_SO_RCVTIMEO` respectively (5000ms each; zero disables the
+corresponding deadline). An expired reply closes the connection and Slot
+reconnects and retries, including when the peer accepts TCP but never replies.
+
+The systemd service lists these defaults and reads overrides from
+`/etc/rawstor-mds.conf`. The MDS logs the effective interval and concurrency
+at startup. `SIGHUP` reload also updates the collector: new OSTs are queued
+for probing immediately, removed OSTs are dropped from the database and aggregate, and
+an address change clears the old sample and availability. In-flight results
+for a removed OST or its old address are ignored. The existing refusal to
+remove an OST that still holds chunks or snapshot members also applies.

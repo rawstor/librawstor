@@ -1,3 +1,5 @@
+#include <mds/monitor.hpp>
+#include <mds/opts.hpp>
 #include <mds/server.hpp>
 
 #include "config.h"
@@ -346,9 +348,24 @@ void mds(
         wake_pipes.emplace_back(rawstd::Pipe::Mode::NonBlocking);
     }
 
-    std::vector<std::exception_ptr> errors(workers);
+    rawstor::mdsserver::Opts opts = rawstor::mdsserver::Opts::from_env();
+    rawstd::Pipe monitor_wake(rawstd::Pipe::Mode::NonBlocking);
+    rawstor::mdsserver::Monitor monitor(store, opts, monitor_wake.read_fd());
+    rawstd_info(
+        "MDS backend info: interval=%u ms, concurrency=%u\n",
+        opts.info_interval, opts.info_concurrency
+    );
+    std::vector<std::exception_ptr> errors(workers + 1);
     std::vector<std::thread> threads;
-    threads.reserve(workers);
+    threads.reserve(workers + 1);
+    threads.emplace_back([&monitor, &errors, workers]() {
+        try {
+            monitor.loop();
+        } catch (...) {
+            errors[workers] = std::current_exception();
+            kill(getpid(), SIGTERM);
+        }
+    });
     for (unsigned int i = 0; i < workers; i++) {
         threads.emplace_back([&errors, &store, i, queue_size,
                               fd = listen_fd.get(),
@@ -378,6 +395,11 @@ void mds(
         reload_topology(store, topology_path);
     }
 
+    {
+        char byte = 0;
+        ssize_t ignored = write(monitor_wake.write_fd(), &byte, 1);
+        (void)ignored;
+    }
     for (const rawstd::Pipe& pipe : wake_pipes) {
         char byte = 0;
         ssize_t n = write(pipe.write_fd(), &byte, 1);

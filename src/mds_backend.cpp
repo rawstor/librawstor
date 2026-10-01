@@ -548,7 +548,7 @@ rawstd::Task<void> Backend::set_sync_state(
 }
 
 rawstd::Task<RawstorLocationInfo> Backend::info() {
-    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    co_return co_await _client.info();
 }
 
 rawstd::Task<void> Backend::_set_object(

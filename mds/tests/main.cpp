@@ -4,11 +4,15 @@
 
 #include <rawstor/rawstor.h>
 
+#include <cstdlib>
+
 int main(int argc, char** argv) {
     // ObjectStore/place()'s own error paths log via rawstd_error() before
     // throwing (the same log-then-throw convention every other component
     // uses) -- rawstd_logging_mutex stays NULL, and a lock on it
     // segfaults, until rawstor_initialize() creates it.
+    setenv("RAWSTOR_OPTS_IO_ATTEMPTS", "3", 0);
+    setenv("RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE", "0", 0);
     int res = rawstor_initialize(nullptr);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);

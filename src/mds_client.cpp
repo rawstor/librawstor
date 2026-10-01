@@ -218,6 +218,25 @@ Client::_exchange(const void* request, size_t size, RawstorCommandType cmd) {
     co_return data;
 }
 
+rawstd::Task<RawstorLocationInfo> Client::info() {
+    RawstorFrameBasic request{
+        .head =
+            {.magic = RAWSTOR_MAGIC,
+             .cmd = RAWSTOR_CMD_LOCATION_INFO,
+             .cid = _cid_counter++},
+        .payload = {},
+    };
+    auto data = co_await _exchange(
+        &request, sizeof(request), RAWSTOR_CMD_LOCATION_INFO
+    );
+    if (data.size() != sizeof(RawstorLocationInfo)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+    RawstorLocationInfo info;
+    memcpy(&info, data.data(), sizeof(info));
+    co_return info;
+}
+
 rawstd::Task<uint64_t> Client::create(
     const RawstdUUID& idempotency_key, const RawstdUUID& id,
     uint64_t logical_size, uint64_t chunk_size,
