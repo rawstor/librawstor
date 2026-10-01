@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every backend now stores an object per chunk (`file://` `<uuid>/<offset>/data`, LVM `<uuid>-<offset>`, ZFS `<uuid>:<offset>`), with no migration: objects created by 0.2.x are not visible to this release.
 - `rawstor_target_open()` gains an `int flags` argument (`0` or `RAWSTOR_READONLY`: no write quorum needed, every write fails `-EROFS`). Breaking C API change.
 - The transitional `rawstor_object_*2()`/`rawio_*2()` functions are gone: their callback-based shapes (including `rawstor_object_pwrite()`/`pwritev()`'s `sync` argument and an `ssize_t` result for every `rawio_*()` callback) now live under the original names. Breaking C API change.
-- `rawstor_object_pread()`/`preadv()`/`pwrite()`/`pwritev()`/`discard()`/`write_zeroes()` take their `offset` as `uint64_t` instead of `off_t`, and `RawstorObjectSpec.failure_domain` is `unsigned int` (values above 255 are `-EINVAL`). Breaking C API change.
+- `rawstor_object_pread()`/`preadv()`/`pwrite()`/`pwritev()`/`discard()`/`write_zeroes()` take their `offset` as `uint64_t` instead of `off_t`. Breaking C API change.
 - Target strings returned by `rawstor_location_list()`/`_create()` always carry an explicit chunk offset segment (`<uuid>/0`); a target without one still parses as offset 0.
 - `rawstor-vhost`/`rawstor-vhost-qemu`/`rawstor testio`'s `--queue-size` defaults raised from 256 to 4096, matching `rawstor-ost`.
 - The OST wire protocol changed incompatibly (`LIST` entries carry a chunk offset, `RELEASE` also removes a snapshot version, new `META`/`SET_SYNC_STATE`/`SNAPSHOT`/`LIST_SNAPSHOTS`/`OBJ_*` commands); `rawstor-ost` and its clients must be upgraded together.
