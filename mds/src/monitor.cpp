@@ -9,28 +9,36 @@
 
 #include <algorithm>
 #include <exception>
+#include <system_error>
+#include <unordered_set>
 #include <utility>
 
+#include <unistd.h>
+
 #include <cerrno>
+#include <climits>
+#include <cstring>
 
 namespace rawstor {
 namespace mdsserver {
 
-Monitor::Monitor(ObjectStore& store, Opts opts, int wake_fd) :
+Monitor::Monitor(ObjectStore& store, Opts opts) :
     _store(store),
     _opts(opts),
-    _wake_fd(wake_fd),
-    _epoch(Clock::now()) {
+    _wake(rawstd::Pipe::Mode::NonBlocking),
+    _epoch(Clock::now()),
+    _slots(opts.info_concurrency) {
     if (opts.info_interval == 0 || opts.info_concurrency == 0 ||
-        opts.info_concurrency > Opts::max_info_concurrency || wake_fd < 0) {
+        opts.info_concurrency > Opts::max_info_concurrency) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
+    // Sized for the in-flight probes; sleeping probe loops only hold
+    // timers, which io_uring and the poll backend keep outside this depth.
     unsigned int depth = 16;
     while (depth < opts.info_concurrency * 8 + 8) {
         depth *= 2;
     }
     _queue = rawio::Queue::create(depth);
-    _active.reserve(opts.info_concurrency);
     _store.reset_backend_availability();
 }
 
@@ -64,7 +72,7 @@ Monitor::Clock::time_point Monitor::next_due(
     return first + periods * interval;
 }
 
-rawstd::Task<void> Monitor::_probe(TopologyOST ost) {
+rawstd::Task<void> Monitor::_probe(const TopologyOST& ost) {
     RawstorLocationInfo info{};
     bool available = false;
     try {
@@ -79,120 +87,207 @@ rawstd::Task<void> Monitor::_probe(TopologyOST ost) {
     _store.update_backend(ost, available ? &info : nullptr);
 }
 
-rawstd::Task<void> Monitor::_wake() {
-    char byte;
-    auto read = _queue->read(_wake_fd, &byte, 1);
-    _wake_event = read.event();
-    try {
-        co_await read;
-    } catch (const std::system_error& e) {
-        if (e.code().value() != ECANCELED) {
-            throw;
-        }
+void Monitor::_notify(char command) {
+    ssize_t ignored = write(_wake.write_fd(), &command, 1);
+    (void)ignored;
+}
+
+void Monitor::_fail(std::exception_ptr error) {
+    if (!_error) {
+        _error = error;
     }
-    _wake_event = nullptr;
     _stop = true;
+    if (_wake_event != nullptr) {
+        _queue->cancel(_wake_event);
+    }
 }
 
-void Monitor::_reload() {
-    auto topology = _store.topology();
-    if (topology == _topology) {
-        return;
-    }
-    _topology = std::move(topology);
-    _pending = {};
-    _current.clear();
-    for (const auto& ost : _topology->osts()) {
-        auto key = _key(ost);
-        _current.insert(key);
-        if (!_inflight.contains(key)) {
-            _pending.push(Pending{ost, _due[key]});
+rawstd::Task<void> Monitor::_sleep_until(Watch& watch, Clock::time_point due) {
+    while (watch.alive) {
+        auto now = Clock::now();
+        if (due <= now) {
+            co_return;
         }
-    }
-    std::erase_if(_due, [this](const auto& entry) {
-        return !_current.contains(entry.first);
-    });
-}
-
-void Monitor::_wait(unsigned int milliseconds) {
-    try {
-        _queue->wait_timeout(milliseconds);
-    } catch (const std::system_error& e) {
-        if (e.code().value() != ETIME && e.code().value() != EINTR) {
+        auto usec =
+            std::chrono::ceil<std::chrono::microseconds>(due - now).count();
+        auto timer = _queue->timeout(
+            static_cast<unsigned int>(std::min<int64_t>(usec, UINT_MAX))
+        );
+        watch.timer = timer.event();
+        try {
+            co_await timer;
+        } catch (const std::system_error& e) {
+            watch.timer = nullptr;
+            if (e.code().value() == ECANCELED) {
+                co_return;
+            }
             throw;
         }
+        watch.timer = nullptr;
     }
 }
 
-void Monitor::loop() {
-    _wake_task = _wake();
-    std::exception_ptr error;
-    while (true) {
-        _reload();
-        for (size_t i = 0; i < _active.size();) {
-            auto& active = _active[i];
-            if (!active.task.done()) {
-                ++i;
-                continue;
+rawstd::Task<void> Monitor::_watch(Watch& watch) {
+    // The first probe runs at once: the OST is unavailable for placement
+    // until it succeeds.
+    try {
+        while (true) {
+            co_await _slots.acquire();
+            if (!watch.alive) {
+                _slots.release();
+                break;
             }
+            std::exception_ptr error;
             try {
-                active.task.get();
+                co_await _probe(watch.ost);
             } catch (...) {
-                if (!error) {
-                    error = std::current_exception();
-                }
-                _stop = true;
-                if (_wake_event) {
-                    _queue->cancel(_wake_event);
-                }
+                error = std::current_exception();
             }
-            auto key = _key(active.ost);
-            _inflight.erase(key);
-            if (_current.contains(key)) {
-                auto due = next_due(
-                    _epoch, phase(active.ost, _opts.info_interval),
-                    std::chrono::milliseconds(_opts.info_interval), Clock::now()
-                );
-                _due[key] = due;
-                _pending.push(Pending{active.ost, due});
-            }
-            _active.erase(_active.begin() + i);
-        }
-        if (_stop && _active.empty()) {
-            while (!_wake_task.done()) {
-                _wait(100);
-            }
-            _wake_task.get();
+            _slots.release();
             if (error) {
                 std::rethrow_exception(error);
             }
+            if (!watch.alive) {
+                break;
+            }
+            co_await _sleep_until(
+                watch,
+                next_due(
+                    _epoch, phase(watch.ost, _opts.info_interval),
+                    std::chrono::milliseconds(_opts.info_interval), Clock::now()
+                )
+            );
+            if (!watch.alive) {
+                break;
+            }
+        }
+    } catch (...) {
+        _fail(std::current_exception());
+    }
+}
+
+rawstd::Task<void> Monitor::_wake_up(std::vector<Watch*> watches) {
+    // One cancellation at a time: cancelling thousands of sleeping loops
+    // at once would overflow the completion ring with the cancellations
+    // and the timers they complete.
+    for (Watch* watch : watches) {
+        if (watch->timer != nullptr) {
+            co_await _queue->cancel(watch->timer);
+        }
+    }
+}
+
+rawstd::Task<void> Monitor::_retire(std::vector<Watch*> watches) {
+    for (Watch* watch : watches) {
+        watch->alive = false;
+    }
+    co_await _wake_up(std::move(watches));
+}
+
+rawstd::Task<void> Monitor::_reload() {
+    auto topology = _store.topology();
+    if (_stop || topology == _topology) {
+        co_return;
+    }
+    _topology = std::move(topology);
+    std::unordered_set<std::string> current;
+    // A kept OST the store no longer counts as available (it failed, or
+    // was dropped and re-added between two reloads) is probed now rather
+    // than at its next slot.
+    std::vector<Watch*> unavailable;
+    for (const auto& ost : _topology->osts()) {
+        auto key = _key(ost);
+        current.insert(key);
+        auto found = _watches.find(key);
+        if (found != _watches.end()) {
+            if (!_store.backend_available(ost.id)) {
+                unavailable.push_back(found->second.get());
+            }
+            continue;
+        }
+        auto watch = std::make_unique<Watch>();
+        watch->ost = ost;
+        Watch& started = *watch;
+        _watches.emplace(std::move(key), std::move(watch));
+        started.task = _watch(started);
+    }
+    std::vector<Watch*> removed;
+    for (auto it = _watches.begin(); it != _watches.end();) {
+        if (current.contains(it->first)) {
+            ++it;
+            continue;
+        }
+        removed.push_back(it->second.get());
+        _retired.push_back(std::move(it->second));
+        it = _watches.erase(it);
+    }
+    co_await _retire(std::move(removed));
+    co_await _wake_up(std::move(unavailable));
+    std::erase_if(_retired, [](const auto& watch) {
+        return watch->task.done();
+    });
+}
+
+rawstd::Task<void> Monitor::_control() {
+    co_await _reload();
+    char commands[64];
+    while (!_stop) {
+        auto read = _queue->read(_wake.read_fd(), commands, sizeof(commands));
+        _wake_event = read.event();
+        size_t n = 0;
+        try {
+            n = co_await read;
+        } catch (const std::system_error& e) {
+            _wake_event = nullptr;
+            if (e.code().value() != ECANCELED) {
+                _fail(std::current_exception());
+            }
             break;
         }
-        while (!_stop && _active.size() < _opts.info_concurrency &&
-               !_pending.empty() && _pending.top().due <= Clock::now()) {
-            auto ost = _pending.top().ost;
-            _pending.pop();
-            _inflight.insert(_key(ost));
-            auto task = _probe(ost);
-            _active.push_back(Active{std::move(ost), std::move(task)});
+        _wake_event = nullptr;
+        if (n == 0 || memchr(commands, 's', n) != nullptr) {
+            break;
         }
-        bool completed =
-            std::any_of(_active.begin(), _active.end(), [](const auto& active) {
-                return active.task.done();
-            });
-        unsigned int wait_ms = completed ? 0 : 100;
-        if (!_stop && _active.size() < _opts.info_concurrency &&
-            !_pending.empty()) {
-            auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            _pending.top().due - Clock::now()
-            )
-                            .count();
-            wait_ms = static_cast<unsigned int>(
-                std::clamp<int64_t>(left, 0, wait_ms)
-            );
-        }
-        _wait(wait_ms);
+        co_await _reload();
     }
+
+    _stop = true;
+    std::vector<Watch*> all;
+    for (auto& [key, watch] : _watches) {
+        all.push_back(watch.get());
+        _retired.push_back(std::move(watch));
+    }
+    _watches.clear();
+    co_await _retire(std::move(all));
+    for (auto& watch : _retired) {
+        co_await watch->task;
+    }
+    _retired.clear();
+}
+
+void Monitor::loop() {
+    rawstd::Task<void> control = _control();
+    while (!control.done()) {
+        try {
+            _queue->wait();
+        } catch (const std::system_error& e) {
+            if (e.code().value() != EINTR) {
+                throw;
+            }
+        }
+    }
+    control.get();
+    if (_error) {
+        std::rethrow_exception(_error);
+    }
+}
+
+void Monitor::reload() {
+    _notify('r');
+}
+
+void Monitor::stop() {
+    _notify('s');
 }
 
 } // namespace mdsserver
