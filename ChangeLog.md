@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.12] - Unreleased
+## [0.2.12] - 2026-10-01
 
 ### Fixed
 - `rawstor info` against a `file://` location reported `total` as the whole filesystem's capacity (`statvfs`'s `f_blocks * f_frsize`) rather than space accounted for by rawstor, so `available` (derived as `total - used`) could include space taken by unrelated data on the same filesystem. `total` is now `used` (rawstor's own files) plus the filesystem's actually-free space (`f_bavail * f_frsize`), matching the `lvm://`/`zfs://` backends' `total = used + available` semantics.
