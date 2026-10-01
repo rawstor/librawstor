@@ -349,8 +349,7 @@ void mds(
     }
 
     rawstor::mdsserver::Opts opts = rawstor::mdsserver::Opts::from_env();
-    rawstd::Pipe monitor_wake(rawstd::Pipe::Mode::NonBlocking);
-    rawstor::mdsserver::Monitor monitor(store, opts, monitor_wake.read_fd());
+    rawstor::mdsserver::Monitor monitor(store, opts);
     rawstd_info(
         "MDS backend info: interval=%u ms, concurrency=%u\n",
         opts.info_interval, opts.info_concurrency
@@ -393,13 +392,10 @@ void mds(
             break;
         }
         reload_topology(store, topology_path);
+        monitor.reload();
     }
 
-    {
-        char byte = 0;
-        ssize_t ignored = write(monitor_wake.write_fd(), &byte, 1);
-        (void)ignored;
-    }
+    monitor.stop();
     for (const rawstd::Pipe& pipe : wake_pipes) {
         char byte = 0;
         ssize_t n = write(pipe.write_fd(), &byte, 1);

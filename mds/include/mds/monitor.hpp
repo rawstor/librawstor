@@ -6,56 +6,59 @@
 
 #include <rawio/queue.hpp>
 #include <rawstd/coro.hpp>
+#include <rawstd/pipe.hpp>
 
 #include <chrono>
+#include <exception>
 #include <memory>
-#include <queue>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace rawstor {
 namespace mdsserver {
 
-/* One collector for the whole MDS, with a bounded number of in-flight
- * Location::info() calls. Every call includes Slot's connect/I/O retries.
- * Shutdown stops new probes and drains the calls already in flight. */
+/* One collector for the whole MDS. Every OST in the topology has its own
+ * probe loop: probe, then sleep until its next slot. A shared semaphore
+ * bounds the in-flight Location::info() calls, each including Slot's
+ * connect/I/O retries; loops waiting for a unit get it in FIFO order.
+ * reload() and stop() may be called from any thread. Shutdown stops new
+ * probes and drains the calls already in flight. */
 class Monitor final {
 public:
     using Clock = std::chrono::steady_clock;
 
 private:
-    struct Pending {
+    struct Watch {
         TopologyOST ost;
-        Clock::time_point due;
-        bool operator<(const Pending& other) const { return due > other.due; }
-    };
-    struct Active {
-        TopologyOST ost;
+        bool alive = true;
+        rawio::Event* timer = nullptr;
         rawstd::Task<void> task;
     };
 
     ObjectStore& _store;
     Opts _opts;
-    int _wake_fd;
-    bool _stop = false;
+    rawstd::Pipe _wake;
+    Clock::time_point _epoch;
     std::unique_ptr<rawio::Queue> _queue;
-    rawstd::Task<void> _wake_task;
+    rawstd::Semaphore _slots;
+    bool _stop = false;
+    std::exception_ptr _error;
     rawio::Event* _wake_event = nullptr;
     std::shared_ptr<const Topology> _topology;
-    std::priority_queue<Pending> _pending;
-    std::vector<Active> _active;
-    std::unordered_set<std::string> _inflight;
-    std::unordered_set<std::string> _current;
-    std::unordered_map<std::string, Clock::time_point> _due;
-    Clock::time_point _epoch;
+    std::unordered_map<std::string, std::unique_ptr<Watch>> _watches;
+    std::vector<std::unique_ptr<Watch>> _retired;
 
     static std::string _key(const TopologyOST& ost);
-    rawstd::Task<void> _probe(TopologyOST ost);
-    rawstd::Task<void> _wake();
-    void _reload();
-    void _wait(unsigned int milliseconds);
+    void _notify(char command);
+    void _fail(std::exception_ptr error);
+    rawstd::Task<void> _probe(const TopologyOST& ost);
+    rawstd::Task<void> _sleep_until(Watch& watch, Clock::time_point due);
+    rawstd::Task<void> _watch(Watch& watch);
+    rawstd::Task<void> _wake_up(std::vector<Watch*> watches);
+    rawstd::Task<void> _retire(std::vector<Watch*> watches);
+    rawstd::Task<void> _reload();
+    rawstd::Task<void> _control();
 
 public:
     /* An OST's fixed offset within the polling interval, derived from its
@@ -70,10 +73,18 @@ public:
         Clock::duration interval, Clock::time_point completed
     );
 
-    Monitor(ObjectStore& store, Opts opts, int wake_fd);
+    Monitor(ObjectStore& store, Opts opts);
     Monitor(const Monitor&) = delete;
     Monitor& operator=(const Monitor&) = delete;
+
+    /* Runs until stop(), or rethrows the first probe-loop failure. */
     void loop();
+    /* Re-reads the store's topology: starts loops for new OSTs, stops
+     * those of removed OSTs and of OSTs whose location changed, and
+     * probes kept OSTs that are unavailable without waiting for their
+     * next slot. */
+    void reload();
+    void stop();
 };
 
 } // namespace mdsserver

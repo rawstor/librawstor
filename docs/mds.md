@@ -1092,12 +1092,14 @@ unavailable until then. Later probes run at a fixed per-OST offset within the
 interval, derived from a hash of the OST's id and location, so a large
 topology is polled evenly across the interval rather than in one burst. A
 probe's next run is the first such slot at least half an interval after it
-finishes. Concurrency bounds sockets, queue events
-and coroutine memory for large topologies (e.g. 5000 OSTs). Probes refill
-independently as requests finish; a slow OST does not create a batch barrier.
-When many OSTs are unavailable, retries consume probe slots and can delay the
-next probe beyond the configured interval. The oldest due probe runs first.
-The collector stops submitting probes on shutdown and drains in-flight calls.
+finishes. Every OST has its own probe loop (probe, then sleep until its next
+slot), so a slow OST does not create a batch barrier. Concurrency bounds the
+probes in flight, and with them sockets, queue events and memory for large
+topologies (e.g. 5000 OSTs); a sleeping loop holds only a timer. When many
+OSTs are unavailable, retries consume probe slots and can delay the next
+probe beyond the configured interval; loops waiting for a slot get it in the
+order they asked. On shutdown the collector stops all loops and drains
+in-flight calls.
 Retry budgets and timeouts use the `RAWSTOR_OPTS_*` knobs documented in README.
 OST connections start with a 32KiB receive ring. Binding an object or a
 snapshot grows it to the data-path size; variable-sized listings also grow
@@ -1111,6 +1113,8 @@ The systemd service lists these defaults and reads overrides from
 `/etc/rawstor-mds.conf`. The MDS logs the effective interval and concurrency
 at startup. `SIGHUP` reload also updates the collector: new OSTs are queued
 for probing immediately, removed OSTs are dropped from the database and aggregate, and
-an address change clears the old sample and availability. In-flight results
+an address change clears the old sample and availability. OSTs that stay in
+the topology but are unavailable are probed again at once rather than at
+their next slot. In-flight results
 for a removed OST or its old address are ignored. The existing refusal to
 remove an OST that still holds chunks or snapshot members also applies.

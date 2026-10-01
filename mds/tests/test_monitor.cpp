@@ -2,16 +2,23 @@
 
 #include "tmp_dir.hpp"
 
-#include <rawstd/pipe.hpp>
 #include <rawstd/uuid.h>
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <deque>
 #include <exception>
 #include <filesystem>
+#include <string>
 #include <thread>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 namespace {
@@ -31,14 +38,13 @@ TopologyOST ost_at(const std::string& location, unsigned index = 1) {
 
 class RunningMonitor {
 private:
-    rawstd::Pipe _wake{rawstd::Pipe::Mode::NonBlocking};
     Monitor _monitor;
     std::exception_ptr _error;
     std::thread _thread;
 
 public:
     RunningMonitor(ObjectStore& store, Opts opts) :
-        _monitor(store, opts, _wake.read_fd()),
+        _monitor(store, opts),
         _thread([this]() {
             try {
                 _monitor.loop();
@@ -49,11 +55,11 @@ public:
 
     ~RunningMonitor() { stop(); }
 
+    void reload() { _monitor.reload(); }
+
     void stop() {
         if (_thread.joinable()) {
-            char byte = 0;
-            ssize_t ignored = write(_wake.write_fd(), &byte, 1);
-            (void)ignored;
+            _monitor.stop();
             _thread.join();
         }
     }
@@ -89,6 +95,7 @@ TEST(MonitorTest, follows_reload_failure_and_recovery) {
     Topology topology;
     topology.add(ost);
     store.set_topology(topology);
+    monitor.reload();
     ASSERT_TRUE(eventually([&]() { return store.backend_available(ost.id); }));
     EXPECT_GT(store.info().total, 0u);
 
@@ -96,6 +103,7 @@ TEST(MonitorTest, follows_reload_failure_and_recovery) {
     Topology moved;
     moved.add(ost);
     store.set_topology(moved);
+    monitor.reload();
     EXPECT_FALSE(store.backend_available(ost.id));
     EXPECT_EQ(store.info().total, 0u);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -107,6 +115,7 @@ TEST(MonitorTest, follows_reload_failure_and_recovery) {
     EXPECT_GT(store.info().total, 0u);
 
     store.set_topology(Topology{});
+    monitor.reload();
     EXPECT_EQ(store.info().total, 0u);
     monitor.check();
     EXPECT_EQ(store.info().total, 0u);
@@ -165,6 +174,79 @@ TEST(MonitorTest, next_due_keeps_phase_and_interval) {
     );
 }
 
+// Accepts connections and closes each one, unanswered, after `hold`;
+// records how many were open at once.
+class SilentServer {
+private:
+    int _fd;
+    std::atomic<bool> _stop{false};
+    std::atomic<unsigned> _max_open{0};
+    std::thread _thread;
+
+    void _run(std::chrono::milliseconds hold) {
+        using Clock = std::chrono::steady_clock;
+        std::deque<std::pair<int, Clock::time_point>> open;
+        while (!_stop) {
+            pollfd pfd{.fd = _fd, .events = POLLIN, .revents = 0};
+            if (poll(&pfd, 1, 5) > 0) {
+                int fd = ::accept(_fd, nullptr, nullptr);
+                if (fd >= 0) {
+                    open.emplace_back(fd, Clock::now());
+                    _max_open = std::max<unsigned>(_max_open, open.size());
+                }
+            }
+            while (!open.empty() &&
+                   Clock::now() - open.front().second >= hold) {
+                ::close(open.front().first);
+                open.pop_front();
+            }
+        }
+        for (auto& [fd, since] : open) {
+            ::close(fd);
+        }
+    }
+
+public:
+    SilentServer(uint16_t port, std::chrono::milliseconds hold) {
+        _fd = socket(AF_INET, SOCK_STREAM, 0);
+        int on = 1;
+        setsockopt(_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (bind(_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0 ||
+            listen(_fd, 64) != 0) {
+            ::close(_fd);
+            throw std::system_error(errno, std::generic_category());
+        }
+        _thread = std::thread([this, hold]() { _run(hold); });
+    }
+
+    ~SilentServer() {
+        _stop = true;
+        _thread.join();
+        ::close(_fd);
+    }
+
+    unsigned max_open() const { return _max_open; }
+};
+
+TEST(MonitorTest, bounds_in_flight_probes) {
+    SilentServer server(8810, std::chrono::milliseconds(300));
+    tests::TmpDir dir;
+    Topology topology;
+    for (unsigned i = 1; i <= 10; ++i) {
+        topology.add(ost_at("ost://127.0.0.1:8810", i));
+    }
+    ObjectStore store(dir.db_path(), topology);
+    RunningMonitor monitor(store, Opts{60000, 3});
+    ASSERT_TRUE(eventually([&]() { return server.max_open() == 3; }));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    EXPECT_EQ(server.max_open(), 3u);
+    monitor.check();
+}
+
 // The largest accepted concurrency must still fit the queue it sizes.
 TEST(MonitorTest, starts_with_max_concurrency) {
     tests::TmpDir dir;
@@ -197,6 +279,24 @@ TEST(MonitorTest, collects_five_thousand_backends_with_bounded_queue) {
         30
     ));
     EXPECT_GT(store.info().total, 0u);
+
+    // Every loop is asleep now: dropping them all cancels 5000 timers.
+    store.set_topology(Topology{});
+    monitor.reload();
+    EXPECT_EQ(store.info().total, 0u);
+    store.set_topology(topology);
+    monitor.reload();
+    ASSERT_TRUE(eventually(
+        [&]() {
+            for (const auto& ost : topology.osts()) {
+                if (!store.backend_available(ost.id)) {
+                    return false;
+                }
+            }
+            return true;
+        },
+        30
+    ));
     monitor.check();
 }
 

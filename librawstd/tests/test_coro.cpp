@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <coroutine>
 #include <limits>
 #include <stdexcept>
@@ -731,6 +732,78 @@ TEST(GateTest, wakes_every_settler_at_once) {
     g.end();
     EXPECT_TRUE(t1.done());
     EXPECT_TRUE(t2.done());
+}
+
+rawstd::Task<void> hold_semaphore(
+    rawstd::Semaphore& semaphore, std::vector<int>& order, int id,
+    std::coroutine_handle<>* slot
+) {
+    co_await semaphore.acquire();
+    order.push_back(id);
+    co_await suspend_once{slot};
+    semaphore.release();
+}
+
+TEST(SemaphoreTest, hands_units_to_waiters_in_fifo_order) {
+    rawstd::Semaphore semaphore(2);
+    std::vector<int> order;
+    std::coroutine_handle<> slots[4];
+    std::vector<rawstd::Task<void>> tasks;
+    for (int i = 0; i < 4; ++i) {
+        tasks.push_back(hold_semaphore(semaphore, order, i, &slots[i]));
+    }
+    EXPECT_EQ(order, (std::vector<int>{0, 1}));
+    EXPECT_EQ(semaphore.available(), 0u);
+    EXPECT_EQ(semaphore.waiting(), 2u);
+
+    slots[1].resume();
+    EXPECT_EQ(order, (std::vector<int>{0, 1, 2}));
+    slots[0].resume();
+    EXPECT_EQ(order, (std::vector<int>{0, 1, 2, 3}));
+    EXPECT_EQ(semaphore.waiting(), 0u);
+
+    slots[2].resume();
+    slots[3].resume();
+    EXPECT_EQ(semaphore.available(), 2u);
+    for (auto& task : tasks) {
+        EXPECT_TRUE(task.done());
+        task.get();
+    }
+}
+
+rawstd::Task<void> acquire_and_release(
+    rawstd::Semaphore& semaphore, unsigned int& depth, unsigned int& max_depth
+) {
+    co_await semaphore.acquire();
+    ++depth;
+    max_depth = std::max(max_depth, depth);
+    semaphore.release();
+    --depth;
+}
+
+TEST(SemaphoreTest, synchronous_releases_do_not_nest_resumptions) {
+    rawstd::Semaphore semaphore(1);
+    std::coroutine_handle<> slot;
+    std::vector<int> order;
+    rawstd::Task<void> holder = hold_semaphore(semaphore, order, 0, &slot);
+
+    unsigned int depth = 0;
+    unsigned int max_depth = 0;
+    std::vector<rawstd::Task<void>> waiters;
+    for (int i = 0; i < 10000; ++i) {
+        waiters.push_back(acquire_and_release(semaphore, depth, max_depth));
+    }
+    EXPECT_EQ(semaphore.waiting(), 10000u);
+
+    slot.resume();
+    EXPECT_EQ(max_depth, 1u);
+    EXPECT_EQ(semaphore.waiting(), 0u);
+    EXPECT_EQ(semaphore.available(), 1u);
+    holder.get();
+    for (auto& waiter : waiters) {
+        EXPECT_TRUE(waiter.done());
+        waiter.get();
+    }
 }
 
 } // namespace
