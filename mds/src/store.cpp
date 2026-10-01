@@ -23,6 +23,13 @@ namespace {
 using rawstor::mdsserver::PlacementPolicy;
 
 constexpr const char* SCHEMA =
+    "CREATE TABLE IF NOT EXISTS backends ("
+    " id BLOB PRIMARY KEY, location TEXT NOT NULL, active INTEGER NOT NULL,"
+    " available INTEGER NOT NULL DEFAULT 0,"
+    " used INTEGER NOT NULL DEFAULT 0, total INTEGER NOT NULL DEFAULT 0,"
+    " checked_at INTEGER NOT NULL DEFAULT 0, sampled_at INTEGER NOT NULL "
+    "DEFAULT 0"
+    ") WITHOUT ROWID;"
     "CREATE TABLE IF NOT EXISTS objects ("
     "  id BLOB PRIMARY KEY,"
     "  logical_size INTEGER NOT NULL,"
@@ -117,6 +124,15 @@ public:
     Stmt& bind_int64(int pos, uint64_t value) {
         if (sqlite3_bind_int64(_stmt, pos, static_cast<sqlite3_int64>(value)) !=
             SQLITE_OK) {
+            throw_sqlite(_db, "sqlite bind");
+        }
+        return *this;
+    }
+
+    Stmt& bind_text(int pos, const std::string& value) {
+        if (sqlite3_bind_text(
+                _stmt, pos, value.c_str(), -1, SQLITE_TRANSIENT
+            ) != SQLITE_OK) {
             throw_sqlite(_db, "sqlite bind");
         }
         return *this;
@@ -437,6 +453,7 @@ ObjectStore::ObjectStore(const std::string& path, Topology topology) :
         exec(_db, "PRAGMA synchronous=FULL;");
         exec(_db, "PRAGMA foreign_keys=ON;");
         exec(_db, SCHEMA);
+        _sync_backends(*_topology);
     } catch (...) {
         sqlite3_close(_db);
         throw;
@@ -520,7 +537,102 @@ void ObjectStore::_check_topology(const Topology& topology) {
 void ObjectStore::set_topology(Topology topology) {
     std::lock_guard<std::mutex> lock(_mutex);
     _check_topology(topology);
-    _topology = std::make_shared<const Topology>(std::move(topology));
+    auto replacement = std::make_shared<const Topology>(std::move(topology));
+    _sync_backends(*replacement);
+    _topology = std::move(replacement);
+}
+
+void ObjectStore::_sync_backends(const Topology& topology) {
+    Transaction tx(_db);
+    exec(_db, "UPDATE backends SET active = 0;");
+    Stmt upsert(
+        _db,
+        "INSERT INTO backends (id, location, active) VALUES (?, ?, 1)"
+        " ON CONFLICT(id) DO UPDATE SET active = 1, location = "
+        "excluded.location,"
+        " available = CASE WHEN location = excluded.location THEN available "
+        "ELSE 0 END,"
+        " used = CASE WHEN location = excluded.location THEN used ELSE 0 END,"
+        " total = CASE WHEN location = excluded.location THEN total ELSE 0 END,"
+        " checked_at = CASE WHEN location = excluded.location THEN checked_at "
+        "ELSE 0 END,"
+        " sampled_at = CASE WHEN location = excluded.location THEN sampled_at "
+        "ELSE 0 END;"
+    );
+    for (const auto& ost : topology.osts()) {
+        upsert.reset();
+        upsert.bind_blob(1, ost.id.bytes, sizeof(ost.id.bytes))
+            .bind_text(2, ost.location)
+            .step();
+    }
+    exec(_db, "DELETE FROM backends WHERE active = 0;");
+    tx.commit();
+}
+
+void ObjectStore::reset_backend_availability() {
+    std::lock_guard<std::mutex> lock(_mutex);
+    exec(_db, "UPDATE backends SET available = 0;");
+}
+
+void ObjectStore::update_backend(
+    const TopologyOST& ost, const RawstorLocationInfo* info
+) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    Stmt update(
+        _db,
+        info != nullptr
+            ? "UPDATE backends SET available = 1, used = ?, total = ?, "
+              "checked_at = ?, sampled_at = ? WHERE id = ? AND location = ?;"
+            : "UPDATE backends SET available = 0, checked_at = ? WHERE id = ? "
+              "AND location = ?;"
+    );
+    int pos = 1;
+    uint64_t now = static_cast<uint64_t>(time(nullptr));
+    if (info != nullptr) {
+        update.bind_int64(pos++, info->used);
+        update.bind_int64(pos++, info->total);
+        update.bind_int64(pos++, now);
+        update.bind_int64(pos++, now);
+    } else {
+        update.bind_int64(pos++, now);
+    }
+    update.bind_blob(pos++, ost.id.bytes, sizeof(ost.id.bytes));
+    update.bind_text(pos, ost.location).step();
+}
+
+bool ObjectStore::backend_available(const RawstdUUID& id) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    Stmt select(_db, "SELECT available FROM backends WHERE id = ?;");
+    select.bind_blob(1, id.bytes, sizeof(id.bytes));
+    return select.step() && select.column_int64(0) != 0;
+}
+
+RawstorLocationInfo ObjectStore::info() {
+    std::lock_guard<std::mutex> lock(_mutex);
+    RawstorLocationInfo result{};
+    Stmt select(_db, "SELECT used, total FROM backends;");
+    while (select.step()) {
+        uint64_t used = select.column_int64(0);
+        uint64_t total = select.column_int64(1);
+        if (used > UINT64_MAX - result.used ||
+            total > UINT64_MAX - result.total) {
+            RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
+        }
+        result.used += used;
+        result.total += total;
+    }
+    return result;
+}
+
+Topology ObjectStore::_available_topology() {
+    Stmt select(_db, "SELECT id FROM backends WHERE available = 1;");
+    std::vector<RawstdUUID> ids;
+    while (select.step()) {
+        RawstdUUID id;
+        select.column_uuid(0, &id);
+        ids.push_back(id);
+    }
+    return _topology->select(ids);
 }
 
 ObjectDescriptor ObjectStore::create(
@@ -553,7 +665,8 @@ ObjectDescriptor ObjectStore::create(
     uint64_t nchunks = nchunks_of(logical_size, chunk_size);
 
     /* Hard-fails on an unsatisfiable topology before anything lands. */
-    place(*_topology, ret.id, 0, policy);
+    Topology available = _available_topology();
+    place(available, ret.id, 0, policy);
 
     Transaction tx(_db);
 
@@ -577,7 +690,7 @@ ObjectDescriptor ObjectStore::create(
             .step();
     }
 
-    insert_chunks(_db, *_topology, ret.id, 0, nchunks, chunk_size, ret.policy);
+    insert_chunks(_db, available, ret.id, 0, nchunks, chunk_size, ret.policy);
 
     record_mutation(_db, idempotency_key, MutationKind::create, id, {});
 
@@ -686,8 +799,8 @@ ResizeResult ObjectStore::resize(
     }
 
     insert_chunks(
-        _db, *_topology, id, old_chunks, new_chunks, descriptor.chunk_size,
-        descriptor.policy
+        _db, _available_topology(), id, old_chunks, new_chunks,
+        descriptor.chunk_size, descriptor.policy
     );
 
     record_mutation(

@@ -7,6 +7,7 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <rawstor/location.h>
 #include <rawstor/protocol.h>
 
 #include <string>
@@ -74,6 +75,8 @@ public:
 
     /* TCP connect + the SET_OBJECT handshake (null binding). */
     rawstd::Task<void> connect();
+
+    rawstd::Task<RawstorLocationInfo> info();
 
     rawstd::Task<uint64_t> create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,

@@ -17,7 +17,7 @@ class Server;
 
 // One MDS client connection. Same framing as an OST connection (shared
 // `rstr` magic and frame heads, docs/mds.md "Wire protocol") --
-// only the object opcode group (CMD_OBJ_*) is actually served here; every
+// the object opcode group (CMD_OBJ_*) and LOCATION_INFO are served here; every
 // other opcode answers -ENOSYS (a plain rawstor-ost, or an OST doubling as
 // partial MDS, serves the session/data/shared-metadata groups instead).
 // Unlike ost::Client, request handling calls straight into ObjectStore's

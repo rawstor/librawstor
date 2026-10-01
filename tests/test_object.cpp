@@ -795,3 +795,18 @@ TEST(ObjectCreateTest, location_create_with_chunk_size_creates_one_object) {
 
     EXPECT_EQ(target_remove(*queue, target_str), 0);
 }
+
+TEST(ObjectLocationInfoTest, mds_returns_cached_database_statistics) {
+    rawstor::tests::ObjectEnv env(18100, 18101);
+    auto queue = rawio::Queue::create(4);
+    RawstorLocationInfo info{};
+    ssize_t res =
+        rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+            return rawstor_location_info(
+                queue.get(), env.location().c_str(), &info, cb, data
+            );
+        });
+    ASSERT_EQ(res, 0);
+    EXPECT_EQ(info.used, 123u);
+    EXPECT_EQ(info.total, 456u);
+}

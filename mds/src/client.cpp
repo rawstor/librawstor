@@ -282,6 +282,25 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         co_await client->_send_response(head.cmd, head.cid, 0);
         break;
     }
+    case RAWSTOR_CMD_LOCATION_INFO: {
+        RawstorFrameBasicPayload payload;
+        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        RawstorLocationInfo info{};
+        int32_t res = 0;
+        try {
+            info = store.info();
+        } catch (const std::system_error& e) {
+            res = -e.code().value();
+        }
+        if (res < 0) {
+            co_await client->_send_response(head.cmd, head.cid, res);
+        } else {
+            co_await client->_send_response(
+                head.cmd, head.cid, sizeof(info), &info, sizeof(info)
+            );
+        }
+        break;
+    }
     case RAWSTOR_CMD_OBJ_CREATE: {
         RawstorFrameObjCreatePayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));

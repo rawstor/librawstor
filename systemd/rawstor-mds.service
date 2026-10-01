@@ -25,6 +25,17 @@ Environment=DB_PATH=/var/lib/rawstor-mds/mds.db
 # no OSTs, so the service starts but can't place anything until the admin
 # lists the OSTs there and reloads (systemctl reload rawstor-mds).
 Environment=TOPOLOGY_PATH=/etc/rawstor-mds/topology.conf
+# MDS statistics collection (milliseconds, concurrent probes).
+Environment=RAWSTOR_MDS_OPTS_INFO_INTERVAL=60000
+Environment=RAWSTOR_MDS_OPTS_INFO_CONCURRENCY=128
+# Probes use the same librawstor retry/timeout settings as Slot.
+#Environment=RAWSTOR_OPTS_IO_ATTEMPTS=10
+#Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE=100
+#Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX=30000
+#Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER=50
+#Environment=RAWSTOR_OPTS_SO_SNDTIMEO=5000
+#Environment=RAWSTOR_OPTS_SO_RCVTIMEO=5000
+#Environment=RAWSTOR_OPTS_TCP_USER_TIMEOUT=5000
 EnvironmentFile=-/etc/rawstor-mds.conf
 ExecStart=/usr/bin/rawstor-mds --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --db=${DB_PATH} --topology=${TOPOLOGY_PATH}
 # Re-reads TOPOLOGY_PATH without a restart (SIGHUP); a topology that
