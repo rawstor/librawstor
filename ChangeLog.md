@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With io_uring, a connection could hang forever when the kernel ended its multishot receive on its own (e.g. on a full completion ring); it now fails and reconnects.
 - With the `poll()` backend (`--without-liburing`, always on macOS), a `rawstor-ost`/`rawstor-mds` worker thread that lost the race for an incoming connection blocked inside `accept()`, so it stopped serving its clients and the server could not be stopped with Ctrl-C/SIGTERM.
 
-## [0.2.12] - Unreleased
+## [0.2.12] - 2026-10-01
 
 ### Fixed
 - `rawstor info` against a `file://` location reported `total` as the whole filesystem's capacity (`statvfs`'s `f_blocks * f_frsize`) rather than space accounted for by rawstor, so `available` (derived as `total - used`) could include space taken by unrelated data on the same filesystem. `total` is now `used` (rawstor's own files) plus the filesystem's actually-free space (`f_bavail * f_frsize`), matching the `lvm://`/`zfs://` backends' `total = used + available` semantics.
