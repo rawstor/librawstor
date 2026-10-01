@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every backend now stores an object per chunk (`file://` `<uuid>/<offset>/data`, LVM `<uuid>-<offset>`, ZFS `<uuid>:<offset>`), with no migration: objects created by 0.2.x are not visible to this release.
 - `rawstor_target_open()` gains an `int flags` argument (`0` or `RAWSTOR_READONLY`: no write quorum needed, every write fails `-EROFS`). Breaking C API change.
 - The transitional `rawstor_object_*2()`/`rawio_*2()` functions are gone: their callback-based shapes (including `rawstor_object_pwrite()`/`pwritev()`'s `sync` argument and an `ssize_t` result for every `rawio_*()` callback) now live under the original names. Breaking C API change.
+- `rawstor_object_pread()`/`preadv()`/`pwrite()`/`pwritev()`/`discard()`/`write_zeroes()` take their `offset` as `uint64_t` instead of `off_t`. Breaking C API change.
 - Target strings returned by `rawstor_location_list()`/`_create()` always carry an explicit chunk offset segment (`<uuid>/0`); a target without one still parses as offset 0.
 - `rawstor-vhost`/`rawstor-vhost-qemu`/`rawstor testio`'s `--queue-size` defaults raised from 256 to 4096, matching `rawstor-ost`.
 - The OST wire protocol changed incompatibly (`LIST` entries carry a chunk offset, `RELEASE` also removes a snapshot version, new `META`/`SET_SYNC_STATE`/`SNAPSHOT`/`LIST_SNAPSHOTS`/`OBJ_*` commands); `rawstor-ost` and its clients must be upgraded together.
@@ -31,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `SPEC` OST wire command (added in 0.2.3), superseded by `META`; a `rawstor-ost` from this release rejects it with `-ENOSYS`.
 
 ### Fixed
+- Object I/O now rejects ranges whose offset plus size would overflow, preventing access to the beginning of a multi-chunk object.
 - `rawstor-ost` now answers `-ENOSYS` for a command it doesn't recognize instead of just dropping the connection, so a newer client can tell "unsupported" apart from a transport failure.
 - The `rawstor-vduse` deb package (present since 0.2.10) was never actually built or published: CI's packaging job never copied its `.install`/`.postinst`/`.prerm` files into place.
 - With io_uring, a connection could hang forever when the kernel ended its multishot receive on its own (e.g. on a full completion ring); it now fails and reconnects.

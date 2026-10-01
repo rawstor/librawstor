@@ -110,7 +110,7 @@ Backend::_open_snapshot(const RawstdUUID&, uint64_t, const RawstdUUID&) {
 }
 
 rawstd::Task<void>
-Backend::_zero_fill(int target_fd, off_t offset, size_t size, bool unmap) {
+Backend::_zero_fill(int target_fd, uint64_t offset, size_t size, bool unmap) {
 #if defined(RAWSTD_ON_LINUX)
     // FALLOC_FL_PUNCH_HOLE additionally deallocates the range (what
     // `unmap` asks for) while still guaranteeing zero readback, same as
@@ -119,7 +119,8 @@ Backend::_zero_fill(int target_fd, off_t offset, size_t size, bool unmap) {
                      : FALLOC_FL_ZERO_RANGE;
     try {
         co_await _queue.fallocate(
-            target_fd, mode, offset, static_cast<off_t>(size)
+            target_fd, mode, static_cast<off_t>(offset),
+            static_cast<off_t>(size)
         );
         co_return;
     } catch (const std::system_error& e) {
@@ -141,7 +142,7 @@ Backend::_zero_fill(int target_fd, off_t offset, size_t size, bool unmap) {
     static constexpr size_t chunk_size = 1u << 20; // 1MB
     std::vector<unsigned char> zeros(std::min(size, chunk_size), 0);
     size_t remaining = size;
-    off_t at = offset;
+    off_t at = static_cast<off_t>(offset);
     while (remaining > 0) {
         size_t chunk = std::min(remaining, zeros.size());
         co_await _queue.pwrite(target_fd, zeros.data(), chunk, at, false);
@@ -268,36 +269,42 @@ void Backend::meta_decode(
     identity->width = static_cast<uint8_t>(width);
 }
 
-rawstd::Task<size_t> Backend::pread(void* buf, size_t size, off_t offset) {
+rawstd::Task<size_t> Backend::pread(void* buf, size_t size, uint64_t offset) {
     rawstd_debug(
-        "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
-        (intmax_t)offset
+        "%s(): fd = %d, size = %zu, offset = %" PRIu64 "\n", __FUNCTION__, fd(),
+        size, offset
     );
 
-    co_return co_await _queue.pread(fd(), buf, size, offset);
+    co_return co_await _queue.pread(
+        fd(), buf, size, static_cast<off_t>(offset)
+    );
 }
 
 rawstd::Task<size_t>
-Backend::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
+Backend::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
     rawstd_debug(
-        "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
-        (intmax_t)offset
+        "%s(): fd = %d, size = %zu, offset = %" PRIu64 "\n", __FUNCTION__, fd(),
+        size, offset
     );
 
-    co_return co_await _queue.preadv(fd(), iov, niov, offset);
+    co_return co_await _queue.preadv(
+        fd(), iov, niov, static_cast<off_t>(offset)
+    );
 }
 
 rawstd::Task<size_t>
-Backend::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
+Backend::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
     rawstd_debug(
-        "%s(): fd = %d, size = %zu, offset = %jd, sync = %d\n", __FUNCTION__,
-        fd(), size, (intmax_t)offset, sync
+        "%s(): fd = %d, size = %zu, offset = %" PRIu64 ", sync = %d\n",
+        __FUNCTION__, fd(), size, offset, sync
     );
 
     co_await _throttle_acquire(size);
     size_t result;
     try {
-        result = co_await _queue.pwrite(fd(), buf, size, offset, sync);
+        result = co_await _queue.pwrite(
+            fd(), buf, size, static_cast<off_t>(offset), sync
+        );
     } catch (...) {
         _throttle_release();
         throw;
@@ -308,17 +315,19 @@ Backend::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
 }
 
 rawstd::Task<size_t> Backend::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
+    const iovec* iov, unsigned int niov, size_t size, uint64_t offset, bool sync
 ) {
     rawstd_debug(
-        "%s(): fd = %d, size = %zu, offset = %jd, sync = %d\n", __FUNCTION__,
-        fd(), size, (intmax_t)offset, sync
+        "%s(): fd = %d, size = %zu, offset = %" PRIu64 ", sync = %d\n",
+        __FUNCTION__, fd(), size, offset, sync
     );
 
     co_await _throttle_acquire(size);
     size_t result;
     try {
-        result = co_await _queue.pwritev(fd(), iov, niov, offset, sync);
+        result = co_await _queue.pwritev(
+            fd(), iov, niov, static_cast<off_t>(offset), sync
+        );
     } catch (...) {
         _throttle_release();
         throw;
@@ -328,17 +337,17 @@ rawstd::Task<size_t> Backend::pwritev(
     co_return result;
 }
 
-rawstd::Task<size_t> Backend::discard(size_t size, off_t offset) {
+rawstd::Task<size_t> Backend::discard(size_t size, uint64_t offset) {
     rawstd_debug(
-        "%s(): fd = %d, size = %zu, offset = %jd\n", __FUNCTION__, fd(), size,
-        (intmax_t)offset
+        "%s(): fd = %d, size = %zu, offset = %" PRIu64 "\n", __FUNCTION__, fd(),
+        size, offset
     );
 
 #if defined(RAWSTD_ON_LINUX)
     try {
         co_await _queue.fallocate(
-            fd(), FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, offset,
-            static_cast<off_t>(size)
+            fd(), FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+            static_cast<off_t>(offset), static_cast<off_t>(size)
         );
     } catch (const std::system_error& e) {
         // discard() is purely advisory (see its own doc comment on
@@ -355,10 +364,11 @@ rawstd::Task<size_t> Backend::discard(size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Backend::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
+Backend::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
     rawstd_debug(
-        "%s(): fd = %d, size = %zu, offset = %jd, unmap = %d, sync = %d\n",
-        __FUNCTION__, fd(), size, (intmax_t)offset, unmap, sync
+        "%s(): fd = %d, size = %zu, offset = %" PRIu64
+        ", unmap = %d, sync = %d\n",
+        __FUNCTION__, fd(), size, offset, unmap, sync
     );
 
     co_await _throttle_acquire(size);

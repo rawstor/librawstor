@@ -23,12 +23,12 @@ extern "C" {
 // silently ignored otherwise.
 int rawstor_cli_create(
     const char* target, uint64_t size, uint64_t chunk_size,
-    unsigned int mirrors, uint8_t failure_domain, uint64_t stripe_width
+    unsigned int mirrors, unsigned int failure_domain, uint64_t stripe_width
 );
 
 int rawstor_cli_create_at(
     const char* location, const char* uuid, uint64_t size, uint64_t chunk_size,
-    unsigned int mirrors, uint8_t failure_domain, uint64_t stripe_width
+    unsigned int mirrors, unsigned int failure_domain, uint64_t stripe_width
 );
 
 #ifdef __cplusplus

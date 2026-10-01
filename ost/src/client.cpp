@@ -187,8 +187,9 @@ int io_trampoline(size_t result, int error, void* data) {
     return 0;
 }
 
-rawstd::Task<size_t>
-co_object_pread(RawstorObject* object, void* buf, size_t size, off_t offset) {
+rawstd::Task<size_t> co_object_pread(
+    RawstorObject* object, void* buf, size_t size, uint64_t offset
+) {
     rawstd::CallbackAwaitable<size_t> awaiter;
     int res = rawstor_object_pread(
         object, buf, size, offset, io_trampoline, &awaiter
@@ -200,7 +201,8 @@ co_object_pread(RawstorObject* object, void* buf, size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t> co_object_pwrite(
-    RawstorObject* object, const void* buf, size_t size, off_t offset, bool sync
+    RawstorObject* object, const void* buf, size_t size, uint64_t offset,
+    bool sync
 ) {
     rawstd::CallbackAwaitable<size_t> awaiter;
     int res = rawstor_object_pwrite(
@@ -213,7 +215,7 @@ rawstd::Task<size_t> co_object_pwrite(
 }
 
 rawstd::Task<size_t>
-co_object_discard(RawstorObject* object, size_t size, off_t offset) {
+co_object_discard(RawstorObject* object, size_t size, uint64_t offset) {
     rawstd::CallbackAwaitable<size_t> awaiter;
     int res =
         rawstor_object_discard(object, size, offset, io_trampoline, &awaiter);
@@ -224,7 +226,7 @@ co_object_discard(RawstorObject* object, size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t> co_object_write_zeroes(
-    RawstorObject* object, size_t size, off_t offset, bool unmap, bool sync
+    RawstorObject* object, size_t size, uint64_t offset, bool unmap, bool sync
 ) {
     rawstd::CallbackAwaitable<size_t> awaiter;
     int res = rawstor_object_write_zeroes(

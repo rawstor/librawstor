@@ -39,7 +39,7 @@ static void log_spec(FILE* output, const struct RawstorObjectSpec* spec) {
 
 int rawstor_cli_create(
     const char* target, uint64_t size, uint64_t chunk_size,
-    unsigned int mirrors, uint8_t failure_domain, uint64_t stripe_width
+    unsigned int mirrors, unsigned int failure_domain, uint64_t stripe_width
 ) {
     struct RawstorObjectSpec spec = {
         .size = size,
@@ -102,7 +102,7 @@ static ssize_t try_location_create(
 
 int rawstor_cli_create_at(
     const char* location, const char* uuid, uint64_t size, uint64_t chunk_size,
-    unsigned int mirrors, uint8_t failure_domain, uint64_t stripe_width
+    unsigned int mirrors, unsigned int failure_domain, uint64_t stripe_width
 ) {
     struct RawstorObjectSpec spec = {
         .size = size,

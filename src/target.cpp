@@ -1162,14 +1162,20 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     // persisted verbatim on every copy, and need not equal a chunk's own
     // URI count: e.g. rawstor-ost relaying one copy of an object onto
     // several local locations stamps each of them with the object's own
-    // width. Every persisted/wire width is a uint8_t, so anything wider is
-    // rejected rather than silently truncated.
+    // width. Every persisted/wire width and failure_domain is a uint8_t, so
+    // anything wider is rejected rather than silently truncated.
     if (sp.width == 0) {
         rawstd_error("Spec width must be set (0 is not a valid width)\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     if (sp.width > UINT8_MAX) {
         rawstd_error("Spec width (%u) is too large\n", sp.width);
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    if (sp.failure_domain > UINT8_MAX) {
+        rawstd_error(
+            "Spec failure_domain (%u) is too large\n", sp.failure_domain
+        );
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 

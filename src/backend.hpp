@@ -267,16 +267,16 @@ public:
     );
 
     virtual rawstd::Task<size_t>
-    pread(void* buf, size_t size, off_t offset) = 0;
+    pread(void* buf, size_t size, uint64_t offset) = 0;
 
     virtual rawstd::Task<size_t>
-    preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) = 0;
+    preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) = 0;
 
     virtual rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, off_t offset, bool sync) = 0;
+    pwrite(const void* buf, size_t size, uint64_t offset, bool sync) = 0;
 
     virtual rawstd::Task<size_t> pwritev(
-        const iovec* iov, unsigned int niov, size_t size, off_t offset,
+        const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync
     ) = 0;
 
@@ -285,7 +285,7 @@ public:
     // unlike write_zeroes() below, discard() does *not* guarantee the
     // range reads back as zero afterward. Returns the number of bytes
     // covered by the hint, mirroring pwrite()'s own byte-count result.
-    virtual rawstd::Task<size_t> discard(size_t size, off_t offset) = 0;
+    virtual rawstd::Task<size_t> discard(size_t size, uint64_t offset) = 0;
 
     // Zeroes [offset, offset + size) -- unlike discard() above, the range
     // is guaranteed to read back as zero once this completes. `unmap`
@@ -294,7 +294,7 @@ public:
     // VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP. `sync` has the same meaning as
     // pwrite()/pwritev()'s own `sync`.
     virtual rawstd::Task<size_t>
-    write_zeroes(size_t size, off_t offset, bool unmap, bool sync) = 0;
+    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) = 0;
 
     virtual rawstd::Task<void> flush() = 0;
 };

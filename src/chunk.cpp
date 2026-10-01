@@ -31,6 +31,7 @@
 #include <utility>
 
 #include <cerrno>
+#include <cinttypes>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -1078,7 +1079,8 @@ rawstd::Task<void> Chunk::_fan_out_write_syncing_one(
  * acknowledgement, but a failure aborts the resync.
  */
 rawstd::Task<size_t> Chunk::_fan_out_write(
-    off_t offset, size_t size, std::function<rawstd::Task<size_t>(Slot&)> issue
+    uint64_t offset, size_t size,
+    std::function<rawstd::Task<size_t>(Slot&)> issue
 ) {
     // A write overlapping the chunk the sweeper is copying right now
     // parks until the copy completes: the copy would otherwise overwrite
@@ -1119,9 +1121,9 @@ rawstd::Task<size_t> Chunk::_fan_out_write(
 
     ++_writes_in_flight;
     if (_resync != nullptr && size > 0) {
-        size_t first = (size_t)(offset / (off_t)_resync->chunk);
+        size_t first = (size_t)(offset / (uint64_t)_resync->chunk);
         size_t last =
-            (size_t)((offset + (off_t)size - 1) / (off_t)_resync->chunk);
+            (size_t)((offset + (uint64_t)size - 1) / (uint64_t)_resync->chunk);
         for (size_t c = first; c <= last; ++c) {
             ++_resync->inflight[c];
         }
@@ -1145,9 +1147,9 @@ rawstd::Task<size_t> Chunk::_fan_out_write(
     --_writes_in_flight;
 
     if (_resync != nullptr && size > 0) {
-        size_t first = (size_t)(offset / (off_t)_resync->chunk);
+        size_t first = (size_t)(offset / (uint64_t)_resync->chunk);
         size_t last =
-            (size_t)((offset + (off_t)size - 1) / (off_t)_resync->chunk);
+            (size_t)((offset + (uint64_t)size - 1) / (uint64_t)_resync->chunk);
         for (size_t c = first; c <= last; ++c) {
             auto it = _resync->inflight.find(c);
             if (it != _resync->inflight.end() && --it->second == 0) {
@@ -1402,8 +1404,7 @@ rawstd::DetachedTask Chunk::_resync_sweep() {
     size_t result = 0;
     int error = 0;
     try {
-        result =
-            co_await _members[src].slot->pread(buf->data(), len, (off_t)off);
+        result = co_await _members[src].slot->pread(buf->data(), len, off);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1438,10 +1439,9 @@ rawstd::DetachedTask Chunk::_resync_sweep() {
     try {
         Slot& target = *_members[_resync->idx].slot;
         if (zero) {
-            wresult =
-                co_await target.write_zeroes(len, (off_t)off, true, false);
+            wresult = co_await target.write_zeroes(len, off, true, false);
         } else {
-            wresult = co_await target.pwrite(data, len, (off_t)off, false);
+            wresult = co_await target.pwrite(data, len, off, false);
         }
     } catch (const std::system_error& e) {
         werror = e.code().value();
@@ -1668,7 +1668,7 @@ rawstd::DetachedTask Chunk::_probe_tick() {
  * If every member fails, the error is reported without touching the states.
  */
 rawstd::Task<size_t> Chunk::_read(
-    off_t offset, std::function<rawstd::Task<size_t>(Slot&)> issue,
+    uint64_t offset, std::function<rawstd::Task<size_t>(Slot&)> issue,
     std::function<void(std::vector<char>&, size_t)> copy_to
 ) {
     std::vector<size_t> order;
@@ -1733,7 +1733,8 @@ rawstd::Task<size_t> Chunk::_read(
  * from the read that triggered it.
  */
 rawstd::DetachedTask Chunk::_read_repair(
-    size_t idx, off_t offset, std::vector<char> data, std::weak_ptr<void> alive
+    size_t idx, uint64_t offset, std::vector<char> data,
+    std::weak_ptr<void> alive
 ) {
     try {
         co_await _with_dirty();
@@ -1784,9 +1785,9 @@ Chunk::_degrade_detached(std::vector<size_t> idxs, std::weak_ptr<void> alive) {
     }
 }
 
-rawstd::Task<size_t> Chunk::pread(void* buf, size_t size, off_t offset) {
+rawstd::Task<size_t> Chunk::pread(void* buf, size_t size, uint64_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'o', "pread(): size = %zu, offset = %jd\n", size, (intmax_t)offset
+        'o', "pread(): size = %zu, offset = %" PRIu64 "\n", size, offset
     );
 
     try {
@@ -1812,9 +1813,9 @@ rawstd::Task<size_t> Chunk::pread(void* buf, size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Chunk::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
+Chunk::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'o', "preadv(): size = %zu, offset = %jd\n", size, (intmax_t)offset
+        'o', "preadv(): size = %zu, offset = %" PRIu64 "\n", size, offset
     );
 
     try {
@@ -1840,10 +1841,10 @@ Chunk::preadv(iovec* iov, unsigned int niov, size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Chunk::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
+Chunk::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'o', "pwrite(): size = %zu, offset = %jd, sync = %d\n", size,
-        (intmax_t)offset, sync
+        'o', "pwrite(): size = %zu, offset = %" PRIu64 ", sync = %d\n", size,
+        offset, sync
     );
 
     // A READONLY chunk (create()'s `flags`) never writes anything.
@@ -1878,11 +1879,11 @@ Chunk::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
 }
 
 rawstd::Task<size_t> Chunk::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, off_t offset, bool sync
+    const iovec* iov, unsigned int niov, size_t size, uint64_t offset, bool sync
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'o', "pwritev(): size = %zu, offset = %jd, sync = %d\n", size,
-        (intmax_t)offset, sync
+        'o', "pwritev(): size = %zu, offset = %" PRIu64 ", sync = %d\n", size,
+        offset, sync
     );
 
     // A READONLY chunk (create()'s `flags`) never writes anything.
@@ -1917,9 +1918,9 @@ rawstd::Task<size_t> Chunk::pwritev(
     }
 }
 
-rawstd::Task<size_t> Chunk::discard(size_t size, off_t offset) {
+rawstd::Task<size_t> Chunk::discard(size_t size, uint64_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'o', "discard(): size = %zu, offset = %jd\n", size, (intmax_t)offset
+        'o', "discard(): size = %zu, offset = %" PRIu64 "\n", size, offset
     );
 
     // A READONLY chunk (create()'s `flags`) never writes anything.
@@ -1960,11 +1961,12 @@ rawstd::Task<size_t> Chunk::discard(size_t size, off_t offset) {
 }
 
 rawstd::Task<size_t>
-Chunk::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
+Chunk::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o',
-        "write_zeroes(): size = %zu, offset = %jd, unmap = %d, sync = %d\n",
-        size, (intmax_t)offset, unmap, sync
+        "write_zeroes(): size = %zu, offset = %" PRIu64
+        ", unmap = %d, sync = %d\n",
+        size, offset, unmap, sync
     );
 
     // A READONLY chunk (create()'s `flags`) never writes anything.

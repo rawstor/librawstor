@@ -114,7 +114,7 @@ ssize_t object_close(rawio::Queue& queue, RawstorObject* object) {
 // tests/test_chunk.cpp's own ChunkTest cases do.
 ssize_t object_pread(
     rawio::Queue& queue, RawstorObject* object, void* buf, size_t size,
-    off_t offset
+    uint64_t offset
 ) {
     struct Result {
         size_t result = 0;
