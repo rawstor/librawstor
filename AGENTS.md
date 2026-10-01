@@ -205,6 +205,7 @@ backends and the io_uring/poll RawIO backends.
   the user reviews what's about to be pushed and pushes it themselves.
 - Do not add a `Claude-Session:` (or similar session/tool attribution)
   trailer to commit messages in this repo.
+- Do not add a `Co-Authored-By:` trailer to commit messages in this repo.
 
 ## Gotchas worth knowing
 
