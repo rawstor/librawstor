@@ -259,9 +259,15 @@ rawstd::Task<std::vector<unsigned char>> Client::_timed_exchange(
     rawio::Event* timer_event = nullptr;
     bool expired = false;
     unsigned int response_timeout = rawstor_opts_so_rcvtimeo();
-    // The exchange is always suspended on a send or recv of _fd while the
-    // timer can fire, so cancelling _fd's requests unblocks it.
-    auto cancel_exchange = [this]() { return _queue.cancel(_fd); };
+    // Shutting the socket down first makes the deadline stick: a partial
+    // reply completing alongside the timer would otherwise let recv_all()
+    // submit a fresh recv after the cancellation, with no deadline left.
+    // Every recv from then on reads EOF; the cancellation unblocks a
+    // pending send.
+    auto cancel_exchange = [this]() {
+        ::shutdown(_fd, SHUT_RDWR);
+        return _queue.cancel(_fd);
+    };
     rawstd::Task<void> timer;
     if (response_timeout != 0) {
         timer = rawstor::deadline(

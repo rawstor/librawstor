@@ -4,7 +4,6 @@
 
 #include <rawio/awaitable.hpp>
 #include <rawstd/gpp.hpp>
-#include <rawstd/hash.h>
 #include <rawstd/logging.hpp>
 
 #include <algorithm>
@@ -51,8 +50,13 @@ std::string Monitor::_key(const TopologyOST& ost) {
 
 Monitor::Clock::duration
 Monitor::phase(const TopologyOST& ost, unsigned int interval) {
-    auto key = _key(ost);
-    uint64_t hash = rawstd_hash_scalar(key.data(), key.size());
+    // FNV-1a rather than rawstd_hash_scalar(), which is constant without
+    // libxxhash and would put every OST at the same phase.
+    uint64_t hash = 14695981039346656037ull;
+    for (unsigned char byte : _key(ost)) {
+        hash ^= byte;
+        hash *= 1099511628211ull;
+    }
     return std::chrono::duration_cast<Clock::duration>(
         std::chrono::milliseconds(hash % interval)
     );
