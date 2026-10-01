@@ -4,6 +4,7 @@
 
 #include <rawio/awaitable.hpp>
 #include <rawstd/gpp.hpp>
+#include <rawstd/hash.h>
 #include <rawstd/logging.hpp>
 
 #include <algorithm>
@@ -18,7 +19,8 @@ namespace mdsserver {
 Monitor::Monitor(ObjectStore& store, Opts opts, int wake_fd) :
     _store(store),
     _opts(opts),
-    _wake_fd(wake_fd) {
+    _wake_fd(wake_fd),
+    _epoch(Clock::now()) {
     if (opts.info_interval == 0 || opts.info_concurrency == 0 ||
         opts.info_concurrency > Opts::max_info_concurrency || wake_fd < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -37,6 +39,29 @@ std::string Monitor::_key(const TopologyOST& ost) {
                reinterpret_cast<const char*>(ost.id.bytes), sizeof(ost.id.bytes)
            ) +
            ost.location;
+}
+
+Monitor::Clock::duration
+Monitor::phase(const TopologyOST& ost, unsigned int interval) {
+    auto key = _key(ost);
+    uint64_t hash = rawstd_hash_scalar(key.data(), key.size());
+    return std::chrono::duration_cast<Clock::duration>(
+        std::chrono::milliseconds(hash % interval)
+    );
+}
+
+Monitor::Clock::time_point Monitor::next_due(
+    Clock::time_point epoch, Clock::duration phase, Clock::duration interval,
+    Clock::time_point completed
+) {
+    auto first = epoch + phase;
+    auto earliest = completed + interval / 2;
+    if (earliest <= first) {
+        return first;
+    }
+    auto periods =
+        (earliest - first + interval - Clock::duration(1)) / interval;
+    return first + periods * interval;
 }
 
 rawstd::Task<void> Monitor::_probe(TopologyOST ost) {
@@ -124,8 +149,10 @@ void Monitor::loop() {
             auto key = _key(active.ost);
             _inflight.erase(key);
             if (_current.contains(key)) {
-                auto due = Clock::now() +
-                           std::chrono::milliseconds(_opts.info_interval);
+                auto due = next_due(
+                    _epoch, phase(active.ost, _opts.info_interval),
+                    std::chrono::milliseconds(_opts.info_interval), Clock::now()
+                );
                 _due[key] = due;
                 _pending.push(Pending{active.ost, due});
             }

@@ -37,7 +37,7 @@ TEST(MdsOptsTest, defaults_and_overrides) {
     ScopedEnv interval("RAWSTOR_MDS_OPTS_INFO_INTERVAL", nullptr);
     ScopedEnv concurrency("RAWSTOR_MDS_OPTS_INFO_CONCURRENCY", nullptr);
     auto defaults = rawstor::mdsserver::Opts::from_env();
-    EXPECT_EQ(defaults.info_interval, 60000u);
+    EXPECT_EQ(defaults.info_interval, 300000u);
     EXPECT_EQ(defaults.info_concurrency, 128u);
     setenv("RAWSTOR_MDS_OPTS_INFO_INTERVAL", "2500", 1);
     setenv("RAWSTOR_MDS_OPTS_INFO_CONCURRENCY", "32", 1);

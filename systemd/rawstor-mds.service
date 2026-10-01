@@ -26,7 +26,7 @@ Environment=DB_PATH=/var/lib/rawstor-mds/mds.db
 # lists the OSTs there and reloads (systemctl reload rawstor-mds).
 Environment=TOPOLOGY_PATH=/etc/rawstor-mds/topology.conf
 # MDS statistics collection (milliseconds, concurrent probes).
-Environment=RAWSTOR_MDS_OPTS_INFO_INTERVAL=60000
+Environment=RAWSTOR_MDS_OPTS_INFO_INTERVAL=300000
 Environment=RAWSTOR_MDS_OPTS_INFO_CONCURRENCY=128
 # Probes use the same librawstor retry/timeout settings as Slot.
 #Environment=RAWSTOR_OPTS_IO_ATTEMPTS=10
