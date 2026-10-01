@@ -1083,7 +1083,7 @@ available OSTs; existing chunk maps and snapshot members are unchanged.
 | Environment variable | Default | Meaning |
 |---|---|---|
 | `RAWSTOR_MDS_OPTS_INFO_INTERVAL` | `60000` | Milliseconds between completion of an OST probe and its next probe. Must be positive. |
-| `RAWSTOR_MDS_OPTS_INFO_CONCURRENCY` | `128` | Maximum in-flight probes, including retries (1–4096). |
+| `RAWSTOR_MDS_OPTS_INFO_CONCURRENCY` | `128` | Maximum in-flight probes, including retries (1–1024). |
 
 The 60-second default avoids continuous metadata/space scans while still
 refreshing availability regularly. Concurrency bounds sockets, queue events

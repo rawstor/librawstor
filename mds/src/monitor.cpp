@@ -20,7 +20,7 @@ Monitor::Monitor(ObjectStore& store, Opts opts, int wake_fd) :
     _opts(opts),
     _wake_fd(wake_fd) {
     if (opts.info_interval == 0 || opts.info_concurrency == 0 ||
-        opts.info_concurrency > 4096 || wake_fd < 0) {
+        opts.info_concurrency > Opts::max_info_concurrency || wake_fd < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     unsigned int depth = 16;

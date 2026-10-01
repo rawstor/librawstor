@@ -85,7 +85,7 @@ Default values are shown below.
 |----------|---------|-------------|
 | `RAWSTOR_LOCATION` | *(none)* | Fallback `LOCATION` for `rawstor create`/`list`/`info` when it's omitted from the command line. |
 | `RAWSTOR_MDS_OPTS_INFO_INTERVAL` | `60000` | MDS backend INFO/health polling interval in milliseconds, measured from completion of each probe; must be positive. |
-| `RAWSTOR_MDS_OPTS_INFO_CONCURRENCY` | `128` | Maximum concurrent MDS backend probes, including retries (1–4096); see [MDS health and location information](docs/mds.md#backend-health-and-location-information). |
+| `RAWSTOR_MDS_OPTS_INFO_CONCURRENCY` | `128` | Maximum concurrent MDS backend probes, including retries (1–1024); see [MDS health and location information](docs/mds.md#backend-health-and-location-information). |
 | `RAWSTOR_OPTS_IO_ATTEMPTS` | `10` | Number of attempts for an I/O operation before giving up, covering any failure from a broken connection to a well-formed rejection from a live backend (e.g. `EBUSY`/`ENOSPC`) -- every retry reconnects first (except a plain `EBUSY`, where the session is fine and just backed up against the remote server's own write-throttling). A rejection known to never succeed on retry (e.g. `ENOENT`) isn't retried at all, regardless of this value. |
 | `RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE` | `100` | Base delay, in milliseconds (ms), before the first retry of an I/O operation; doubles with each further attempt, capped at `RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX`. |
 | `RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX` | `30000` | Upper bound, in milliseconds (ms), on the exponential retry backoff delay above. |

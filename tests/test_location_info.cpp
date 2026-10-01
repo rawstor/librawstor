@@ -277,4 +277,44 @@ TEST(OstLocationInfoTest, cancel_all_stops_retries) {
     ::close(listen_fd);
 }
 
+TEST(MdsLocationInfoTest, location_info) {
+    rawstor::tests::Server server(8760, 256);
+    RawstorLocationInfo sent_info{.used = 1ull << 20, .total = 1ull << 30};
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_location_info(RAWSTOR_MAGIC, 1, sent_info);
+    }
+    auto queue = rawio::Queue::create(8);
+    RawstorLocationInfo info{};
+    EXPECT_EQ(location_info(*queue, "mds://127.0.0.1:8760", &info), 0);
+    EXPECT_EQ(info.used, sent_info.used);
+    EXPECT_EQ(info.total, sent_info.total);
+}
+
+// A reply length INFO can never have is rejected before it sizes the
+// receive buffer.
+TEST(MdsLocationInfoTest, oversized_reply_is_rejected_before_allocation) {
+    ScopedOpts opts(1);
+    rawstor::tests::Server server(8761, 256);
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_location_info_request();
+        RawstorFrameResponse response{
+            .head =
+                {.magic = RAWSTOR_MAGIC,
+                 .cmd = RAWSTOR_CMD_LOCATION_INFO,
+                 .cid = 1},
+            .body = {.hash = 0, .res = INT32_MAX},
+        };
+        server.write("oversized INFO >>>", &response, sizeof(response));
+    }
+    auto queue = rawio::Queue::create(8);
+    RawstorLocationInfo info{123, 456};
+    EXPECT_EQ(location_info(*queue, "mds://127.0.0.1:8761", &info), -EPROTO);
+    EXPECT_EQ(info.used, 123u);
+    EXPECT_EQ(info.total, 456u);
+}
+
 } // unnamed namespace

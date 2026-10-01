@@ -112,6 +112,14 @@ TEST(MonitorTest, follows_reload_failure_and_recovery) {
     EXPECT_EQ(store.info().total, 0u);
 }
 
+// The largest accepted concurrency must still fit the queue it sizes.
+TEST(MonitorTest, starts_with_max_concurrency) {
+    tests::TmpDir dir;
+    ObjectStore store(dir.db_path(), Topology{});
+    RunningMonitor monitor(store, Opts{60000, Opts::max_info_concurrency});
+    monitor.check();
+}
+
 TEST(MonitorTest, collects_five_thousand_backends_with_bounded_queue) {
     tests::TmpDir dir;
     Topology topology;
