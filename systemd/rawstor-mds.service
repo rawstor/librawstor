@@ -46,9 +46,11 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=10
 # sysexits.h codes rawstor-mds exits with when retrying won't help:
-# EX_NOINPUT (66) e.g. a missing topology file and EX_NOPERM (77)
-# permission denied. Leave the unit failed instead of restart-looping.
-RestartPreventExitStatus=66 77
+# EX_NOINPUT (66) e.g. a missing topology file, EX_NOPERM (77)
+# permission denied and EX_CONFIG (78) an invalid RAWSTOR_OPTS_* or
+# RAWSTOR_MDS_OPTS_* setting. Leave the unit failed instead of
+# restart-looping.
+RestartPreventExitStatus=66 77 78
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
