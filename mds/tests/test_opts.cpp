@@ -44,13 +44,24 @@ TEST(MdsOptsTest, defaults_and_overrides) {
     auto overridden = rawstor::mdsserver::Opts::from_env();
     EXPECT_EQ(overridden.info_interval, 2500u);
     EXPECT_EQ(overridden.info_concurrency, 32u);
-    setenv("RAWSTOR_MDS_OPTS_INFO_INTERVAL", "0", 1);
-    EXPECT_THROW(rawstor::mdsserver::Opts::from_env(), std::system_error);
-    setenv("RAWSTOR_MDS_OPTS_INFO_INTERVAL", "2500", 1);
     setenv("RAWSTOR_MDS_OPTS_INFO_CONCURRENCY", "1024", 1);
     EXPECT_EQ(rawstor::mdsserver::Opts::from_env().info_concurrency, 1024u);
-    setenv("RAWSTOR_MDS_OPTS_INFO_CONCURRENCY", "1025", 1);
-    EXPECT_THROW(rawstor::mdsserver::Opts::from_env(), std::system_error);
+}
+
+TEST(MdsOptsTest, invalid_values_are_configuration_errors) {
+    ScopedEnv interval("RAWSTOR_MDS_OPTS_INFO_INTERVAL", nullptr);
+    ScopedEnv concurrency("RAWSTOR_MDS_OPTS_INFO_CONCURRENCY", nullptr);
+    for (const char* bad : {"0", "", "5m", "-1"}) {
+        setenv("RAWSTOR_MDS_OPTS_INFO_INTERVAL", bad, 1);
+        EXPECT_THROW(rawstor::mdsserver::Opts::from_env(), std::system_error)
+            << bad;
+    }
+    unsetenv("RAWSTOR_MDS_OPTS_INFO_INTERVAL");
+    for (const char* bad : {"0", "1025", "abc"}) {
+        setenv("RAWSTOR_MDS_OPTS_INFO_CONCURRENCY", bad, 1);
+        EXPECT_THROW(rawstor::mdsserver::Opts::from_env(), std::system_error)
+            << bad;
+    }
 }
 
 } // namespace
