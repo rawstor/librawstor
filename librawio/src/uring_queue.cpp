@@ -1191,6 +1191,23 @@ rawio::Awaitable<void> Queue::cancel(int fd) {
     );
 }
 
+rawio::Awaitable<void> Queue::cancel_all() {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "%s\n", "all");
+    io_uring_sqe* sqe = _get_sqe();
+    io_uring_prep_cancel64(sqe, 0, IORING_ASYNC_CANCEL_ANY);
+    auto c = std::make_unique<CancelCompletion>(std::move(trace_event));
+    io_uring_sqe_set_data(sqe, c.get());
+
+    int res = io_uring_submit(&_ring);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+
+    return rawio::Awaitable<void>(
+        this, static_cast<rawio::Event*>(c.release())
+    );
+}
+
 void Queue::wait() {
     rawstd_trace("io_uring_submit_and_wait()\n");
     // Ideally used with a ring setup with

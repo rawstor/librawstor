@@ -55,6 +55,10 @@ public:
         return _poll_sqes.empty() && _read_sqes.empty() && _write_sqes.empty();
     }
 
+    inline size_t pending() const noexcept {
+        return _poll_sqes.size() + _read_sqes.size() + _write_sqes.size();
+    }
+
     void poll(std::unique_ptr<EventSimplexPoll> event);
 
     void accept(std::unique_ptr<EventSimplexAccept> event);

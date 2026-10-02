@@ -1045,6 +1045,39 @@ rawio::Awaitable<void> Queue::cancel(rawio::Event* e) {
     return rawio::Awaitable<void>(this, ret);
 }
 
+rawio::Awaitable<void> Queue::cancel_all() {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "%s\n", "all");
+
+    std::unique_ptr<EventEval> event =
+        std::make_unique<EventEval>(*this, trace_event, [this]() -> int {
+            // Resolved by the _reap_timers() call right after this
+            // eval-drain loop, as in cancel(rawio::Event*). Deadlines set
+            // front to back stay sorted.
+            for (std::unique_ptr<EventTimer>& t : _timers) {
+                t->set_error(ECANCELED);
+                t->set_deadline(std::chrono::steady_clock::now());
+            }
+            // An eval must not throw (EventEval::process() is noexcept):
+            // cancel only the fds whose events fit in _cqes, and report
+            // the rest instead of overflowing it.
+            int res = 0;
+            for (auto it = _sessions.begin(); it != _sessions.end();) {
+                if (it->second->pending() > _cqes.capacity() - _cqes.size()) {
+                    res = -ENOBUFS;
+                    ++it;
+                    continue;
+                }
+                it->second->cancel(_cqes);
+                it = _sessions.erase(it);
+            }
+            return res;
+        });
+
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+    _eval(std::move(event));
+    return rawio::Awaitable<void>(this, ret);
+}
+
 rawio::Awaitable<void> Queue::cancel(int fd) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "fd = %d\n", fd);
 

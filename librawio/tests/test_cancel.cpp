@@ -330,4 +330,112 @@ TEST_F(CancelTest, cancel_fd_resolves_pending_write_before_close) {
                                    "the live vhost hang this test targets";
 }
 
+TEST_F(CancelTest, cancel_all_nothing_pending) {
+    EXPECT_NO_THROW(
+        rawio::tests::run(
+            *_queue, rawio::tests::wrap<void>(_queue->cancel_all())
+        )
+    );
+}
+
+TEST_F(CancelTest, cancel_all_cancels_fds_and_timers) {
+    int pipe_fds[2];
+    ASSERT_EQ(pipe(pipe_fds), 0);
+    ASSERT_EQ(fcntl(pipe_fds[0], F_SETFL, O_NONBLOCK), 0);
+
+    int result_poll = 0;
+    int error_poll = 0;
+    rawstd::Task<void> poll = rawio::tests::await_into(
+        _queue->poll(_fd, POLLIN), &result_poll, &error_poll
+    );
+
+    char buf[10];
+    size_t result_read = 0;
+    int error_read = 0;
+    rawstd::Task<void> read = rawio::tests::await_into(
+        _queue->read(pipe_fds[0], buf, sizeof(buf)), &result_read, &error_read
+    );
+
+    int error_timer = 0;
+    auto wait_timer = [](rawio::Awaitable<void> aw,
+                         int* error) -> rawstd::Task<void> {
+        try {
+            co_await aw;
+        } catch (const std::system_error& e) {
+            *error = e.code().value();
+        }
+    };
+    rawstd::Task<void> timer =
+        wait_timer(_queue->timeout(60u * 1000 * 1000), &error_timer);
+
+    EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
+
+    EXPECT_NO_THROW(
+        rawio::tests::run(
+            *_queue, rawio::tests::wrap<void>(_queue->cancel_all())
+        )
+    );
+    EXPECT_NO_THROW(_wait_all());
+
+    EXPECT_TRUE(poll.done());
+    EXPECT_TRUE(read.done());
+    EXPECT_TRUE(timer.done());
+    EXPECT_EQ(error_poll, ECANCELED);
+    EXPECT_EQ(error_read, ECANCELED);
+    EXPECT_EQ(error_timer, ECANCELED);
+
+    close(pipe_fds[0]);
+    close(pipe_fds[1]);
+}
+
+#ifndef RAWIO_WITH_LIBURING
+// Cancelled events go through the poll() backend's bounded completion
+// ring: cancel_all() stops short of overflowing it, reports ENOBUFS and
+// finishes the job when called again.
+TEST_F(CancelTest, cancel_all_reports_a_full_completion_ring) {
+    int pipes[2][2];
+    std::vector<rawstd::Task<void>> polls;
+    int results[6] = {};
+    int errors[6] = {};
+    for (int p = 0; p < 2; ++p) {
+        ASSERT_EQ(pipe(pipes[p]), 0);
+        ASSERT_EQ(fcntl(pipes[p][0], F_SETFL, O_NONBLOCK), 0);
+        for (int i = 0; i < 3; ++i) {
+            int n = p * 3 + i;
+            polls.push_back(
+                rawio::tests::await_into(
+                    _queue->poll(pipes[p][0], POLLIN), &results[n], &errors[n]
+                )
+            );
+        }
+    }
+
+    // Queue depth 4: one fd's 3 polls fit, the other's do not.
+    try {
+        rawio::tests::run(
+            *_queue, rawio::tests::wrap<void>(_queue->cancel_all())
+        );
+        ADD_FAILURE() << "cancel_all() did not report ENOBUFS";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOBUFS);
+    }
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_NO_THROW(
+        rawio::tests::run(
+            *_queue, rawio::tests::wrap<void>(_queue->cancel_all())
+        )
+    );
+    EXPECT_NO_THROW(_wait_all());
+
+    for (int n = 0; n < 6; ++n) {
+        EXPECT_TRUE(polls[n].done()) << n;
+        EXPECT_EQ(errors[n], ECANCELED) << n;
+    }
+    for (auto& p : pipes) {
+        close(p[0]);
+        close(p[1]);
+    }
+}
+#endif
+
 } // unnamed namespace
