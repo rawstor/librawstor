@@ -12,6 +12,7 @@
 #include <deque>
 #include <exception>
 #include <filesystem>
+#include <future>
 #include <string>
 #include <thread>
 
@@ -245,6 +246,25 @@ TEST(MonitorTest, bounds_in_flight_probes) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     EXPECT_EQ(server.max_open(), 3u);
     monitor.check();
+}
+
+// Reloads that fill the wake-up pipe before the loop drains it must not
+// swallow a later stop().
+TEST(MonitorTest, stop_survives_a_full_wake_up_pipe) {
+    tests::TmpDir dir;
+    ObjectStore store(dir.db_path(), Topology{});
+    Monitor monitor(store, Opts{60000, 1});
+    for (int i = 0; i < 100000; ++i) {
+        monitor.reload();
+    }
+    monitor.stop();
+    auto loop =
+        std::async(std::launch::async, [&monitor]() { monitor.loop(); });
+    if (loop.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
+        ADD_FAILURE() << "loop() did not return after stop()";
+        std::abort();
+    }
+    loop.get();
 }
 
 // The largest accepted concurrency must still fit the queue it sizes.

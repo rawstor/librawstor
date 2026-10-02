@@ -8,6 +8,7 @@
 #include <rawstd/coro.hpp>
 #include <rawstd/pipe.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <exception>
 #include <memory>
@@ -43,6 +44,9 @@ private:
     std::unique_ptr<rawio::Queue> _queue;
     rawstd::Semaphore _slots;
     bool _stop = false;
+    // Set by reload()/stop() from any thread; the pipe only wakes _control().
+    std::atomic<bool> _reload_requested{false};
+    std::atomic<bool> _stop_requested{false};
     std::exception_ptr _error;
     rawio::Event* _wake_event = nullptr;
     std::shared_ptr<const Topology> _topology;
@@ -50,7 +54,7 @@ private:
     std::vector<std::unique_ptr<Watch>> _retired;
 
     static std::string _key(const TopologyOST& ost);
-    void _notify(char command);
+    void _wake_up_control();
     void _fail(std::exception_ptr error);
     rawstd::Task<void> _probe(const TopologyOST& ost);
     rawstd::Task<void> _sleep_until(Watch& watch, Clock::time_point due);
