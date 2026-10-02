@@ -17,7 +17,6 @@
 
 #include <cerrno>
 #include <climits>
-#include <cstring>
 
 namespace rawstor {
 namespace mdsserver {
@@ -87,8 +86,11 @@ rawstd::Task<void> Monitor::_probe(const TopologyOST& ost) {
     _store.update_backend(ost, available ? &info : nullptr);
 }
 
-void Monitor::_notify(char command) {
-    ssize_t ignored = write(_wake.write_fd(), &command, 1);
+void Monitor::_wake_up_control() {
+    // A full pipe already holds a pending wake-up, so a failed write loses
+    // nothing: the request itself is in the flags.
+    char byte = 0;
+    ssize_t ignored = write(_wake.write_fd(), &byte, 1);
     (void)ignored;
 }
 
@@ -230,9 +232,9 @@ rawstd::Task<void> Monitor::_reload() {
 
 rawstd::Task<void> Monitor::_control() {
     co_await _reload();
-    char commands[64];
-    while (!_stop) {
-        auto read = _queue->read(_wake.read_fd(), commands, sizeof(commands));
+    char wake_ups[64];
+    while (!_stop && !_stop_requested) {
+        auto read = _queue->read(_wake.read_fd(), wake_ups, sizeof(wake_ups));
         _wake_event = read.event();
         size_t n = 0;
         try {
@@ -245,10 +247,12 @@ rawstd::Task<void> Monitor::_control() {
             break;
         }
         _wake_event = nullptr;
-        if (n == 0 || memchr(commands, 's', n) != nullptr) {
+        if (n == 0 || _stop_requested) {
             break;
         }
-        co_await _reload();
+        if (_reload_requested.exchange(false)) {
+            co_await _reload();
+        }
     }
 
     _stop = true;
@@ -286,11 +290,13 @@ void Monitor::loop() {
 }
 
 void Monitor::reload() {
-    _notify('r');
+    _reload_requested = true;
+    _wake_up_control();
 }
 
 void Monitor::stop() {
-    _notify('s');
+    _stop_requested = true;
+    _wake_up_control();
 }
 
 } // namespace mdsserver
