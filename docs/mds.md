@@ -1100,8 +1100,8 @@ probes in flight, and with them sockets, queue events and memory for large
 topologies (e.g. 5000 OSTs); a sleeping loop holds only a timer. When many
 OSTs are unavailable, retries consume probe slots and can delay the next
 probe beyond the configured interval; loops waiting for a slot get it in the
-order they asked. On shutdown the collector stops all loops and drains
-in-flight calls.
+order they asked. On shutdown the collector stops all loops and cancels the
+calls in flight, retries included, without recording their outcome.
 Retry budgets and timeouts use the `RAWSTOR_OPTS_*` knobs documented in README.
 OST connections start with a 32KiB receive ring. Binding an object or a
 snapshot grows it to the data-path size; variable-sized listings also grow
