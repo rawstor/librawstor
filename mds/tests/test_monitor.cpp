@@ -248,6 +248,33 @@ TEST(MonitorTest, bounds_in_flight_probes) {
     monitor.check();
 }
 
+// Probes waiting on peers that never answer are cut short by stop()
+// instead of holding shutdown until they give up on their own.
+TEST(MonitorTest, stop_cancels_probes_in_flight) {
+    SilentServer server(8811, std::chrono::seconds(60));
+    tests::TmpDir dir;
+    Topology topology;
+    for (unsigned i = 1; i <= 3; ++i) {
+        topology.add(ost_at("ost://127.0.0.1:8811", i));
+    }
+    ObjectStore store(dir.db_path(), topology);
+    RunningMonitor monitor(store, Opts{60000, 3});
+    ASSERT_TRUE(eventually([&]() { return server.max_open() == 3; }));
+
+    auto stopped =
+        std::async(std::launch::async, [&monitor]() { monitor.check(); });
+    if (stopped.wait_for(std::chrono::seconds(10)) !=
+        std::future_status::ready) {
+        ADD_FAILURE() << "stop() waited for the probes in flight";
+        std::abort();
+    }
+    stopped.get();
+    // Cancelled probes say nothing about the backends.
+    for (const auto& ost : topology.osts()) {
+        EXPECT_FALSE(store.backend_available(ost.id));
+    }
+}
+
 // Reloads that fill the wake-up pipe before the loop drains it must not
 // swallow a later stop().
 TEST(MonitorTest, stop_survives_a_full_wake_up_pipe) {

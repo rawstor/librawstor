@@ -79,6 +79,11 @@ rawstd::Task<void> Monitor::_probe(const TopologyOST& ost) {
         info = co_await location.info(*_queue);
         available = true;
     } catch (const std::exception& e) {
+        // Cut short by stop(): says nothing about the backend.
+        auto* error = dynamic_cast<const std::system_error*>(&e);
+        if (_stop && error != nullptr && error->code().value() == ECANCELED) {
+            co_return;
+        }
         rawstd_warning(
             "MDS info probe for %s failed: %s\n", ost.location.c_str(), e.what()
         );
@@ -263,6 +268,18 @@ rawstd::Task<void> Monitor::_control() {
     }
     _watches.clear();
     co_await _retire(std::move(all));
+    // Probes in flight fail with ECANCELED, which ends their retries at
+    // once, instead of being waited out.
+    while (true) {
+        try {
+            co_await _queue->cancel_all();
+            break;
+        } catch (const std::system_error& e) {
+            if (e.code().value() != ENOBUFS) {
+                throw;
+            }
+        }
+    }
     for (auto& watch : _retired) {
         // Awaiting `watch->task` directly crashes GCC 13 (internal
         // compiler error); a named reference compiles everywhere.
