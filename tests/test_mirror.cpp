@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -188,6 +189,7 @@ public:
     // (see get_target_dir() in src/file_backend.cpp) -- every target
     // here is a plain, non-chunked object, offset 0.
     fs::path dat(size_t i) const { return _dirs[i] / _uuid / "0" / "data"; }
+    fs::path meta(size_t i) const { return _dirs[i] / _uuid / "0" / "meta"; }
 };
 
 std::string read_file(const fs::path& path) {
@@ -195,6 +197,26 @@ std::string read_file(const fs::path& path) {
     std::ostringstream oss;
     oss << f.rdbuf();
     return oss.str();
+}
+
+// A member's sync state as file::Backend has it on disk right now (see
+// meta_encode()), read without running the queue.
+RawstorObjectSyncState disk_sync_state(const fs::path& meta) {
+    RawstorObjectSyncState sync_state{};
+    unsigned int version = 0;
+    unsigned int state = 0;
+    unsigned long long epoch = 0;
+    unsigned long long sync_id = 0;
+    std::string record = read_file(meta);
+    if (sscanf(
+            record.c_str(), "version=%u:state=%u:epoch=%llx:sync_id=%llx",
+            &version, &state, &epoch, &sync_id
+        ) == 4) {
+        sync_state.state = static_cast<RawstorObjectSyncStateValue>(state);
+        sync_state.epoch = epoch;
+        sync_state.sync_id = sync_id;
+    }
+    return sync_state;
 }
 
 void object_write(
@@ -795,6 +817,65 @@ TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
     object_read(queue, member, data.data(), data.size(), 0);
     EXPECT_EQ(data, "ping");
     EXPECT_EQ(object_close(queue, member), 0);
+}
+
+// The first write of an open object can arrive while the resync is
+// recording the rejoining member's final state. Its dirty barrier must not
+// give the in-sync members a new identity that the rejoining member then
+// misses.
+TEST(MirrorResyncTest, first_write_during_rejoin_keeps_identities_equal) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000a9");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObjectSyncState fresh{};
+    fresh.epoch = 2;
+    fresh.sync_id = 0x1111111111111111ull;
+    fresh.sync_id_history[0] = 0x2222222222222222ull;
+    fresh.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    ASSERT_EQ(target_set_sync_state(queue, members.target(0), fresh), 0);
+
+    RawstorObjectSyncState stale{};
+    stale.epoch = 1;
+    stale.sync_id = 0x2222222222222222ull;
+    stale.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    ASSERT_EQ(target_set_sync_state(queue, members.target(1), stale), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+
+    // Step the queue until the rejoining member's final CLEAN record is on
+    // disk: the resync is then still waiting for that write to finish.
+    bool window = false;
+    for (int i = 0; i < 100000 && !window; ++i) {
+        RawstorObjectSyncState b = disk_sync_state(members.meta(1));
+        window = b.state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN &&
+                 b.sync_id == fresh.sync_id;
+        if (!window) {
+            rawio_wait_timeout(queue, 1);
+        }
+    }
+    ASSERT_TRUE(window);
+
+    std::string block(4096, 'W');
+    object_write(queue, object, block.data(), block.size(), 0, 0);
+
+    RawstorObjectSyncState a = disk_sync_state(members.meta(0));
+    RawstorObjectSyncState b = disk_sync_state(members.meta(1));
+    EXPECT_EQ(a.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+    EXPECT_EQ(b.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+    EXPECT_EQ(a.sync_id, b.sync_id);
+
+    object_close_clean(queue, object);
+    EXPECT_EQ(read_file(members.dat(0)), read_file(members.dat(1)));
 }
 
 TEST(MirrorResyncTest, resync_under_concurrent_writes) {
