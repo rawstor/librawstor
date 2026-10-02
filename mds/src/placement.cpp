@@ -47,7 +47,7 @@ uint64_t hrw_hash(
     }
     buf.insert(buf.end(), name.begin(), name.end());
 
-    return rawstd_hash_scalar(buf.data(), buf.size());
+    return rawstd_hash_stable(buf.data(), buf.size());
 }
 
 /*

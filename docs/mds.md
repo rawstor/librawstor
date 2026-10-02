@@ -474,7 +474,9 @@ generator.
 
 - **Algorithm: weighted rendezvous (HRW)** hashing — deterministic, capacity-
   weighted, minimal reshuffle on topology change, distinct slots = top-N, no
-  state. O(N) per lookup is fine (small N, rare lookups).
+  state. O(N) per lookup is fine (small N, rare lookups). Scores hash with
+  `rawstd_hash_stable()` (FNV-1a with a 64-bit finalizer), so placement is
+  the same whether or not the MDS is built with libxxhash.
 - **Topology = tree**: `root -> dc -> row -> rack -> server -> ost(leaf)`
   (a topology line's path is `server[/rack[/row[/dc]]]`, leaf first; a
   level left out is one implicit domain shared by every entry leaving it
