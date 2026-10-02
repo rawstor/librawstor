@@ -1,6 +1,5 @@
 #include "ost_backend.hpp"
 
-#include "deadline.hpp"
 #include "opts.h"
 #include "telemetry.hpp"
 
@@ -1159,16 +1158,6 @@ rawstd::Task<void> Backend::_connect() {
     }
 
     std::exception_ptr connect_error;
-    rawio::Event* timer_event = nullptr;
-    bool expired = false;
-    unsigned int connect_timeout = rawstor_opts_so_sndtimeo();
-    auto cancel_connect = [&]() { return _queue.cancel(fd); };
-    rawstd::Task<void> timer;
-    if (connect_timeout != 0) {
-        timer = deadline(
-            _queue, connect_timeout, timer_event, expired, cancel_connect
-        );
-    }
     try {
         // Also puts fd in non-blocking mode, which the async connect()
         // below relies on (the poll backend needs a non-blocking
@@ -1218,18 +1207,6 @@ rawstd::Task<void> Backend::_connect() {
         // exception and rethrow it once out of the handler, below, after
         // the cleanup co_await.
         connect_error = std::current_exception();
-    }
-
-    if (timer_event != nullptr) {
-        co_await _queue.cancel(timer_event);
-    }
-    if (connect_timeout != 0) {
-        co_await timer;
-    }
-    if (expired) {
-        connect_error = std::make_exception_ptr(
-            std::system_error(ETIMEDOUT, std::generic_category())
-        );
     }
 
     if (connect_error) {
@@ -1669,43 +1646,27 @@ rawstd::Task<void> Backend::set_sync_state(
 
 rawstd::Task<RawstorLocationInfo> Backend::info() {
     rawstd_debug("%s: Reading location info...\n", str().c_str());
-    RawstorLocationInfo ret{};
-    std::exception_ptr error;
-    rawio::Event* timer_event = nullptr;
-    bool expired = false;
-    unsigned int response_timeout = rawstor_opts_so_rcvtimeo();
-    auto close_connection = [this]() { return close(); };
-    rawstd::Task<void> timer;
-    if (response_timeout != 0) {
-        timer = deadline(
-            _queue, response_timeout, timer_event, expired, close_connection
-        );
-    }
+
+    RawstorLocationInfo ret = {};
     try {
-        RawstdUUID unused_id{};
+        RawstdUUID unused_id = {};
         std::vector<char> response = co_await _basic_request(
             RAWSTOR_CMD_LOCATION_INFO, "info", unused_id, 0, 0
         );
         if (response.size() != sizeof(ret)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
-        memcpy(&ret, response.data(), sizeof(ret));
+        ret = *static_cast<RawstorLocationInfo*>(
+            static_cast<void*>(response.data())
+        );
+    } catch (const std::system_error&) {
+        throw;
     } catch (...) {
-        error = std::current_exception();
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
-    if (timer_event != nullptr) {
-        co_await _queue.cancel(timer_event);
-    }
-    if (response_timeout != 0) {
-        co_await timer;
-    }
-    if (expired) {
-        RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
-    }
-    if (error) {
-        std::rethrow_exception(error);
-    }
+
     rawstd_debug("%s: Location info successfully received\n", str().c_str());
+
     co_return ret;
 }
 
