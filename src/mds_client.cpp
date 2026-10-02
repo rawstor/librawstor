@@ -1,8 +1,5 @@
 #include "mds_client.hpp"
 
-#include "deadline.hpp"
-#include "opts.h"
-
 #include <rawio/awaitable.hpp>
 
 #include <rawstd/gpp.hpp>
@@ -14,8 +11,6 @@
 
 #include <unistd.h>
 
-#include <exception>
-#include <system_error>
 #include <utility>
 
 #include <cerrno>
@@ -154,16 +149,6 @@ rawstd::Task<void> Client::connect() {
     }
 
     std::exception_ptr connect_error;
-    rawio::Event* timer_event = nullptr;
-    bool expired = false;
-    unsigned int connect_timeout = rawstor_opts_so_sndtimeo();
-    auto cancel_connect = [&]() { return _queue.cancel(fd); };
-    rawstd::Task<void> timer;
-    if (connect_timeout != 0) {
-        timer = rawstor::deadline(
-            _queue, connect_timeout, timer_event, expired, cancel_connect
-        );
-    }
     try {
         rawio::Queue::setup_fd(fd);
 
@@ -185,18 +170,6 @@ rawstd::Task<void> Client::connect() {
         );
     } catch (...) {
         connect_error = std::current_exception();
-    }
-
-    if (timer_event != nullptr) {
-        co_await _queue.cancel(timer_event);
-    }
-    if (connect_timeout != 0) {
-        co_await timer;
-    }
-    if (expired) {
-        connect_error = std::make_exception_ptr(
-            std::system_error(ETIMEDOUT, std::generic_category())
-        );
     }
 
     if (connect_error) {
@@ -222,9 +195,7 @@ rawstd::Task<void> Client::connect() {
             },
         .payload = {.object_id = {}, .offset = 0, .snapshot_id = {}, .val = 0},
     };
-    co_await _timed_exchange(
-        &request, sizeof(request), RAWSTOR_CMD_SET_OBJECT, 0
-    );
+    co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_SET_OBJECT, 0);
 }
 
 rawstd::Task<std::vector<unsigned char>> Client::_exchange(
@@ -251,51 +222,6 @@ rawstd::Task<std::vector<unsigned char>> Client::_exchange(
     co_return data;
 }
 
-rawstd::Task<std::vector<unsigned char>> Client::_timed_exchange(
-    const void* request, size_t size, RawstorCommandType cmd, size_t max_size
-) {
-    std::vector<unsigned char> data;
-    std::exception_ptr error;
-    rawio::Event* timer_event = nullptr;
-    bool expired = false;
-    unsigned int response_timeout = rawstor_opts_so_rcvtimeo();
-    // Shutting the socket down first makes the deadline stick: a partial
-    // reply completing alongside the timer would otherwise let recv_all()
-    // submit a fresh recv after the cancellation, with no deadline left.
-    // Every recv from then on reads EOF; the cancellation unblocks a
-    // pending send.
-    auto cancel_exchange = [this]() {
-        ::shutdown(_fd, SHUT_RDWR);
-        return _queue.cancel(_fd);
-    };
-    rawstd::Task<void> timer;
-    if (response_timeout != 0) {
-        timer = rawstor::deadline(
-            _queue, response_timeout, timer_event, expired, cancel_exchange
-        );
-    }
-    try {
-        data = co_await _exchange(request, size, cmd, max_size);
-    } catch (...) {
-        error = std::current_exception();
-    }
-    if (timer_event != nullptr) {
-        co_await _queue.cancel(timer_event);
-    }
-    if (response_timeout != 0) {
-        co_await timer;
-    }
-    if (expired) {
-        // A late reply would desynchronize the next exchange.
-        ::close(std::exchange(_fd, -1));
-        RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
-    }
-    if (error) {
-        std::rethrow_exception(error);
-    }
-    co_return data;
-}
-
 rawstd::Task<RawstorLocationInfo> Client::info() {
     RawstorFrameBasic request{
         .head =
@@ -304,7 +230,7 @@ rawstd::Task<RawstorLocationInfo> Client::info() {
              .cid = _cid_counter++},
         .payload = {},
     };
-    auto data = co_await _timed_exchange(
+    auto data = co_await _exchange(
         &request, sizeof(request), RAWSTOR_CMD_LOCATION_INFO,
         sizeof(RawstorLocationInfo)
     );

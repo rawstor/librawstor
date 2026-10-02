@@ -41,7 +41,6 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         blk_backend.hpp \
                         chunk.cpp \
                         chunk.hpp \
-                        deadline.hpp \
                         file_backend.cpp \
                         file_backend.hpp \
                         list.c \

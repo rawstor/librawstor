@@ -1106,10 +1106,6 @@ Retry budgets and timeouts use the `RAWSTOR_OPTS_*` knobs documented in README.
 OST connections start with a 32KiB receive ring. Binding an object or a
 snapshot grows it to the data-path size; variable-sized listings also grow
 it before sending a request. INFO polling needs only the initial ring.
-Connect and INFO reply deadlines use `RAWSTOR_OPTS_SO_SNDTIMEO` and
-`RAWSTOR_OPTS_SO_RCVTIMEO` respectively (5000ms each; zero disables the
-corresponding deadline). An expired reply closes the connection and Slot
-reconnects and retries, including when the peer accepts TCP but never replies.
 
 The systemd service lists these defaults and reads overrides from
 `/etc/rawstor-mds.conf`. The MDS logs the effective interval and concurrency
