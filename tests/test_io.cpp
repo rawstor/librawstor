@@ -1,12 +1,18 @@
+#include "backend.hpp"
 #include "opts.h"
 #include "rawio_sync.hpp"
 #include "server.hpp"
 #include "session.hpp"
 #include "tmp_dir.hpp"
 
+#include <rawio/awaitable.hpp>
+#include <rawio/queue.hpp>
+
+#include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
 #include <rawstd/logging.h>
+#include <rawstd/uri.hpp>
 
 #include <rawstor/object.h>
 #include <rawstor/protocol.h>
@@ -1478,6 +1484,68 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
     for (int i = 0; i < kWrites; ++i) {
         EXPECT_TRUE(done[i]) << "write " << i << " orphaned (never completed)";
         EXPECT_EQ(err[i], 0) << "write " << i;
+    }
+}
+
+rawstd::Task<void> read_then_read_again(
+    rawstor::Backend& backend, int* first_error, int* second_error
+) {
+    char buf[4096];
+    try {
+        co_await backend.pread(buf, sizeof(buf), 0);
+    } catch (const std::system_error& e) {
+        *first_error = e.code().value();
+    }
+    // Still inside the failure of the first read: the connection is gone,
+    // so this read has nobody left to answer it.
+    try {
+        co_await backend.pread(buf, sizeof(buf), 0);
+    } catch (const std::system_error& e) {
+        *second_error = e.code().value();
+    }
+}
+
+// Cancelling the queue under a pending OST read fails it with ECANCELED;
+// a read its caller issues in response must fail too rather than wait
+// forever on a receive pump that has already stopped.
+TEST(OstIOTest, read_issued_from_a_cancelled_read_fails) {
+    rawstor::tests::Server server(8820, 256);
+    rawstor::tests::Session s(server);
+    s.cmd_read_request();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(16);
+    rawstd::Task<std::shared_ptr<rawstor::Backend>> create =
+        rawstor::Backend::create(*queue, rawstd::URI("ost://127.0.0.1:8820"));
+    while (!create.done()) {
+        queue->wait_timeout(100);
+    }
+    std::shared_ptr<rawstor::Backend> backend = create.get();
+
+    int first_error = 0;
+    int second_error = 0;
+    rawstd::Task<void> t =
+        read_then_read_again(*backend, &first_error, &second_error);
+    for (int i = 0; i < 5; ++i) {
+        try {
+            queue->wait_timeout(20);
+        } catch (const std::system_error&) {
+        }
+    }
+    ASSERT_FALSE(t.done());
+
+    queue->cancel_all();
+    for (int i = 0; i < 100 && !t.done(); ++i) {
+        try {
+            queue->wait_timeout(20);
+        } catch (const std::system_error&) {
+        }
+    }
+    ASSERT_TRUE(t.done());
+    EXPECT_EQ(first_error, ECANCELED);
+    EXPECT_NE(second_error, 0);
+    rawstd::Task<void> close = backend->close();
+    while (!close.done()) {
+        queue->wait_timeout(100);
     }
 }
 

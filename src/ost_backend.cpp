@@ -1812,12 +1812,14 @@ void Backend::_recv_pump_failed(const std::weak_ptr<Backend>& weak, int error) {
     }
 
     // The stream is no longer trustworthy (either a real transport-level/
-    // framing error, or a cid we can't resync past): fail everything still
-    // in flight and stop the pump for good. _read_event must not outlive
-    // it -- ~Backend() would otherwise try to cancel() an Event that's
-    // already gone.
-    backend->_fail_in_flight(error);
+    // framing error, a cid we can't resync past, or a cancellation): stop
+    // the pump for good and fail everything still in flight. _read_event
+    // must not outlive it -- ~Backend() would otherwise try to cancel() an
+    // Event that's already gone -- and is cleared first: a failed op's
+    // caller may issue another one right away, which _add_op() must then
+    // fail instead of registering it with a pump that never answers.
     backend->_read_event = nullptr;
+    backend->_fail_in_flight(error);
 }
 
 rawstd::Task<size_t> Backend::pread(void* buf, size_t size, uint64_t offset) {
