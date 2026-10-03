@@ -216,6 +216,38 @@ TEST(FileLifecycleTest, create_spec_list_remove) {
     EXPECT_EQ(res, 0);
 }
 
+// remove() is retried by its Slot after a transient failure (e.g. ENOBUFS
+// from a saturated queue), possibly after the failed attempt already
+// unlinked the chunk's data file but not its meta file: the retry must
+// finish the removal rather than report ENOENT. Only a chunk with nothing
+// left of it is missing.
+TEST(FileLifecycleTest, remove_finishes_interrupted_remove) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
+    std::string uuid = "00000000-0000-7000-8000-00000000000c";
+    std::string target = rawstd::URI(location_uri, uuid).str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
+
+    std::filesystem::path chunk_dir = dir.path() / uuid / "0";
+    ASSERT_TRUE(std::filesystem::remove(chunk_dir / "data"));
+    ASSERT_TRUE(std::filesystem::exists(chunk_dir / "meta"));
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+    EXPECT_FALSE(std::filesystem::exists(dir.path() / uuid));
+
+    EXPECT_EQ(target_remove(*queue, target), -ENOENT);
+}
+
 // A failed create() must only roll back what THIS call itself created --
 // a second create() on an already-existing target fails with EEXIST, and
 // must not remove() the target the first call created.
