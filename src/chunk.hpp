@@ -105,10 +105,25 @@ private:
 
     // Expires on destruction. Detached background work (read-repair,
     // resync, the reconnect probe, the degrade barriers they may trigger)
-    // checks it before touching the object: unlike caller I/O (covered by
-    // the _writes_issued/_flush_barrier drain below), such work is not
-    // waited for at close.
+    // checks it before touching the object.
     std::shared_ptr<void> _alive;
+
+    // Set once close() (or a destructor without close()) starts: no new
+    // background work begins, and running work stops at its next resume.
+    bool _closing;
+
+    // Detached background coroutines that issue I/O on the members' Slots
+    // (resync steps, read-repair, detached degrades), each counted by a
+    // BackgroundGuard for its whole life. close() waits for zero before
+    // closing the Slots: an operation still in flight on a Slot would
+    // otherwise complete into it after it is freed. _background_barrier
+    // advances every time the count drops to zero.
+    size_t _background;
+    rawstd::Barrier _background_barrier;
+    class BackgroundGuard;
+
+    // Stops background work and waits for _background to reach zero.
+    rawstd::Task<void> _stop_background();
 
     // Mirrored writes currently in flight -- resync drain bookkeeping
     // (_write_settled() below), separate from _writes_issued/

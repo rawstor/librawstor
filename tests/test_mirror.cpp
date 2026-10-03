@@ -484,6 +484,73 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
     EXPECT_EQ(object_close(queue, member), 0);
 }
 
+// Closing the object while the online resync is still copying, then
+// destroying the queue: the sweeper's in-flight I/O must not outlive the
+// members' Slots it was issued on. The interrupted copy stays untrusted
+// and a later open resyncs it to the end.
+TEST(MirrorResyncTest, close_during_resync) {
+    Members members(2, "00000000-0000-7000-8000-0000000000a9");
+
+    {
+        Queue queue(16);
+        RawstorObjectSpec spec{
+            .size = 256ull << 20,
+            .width = 2,
+            .chunk_size = 0,
+            .stripe_width = 0,
+            .failure_domain = 0,
+        };
+        ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+        RawstorObjectSyncState fresh{};
+        fresh.epoch = 2;
+        fresh.sync_id = 0x1111111111111111ull;
+        fresh.sync_id_history[0] = 0x2222222222222222ull;
+        fresh.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+        ASSERT_EQ(target_set_sync_state(queue, members.target(0), fresh), 0);
+
+        RawstorObjectSyncState stale{};
+        stale.epoch = 1;
+        stale.sync_id = 0x2222222222222222ull;
+        stale.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+        ASSERT_EQ(target_set_sync_state(queue, members.target(1), stale), 0);
+
+        std::string ping = "ping";
+        object_write_single(
+            queue, members.target(0), ping.data(), ping.size(), 0
+        );
+    }
+
+    // The queue goes away right after each close: whatever I/O close()
+    // left behind completes inside its destructor.
+    for (int i = 0; i < 20; ++i) {
+        Queue queue(16);
+        RawstorObject* object = nullptr;
+        ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+        EXPECT_EQ(object_close(queue, object), 0);
+    }
+
+    Queue queue(16);
+
+    RawstorObjectMeta b{};
+    ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
+    EXPECT_NE(b.sync_state.sync_id, 0x1111111111111111ull);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    EXPECT_TRUE(
+        wait_member_synced(queue, members.target(0), members.target(1))
+    );
+    object_close_clean(queue, object);
+
+    RawstorObject* member = nullptr;
+    ASSERT_EQ(target_open(queue, members.target(1), &member), 0);
+    std::string data(4, '\0');
+    object_read(queue, member, data.data(), data.size(), 0);
+    EXPECT_EQ(data, "ping");
+    EXPECT_EQ(object_close(queue, member), 0);
+}
+
 // Resync copies all-zero blocks as write_zeroes() and the rest as data:
 // both must leave the rejoined member byte-identical to the fresh one,
 // even over a stale member holding garbage everywhere.
