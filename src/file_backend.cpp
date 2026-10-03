@@ -478,18 +478,36 @@ Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
     rawstd_uuid_to_string(&id, &uuid_string);
 
     std::string target_dir = get_target_dir(location_path, uuid_string, offset);
-    co_await _queue.unlink(
-        get_target_path(location_path, uuid_string, offset).c_str()
-    );
+
+    // Either file may already be gone: a Slot retries remove() after a
+    // transient failure (e.g. ENOBUFS from a saturated queue), possibly
+    // one that hit between the two unlinks below. The chunk is missing
+    // (ENOENT) only if neither file was there.
+    bool found = false;
+    try {
+        co_await _queue.unlink(
+            get_target_path(location_path, uuid_string, offset).c_str()
+        );
+        found = true;
+    } catch (const std::system_error& e) {
+        if (e.code().value() != ENOENT) {
+            throw;
+        }
+    }
 
     try {
         co_await _queue.unlink(
             get_target_meta_path(location_path, uuid_string, offset).c_str()
         );
+        found = true;
     } catch (const std::system_error& e) {
         if (e.code().value() != ENOENT) {
             throw;
         }
+    }
+
+    if (!found) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
 
     // Best-effort cleanup of the now-empty directory chain -- rmdir()
