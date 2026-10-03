@@ -46,6 +46,17 @@ TEST(UnitsTest, size_to_bytes_case_insensitive) {
 TEST(UnitsTest, size_to_bytes_missing_unit) {
     uint64_t out = 0;
     EXPECT_EQ(rawstd_size_to_bytes("256", &out), -EINVAL);
+    EXPECT_EQ(rawstd_size_to_bytes("0", &out), -EINVAL);
+}
+
+TEST(UnitsTest, size_to_bytes_rejects_anything_around_number_and_unit) {
+    uint64_t out = 7;
+    for (const char* bad :
+         {"", "M", "256MX", "256MB", "256 M", " 256M", "256M ", "+1K", "-1B",
+          "1.5G", "0x10K"}) {
+        EXPECT_EQ(rawstd_size_to_bytes(bad, &out), -EINVAL) << bad;
+    }
+    EXPECT_EQ(out, 7u);
 }
 
 TEST(UnitsTest, size_to_bytes_invalid_unit) {
@@ -61,6 +72,9 @@ TEST(UnitsTest, size_to_bytes_invalid_number) {
 TEST(UnitsTest, size_to_bytes_overflow) {
     uint64_t out = 0;
     EXPECT_EQ(rawstd_size_to_bytes("16E", &out), -EOVERFLOW);
+    EXPECT_EQ(
+        rawstd_size_to_bytes("99999999999999999999999B", &out), -EOVERFLOW
+    );
 }
 
 TEST(UnitsTest, bytes_to_size_picks_largest_exact_unit) {

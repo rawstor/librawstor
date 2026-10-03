@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 static int unit_to_shift(const char unit) {
     switch (unit) {
@@ -33,13 +34,23 @@ static int unit_to_shift(const char unit) {
 }
 
 int rawstd_size_to_bytes(const char* s, uint64_t* out) {
-    unsigned long long value;
-    char unit;
-    if (sscanf(s, "%llu%c", &value, &unit) != 2) {
+    // Digits first: strtoull() would also skip whitespace and accept a
+    // sign, wrapping "-1B" around to 2^64-1.
+    if (*s < '0' || *s > '9') {
+        return -EINVAL;
+    }
+    char* end;
+    errno = 0;
+    unsigned long long value = strtoull(s, &end, 10);
+    if (errno == ERANGE) {
+        return -EOVERFLOW;
+    }
+    // Exactly one unit character, nothing after it.
+    if (end[0] == '\0' || end[1] != '\0') {
         return -EINVAL;
     }
 
-    int shift = unit_to_shift(unit);
+    int shift = unit_to_shift(end[0]);
     if (shift < 0) {
         return shift;
     }
