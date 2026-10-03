@@ -6,6 +6,7 @@
 
 #include <rawstd/uuid.h>
 
+#include <rawstor/location.h>
 #include <rawstor/target.h>
 
 #include <cstdint>
@@ -88,6 +89,8 @@ private:
     // set_topology().
     std::shared_ptr<const Topology> _topology;
 
+    void _sync_backends(const Topology& topology);
+    Topology _available_topology();
     void _check_topology(const Topology& topology);
     ObjectDescriptor _descriptor(const RawstdUUID& id);
     ObjectMap _open_live(const RawstdUUID& id);
@@ -104,6 +107,17 @@ public:
     ObjectStore& operator=(ObjectStore&&) = delete;
 
     std::shared_ptr<const Topology> topology();
+
+    /* Last successful space samples for the current topology, including
+     * unavailable OSTs. Unsampled OSTs contribute zero. */
+    RawstorLocationInfo info();
+
+    /* A result from a removed/readdressed OST is ignored. Failure keeps
+     * the last successful sample but disables new placement. */
+    void
+    update_backend(const TopologyOST& ost, const RawstorLocationInfo* info);
+    void reset_backend_availability();
+    bool backend_available(const RawstdUUID& id);
 
     /*
      * Throws EBUSY if `topology` is missing an OST that still holds a

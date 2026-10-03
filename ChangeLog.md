@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - Unreleased
 
 ### Added
+- `rawstor info mds://` reads cached backend space statistics from MDS, with configurable periodic health probes and placement restricted to available backends.
 - N-way mirroring ([design](docs/mirroring.md)): quorum-gated open, degrade-and-continue writes, read failover and repair, and online resync of a stale, reconnected or missing member (a copy lost from one member is recreated at open while the remaining copies are still a majority), with each copy's own consistency state persisted by its backend (a `meta` file next to `file://`'s data, an LVM tag, a ZFS user property).
 - `rawstor create -m`/`--mirrors N` and the matching `RawstorObjectSpec.width`/pyrawstor `width` (both required); a width of 0, or one that doesn't match a multi-URI target's own URI count, is `-EINVAL`.
 - `rawstor show -v` (every copy's own consistency state, per chunk) and `rawstor resolve TARGET --winner=N[,N...] [--offset OFFSET]` for manual split-brain recovery, backed by the new `rawstor_target_meta()`/`rawstor_target_chunks()`/`rawstor_target_set_member_sync_state()` API (pyrawstor `Target.meta()`/`Target.set_member_sync_state()`).

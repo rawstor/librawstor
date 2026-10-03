@@ -914,6 +914,73 @@ public:
     }
 };
 
+/**
+ * A counting async semaphore with FIFO handoff: `co_await acquire()`
+ * takes a unit or waits behind every earlier waiter, and `release()`
+ * hands the unit straight to the oldest waiter. Waiters are resumed inline
+ * from the outermost release() only: a resumed waiter that releases again
+ * before suspending (e.g. a task failing synchronously) just returns its
+ * unit to that loop, so a long queue never nests resumptions on the stack.
+ */
+class Semaphore final {
+private:
+    unsigned int _count;
+    bool _releasing;
+    std::deque<std::coroutine_handle<>> _waiters;
+
+public:
+    explicit Semaphore(unsigned int count) noexcept :
+        _count(count),
+        _releasing(false) {}
+
+    Semaphore(const Semaphore&) = delete;
+    Semaphore& operator=(const Semaphore&) = delete;
+
+    unsigned int available() const noexcept { return _count; }
+
+    size_t waiting() const noexcept { return _waiters.size(); }
+
+    class Awaiter final {
+    private:
+        Semaphore& _semaphore;
+
+    public:
+        explicit Awaiter(Semaphore& semaphore) noexcept :
+            _semaphore(semaphore) {}
+
+        bool await_ready() const noexcept {
+            if (_semaphore._count == 0 || !_semaphore._waiters.empty()) {
+                return false;
+            }
+            --_semaphore._count;
+            return true;
+        }
+
+        void await_suspend(std::coroutine_handle<> h) {
+            _semaphore._waiters.push_back(h);
+        }
+
+        void await_resume() const noexcept {}
+    };
+
+    Awaiter acquire() noexcept { return Awaiter(*this); }
+
+    void release() noexcept {
+        ++_count;
+        if (_releasing) {
+            return;
+        }
+        _releasing = true;
+        while (_count != 0 && !_waiters.empty()) {
+            std::coroutine_handle<> h = _waiters.front();
+            _waiters.pop_front();
+            --_count;
+            h.resume();
+        }
+        _releasing = false;
+    }
+};
+
 } // namespace rawstd
 
 #endif // RAWSTD_CORO_HPP

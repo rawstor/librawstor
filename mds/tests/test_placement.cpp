@@ -4,6 +4,7 @@
 #include <rawstd/gpp.hpp>
 #include <rawstd/uuid.h>
 
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -207,6 +208,58 @@ TEST(PlacementTest, different_objects_can_land_on_different_placements) {
         distinct_placements.insert(key);
     }
     EXPECT_GT(distinct_placements.size(), 1u);
+}
+
+// Consecutive object ids, as a burst of creates produces: they differ in a
+// few low bytes only.
+RawstdUUID sequential_id(unsigned i) {
+    RawstdUUID id{};
+    id.bytes[6] = 0x70;
+    id.bytes[8] = 0x80;
+    id.bytes[13] = static_cast<uint8_t>(i >> 16);
+    id.bytes[14] = static_cast<uint8_t>(i >> 8);
+    id.bytes[15] = static_cast<uint8_t>(i);
+    return id;
+}
+
+std::map<std::string, unsigned>
+count_primaries(const Topology& topology, unsigned objects) {
+    PlacementPolicy policy{1, Level::OST, STRIPE_ALL, 0};
+    std::map<std::string, unsigned> counts;
+    for (unsigned i = 0; i < objects; ++i) {
+        auto slots = place(topology, sequential_id(i), 0, policy);
+        RawstdUUIDString id;
+        rawstd_uuid_to_string(&slots.at(0).ost_id, &id);
+        ++counts[id];
+    }
+    return counts;
+}
+
+TEST(PlacementTest, spreads_objects_evenly_over_equal_weights) {
+    Topology topology;
+    for (int i = 1; i <= 8; ++i) {
+        char id[64];
+        snprintf(id, sizeof(id), "00000000-0000-7000-8000-%012d", i);
+        char host[16];
+        snprintf(host, sizeof(host), "host%d", i);
+        topology.add(make_ost(id, 100, host));
+    }
+    auto counts = count_primaries(topology, 8000);
+    ASSERT_EQ(counts.size(), 8u);
+    for (const auto& [ost, count] : counts) {
+        EXPECT_GT(count, 850u) << ost;
+        EXPECT_LT(count, 1150u) << ost;
+    }
+}
+
+TEST(PlacementTest, spreads_objects_in_proportion_to_weight) {
+    Topology topology;
+    topology.add(make_ost("00000000-0000-7000-8000-000000000001", 100, "a"));
+    topology.add(make_ost("00000000-0000-7000-8000-000000000002", 300, "b"));
+    auto counts = count_primaries(topology, 8000);
+    unsigned heavy = counts["00000000-0000-7000-8000-000000000002"];
+    EXPECT_GT(heavy, 5760u); // 72%
+    EXPECT_LT(heavy, 6240u); // 78%
 }
 
 } // namespace

@@ -105,6 +105,10 @@ ObjectEnv::ObjectEnv(unsigned int mds_port, unsigned int ost_port) :
          mds_wake_read_fd](std::shared_ptr<std::promise<void>> ready) mutable {
             try {
                 mdsserver::ObjectStore store(mds_db, std::move(topology));
+                RawstorLocationInfo info{123, 456};
+                for (const auto& ost : store.topology()->osts()) {
+                    store.update_backend(ost, &info);
+                }
                 mdsserver::Server s(256, fd, store, mds_wake_read_fd);
                 ready->set_value();
                 s.loop();

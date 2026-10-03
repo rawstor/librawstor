@@ -7,6 +7,7 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <rawstor/location.h>
 #include <rawstor/protocol.h>
 
 #include <string>
@@ -60,8 +61,11 @@ private:
     int _fd;
     uint16_t _cid_counter;
 
-    rawstd::Task<std::vector<unsigned char>>
-    _exchange(const void* request, size_t size, RawstorCommandType cmd);
+    // `max_size` bounds the response body before it sizes an allocation.
+    rawstd::Task<std::vector<unsigned char>> _exchange(
+        const void* request, size_t size, RawstorCommandType cmd,
+        size_t max_size = SIZE_MAX
+    );
 
 public:
     Client(rawio::Queue& queue, const rawstd::URI& location);
@@ -74,6 +78,8 @@ public:
 
     /* TCP connect + the SET_OBJECT handshake (null binding). */
     rawstd::Task<void> connect();
+
+    rawstd::Task<RawstorLocationInfo> info();
 
     rawstd::Task<uint64_t> create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,

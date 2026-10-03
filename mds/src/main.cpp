@@ -1,3 +1,5 @@
+#include <mds/monitor.hpp>
+#include <mds/opts.hpp>
 #include <mds/server.hpp>
 
 #include "config.h"
@@ -309,7 +311,8 @@ void reload_topology(
 void mds(
     unsigned int queue_size, unsigned int workers, const std::string& addr,
     unsigned int port, const std::string& db_path,
-    const std::string& topology_path, bool do_reconstruct
+    const std::string& topology_path, bool do_reconstruct,
+    const rawstor::mdsserver::Opts& opts
 ) {
     sigset_t signals;
     sigemptyset(&signals);
@@ -346,9 +349,22 @@ void mds(
         wake_pipes.emplace_back(rawstd::Pipe::Mode::NonBlocking);
     }
 
-    std::vector<std::exception_ptr> errors(workers);
+    rawstor::mdsserver::Monitor monitor(store, opts);
+    rawstd_info(
+        "MDS backend info: interval=%u ms, concurrency=%u\n",
+        opts.info_interval, opts.info_concurrency
+    );
+    std::vector<std::exception_ptr> errors(workers + 1);
     std::vector<std::thread> threads;
-    threads.reserve(workers);
+    threads.reserve(workers + 1);
+    threads.emplace_back([&monitor, &errors, workers]() {
+        try {
+            monitor.loop();
+        } catch (...) {
+            errors[workers] = std::current_exception();
+            kill(getpid(), SIGTERM);
+        }
+    });
     for (unsigned int i = 0; i < workers; i++) {
         threads.emplace_back([&errors, &store, i, queue_size,
                               fd = listen_fd.get(),
@@ -376,8 +392,10 @@ void mds(
             break;
         }
         reload_topology(store, topology_path);
+        monitor.reload();
     }
 
+    monitor.stop();
     for (const rawstd::Pipe& pipe : wake_pipes) {
         char byte = 0;
         ssize_t n = write(pipe.write_fd(), &byte, 1);
@@ -540,15 +558,29 @@ int main(int argc, char** argv) {
     if (res < 0) {
         std::cerr << "Failed to initialize rawstor: " << strerror(-res)
                   << std::endl;
-        return rawstd_exitcode_for_errno(-res);
+        // rawstor_initialize() fails with EINVAL only on invalid
+        // configuration.
+        return res == -EINVAL ? EX_CONFIG : rawstd_exitcode_for_errno(-res);
     }
 
     rawstd_info("Rawstor MDS server %s\n", PACKAGE_VERSION);
 
+    // Read before opening the database or the listening socket, so a
+    // configuration error fails fast. from_env() throws only on invalid
+    // configuration.
+    rawstor::mdsserver::Opts opts;
+    try {
+        opts = rawstor::mdsserver::Opts::from_env();
+    } catch (const std::exception& e) {
+        std::cerr << "Invalid MDS configuration: " << e.what() << std::endl;
+        rawstor_terminate();
+        return EX_CONFIG;
+    }
+
     int exit_code = EXIT_SUCCESS;
     try {
         mds(queue_size, workers, name, port, db_arg, topology_arg,
-            do_reconstruct);
+            do_reconstruct, opts);
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
         exit_code = rawstd_exitcode_for_errno(e.code().value());
