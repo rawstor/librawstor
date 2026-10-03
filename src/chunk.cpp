@@ -1075,7 +1075,8 @@ Chunk::_set_sync_state_one(size_t idx, RawstorObjectSyncState sync_state) {
  * exclusive with client writes per chunk.
  */
 struct Chunk::ResyncState {
-    enum class Phase { START_DRAIN, SWEEP, FINISH_DRAIN };
+    // FINISHING: _resync_finish() is running; it alone ends the resync.
+    enum class Phase { START_DRAIN, SWEEP, FINISH_DRAIN, FINISHING };
 
     // Captured by every chunk-copy completion so it can tell whether it
     // still belongs to the current resync (see Chunk::_resync_generation).
@@ -1270,10 +1271,15 @@ rawstd::Task<size_t> Chunk::_flush_one(Slot& slot) {
 // whichever resync phase is waiting on the in-flight count reaching zero,
 // or wakes the sweeper's own per-chunk block.
 void Chunk::_write_settled() noexcept {
-    if (_resync == nullptr) {
-        return;
+    if (_resync != nullptr) {
+        _resync_advance_on_settle();
     }
+    // Last: a resync finisher waiting for writes resumes inline here and
+    // may end the resync.
+    _write_settle_barrier.advance();
+}
 
+void Chunk::_resync_advance_on_settle() noexcept {
     switch (_resync->phase) {
     case ResyncState::Phase::START_DRAIN:
         if (_writes_in_flight == 0) {
@@ -1291,6 +1297,8 @@ void Chunk::_write_settled() noexcept {
         if (_writes_in_flight == 0) {
             _resync_finish();
         }
+        break;
+    case ResyncState::Phase::FINISHING:
         break;
     }
 }
@@ -1561,6 +1569,9 @@ rawstd::DetachedTask Chunk::_resync_finish() {
     // duplicated onto the still-SYNCING target can fail right up until the
     // state flips below) and replaced by a new one for a different member.
     size_t generation = _resync->generation;
+    // The only finisher of this resync: writes settling from now on do not
+    // start another one.
+    _resync->phase = ResyncState::Phase::FINISHING;
 
     auto identity = [this]() {
         RawstorObjectSyncState m{};
@@ -1571,18 +1582,31 @@ rawstd::DetachedTask Chunk::_resync_finish() {
         memcpy(m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history));
         return m;
     };
+    auto same = [](const RawstorObjectSyncState& a,
+                   const RawstorObjectSyncState& b) {
+        return a.state == b.state && a.epoch == b.epoch &&
+               a.sync_id == b.sync_id &&
+               memcmp(
+                   a.sync_id_history, b.sync_id_history,
+                   sizeof(a.sync_id_history)
+               ) == 0;
+    };
+    auto gone = [&]() {
+        return alive.expired() || _resync == nullptr ||
+               _resync->generation != generation;
+    };
 
-    // A dirty or degrade barrier running alongside the write below records
-    // a new identity on the in-sync members only. Rather than holding
-    // _meta_gate across a write to this member (which may never answer),
-    // wait out any such barrier afterwards and write again if the identity
-    // moved on; the member joins the set with no suspension after the
-    // final check. Gate has no queue of its own, so re-check after every
-    // wake-up.
-    RawstorObjectSyncState m{};
+    // Neither _meta_gate nor client writes are held off while this writes
+    // to a member that may never answer. Instead the member joins the set
+    // only once, with no suspension in between: no barrier is running
+    // (one running alongside records a new identity on the in-sync
+    // members only, so the member is written again), no write is in
+    // flight (one started meanwhile was duplicated onto the member, and
+    // aborts the resync itself if it failed there), and the identity it
+    // holds is still current. Gate has no queue of its own, so re-check
+    // after every wake-up.
+    RawstorObjectSyncState m = identity();
     while (true) {
-        m = identity();
-
         int error = 0;
         try {
             co_await _members[idx].slot->set_sync_state(_id, _offset, m);
@@ -1590,8 +1614,7 @@ rawstd::DetachedTask Chunk::_resync_finish() {
             error = e.code().value();
         }
 
-        if (alive.expired() || _resync == nullptr ||
-            _resync->generation != generation) {
+        if (gone()) {
             co_return;
         }
 
@@ -1604,25 +1627,26 @@ rawstd::DetachedTask Chunk::_resync_finish() {
             co_return;
         }
 
-        while (_meta_gate.running()) {
-            co_await _meta_gate.settle();
-            if (alive.expired()) {
+        while (true) {
+            if (_meta_gate.running()) {
+                co_await _meta_gate.settle();
+            } else if (_writes_in_flight != 0) {
+                co_await _write_settle_barrier.at_least(
+                    _write_settle_barrier.value() + 1
+                );
+            } else {
+                break;
+            }
+            if (gone()) {
                 co_return;
             }
         }
-        if (_resync == nullptr || _resync->generation != generation) {
-            co_return;
-        }
 
         RawstorObjectSyncState current = identity();
-        if (current.state == m.state && current.epoch == m.epoch &&
-            current.sync_id == m.sync_id &&
-            memcmp(
-                current.sync_id_history, m.sync_id_history,
-                sizeof(m.sync_id_history)
-            ) == 0) {
+        if (same(current, m)) {
             break;
         }
+        m = current;
     }
 
     _members[idx].state = MemberState::IN_SYNC;
