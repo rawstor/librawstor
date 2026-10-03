@@ -1773,11 +1773,11 @@ rawstd::DetachedTask Backend::_recv_pump(
             );
         }
     } catch (const std::system_error& e) {
-        // ECANCELED: close()/~Backend() cancelled this pump's own
-        // registration -- nothing left to clean up but the end() below.
-        if (e.code().value() != ECANCELED) {
-            _recv_pump_failed(weak, e.code().value());
-        }
+        // ECANCELED included: after close() or ~Backend() cancelled this
+        // registration there is nothing left in flight, but a cancellation
+        // of the whole queue (Queue::cancel_all()) leaves ops waiting on
+        // responses that will now never come.
+        _recv_pump_failed(weak, e.code().value());
     } catch (const std::exception& e) {
         // Not a system_error: only reachable from
         // response_head_cb()/response_body_cb()'s own body (see above)
