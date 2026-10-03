@@ -738,7 +738,11 @@ rawstd::Task<void> Chunk::_with_dirty() {
         co_return;
     }
 
-    co_await _meta_gate.settle();
+    // Gate has no queue of its own: several writers woken by one end()
+    // must not each start a barrier.
+    while (_meta_gate.running()) {
+        co_await _meta_gate.settle();
+    }
 
     if (_writes_frozen) {
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
@@ -1481,53 +1485,67 @@ rawstd::DetachedTask Chunk::_resync_finish() {
     // state flips below) and replaced by a new one for a different member.
     size_t generation = _resync->generation;
 
-    // A metadata barrier of its own: a dirty or degrade barrier running
-    // alongside would record a new identity on the in-sync members only,
-    // while this one writes the older identity onto the member it then
-    // adds to the set. Gate has no queue of its own, so re-check after
-    // every wake-up.
-    while (_meta_gate.running()) {
-        co_await _meta_gate.settle();
-        if (alive.expired()) {
+    auto identity = [this]() {
+        RawstorObjectSyncState m{};
+        m.state = _dirty ? RAWSTOR_OBJECT_SYNC_STATE_DIRTY
+                         : RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+        m.epoch = _epoch;
+        m.sync_id = _sync_id;
+        memcpy(m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history));
+        return m;
+    };
+
+    // A dirty or degrade barrier running alongside the write below records
+    // a new identity on the in-sync members only. Rather than holding
+    // _meta_gate across a write to this member (which may never answer),
+    // wait out any such barrier afterwards and write again if the identity
+    // moved on; the member joins the set with no suspension after the
+    // final check. Gate has no queue of its own, so re-check after every
+    // wake-up.
+    RawstorObjectSyncState m{};
+    while (true) {
+        m = identity();
+
+        int error = 0;
+        try {
+            co_await _members[idx].slot->set_sync_state(_id, _offset, m);
+        } catch (const std::system_error& e) {
+            error = e.code().value();
+        }
+
+        if (alive.expired() || _resync == nullptr ||
+            _resync->generation != generation) {
             co_return;
         }
-    }
-    if (_resync == nullptr || _resync->generation != generation) {
-        co_return;
-    }
-    _meta_gate.begin();
 
-    RawstorObjectSyncState m{};
-    m.state = _dirty ? RAWSTOR_OBJECT_SYNC_STATE_DIRTY
-                     : RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    m.epoch = _epoch;
-    m.sync_id = _sync_id;
-    memcpy(m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history));
+        if (error == ENOSYS) {
+            error = 0;
+        }
 
-    int error = 0;
-    try {
-        co_await _members[idx].slot->set_sync_state(_id, _offset, m);
-    } catch (const std::system_error& e) {
-        error = e.code().value();
-    }
+        if (error) {
+            _resync_abort("final state update failed");
+            co_return;
+        }
 
-    if (alive.expired()) {
-        co_return;
-    }
+        while (_meta_gate.running()) {
+            co_await _meta_gate.settle();
+            if (alive.expired()) {
+                co_return;
+            }
+        }
+        if (_resync == nullptr || _resync->generation != generation) {
+            co_return;
+        }
 
-    if (_resync == nullptr || _resync->generation != generation) {
-        _meta_gate.end();
-        co_return;
-    }
-
-    if (error == ENOSYS) {
-        error = 0;
-    }
-
-    if (error) {
-        _meta_gate.end();
-        _resync_abort("final state update failed");
-        co_return;
+        RawstorObjectSyncState current = identity();
+        if (current.state == m.state && current.epoch == m.epoch &&
+            current.sync_id == m.sync_id &&
+            memcmp(
+                current.sync_id_history, m.sync_id_history,
+                sizeof(m.sync_id_history)
+            ) == 0) {
+            break;
+        }
     }
 
     _members[idx].state = MemberState::IN_SYNC;
@@ -1544,10 +1562,6 @@ rawstd::DetachedTask Chunk::_resync_finish() {
         rawstd_info("Mirror write quorum restored: unfreezing writes\n");
         _writes_frozen = false;
     }
-
-    // Only now: ending the gate resumes a waiting barrier inline, which
-    // must already see the member in the set.
-    _meta_gate.end();
 
     _resync_maybe_start();
 }
