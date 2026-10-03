@@ -100,7 +100,8 @@ void SingleSlotStreamBackend<BackendBase, dedup>::on_completion(
         return;
     }
     if constexpr (dedup) {
-        if (_last_generation == _q.dispatch_generation()) {
+        // An error ends the stream: never a duplicate.
+        if (!error && _last_generation == _q.dispatch_generation()) {
             // Same-batch duplicate wakeup, see poll::Queue's
             // _dispatch_generation doc comment.
             return;
@@ -123,6 +124,14 @@ void SingleSlotStreamBackend<BackendBase, dedup>::on_completion(
     }
 
     if (_has_pending) {
+        if (error) {
+            // Ending after the item still waiting for the consumer (e.g.
+            // Queue::cancel_all() reaching a completion already taken):
+            // that item comes first, then the error.
+            _terminated = true;
+            _terminal_error = error;
+            return;
+        }
         _pending_overflow = true;
         return;
     }

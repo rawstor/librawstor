@@ -1,8 +1,10 @@
 #include "config.h"
 #include "fixture.hpp"
 #include "server.hpp"
+#include "socket.hpp"
 
 #include <rawio/awaitable.hpp>
+#include <rawio/stream.hpp>
 #include <rawstd/coro.hpp>
 
 #include <gtest/gtest.h>
@@ -13,6 +15,7 @@
 #include <poll.h>
 #include <unistd.h>
 
+#include <stdexcept>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -329,5 +332,262 @@ TEST_F(CancelTest, cancel_fd_resolves_pending_write_before_close) {
                                    "after cancel(fd) -- lost, exactly like "
                                    "the live vhost hang this test targets";
 }
+
+TEST_F(CancelTest, cancel_all_nothing_pending) {
+    EXPECT_NO_THROW(
+        rawio::tests::run(
+            *_queue, rawio::tests::wrap<void>(_queue->cancel_all())
+        )
+    );
+}
+
+TEST_F(CancelTest, cancel_all_cancels_fds_and_timers) {
+    int pipe_fds[2];
+    ASSERT_EQ(pipe(pipe_fds), 0);
+    ASSERT_EQ(fcntl(pipe_fds[0], F_SETFL, O_NONBLOCK), 0);
+
+    int result_poll = 0;
+    int error_poll = 0;
+    rawstd::Task<void> poll = rawio::tests::await_into(
+        _queue->poll(_fd, POLLIN), &result_poll, &error_poll
+    );
+
+    char buf[10];
+    size_t result_read = 0;
+    int error_read = 0;
+    rawstd::Task<void> read = rawio::tests::await_into(
+        _queue->read(pipe_fds[0], buf, sizeof(buf)), &result_read, &error_read
+    );
+
+    int error_timer = 0;
+    auto wait_timer = [](rawio::Awaitable<void> aw,
+                         int* error) -> rawstd::Task<void> {
+        try {
+            co_await aw;
+        } catch (const std::system_error& e) {
+            *error = e.code().value();
+        }
+    };
+    rawstd::Task<void> timer =
+        wait_timer(_queue->timeout(60u * 1000 * 1000), &error_timer);
+
+    EXPECT_THROW(_queue->wait_timeout(0), std::system_error);
+
+    EXPECT_NO_THROW(
+        rawio::tests::run(
+            *_queue, rawio::tests::wrap<void>(_queue->cancel_all())
+        )
+    );
+    EXPECT_NO_THROW(_wait_all());
+
+    EXPECT_TRUE(poll.done());
+    EXPECT_TRUE(read.done());
+    EXPECT_TRUE(timer.done());
+    EXPECT_EQ(error_poll, ECANCELED);
+    EXPECT_EQ(error_read, ECANCELED);
+    EXPECT_EQ(error_timer, ECANCELED);
+
+    close(pipe_fds[0]);
+    close(pipe_fds[1]);
+}
+
+#ifndef RAWIO_WITH_LIBURING
+// Cancelled events go through the poll() backend's bounded completion
+// ring: cancel_all() stops short of overflowing it, reports ENOBUFS and
+// finishes the job when called again.
+TEST_F(CancelTest, cancel_all_reports_a_full_completion_ring) {
+    int pipes[2][2];
+    std::vector<rawstd::Task<void>> polls;
+    int results[6] = {};
+    int errors[6] = {};
+    for (int p = 0; p < 2; ++p) {
+        ASSERT_EQ(pipe(pipes[p]), 0);
+        ASSERT_EQ(fcntl(pipes[p][0], F_SETFL, O_NONBLOCK), 0);
+        for (int i = 0; i < 3; ++i) {
+            int n = p * 3 + i;
+            polls.push_back(
+                rawio::tests::await_into(
+                    _queue->poll(pipes[p][0], POLLIN), &results[n], &errors[n]
+                )
+            );
+        }
+    }
+
+    // Queue depth 4: one fd's 3 polls fit, the other's do not.
+    try {
+        rawio::tests::run(
+            *_queue, rawio::tests::wrap<void>(_queue->cancel_all())
+        );
+        ADD_FAILURE() << "cancel_all() did not report ENOBUFS";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOBUFS);
+    }
+    EXPECT_NO_THROW(_wait_all());
+    EXPECT_NO_THROW(
+        rawio::tests::run(
+            *_queue, rawio::tests::wrap<void>(_queue->cancel_all())
+        )
+    );
+    EXPECT_NO_THROW(_wait_all());
+
+    for (int n = 0; n < 6; ++n) {
+        EXPECT_TRUE(polls[n].done()) << n;
+        EXPECT_EQ(errors[n], ECANCELED) << n;
+    }
+    for (auto& p : pipes) {
+        close(p[0]);
+        close(p[1]);
+    }
+}
+
+// An fd with more events pending than the completion ring holds is
+// cancelled in parts: each call makes progress.
+TEST_F(CancelTest, cancel_all_splits_an_fd_larger_than_the_ring) {
+    std::vector<rawstd::Task<void>> polls;
+    int results[5] = {};
+    int errors[5] = {};
+    for (int i = 0; i < 5; ++i) {
+        polls.push_back(
+            rawio::tests::await_into(
+                _queue->poll(_fd, POLLIN), &results[i], &errors[i]
+            )
+        );
+    }
+
+    // Queue depth 4: the first call cancels four, the second the last.
+    int enobufs = 0;
+    for (int round = 0; round < 3; ++round) {
+        try {
+            rawio::tests::run(
+                *_queue, rawio::tests::wrap<void>(_queue->cancel_all())
+            );
+            break;
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), ENOBUFS);
+            ++enobufs;
+        }
+        EXPECT_NO_THROW(_wait_all());
+    }
+    EXPECT_EQ(enobufs, 1);
+    EXPECT_NO_THROW(_wait_all());
+
+    for (int i = 0; i < 5; ++i) {
+        EXPECT_TRUE(polls[i].done()) << i;
+        EXPECT_EQ(errors[i], ECANCELED) << i;
+    }
+}
+
+rawstd::DetachedTask throw_when_resumed(rawio::Awaitable<int> aw) {
+    co_await aw;
+    throw std::runtime_error("resumed");
+}
+
+// A multishot registration that completed but was not dispatched yet --
+// left in the completion ring when an earlier dispatch in the same batch
+// threw -- delivers that completion and then ends instead of being
+// re-armed.
+TEST_F(CancelTest, cancel_all_ends_a_multishot_awaiting_dispatch) {
+    throw_when_resumed(_queue->poll(_fd, POLLIN));
+    rawio::PollStream stream = _queue->poll_multishot(_fd, POLLIN);
+
+    const char server_buf[] = "data";
+    _server.write(server_buf, sizeof(server_buf));
+    _server.wait();
+
+    // Both polls complete together, the one-shot first: dispatching it
+    // throws before the multishot is dispatched.
+    EXPECT_THROW(_queue->wait_timeout(100), std::runtime_error);
+
+    EXPECT_NO_THROW(
+        rawio::tests::run(
+            *_queue, rawio::tests::wrap<void>(_queue->cancel_all())
+        )
+    );
+    EXPECT_EQ(
+        rawio::tests::run(*_queue, rawio::tests::wrap<int>(stream.next())),
+        POLLIN
+    );
+    try {
+        rawio::tests::run(*_queue, rawio::tests::wrap<int>(stream.next()));
+        ADD_FAILURE() << "expected ECANCELED";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ECANCELED);
+    }
+}
+
+// Same for a multishot accept: the connection it already accepted reaches
+// the consumer instead of being dropped with its fd.
+TEST_F(CancelTest, cancel_all_delivers_a_queued_accept) {
+    rawio::tests::Socket listen_socket;
+    listen_socket.listen();
+    throw_when_resumed(_queue->poll(listen_socket.fd(), POLLIN));
+    rawio::AcceptStream stream = _queue->accept_multishot(listen_socket.fd());
+
+    rawio::tests::Socket client;
+    client.connect(listen_socket);
+
+    EXPECT_THROW(_queue->wait_timeout(100), std::runtime_error);
+
+    EXPECT_NO_THROW(
+        rawio::tests::run(
+            *_queue, rawio::tests::wrap<void>(_queue->cancel_all())
+        )
+    );
+    int accepted =
+        rawio::tests::run(*_queue, rawio::tests::wrap<int>(stream.next()));
+    EXPECT_GE(accepted, 0);
+    if (accepted >= 0) {
+        ::close(accepted);
+    }
+    try {
+        rawio::tests::run(*_queue, rawio::tests::wrap<int>(stream.next()));
+        ADD_FAILURE() << "expected ECANCELED";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ECANCELED);
+    }
+}
+
+rawstd::Task<void> cancel_while_dispatched(
+    rawio::Queue& queue, rawio::PollStream& stream, int* first, int* error
+) {
+    *first = co_await stream.next();
+    // Still inside the multishot's own dispatch: cancel and run the queue
+    // from here.
+    queue.cancel_all();
+    try {
+        queue.wait_timeout(0);
+    } catch (const std::system_error&) {
+    }
+    try {
+        co_await stream.next();
+    } catch (const std::system_error& e) {
+        *error = e.code().value();
+    }
+}
+
+// A multishot cancelled while it is being dispatched still tells its
+// stream it has ended, instead of leaving the next next() waiting.
+TEST_F(CancelTest, cancel_all_ends_a_multishot_being_dispatched) {
+    rawio::PollStream stream = _queue->poll_multishot(_fd, POLLIN);
+    int first = 0;
+    int error = 0;
+    rawstd::Task<void> t =
+        cancel_while_dispatched(*_queue, stream, &first, &error);
+
+    const char server_buf[] = "data";
+    _server.write(server_buf, sizeof(server_buf));
+    _server.wait();
+
+    for (int i = 0; i < 100 && !t.done(); ++i) {
+        try {
+            _queue->wait_timeout(10);
+        } catch (const std::system_error&) {
+        }
+    }
+    ASSERT_TRUE(t.done());
+    EXPECT_EQ(first, POLLIN);
+    EXPECT_EQ(error, ECANCELED);
+}
+#endif
 
 } // unnamed namespace

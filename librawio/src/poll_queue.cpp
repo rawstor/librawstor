@@ -157,7 +157,10 @@ bool Queue::_reap_timers() {
         // rawstd::DetachedTask in the process, unrelated to this timer
         // entirely, and checking it first would skip this re-arm on every
         // such coincidence, silently dropping the registration.
-        if (event->is_multishot() && !event->error()) {
+        if (event->is_multishot() && !event->error() &&
+            event->cancel_requested()) {
+            _end_cancelled(*event);
+        } else if (event->is_multishot() && !event->error()) {
             EventTimerMultishot* multishot =
                 static_cast<EventTimerMultishot*>(event.get());
             multishot->set_deadline(
@@ -331,7 +334,9 @@ void Queue::_wait_timeout(int msec) {
         // nothing can reach anymore, leaking it and the `_recv_pump`
         // coroutine still suspended on it.
         if (event->is_multishot() && !event->error()) {
-            if (event->is_poll()) {
+            if (event->cancel_requested()) {
+                _end_cancelled(*event);
+            } else if (event->is_poll()) {
                 std::unique_ptr<EventSimplexPoll> poll_event(
                     static_cast<EventSimplexPoll*>(event.release())
                 );
@@ -364,6 +369,18 @@ void Queue::_wait_timeout(int msec) {
         // two places that need to check.
         rawstd::DetachedTask::rethrow_if_pending();
     }
+}
+
+void Queue::_end_cancelled(Event& event) {
+    event.set_error(ECANCELED);
+    _current_events.push_back(&event);
+    try {
+        event.dispatch();
+    } catch (...) {
+        _current_events.pop_back();
+        throw;
+    }
+    _current_events.pop_back();
 }
 
 void Queue::_eval(std::unique_ptr<EventEval> event) {
@@ -1023,6 +1040,58 @@ rawio::Awaitable<void> Queue::cancel(rawio::Event* e) {
                 }
             }
             return 0;
+        });
+
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+    _eval(std::move(event));
+    return rawio::Awaitable<void>(this, ret);
+}
+
+rawio::Awaitable<void> Queue::cancel_all() {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('|', "%s\n", "all");
+
+    std::unique_ptr<EventEval> event =
+        std::make_unique<EventEval>(*this, trace_event, [this]() -> int {
+            // Resolved by the _reap_timers() call right after this
+            // eval-drain loop, as in cancel(rawio::Event*). Deadlines set
+            // front to back stay sorted.
+            for (std::unique_ptr<EventTimer>& t : _timers) {
+                t->set_error(ECANCELED);
+                t->set_deadline(std::chrono::steady_clock::now());
+            }
+            // A multishot registration that already completed but is not
+            // dispatched yet (left in _cqes when an earlier dispatch
+            // threw) or is being dispatched right now would be re-armed
+            // after its dispatch. Its completion stands -- it may carry an
+            // accepted fd or received data -- so let it deliver that and
+            // end it afterwards (see _end_cancelled()). One-shot
+            // completions there keep their result too: the cancellation
+            // lost the race.
+            for (Event* current : _current_events) {
+                if (current->is_multishot()) {
+                    current->request_cancel();
+                }
+            }
+            for (size_t i = _cqes.size(); i > 0; --i) {
+                std::unique_ptr<Event> e = _cqes.pop();
+                if (e->is_multishot()) {
+                    e->request_cancel();
+                }
+                _cqes.push(std::move(e));
+            }
+            // An eval must not throw (EventEval::process() is noexcept):
+            // cancel only as many events as _cqes has room for, and report
+            // the rest instead of overflowing it.
+            int res = 0;
+            for (auto it = _sessions.begin(); it != _sessions.end();) {
+                if (!it->second->cancel_some(_cqes)) {
+                    res = -ENOBUFS;
+                    ++it;
+                    continue;
+                }
+                it = _sessions.erase(it);
+            }
+            return res;
         });
 
     rawio::Event* ret = static_cast<rawio::Event*>(event.get());

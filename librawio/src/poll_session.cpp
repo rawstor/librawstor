@@ -273,6 +273,30 @@ void Session::cancel(rawstd::RingBuf<Event>& cqes) {
     }
 }
 
+bool Session::cancel_some(rawstd::RingBuf<Event>& cqes) {
+    while (!_poll_sqes.empty() && !cqes.full()) {
+        std::unique_ptr<EventSimplexPoll> e = std::move(_poll_sqes.front());
+        _poll_sqes.pop_front();
+
+        e->set_error(ECANCELED);
+        cqes.push(std::move(e));
+    }
+
+    while (!_read_sqes.empty() && !cqes.full()) {
+        std::unique_ptr<EventSimplex> e = _read_sqes.pop();
+        e->set_error(ECANCELED);
+        cqes.push(std::move(e));
+    }
+
+    while (!_write_sqes.empty() && !cqes.full()) {
+        std::unique_ptr<Event> e = _write_sqes.pop();
+        e->set_error(ECANCELED);
+        cqes.push(std::move(e));
+    }
+
+    return empty();
+}
+
 void Session::process(
     rawstd::RingBuf<rawio::poll::Event>& cqes, short revents
 ) {

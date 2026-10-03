@@ -68,6 +68,11 @@ private:
     // return inside _wait_timeout()'s loop.
     bool _reap_timers();
 
+    // Ends a multishot event that cancel_all() reached after its
+    // completion was taken: dispatched once more with ECANCELED, which its
+    // stream takes as the end, instead of being re-armed.
+    void _end_cancelled(Event& event);
+
     // Inserts `event` into `_timers`, kept sorted ascending by deadline --
     // shared by timeout()/timeout_multishot() (arming a fresh timer) and
     // _reap_timers() (re-arming a still-live multishot timer after it
@@ -172,6 +177,8 @@ public:
     rawio::Awaitable<void> cancel(rawio::Event* e) override;
 
     rawio::Awaitable<void> cancel(int fd) override;
+
+    rawio::Awaitable<void> cancel_all() override;
 
     void wait() override;
 
