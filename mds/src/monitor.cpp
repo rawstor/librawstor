@@ -269,15 +269,27 @@ rawstd::Task<void> Monitor::_control() {
     _watches.clear();
     co_await _retire(std::move(all));
     // Probes in flight fail with ECANCELED, which ends their retries at
-    // once, instead of being waited out.
-    while (true) {
+    // once, instead of being waited out. A probe caught between operations
+    // (e.g. tearing a connection down, whose failures are ignored) goes on
+    // to submit new ones: cancel again until every probe has returned.
+    // Each round waits on a real timer first, so the queue gets to complete
+    // what was cancelled (the poll() backend would otherwise keep
+    // dispatching one cancellation after another and never reach them).
+    auto all_returned = [this]() {
+        return std::all_of(_retired.begin(), _retired.end(), [](auto& watch) {
+            return watch->task.done();
+        });
+    };
+    while (!all_returned()) {
         try {
             co_await _queue->cancel_all();
-            break;
         } catch (const std::system_error& e) {
             if (e.code().value() != ENOBUFS) {
                 throw;
             }
+        }
+        if (!all_returned()) {
+            co_await _queue->timeout(10 * 1000);
         }
     }
     for (auto& watch : _retired) {
