@@ -114,6 +114,10 @@ private:
     // (_write_settled() below), separate from _writes_issued/
     // _flush_barrier's own flush-barrier accounting.
     size_t _writes_in_flight;
+    // Bumped every time a mirrored write settles (_write_settled()): the
+    // resync finisher waits on it for the writes started meanwhile. Kept
+    // here rather than in ResyncState, which a resumed finisher may reset.
+    rawstd::Barrier _write_settle_barrier;
 
     // Active online resync, one member at a time (nullptr when none is in
     // progress).
@@ -272,6 +276,7 @@ private:
     // phase is waiting on the in-flight count reaching zero, or the
     // sweeper's own per-chunk block.
     void _write_settled() noexcept;
+    void _resync_advance_on_settle() noexcept;
 
     // Online resync of one member (docs/mirroring.md, resync algorithm): a
     // needs-copy bitmap over RESYNC_CHUNK-sized chunks, client writes

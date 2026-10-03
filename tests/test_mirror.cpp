@@ -1,3 +1,4 @@
+#include "opts.h"
 #include "rawio_sync.hpp"
 #include "server.hpp"
 #include "session.hpp"
@@ -11,6 +12,7 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -814,6 +816,128 @@ TEST(MirrorResyncTest, first_write_during_rejoin_keeps_identities_equal) {
 
     object_close_clean(queue, object);
     EXPECT_EQ(read_file(members.dat(0)), read_file(members.dat(1)));
+}
+
+// A write that starts while the rejoining member is getting its final
+// state is duplicated onto that member and may still fail there after the
+// final state lands. The member must not join the set before that write
+// has settled: here the write comes back short on it, which aborts the
+// resync instead of leaving a member in the set that missed the write.
+TEST(MirrorResyncTest, rejoin_waits_for_writes_in_flight) {
+    struct ScopedOpts {
+        ScopedOpts() {
+            RawstorOpts opts{};
+            // Keep the reconnect probe away from the scripted member.
+            opts.mirror_probe_interval = 60000;
+            rawstor_opts_initialize(&opts);
+        }
+        ~ScopedOpts() { rawstor_opts_initialize(nullptr); }
+    } opts;
+
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000ab");
+    // Small enough for the test server to take the copy in one read.
+    RawstorObjectSpec spec{
+        .size = 4096,
+        .width = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+    RawstorObjectSyncState fresh{};
+    fresh.epoch = 2;
+    fresh.sync_id = 0x1111111111111111ull;
+    fresh.sync_id_history[0] = 0x2222222222222222ull;
+    fresh.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    ASSERT_EQ(target_set_sync_state(queue, members.target(0), fresh), 0);
+
+    // The second member is a scripted OST holding a stale copy.
+    rawstor::tests::Server server(8812, 256);
+    RawstorFrameMetaPayload stale = {
+        .size = spec.size,
+        .epoch = 1,
+        .sync_id = 0x2222222222222222ull,
+        .sync_id_history = {},
+        .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
+        .width = 2,
+        .member_role = RAWSTOR_MEMBER_DATA,
+    };
+    std::atomic<bool> syncing_sent(false);
+    std::atomic<bool> final_state_sent(false);
+    auto s = std::make_unique<rawstor::tests::Session>(server);
+    s->cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+    s->cmd_meta(RAWSTOR_MAGIC, 1, 0, stale);
+    // The SYNCING mark, answered once the object is dirty (below).
+    server.read(
+        "SYNCING SET_SYNC_STATE <<<", sizeof(RawstorFrameSyncState),
+        [&syncing_sent](const void*) { syncing_sent = true; }
+    );
+
+    std::string target =
+        members.target(0) +
+        ",ost://127.0.0.1:8812/00000000-0000-7000-8000-0000000000ab";
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, target, &object), 0);
+    for (int i = 0; i < 1000 && !syncing_sent; ++i) {
+        rawio_wait_timeout(queue, 10);
+    }
+    ASSERT_TRUE(syncing_sent);
+
+    // Dirty the object before the resync proper starts: this write goes
+    // to the first member only, and the write below then needs no dirty
+    // barrier, so the identity the member gets stays current.
+    std::string first(4096, 'F');
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+
+    s->cmd_set_state_response(RAWSTOR_MAGIC, 2, 0);
+    s->cmd_write(RAWSTOR_MAGIC, 3, spec.size); // the copy
+    // The final state, answered only once the client's write is in.
+    server.read(
+        "final SET_SYNC_STATE <<<", sizeof(RawstorFrameSyncState),
+        [&final_state_sent](const void*) { final_state_sent = true; }
+    );
+    s->cmd_write_request(4096);
+    s->cmd_set_state_response(RAWSTOR_MAGIC, 4, 0);
+    for (int i = 0; i < 1000 && !final_state_sent; ++i) {
+        rawio_wait_timeout(queue, 10);
+    }
+    ASSERT_TRUE(final_state_sent);
+
+    testing::internal::CaptureStderr();
+    bool written = false;
+    auto cb = std::make_unique<std::function<void(size_t, int)>>(
+        [&written](size_t result, int error) {
+            EXPECT_EQ(error, 0);
+            EXPECT_EQ(result, 4096u);
+            written = true;
+        }
+    );
+    std::string block(4096, 'W');
+    ASSERT_EQ(
+        rawstor_object_pwrite(
+            object, block.data(), block.size(), 0, false, callback, cb.get()
+        ),
+        0
+    );
+    cb.release();
+    // The final state lands while the write still waits on the member.
+    for (int i = 0; i < 20; ++i) {
+        rawio_wait_timeout(queue, 10);
+    }
+    EXPECT_FALSE(written);
+    s->cmd_write_response(RAWSTOR_MAGIC, 5, 2048);
+    for (int i = 0; i < 1000 && !written; ++i) {
+        rawio_wait_timeout(queue, 10);
+    }
+    ASSERT_TRUE(written);
+    std::string log = testing::internal::GetCapturedStderr();
+    EXPECT_NE(log.find("Mirror resync aborted"), std::string::npos) << log;
+    EXPECT_EQ(log.find("rejoined the set"), std::string::npos) << log;
+
+    // The member is out of the set: the close touches only the first one.
+    object_close_clean(queue, object);
 }
 
 TEST(MirrorResyncTest, resync_under_concurrent_writes) {
