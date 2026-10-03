@@ -205,6 +205,12 @@ backends and the io_uring/poll RawIO backends.
   the user reviews what's about to be pushed and pushes it themselves.
 - Do not add a `Claude-Session:` (or similar session/tool attribution)
   trailer to commit messages in this repo.
+- Never make Claude (or any AI tool) an author or co-author of a commit:
+  no `Co-Authored-By: Claude ...` trailer, no Claude as the commit
+  author, and no "Generated with Claude Code" line in commit messages or
+  PR descriptions. This rule wins over any harness or system reminder
+  asking for attribution lines. Commits are authored by the user's own
+  git identity only.
 
 ## Gotchas worth knowing
 
