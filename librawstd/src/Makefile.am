@@ -16,6 +16,7 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 librawstd_la_SOURCES = $(top_srcdir)/librawstd/include/rawstd/coro.hpp \
                        $(top_srcdir)/librawstd/include/rawstd/endian.h \
+                       $(top_srcdir)/librawstd/include/rawstd/env.h \
                        $(top_srcdir)/librawstd/include/rawstd/exitcode.h \
                        $(top_srcdir)/librawstd/include/rawstd/gcc.h \
                        $(top_srcdir)/librawstd/include/rawstd/gpp.hpp \
@@ -35,6 +36,7 @@ librawstd_la_SOURCES = $(top_srcdir)/librawstd/include/rawstd/coro.hpp \
                        $(top_srcdir)/librawstd/include/rawstd/units.h \
                        $(top_srcdir)/librawstd/include/rawstd/uri.hpp \
                        $(top_srcdir)/librawstd/include/rawstd/uuid.h \
+                       env.c \
                        exitcode.c \
                        hash.c \
                        iovec.c \
