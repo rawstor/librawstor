@@ -311,13 +311,16 @@ inline thread_local std::exception_ptr detached_task_pending_exception;
  * to `Task<T>`, which is [[nodiscard]] and must be held/awaited/`get()`-ed
  * by something.
  *
- * The coroutine frame is entirely self-managed: `initial_suspend()` is
- * `suspend_never`, and `final_suspend()`'s awaiter destroys the frame
- * itself from within `await_suspend()` (the standard, documented way for
- * a coroutine to end its own lifetime -- the frame is considered
- * suspended at that point, so `coroutine_handle::destroy()` is valid
- * there) -- there is no owner and nothing to hold a `coroutine_handle`
- * for later cleanup.
+ * The coroutine frame is entirely self-managed: both `initial_suspend()`
+ * and `final_suspend()` are `suspend_never`, so the frame is destroyed
+ * as the body flows off its end -- there is no owner and nothing to hold
+ * a `coroutine_handle` for later cleanup. Destroying the frame by hand
+ * from a `final_suspend()` awaiter's `await_suspend()` instead (equally
+ * valid by the standard) miscompiles under GCC 15: when the body
+ * completes synchronously, inside the call that started it, the
+ * generated ramp still reads the already-freed frame after the body
+ * returns (an ASan heap-use-after-free at the coroutine's own
+ * declaration line; GCC 13 and Clang 21 are unaffected).
  *
  * An exception escaping the coroutine body cannot be rethrown directly
  * from `unhandled_exception()`: doing so would skip `final_suspend()`
@@ -329,8 +332,8 @@ inline thread_local std::exception_ptr detached_task_pending_exception;
  * `unhandled_exception()` only stashes the exception (into a
  * thread_local, since nothing will ever call `.get()`/`await_resume()`
  * on a DetachedTask to retrieve it from the promise the way `Task<T>`
- * does) and returns normally, letting `final_suspend()` destroy the
- * frame safely.
+ * does) and returns normally, so the coroutine still reaches its
+ * (non-suspending) `final_suspend()` and the frame is destroyed safely.
  *
  * Delivering it from there is deliberately NOT automatic (e.g. via
  * `~DetachedTask()`): a coroutine return type with a `noexcept(false)`
@@ -363,17 +366,7 @@ public:
         DetachedTask get_return_object() noexcept { return {}; }
         std::suspend_never initial_suspend() noexcept { return {}; }
 
-        struct final_awaiter {
-            bool await_ready() noexcept { return false; }
-
-            void await_suspend(std::coroutine_handle<promise_type> h) noexcept {
-                h.destroy();
-            }
-
-            void await_resume() noexcept {}
-        };
-
-        final_awaiter final_suspend() noexcept { return {}; }
+        std::suspend_never final_suspend() noexcept { return {}; }
 
         void return_void() noexcept {}
 
