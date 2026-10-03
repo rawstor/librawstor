@@ -55,10 +55,6 @@ public:
         return _poll_sqes.empty() && _read_sqes.empty() && _write_sqes.empty();
     }
 
-    inline size_t pending() const noexcept {
-        return _poll_sqes.size() + _read_sqes.size() + _write_sqes.size();
-    }
-
     void poll(std::unique_ptr<EventSimplexPoll> event);
 
     void accept(std::unique_ptr<EventSimplexAccept> event);
@@ -70,6 +66,10 @@ public:
     bool cancel(rawio::Event* event, rawstd::RingBuf<Event>& cqes);
 
     void cancel(rawstd::RingBuf<Event>& cqes);
+
+    // Cancels as many events as `cqes` has room for; true once none are
+    // left.
+    bool cancel_some(rawstd::RingBuf<Event>& cqes);
 
     void process(rawstd::RingBuf<Event>& cqes, short revents);
 };

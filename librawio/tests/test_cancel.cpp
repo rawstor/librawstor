@@ -3,6 +3,7 @@
 #include "server.hpp"
 
 #include <rawio/awaitable.hpp>
+#include <rawio/stream.hpp>
 #include <rawstd/coro.hpp>
 
 #include <gtest/gtest.h>
@@ -13,6 +14,7 @@
 #include <poll.h>
 #include <unistd.h>
 
+#include <stdexcept>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -434,6 +436,76 @@ TEST_F(CancelTest, cancel_all_reports_a_full_completion_ring) {
     for (auto& p : pipes) {
         close(p[0]);
         close(p[1]);
+    }
+}
+
+// An fd with more events pending than the completion ring holds is
+// cancelled in parts: each call makes progress.
+TEST_F(CancelTest, cancel_all_splits_an_fd_larger_than_the_ring) {
+    std::vector<rawstd::Task<void>> polls;
+    int results[5] = {};
+    int errors[5] = {};
+    for (int i = 0; i < 5; ++i) {
+        polls.push_back(
+            rawio::tests::await_into(
+                _queue->poll(_fd, POLLIN), &results[i], &errors[i]
+            )
+        );
+    }
+
+    // Queue depth 4: the first call cancels four, the second the last.
+    int enobufs = 0;
+    for (int round = 0; round < 3; ++round) {
+        try {
+            rawio::tests::run(
+                *_queue, rawio::tests::wrap<void>(_queue->cancel_all())
+            );
+            break;
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), ENOBUFS);
+            ++enobufs;
+        }
+        EXPECT_NO_THROW(_wait_all());
+    }
+    EXPECT_EQ(enobufs, 1);
+    EXPECT_NO_THROW(_wait_all());
+
+    for (int i = 0; i < 5; ++i) {
+        EXPECT_TRUE(polls[i].done()) << i;
+        EXPECT_EQ(errors[i], ECANCELED) << i;
+    }
+}
+
+rawstd::DetachedTask throw_when_resumed(rawio::Awaitable<int> aw) {
+    co_await aw;
+    throw std::runtime_error("resumed");
+}
+
+// A multishot registration that completed but was not dispatched yet --
+// left in the completion ring when an earlier dispatch in the same batch
+// threw -- ends instead of being re-armed.
+TEST_F(CancelTest, cancel_all_ends_a_multishot_awaiting_dispatch) {
+    throw_when_resumed(_queue->poll(_fd, POLLIN));
+    rawio::PollStream stream = _queue->poll_multishot(_fd, POLLIN);
+
+    const char server_buf[] = "data";
+    _server.write(server_buf, sizeof(server_buf));
+    _server.wait();
+
+    // Both polls complete together, the one-shot first: dispatching it
+    // throws before the multishot is dispatched.
+    EXPECT_THROW(_queue->wait_timeout(100), std::runtime_error);
+
+    EXPECT_NO_THROW(
+        rawio::tests::run(
+            *_queue, rawio::tests::wrap<void>(_queue->cancel_all())
+        )
+    );
+    try {
+        rawio::tests::run(*_queue, rawio::tests::wrap<int>(stream.next()));
+        ADD_FAILURE() << "expected ECANCELED";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ECANCELED);
     }
 }
 #endif

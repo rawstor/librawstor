@@ -177,10 +177,10 @@ public:
 
     // Cancels every operation pending on this queue, timers included, the
     // way cancel(int fd) does for one fd; the same awaiting rules apply.
-    // Fails with ENOBUFS if the poll() backend could not cancel every fd at
-    // once without overflowing its completion ring: what it did cancel
-    // stays cancelled, so call it again once those completions have been
-    // dispatched.
+    // Fails with ENOBUFS if the poll() backend could not cancel every
+    // operation at once without overflowing its completion ring: what it
+    // did cancel stays cancelled, so call it again once those completions
+    // have been dispatched.
     virtual Awaitable<void> cancel_all() = 0;
 
     virtual void wait() = 0;

@@ -1057,17 +1057,33 @@ rawio::Awaitable<void> Queue::cancel_all() {
                 t->set_error(ECANCELED);
                 t->set_deadline(std::chrono::steady_clock::now());
             }
+            // A multishot registration that already completed but is not
+            // dispatched yet (left in _cqes when an earlier dispatch
+            // threw) or is being dispatched right now is re-armed by its
+            // dispatch unless it carries an error. One-shot completions
+            // there keep their result: the cancellation lost the race.
+            for (Event* current : _current_events) {
+                if (current->is_multishot()) {
+                    current->set_error(ECANCELED);
+                }
+            }
+            for (size_t i = _cqes.size(); i > 0; --i) {
+                std::unique_ptr<Event> e = _cqes.pop();
+                if (e->is_multishot()) {
+                    e->set_error(ECANCELED);
+                }
+                _cqes.push(std::move(e));
+            }
             // An eval must not throw (EventEval::process() is noexcept):
-            // cancel only the fds whose events fit in _cqes, and report
+            // cancel only as many events as _cqes has room for, and report
             // the rest instead of overflowing it.
             int res = 0;
             for (auto it = _sessions.begin(); it != _sessions.end();) {
-                if (it->second->pending() > _cqes.capacity() - _cqes.size()) {
+                if (!it->second->cancel_some(_cqes)) {
                     res = -ENOBUFS;
                     ++it;
                     continue;
                 }
-                it->second->cancel(_cqes);
                 it = _sessions.erase(it);
             }
             return res;
