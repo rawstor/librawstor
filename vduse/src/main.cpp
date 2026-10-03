@@ -129,24 +129,10 @@ void server(
     unsigned int queue_size, unsigned int num_queues, const std::string& target,
     bool write_cache_enabled, bool readonly, int wake_fd
 ) {
-    int res = rawstor_initialize(NULL);
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-
-    rawstd_info("Rawstor VDUSE %s\n", PACKAGE_VERSION);
-
-    try {
-        rawstor::vduse::Device d(
-            queue_size, num_queues, target, write_cache_enabled, readonly,
-            wake_fd
-        );
-        d.loop();
-    } catch (...) {
-        rawstor_terminate();
-        throw;
-    }
-    rawstor_terminate();
+    rawstor::vduse::Device d(
+        queue_size, num_queues, target, write_cache_enabled, readonly, wake_fd
+    );
+    d.loop();
 }
 
 } // namespace
@@ -262,6 +248,19 @@ int main(int argc, char** argv) {
             return EX_USAGE;
         }
     }
+
+    int res = rawstor_initialize(NULL);
+    if (res) {
+        std::cerr << "Failed to initialize rawstor: " << strerror(-res)
+                  << std::endl;
+        // rawstor_initialize() fails with EINVAL only on invalid
+        // configuration.
+        return res == -EINVAL ? EX_CONFIG : rawstd_exitcode_for_errno(-res);
+    }
+    struct Terminate {
+        ~Terminate() { rawstor_terminate(); }
+    } terminate;
+    rawstd_info("Rawstor VDUSE %s\n", PACKAGE_VERSION);
 
     // wake_pipe is constructed unconditionally right here, so it needs no
     // std::optional to hold an "empty" state -- unlike VirtQueue's own

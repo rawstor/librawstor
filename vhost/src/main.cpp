@@ -6,6 +6,8 @@
 #include <rawstd/logging.hpp>
 #include <rawstd/pipe.hpp>
 
+#include <rawstor.h>
+
 #include <getopt.h>
 #include <signal.h>
 #include <unistd.h>
@@ -113,10 +115,6 @@ void server(
         queue_size, num_queues, target, socket_path, write_cache_enabled,
         readonly, wake_fd
     );
-    // Not any earlier: rawstd_info() needs the logging mutex
-    // rawstor_initialize() sets up, and that only happens inside Server's
-    // own constructor above (see server.cpp), not here in main.cpp.
-    rawstd_info("Rawstor VHOST %s\n", PACKAGE_VERSION);
     s.loop();
 }
 
@@ -237,6 +235,19 @@ int main(int argc, char** argv) {
             return EX_USAGE;
         }
     }
+
+    int res = rawstor_initialize(NULL);
+    if (res) {
+        std::cerr << "Failed to initialize rawstor: " << strerror(-res)
+                  << std::endl;
+        // rawstor_initialize() fails with EINVAL only on invalid
+        // configuration.
+        return res == -EINVAL ? EX_CONFIG : rawstd_exitcode_for_errno(-res);
+    }
+    struct Terminate {
+        ~Terminate() { rawstor_terminate(); }
+    } terminate;
+    rawstd_info("Rawstor VHOST %s\n", PACKAGE_VERSION);
 
     // wake_pipe is constructed unconditionally right here, so it needs no
     // std::optional to hold an "empty" state -- unlike VirtQueue's own

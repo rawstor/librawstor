@@ -1189,7 +1189,9 @@ static int run_command(
     int res = rawstor_initialize(opts);
     if (res) {
         fprintf(stderr, "rawstor_initialize() failed: %s\n", strerror(-res));
-        return rawstd_exitcode_for_errno(-res);
+        // rawstor_initialize() fails with EINVAL only on invalid
+        // configuration.
+        return res == -EINVAL ? EX_CONFIG : rawstd_exitcode_for_errno(-res);
     }
 
     int ret;
