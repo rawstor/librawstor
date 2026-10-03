@@ -820,9 +820,9 @@ TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
 }
 
 // The first write of an open object can arrive while the resync is
-// recording the rejoining member's final state. Its dirty barrier must not
-// give the in-sync members a new identity that the rejoining member then
-// misses.
+// recording the rejoining member's final state. Its dirty barrier gives
+// the in-sync members a new identity, which the rejoining member must end
+// up with too.
 TEST(MirrorResyncTest, first_write_during_rejoin_keeps_identities_equal) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a9");
@@ -867,6 +867,11 @@ TEST(MirrorResyncTest, first_write_during_rejoin_keeps_identities_equal) {
 
     std::string block(4096, 'W');
     object_write(queue, object, block.data(), block.size(), 0, 0);
+    // The rejoin ends with the member on the identity that write gave the
+    // set, not the one it was being given when the write arrived.
+    ASSERT_TRUE(
+        wait_member_synced(queue, members.target(0), members.target(1))
+    );
 
     RawstorObjectSyncState a = disk_sync_state(members.meta(0));
     RawstorObjectSyncState b = disk_sync_state(members.meta(1));
