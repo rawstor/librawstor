@@ -129,6 +129,8 @@ public:
 
     rawio::Awaitable<void> cancel(int fd) override;
 
+    rawio::Awaitable<void> cancel_all() override;
+
     void wait() override;
 
     void wait_timeout(unsigned int msec) override;

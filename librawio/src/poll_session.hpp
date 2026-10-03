@@ -67,6 +67,10 @@ public:
 
     void cancel(rawstd::RingBuf<Event>& cqes);
 
+    // Cancels as many events as `cqes` has room for; true once none are
+    // left.
+    bool cancel_some(rawstd::RingBuf<Event>& cqes);
+
     void process(rawstd::RingBuf<Event>& cqes, short revents);
 };
 
