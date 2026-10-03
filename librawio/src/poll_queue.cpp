@@ -170,7 +170,10 @@ bool Queue::_reap_timers() {
         // rawstd::DetachedTask in the process, unrelated to this timer
         // entirely, and checking it first would skip this re-arm on every
         // such coincidence, silently dropping the registration.
-        if (event->is_multishot() && !event->error()) {
+        if (event->is_multishot() && !event->error() &&
+            event->cancel_requested()) {
+            _end_cancelled(*event);
+        } else if (event->is_multishot() && !event->error()) {
             EventTimerMultishot* multishot =
                 static_cast<EventTimerMultishot*>(event.get());
             multishot->set_deadline(
@@ -344,7 +347,9 @@ void Queue::_wait_timeout(int msec) {
         // nothing can reach anymore, leaking it and the `_recv_pump`
         // coroutine still suspended on it.
         if (event->is_multishot() && !event->error()) {
-            if (event->is_poll()) {
+            if (event->cancel_requested()) {
+                _end_cancelled(*event);
+            } else if (event->is_poll()) {
                 std::unique_ptr<EventSimplexPoll> poll_event(
                     static_cast<EventSimplexPoll*>(event.release())
                 );
@@ -377,6 +382,18 @@ void Queue::_wait_timeout(int msec) {
         // two places that need to check.
         rawstd::DetachedTask::rethrow_if_pending();
     }
+}
+
+void Queue::_end_cancelled(Event& event) {
+    event.set_error(ECANCELED);
+    _current_events.push_back(&event);
+    try {
+        event.dispatch();
+    } catch (...) {
+        _current_events.pop_back();
+        throw;
+    }
+    _current_events.pop_back();
 }
 
 void Queue::_eval(std::unique_ptr<EventEval> event) {
@@ -1059,18 +1076,21 @@ rawio::Awaitable<void> Queue::cancel_all() {
             }
             // A multishot registration that already completed but is not
             // dispatched yet (left in _cqes when an earlier dispatch
-            // threw) or is being dispatched right now is re-armed by its
-            // dispatch unless it carries an error. One-shot completions
-            // there keep their result: the cancellation lost the race.
+            // threw) or is being dispatched right now would be re-armed
+            // after its dispatch. Its completion stands -- it may carry an
+            // accepted fd or received data -- so let it deliver that and
+            // end it afterwards (see _end_cancelled()). One-shot
+            // completions there keep their result too: the cancellation
+            // lost the race.
             for (Event* current : _current_events) {
                 if (current->is_multishot()) {
-                    current->set_error(ECANCELED);
+                    current->request_cancel();
                 }
             }
             for (size_t i = _cqes.size(); i > 0; --i) {
                 std::unique_ptr<Event> e = _cqes.pop();
                 if (e->is_multishot()) {
-                    e->set_error(ECANCELED);
+                    e->request_cancel();
                 }
                 _cqes.push(std::move(e));
             }

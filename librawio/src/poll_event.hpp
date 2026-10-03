@@ -36,6 +36,9 @@ protected:
     int _fd;
     ssize_t _result;
     int _error;
+    // Queue::cancel_all() reached a multishot event whose completion was
+    // already taken: it delivers that, then ends instead of re-arming.
+    bool _cancel_requested;
 
     // Set via attach() (called from Queue::_attach(), i.e. from some
     // Awaitable<T>::await_suspend()) once whoever co_await-ed this
@@ -63,6 +66,7 @@ public:
         _fd(fd),
         _result(0),
         _error(0),
+        _cancel_requested(false),
         _handle(),
         _value_ptr(nullptr),
         _error_ptr(nullptr),
@@ -86,6 +90,10 @@ public:
     }
 
     inline int error() const noexcept { return _error; }
+
+    inline void request_cancel() noexcept { _cancel_requested = true; }
+
+    inline bool cancel_requested() const noexcept { return _cancel_requested; }
     inline ssize_t result() const noexcept { return _result; }
 
     inline void attach(
