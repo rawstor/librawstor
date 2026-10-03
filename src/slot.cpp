@@ -208,8 +208,9 @@ void Slot::set_transparent_retry(bool enabled) noexcept {
 rawstd::Task<std::unique_ptr<Slot>> Slot::create(
     rawio::Queue& queue, const rawstd::URI& location, size_t nbackends
 ) {
-    // Initial connects share the bounded connect retry helper used for
-    // backend replacements.
+    // A single attempt, same as Backend::create() -- retrying a broken
+    // connect (or a set_object() done afterwards by a caller, e.g.
+    // Chunk's constructor) is each caller's own job, not this one's.
     //
     // Task<T> starts eagerly, right up to its first real suspension
     // point -- building the whole vector before handing it to gather()
@@ -217,11 +218,8 @@ rawstd::Task<std::unique_ptr<Slot>> Slot::create(
     // instead of one full round-trip at a time.
     std::vector<rawstd::Task<std::shared_ptr<Backend>>> creates;
     creates.reserve(nbackends);
-    auto connect_backend = [&queue, &location]() {
-        return Backend::create(queue, location);
-    };
     for (size_t i = 0; i < nbackends; ++i) {
-        creates.push_back(retry_n_async(queue, "connect", connect_backend));
+        creates.push_back(Backend::create(queue, location));
     }
 
     std::vector<std::shared_ptr<Backend>> backends =
