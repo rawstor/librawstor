@@ -8,6 +8,11 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    # Reads contributor-controlled commit metadata: the token needs no
+    # more than checkout access, whatever the repository default is.
+    permissions:
+      contents: read
+
     steps:
     - uses: actions/checkout@v7
       with:

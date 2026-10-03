@@ -6,10 +6,17 @@
 # revision range given as $1 (e.g. "origin/main..HEAD"). Needs the full
 # history (actions/checkout with fetch-depth: 0).
 
-set -o pipefail
-
-
 PATTERN="claude"
+
+
+# Prints the first line of $1 that contains PATTERN (case-insensitive);
+# fails if there is none. The text reaches grep as a here-string rather
+# than through a pipe: with `echo | grep -q`, grep exits on the first
+# match while echo is still writing a long message, echo dies of SIGPIPE,
+# and under pipefail the match would read as a miss.
+function first_match() {
+    grep -i -F -m 1 -- "${PATTERN}" <<<"$1"
+}
 
 
 function main() {
@@ -25,15 +32,15 @@ function main() {
 
     for commit in ${commits}; do
         checked=$((checked + 1))
-        local people
+        local people match
         people="$(git log -1 --format='%an <%ae>%n%cn <%ce>' "${commit}")"
-        if echo "${people}" | grep -qi "${PATTERN}"; then
-            issues+=("${commit}: author/committer: $(echo "${people}" | grep -i "${PATTERN}" | head -1)")
+        if match="$(first_match "${people}")"; then
+            issues+=("${commit}: author/committer: ${match}")
         fi
         local message
         message="$(git log -1 --format='%B' "${commit}")"
-        if echo "${message}" | grep -qi "${PATTERN}"; then
-            issues+=("${commit}: message: $(echo "${message}" | grep -i "${PATTERN}" | head -1)")
+        if match="$(first_match "${message}")"; then
+            issues+=("${commit}: message: ${match}")
         fi
     done
 
