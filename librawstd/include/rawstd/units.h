@@ -9,8 +9,9 @@ extern "C" {
 #endif
 
 /**
- * Parses a size like "256M" (a decimal number followed by one of
- * "bBkKmMgGtTpPeE", binary/1024-based) into bytes.
+ * Parses a size like "256M" (a decimal number followed by exactly one of
+ * "bBkKmMgGtTpPeE", binary/1024-based) into bytes. The unit is mandatory
+ * -- plain bytes are "4096B" -- so a bare number is -EINVAL.
  */
 int rawstd_size_to_bytes(const char* s, uint64_t* out);
 
