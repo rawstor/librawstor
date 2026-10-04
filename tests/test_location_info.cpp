@@ -1,8 +1,10 @@
+#include "opts.h"
 #include "server.hpp"
 #include "session.hpp"
 
 #include "rawio_sync.hpp"
 
+#include <rawio/awaitable.hpp>
 #include <rawio/queue.hpp>
 
 #include <rawstd/gpp.hpp>
@@ -15,10 +17,30 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <memory>
+#include <string>
+#include <thread>
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 namespace {
+
+struct ScopedOpts {
+    explicit ScopedOpts(
+        unsigned int io_attempts, unsigned int io_retry_backoff_base = 0
+    ) {
+        RawstorOpts opts{};
+        opts.io_attempts = io_attempts;
+        opts.io_retry_backoff_base = io_retry_backoff_base;
+        rawstor_opts_initialize(&opts);
+    }
+    ~ScopedOpts() { rawstor_opts_initialize(nullptr); }
+};
 
 ssize_t location_info(
     rawio::Queue& queue, const std::string& location, RawstorLocationInfo* info
@@ -154,6 +176,83 @@ TEST(OstLocationInfoTest, location_info) {
     EXPECT_EQ(res, 0);
     EXPECT_EQ(info.used, sent_info.used);
     EXPECT_EQ(info.total, sent_info.total);
+}
+
+// Cancelling the queue ends an operation's retries at once: a cancelled
+// backoff wait is not followed by another attempt.
+TEST(OstLocationInfoTest, cancel_all_stops_retries) {
+    ScopedOpts opts(10, 10000);
+
+    // Drops the first connection after its INFO request and keeps
+    // listening: the reconnect succeeds and the retry waits out its
+    // backoff, then would wait forever for an answer.
+    int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_GE(listen_fd, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    socklen_t addr_len = sizeof(addr);
+    ASSERT_EQ(bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), addr_len), 0);
+    ASSERT_EQ(
+        getsockname(listen_fd, reinterpret_cast<sockaddr*>(&addr), &addr_len), 0
+    );
+    ASSERT_EQ(listen(listen_fd, 4), 0);
+    std::thread peer([listen_fd]() {
+        int fd = accept(listen_fd, nullptr, nullptr);
+        if (fd >= 0) {
+            RawstorOSTFrameBasic request;
+            ssize_t ignored = recv(fd, &request, sizeof(request), MSG_WAITALL);
+            (void)ignored;
+            ::close(fd);
+        }
+    });
+    std::string location =
+        "ost://127.0.0.1:" + std::to_string(ntohs(addr.sin_port));
+
+    auto queue = rawio::Queue::create(8);
+    struct Result {
+        bool done = false;
+        ssize_t value = 0;
+    } result;
+    RawstorLocationInfo info{};
+    ASSERT_EQ(
+        rawstor_location_info(
+            queue.get(), location.c_str(), &info,
+            [](ssize_t value, void* data) {
+                auto* r = static_cast<Result*>(data);
+                r->done = true;
+                r->value = value;
+                return 0;
+            },
+            &result
+        ),
+        0
+    );
+    // Run until the queue goes quiet: the retry is then parked on its
+    // backoff wait, past the reconnect.
+    bool parked = false;
+    for (int i = 0; i < 100 && !parked && !result.done; ++i) {
+        try {
+            queue->wait_timeout(100);
+        } catch (const std::system_error& e) {
+            parked = e.code().value() == ETIME;
+        }
+    }
+    peer.join();
+    ASSERT_TRUE(parked);
+    ASSERT_FALSE(result.done);
+
+    queue->cancel_all();
+    auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!result.done && std::chrono::steady_clock::now() < until) {
+        try {
+            queue->wait_timeout(100);
+        } catch (const std::system_error&) {
+        }
+    }
+    EXPECT_TRUE(result.done);
+    EXPECT_EQ(result.value, -ECANCELED);
+    ::close(listen_fd);
 }
 
 } // unnamed namespace
