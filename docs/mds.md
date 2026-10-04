@@ -3,7 +3,8 @@
 ## Status
 
 Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. Checked against
-the code on 2026-10-04.
+the code on 2026-10-04. *Stage* is this document's own numbering (see
+*Implementation stages*); [Mirroring](mirroring.md) numbers its stages separately.
 
 | Feature | Stage | Status | Where |
 |---|---|---|---|

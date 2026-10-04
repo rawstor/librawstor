@@ -3,7 +3,8 @@
 ## Status
 
 Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. Checked against
-the code on 2026-10-04.
+the code on 2026-10-04. *Stage* is this document's own numbering (see
+*Implementation stages*); [MDS design](mds.md) numbers its stages separately.
 
 | Feature | Stage | Status | Where |
 |---|---|---|---|
@@ -23,7 +24,7 @@ the code on 2026-10-04.
 | `rawstor resolve TARGET --winner=N [--offset]` | — | ✅ | `cli/resolve.c` |
 | Force-open below quorum (CLI / opts) | — | ❌ | — |
 | Persistent write-intent bitmap (resumable resync, cheaper F5) | 4 | ❌ | — |
-| MDS witness in quorum | 4 | ❌ | see [MDS design](mds.md), stage 3 |
+| MDS witness in quorum | 4 | ❌ | designed in [MDS design](mds.md#witness-stage-3) |
 | Stored checksums / scrub | 4 | ❌ | — |
 | Fastest-mirror read selection | 4 | ❌ | — |
 
