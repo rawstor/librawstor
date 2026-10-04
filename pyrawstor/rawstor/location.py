@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from . import librawstor
+from .constants import OBJ_DOMAIN_DEFAULT
 from .target import Target, object_spec
 
 
@@ -48,7 +49,7 @@ class Location:
     def create(
         self, *, size: int, width: int, chunk_size: int = 0,
         stripe_width: int = 0,
-        failure_domain: int | str = librawstor.OBJ_DOMAIN_DEFAULT,
+        failure_domain: int | str = OBJ_DOMAIN_DEFAULT,
         uuid: str | None = None
     ) -> Target:
         return Target(

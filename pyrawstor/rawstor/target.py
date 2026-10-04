@@ -3,25 +3,17 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from . import librawstor
-
-
-FAILURE_DOMAINS = {
-    "ost": librawstor.OBJ_DOMAIN_OST,
-    "server": librawstor.OBJ_DOMAIN_SERVER,
-    "rack": librawstor.OBJ_DOMAIN_RACK,
-    "row": librawstor.OBJ_DOMAIN_ROW,
-    "dc": librawstor.OBJ_DOMAIN_DC,
-}
+from .constants import FAILURE_DOMAINS, OBJ_DOMAIN_DEFAULT
 
 
 def object_spec(
     *, size: int, width: int, chunk_size: int = 0, stripe_width: int = 0,
-    failure_domain: int | str = librawstor.OBJ_DOMAIN_DEFAULT
+    failure_domain: int | str = OBJ_DOMAIN_DEFAULT
 ) -> librawstor.ObjectSpec:
     """Build an ObjectSpec for create(). stripe_width and failure_domain
-    are mds:// placement policy (docs/mds.md); failure_domain is either a
-    librawstor.OBJ_DOMAIN_* value or its name, as the CLI's own
-    --failure-domain takes it ("dc", "row", "rack", "server", "ost")."""
+    are mds:// placement policy (docs/mds.md); failure_domain is either an
+    OBJ_DOMAIN_* value or its FAILURE_DOMAINS name ("dc", "row", "rack",
+    "server", "ost")."""
     if isinstance(failure_domain, str):
         try:
             failure_domain = FAILURE_DOMAINS[failure_domain]
@@ -75,7 +67,7 @@ class Target:
     def create(
         self, *, size: int, width: int, chunk_size: int = 0,
         stripe_width: int = 0,
-        failure_domain: int | str = librawstor.OBJ_DOMAIN_DEFAULT
+        failure_domain: int | str = OBJ_DOMAIN_DEFAULT
     ) -> None:
         librawstor.object_create(
             self._uri,
