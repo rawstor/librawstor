@@ -293,12 +293,13 @@ A **snapshot** is a bound, read-only version of a target/chunk/slot,
 identified by a version id (`snapshot_id`, a UUID -- never nil, nil always
 means "live"). Like every other id in this design, `snapshot_id` is
 client-generated -- the caller picks it (or generates a fresh one, the
-same single point of generation a fresh object id comes from) and embeds
-it in the target string itself before calling `rawstor_target_create()`,
-which takes a native CoW snapshot instead of creating a fresh object
-whenever its target carries one -- there is no separate "assign" mode,
-mds:// included: two independent mechanisms use the same id, at different
-layers:
+same single point of generation a fresh object id comes from) and passes
+it to `rawstor_target_create_snapshot()`, either as its `snapshot_id`
+argument or already embedded in the target string (with `snapshot_id`
+NULL); with neither, a fresh id is generated. `rawstor_target_create()`
+never takes a snapshot -- it rejects a target that carries one with
+`-EINVAL`. There is no separate "assign" mode, mds:// included: two
+independent mechanisms use the same id, at different layers:
 
 - **mds:// object-level**: CoW-every-chunk/`OBJ_COMMIT_SNAPSHOT`
   (docs/mds.md, "Snapshots (stage 2)") registers the caller's id against

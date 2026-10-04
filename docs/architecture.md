@@ -23,7 +23,7 @@ today.
 | Parallel reads from multiple OSTs | ❌ | reads go to one IN-SYNC mirror |
 | Hashsum | 🟡 | transport hash only (xxh3); no stored checksums |
 | Compression / encryption | ❌ | — |
-| `flush` / `snapshot` in the client API | ✅ | `rawstor_object_flush()`; `rawstor_target_create()` on a target with a snapshot segment |
+| `flush` / `snapshot` in the client API | ✅ | `rawstor_object_flush()`, `rawstor_target_create_snapshot()` |
 | Block storage client (VM) | ✅ | `vhost/`, `vhost-qemu/`, `vduse/` |
 | S3 gateway | ❌ | — |
 | User-chosen chunk size / distribution strategy | ✅ | `chunk_size`, `stripe_width`, `failure_domain` |
