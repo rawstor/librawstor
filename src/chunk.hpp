@@ -122,7 +122,10 @@ private:
     rawstd::Barrier _background_barrier;
     class BackgroundGuard;
 
-    // Stops background work and waits for _background to reach zero.
+    // Sets _closing and aborts a running resync: no new background work
+    // starts, and the running work stops at its next resume.
+    void _abort_background() noexcept;
+    // _abort_background(), then waits for _background to reach zero.
     rawstd::Task<void> _stop_background();
 
     // Mirrored writes currently in flight -- resync drain bookkeeping

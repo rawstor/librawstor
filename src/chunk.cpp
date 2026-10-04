@@ -178,12 +178,16 @@ public:
 
     ~BackgroundGuard() {
         if (--_chunk._background == 0) {
-            _chunk._background_barrier.advance();
+            // Advanced on a local: the waiter it resumes (close()) may run
+            // to completion inline and free the Chunk, member barrier
+            // included, before advance() is done with its waiter list.
+            rawstd::Barrier barrier = std::move(_chunk._background_barrier);
+            barrier.advance();
         }
     }
 };
 
-rawstd::Task<void> Chunk::_stop_background() {
+void Chunk::_abort_background() noexcept {
     _closing = true;
 
     // The interrupted copy stays SYNCING on the member, untrusted until a
@@ -191,6 +195,10 @@ rawstd::Task<void> Chunk::_stop_background() {
     if (_resync != nullptr) {
         _resync_abort("object closing");
     }
+}
+
+rawstd::Task<void> Chunk::_stop_background() {
+    _abort_background();
 
     while (_background > 0) {
         co_await _background_barrier.at_least(_background_barrier.value() + 1);
@@ -199,11 +207,21 @@ rawstd::Task<void> Chunk::_stop_background() {
 
 Chunk::~Chunk() {
     // A Chunk destroyed without close() still must not free the Slots
-    // under background I/O in flight on them.
-    try {
-        run(_queue, _stop_background());
-    } catch (const std::exception& e) {
-        rawstd_error("Chunk::~Chunk(): %s\n", e.what());
+    // under background I/O in flight on them. Drained by pumping the queue
+    // directly rather than through a suspended Task: wait_timeout() throws
+    // ETIME after a quiet interval, and a Task destroyed by that throw
+    // would stay registered as a waiter on _background_barrier.
+    _abort_background();
+    while (_background > 0) {
+        try {
+            _queue.wait_timeout(rawstor_opts_tcp_user_timeout());
+        } catch (const std::system_error& e) {
+            if (e.code().value() != ETIME) {
+                rawstd_error("Chunk::~Chunk(): %s\n", e.what());
+            }
+        } catch (const std::exception& e) {
+            rawstd_error("Chunk::~Chunk(): %s\n", e.what());
+        }
     }
 
     for (auto& m : _members) {
