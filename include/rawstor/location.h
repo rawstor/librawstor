@@ -36,6 +36,10 @@ struct RawstorLocationInfo {
  * syntax), this function fills a RawstorLocationInfo structure with
  * space-accounting information about the backend(s) the location refers to.
  *
+ * An mds:// location returns the sum of its topology's last successful
+ * backend space samples, cached in the MDS database; unavailable backends
+ * retain their last sample and unsampled backends contribute zero.
+ *
  * The location may be a single backend URI or a comma-separated list of
  * backend URIs (mirroring / data locality). When multiple backends are
  * given, each is queried independently and the results are combined as

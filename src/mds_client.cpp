@@ -195,11 +195,12 @@ rawstd::Task<void> Client::connect() {
             },
         .payload = {.object_id = {}, .offset = 0, .snapshot_id = {}, .val = 0},
     };
-    co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_SET_OBJECT);
+    co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_SET_OBJECT, 0);
 }
 
-rawstd::Task<std::vector<unsigned char>>
-Client::_exchange(const void* request, size_t size, RawstorCommandType cmd) {
+rawstd::Task<std::vector<unsigned char>> Client::_exchange(
+    const void* request, size_t size, RawstorCommandType cmd, size_t max_size
+) {
     co_await send_all(_queue, _fd, request, size);
 
     RawstorFrameResponse response;
@@ -210,12 +211,35 @@ Client::_exchange(const void* request, size_t size, RawstorCommandType cmd) {
     if (response.body.res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-response.body.res);
     }
+    if (static_cast<size_t>(response.body.res) > max_size) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
 
     std::vector<unsigned char> data(response.body.res);
     if (!data.empty()) {
         co_await recv_all(_queue, _fd, data.data(), data.size());
     }
     co_return data;
+}
+
+rawstd::Task<RawstorLocationInfo> Client::info() {
+    RawstorFrameBasic request{
+        .head =
+            {.magic = RAWSTOR_MAGIC,
+             .cmd = RAWSTOR_CMD_LOCATION_INFO,
+             .cid = _cid_counter++},
+        .payload = {},
+    };
+    auto data = co_await _exchange(
+        &request, sizeof(request), RAWSTOR_CMD_LOCATION_INFO,
+        sizeof(RawstorLocationInfo)
+    );
+    if (data.size() != sizeof(RawstorLocationInfo)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+    RawstorLocationInfo info;
+    memcpy(&info, data.data(), sizeof(info));
+    co_return info;
 }
 
 rawstd::Task<uint64_t> Client::create(
@@ -241,8 +265,10 @@ rawstd::Task<uint64_t> Client::create(
         static_cast<uint8_t>(__builtin_ctzll(chunk_size));
     request.payload.policy = policy;
 
-    std::vector<unsigned char> data =
-        co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_OBJ_CREATE);
+    std::vector<unsigned char> data = co_await _exchange(
+        &request, sizeof(request), RAWSTOR_CMD_OBJ_CREATE,
+        sizeof(RawstorFrameObjCreatedPayload)
+    );
     if (data.size() != sizeof(RawstorFrameObjCreatedPayload)) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
@@ -287,8 +313,10 @@ rawstd::Task<WireResized> Client::resize(
     uuid_to_bytes(id, request.payload.id);
     uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
 
-    std::vector<unsigned char> data =
-        co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_OBJ_RESIZE);
+    std::vector<unsigned char> data = co_await _exchange(
+        &request, sizeof(request), RAWSTOR_CMD_OBJ_RESIZE,
+        sizeof(RawstorFrameObjResizedPayload)
+    );
     if (data.size() != sizeof(RawstorFrameObjResizedPayload)) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
@@ -350,7 +378,8 @@ rawstd::Task<uint64_t> Client::commit_snapshot(
     }
 
     std::vector<unsigned char> data = co_await _exchange(
-        request.data(), request.size(), RAWSTOR_CMD_OBJ_COMMIT_SNAPSHOT
+        request.data(), request.size(), RAWSTOR_CMD_OBJ_COMMIT_SNAPSHOT,
+        sizeof(RawstorFrameObjSnapshotCommittedPayload)
     );
     if (data.size() != sizeof(RawstorFrameObjSnapshotCommittedPayload)) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);

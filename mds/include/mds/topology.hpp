@@ -69,6 +69,9 @@ public:
     /* Throws EEXIST on a duplicate ost id. */
     void add(const TopologyOST& ost);
 
+    /* Retains only the given OST ids, preserving topology order. */
+    Topology select(const std::vector<RawstdUUID>& ids) const;
+
     const std::vector<TopologyOST>& osts() const noexcept { return _osts; }
 };
 

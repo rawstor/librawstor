@@ -44,6 +44,11 @@ private:
     // final ECANCELED completion and returned, and a pump still suspended
     // on that when the queue goes away is never freed.
     rawstd::Gate _pump;
+    rawstd::Gate _receive_resize;
+    bool _large_receive_ring = false;
+
+    void _start_receive_ring();
+    rawstd::Task<void> _ensure_large_receive_ring();
 
     rawstd::Task<void> _connect() override;
     // The cid-dispatched counterpart of the old basic_request_async():

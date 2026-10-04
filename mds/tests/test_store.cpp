@@ -71,6 +71,13 @@ protected:
     rawstor::mdsserver::tests::TmpDir dir;
 
     ObjectStore make_store() {
+        {
+            ObjectStore store(dir.db_path(), make_topology());
+            RawstorLocationInfo info{};
+            for (const auto& ost : store.topology()->osts()) {
+                store.update_backend(ost, &info);
+            }
+        }
         return ObjectStore(dir.db_path(), make_topology());
     }
 };
@@ -670,6 +677,99 @@ TEST_F(ObjectStoreTest, reconstruct_replaces_every_existing_object) {
     // among the scanned records is gone.
     EXPECT_THROW(store.open(stale_id, RawstdUUID{}), std::system_error);
     EXPECT_NO_THROW(store.open(rebuilt_id, RawstdUUID{}));
+}
+
+TEST_F(ObjectStoreTest, backend_samples_survive_failure_and_reopen) {
+    auto topology = make_topology();
+    auto first = topology.osts()[0];
+    auto second = topology.osts()[1];
+    {
+        ObjectStore store(dir.db_path(), topology);
+        EXPECT_FALSE(store.backend_available(first.id));
+        RawstorLocationInfo a{10, 100}, b{20, 200};
+        store.update_backend(first, &a);
+        store.update_backend(second, &b);
+        store.update_backend(first, nullptr);
+        EXPECT_FALSE(store.backend_available(first.id));
+        EXPECT_EQ(store.info().used, 30u);
+        EXPECT_EQ(store.info().total, 300u);
+    }
+    ObjectStore reopened(dir.db_path(), topology);
+    EXPECT_FALSE(reopened.backend_available(first.id));
+    EXPECT_TRUE(reopened.backend_available(second.id));
+    EXPECT_EQ(reopened.info().total, 300u);
+    reopened.reset_backend_availability();
+    EXPECT_FALSE(reopened.backend_available(second.id));
+    EXPECT_EQ(reopened.info().used, 30u);
+}
+
+TEST_F(ObjectStoreTest, unavailable_osts_are_excluded_from_create_and_resize) {
+    ObjectStore store = make_store();
+    auto topology = store.topology();
+    for (const auto& ost : topology->osts()) {
+        store.update_backend(ost, nullptr);
+    }
+    EXPECT_THROW(
+        store.create({}, make_id(), chunk_size, chunk_size, make_policy(1)),
+        std::system_error
+    );
+    RawstorLocationInfo info{};
+    const auto& first = topology->osts()[0];
+    const auto& second = topology->osts()[1];
+    store.update_backend(first, &info);
+    RawstdUUID id = make_id();
+    store.create({}, id, chunk_size, chunk_size, make_policy(1));
+    auto before = store.open(id, {});
+    EXPECT_EQ(rawstd_uuid_cmp(&before.chunks[0][0].ost_id, &first.id), 0);
+    store.update_backend(first, nullptr);
+    EXPECT_THROW(store.resize({}, id, 2 * chunk_size), std::system_error);
+    EXPECT_EQ(store.open(id, {}).descriptor.logical_size, chunk_size);
+    store.update_backend(second, &info);
+    store.resize({}, id, 2 * chunk_size);
+    auto after = store.open(id, {});
+    EXPECT_EQ(rawstd_uuid_cmp(&after.chunks[0][0].ost_id, &first.id), 0);
+    EXPECT_EQ(rawstd_uuid_cmp(&after.chunks[1][0].ost_id, &second.id), 0);
+    EXPECT_THROW(
+        store.create({}, make_id(), chunk_size, chunk_size, make_policy(2)),
+        std::system_error
+    );
+}
+
+TEST_F(ObjectStoreTest, reload_discards_removed_and_readdressed_samples) {
+    ObjectStore store = make_store();
+    auto old = store.topology();
+    RawstorLocationInfo sample{10, 100};
+    for (const auto& ost : old->osts()) {
+        store.update_backend(ost, &sample);
+    }
+    Topology replacement;
+    auto moved = old->osts()[0];
+    moved.location = "ost://127.0.0.1:7778";
+    replacement.add(moved);
+    replacement.add(old->osts()[1]);
+    store.set_topology(replacement);
+    EXPECT_FALSE(store.backend_available(moved.id));
+    EXPECT_EQ(store.info().total, 100u);
+    store.update_backend(old->osts()[0], &sample);
+    store.update_backend(old->osts()[2], &sample);
+    EXPECT_FALSE(store.backend_available(moved.id));
+    EXPECT_EQ(store.info().total, 100u);
+    store.update_backend(moved, &sample);
+    EXPECT_TRUE(store.backend_available(moved.id));
+    EXPECT_EQ(store.info().total, 200u);
+}
+
+TEST_F(
+    ObjectStoreTest, info_preserves_unsigned_counts_and_rejects_sum_overflow
+) {
+    ObjectStore store = make_store();
+    auto topology = store.topology();
+    RawstorLocationInfo sample{UINT64_MAX - 1, UINT64_MAX};
+    store.update_backend(topology->osts()[0], &sample);
+    EXPECT_EQ(store.info().total, UINT64_MAX);
+    RawstorLocationInfo more{2, 2};
+    store.update_backend(topology->osts()[1], &more);
+    EXPECT_THROW(store.info(), std::system_error);
 }
 
 } // namespace

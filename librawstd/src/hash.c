@@ -22,6 +22,21 @@ uint64_t rawstd_hash_scalar(const void* buf, size_t length) {
 #endif
 }
 
+uint64_t rawstd_hash_stable(const void* buf, size_t length) {
+    const unsigned char* p = (const unsigned char*)buf;
+    uint64_t hash = 14695981039346656037ull;
+    for (size_t i = 0; i < length; ++i) {
+        hash ^= p[i];
+        hash *= 1099511628211ull;
+    }
+    hash ^= hash >> 33;
+    hash *= 0xff51afd7ed558ccdull;
+    hash ^= hash >> 33;
+    hash *= 0xc4ceb9fe1a85ec53ull;
+    hash ^= hash >> 33;
+    return hash;
+}
+
 int rawstd_hash_vector(
     const struct iovec* iov, unsigned int niov, uint64_t* hash
 ) {

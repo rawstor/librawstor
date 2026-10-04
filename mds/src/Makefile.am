@@ -9,7 +9,8 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               -I$(top_srcdir)/mds/include \
               -I$(top_srcdir)/librawstd/include \
               -I$(top_srcdir)/librawio/include \
-              -I$(top_srcdir)/include
+              -I$(top_srcdir)/include \
+              -I$(top_srcdir)/src
 
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
@@ -26,7 +27,11 @@ libmdsstore_la_SOURCES = placement.cpp \
 # the same way ost/tests/ already reuses ost::Server -- without this,
 # Object::create_snapshot()/snapshot_remove()'s actual MDS wire path would be
 # untestable outside of spawning the rawstor-mds binary itself.
-libmds_la_SOURCES = server.cpp \
+libmds_la_SOURCES = opts.cpp \
+                    $(top_srcdir)/mds/include/mds/opts.hpp \
+                    monitor.cpp \
+                    $(top_srcdir)/mds/include/mds/monitor.hpp \
+                    server.cpp \
                     $(top_srcdir)/mds/include/mds/server.hpp \
                     client.cpp \
                     $(top_srcdir)/mds/include/mds/client.hpp

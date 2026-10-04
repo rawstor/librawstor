@@ -1222,36 +1222,59 @@ rawstd::Task<void> Backend::_connect() {
 
     set_fd(fd);
 
+    _start_receive_ring();
+}
+
+void Backend::_start_receive_ring() {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");
-    // 64 * 16 buffers of 1u<<17 (128KiB) each = 128MiB: comfortably covers
-    // rawstor-vhost's usual worst case (its default write-throttle-limit
-    // of 128 concurrent requests, each up to a virtio-blk transfer's
-    // realistic ~512KiB) with headroom, so a healthy client pipelining
-    // that many in-flight requests doesn't overflow this ring and force a
-    // reconnect (see ost/src/client.cpp's matching registration for the
-    // request-reading side of the same problem).
+    // Short metadata responses need 32KiB. Data I/O and variable-sized
+    // listings use 1024 buffers of 128KiB for burst headroom.
     rawio::RecvStream stream = _queue.recv_multishot(
-        fd, 1u << 17, 64 * 16, sizeof(RawstorFrameResponse), 0
+        fd(), _large_receive_ring ? 1u << 17 : 4096,
+        _large_receive_ring ? 64 * 16 : 8, sizeof(RawstorFrameResponse), 0
     );
     _read_event = stream.event();
-    // An exception out of either call below means the pump never got as
-    // far as its own end() (its body catches everything it can reach), so
-    // it's ended here instead -- or close() would settle on it forever.
     _pump.begin();
     try {
         _recv_pump(
             std::static_pointer_cast<Backend>(shared_from_this()),
             std::move(stream), trace_event
         );
-        // _recv_pump() may have stored a pending exception instead of
-        // throwing it directly -- see rawstd::DetachedTask's own doc
-        // comment for why, and why this is the one call site that needs
-        // to check.
         rawstd::DetachedTask::rethrow_if_pending();
     } catch (...) {
         _pump.end();
         throw;
+    }
+}
+
+rawstd::Task<void> Backend::_ensure_large_receive_ring() {
+    co_await _receive_resize.settle();
+    if (_large_receive_ring) {
+        co_return;
+    }
+    // Restart only at a frame boundary, before submitting the operation
+    // that needs the larger ring. Other callers retry once their current
+    // metadata operations have completed.
+    if (!_ops.empty()) {
+        RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
+    }
+    _receive_resize.begin();
+    std::exception_ptr error;
+    try {
+        if (_read_event != nullptr) {
+            co_await _queue.cancel(_read_event);
+            _read_event = nullptr;
+        }
+        co_await _pump.settle();
+        _large_receive_ring = true;
+        _start_receive_ring();
+    } catch (...) {
+        error = std::current_exception();
+    }
+    _receive_resize.end();
+    if (error) {
+        std::rethrow_exception(error);
     }
 }
 
@@ -1316,6 +1339,10 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
     RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
     uint64_t offset, uint64_t val, const RawstdUUID& snapshot_id
 ) {
+    if (cmd == RAWSTOR_CMD_SET_OBJECT || cmd == RAWSTOR_CMD_LIST_SNAPSHOTS) {
+        co_await _ensure_large_receive_ring();
+    }
+    co_await _receive_resize.settle();
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", op_name);
 
     std::shared_ptr<BackendOpBasic<T>> op = std::make_shared<BackendOpBasic<T>>(
@@ -1344,6 +1371,8 @@ rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
     RawstdUUID& token, RawstdUUID snapshot_id
 ) {
+    co_await _ensure_large_receive_ring();
+
     // LIST only ever lists live objects (RawstorFrameListEntry's own doc
     // comment, protocol.h). A version's own chunks are only ever asked
     // for of an mds:// target, whose own map answers it instead.

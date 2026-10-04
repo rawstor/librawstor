@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <unordered_set>
 
 #include <cerrno>
 #include <cstring>
@@ -95,6 +96,28 @@ std::string TopologyOST::domain(Level level) const {
         ret += s;
     }
     return ret;
+}
+
+Topology Topology::select(const std::vector<RawstdUUID>& ids) const {
+    std::unordered_set<std::string> selected;
+    selected.reserve(ids.size());
+    for (const auto& id : ids) {
+        selected.emplace(
+            reinterpret_cast<const char*>(id.bytes), sizeof(id.bytes)
+        );
+    }
+    Topology result;
+    for (const auto& ost : _osts) {
+        if (selected.contains(
+                std::string(
+                    reinterpret_cast<const char*>(ost.id.bytes),
+                    sizeof(ost.id.bytes)
+                )
+            )) {
+            result._osts.push_back(ost);
+        }
+    }
+    return result;
 }
 
 Topology Topology::parse(std::istream& in) {
