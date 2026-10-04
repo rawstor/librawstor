@@ -1,5 +1,33 @@
 # Mirroring: Failure Model and Recovery
 
+## Status
+
+Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. Checked against
+the code on 2026-10-04. *Stage* is this document's own numbering (see
+*Implementation stages*); [MDS design](mds.md) numbers its stages separately.
+
+| Feature | Stage | Status | Where |
+|---|---|---|---|
+| Per-copy metadata (`state`, `epoch`, `sync_id`, history) on `file://` | 1 | ✅ | `src/file_backend.cpp` |
+| Per-copy metadata on `lvm://` / `zfs://` (LVM tags, ZFS user properties) | 1 | ✅ | `src/lvm_backend.cpp`, `src/zfs_backend.cpp` |
+| `META`, `SET_SYNC_STATE`, `FLUSH` opcodes | 1 | ✅ | `include/rawstor/protocol.h`, `ost/src/client.cpp` |
+| Metadata transitions fsynced before the ack | 1 | ✅ | `src/chunk.cpp` |
+| `rawstor_target_meta()` / `rawstor_target_set_member_sync_state()` | 1 | ✅ | `include/rawstor/target.h` |
+| Quorum at open (> N/2), split-brain detection | 2 | ✅ | `src/chunk.cpp` |
+| Degraded open, F10 recreate of a missing copy | 2 | ✅ | `src/chunk.cpp` |
+| Degrade & continue (F1), write freeze below quorum for N ≥ 3 | 2 | ✅ | `src/chunk.cpp` |
+| Read failover and read-repair (F2) | 2 | ✅ | `src/chunk.cpp` |
+| Clean close (all copies `CLEAN`) | 2 | ✅ | `src/chunk.cpp` |
+| Online resync with in-memory bitmap, region locks, zero-region `write_zeroes` | 3 | ✅ | `src/chunk.cpp` (`RESYNC_CHUNK`) |
+| Reconnect probe and automatic rejoin of STALE mirrors | 3 | ✅ | `src/chunk.cpp` (`_probe_watch()`) |
+| `rawstor show -v` per-chunk / per-mirror state | — | ✅ | `cli/show.c` |
+| `rawstor resolve TARGET --winner=N [--offset]` | — | ✅ | `cli/resolve.c` |
+| Force-open below quorum (CLI / opts) | — | ❌ | — |
+| Persistent write-intent bitmap (resumable resync, cheaper F5) | 4 | ❌ | — |
+| MDS witness in quorum | 4 | ❌ | designed in [MDS design](mds.md#witness-stage-3) |
+| Stored checksums / scrub | 4 | ❌ | — |
+| Fastest-mirror read selection | 4 | ❌ | — |
+
 ## Overview
 
 A comma-separated target list (see [Concepts](concepts.md)) makes the client keep N identical copies of a chunk on different backends -- each copy is a **slot**, addressed by one URI in the list. A plain (non-`mds://`) target is the degenerate single-chunk case: the whole object it addresses **is** that one chunk, so everything below applies to it directly; an `mds://` object's own chunks (`docs/mds.md`) each get this same treatment independently, possibly with different widths. This document defines the failure model for N-way mirroring: what can fail, how the client reacts, and how byte-for-byte identity of the copies is restored afterwards. Erasure coding is out of scope.
@@ -294,7 +322,7 @@ copies, a witness (*Roadmap — MDS as witness* above).
   - `FLUSH` — fdatasync of object data; needed for clean close and so that `rawstor-vhost`/QEMU can forward guest flushes.
   - An old server receiving an unknown opcode must answer `-ENOSYS`. There is no wire version field — acceptable before 1.0.
 - **`src/file_backend.cpp`** — versioned `.spec` format; fsync of metadata.
-- **`src/lvm_backend.cpp`/`src/zfs_backend.cpp`** — a raw block device has no `.spec` file and a reserved header/footer region is incompatible with objects already created (data occupies the device from byte 0). Metadata instead uses each backend's own native, transactional storage: a ZFS user property (`rawstor:meta`, set/read via `zfs set`/`zfs get`) or an LVM tag (`rawstor.meta=...`, via `lvchange --addtag`/`--deltag` and `lvs -o lv_tags`), encoded as a compact colon-separated hex string (`src/blkdev_meta.{hpp,cpp}`). Both mechanisms share the device/dataset's own failure domain and are set in the same command as creation, so there is never a window where the volume exists without one. A volume with no recorded value (created before this existed, or by something else) is **not** trusted as legacy-CLEAN the way an old `.spec` record is — it fails `meta()`, which the caller already treats as case F10 (untrusted member, needs a resync).
+- **`src/lvm_backend.cpp`/`src/zfs_backend.cpp`** — a raw block device has no `.spec` file and a reserved header/footer region is incompatible with objects already created (data occupies the device from byte 0). Metadata instead uses each backend's own native, transactional storage: a ZFS user property (`rawstor:meta`, set/read via `zfs set`/`zfs get`) or an LVM tag (`rawstor.meta=...`, via `lvchange --addtag`/`--deltag` and `lvs -o lv_tags`), encoded as a compact colon-separated hex string (`meta_encode()`/`meta_decode()` in `src/blk_backend.{hpp,cpp}`). Both mechanisms share the device/dataset's own failure domain and are set in the same command as creation, so there is never a window where the volume exists without one. A volume with no recorded value (created before this existed, or by something else) is **not** trusted as legacy-CLEAN the way an old `.spec` record is — it fails `meta()`, which the caller already treats as case F10 (untrusted member, needs a resync).
 - **`ost/session.cpp`** — handlers for the new opcodes.
 - **`src/chunk.cpp`** — per-mirror state machine (IN-SYNC/STALE/SYNCING per `Slot`), quorum checks at open, degraded open, the degradation procedure (F1: suspend acks → bump survivors' metadata → resume), read failover + read-repair, the resync engine (bitmap + sweeper + per-chunk locks), reconnect probes for STALE mirrors. Cross-mirror logic lives in `Chunk`; `Slot` keeps only per-location retry/reopen.
 - **`cli/`** — `rawstor show -v` prints one `chunk[OFFSET]` block per chunk (`rawstor_target_spec()`'s own size/chunk_size say how many), each with a `mirror[N]` per copy of that chunk and its own state; `rawstor resolve TARGET --winner=N[,N...] [--offset OFFSET]` declares one or more mirrors of the targeted chunk(s) jointly authoritative after split brain (F9) -- every chunk in the object if `--offset` is omitted -- writing them all the same new dominant `sync_id`, one member at a time via `rawstor_target_set_member_sync_state()`, so every mirror of that chunk NOT listed gets a full resync on the next open. Still missing: `rawstor-cli force-open` / an opts flag (below-quorum start, explicit manual approval).

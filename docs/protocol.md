@@ -1,5 +1,27 @@
 # Rawstor wire protocol
 
+## Status
+
+Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. Checked against
+the code on 2026-10-04.
+
+| Area | Status | Where |
+|---|---|---|
+| Frame head, `rstr` magic, `cid` pipelining | ✅ | `include/rawstor/protocol.h` |
+| Response `hash` (xxh3 with libxxhash) | ✅ | `librawstd/src/hash.c` |
+| Session: `SET_OBJECT` | ✅ | OST `ost/src/client.cpp`, MDS `mds/src/client.cpp` |
+| Data: `READ` `WRITE` `DISCARD` `ALLOCATE` `RELEASE` `FLUSH` `WRITE_ZEROES` | ✅ | OST server + `src/ost_backend.cpp` |
+| Metadata: `META` `SET_SYNC_STATE` `SNAPSHOT` `LIST_SNAPSHOTS` | ✅ | OST server + `src/ost_backend.cpp` |
+| `LIST`, `LOCATION_INFO` | ✅ | OST and MDS servers, both clients |
+| Object: `OBJ_CREATE` `OBJ_OPEN` `OBJ_RESIZE` `OBJ_REMOVE` | ✅ | MDS server + `src/mds_client.cpp` |
+| Object snapshots: `OBJ_COMMIT_SNAPSHOT` `OBJ_REMOVE_SNAPSHOT` `OBJ_LIST_SNAPSHOTS` | ✅ | MDS server + `src/mds_client.cpp` |
+| `idempotency_key` on mutating `OBJ_*` | ✅ | `mds/src/store.cpp` (`applied_mutations`) |
+| `-ENOSYS` for commands outside a server's role | ✅ | `ost/src/client.cpp`, `mds/src/client.cpp` |
+| Protocol version + feature bits in the `SET_OBJECT` handshake | ❌ | planned in [MDS design](mds.md) |
+| Explicit `len` field in the response (`{res, len, hash}`) | ❌ | `res` still carries the payload size |
+| `map_epoch` in the IO frame (epoch-fence) | ❌ | planned in [MDS design](mds.md) |
+| Auth / capabilities | ❌ | open question |
+
 One binary protocol is spoken by every rawstor server role: `rawstor-ost`
 (object storage) and `rawstor-mds` (metadata server). The authoritative
 definition is [`include/rawstor/protocol.h`](../include/rawstor/protocol.h);

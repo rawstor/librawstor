@@ -1,5 +1,27 @@
 # Concepts
 
+## Status
+
+Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. Checked against
+the code on 2026-10-04.
+
+| Feature | Status | Where |
+|---|---|---|
+| `ost://`, `file://`, `lvm://`, `zfs://`, `mds://` schemes | ✅ | `src/backend.cpp`, `src/*_backend.cpp` |
+| Comma-separated location/target lists, duplicate URIs rejected | ✅ | `src/location.cpp`, `src/target.cpp` |
+| `\,` escaping inside a URI | ✅ | `librawstd/src/uri.cpp` |
+| Mirroring policy (`ost://a,ost://b`) | ✅ | `src/chunk.cpp`, see [Mirroring](mirroring.md) |
+| Data locality (`file://` on the hypervisor + `ost://`) | 🟡 | works as a regular mirror with local reads; no cache / primary-store asymmetry (see *Multiple backends*) |
+| Object / Chunk / Slot runtime model | ✅ | `src/object.cpp`, `src/chunk.cpp`, `src/slot.cpp` |
+| Internal multi-chunk form, chunk offset path segment | ✅ | `src/target.cpp` (`parse_target_path()`) |
+| `rawstor_target_chunks()` | ✅ | `include/rawstor/target.h` |
+| Snapshot target (`.../<uuid>/<snapshot_uuid>`), read-only open | ✅ | `src/target.cpp` |
+| `mds://` object-level snapshot | ✅ | `src/mds_backend.cpp` |
+| Per-slot native CoW snapshot: `zfs://` | ✅ | `src/zfs_backend.cpp` |
+| Per-slot native CoW snapshot: `ost://` (relayed to the server's backend) | ✅ | `src/ost_backend.cpp` |
+| Per-slot native CoW snapshot: `lvm://` | ❌ | `-ENOTSUP` (waits for an lvm-thin backend) |
+| Per-slot native CoW snapshot: `file://` | ❌ | `-ENOTSUP` by design (no CoW) |
+
 ## Overview
 
 Rawstor addresses data through six related concepts, each with its own
@@ -132,7 +154,7 @@ A **location** specifies the address of a backend data store (or a list
 of backends). It is expressed as a comma-separated list of URIs. The URI
 format follows the standard scheme `<scheme>://<endpoint>`.
 
-Currently, four URI schemes are supported:
+Currently, five URI schemes are supported:
 
 | Scheme | Description |
 |--------|-------------|
@@ -156,6 +178,21 @@ to specific policies:
 |---------|----------|
 | `ost://host1:port1,ost://host2:port2` | **Mirroring** – both backends contain identical data. |
 | `file:///data/folder,ost://host:port` | **Data locality** – the file backend serves as a local cache or fast access path, while the OST backend is the primary remote store. |
+
+Today data locality is plain mirroring (see [Mirroring](mirroring.md)) with
+the local copy listed first: reads are served from the first IN-SYNC member
+in list order, so they stay on the hypervisor's own disk. The two copies are
+still equal mirrors, not a cache in front of a primary store:
+
+- A write is acknowledged only once it has completed on both copies, so
+  write latency is the remote OST's.
+- The local copy is a full copy of the object, not a cache with eviction.
+- With two copies, an open needs both reachable (quorum is > N/2): if
+  either the local disk or the OST is down, the object does not open
+  automatically.
+- After a client crash with both copies DIRTY (case F5 in
+  [Mirroring](mirroring.md)), the first copy in the list, the local one,
+  wins and the remote copy is resynced from it.
 
 **Syntax rules:**
 - Do not add spaces between URIs – use a single comma: `uri1,uri2`
@@ -256,12 +293,13 @@ A **snapshot** is a bound, read-only version of a target/chunk/slot,
 identified by a version id (`snapshot_id`, a UUID -- never nil, nil always
 means "live"). Like every other id in this design, `snapshot_id` is
 client-generated -- the caller picks it (or generates a fresh one, the
-same single point of generation a fresh object id comes from) and embeds
-it in the target string itself before calling `rawstor_target_create()`,
-which takes a native CoW snapshot instead of creating a fresh object
-whenever its target carries one -- there is no separate "assign" mode,
-mds:// included: two independent mechanisms use the same id, at different
-layers:
+same single point of generation a fresh object id comes from) and passes
+it to `rawstor_target_create_snapshot()`, either as its `snapshot_id`
+argument or already embedded in the target string (with `snapshot_id`
+NULL); with neither, a fresh id is generated. `rawstor_target_create()`
+never takes a snapshot -- it rejects a target that carries one with
+`-EINVAL`. There is no separate "assign" mode, mds:// included: two
+independent mechanisms use the same id, at different layers:
 
 - **mds:// object-level**: CoW-every-chunk/`OBJ_COMMIT_SNAPSHOT`
   (docs/mds.md, "Snapshots (stage 2)") registers the caller's id against

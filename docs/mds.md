@@ -1,11 +1,53 @@
 # Rawstor MDS design (block storage)
 
+## Status
+
+Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. Checked against
+the code on 2026-10-04. *Stage* is this document's own numbering (see
+*Implementation stages*); [Mirroring](mirroring.md) numbers its stages separately.
+
+| Feature | Stage | Status | Where |
+|---|---|---|---|
+| `rawstor-mds` server, `-w/--workers` threads | 1 | ✅ | `mds/src/main.cpp`, `mds/src/server.cpp` |
+| SQLite store (WAL, `synchronous=FULL`) | 1 | ✅ | `mds/src/store.cpp` |
+| `OBJ_CREATE` / `OBJ_OPEN` / `OBJ_RESIZE` / `OBJ_REMOVE` | 1 | ✅ | `mds/src/client.cpp`, `src/mds_client.cpp` |
+| Explicit chunk map, client-side routing by chunk | 1 | ✅ | `src/mds_backend.cpp`, `src/object.cpp` |
+| Weighted HRW placement, `failure_domain`, `stripe_width` | 1 | ✅ | `mds/src/placement.cpp` |
+| Unsatisfiable topology hard-fails | 1 | ✅ | `mds/src/placement.cpp` |
+| Static `topology.conf`, `SIGHUP` reload, refusal to drop OSTs in use | 1 | ✅ | `mds/src/topology.cpp`, `mds/src/main.cpp` |
+| Idempotent mutations (`idempotency_key`, `applied_mutations`, 1-day expiry) | 1 | ✅ | `mds/src/store.cpp` |
+| Grow-only resize | 1 | ✅ | `mds/src/store.cpp` (shrink refused) |
+| `map_epoch` per object | 1 | 🟡 | stored and returned by `OBJ_*`; not sent in IO frames |
+| epoch-fence (`slot.fence` watermark on OSTs) | 1 | ❌ | — |
+| `updatePlacement` / migration / rebalance | 1 | ❌ | — |
+| One connection per (OST, object) serving all its chunks | 1 | 🟡 | one connection pool per chunk slot (`SET_OBJECT` with the chunk offset) |
+| `--reconstruct`: rebuild the live map from `LIST` + `META` | 1 | ✅ | `mds/src/main.cpp` |
+| `--reconstruct`: register complete snapshot versions, collect garbage | 2 | ❌ | snapshot records are skipped |
+| Scrub: full MDS serving the same scan from its own index | — | ❌ | — |
+| `OBJ_COMMIT_SNAPSHOT` / `OBJ_REMOVE_SNAPSHOT` / `OBJ_LIST_SNAPSHOTS` | 2 | ✅ | `mds/src/client.cpp`, `src/mds_backend.cpp` |
+| Client-generated `snapshot_id`, CoW in descending chunk order | 2 | ✅ | `src/mds_backend.cpp` |
+| Native CoW: `zfs://` | 2 | ✅ | `src/zfs_backend.cpp` |
+| Native CoW: `lvm://` (thin) | 2 | ❌ | `-ENOTSUP` |
+| `file://` snapshots refused with `-ENOTSUP` | 2 | ✅ | `src/file_backend.cpp` |
+| Object removal refused with `-EBUSY` while snapshots exist | 2 | ✅ | `mds/src/store.cpp` |
+| Snapshot redundancy status surfacing | 2 | ❌ | TODO |
+| vhost/QEMU flush hook for snapshots | 2 | ❌ | the CLI assumes no concurrent writer |
+| Backend health / `LOCATION_INFO` collector | — | ✅ | `mds/src/monitor.cpp`, `mds/src/opts.cpp` |
+| Protocol version + feature bits in `SET_OBJECT` | — | ❌ | — |
+| Unified response frame `{res, len, hash}` | — | ❌ | — |
+| Witness: `member_role` field in metadata | 3 | 🟡 | reserved in `include/rawstor/protocol.h` |
+| Witness: record kinds, voting rules, async updates, re-attach | 3 | ❌ | — |
+| MDS replication (primary + log) | v2+ | ❌ | — |
+| EC policy | v2+ | ❌ | — |
+| Stored checksums / scrub, snapshot redundancy repair | v2+ | ❌ | — |
+| Auth / capabilities, shrink, MGS as a service | open | ❌ | — |
+
 Metadata Storage Target (**MDS/MDT**) design, specialized for the **block
 storage** use case: sparse (thin) allocation and large object chunks (1+ GiB).
 
 Status: **approved** (2026-07-06). Supersedes the earlier draft where the
-*Decision revalidation* table below says so. Nothing is implemented yet; see
-*Implementation stages*.
+*Decision revalidation* table below says so. Implementation progress is
+tracked in the *Status* table above; see also *Implementation stages*.
 
 See also: [Architecture](architecture.md), [Protocol](protocol.md),
 `librawstor/docs/mirroring.md` (quorum rules the witness plugs into).
