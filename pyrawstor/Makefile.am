@@ -21,6 +21,7 @@ C_SOURCES = \
 SOURCES = \
     $(C_SOURCES) \
     rawstor/__init__.py \
+    rawstor/constants.py \
     rawstor/location.py \
     rawstor/target.py \
     config.py \

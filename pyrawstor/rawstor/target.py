@@ -3,6 +3,26 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from . import librawstor
+from .constants import FAILURE_DOMAINS, OBJ_DOMAIN_DEFAULT
+
+
+def object_spec(
+    *, size: int, width: int, chunk_size: int = 0, stripe_width: int = 0,
+    failure_domain: int | str = OBJ_DOMAIN_DEFAULT
+) -> librawstor.ObjectSpec:
+    """Build an ObjectSpec for create(). stripe_width and failure_domain
+    are mds:// placement policy (docs/mds.md); failure_domain is either an
+    OBJ_DOMAIN_* value or its FAILURE_DOMAINS name ("dc", "row", "rack",
+    "server", "ost")."""
+    if isinstance(failure_domain, str):
+        try:
+            failure_domain = FAILURE_DOMAINS[failure_domain]
+        except KeyError:
+            raise ValueError(
+                f"invalid failure domain: {failure_domain!r}") from None
+    return librawstor.ObjectSpec(
+        size=size, width=width, chunk_size=chunk_size,
+        stripe_width=stripe_width, failure_domain=failure_domain)
 
 
 class Target:
@@ -44,11 +64,16 @@ class Target:
             return NotImplemented
         return self._uri == other._uri
 
-    def create(self, *, size: int, width: int, chunk_size: int = 0) -> None:
+    def create(
+        self, *, size: int, width: int, chunk_size: int = 0,
+        stripe_width: int = 0,
+        failure_domain: int | str = OBJ_DOMAIN_DEFAULT
+    ) -> None:
         librawstor.object_create(
             self._uri,
-            librawstor.ObjectSpec(
-                size=size, width=width, chunk_size=chunk_size))
+            object_spec(
+                size=size, width=width, chunk_size=chunk_size,
+                stripe_width=stripe_width, failure_domain=failure_domain))
 
     def create_snapshot(self, uuid: str | None = None) -> "Target":
         """Take a native CoW snapshot of this target's live version,

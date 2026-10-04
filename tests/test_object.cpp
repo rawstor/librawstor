@@ -545,6 +545,33 @@ TEST(ObjectMetaTest, meta_on_object_target_is_real) {
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
+// The placement policy lives only in the MDS map, not on any member --
+// spec() and every answering meta() entry still report it.
+TEST(ObjectSpecTest, reports_placement_policy) {
+    rawstor::tests::ObjectEnv env(8808, 8809);
+    std::string target =
+        object_target(env, "018f4e2a-3000-7000-8000-00000000000d");
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    spec.failure_domain = RAWSTOR_OBJ_DOMAIN_OST;
+    spec.stripe_width = 1;
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
+
+    RawstorObjectSpec read_spec{};
+    ASSERT_EQ(target_spec(*queue, target, &read_spec), 0);
+    EXPECT_EQ(read_spec.failure_domain, (unsigned int)RAWSTOR_OBJ_DOMAIN_OST);
+    EXPECT_EQ(read_spec.stripe_width, 1u);
+
+    RawstorObjectMeta meta{};
+    ASSERT_EQ(target_meta(*queue, target, 0, &meta, 1), 1);
+    EXPECT_EQ(meta.spec.failure_domain, (unsigned int)RAWSTOR_OBJ_DOMAIN_OST);
+    EXPECT_EQ(meta.spec.stripe_width, 1u);
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
 TEST(ObjectMetaTest, set_member_sync_state_on_object_target_is_real) {
     rawstor::tests::ObjectEnv env(8788, 8789);
     std::string target =

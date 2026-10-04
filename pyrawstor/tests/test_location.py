@@ -1,5 +1,6 @@
 import rawstor
 
+import errno
 import unittest
 import tempfile
 
@@ -60,5 +61,21 @@ class TestLocation(unittest.TestCase):
 
             info = location.info()
             self.assertEqual(info.used, (1 << 20) + META_FILE_SIZE)
+
+            target.remove()
+
+    # file:// keeps no placement policy of its own; see
+    # TestTarget.test_create_failure_domain_reaches_library.
+    def test_create_failure_domain(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            location = rawstor.Location(f"file://{temp_dir}")
+
+            with self.assertRaises(OSError) as cm:
+                location.create(size=1 << 20, width=1, failure_domain=256)
+            self.assertEqual(cm.exception.errno, errno.EINVAL)
+
+            target = location.create(
+                size=1 << 20, width=1, failure_domain="server")
+            self.assertEqual(list(location), [target])
 
             target.remove()

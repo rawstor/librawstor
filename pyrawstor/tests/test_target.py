@@ -46,6 +46,70 @@ class TestTarget(unittest.TestCase):
 
             target.remove()
 
+    def test_object_spec_fields(self):
+        spec = rawstor.librawstor.ObjectSpec(
+            size=4 << 20, width=3, chunk_size=1 << 20, stripe_width=2,
+            failure_domain=rawstor.OBJ_DOMAIN_RACK)
+        self.assertEqual(spec.size, 4 << 20)
+        self.assertEqual(spec.width, 3)
+        self.assertEqual(spec.chunk_size, 1 << 20)
+        self.assertEqual(spec.stripe_width, 2)
+        self.assertEqual(spec.failure_domain, rawstor.OBJ_DOMAIN_RACK)
+
+        spec.stripe_width = 1
+        spec.failure_domain = rawstor.OBJ_DOMAIN_DC
+        self.assertEqual(spec.stripe_width, 1)
+        self.assertEqual(spec.failure_domain, rawstor.OBJ_DOMAIN_DC)
+
+    def test_object_spec_failure_domain_names(self):
+        for name, value in [
+            ("ost", rawstor.OBJ_DOMAIN_OST),
+            ("server", rawstor.OBJ_DOMAIN_SERVER),
+            ("rack", rawstor.OBJ_DOMAIN_RACK),
+            ("row", rawstor.OBJ_DOMAIN_ROW),
+            ("dc", rawstor.OBJ_DOMAIN_DC),
+        ]:
+            spec = rawstor.target.object_spec(
+                size=1 << 20, width=1, failure_domain=name)
+            self.assertEqual(spec.failure_domain, value)
+
+        self.assertRaises(
+            ValueError, rawstor.target.object_spec,
+            size=1 << 20, width=1, failure_domain="zone")
+
+    # file:// keeps no placement policy of its own, so this only checks
+    # failure_domain actually reaches rawstor_target_create(): an
+    # out-of-range value is refused there.
+    def test_create_failure_domain_reaches_library(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000009")
+
+            with self.assertRaises(OSError) as cm:
+                target.create(size=1 << 20, width=1, failure_domain=256)
+            self.assertEqual(cm.exception.errno, errno.EINVAL)
+
+            target.create(size=1 << 20, width=1, failure_domain="rack")
+            target.remove()
+
+    def test_meta(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-00000000000a")
+            target.create(size=4 << 20, width=1, chunk_size=4 << 20)
+
+            [meta] = target.meta()
+            self.assertEqual(meta.size, 4 << 20)
+            self.assertEqual(meta.width, 1)
+            self.assertEqual(meta.chunk_size, 4 << 20)
+            # Placement policy is mds:// only.
+            self.assertEqual(meta.stripe_width, 0)
+            self.assertEqual(meta.failure_domain, rawstor.OBJ_DOMAIN_DEFAULT)
+            self.assertEqual(meta.member_role, rawstor.MEMBER_DATA)
+            self.assertEqual(meta.state, rawstor.OBJECT_SYNC_STATE_CLEAN)
+
+            target.remove()
+
     def test_chunks(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             location = rawstor.Location(f"file://{temp_dir}")
