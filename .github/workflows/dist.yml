@@ -4,12 +4,21 @@ on:
   push:
 
 jobs:
-  clang-format:
+  linter:
 
     runs-on: ubuntu-latest
 
+    # Reads contributor-controlled commit metadata: the token needs no
+    # more than checkout access, whatever the repository default is.
+    permissions:
+      contents: read
+
     steps:
     - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+    - name: commit-messages
+      run: ./.github/tools/commit-messages.sh
     - name: add llvm 21
       run: |
         wget https://apt.llvm.org/llvm.sh
@@ -678,7 +687,7 @@ jobs:
 
   release:
     needs:
-    - clang-format
+    - linter
     - sources
     - sources-unittest
     - sources-testio
