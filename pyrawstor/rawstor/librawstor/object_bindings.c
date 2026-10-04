@@ -528,6 +528,8 @@ typedef struct {
     PyObject_HEAD unsigned long long size;
     unsigned int width;
     unsigned long long chunk_size;
+    unsigned long long stripe_width;
+    unsigned int failure_domain;
     int member_role;
     int state;
     unsigned long long epoch;
@@ -544,10 +546,12 @@ static void PyObjectMeta_dealloc(PyObjectMeta* self) {
 
 static PyObject* PyObjectMeta_repr(PyObjectMeta* self) {
     return PyUnicode_FromFormat(
-        "ObjectMeta(size=%llu, width=%u, chunk_size=%llu, member_role=%d, "
-        "state=%d, epoch=%llu, sync_id=%llu)",
-        self->size, self->width, self->chunk_size, self->member_role,
-        self->state, self->epoch, self->sync_id
+        "ObjectMeta(size=%llu, width=%u, chunk_size=%llu, stripe_width=%llu, "
+        "failure_domain=%u, member_role=%d, state=%d, epoch=%llu, "
+        "sync_id=%llu)",
+        self->size, self->width, self->chunk_size, self->stripe_width,
+        self->failure_domain, self->member_role, self->state, self->epoch,
+        self->sync_id
     );
 }
 
@@ -564,6 +568,16 @@ PyObjectMeta_get_width(PyObjectMeta* self, void* Py_UNUSED(closure)) {
 static PyObject*
 PyObjectMeta_get_chunk_size(PyObjectMeta* self, void* Py_UNUSED(closure)) {
     return PyLong_FromUnsignedLongLong(self->chunk_size);
+}
+
+static PyObject*
+PyObjectMeta_get_stripe_width(PyObjectMeta* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLongLong(self->stripe_width);
+}
+
+static PyObject*
+PyObjectMeta_get_failure_domain(PyObjectMeta* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLong(self->failure_domain);
 }
 
 static PyObject*
@@ -609,6 +623,9 @@ static PyGetSetDef PyObjectMeta_getset[] = {
     {"size", (getter)PyObjectMeta_get_size, NULL, NULL, NULL},
     {"width", (getter)PyObjectMeta_get_width, NULL, NULL, NULL},
     {"chunk_size", (getter)PyObjectMeta_get_chunk_size, NULL, NULL, NULL},
+    {"stripe_width", (getter)PyObjectMeta_get_stripe_width, NULL, NULL, NULL},
+    {"failure_domain", (getter)PyObjectMeta_get_failure_domain, NULL, NULL,
+     NULL},
     {"member_role", (getter)PyObjectMeta_get_member_role, NULL, NULL, NULL},
     {"state", (getter)PyObjectMeta_get_state, NULL, NULL, NULL},
     {"epoch", (getter)PyObjectMeta_get_epoch, NULL, NULL, NULL},
@@ -1008,6 +1025,8 @@ static PyObject* build_mirror_meta(const struct RawstorObjectMeta* meta) {
     py_meta->size = meta->spec.size;
     py_meta->width = meta->spec.width;
     py_meta->chunk_size = meta->spec.chunk_size;
+    py_meta->stripe_width = meta->spec.stripe_width;
+    py_meta->failure_domain = meta->spec.failure_domain;
     py_meta->member_role = (int)meta->member_role;
     py_meta->state = (int)meta->sync_state.state;
     py_meta->epoch = meta->sync_state.epoch;

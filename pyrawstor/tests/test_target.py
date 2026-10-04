@@ -104,6 +104,10 @@ class TestTarget(unittest.TestCase):
             self.assertEqual(meta.size, 4 << 20)
             self.assertEqual(meta.width, 1)
             self.assertEqual(meta.chunk_size, 4 << 20)
+            # Placement policy is mds:// only.
+            self.assertEqual(meta.stripe_width, 0)
+            self.assertEqual(
+                meta.failure_domain, rawstor.librawstor.OBJ_DOMAIN_DEFAULT)
             self.assertEqual(
                 meta.member_role, rawstor.librawstor.MEMBER_DATA)
             self.assertEqual(

@@ -513,15 +513,25 @@ rawstd::Task<void> Backend::_remove_snapshot(
 // mds://, so there's no further flattening to do. `offset` not landing on a
 // real chunk boundary (including a WireMap whose own chunk_size is somehow 0)
 // is -ENOENT, same as a plain target's own chunk_uris_at_offset() (target.cpp)
-// finding no chunk there.
+// finding no chunk there. A member persists only its own chunk's shape, not
+// the object's placement policy, so every answering entry gets
+// failure_domain/stripe_width from the map -- which is also what
+// rawstor_target_spec() reports, through resolve_spec().
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
 ) {
     WireMap map = co_await _client.open(id, snapshot_id);
     uint64_t index = chunk_index_at(map, offset);
-    co_return co_await resolve_meta(
+    std::vector<RawstorObjectMeta> ret = co_await resolve_meta(
         _queue, chunk_locations(map, index), id, offset, snapshot_id
     );
+    for (RawstorObjectMeta& m : ret) {
+        if (m.sync_state.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+            m.spec.failure_domain = map.policy.failure_domain;
+            m.spec.stripe_width = map.policy.stripe_width;
+        }
+    }
+    co_return ret;
 }
 
 // The MDS's own snapshot registry for the whole object -- a snapshot
