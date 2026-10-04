@@ -134,6 +134,8 @@ Chunk::Chunk(
     _sync_id(0),
     _sync_id_history{},
     _alive(std::make_shared<char>()),
+    _closing(false),
+    _background(0),
     _writes_in_flight(0),
     _resync_generation(0),
     _probe_pending(false),
@@ -156,7 +158,72 @@ Chunk::Chunk(
     }
 }
 
+// Counts one detached background coroutine in Chunk::_background for its
+// whole life (see its own doc comment). Declared first in the coroutine,
+// so it is destroyed last: once the count drops, nothing in the frame
+// touches the Chunk anymore. close() and ~Chunk() wait for zero, so the
+// Chunk outlives every guard.
+class Chunk::BackgroundGuard {
+private:
+    Chunk& _chunk;
+
+public:
+    explicit BackgroundGuard(Chunk& chunk) noexcept : _chunk(chunk) {
+        ++_chunk._background;
+    }
+    BackgroundGuard(const BackgroundGuard&) = delete;
+    BackgroundGuard(BackgroundGuard&&) = delete;
+    BackgroundGuard& operator=(const BackgroundGuard&) = delete;
+    BackgroundGuard& operator=(BackgroundGuard&&) = delete;
+
+    ~BackgroundGuard() {
+        if (--_chunk._background == 0) {
+            // Advanced on a local: the waiter it resumes (close()) may run
+            // to completion inline and free the Chunk, member barrier
+            // included, before advance() is done with its waiter list.
+            rawstd::Barrier barrier = std::move(_chunk._background_barrier);
+            barrier.advance();
+        }
+    }
+};
+
+void Chunk::_abort_background() noexcept {
+    _closing = true;
+
+    // The interrupted copy stays SYNCING on the member, untrusted until a
+    // later open resyncs it again (docs/mirroring.md, case F8).
+    if (_resync != nullptr) {
+        _resync_abort("object closing");
+    }
+}
+
+rawstd::Task<void> Chunk::_stop_background() {
+    _abort_background();
+
+    while (_background > 0) {
+        co_await _background_barrier.at_least(_background_barrier.value() + 1);
+    }
+}
+
 Chunk::~Chunk() {
+    // A Chunk destroyed without close() still must not free the Slots
+    // under background I/O in flight on them. Drained by pumping the queue
+    // directly rather than through a suspended Task: wait_timeout() throws
+    // ETIME after a quiet interval, and a Task destroyed by that throw
+    // would stay registered as a waiter on _background_barrier.
+    _abort_background();
+    while (_background > 0) {
+        try {
+            _queue.wait_timeout(rawstor_opts_tcp_user_timeout());
+        } catch (const std::system_error& e) {
+            if (e.code().value() != ETIME) {
+                rawstd_error("Chunk::~Chunk(): %s\n", e.what());
+            }
+        } catch (const std::exception& e) {
+            rawstd_error("Chunk::~Chunk(): %s\n", e.what());
+        }
+    }
+
     for (auto& m : _members) {
         // An unreachable member's slot has no Slot to close (see
         // Member's own doc comment) -- unlike before online resync, where
@@ -1236,10 +1303,12 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
     // misattribute (see its own doc comment) -- caught here instead, same
     // as _degrade_detached()/_read_repair()/_probe_watch()'s own blanket
     // catch.
+    BackgroundGuard guard(*this);
     try {
         std::weak_ptr<void> alive = _alive;
 
-        if (_members.size() == 1 || _resync != nullptr || _size == 0) {
+        if (_closing || _members.size() == 1 || _resync != nullptr ||
+            _size == 0) {
             co_return;
         }
 
@@ -1290,6 +1359,12 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
             co_return;
         }
 
+        // Left SYNCING on the member: untrusted until a later open.
+        if (_closing) {
+            _members[idx].state = MemberState::STALE;
+            co_return;
+        }
+
         if (error == ENOSYS) {
             rawstd_warning(
                 "Mirror member does not support state tracking; resyncing "
@@ -1337,6 +1412,7 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
 }
 
 rawstd::DetachedTask Chunk::_resync_sweep() {
+    BackgroundGuard guard(*this);
     std::weak_ptr<void> alive = _alive;
 
     if (_resync == nullptr || _resync->phase != ResyncState::Phase::SWEEP ||
@@ -1470,6 +1546,7 @@ rawstd::DetachedTask Chunk::_resync_sweep() {
 }
 
 rawstd::DetachedTask Chunk::_resync_finish() {
+    BackgroundGuard guard(*this);
     std::weak_ptr<void> alive = _alive;
 
     // All chunks are copied and no client write is in flight: the member is
@@ -1603,7 +1680,9 @@ rawstd::DetachedTask Chunk::_probe_watch(std::weak_ptr<void> alive) {
 rawstd::DetachedTask Chunk::_probe_tick() {
     std::weak_ptr<void> alive = _alive;
 
-    if (_probe_pending || _resync != nullptr) {
+    // Not a BackgroundGuard user: the reconnect goes through a Slot of its
+    // own, never through a member's, so close() need not wait for it.
+    if (_closing || _probe_pending || _resync != nullptr) {
         co_return;
     }
 
@@ -1627,15 +1706,22 @@ rawstd::DetachedTask Chunk::_probe_tick() {
     }
     _probe_pending = true;
 
+    // Copied out: the Chunk may be gone by the time the connect completes.
+    rawio::Queue& queue = _queue;
+    rawstd::URI location = _members[idx].location;
+    RawstdUUID id = _id;
+    uint64_t offset = _offset;
+
     std::unique_ptr<Slot> slot;
     int error = 0;
     try {
-        slot = co_await Slot::create(
-            _queue, _members[idx].location, rawstor_opts_sessions()
-        );
+        slot = co_await Slot::create(queue, location, rawstor_opts_sessions());
+        if (alive.expired() || _closing) {
+            co_return;
+        }
         // The probe only ever runs for a writable, live chunk (READONLY
         // never starts it, the constructor's own check).
-        co_await slot->open(_id, _offset, 0, RawstdUUID{});
+        co_await slot->open(id, offset, 0, RawstdUUID{});
     } catch (const std::system_error& e) {
         error = e.code().value();
     } catch (const std::exception& e) {
@@ -1649,8 +1735,9 @@ rawstd::DetachedTask Chunk::_probe_tick() {
 
     _probe_pending = false;
 
-    if (error) {
-        // The next tick retries.
+    // The next tick retries; a closing object's _members may already be
+    // gone.
+    if (error || _closing) {
         co_return;
     }
 
@@ -1736,6 +1823,12 @@ rawstd::DetachedTask Chunk::_read_repair(
     size_t idx, uint64_t offset, std::vector<char> data,
     std::weak_ptr<void> alive
 ) {
+    BackgroundGuard guard(*this);
+
+    if (_closing) {
+        co_return;
+    }
+
     try {
         co_await _with_dirty();
     } catch (const std::exception& e) {
@@ -1743,7 +1836,7 @@ rawstd::DetachedTask Chunk::_read_repair(
         co_return;
     }
 
-    if (alive.expired()) {
+    if (alive.expired() || _closing) {
         co_return;
     }
 
@@ -1778,6 +1871,9 @@ Chunk::_degrade_detached(std::vector<size_t> idxs, std::weak_ptr<void> alive) {
     if (alive.expired()) {
         co_return;
     }
+    // Runs to the end even while closing: close() waits for it, so the
+    // CLEAN mark leaves the degraded members out.
+    BackgroundGuard guard(*this);
     try {
         co_await _degrade(std::move(idxs));
     } catch (const std::exception& e) {
@@ -2049,6 +2145,7 @@ rawstd::Task<void> Chunk::close() {
     // is still closed regardless of a flush failure -- leaking them over
     // it would be worse than reporting the failure alongside an otherwise
     // clean close.
+    _closing = true;
     bool flush_failed = false;
     try {
         co_await flush();
@@ -2058,6 +2155,10 @@ rawstd::Task<void> Chunk::close() {
             "Chunk::close(): flush failed: %s\n", strerror(e.code().value())
         );
     }
+
+    // A running resync is aborted and every background coroutine still
+    // issuing I/O on the members' Slots finishes before they are closed.
+    co_await _stop_background();
 
     // A metadata barrier may be in flight even before _dirty is set (e.g.
     // one triggered by a detached read-repair): settled first, or tearing
