@@ -11,7 +11,7 @@ the code on 2026-10-04.
 | Comma-separated location/target lists, duplicate URIs rejected | ✅ | `src/location.cpp`, `src/target.cpp` |
 | `\,` escaping inside a URI | ✅ | `librawstd/src/uri.cpp` |
 | Mirroring policy (`ost://a,ost://b`) | ✅ | `src/chunk.cpp`, see [Mirroring](mirroring.md) |
-| Data-locality policy (`file://` as a local cache in front of `ost://`) | ❌ | a mixed list is treated as a plain mirror |
+| Data locality (`file://` on the hypervisor + `ost://`) | ✅ | a regular mirror: reads go to the first IN-SYNC member in list order, so list `file://` first (`src/chunk.cpp`) |
 | Object / Chunk / Slot runtime model | ✅ | `src/object.cpp`, `src/chunk.cpp`, `src/slot.cpp` |
 | Internal multi-chunk form, chunk offset path segment | ✅ | `src/target.cpp` (`parse_target_path()`) |
 | `rawstor_target_chunks()` | ✅ | `include/rawstor/target.h` |
