@@ -10,10 +10,9 @@ PATTERN="claude"
 
 
 # Prints the first line of $1 that contains PATTERN (case-insensitive);
-# fails if there is none. The text reaches grep as a here-string rather
-# than through a pipe: with `echo | grep -q`, grep exits on the first
-# match while echo is still writing a long message, echo dies of SIGPIPE,
-# and under pipefail the match would read as a miss.
+# fails if there is none. The text is passed as a here-string: there is
+# no pipe writer that could die of SIGPIPE when grep stops reading early
+# on a long message and turn a match into a miss.
 function first_match() {
     grep -i -F -m 1 -- "${PATTERN}" <<<"$1"
 }
