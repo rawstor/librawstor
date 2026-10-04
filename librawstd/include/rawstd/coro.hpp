@@ -314,13 +314,7 @@ inline thread_local std::exception_ptr detached_task_pending_exception;
  * The coroutine frame is entirely self-managed: both `initial_suspend()`
  * and `final_suspend()` are `suspend_never`, so the frame is destroyed
  * as the body flows off its end -- there is no owner and nothing to hold
- * a `coroutine_handle` for later cleanup. Destroying the frame by hand
- * from a `final_suspend()` awaiter's `await_suspend()` instead (equally
- * valid by the standard) miscompiles under GCC 15: when the body
- * completes synchronously, inside the call that started it, the
- * generated ramp still reads the already-freed frame after the body
- * returns (an ASan heap-use-after-free at the coroutine's own
- * declaration line; GCC 13 and Clang 21 are unaffected).
+ * a `coroutine_handle` for later cleanup.
  *
  * An exception escaping the coroutine body cannot be rethrown directly
  * from `unhandled_exception()`: doing so would skip `final_suspend()`
