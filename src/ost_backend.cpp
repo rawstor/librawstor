@@ -1302,9 +1302,10 @@ rawstd::DetachedTask Backend::_recv_pump(
             );
         }
     } catch (const std::system_error& e) {
-        if (e.code().value() == ECANCELED) {
-            co_return;
-        }
+        // ECANCELED included: after close() or ~Backend() cancelled this
+        // registration there is nothing left in flight, but a cancellation
+        // of the whole queue (Queue::cancel_all()) leaves ops waiting on
+        // responses that will now never come.
 
         // A strong self-reference here (instead of weak_ptr::lock())
         // would keep this Backend alive purely because its own recv
@@ -1322,12 +1323,15 @@ rawstd::DetachedTask Backend::_recv_pump(
         }
 
         // The stream is no longer trustworthy (either a real
-        // transport-level/framing error, or a cid we can't resync past):
-        // fail everything still in flight and stop the pump for good.
-        // _read_event must not outlive it -- ~Backend() would otherwise
-        // try to cancel() an Event that's already gone.
-        backend->_fail_in_flight(e.code().value());
+        // transport-level/framing error, a cid we can't resync past, or a
+        // cancellation): stop the pump for good and fail everything still
+        // in flight. _read_event must not outlive it -- ~Backend() would
+        // otherwise try to cancel() an Event that's already gone -- and is
+        // cleared first: a failed op's caller may issue another one right
+        // away, which _add_op() must then fail instead of registering it
+        // with a pump that never answers.
         backend->_read_event = nullptr;
+        backend->_fail_in_flight(e.code().value());
         co_return;
     } catch (const std::exception& e) {
         // Not a system_error: only reachable from

@@ -116,10 +116,6 @@ Server::Server(
     _write_cache_enabled(write_cache_enabled),
     _fd(open_unix_socket(_socket_path)),
     _wake_fd(wake_fd) {
-    int res = rawstor_initialize(NULL);
-    if (res) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    };
 }
 
 Server::~Server() {
@@ -130,8 +126,6 @@ Server::~Server() {
         oss << "Failed to close socket " << _socket_path << ": " << e.what();
         rawstd_error("%s\n", oss.str().c_str());
     }
-
-    rawstor_terminate();
 }
 
 void Server::loop() {

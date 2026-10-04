@@ -355,7 +355,9 @@ int main(int argc, char** argv) {
     if (res < 0) {
         std::cerr << "Failed to initialize rawstor: " << strerror(-res)
                   << std::endl;
-        return rawstd_exitcode_for_errno(-res);
+        // rawstor_initialize() fails with EINVAL only on invalid
+        // configuration.
+        return res == -EINVAL ? EX_CONFIG : rawstd_exitcode_for_errno(-res);
     }
 
     rawstd_info("Rawstor OST backend %s\n", PACKAGE_VERSION);

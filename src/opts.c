@@ -1,12 +1,11 @@
 #include "opts.h"
 
-#include <rawstd/units.h>
+#include <rawstd/env.h>
+#include <rawstd/logging.h>
 
-#include <assert.h>
+#include <errno.h>
 #include <limits.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include <stddef.h>
 
 #define RAWSTOR_OPTS_IO_ATTEMPTS 10
 #define RAWSTOR_OPTS_SESSIONS 1
@@ -32,121 +31,90 @@
 
 static struct RawstorOpts _rawstor_opts = {};
 
-static unsigned int get_env_uint(const char* name, int def) {
-    const char* strval = getenv(name);
-    if (strval == NULL) {
-        return def;
+// Millisecond values that get scaled to microseconds in an unsigned int.
+#define RAWSTOR_OPTS_MAX_MS (UINT_MAX / 1000)
+
+// A nonzero `given` (set by the RawstorOpts caller) wins over the
+// environment; either must lie within [min, max].
+static int resolve(
+    unsigned int given, const char* name, int bytes, unsigned int def,
+    unsigned int min, unsigned int max, unsigned int* out
+) {
+    if (given != 0) {
+        if (given < min || given > max) {
+            rawstd_error(
+                "Invalid RawstorOpts value %u for %s: expected %u to %u\n",
+                given, name, min, max
+            );
+            return -EINVAL;
+        }
+        *out = given;
+        return 0;
     }
-
-    unsigned int uintval;
-    if (sscanf(strval, "%u", &uintval) != 1) {
-        return def;
-    }
-
-    return uintval;
-}
-
-// Like get_env_uint(), but for a byte count -- also accepts a size with a
-// unit suffix (B, K, M, G, T, P, E), e.g. "256M", same as rawstor-ost's own
-// former --write-backlog-capacity flag did.
-static unsigned int get_env_bytes(const char* name, unsigned int def) {
-    const char* strval = getenv(name);
-    if (strval == NULL) {
-        return def;
-    }
-
-    uint64_t bytes;
-    if (rawstd_size_to_bytes(strval, &bytes) == 0) {
-        return bytes <= UINT_MAX ? (unsigned int)bytes : def;
-    }
-
-    unsigned int uintval;
-    if (sscanf(strval, "%u", &uintval) != 1) {
-        return def;
-    }
-
-    return uintval;
+    return bytes ? rawstd_env_bytes(name, def, min, max, out)
+                 : rawstd_env_uint(name, def, min, max, out);
 }
 
 int rawstor_opts_initialize(const struct RawstorOpts* opts) {
-    _rawstor_opts.io_attempts =
-        (opts != NULL && opts->io_attempts != 0)
-            ? opts->io_attempts
-            : get_env_uint(
-                  "RAWSTOR_OPTS_IO_ATTEMPTS", RAWSTOR_OPTS_IO_ATTEMPTS
-              );
-
-    _rawstor_opts.sessions =
-        (opts != NULL && opts->sessions != 0)
-            ? opts->sessions
-            : get_env_uint("RAWSTOR_OPTS_SESSIONS", RAWSTOR_OPTS_SESSIONS);
-
-    _rawstor_opts.so_sndtimeo =
-        (opts != NULL && opts->so_sndtimeo != 0)
-            ? opts->so_sndtimeo
-            : get_env_uint(
-                  "RAWSTOR_OPTS_SO_SNDTIMEO", RAWSTOR_OPTS_SO_SNDTIMEO
-              );
-
-    _rawstor_opts.so_rcvtimeo =
-        (opts != NULL && opts->so_rcvtimeo != 0)
-            ? opts->so_rcvtimeo
-            : get_env_uint(
-                  "RAWSTOR_OPTS_SO_RCVTIMEO", RAWSTOR_OPTS_SO_RCVTIMEO
-              );
-
-    _rawstor_opts.tcp_user_timeout =
-        (opts != NULL && opts->tcp_user_timeout != 0)
-            ? opts->tcp_user_timeout
-            : get_env_uint(
-                  "RAWSTOR_OPTS_TCP_USER_TIMEOUT", RAWSTOR_OPTS_TCP_USER_TIMEOUT
-              );
-
-    _rawstor_opts.list_limit =
-        (opts != NULL && opts->list_limit != 0)
-            ? opts->list_limit
-            : get_env_uint("RAWSTOR_OPTS_LIST_LIMIT", RAWSTOR_OPTS_LIST_LIMIT);
-
-    _rawstor_opts.write_throttle_limit =
-        (opts != NULL && opts->write_throttle_limit != 0)
-            ? opts->write_throttle_limit
-            : get_env_uint(
-                  "RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT",
-                  RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT
-              );
-
-    _rawstor_opts.write_backlog_capacity =
-        (opts != NULL && opts->write_backlog_capacity != 0)
-            ? opts->write_backlog_capacity
-            : get_env_bytes(
-                  "RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY",
-                  RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY
-              );
-
-    _rawstor_opts.io_retry_backoff_base =
-        (opts != NULL && opts->io_retry_backoff_base != 0)
-            ? opts->io_retry_backoff_base
-            : get_env_uint(
-                  "RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE",
-                  RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE
-              );
-
-    _rawstor_opts.io_retry_backoff_max =
-        (opts != NULL && opts->io_retry_backoff_max != 0)
-            ? opts->io_retry_backoff_max
-            : get_env_uint(
-                  "RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX",
-                  RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX
-              );
-
-    _rawstor_opts.io_retry_backoff_jitter =
-        (opts != NULL && opts->io_retry_backoff_jitter != 0)
-            ? opts->io_retry_backoff_jitter
-            : get_env_uint(
-                  "RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER",
-                  RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER
-              );
-
+    struct RawstorOpts given = {};
+    if (opts != NULL) {
+        given = *opts;
+    }
+    struct RawstorOpts resolved = {};
+    const struct {
+        unsigned int given;
+        const char* name;
+        int bytes;
+        unsigned int def;
+        unsigned int min;
+        unsigned int max;
+        unsigned int* out;
+    } options[] = {
+        {given.io_attempts, "RAWSTOR_OPTS_IO_ATTEMPTS", 0,
+         RAWSTOR_OPTS_IO_ATTEMPTS, 1, UINT_MAX, &resolved.io_attempts},
+        {given.sessions, "RAWSTOR_OPTS_SESSIONS", 0, RAWSTOR_OPTS_SESSIONS, 1,
+         UINT_MAX, &resolved.sessions},
+        // Zero disables each of these timeouts.
+        {given.so_sndtimeo, "RAWSTOR_OPTS_SO_SNDTIMEO", 0,
+         RAWSTOR_OPTS_SO_SNDTIMEO, 0, UINT_MAX, &resolved.so_sndtimeo},
+        {given.so_rcvtimeo, "RAWSTOR_OPTS_SO_RCVTIMEO", 0,
+         RAWSTOR_OPTS_SO_RCVTIMEO, 0, UINT_MAX, &resolved.so_rcvtimeo},
+        // TCP_USER_TIMEOUT is an int to the kernel.
+        {given.tcp_user_timeout, "RAWSTOR_OPTS_TCP_USER_TIMEOUT", 0,
+         RAWSTOR_OPTS_TCP_USER_TIMEOUT, 0, INT_MAX, &resolved.tcp_user_timeout},
+        {given.list_limit, "RAWSTOR_OPTS_LIST_LIMIT", 0,
+         RAWSTOR_OPTS_LIST_LIMIT, 1, UINT_MAX, &resolved.list_limit},
+        {given.write_throttle_limit, "RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT", 0,
+         RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT, 1, UINT_MAX,
+         &resolved.write_throttle_limit},
+        {given.write_backlog_capacity, "RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY", 1,
+         RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY, 0, UINT_MAX,
+         &resolved.write_backlog_capacity},
+        {given.io_retry_backoff_base, "RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE", 0,
+         RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE, 0, RAWSTOR_OPTS_MAX_MS,
+         &resolved.io_retry_backoff_base},
+        {given.io_retry_backoff_max, "RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX", 0,
+         RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX, 0, RAWSTOR_OPTS_MAX_MS,
+         &resolved.io_retry_backoff_max},
+        {given.io_retry_backoff_jitter, "RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER",
+         0, RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER, 0, 100,
+         &resolved.io_retry_backoff_jitter},
+    };
+    // Every option is checked, so one run reports every invalid one.
+    int res = 0;
+    for (size_t i = 0; i < sizeof(options) / sizeof(options[0]); ++i) {
+        int r = resolve(
+            options[i].given, options[i].name, options[i].bytes, options[i].def,
+            options[i].min, options[i].max, options[i].out
+        );
+        if (r != 0 && res == 0) {
+            res = r;
+        }
+    }
+    if (res != 0) {
+        return res;
+    }
+    _rawstor_opts = resolved;
     return 0;
 }
 

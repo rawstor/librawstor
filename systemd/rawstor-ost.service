@@ -37,11 +37,12 @@ ExecStart=/usr/bin/rawstor-ost --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --
 Restart=always
 RestartSec=10
 # sysexits.h codes rawstor-ost exits with when retrying won't help:
-# EX_NOINPUT (66) the configured location doesn't exist and EX_NOPERM (77)
-# permission denied. Leave the unit failed instead of restart-looping;
-# other exit codes (e.g. EX_UNAVAILABLE for an upstream ost:// backend
-# that's merely down right now) still retry.
-RestartPreventExitStatus=66 77
+# EX_NOINPUT (66) the configured location doesn't exist, EX_NOPERM (77)
+# permission denied and EX_CONFIG (78) an invalid RAWSTOR_OPTS_* setting.
+# Leave the unit failed instead of restart-looping; other exit codes (e.g.
+# EX_UNAVAILABLE for an upstream ost:// backend that's merely down right
+# now) still retry.
+RestartPreventExitStatus=66 77 78
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
