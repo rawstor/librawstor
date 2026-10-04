@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from . import librawstor
-from .target import Target
+from .target import Target, object_spec
 
 
 class Location:
@@ -47,13 +47,17 @@ class Location:
 
     def create(
         self, *, size: int, width: int, chunk_size: int = 0,
+        stripe_width: int = 0,
+        failure_domain: int | str = librawstor.OBJ_DOMAIN_DEFAULT,
         uuid: str | None = None
     ) -> Target:
         return Target(
             librawstor.object_create_at(
                 self._uri, uuid,
-                librawstor.ObjectSpec(
-                    size=size, width=width, chunk_size=chunk_size)))
+                object_spec(
+                    size=size, width=width, chunk_size=chunk_size,
+                    stripe_width=stripe_width,
+                    failure_domain=failure_domain)))
 
     def info(self) -> librawstor.LocationInfo:
         return librawstor.location_info(self._uri)

@@ -19,6 +19,8 @@ typedef struct {
     PyObject_HEAD unsigned long long size;
     unsigned int width;
     unsigned long long chunk_size;
+    unsigned long long stripe_width;
+    unsigned int failure_domain;
 } PyObjectSpec;
 
 // ObjectSpec is Py_TPFLAGS_BASETYPE (subclassable from Python), and a
@@ -44,6 +46,8 @@ static PyObject* PyObjectSpec_new(
         self->size = 0;
         self->width = 0;
         self->chunk_size = 0;
+        self->stripe_width = 0;
+        self->failure_domain = 0;
     }
     return (PyObject*)self;
 }
@@ -53,9 +57,13 @@ PyObjectSpec_init(PyObjectSpec* self, PyObject* args, PyObject* kwargs) {
     long long size;
     unsigned int width;
     unsigned long long chunk_size = 0;
-    static char* kwlist[] = {"size", "width", "chunk_size", NULL};
+    unsigned long long stripe_width = 0;
+    unsigned int failure_domain = 0;
+    static char* kwlist[] = {"size",         "width",          "chunk_size",
+                             "stripe_width", "failure_domain", NULL};
     if (!PyArg_ParseTupleAndKeywords(
-            args, kwargs, "LI|K", kwlist, &size, &width, &chunk_size
+            args, kwargs, "LI|KKI", kwlist, &size, &width, &chunk_size,
+            &stripe_width, &failure_domain
         )) {
         return -1;
     }
@@ -66,13 +74,17 @@ PyObjectSpec_init(PyObjectSpec* self, PyObject* args, PyObject* kwargs) {
     self->size = (unsigned long long)size;
     self->width = width;
     self->chunk_size = chunk_size;
+    self->stripe_width = stripe_width;
+    self->failure_domain = failure_domain;
     return 0;
 }
 
 static PyObject* PyObjectSpec_repr(PyObjectSpec* self) {
     return PyUnicode_FromFormat(
-        "ObjectSpec(size=%llu, width=%u, chunk_size=%llu)", self->size,
-        self->width, self->chunk_size
+        "ObjectSpec(size=%llu, width=%u, chunk_size=%llu, stripe_width=%llu, "
+        "failure_domain=%u)",
+        self->size, self->width, self->chunk_size, self->stripe_width,
+        self->failure_domain
     );
 }
 
@@ -139,6 +151,52 @@ static int PyObjectSpec_set_chunk_size(
     return 0;
 }
 
+static PyObject*
+PyObjectSpec_get_stripe_width(PyObjectSpec* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLongLong(self->stripe_width);
+}
+
+static int PyObjectSpec_set_stripe_width(
+    PyObjectSpec* self, PyObject* value, void* Py_UNUSED(closure)
+) {
+    if (value == NULL) {
+        PyErr_SetString(
+            PyExc_TypeError, "Cannot delete stripe_width attribute"
+        );
+        return -1;
+    }
+
+    unsigned long long new_stripe_width = PyLong_AsUnsignedLongLong(value);
+    if (PyErr_Occurred()) {
+        return -1;
+    }
+    self->stripe_width = new_stripe_width;
+    return 0;
+}
+
+static PyObject*
+PyObjectSpec_get_failure_domain(PyObjectSpec* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLong(self->failure_domain);
+}
+
+static int PyObjectSpec_set_failure_domain(
+    PyObjectSpec* self, PyObject* value, void* Py_UNUSED(closure)
+) {
+    if (value == NULL) {
+        PyErr_SetString(
+            PyExc_TypeError, "Cannot delete failure_domain attribute"
+        );
+        return -1;
+    }
+
+    unsigned long new_failure_domain = PyLong_AsUnsignedLong(value);
+    if (PyErr_Occurred()) {
+        return -1;
+    }
+    self->failure_domain = (unsigned int)new_failure_domain;
+    return 0;
+}
+
 static PyGetSetDef PyObjectSpec_getset[] = {
     {"size", (getter)PyObjectSpec_get_size, (setter)PyObjectSpec_set_size, NULL,
      NULL},
@@ -146,6 +204,10 @@ static PyGetSetDef PyObjectSpec_getset[] = {
      NULL, NULL},
     {"chunk_size", (getter)PyObjectSpec_get_chunk_size,
      (setter)PyObjectSpec_set_chunk_size, NULL, NULL},
+    {"stripe_width", (getter)PyObjectSpec_get_stripe_width,
+     (setter)PyObjectSpec_set_stripe_width, NULL, NULL},
+    {"failure_domain", (getter)PyObjectSpec_get_failure_domain,
+     (setter)PyObjectSpec_set_failure_domain, NULL, NULL},
     {NULL, NULL, NULL, NULL, NULL}
 };
 
@@ -465,6 +527,8 @@ PyTypeObject* PyObjectSyncStateType = NULL;
 typedef struct {
     PyObject_HEAD unsigned long long size;
     unsigned int width;
+    unsigned long long chunk_size;
+    int member_role;
     int state;
     unsigned long long epoch;
     unsigned long long sync_id;
@@ -480,9 +544,10 @@ static void PyObjectMeta_dealloc(PyObjectMeta* self) {
 
 static PyObject* PyObjectMeta_repr(PyObjectMeta* self) {
     return PyUnicode_FromFormat(
-        "ObjectMeta(size=%llu, width=%u, state=%d, epoch=%llu, "
-        "sync_id=%llu)",
-        self->size, self->width, self->state, self->epoch, self->sync_id
+        "ObjectMeta(size=%llu, width=%u, chunk_size=%llu, member_role=%d, "
+        "state=%d, epoch=%llu, sync_id=%llu)",
+        self->size, self->width, self->chunk_size, self->member_role,
+        self->state, self->epoch, self->sync_id
     );
 }
 
@@ -494,6 +559,16 @@ PyObjectMeta_get_size(PyObjectMeta* self, void* Py_UNUSED(closure)) {
 static PyObject*
 PyObjectMeta_get_width(PyObjectMeta* self, void* Py_UNUSED(closure)) {
     return PyLong_FromUnsignedLong(self->width);
+}
+
+static PyObject*
+PyObjectMeta_get_chunk_size(PyObjectMeta* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromUnsignedLongLong(self->chunk_size);
+}
+
+static PyObject*
+PyObjectMeta_get_member_role(PyObjectMeta* self, void* Py_UNUSED(closure)) {
+    return PyLong_FromLong(self->member_role);
 }
 
 static PyObject*
@@ -533,6 +608,8 @@ PyObjectMeta_get_sync_id_history(PyObjectMeta* self, void* Py_UNUSED(closure)) {
 static PyGetSetDef PyObjectMeta_getset[] = {
     {"size", (getter)PyObjectMeta_get_size, NULL, NULL, NULL},
     {"width", (getter)PyObjectMeta_get_width, NULL, NULL, NULL},
+    {"chunk_size", (getter)PyObjectMeta_get_chunk_size, NULL, NULL, NULL},
+    {"member_role", (getter)PyObjectMeta_get_member_role, NULL, NULL, NULL},
     {"state", (getter)PyObjectMeta_get_state, NULL, NULL, NULL},
     {"epoch", (getter)PyObjectMeta_get_epoch, NULL, NULL, NULL},
     {"sync_id", (getter)PyObjectMeta_get_sync_id, NULL, NULL, NULL},
@@ -735,6 +812,8 @@ PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
         .size = py_spec->size,
         .width = py_spec->width,
         .chunk_size = py_spec->chunk_size,
+        .stripe_width = py_spec->stripe_width,
+        .failure_domain = py_spec->failure_domain,
     };
 
     RawstorSyncOp op;
@@ -773,6 +852,8 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
         .size = py_spec->size,
         .width = py_spec->width,
         .chunk_size = py_spec->chunk_size,
+        .stripe_width = py_spec->stripe_width,
+        .failure_domain = py_spec->failure_domain,
     };
 
     char target[65536];
@@ -906,6 +987,8 @@ PyObject* py_rawstor_object_spec(PyObject* Py_UNUSED(self), PyObject* args) {
     py_spec->size = spec.size;
     py_spec->width = spec.width;
     py_spec->chunk_size = spec.chunk_size;
+    py_spec->stripe_width = spec.stripe_width;
+    py_spec->failure_domain = spec.failure_domain;
 
     return (PyObject*)py_spec;
 }
@@ -924,6 +1007,8 @@ static PyObject* build_mirror_meta(const struct RawstorObjectMeta* meta) {
     }
     py_meta->size = meta->spec.size;
     py_meta->width = meta->spec.width;
+    py_meta->chunk_size = meta->spec.chunk_size;
+    py_meta->member_role = (int)meta->member_role;
     py_meta->state = (int)meta->sync_state.state;
     py_meta->epoch = meta->sync_state.epoch;
     py_meta->sync_id = meta->sync_state.sync_id;
@@ -940,8 +1025,10 @@ PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
 
-    /* rawstor_target_meta() returns one entry per ','-separated URI in
-     * `target` -- `count` must match that exactly. */
+    /* One entry per ','-separated URI in `target` is the first guess; the
+     * real member count comes back as the result (an mds:// target
+     * reports every member of the chunk), and a bigger one means the
+     * call has to be repeated with room for all of them. */
     size_t count = 1;
     for (const char* p = target; *p != '\0'; p++) {
         if (*p == ',') {
@@ -949,29 +1036,40 @@ PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
         }
     }
 
-    struct RawstorObjectMeta* metas =
-        PyMem_Malloc(count * sizeof(struct RawstorObjectMeta));
-    if (metas == NULL) {
-        return PyErr_NoMemory();
-    }
+    struct RawstorObjectMeta* metas = NULL;
+    ssize_t res;
+    for (;;) {
+        struct RawstorObjectMeta* new_metas =
+            PyMem_Realloc(metas, count * sizeof(struct RawstorObjectMeta));
+        if (new_metas == NULL) {
+            PyMem_Free(metas);
+            return PyErr_NoMemory();
+        }
+        metas = new_metas;
 
-    RawstorSyncOp op;
-    int ires = rawstor_sync_op_init(&op);
-    if (ires < 0) {
-        PyMem_Free(metas);
-        set_os_error(-ires);
-        return NULL;
+        RawstorSyncOp op;
+        int ires = rawstor_sync_op_init(&op);
+        if (ires < 0) {
+            PyMem_Free(metas);
+            set_os_error(-ires);
+            return NULL;
+        }
+        int mres = rawstor_target_meta(
+            op.queue, target, offset, metas, count, rawstor_sync_op_cb, &op
+        );
+        res = rawstor_sync_op_wait(&op, mres);
+        rawstor_sync_op_destroy(&op);
+        if (res < 0) {
+            PyMem_Free(metas);
+            set_os_error((int)-res);
+            return NULL;
+        }
+        if ((size_t)res <= count) {
+            break;
+        }
+        count = (size_t)res;
     }
-    int mres = rawstor_target_meta(
-        op.queue, target, offset, metas, count, rawstor_sync_op_cb, &op
-    );
-    ssize_t res = rawstor_sync_op_wait(&op, mres);
-    rawstor_sync_op_destroy(&op);
-    if (res < 0) {
-        PyMem_Free(metas);
-        set_os_error((int)-res);
-        return NULL;
-    }
+    count = (size_t)res;
 
     PyObject* list = PyList_New((Py_ssize_t)count);
     if (list == NULL) {
