@@ -1,5 +1,35 @@
 # DRAFT: Rawstor High-level architecture
 
+## Status
+
+Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. Checked against
+the code on 2026-10-04.
+
+This page is an early draft; the table maps its components to what exists
+today.
+
+| Component / idea | Status | Where |
+|---|---|---|
+| OST (object storage server) | ✅ | `ost/` (`rawstor-ost`) |
+| OST ops: create / read / write / erase / delete | ✅ | `ALLOCATE` / `READ` / `WRITE` / `DISCARD`, `WRITE_ZEROES` / `RELEASE` ([Protocol](protocol.md)) |
+| Chunk size is a power of two | ✅ | `chunk_shift` in `include/rawstor/protocol.h` |
+| Chunk id with a version (snapshots) | ✅ | `snapshot_id`, see [MDS design](mds.md) |
+| MDS (object → chunks map) | ✅ | `mds/` (`rawstor-mds`) |
+| `getObj` / `getObjPart` / `getFreeOst` | ✅ | replaced by `OBJ_OPEN` + HRW placement (`mds/src/placement.cpp`) |
+| MDS sharding / clustering | ❌ | v1 is a single instance |
+| MGS (management/config server) | ❌ | replaced by a static `topology.conf` |
+| Client library | ✅ | `src/`, `include/rawstor/` |
+| Client-side redundancy (writes to multiple OSTs) | ✅ | mirroring, `src/chunk.cpp` |
+| Parallel reads from multiple OSTs | ❌ | reads go to one IN-SYNC mirror |
+| Hashsum | 🟡 | transport hash only (xxh3); no stored checksums |
+| Compression / encryption | ❌ | — |
+| `flush` / `snapshot` in the client API | ✅ | `rawstor_object_flush()`; `rawstor_target_create()` on a target with a snapshot segment |
+| Block storage client (VM) | ✅ | `vhost/`, `vhost-qemu/`, `vduse/` |
+| S3 gateway | ❌ | — |
+| User-chosen chunk size / distribution strategy | ✅ | `chunk_size`, `stripe_width`, `failure_domain` |
+| Mutable objects (block storage) | ✅ | — |
+| Immutable objects (object storage mode) | ❌ | — |
+
 Status: early design draft, predates chunk-addressing, mirroring, snapshots
 and the MDS (see [Concepts](concepts.md), [Mirroring](mirroring.md)).
 Copied from [rawstor/rawstor_docs](https://github.com/rawstor/rawstor_docs)

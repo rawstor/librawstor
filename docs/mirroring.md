@@ -1,5 +1,32 @@
 # Mirroring: Failure Model and Recovery
 
+## Status
+
+Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. Checked against
+the code on 2026-10-04.
+
+| Feature | Stage | Status | Where |
+|---|---|---|---|
+| Per-copy metadata (`state`, `epoch`, `sync_id`, history) on `file://` | 1 | ✅ | `src/file_backend.cpp` |
+| Per-copy metadata on `lvm://` / `zfs://` (LVM tags, ZFS user properties) | 1 | ✅ | `src/lvm_backend.cpp`, `src/zfs_backend.cpp` |
+| `META`, `SET_SYNC_STATE`, `FLUSH` opcodes | 1 | ✅ | `include/rawstor/protocol.h`, `ost/src/client.cpp` |
+| Metadata transitions fsynced before the ack | 1 | ✅ | `src/chunk.cpp` |
+| `rawstor_target_meta()` / `rawstor_target_set_member_sync_state()` | 1 | ✅ | `include/rawstor/target.h` |
+| Quorum at open (> N/2), split-brain detection | 2 | ✅ | `src/chunk.cpp` |
+| Degraded open, F10 recreate of a missing copy | 2 | ✅ | `src/chunk.cpp` |
+| Degrade & continue (F1), write freeze below quorum for N ≥ 3 | 2 | ✅ | `src/chunk.cpp` |
+| Read failover and read-repair (F2) | 2 | ✅ | `src/chunk.cpp` |
+| Clean close (all copies `CLEAN`) | 2 | ✅ | `src/chunk.cpp` |
+| Online resync with in-memory bitmap, region locks, zero-region `write_zeroes` | 3 | ✅ | `src/chunk.cpp` (`RESYNC_CHUNK`) |
+| Reconnect probe and automatic rejoin of STALE mirrors | 3 | ✅ | `src/chunk.cpp` (`_probe_watch()`) |
+| `rawstor show -v` per-chunk / per-mirror state | — | ✅ | `cli/show.c` |
+| `rawstor resolve TARGET --winner=N [--offset]` | — | ✅ | `cli/resolve.c` |
+| Force-open below quorum (CLI / opts) | — | ❌ | — |
+| Persistent write-intent bitmap (resumable resync, cheaper F5) | 4 | ❌ | — |
+| MDS witness in quorum | 4 | ❌ | see [MDS design](mds.md), stage 3 |
+| Stored checksums / scrub | 4 | ❌ | — |
+| Fastest-mirror read selection | 4 | ❌ | — |
+
 ## Overview
 
 A comma-separated target list (see [Concepts](concepts.md)) makes the client keep N identical copies of a chunk on different backends -- each copy is a **slot**, addressed by one URI in the list. A plain (non-`mds://`) target is the degenerate single-chunk case: the whole object it addresses **is** that one chunk, so everything below applies to it directly; an `mds://` object's own chunks (`docs/mds.md`) each get this same treatment independently, possibly with different widths. This document defines the failure model for N-way mirroring: what can fail, how the client reacts, and how byte-for-byte identity of the copies is restored afterwards. Erasure coding is out of scope.

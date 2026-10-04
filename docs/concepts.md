@@ -1,5 +1,27 @@
 # Concepts
 
+## Status
+
+Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. Checked against
+the code on 2026-10-04.
+
+| Feature | Status | Where |
+|---|---|---|
+| `ost://`, `file://`, `lvm://`, `zfs://`, `mds://` schemes | ✅ | `src/backend.cpp`, `src/*_backend.cpp` |
+| Comma-separated location/target lists, duplicate URIs rejected | ✅ | `src/location.cpp`, `src/target.cpp` |
+| `\,` escaping inside a URI | ✅ | `librawstd/src/uri.cpp` |
+| Mirroring policy (`ost://a,ost://b`) | ✅ | `src/chunk.cpp`, see [Mirroring](mirroring.md) |
+| Data-locality policy (`file://` as a local cache in front of `ost://`) | ❌ | a mixed list is treated as a plain mirror |
+| Object / Chunk / Slot runtime model | ✅ | `src/object.cpp`, `src/chunk.cpp`, `src/slot.cpp` |
+| Internal multi-chunk form, chunk offset path segment | ✅ | `src/target.cpp` (`parse_target_path()`) |
+| `rawstor_target_chunks()` | ✅ | `include/rawstor/target.h` |
+| Snapshot target (`.../<uuid>/<snapshot_uuid>`), read-only open | ✅ | `src/target.cpp` |
+| `mds://` object-level snapshot | ✅ | `src/mds_backend.cpp` |
+| Per-slot native CoW snapshot: `zfs://` | ✅ | `src/zfs_backend.cpp` |
+| Per-slot native CoW snapshot: `ost://` (relayed to the server's backend) | ✅ | `src/ost_backend.cpp` |
+| Per-slot native CoW snapshot: `lvm://` | ❌ | `-ENOTSUP` (waits for an lvm-thin backend) |
+| Per-slot native CoW snapshot: `file://` | ❌ | `-ENOTSUP` by design (no CoW) |
+
 ## Overview
 
 Rawstor addresses data through six related concepts, each with its own
@@ -132,7 +154,7 @@ A **location** specifies the address of a backend data store (or a list
 of backends). It is expressed as a comma-separated list of URIs. The URI
 format follows the standard scheme `<scheme>://<endpoint>`.
 
-Currently, four URI schemes are supported:
+Currently, five URI schemes are supported:
 
 | Scheme | Description |
 |--------|-------------|
