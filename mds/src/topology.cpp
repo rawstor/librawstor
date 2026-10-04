@@ -14,10 +14,10 @@
 
 namespace {
 
-// Splits a leaf-first path, "server[/rack[/row[/dc]]]", into `out`'s
-// outermost-first dc, row, rack, server slots. Only the server is
-// required; a level left out stays empty, so every entry that leaves it
-// out shares that one implicit domain.
+// Splits a root-first path, "[[[dc/]row/]rack/]server", into `out`'s
+// dc, row, rack, server slots. Only the server is required; the path may
+// start at any level, and a level left out stays empty, so every entry
+// that leaves it out shares that one implicit domain.
 void split_path(const std::string& s, std::string (&out)[4]) {
     std::string parts[4];
     size_t n = 0;
@@ -38,7 +38,7 @@ void split_path(const std::string& s, std::string (&out)[4]) {
         begin = end + 1;
     }
     for (size_t i = 0; i < 4; ++i) {
-        out[3 - i] = i < n ? parts[i] : std::string();
+        out[i] = i < 4 - n ? std::string() : parts[i - (4 - n)];
     }
 }
 

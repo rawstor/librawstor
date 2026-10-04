@@ -520,7 +520,8 @@ generator.
   `rawstd_hash_stable()` (FNV-1a with a 64-bit finalizer), so placement is
   the same whether or not the MDS is built with libxxhash.
 - **Topology = tree**: `root -> dc -> row -> rack -> server -> ost(leaf)`
-  (a topology line's path is `server[/rack[/row[/dc]]]`, leaf first; a
+  (a topology line's path is `[[[dc/]row/]rack/]server`, root first,
+  ending at the OST's server; only the server is required, and a leading
   level left out is one implicit domain shared by every entry leaving it
   out). Levels are numbered from
   the leaf up (`RAWSTOR_OBJ_DOMAIN_OST = 1` ... `DC = 5`, 0 = unset, i.e. the

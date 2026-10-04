@@ -39,9 +39,9 @@ MDS_DATADIR=/var/lib/rawstor-mds
 
 mkdir -p ${MDS_DATADIR}
 
-# One line per OST: <uuid> <location> <weight> <server>[/<rack>[/<row>[/<dc>]]]
+# One line per OST: <uuid> <location> <weight> [[[<dc>/]<row>/]<rack>/]<server>
 cat > ${MDS_DATADIR}/topology.conf <<EOF
-$(cat /proc/sys/kernel/random/uuid) ost://${OST_ADDR} 100 host1/rack1/row1/dc1
+$(cat /proc/sys/kernel/random/uuid) ost://${OST_ADDR} 100 dc1/row1/rack1/host1
 EOF
 
 rawstor-mds \
@@ -419,7 +419,7 @@ the placed OSTs directly once it has resolved an object's own chunk map.
 | `-h, --help` | Show help message and exit. |
 | `-b, --bind ADDR` | Bind address in `<ip>:<port>` format (e.g., `127.0.0.1:7776`). |
 | `-d, --db PATH` | SQLite database file holding the chunk map (created if missing). |
-| `-t, --topology PATH` | Static topology config file: one `<uuid> <location> <weight> <server>[/<rack>[/<row>[/<dc>]]]` line per OST, `<location>` being a single location URI (`ost://host:port`; a client-local one such as `file://` only makes sense on a single host; to put several stores under one entry, list a `rawstor-ost` serving them all) (see [MDS design](https://github.com/rawstor/librawstor/blob/main/docs/mds.md)). |
+| `-t, --topology PATH` | Static topology config file: one `<uuid> <location> <weight> [[[<dc>/]<row>/]<rack>/]<server>` line per OST (failure domains from the root down; only `<server>` is required), `<location>` being a single location URI (`ost://host:port`; a client-local one such as `file://` only makes sense on a single host; to put several stores under one entry, list a `rawstor-ost` serving them all) (see [MDS design](https://github.com/rawstor/librawstor/blob/main/docs/mds.md)). |
 | `--queue-size SIZE` | RawIO queue (`io_uring`) depth. Default: `4096`. |
 | `-w, --workers N` | Number of worker threads, each with its own client connections and I/O queue, all accepting on the same listening socket and sharing one database (default: `4`). |
 | `-r, --reconstruct` | Rebuild the chunk map from a LIST+META scan of every OST in the topology before serving -- for recovering from a lost or corrupted database. |
@@ -429,8 +429,8 @@ the placed OSTs directly once it has resolved an object's own chunk map.
 Serve a topology of two OSTs:
 ```bash
 cat > topology.conf <<EOF
-018f4e2a-1000-7000-8000-000000000001 ost://host1:7777 100 host1/rack1/row1/dc1
-018f4e2a-1000-7000-8000-000000000002 ost://host2:7777 100 host2/rack1/row1/dc1
+018f4e2a-1000-7000-8000-000000000001 ost://host1:7777 100 dc1/row1/rack1/host1
+018f4e2a-1000-7000-8000-000000000002 ost://host2:7777 100 dc1/row1/rack1/host2
 EOF
 rawstor-mds -b 0.0.0.0:7776 -d /var/lib/rawstor-mds/mds.db -t topology.conf
 ```
