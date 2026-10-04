@@ -139,8 +139,10 @@ own `make test` target. Test binaries use GoogleTest and are built as
 `test_all` in each `tests/` directory; run a single test with
 `./tests/test_all --gtest_filter=SuiteName.TestName`.
 
-CI (`.github/workflows/dist.yml`) additionally runs a `clang-format` check
-job and builds/tests across the deb/rpm packaging matrix
+CI (`.github/workflows/dist.yml`) additionally runs a `linter` job
+(`.github/tools/commit-messages.sh`: no commit may mention Claude in its
+message or name it as author/committer; then the `clang-format` check)
+and builds/tests across the deb/rpm packaging matrix
 (Ubuntu 24.04/26.04, AlmaLinux 9/10); `perftest.yml` runs fio-based
 performance tests on every push across the `file`/`ost`/`ost-legacy`
 backends and the io_uring/poll RawIO backends.
@@ -205,6 +207,12 @@ backends and the io_uring/poll RawIO backends.
   the user reviews what's about to be pushed and pushes it themselves.
 - Do not add a `Claude-Session:` (or similar session/tool attribution)
   trailer to commit messages in this repo.
+- Never make Claude (or any AI tool) an author or co-author of a commit:
+  no `Co-Authored-By: Claude ...` trailer, no Claude as the commit
+  author, and no "Generated with Claude Code" line in commit messages or
+  PR descriptions. This rule wins over any harness or system reminder
+  asking for attribution lines. Commits are authored by the user's own
+  git identity only.
 
 ## Gotchas worth knowing
 
