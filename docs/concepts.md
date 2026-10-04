@@ -11,7 +11,7 @@ the code on 2026-10-04.
 | Comma-separated location/target lists, duplicate URIs rejected | ✅ | `src/location.cpp`, `src/target.cpp` |
 | `\,` escaping inside a URI | ✅ | `librawstd/src/uri.cpp` |
 | Mirroring policy (`ost://a,ost://b`) | ✅ | `src/chunk.cpp`, see [Mirroring](mirroring.md) |
-| Data locality (`file://` on the hypervisor + `ost://`) | ✅ | a regular mirror: reads go to the first IN-SYNC member in list order, so list `file://` first (`src/chunk.cpp`) |
+| Data locality (`file://` on the hypervisor + `ost://`) | 🟡 | works as a regular mirror with local reads; no cache / primary-store asymmetry (see *Multiple backends*) |
 | Object / Chunk / Slot runtime model | ✅ | `src/object.cpp`, `src/chunk.cpp`, `src/slot.cpp` |
 | Internal multi-chunk form, chunk offset path segment | ✅ | `src/target.cpp` (`parse_target_path()`) |
 | `rawstor_target_chunks()` | ✅ | `include/rawstor/target.h` |
@@ -178,6 +178,21 @@ to specific policies:
 |---------|----------|
 | `ost://host1:port1,ost://host2:port2` | **Mirroring** – both backends contain identical data. |
 | `file:///data/folder,ost://host:port` | **Data locality** – the file backend serves as a local cache or fast access path, while the OST backend is the primary remote store. |
+
+Today data locality is plain mirroring (see [Mirroring](mirroring.md)) with
+the local copy listed first: reads are served from the first IN-SYNC member
+in list order, so they stay on the hypervisor's own disk. The two copies are
+still equal mirrors, not a cache in front of a primary store:
+
+- A write is acknowledged only once it has completed on both copies, so
+  write latency is the remote OST's.
+- The local copy is a full copy of the object, not a cache with eviction.
+- With two copies, an open needs both reachable (quorum is > N/2): if
+  either the local disk or the OST is down, the object does not open
+  automatically.
+- After a client crash with both copies DIRTY (case F5 in
+  [Mirroring](mirroring.md)), the first copy in the list, the local one,
+  wins and the remote copy is resynced from it.
 
 **Syntax rules:**
 - Do not add spaces between URIs – use a single comma: `uri1,uri2`
