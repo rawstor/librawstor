@@ -86,14 +86,17 @@ RawstdUUID new_idempotency_key() {
 // non-nil snapshot_id to remove() on file:// or classic LVM, docs/mds.md's
 // "Snapshots": no retry will ever make a backend grow native CoW support
 // it doesn't have), or the server doesn't know the command at all (ENOSYS
-// -- e.g. an older rawstor-ost/rawstor-mds).
+// -- e.g. an older rawstor-ost/rawstor-mds), or the operation was
+// cancelled on purpose through its rawio::Queue (ECANCELED -- e.g. a
+// shutdown; a backend closed under an operation fails it with
+// ECONNABORTED instead, which stays retryable).
 // Anything else defaults to retryable -- safer to spend a few pointless
 // retries on a genuinely transient rejection we don't recognize than to
 // silently give up on one that would have gone away on its own (e.g.
 // EBUSY, ENOSPC, EIO).
 bool is_permanent_backend_error(int error) {
     return error == ENOENT || error == EEXIST || error == EINVAL ||
-           error == ENOTSUP || error == ENOSYS;
+           error == ENOTSUP || error == ENOSYS || error == ECANCELED;
 }
 
 // Binds `backend` to `id`/`offset`'s live version, or one previously
@@ -133,6 +136,11 @@ auto retry_n_async(rawio::Queue& queue, const char* func_name, F&& attempt)
         try {
             co_return co_await attempt();
         } catch (const std::exception& e) {
+            // A cancellation was asked for: stop, and nothing to report.
+            auto* error = dynamic_cast<const std::system_error*>(&e);
+            if (error != nullptr && error->code().value() == ECANCELED) {
+                throw;
+            }
             if (i == rawstor_opts_io_attempts()) {
                 rawstd_error(
                     "%s: error: %s; attempt: %u of %u; failing...\n", func_name,
@@ -164,8 +172,13 @@ auto retry_n_async(rawio::Queue& queue, const char* func_name, F&& attempt)
             // ride out) must not burn the whole budget in one shot on a
             // failure that has nothing to do with `attempt()` itself.
             // Skip the wait and retry immediately instead.
+            // A cancelled wait is a cancelled retry, not a failed timer.
             try {
                 co_await queue.timeout(delay_ms * 1000u);
+            } catch (const std::system_error& e) {
+                if (e.code().value() == ECANCELED) {
+                    throw;
+                }
             } catch (const std::exception&) {
             }
         }
@@ -310,10 +323,13 @@ rawstd::Task<T> Slot::_with_retry(
             }
 
             if (is_permanent_backend_error(error)) {
-                rawstd_error(
-                    "IO %s: error on %s: %s; not retryable; failing...\n",
-                    func_name, be->str().c_str(), std::strerror(error)
-                );
+                // A cancellation was asked for: nothing to report.
+                if (error != ECANCELED) {
+                    rawstd_error(
+                        "IO %s: error on %s: %s; not retryable; failing...\n",
+                        func_name, be->str().c_str(), std::strerror(error)
+                    );
+                }
                 throw;
             }
 
@@ -411,6 +427,10 @@ rawstd::Task<T> Slot::_with_retry(
                 // out) cut the retry budget short.
                 try {
                     co_await _queue.timeout(delay_ms * 1000u);
+                } catch (const std::system_error& e) {
+                    if (e.code().value() == ECANCELED) {
+                        throw;
+                    }
                 } catch (const std::exception&) {
                 }
             }

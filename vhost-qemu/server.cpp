@@ -117,8 +117,14 @@ Server::Server(
     _fd(open_unix_socket(_socket_path)) {
     int res = rawstor_initialize(NULL);
     if (res) {
+        // No destructor runs for a constructor that throws: remove the
+        // socket here, or it blocks the next start's bind().
+        try {
+            close_unix_socket(_socket_path, _fd);
+        } catch (...) {
+        }
         RAWSTD_THROW_SYSTEM_ERROR(-res);
-    };
+    }
 }
 
 Server::~Server() {

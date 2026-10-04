@@ -94,9 +94,18 @@ Default values are shown below.
 | `RAWSTOR_OPTS_TCP_USER_TIMEOUT` | `5000` | TCP user timeout, in milliseconds (ms) (Linux `TCP_USER_TIMEOUT`). Defines how long transmitted data may remain unacknowledged before the connection is closed. |
 | `RAWSTOR_OPTS_LIST_LIMIT` | `1000` | Server-side page size cap for list operations: the maximum number of objects returned in a single call, regardless of the caller-requested limit. Larger listings are paginated across multiple calls. |
 | `RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT` | `128` | Per-session cap on writes dispatched to a `file://` backing store without their completion arriving yet; writes past the cap wait for a dispatch slot instead of being sent immediately. |
-| `RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY` | `256M` | Per-session cap on writes queued behind `RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT` but not yet dispatched to a `file://` backing store; a write that would push the backlog over the cap fails with `EBUSY` instead of queuing. Takes either a plain byte count or a size with a unit suffix (`B`, `K`, `M`, `G`, `T`, `P`, `E`), e.g. `256M`. |
+| `RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY` | `256M` | Per-session cap on writes queued behind `RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT` but not yet dispatched to a `file://` backing store; a write that would push the backlog over the cap fails with `EBUSY` instead of queuing. Takes a size with a mandatory unit suffix (`B`, `K`, `M`, `G`, `T`, `P`, `E`), e.g. `256M` or `4096B`; a bare number is rejected. |
 
 > **Note:** All timeout values are expressed in milliseconds unless stated otherwise.
+
+An unset variable takes its default. A set one must be valid -- a plain
+decimal integer within the variable's range (or, for a size, a number with a
+unit) -- otherwise the program logs the variable and the accepted range and
+exits with `EX_CONFIG` (78), which the shipped systemd units do not restart.
+`0` is accepted only where it means something: it disables
+`RAWSTOR_OPTS_SO_SNDTIMEO`, `RAWSTOR_OPTS_SO_RCVTIMEO`,
+`RAWSTOR_OPTS_TCP_USER_TIMEOUT` and the retry backoff, and allows no backlog in
+`RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY`.
 
 ## rawstor-ost – OST Protocol Server
 
