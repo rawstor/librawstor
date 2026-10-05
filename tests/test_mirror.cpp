@@ -858,9 +858,11 @@ TEST(MirrorResyncTest, first_write_during_rejoin_keeps_identities_equal) {
     // disk: the resync is then still waiting for that write to finish.
     bool window = false;
     for (int i = 0; i < 100000 && !window; ++i) {
+        // The rejoin moves the set to a new sync_id first, on member 0.
+        RawstorObjectSyncState a = disk_sync_state(members.meta(0));
         RawstorObjectSyncState b = disk_sync_state(members.meta(1));
         window = b.state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN &&
-                 b.sync_id == fresh.sync_id;
+                 b.sync_id != fresh.sync_id && b.sync_id == a.sync_id;
         if (!window) {
             rawio_wait_timeout(queue, 1);
         }
@@ -1337,10 +1339,10 @@ TEST(MirrorQuorumTest, clean_close_stable_identity) {
 
 /*
  * A stale member whose own ancestor sync_id already records its exclusion
- * does not change the membership: the first write keeps the identity, and
- * the member rejoins on it.
+ * does not change the membership: the first write keeps the identity.
+ * Its rejoin does, exactly once.
  */
-TEST(MirrorQuorumTest, recorded_stale_member_keeps_identity) {
+TEST(MirrorQuorumTest, stale_member_bumps_identity_on_rejoin_only) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000af");
 
@@ -1372,23 +1374,21 @@ TEST(MirrorQuorumTest, recorded_stale_member_keeps_identity) {
     std::string ping = "ping";
     object_write(queue, object, ping.data(), ping.size(), 0, 0);
 
-    RawstorObjectSyncState a = disk_sync_state(members.meta(0));
-    EXPECT_EQ(a.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
-    EXPECT_EQ(a.sync_id, fresh.sync_id);
-    EXPECT_EQ(a.epoch, fresh.epoch);
-
     EXPECT_TRUE(
         wait_member_synced(queue, members.target(0), members.target(1))
     );
     object_close_clean(queue, object);
 
-    a = disk_sync_state(members.meta(0));
-    RawstorObjectSyncState b = disk_sync_state(members.meta(1));
-    EXPECT_EQ(a.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
-    EXPECT_EQ(a.sync_id, fresh.sync_id);
-    EXPECT_EQ(a.epoch, fresh.epoch);
-    EXPECT_EQ(b.sync_id, fresh.sync_id);
-    EXPECT_EQ(b.epoch, fresh.epoch);
+    RawstorObjectMeta am{};
+    RawstorObjectMeta bm{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &am), 0);
+    ASSERT_EQ(target_meta(queue, members.target(1), &bm), 0);
+    EXPECT_EQ(am.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_NE(am.sync_state.sync_id, fresh.sync_id);
+    EXPECT_EQ(am.sync_state.sync_id_history[0], fresh.sync_id);
+    EXPECT_EQ(am.sync_state.epoch, fresh.epoch + 1);
+    EXPECT_EQ(bm.sync_state.sync_id, am.sync_state.sync_id);
+    EXPECT_EQ(bm.sync_state.epoch, am.sync_state.epoch);
 }
 
 /*

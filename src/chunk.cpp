@@ -783,10 +783,11 @@ void Chunk::_reconcile_sync_set() {
     }
 
     /*
-     * sync_id changes only with the membership of the set. A member whose
-     * own record already proves it stale -- an ancestor or blank sync_id,
-     * or SYNCING -- was excluded by an earlier change, and reopening
-     * without it changes nothing. One that is unreachable (its copy may
+     * sync_id changes only with the membership of the set (a rejoin
+     * moves it too, _run_rejoin_barrier()). A member whose own record
+     * already proves it stale -- an ancestor or blank sync_id, or
+     * SYNCING -- was excluded by an earlier change, and reopening without
+     * it changes nothing. One that is unreachable (its copy may
      * still carry the current sync_id) or excluded by size alone (F11)
      * would read as in-sync at the next open: its exclusion is recorded
      * by the dirty gate, with a new sync_id, before the first write.
@@ -1583,8 +1584,8 @@ rawstd::DetachedTask Chunk::_resync_finish() {
     std::weak_ptr<void> alive = _alive;
 
     // All chunks are copied and no client write is in flight: the member is
-    // byte-identical to the in-sync set. Adopt the current identity
-    // durably, then let the member serve reads.
+    // byte-identical to the in-sync set. Move the set to a new identity,
+    // adopt it durably, then let the member serve reads.
     size_t idx = _resync->idx;
     // See _resync_sweep(): this resync may be aborted (a concurrent write
     // duplicated onto the still-SYNCING target can fail right up until the
@@ -1616,6 +1617,27 @@ rawstd::DetachedTask Chunk::_resync_finish() {
         return alive.expired() || _resync == nullptr ||
                _resync->generation != generation;
     };
+
+    // Gate has no queue of its own: re-check after every wake-up.
+    while (_meta_gate.running()) {
+        co_await _meta_gate.settle();
+        if (gone()) {
+            co_return;
+        }
+    }
+
+    try {
+        co_await _run_rejoin_barrier();
+    } catch (const std::system_error&) {
+        if (!gone()) {
+            _resync_abort("sync set update failed");
+        }
+        co_return;
+    }
+
+    if (gone()) {
+        co_return;
+    }
 
     // Neither _meta_gate nor client writes are held off while this writes
     // to a member that may never answer. Instead the member joins the set
@@ -1686,6 +1708,59 @@ rawstd::DetachedTask Chunk::_resync_finish() {
     }
 
     _resync_maybe_start();
+}
+
+/*
+ * A rejoin changes the membership as well: the in-sync members move to a
+ * new sync_id (docs/mirroring.md, When sync_id changes) before the
+ * rejoining member adopts it. Until then that member is still SYNCING on
+ * its old record, so an interruption leaves it stale either way. The
+ * caller has waited for _meta_gate to settle.
+ */
+rawstd::Task<void> Chunk::_run_rejoin_barrier() {
+    _meta_gate.begin();
+
+    try {
+        // The new sync_id also records any exclusion still pending (a
+        // member degraded while CLEAN), as the dirty gate would.
+        size_t recorded_stale = _unrecorded_stale;
+
+        RawstorObjectSyncState m = _bump_sync_state();
+        if (!_dirty) {
+            m.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+        }
+
+        co_await _run_meta_fan_out(m);
+
+        size_t survivors = _in_sync_count();
+
+        if (survivors == 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+
+        if (_below_write_quorum(survivors)) {
+            rawstd_error(
+                "Mirror survivors below write quorum: freezing writes\n"
+            );
+            _writes_frozen = true;
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+
+        _epoch = m.epoch;
+        _sync_id = m.sync_id;
+        memcpy(_sync_id_history, m.sync_id_history, sizeof(_sync_id_history));
+        _unrecorded_stale -= recorded_stale;
+        for (Member& mirror : _members) {
+            if (mirror.state == MemberState::IN_SYNC) {
+                mirror.meta.sync_state = m;
+            }
+        }
+    } catch (...) {
+        _meta_gate.end();
+        throw;
+    }
+
+    _meta_gate.end();
 }
 
 void Chunk::_resync_abort(const char* reason) noexcept {

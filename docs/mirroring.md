@@ -2,9 +2,9 @@
 
 ## Status
 
-Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
-*Stage* is this document's own numbering (see
-*Implementation stages*); [MDS design](mds.md) numbers its stages separately.
+Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. *Stage* is this
+document's own numbering (see *Implementation stages*); [MDS design](mds.md)
+numbers its stages separately.
 
 | Feature | Stage | Status | Where |
 |---|---|---|---|
@@ -56,7 +56,7 @@ Each backend stores, next to the chunk's data, a metadata record (an extension o
 | `size` | uint64 | Logical chunk size (as today) |
 | `state` | enum | `CLEAN` \| `DIRTY` \| `SYNCING` |
 | `epoch` | uint64 | Monotonic counter; bumped on every change of mirror-set health/membership |
-| `sync_id` | uint64 | Random id of the current sync set; regenerated only when the set's membership shrinks (see *When `sync_id` changes*) |
+| `sync_id` | uint64 | Random id of the current sync set; regenerated only when the set's membership changes (see *When `sync_id` changes*) |
 | `sync_id_history[4]` | uint64[] | Previous `sync_id`s (ancestry), DRBD-generation-UUID style |
 
 `STALE` is not stored — it is derived by comparing copies.
@@ -74,7 +74,7 @@ stateDiagram-v2
     CLEAN --> STALE : missed writes while offline
     STALE --> SYNCING : rejoin, resync starts (F7)
     SYNCING --> SYNCING : crash mid-resync, restart (F8)
-    SYNCING --> DIRTY : resync done, source sync_id (IN-SYNC)
+    SYNCING --> DIRTY : resync done, set's new sync_id (IN-SYNC)
     note right of STALE
         derived, never stored:
         an ancestor sync_id,
@@ -132,23 +132,30 @@ to the others, reached one of two ways:
 A STALE copy is excluded from reads and writes. Once it is reachable again
 (the reconnect probe, or the next open), an online resync copies the
 authoritative data onto it (`SYNCING`), and on completion it joins the
-current sync set as IN-SYNC.
+sync set as IN-SYNC, under the new `sync_id` its joining gives the set.
 
 ### When `sync_id` changes
 
-A `sync_id` names a membership: the set of copies holding every
+A `sync_id` names a membership: the set of IN-SYNC copies holding every
 acknowledged write. It is regenerated (with `epoch`+1, the old one pushed
-to history) only when that membership shrinks, i.e. a copy that could
-still read as part of the current set is excluded from it:
+to history) exactly when that membership changes, in either direction:
 
-- **at runtime**, a member degraded by a write/session/read-repair
-  failure (F1, F2, F6) — behind the degrade barrier if the chunk is
-  `DIRTY`, otherwise by the dirty gate before the first write;
-- **at open**, a copy left out without its own record proving it stale:
-  an unreachable one (F4 — its record may well carry the current
+- **A copy leaves the set at runtime**: a member degraded by a
+  write/session/read-repair failure (F1, F2, F6) — behind the degrade
+  barrier if the chunk is `DIRTY`, otherwise by the dirty gate before the
+  first write.
+- **A copy is left out at open without its own record proving it
+  stale**: an unreachable one (F4 — its record may well carry the current
   `sync_id`, nothing tells otherwise) or one excluded by size alone with
-  the current `sync_id` (F11). The new `sync_id` is recorded by the
-  dirty gate, before the first write is acknowledged.
+  the current `sync_id` (F11). The new `sync_id` is recorded by the dirty
+  gate, before the first write is acknowledged.
+- **A copy rejoins** (F7): once its resync is done, the IN-SYNC copies move
+  to a new `sync_id` first, then the rejoining copy adopts it. Interrupted
+  in between, the copy is still `SYNCING` on its old record — stale either
+  way. Data-only quorum would be safe without this bump (the copies are
+  identical), but a record naming the old membership — such as a witness
+  record whose update failed (see [MDS design](mds.md#witness-stage-3)) —
+  must never match a copy of the new one.
 
 Everything else keeps the identity:
 
@@ -157,13 +164,11 @@ Everything else keeps the identity:
   `SYNCING` is already excluded by its own record, so a session that
   starts and ends without it — e.g. it stays unreachable to the probe, or
   its resync is interrupted again — writes the same `sync_id`/`epoch`.
-- **Rejoin** (F7): a resynced copy adopts the current `sync_id`/`epoch`;
-  the set grows, but no copy needs to be told it fell behind.
 - **Mark `DIRTY`, clean close**: only `state` changes.
 
-Two exceptions write a new `sync_id` without a membership change: a legacy
-set (every copy on `sync_id` 0) gets its first one at the first write, and
-`rawstor resolve` (F9) gives its winners a new dominant one.
+Two more cases write a new `sync_id`: a legacy set (every copy on
+`sync_id` 0) gets its first one at the first write, and `rawstor resolve`
+(F9) gives its winners a new dominant one.
 
 The open path cannot tell an unreachable copy excluded in an earlier
 session from one that just went down, so every session that starts with a
@@ -264,7 +269,7 @@ sequenceDiagram
 | F4 | OST unreachable at open | connect failure | Reachable > N/2 → degraded open on the majority (it is guaranteed to contain the newest `sync_id`); on survivors `epoch`+1 / new `sync_id` **before the first write ack**. Reachable ≤ N/2 (N=2 with one down falls here) → **auto-start refused**, manual force-open only (not yet implemented) | F7 when it returns |
 | F5 | Client crash with writes in flight | at next open: all copies `DIRTY` with the same `sync_id` | All copies are "valid" (they diverge only in unacknowledged regions). Deterministic winner: the first copy in the target list | v1: full online resync of the losers from the winner (expensive — the main argument for a persistent bitmap in v2). I/O is served from the winner immediately |
 | F6 | OST crash/restart → acknowledged writes lost from page cache (data is not fsynced) | **not detectable from metadata** (the copy looks up to date) | **Conservative rule: any session loss to a mirror while the chunk is open `DIRTY` ⇒ that mirror is STALE (run the F1 procedure), even if it reconnects immediately.** We cannot know what it lost, so we do not trust it | Full resync (F7) overwrites whatever was lost |
-| F7 | A stale mirror returns (rejoin) | reconnect probe + `sync_id`/`epoch` comparison: ancestor → stale | Mark the copy `SYNCING` (fsync), start an **online resync** (algorithm below) without stopping client I/O | On completion: copy metadata = source's `sync_id`/`epoch`, state `DIRTY` (chunk still open), fsync → mirror is IN-SYNC, reads allowed |
+| F7 | A stale mirror returns (rejoin) | reconnect probe + `sync_id`/`epoch` comparison: ancestor → stale | Mark the copy `SYNCING` (fsync), start an **online resync** (algorithm below) without stopping client I/O | On completion: the IN-SYNC copies move to a new `sync_id`/`epoch` (fsync), then the copy adopts it, state `DIRTY` if the chunk is (fsync) → mirror is IN-SYNC, reads allowed |
 | F8 | Client/OST crash during resync | the copy is left `SYNCING` / with an old `sync_id` | Copy is untrusted | Resync from scratch (v1; resumable with the persistent bitmap in v2) |
 | F9 | Split brain (disjoint write histories) | different `sync_id`s, neither in the other's history | **Excluded in automatic paths by the quorum rules.** Can only arise from a wrong manual force-open, an OST restored from backup, or a bug → then: open refused with a clear error, no automatic winner | Operator: `rawstor resolve TARGET --winner=N` (`rawstor show -v`'s own `slot[N]` index) → winner gets a new `sync_id`, the loser gets a full resync |
 | F10 | Chunk copy missing on one OST (disk lost, OST reprovisioned) | ENOENT when opening the copy (a `file://` location whose directory is gone altogether is unreachable instead, ENOTCONN -- e.g. an unmounted disk) | At open, recreate that copy blank (ALLOCATE, sized off a surviving copy's own META) and treat it as stale. Only when the surviving copies alone are a majority (> N/2): a blank copy never counts toward the quorum, or a survivor that fell behind could be opened as authoritative. So N=2 with one copy missing is not healed automatically: the open fails the quorum check, and the copy is recreated by hand (`rawstor create` on its location) once the survivor is known to be current. Every copy missing is never recreated (nothing vouches the chunk held no data) and the open fails ENOENT. Not on a read-only open or a version | Full online resync (F7) |
@@ -281,7 +286,7 @@ Requirements: no downtime, and regions already rewritten by the client onto all 
 2. Client I/O continues throughout: reads are served **only from IN-SYNC mirrors**; **writes go both to IN-SYNC mirrors and to the SYNCING copy**. A write that fully covers a chunk clears its bit (that region is already identical). A partially covered chunk keeps its bit.
 3. A sweeper walks the bitmap: for each set bit it reads the chunk from a source mirror, writes it to the SYNCING copy, clears the bit. A chunk that reads back all zeros (typically never written) goes out as `write_zeroes` with unmap instead -- no payload on the wire, and the SYNCING copy stays sparse. Rate limiting (option) protects foreground I/O.
 4. **Ordering hazard, sweeper × client write to the same chunk:** a per-chunk lock in client memory (single writer, cheap) — a client write to a chunk currently being copied waits for the chunk copy to finish (or vice versa). Otherwise the sweeper could overwrite a fresh client write with stale source data.
-5. Bitmap empty → drain in-flight I/O → the SYNCING copy's metadata is set to the source's `sync_id`/`epoch` (fsync) → the mirror is IN-SYNC.
+5. Bitmap empty → drain in-flight I/O → the IN-SYNC copies move to a new `sync_id`/`epoch` (fsync), and the SYNCING copy's metadata is set to it (fsync) → the mirror is IN-SYNC (*When `sync_id` changes*).
 
 ```mermaid
 sequenceDiagram
@@ -306,7 +311,8 @@ sequenceDiagram
     end
     C->>C: clear its bit (already identical)
     Note over C: bitmap empty: drain in-flight I/O
-    C->>Dst: metadata = source sync_id / epoch (fsync)
+    C->>Src: epoch+1, new sync_id, old one to history (fsync)
+    C->>Dst: metadata = that new sync_id / epoch (fsync)
     Note over Dst: IN-SYNC, serves reads
 ```
 

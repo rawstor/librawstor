@@ -244,9 +244,9 @@ private:
     // New epoch, freshly generated sync_id, with the chunk's own current
     // sync_id (if any) pushed onto the front of the ancestry
     // (_sync_id_history's own comment above) -- shared by
-    // _run_dirty_barrier() and _run_degrade_barrier(), each only for a
-    // membership change (_unrecorded_stale) or, the dirty gate, a legacy
-    // set.
+    // the barriers that record a membership change: _run_degrade_barrier(),
+    // _run_rejoin_barrier(), and _run_dirty_barrier() (for an exclusion
+    // still unrecorded, or a legacy set).
     RawstorObjectSyncState _bump_sync_state() const;
 
     // Runs cont(0) once DIRTY is durably recorded on the in-sync members; the
@@ -319,6 +319,9 @@ private:
     // Every chunk copied and no client write in flight: durably adopts
     // the current sync-set identity on the member, then lets it serve reads.
     rawstd::DetachedTask _resync_finish();
+    // Moves the in-sync members to a new sync_id before a rejoining member
+    // adopts it (docs/mirroring.md, When sync_id changes).
+    rawstd::Task<void> _run_rejoin_barrier();
     // Marks the resync's member STALE (unreachable, so the probe retries
     // later) and wakes every writer parked on a chunk overlap. Synchronous
     // -- safe to call from anywhere already holding _resync, including
