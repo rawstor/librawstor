@@ -40,9 +40,20 @@ Environment=LOCATION=file:///var/lib/rawstor-ost/%i
 # rawstor-ost's own --queue-size/--workers (see its --help).
 Environment=QUEUE_SIZE=4096
 Environment=WORKERS=12
-# librawstor client/server tuning knobs (README.md's "Environment
-# Variables" section) are set in the same file as well, e.g.
-# RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT=128.
+# librawstor client/server tuning knobs (see README.md's "Environment
+# Variables" section for what each one does); set them in
+# /etc/rawstor/ost/<uuid>.conf below to override a default.
+#Environment=RAWSTOR_OPTS_IO_ATTEMPTS=10
+#Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE=100
+#Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX=30000
+#Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER=50
+#Environment=RAWSTOR_OPTS_SESSIONS=1
+#Environment=RAWSTOR_OPTS_SO_SNDTIMEO=5000
+#Environment=RAWSTOR_OPTS_SO_RCVTIMEO=5000
+#Environment=RAWSTOR_OPTS_TCP_USER_TIMEOUT=5000
+#Environment=RAWSTOR_OPTS_LIST_LIMIT=1000
+#Environment=RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT=128
+#Environment=RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY=256M
 EnvironmentFile=/etc/rawstor/ost/%i.conf
 ExecStart=/usr/bin/rawstor-ost --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} ${LOCATION}
 Restart=always

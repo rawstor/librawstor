@@ -36,9 +36,18 @@ Environment=TOPOLOGY_PATH=/etc/rawstor/mds/%i.topology
 # rawstor-mds's own --queue-size/--workers (see its --help).
 Environment=QUEUE_SIZE=4096
 Environment=WORKERS=4
-# MDS statistics collection (RAWSTOR_MDS_OPTS_*) and librawstor tuning
-# knobs (RAWSTOR_OPTS_*, README.md's "Environment Variables" section) are
-# set in the same file as well.
+# MDS statistics collection and librawstor tuning knobs its probes use
+# (see README.md's "Environment Variables" section for what each one does);
+# set them in /etc/rawstor/mds/<uuid>.conf below to override a default.
+#Environment=RAWSTOR_MDS_OPTS_INFO_INTERVAL=300000
+#Environment=RAWSTOR_MDS_OPTS_INFO_CONCURRENCY=128
+#Environment=RAWSTOR_OPTS_IO_ATTEMPTS=10
+#Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE=100
+#Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX=30000
+#Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER=50
+#Environment=RAWSTOR_OPTS_SO_SNDTIMEO=5000
+#Environment=RAWSTOR_OPTS_SO_RCVTIMEO=5000
+#Environment=RAWSTOR_OPTS_TCP_USER_TIMEOUT=5000
 EnvironmentFile=/etc/rawstor/mds/%i.conf
 ExecStart=/usr/bin/rawstor-mds --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --db=${DB_PATH} --topology=${TOPOLOGY_PATH}
 # Re-reads TOPOLOGY_PATH without a restart (SIGHUP), keeping every client
