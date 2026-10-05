@@ -75,15 +75,15 @@ class Target:
                 size=size, width=width, chunk_size=chunk_size,
                 stripe_width=stripe_width, failure_domain=failure_domain))
 
-    def create_snapshot(self, uuid: str | None = None) -> "Target":
-        """Take a native CoW snapshot of this target's live version,
+    def create_version(self, uuid: str | None = None) -> "Target":
+        """Take a native CoW version of this target's live version,
         returning the resulting Target (this target's own URI, with the
         version id actually used spliced onto it -- or this target
         itself, unchanged, if it already named a bound version). Three
-        ways that id is picked (see rawstor_target_create_snapshot()'s
+        ways that id is picked (see rawstor_target_create_version()'s
         own doc comment, <rawstor/target.h>):
         - This target's own URI already names a specific version of its
-          own (e.g. as returned by a previous create_snapshot()) and
+          own (e.g. as returned by a previous create_version()) and
           `uuid` is None: that bound version IS the one taken.
         - This target names a plain object and `uuid` is None: a fresh
           id is generated.
@@ -91,7 +91,7 @@ class Target:
           target names a plain object; combining it with a target that
           already carries its own bound version raises OSError (EINVAL).
         """
-        return Target(librawstor.object_create_snapshot(self._uri, uuid))
+        return Target(librawstor.object_create_version(self._uri, uuid))
 
     def spec(self) -> librawstor.ObjectSpec:
         return librawstor.object_spec(self._uri)
@@ -121,12 +121,12 @@ class Target:
         rawstor_target_chunks(), <rawstor/target.h>)."""
         return librawstor.object_chunks(self._uri)
 
-    def snapshots(self) -> Iterator["Target"]:
-        """Every snapshot of this target's object, oldest first, each as
-        its own Target (see rawstor_target_snapshots(),
+    def versions(self) -> Iterator["Target"]:
+        """Every version of this target's object, oldest first, each as
+        its own Target (see rawstor_target_versions(),
         <rawstor/target.h>)."""
-        for snapshot in librawstor.object_snapshots(self._uri):
-            yield Target(snapshot)
+        for version in librawstor.object_versions(self._uri):
+            yield Target(version)
 
     def remove(self) -> None:
         librawstor.object_remove(self._uri)

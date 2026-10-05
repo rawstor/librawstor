@@ -23,7 +23,7 @@ PyObject* py_rawstor_object_create(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_create_at(PyObject* self, PyObject* args);
 
-PyObject* py_rawstor_object_create_snapshot(PyObject* self, PyObject* args);
+PyObject* py_rawstor_object_create_version(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_spec(PyObject* self, PyObject* args);
 
@@ -36,7 +36,7 @@ PyObject* py_rawstor_object_remove(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_chunks(PyObject* self, PyObject* args);
 
-PyObject* py_rawstor_object_snapshots(PyObject* self, PyObject* args);
+PyObject* py_rawstor_object_versions(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_location_info(PyObject* self, PyObject* args);
 

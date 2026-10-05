@@ -188,10 +188,10 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
 
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID snapshot_id
+    RawstdUUID& token, RawstdUUID version_id
 ) {
-    if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        // No snapshots on this backend (Backend::remove_snapshot()'s own
+    if (!rawstd_uuid_is_nil(&version_id)) {
+        // No versions on this backend (Backend::remove_version()'s own
         // default).
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
@@ -672,10 +672,10 @@ rawstd::Task<std::string> Backend::_lv_tags(const std::string& path) {
 }
 
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
-    if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        // No snapshots on this backend (Backend::remove_snapshot()'s own
+    if (!rawstd_uuid_is_nil(&version_id)) {
+        // No versions on this backend (Backend::remove_version()'s own
         // default).
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
@@ -701,7 +701,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     // a value that could go stale if the LV were ever resized outside
     // rawstor.
     RawstorObjectMeta ret{};
-    ret.spec.size = co_await _blk_size(id, offset, snapshot_id);
+    ret.spec.size = co_await _blk_size(id, offset, version_id);
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;

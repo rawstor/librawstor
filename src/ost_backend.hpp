@@ -53,18 +53,18 @@ private:
     rawstd::Task<void> _connect() override;
     // The cid-dispatched counterpart of the old basic_request_async():
     // sends a RawstorFrameBasic-shaped request (remove/meta/info/
-    // set_object/set_snapshot/create_snapshot all share this shape; LIST
+    // set_object/set_version/create_version all share this shape; LIST
     // has its own dedicated shape instead, see BackendOpList in the .cpp)
     // and awaits its response through the same _ops demultiplex mechanism
     // as every other op -- requires _recv_pump to already be running,
-    // i.e. _connect() to have completed. `val`/`snapshot_id` are never
+    // i.e. _connect() to have completed. `val`/`version_id` are never
     // both meaningful for the same command (protocol.h's own doc comment
     // on RawstorFrameBasicPayload); a caller that only needs one
     // leaves the other at its default (0/nil).
     template <typename T = char>
     rawstd::Task<std::vector<T>> _basic_request(
         RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
-        uint64_t offset, uint64_t val = 0, const RawstdUUID& snapshot_id = {}
+        uint64_t offset, uint64_t val = 0, const RawstdUUID& version_id = {}
     );
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
@@ -103,7 +103,7 @@ public:
 
     rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID snapshot_id = {}
+        RawstdUUID& token, RawstdUUID version_id = {}
     ) override;
 
     rawstd::Task<void> create(
@@ -113,34 +113,32 @@ public:
     ) override;
 
     // Both relayed over the wire as a RAWSTOR_CMD_RELEASE request, nil vs.
-    // non-nil `snapshot_id` (protocol.h widened this command's own payload for
+    // non-nil `version_id` (protocol.h widened this command's own payload for
     // exactly this, same as SET_OBJECT/OBJ_OPEN's own nil-means-live
     // convention) -- the split here mirrors Backend::remove()/
-    // remove_snapshot()'s own C++-level distinction, not a second wire
+    // remove_version()'s own C++-level distinction, not a second wire
     // command.
     rawstd::Task<void> remove(
         const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
     ) override;
 
-    rawstd::Task<void> remove_snapshot(
+    rawstd::Task<void> remove_version(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& snapshot_id
+        uint64_t offset, const RawstdUUID& version_id
     ) override;
 
     rawstd::Task<std::vector<RawstdUUID>>
-    list_snapshots(const RawstdUUID& id, uint64_t offset) override;
+    list_versions(const RawstdUUID& id, uint64_t offset) override;
 
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstdUUID& snapshot_id = {}
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) override;
 
     // Trivial (Backend::resolve_locations()'s own doc comment): this is a
     // plain, single-copy backend, already the one real member of whatever
     // offset it's asked about.
     rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstdUUID& snapshot_id = {}
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) override;
 
     rawstd::Task<void> set_sync_state(
@@ -154,20 +152,20 @@ public:
     set_object(const RawstdUUID& id, uint64_t offset, int flags) override;
 
     // Both relayed over the wire as a RAWSTOR_CMD_SET_OBJECT request,
-    // nil vs. non-nil snapshot_id (protocol.h's own doc comment) -- the
-    // split here mirrors Backend::remove()/remove_snapshot()'s own
+    // nil vs. non-nil version_id (protocol.h's own doc comment) -- the
+    // split here mirrors Backend::remove()/remove_version()'s own
     // C++-level distinction, not a second wire command.
-    rawstd::Task<void> set_snapshot(
+    rawstd::Task<void> set_version(
         const RawstdUUID& object_id, uint64_t offset,
-        const RawstdUUID& snapshot_id
+        const RawstdUUID& version_id
     ) override;
 
-    // Relays RAWSTOR_CMD_SNAPSHOT over the wire -- the remote rawstor-ost
+    // Relays RAWSTOR_CMD_CREATE_VERSION over the wire -- the remote rawstor-ost
     // forwards to its own local backend the same way (docs/mds.md,
-    // "Snapshots").
-    rawstd::Task<void> create_snapshot(
+    // "Versions").
+    rawstd::Task<void> create_version(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& snapshot_id
+        uint64_t offset, const RawstdUUID& version_id
     ) override;
 
     rawstd::Task<size_t>

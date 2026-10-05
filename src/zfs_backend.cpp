@@ -55,7 +55,7 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
 }
 
 std::string Backend::_dataset(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
@@ -65,18 +65,18 @@ std::string Backend::_dataset(
     // codebase agrees on one base.
     std::ostringstream oss;
     oss << _parent_dataset << "/" << uuid_str << ":" << std::hex << offset;
-    if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        RawstdUUIDString snapshot_str;
-        rawstd_uuid_to_string(&snapshot_id, &snapshot_str);
-        oss << "@s" << snapshot_str;
+    if (!rawstd_uuid_is_nil(&version_id)) {
+        RawstdUUIDString version_str;
+        rawstd_uuid_to_string(&version_id, &version_str);
+        oss << "@s" << version_str;
     }
     return oss.str();
 }
 
 std::string Backend::_device_path(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) const {
-    return "/dev/zvol/" + _dataset(id, offset, snapshot_id);
+    return "/dev/zvol/" + _dataset(id, offset, version_id);
 }
 
 rawstd::Task<void> Backend::_wait_for_blockdev(
@@ -125,13 +125,13 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
     co_return fd;
 }
 
-rawstd::Task<int> Backend::_open_snapshot(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+rawstd::Task<int> Backend::_open_version(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
-    std::string path = _device_path(id, offset, snapshot_id);
+    std::string path = _device_path(id, offset, version_id);
 
-    // O_RDONLY, not O_RDWR: a snapshot device is read-only at the device
-    // level too (docs/mds.md, "Snapshots"), so a write against one fails
+    // O_RDONLY, not O_RDWR: a version device is read-only at the device
+    // level too (docs/mds.md, "Versions"), so a write against one fails
     // as soon as the fd itself is wrong, before ever reaching pwrite().
     // See _open_object() above for O_NONBLOCK/O_CLOEXEC's own reasoning,
     // unchanged here.
@@ -141,23 +141,23 @@ rawstd::Task<int> Backend::_open_snapshot(
 
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID snapshot_id
+    RawstdUUID& token, RawstdUUID version_id
 ) {
     // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc
     // comment): every other uuid's own zvols are skipped while grouping,
-    // and `token` plays no part. A non-nil `snapshot_id` lists that
-    // version's own snapshot datasets ("<zvol>@s<snapshot_id>") instead of
+    // and `token` plays no part. A non-nil `version_id` lists that
+    // version's own snapshot datasets ("<zvol>@s<version_id>") instead of
     // the live zvols.
     bool filtered = !rawstd_uuid_is_nil(&id);
-    bool snapshot = !rawstd_uuid_is_nil(&snapshot_id);
-    if (snapshot && !filtered) {
+    bool version = !rawstd_uuid_is_nil(&version_id);
+    if (version && !filtered) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    std::string snapshot_suffix;
-    if (snapshot) {
-        RawstdUUIDString snapshot_str;
-        rawstd_uuid_to_string(&snapshot_id, &snapshot_str);
-        snapshot_suffix = std::string("s") + snapshot_str;
+    std::string version_suffix;
+    if (version) {
+        RawstdUUIDString version_str;
+        rawstd_uuid_to_string(&version_id, &version_str);
+        version_suffix = std::string("s") + version_str;
     }
     RawstdUUID input_token = filtered ? RawstdUUID{} : token;
     chunks.clear();
@@ -183,7 +183,7 @@ rawstd::Task<void> Backend::list_chunks(
         "-o",
         "name",
         "-t",
-        snapshot ? "snapshot" : "volume",
+        version ? "snapshot" : "volume",
         "-r",
         _parent_dataset
     };
@@ -212,9 +212,9 @@ rawstd::Task<void> Backend::list_chunks(
             continue; // Not a direct child of the parent dataset.
         }
         size_t at = name.find('@');
-        if (snapshot) {
+        if (version) {
             if (at == std::string::npos ||
-                name.compare(at + 1, std::string::npos, snapshot_suffix) != 0) {
+                name.compare(at + 1, std::string::npos, version_suffix) != 0) {
                 continue;
             }
             name.resize(at);
@@ -438,12 +438,12 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
 }
 
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
-    // A snapshot's own dataset (`<zvol>@s<snapshot_id>`) answers the same
+    // A version's own dataset (`<zvol>@s<version_id>`) answers the same
     // property query, and its device the same size query, as the live
     // zvol's.
-    std::string dataset = _dataset(id, offset, snapshot_id);
+    std::string dataset = _dataset(id, offset, version_id);
 
     std::vector<std::string> argv = {"zfs",  "get",   "-H",
                                      "-o",   "value", rawstor_property,
@@ -482,7 +482,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     // trust a value that could go stale if the zvol were ever resized
     // outside rawstor.
     RawstorObjectMeta ret{};
-    ret.spec.size = co_await _blk_size(id, offset, snapshot_id);
+    ret.spec.size = co_await _blk_size(id, offset, version_id);
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
@@ -492,10 +492,10 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
 }
 
 // Every snapshot dataset of this chunk's own zvol that this backend
-// itself took ("<zvol>@s<snapshot_id>", _dataset()'s naming); any other
+// itself took ("<zvol>@s<version_id>", _dataset()'s naming); any other
 // snapshot of it (e.g. one taken by hand) is skipped.
 rawstd::Task<std::vector<RawstdUUID>>
-Backend::list_snapshots(const RawstdUUID& id, uint64_t offset) {
+Backend::list_versions(const RawstdUUID& id, uint64_t offset) {
     // Same ENOENT convention as remove(): a nonexistent zvol is permanent,
     // not the retryable EIO "zfs list" itself would produce.
     std::string device_path = _device_path(id, offset);
@@ -531,13 +531,12 @@ Backend::list_snapshots(const RawstdUUID& id, uint64_t offset) {
         if (line.compare(0, prefix.size(), prefix) != 0) {
             continue;
         }
-        RawstdUUID snapshot_id;
-        if (rawstd_uuid_from_string(
-                &snapshot_id, line.c_str() + prefix.size()
-            ) < 0) {
+        RawstdUUID version_id;
+        if (rawstd_uuid_from_string(&version_id, line.c_str() + prefix.size()) <
+            0) {
             continue;
         }
-        ret.push_back(snapshot_id);
+        ret.push_back(version_id);
     }
     co_return ret;
 }
@@ -593,24 +592,24 @@ rawstd::Task<void> Backend::set_sync_state(
     co_return;
 }
 
-rawstd::Task<void> Backend::create_snapshot(
+rawstd::Task<void> Backend::create_version(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
-    const RawstdUUID& snapshot_id
+    const RawstdUUID& version_id
 ) {
-    if (rawstd_uuid_is_nil(&snapshot_id)) {
-        /* nil is the live version, never a snapshot. */
+    if (rawstd_uuid_is_nil(&version_id)) {
+        /* nil is the live version, never a created one. */
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
     std::string dataset = _dataset(id, offset);
-    std::string snapshot = _dataset(id, offset, snapshot_id);
+    std::string snapshot = _dataset(id, offset, version_id);
 
     rawstd_info("zfs: creating snapshot %s\n", snapshot.c_str());
 
-    // The snapshot read path opens /dev/zvol/.../<uuid>@s<id>, which
+    // The version read path opens /dev/zvol/.../<uuid>@s<id>, which
     // exists only with snapdev=visible on the origin. Set it with every
-    // snapshot, so every one that exists is also openable -- one
-    // mechanism, old zvols included, rather than a per-snapshot property.
+    // version, so every one that exists is also openable -- one
+    // mechanism, old zvols included, rather than a per-version property.
     // It goes first and is idempotent, so "zfs snapshot" is the only step
     // that can leave state behind: a retry after a failure of either step
     // never trips over an already-existing snapshot.
@@ -620,11 +619,11 @@ rawstd::Task<void> Backend::create_snapshot(
     // a nested coroutine that's co_await-ed from within another coroutine
     // -- naming the vector first works around it (see Backend::create()'s
     // own comment on this file).
-    std::vector<std::string> snapdev_argv = {
+    std::vector<std::string> property_argv = {
         "zfs", "set", "snapdev=visible", dataset
     };
     try {
-        co_await rawstor::run_command(_queue, std::move(snapdev_argv));
+        co_await rawstor::run_command(_queue, std::move(property_argv));
     } catch (const std::system_error& e) {
         rawstd_error(
             "zfs: failed to set snapdev=visible on %s: %s\n", dataset.c_str(),
@@ -633,11 +632,11 @@ rawstd::Task<void> Backend::create_snapshot(
         throw;
     }
 
-    // Same O_EXCL convention as create(): a snapshot a previous,
+    // Same O_EXCL convention as create(): a version a previous,
     // unacknowledged attempt already took is EEXIST (permanent, and what
-    // a retried object snapshot counts as already taken), not the
+    // a retried object version counts as already taken), not the
     // generic, pointlessly retried error "zfs snapshot" would give.
-    if (co_await _exists(_device_path(id, offset, snapshot_id))) {
+    if (co_await _exists(_device_path(id, offset, version_id))) {
         rawstd_error("zfs: snapshot %s already exists\n", snapshot.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EEXIST);
     }
@@ -654,13 +653,13 @@ rawstd::Task<void> Backend::create_snapshot(
     }
 }
 
-rawstd::Task<void> Backend::remove_snapshot(
+rawstd::Task<void> Backend::remove_version(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
-    const RawstdUUID& snapshot_id
+    const RawstdUUID& version_id
 ) {
-    std::string snapshot = _dataset(id, offset, snapshot_id);
+    std::string snapshot = _dataset(id, offset, version_id);
 
-    // Same ENOENT convention as remove(): a nonexistent snapshot is
+    // Same ENOENT convention as remove(): a nonexistent version is
     // permanent, not the retryable EIO "zfs destroy" would produce.
     std::vector<std::string> probe_argv = {"zfs",  "list",     "-H",
                                            "-t",   "snapshot", "-o",

@@ -15,20 +15,20 @@ the code on 2026-10-04.
 | Object / Chunk / Slot runtime model | ✅ | `src/object.cpp`, `src/chunk.cpp`, `src/slot.cpp` |
 | Internal multi-chunk form, chunk offset path segment | ✅ | `src/target.cpp` (`parse_target_path()`) |
 | `rawstor_target_chunks()` | ✅ | `include/rawstor/target.h` |
-| Snapshot target (`.../<uuid>/<snapshot_uuid>`), read-only open | ✅ | `src/target.cpp` |
-| `mds://` object-level snapshot | ✅ | `src/mds_backend.cpp` |
-| Per-slot native CoW snapshot: `zfs://` | ✅ | `src/zfs_backend.cpp` |
-| Per-slot native CoW snapshot: `ost://` (relayed to the server's backend) | ✅ | `src/ost_backend.cpp` |
-| Per-slot native CoW snapshot: `lvm://` | ❌ | `-ENOTSUP` (waits for an lvm-thin backend) |
-| Per-slot native CoW snapshot: `file://` | ❌ | `-ENOTSUP` by design (no CoW) |
+| Version target (`.../<uuid>/<version_uuid>`), read-only open | ✅ | `src/target.cpp` |
+| `mds://` object-level version | ✅ | `src/mds_backend.cpp` |
+| Per-slot native CoW version: `zfs://` | ✅ | `src/zfs_backend.cpp` |
+| Per-slot native CoW version: `ost://` (relayed to the server's backend) | ✅ | `src/ost_backend.cpp` |
+| Per-slot native CoW version: `lvm://` | ❌ | `-ENOTSUP` (waits for an lvm-thin backend) |
+| Per-slot native CoW version: `file://` | ❌ | `-ENOTSUP` by design (no CoW) |
 
 ## Overview
 
 Rawstor addresses data through six related concepts, each with its own
 URI form: **Location**, **Target**, **Object**, **Chunk**, **Slot**, and
-**Snapshot**. A Location names a backend store; a Target names one
+**Version**. A Location names a backend store; a Target names one
 specific object within it; Object/Chunk/Slot are the layers a Target
-decomposes into once opened; Snapshot is a bound version of any of them.
+decomposes into once opened; Version is a bound, read-only copy of any of them.
 Only **Location** and **Target** are syntax a caller ever types by hand
 (CLI arguments, `rawstor_target_*()`'s own `target` string) — Object,
 Chunk and Slot are the client library's internal model of what a Target
@@ -64,11 +64,11 @@ classDiagram
     class Target {
       <<typed by the caller>>
       Location + object uuid
-      optional snapshot uuid
+      optional version uuid
       +create(spec)
       +open(flags) Object
       +meta() / spec()
-      +create_snapshot()
+      +create_version()
       +resize(size)
       +remove()
     }
@@ -106,7 +106,7 @@ classDiagram
     comma-separated = mirrors"
     note for Target "ost://host:7777/UUID
     ost://a/UUID,ost://b/UUID
-    mds://host:7776/UUID/SNAPSHOT_UUID"
+    mds://host:7776/UUID/VERSION_UUID"
 ```
 
 The same layers on a concrete object: a 1.5 GiB `mds://` object with
@@ -205,16 +205,16 @@ still equal mirrors, not a cache in front of a primary store:
 ## Target
 
 A **target** identifies a specific object a caller can open, read,
-write, create, remove, or snapshot. For a single-URI target, the format
+write, create, remove, or create a version of. For a single-URI target, the format
 is `<scheme>://<endpoint>/<uuid>`. For multiple URIs (mirroring), the
 UUID is appended to each one: `<scheme1>://<endpoint1>/<uuid>,<scheme2>://<endpoint2>/<uuid>,...`
 
-A target that names one snapshot of an object appends the snapshot's UUID: `<scheme>://<endpoint>/<uuid>/<snapshot_uuid>` (on every URI of a multiple target). Such a target can only be opened read-only (`RAWSTOR_READONLY`) or removed.
+A target that names one version of an object appends the version's UUID: `<scheme>://<endpoint>/<uuid>/<version_uuid>` (on every URI of a multiple target). Such a target can only be opened read-only (`RAWSTOR_READONLY`) or removed.
 
 Where:
 - `<scheme>` and `<endpoint>` are the same as for location.
 - `<uuid>` is the unique identifier of the object (rawstor uses UUID v7).
-- `<snapshot_uuid>` is the identifier of a snapshot of that object (also UUID v7), optional.
+- `<version_uuid>` is the identifier of a version of that object (also UUID v7), optional.
 
 ### Single backend target examples
 
@@ -287,24 +287,24 @@ reconnecting on that one arm independently of its siblings. Its URI form
 is a single, bare URI: `ost://h1:p1/<uuid>`. A Chunk with N mirrors has N
 Slots; a plain, unmirrored target's Chunk has exactly one.
 
-## Snapshot
+## Version
 
-A **snapshot** is a bound, read-only version of a target/chunk/slot,
-identified by a version id (`snapshot_id`, a UUID -- never nil, nil always
-means "live"). Like every other id in this design, `snapshot_id` is
+A **version** is a bound, read-only copy of a target/chunk/slot,
+identified by a version id (`version_id`, a UUID -- never nil, nil always
+means "live"). Like every other id in this design, `version_id` is
 client-generated -- the caller picks it (or generates a fresh one, the
 same single point of generation a fresh object id comes from) and passes
-it to `rawstor_target_create_snapshot()`, either as its `snapshot_id`
-argument or already embedded in the target string (with `snapshot_id`
+it to `rawstor_target_create_version()`, either as its `version_id`
+argument or already embedded in the target string (with `version_id`
 NULL); with neither, a fresh id is generated. `rawstor_target_create()`
-never takes a snapshot -- it rejects a target that carries one with
+never creates a version -- it rejects a target that carries one with
 `-EINVAL`. There is no separate "assign" mode, mds:// included: two
 independent mechanisms use the same id, at different layers:
 
-- **mds:// object-level**: CoW-every-chunk/`OBJ_COMMIT_SNAPSHOT`
-  (docs/mds.md, "Snapshots (stage 2)") registers the caller's id against
-  the whole object, driven by `mds::Backend::create_snapshot()`.
-- **Per-slot native CoW**: a single backend's own thin-clone/snapshot
+- **mds:// object-level**: CoW-every-chunk/`OBJ_COMMIT_VERSION`
+  (docs/mds.md, "Versions (stage 2)") registers the caller's id against
+  the whole object, driven by `mds::Backend::create_version()`.
+- **Per-slot native CoW**: a single backend's own thin-clone/version
   primitive (zfs::Backend today), addressed directly by target/chunk-
   slot URI with the version appended as a trailing path segment, in
   either of two equivalent shapes:
@@ -327,23 +327,23 @@ independent mechanisms use the same id, at different layers:
 A chunk's own byte offset within its parent `mds://` object
 (`logical_index * chunk_size`) rides the same URI, as a path segment
 right after the UUID: `ost://host:port/<uuid>/100000` (hexadecimal --
-`0x100000`, 1MiB; optionally followed by a snapshot segment, e.g.
+`0x100000`, 1MiB; optionally followed by a version segment, e.g.
 `ost://host:port/<uuid>/100000/018f4e2a-3000-7000-8000-000000000001`).
-Offset and snapshot are told apart from an arbitrary preceding location
+Offset and version are told apart from an arbitrary preceding location
 path by shape alone (a UUID-shaped segment vs. a hexadecimal one):
 `parse_target_path()` (src/target.hpp) reads the identity off the
-*end* of the path. A target binds at most one snapshot, so the trailing
+*end* of the path. A target binds at most one version, so the trailing
 run of UUID-shaped segments is at most two long (longer is rejected). A
 single trailing UUID preceded by a valid hexadecimal offset (and another
-UUID, the id) is the snapshot — the *physical, with a bound snapshot*
+UUID, the id) is the version — the *physical, with a bound version*
 shape above; otherwise the run's first segment is the id and its second
-(if any) the snapshot — the *logical* shape, offset implied 0. A
+(if any) the version — the *logical* shape, offset implied 0. A
 location path that itself ends in a UUID-shaped directory is therefore
 ambiguous and not supported. If the last segment isn't UUID-shaped at
-all (no snapshot to find), it must instead be the hexadecimal
+all (no version to find), it must instead be the hexadecimal
 offset itself, with the id right before it — `ost://host:port/<uuid>/
 100000` above, the *physical, live* shape: an explicit offset with no
-snapshot anywhere in the path. A chunk's own offset is always spelled
+version anywhere in the path. A chunk's own offset is always spelled
 out explicitly (one of the two physical shapes) since it's never
 0-and-absent-by-convention the way a plain target's own implied offset
 is. Like the internal multi-chunk form above, this is built only by
@@ -363,7 +363,7 @@ directly (a single entry, 0, for a plain, non-`mds://` target).
 | **Object** | (none — derived from the target string that opened it) | The open handle `rawstor_object_*()` I/O acts on; routes to the owning Chunk | — |
 | **Chunk** | Same as Target: `uri1,uri2,...` (one UUID per group) | One logical slice of an Object's data; owns mirror consistency | `ost://h1:p1/<uuid>,ost://h2:p2/<uuid>` |
 | **Slot** | A single URI | One physical mirror arm of a Chunk; owns retries/reconnects | `ost://h1:p1/<uuid>` |
-| **Snapshot** | Trailing path segment on a target/chunk-slot URI (logical: right after the id; physical: after an explicit offset), `snapshot_id` a client-generated UUID | A bound, read-only version | `ost://host:port/<uuid>/018f4e2a-3000-7000-8000-000000000001` |
+| **Version** | Trailing path segment on a target/chunk-slot URI (logical: right after the id; physical: after an explicit offset), `version_id` a client-generated UUID | A bound, read-only copy | `ost://host:port/<uuid>/018f4e2a-3000-7000-8000-000000000001` |
 
 ---
 

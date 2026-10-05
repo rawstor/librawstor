@@ -30,37 +30,37 @@
 
 namespace {
 
-// One chunk's own directory: <location>/<uuid>/<offset>[/<snapshot_id>]
+// One chunk's own directory: <location>/<uuid>/<offset>[/<version_id>]
 // -- self-describing (docs/mds.md, "Chunk identity"): `uuid` is the
 // volume's own id for every one of its chunks, `offset` (0 for a plain object
 // or a volume's own chunk 0 -- the two are indistinguishable at this layer by
 // design) disambiguates which chunk of that id this is, always its own path
-// component (never omitted, unlike the id/offset/snapshot_id path *target
+// component (never omitted, unlike the id/offset/version_id path *target
 // strings* use -- see TargetPath's own doc comment in target.hpp for why
 // those stay optional; a physical directory layout has no such
 // ambiguity to worry about, so there's nothing to gain from omitting
 // it), and hex, not decimal -- same base as the target URI's own offset
 // path segment (parse_target_path()'s own doc comment) and every
 // numeric field meta_encode() persists alongside it, so a directory
-// listing and its own meta record read the same way. `snapshot_id`, when
+// listing and its own meta record read the same way. `version_id`, when
 // bound, is one directory deeper still -- file:// never actually creates
-// one (its own _open_object() below has no snapshot_id parameter at all,
-// and it never overrides _open_snapshot(), whose blk::Backend default
+// one (its own _open_object() below has no version_id parameter at all,
+// and it never overrides _open_version(), whose blk::Backend default
 // rejects every call with ENOTSUP -- no native CoW), but the layout is
 // already shaped for a backend that could. Two
 // files live directly under this directory: `data` (the object's own
 // bytes) and `meta` (get_target_meta_path() below).
 std::string get_target_dir(
     const std::string& location_path, const RawstdUUIDString& uuid,
-    uint64_t offset, const RawstdUUID& snapshot_id = {}
+    uint64_t offset, const RawstdUUID& version_id = {}
 ) {
     std::ostringstream oss;
 
     oss << location_path << "/" << uuid << "/" << std::hex << offset;
-    if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        RawstdUUIDString snapshot_string;
-        rawstd_uuid_to_string(&snapshot_id, &snapshot_string);
-        oss << "/" << snapshot_string;
+    if (!rawstd_uuid_is_nil(&version_id)) {
+        RawstdUUIDString version_string;
+        rawstd_uuid_to_string(&version_id, &version_string);
+        oss << "/" << version_string;
     }
 
     return oss.str();
@@ -165,10 +165,10 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
 
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID snapshot_id
+    RawstdUUID& token, RawstdUUID version_id
 ) {
-    if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        // No snapshots on this backend (Backend::remove_snapshot()'s own
+    if (!rawstd_uuid_is_nil(&version_id)) {
+        // No versions on this backend (Backend::remove_version()'s own
         // default).
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
@@ -186,8 +186,8 @@ rawstd::Task<void> Backend::list_chunks(
         // offset directory under one uuid becomes that uuid's own single
         // ChunkGroup entry (its own offsets sorted ascending).
         // list_chunks() only ever enumerates live objects (docs/mds.md,
-        // "Snapshot-version records are skipped (stage 2)"), so a third,
-        // snapshot-named level (get_target_dir()'s own doc comment) never
+        // "Version records are skipped (stage 2)"), so a third,
+        // version-named level (get_target_dir()'s own doc comment) never
         // applies here; an offset directory missing its own `data` file
         // (mid-create(), or a leftover empty one after remove()) is
         // silently skipped rather than reported as a malformed name.
@@ -514,7 +514,7 @@ Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
     // fails ENOTEMPTY, silently tolerated, the moment a sibling still
     // lives there: another offset under the same uuid (the uuid
     // directory), or -- once a backend actually creates one -- a
-    // surviving snapshot under this same offset (this directory).
+    // surviving version under this same offset (this directory).
     if (rmdir(target_dir.c_str()) == -1) {
         errno = 0;
     } else if (rmdir((location_path + "/" + uuid_string).c_str()) == -1) {
@@ -523,10 +523,10 @@ Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
 }
 
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
-    if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        // No snapshots on this backend (Backend::remove_snapshot()'s own
+    if (!rawstd_uuid_is_nil(&version_id)) {
+        // No versions on this backend (Backend::remove_version()'s own
         // default).
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }

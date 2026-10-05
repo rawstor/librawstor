@@ -86,13 +86,13 @@ private:
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameAllocatePayload payload
     );
-    // `payload.snapshot_id` nil for the live version, non-nil for one
-    // previously snapshotted (protocol.h's own doc comment on RELEASE).
+    // `payload.version_id` nil for the live version, non-nil for one
+    // previously created (protocol.h's own doc comment on RELEASE).
     static rawstd::DetachedTask _release(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameBasicPayload payload
     );
-    static rawstd::DetachedTask _create_snapshot(
+    static rawstd::DetachedTask _create_version(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameBasicPayload payload
     );
@@ -100,7 +100,7 @@ private:
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameBasicPayload payload
     );
-    static rawstd::DetachedTask _list_snapshots(
+    static rawstd::DetachedTask _list_versions(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameBasicPayload payload
     );
@@ -141,13 +141,13 @@ private:
         RawstorFrameSyncStatePayload payload
     );
     // Every configured location's own URI for `uuid`, with `offset`/
-    // `snapshot_id` folded into each one's own path as
-    // "<uuid>[/<offset>[/<snapshot_id>]]" (TargetPath's own doc comment,
+    // `version_id` folded into each one's own path as
+    // "<uuid>[/<offset>[/<version_id>]]" (TargetPath's own doc comment,
     // src/target.hpp) -- the same self-describing name every backend on
     // the receiving end already expects (docs/mds.md, "Chunk identity").
     std::vector<rawstd::URI> _targets(
         const RawstdUUID& uuid, uint64_t offset = 0,
-        const RawstdUUID& snapshot_id = {}
+        const RawstdUUID& version_id = {}
     );
 
     // Sends a response frame and awaits its actual completion (not just

@@ -721,7 +721,7 @@ public:
             .payload = {
                 .object_id = {},
                 .offset = 0,
-                .snapshot_id = {},
+                .version_id = {},
                 .val = 0,
             },
         }) {}
@@ -882,12 +882,12 @@ public:
 
 // The cid-dispatched counterpart of BackendOpRead/BackendOpWrite/
 // BackendOpFlush above, for the RawstorFrameBasic-shaped commands
-// (remove/meta/info/set_object/set_snapshot/create_snapshot) -- these
+// (remove/meta/info/set_object/set_version/create_version) -- these
 // carry no hash and have either no response body or a body of some
 // number of T's, per response.body.res. Routed through the same
 // _recv_pump demultiplex mechanism as every other op, now that the pump
 // starts in Backend::_connect() instead of after the first request
-// round-trips. `val`/`snapshot_id` are never both meaningful for the
+// round-trips. `val`/`version_id` are never both meaningful for the
 // same command (protocol.h's own doc comment on
 // RawstorFrameBasicPayload) but both live in this one op regardless,
 // so every such command shares one request path rather than two nearly
@@ -903,7 +903,7 @@ public:
     BackendOpBasic(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
-        uint64_t offset, uint64_t val, const RawstdUUID& snapshot_id,
+        uint64_t offset, uint64_t val, const RawstdUUID& version_id,
         const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, op_name, 0, 0),
@@ -918,7 +918,7 @@ public:
             .payload = {
                 .object_id = {},
                 .offset = offset,
-                .snapshot_id = {},
+                .version_id = {},
                 .val = val,
             },
         }) {
@@ -927,8 +927,8 @@ public:
             sizeof(_request.payload.object_id)
         );
         memcpy(
-            _request.payload.snapshot_id, snapshot_id.bytes,
-            sizeof(_request.payload.snapshot_id)
+            _request.payload.version_id, version_id.bytes,
+            sizeof(_request.payload.version_id)
         );
     }
 
@@ -1337,9 +1337,9 @@ rawstd::Task<void> Backend::close() {
 template <typename T>
 rawstd::Task<std::vector<T>> Backend::_basic_request(
     RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
-    uint64_t offset, uint64_t val, const RawstdUUID& snapshot_id
+    uint64_t offset, uint64_t val, const RawstdUUID& version_id
 ) {
-    if (cmd == RAWSTOR_CMD_SET_OBJECT || cmd == RAWSTOR_CMD_LIST_SNAPSHOTS) {
+    if (cmd == RAWSTOR_CMD_SET_OBJECT || cmd == RAWSTOR_CMD_LIST_VERSIONS) {
         co_await _ensure_large_receive_ring();
     }
     co_await _receive_resize.settle();
@@ -1347,7 +1347,7 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
 
     std::shared_ptr<BackendOpBasic<T>> op = std::make_shared<BackendOpBasic<T>>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        cmd, op_name, id, offset, val, snapshot_id, trace_event
+        cmd, op_name, id, offset, val, version_id, trace_event
     );
     _add_op(op);
 
@@ -1369,14 +1369,14 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
 
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID snapshot_id
+    RawstdUUID& token, RawstdUUID version_id
 ) {
     co_await _ensure_large_receive_ring();
 
     // LIST only ever lists live objects (RawstorFrameListEntry's own doc
     // comment, protocol.h). A version's own chunks are only ever asked
     // for of an mds:// target, whose own map answers it instead.
-    if (!rawstd_uuid_is_nil(&snapshot_id)) {
+    if (!rawstd_uuid_is_nil(&version_id)) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
 
@@ -1516,13 +1516,13 @@ Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
     co_return;
 }
 
-rawstd::Task<void> Backend::remove_snapshot(
+rawstd::Task<void> Backend::remove_version(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
-    const RawstdUUID& snapshot_id
+    const RawstdUUID& version_id
 ) {
     try {
         co_await _basic_request(
-            RAWSTOR_CMD_RELEASE, "remove_snapshot", id, offset, 0, snapshot_id
+            RAWSTOR_CMD_RELEASE, "remove_version", id, offset, 0, version_id
         );
     } catch (const std::system_error&) {
         throw;
@@ -1532,13 +1532,14 @@ rawstd::Task<void> Backend::remove_snapshot(
     co_return;
 }
 
-rawstd::Task<void> Backend::create_snapshot(
+rawstd::Task<void> Backend::create_version(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
-    const RawstdUUID& snapshot_id
+    const RawstdUUID& version_id
 ) {
     try {
         co_await _basic_request(
-            RAWSTOR_CMD_SNAPSHOT, "create_snapshot", id, offset, 0, snapshot_id
+            RAWSTOR_CMD_CREATE_VERSION, "create_version", id, offset, 0,
+            version_id
         );
     } catch (const std::system_error&) {
         throw;
@@ -1549,14 +1550,14 @@ rawstd::Task<void> Backend::create_snapshot(
 }
 
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
     rawstd_debug("%s: Reading object metadata...\n", str().c_str());
 
     RawstorObjectMeta ret = {};
     try {
         std::vector<char> response = co_await _basic_request(
-            RAWSTOR_CMD_META, "meta", id, offset, 0, snapshot_id
+            RAWSTOR_CMD_META, "meta", id, offset, 0, version_id
         );
         if (response.size() != sizeof(RawstorFrameMetaPayload)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
@@ -1593,19 +1594,19 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
 }
 
 rawstd::Task<std::vector<RawstdUUID>>
-Backend::list_snapshots(const RawstdUUID& id, uint64_t offset) {
+Backend::list_versions(const RawstdUUID& id, uint64_t offset) {
     std::vector<char> response = co_await _basic_request(
-        RAWSTOR_CMD_LIST_SNAPSHOTS, "list_snapshots", id, offset
+        RAWSTOR_CMD_LIST_VERSIONS, "list_versions", id, offset
     );
-    if (response.size() % sizeof(RawstorFrameSnapshotEntry) != 0) {
+    if (response.size() % sizeof(RawstorFrameVersionEntry) != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
-    size_t n = response.size() / sizeof(RawstorFrameSnapshotEntry);
+    size_t n = response.size() / sizeof(RawstorFrameVersionEntry);
     std::vector<RawstdUUID> ret(n);
     for (size_t i = 0; i < n; ++i) {
         memcpy(
             ret[i].bytes,
-            response.data() + i * sizeof(RawstorFrameSnapshotEntry),
+            response.data() + i * sizeof(RawstorFrameVersionEntry),
             sizeof(ret[i].bytes)
         );
     }
@@ -1684,17 +1685,17 @@ Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
     );
 }
 
-rawstd::Task<void> Backend::set_snapshot(
-    const RawstdUUID& object_id, uint64_t offset, const RawstdUUID& snapshot_id
+rawstd::Task<void> Backend::set_version(
+    const RawstdUUID& object_id, uint64_t offset, const RawstdUUID& version_id
 ) {
     assert(_read_event != nullptr);
 
-    // A snapshot is only ever opened read-only (Target::open()'s own
+    // A version is only ever opened read-only (Target::open()'s own
     // check), which is exactly what the remote rawstor-ost's own
-    // rawstor_target_open() requires of a bound-snapshot target.
+    // rawstor_target_open() requires of a bound-version target.
     co_await _basic_request(
-        RAWSTOR_CMD_SET_OBJECT, "set_snapshot", object_id, offset,
-        RAWSTOR_READONLY, snapshot_id
+        RAWSTOR_CMD_SET_OBJECT, "set_version", object_id, offset,
+        RAWSTOR_READONLY, version_id
     );
 }
 

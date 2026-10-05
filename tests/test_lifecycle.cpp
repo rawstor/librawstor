@@ -312,15 +312,15 @@ TEST(FileLifecycleTest, remove_already_removed_target_fails_with_enoent) {
     EXPECT_EQ(res, -ENOENT);
 }
 
-// A target naming a bound snapshot version can only be opened
+// A target naming a bound version can only be opened
 // RAWSTOR_READONLY -- refused before any I/O otherwise.
-TEST(FileLifecycleTest, open_snapshot_without_readonly_is_einval) {
+TEST(FileLifecycleTest, open_version_without_readonly_is_einval) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location_uri(dir.uri());
     std::string uuid = "00000000-0000-7000-8000-000000000008";
-    std::string snapshot_id = "00000000-0000-7000-8000-000000000009";
+    std::string version_id = "00000000-0000-7000-8000-000000000009";
     std::string target =
-        rawstd::URI(rawstd::URI(location_uri, uuid), snapshot_id).str();
+        rawstd::URI(rawstd::URI(location_uri, uuid), version_id).str();
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
@@ -331,13 +331,13 @@ TEST(FileLifecycleTest, open_snapshot_without_readonly_is_einval) {
 // With RAWSTOR_READONLY the open goes ahead and reaches the backend, which
 // (file:// has no native CoW) answers ENOTSUP -- Chunk::create() then
 // reports the lone member as unavailable, i.e. ENOTCONN.
-TEST(FileLifecycleTest, open_snapshot_readonly_reaches_backend) {
+TEST(FileLifecycleTest, open_version_readonly_reaches_backend) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location_uri(dir.uri());
     std::string uuid = "00000000-0000-7000-8000-00000000000a";
-    std::string snapshot_id = "00000000-0000-7000-8000-00000000000b";
+    std::string version_id = "00000000-0000-7000-8000-00000000000b";
     std::string live = rawstd::URI(location_uri, uuid).str();
-    std::string target = rawstd::URI(rawstd::URI(live), snapshot_id).str();
+    std::string target = rawstd::URI(rawstd::URI(live), version_id).str();
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
@@ -700,16 +700,16 @@ TEST(OstLifecycleTest, create_spec_remove) {
     }
 }
 
-// A bound snapshot's META asks the far end about that version: the
-// snapshot_id rides the request's own RawstorFrameBasicPayload.
-TEST(OstLifecycleTest, meta_of_bound_snapshot_carries_snapshot_id) {
+// A bound version's META asks the far end about that version: the
+// version_id rides the request's own RawstorFrameBasicPayload.
+TEST(OstLifecycleTest, meta_of_bound_version_carries_version_id) {
     rawstor::tests::Server server(8755, 256);
 
     rawstd::URI location_uri("ost://127.0.0.1:8755");
     std::string uuid = "00000000-0000-7000-8000-000000000004";
-    std::string snapshot_str = "00000000-0000-7000-8000-000000000005";
+    std::string version_str = "00000000-0000-7000-8000-000000000005";
     std::string target =
-        rawstd::URI(rawstd::URI(location_uri, uuid), snapshot_str).str();
+        rawstd::URI(rawstd::URI(location_uri, uuid), version_str).str();
 
     RawstorFrameMetaPayload meta_body = {
         .size = 1ull << 20,
@@ -731,7 +731,7 @@ TEST(OstLifecycleTest, meta_of_bound_snapshot_carries_snapshot_id) {
                 const RawstorFrameBasic* frame =
                     static_cast<const RawstorFrameBasic*>(buf);
                 memcpy(
-                    requested->bytes, frame->payload.snapshot_id,
+                    requested->bytes, frame->payload.version_id,
                     sizeof(requested->bytes)
                 );
             }
@@ -747,32 +747,30 @@ TEST(OstLifecycleTest, meta_of_bound_snapshot_carries_snapshot_id) {
     EXPECT_EQ(meta.spec.size, 1ull << 20);
 
     RawstdUUID expected;
-    ASSERT_EQ(rawstd_uuid_from_string(&expected, snapshot_str.c_str()), 0);
+    ASSERT_EQ(rawstd_uuid_from_string(&expected, version_str.c_str()), 0);
     EXPECT_EQ(rawstd_uuid_cmp(requested.get(), &expected), 0);
 }
 
-// LIST_SNAPSHOTS asks the far end about the object's own chunk, and every
+// LIST_VERSIONS asks the far end about the object's own chunk, and every
 // returned id becomes that version's own target string.
-TEST(OstLifecycleTest, snapshots_over_wire) {
+TEST(OstLifecycleTest, versions_over_wire) {
     rawstor::tests::Server server(8756, 256);
 
     rawstd::URI location_uri("ost://127.0.0.1:8756");
     std::string uuid = "00000000-0000-7000-8000-000000000006";
     std::string target = rawstd::URI(location_uri, uuid).str();
-    std::string snapshots[2] = {
+    std::string versions[2] = {
         "00000000-0000-7000-8000-000000000007",
         "00000000-0000-7000-8000-000000000008",
     };
 
-    RawstorFrameSnapshotEntry entries[2];
+    RawstorFrameVersionEntry entries[2];
     for (size_t i = 0; i < 2; ++i) {
-        RawstdUUID snapshot_id;
-        ASSERT_EQ(
-            rawstd_uuid_from_string(&snapshot_id, snapshots[i].c_str()), 0
-        );
+        RawstdUUID version_id;
+        ASSERT_EQ(rawstd_uuid_from_string(&version_id, versions[i].c_str()), 0);
         memcpy(
-            entries[i].snapshot_id, snapshot_id.bytes,
-            sizeof(entries[i].snapshot_id)
+            entries[i].version_id, version_id.bytes,
+            sizeof(entries[i].version_id)
         );
     }
 
@@ -780,7 +778,7 @@ TEST(OstLifecycleTest, snapshots_over_wire) {
     {
         rawstor::tests::Session s(server);
         server.read(
-            "RAWSTOR_CMD_LIST_SNAPSHOTS <<<", sizeof(RawstorFrameBasic),
+            "RAWSTOR_CMD_LIST_VERSIONS <<<", sizeof(RawstorFrameBasic),
             [requested](const void* buf) {
                 const RawstorFrameBasic* frame =
                     static_cast<const RawstorFrameBasic*>(buf);
@@ -793,7 +791,7 @@ TEST(OstLifecycleTest, snapshots_over_wire) {
         RawstorFrameResponse response = {
             .head{
                 .magic = RAWSTOR_MAGIC,
-                .cmd = RAWSTOR_CMD_LIST_SNAPSHOTS,
+                .cmd = RAWSTOR_CMD_LIST_VERSIONS,
                 .cid = 0,
             },
             .body = {
@@ -805,7 +803,7 @@ TEST(OstLifecycleTest, snapshots_over_wire) {
             {.iov_base = &response, .iov_len = sizeof(response)},
             {.iov_base = entries, .iov_len = sizeof(entries)},
         };
-        server.writev("RAWSTOR_CMD_LIST_SNAPSHOTS >>>", iov, 2);
+        server.writev("RAWSTOR_CMD_LIST_VERSIONS >>>", iov, 2);
     }
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
@@ -813,7 +811,7 @@ TEST(OstLifecycleTest, snapshots_over_wire) {
     RawstorStringList* list = nullptr;
     ssize_t res =
         rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
-            return rawstor_target_snapshots(
+            return rawstor_target_versions(
                 queue.get(), target.c_str(), &list, cb, data
             );
         });
@@ -827,10 +825,10 @@ TEST(OstLifecycleTest, snapshots_over_wire) {
     rawstor_string_list_delete(list);
     ASSERT_EQ(got.size(), 2u);
     EXPECT_EQ(
-        got[0], rawstd::URI(rawstd::URI(location_uri, uuid), snapshots[0]).str()
+        got[0], rawstd::URI(rawstd::URI(location_uri, uuid), versions[0]).str()
     );
     EXPECT_EQ(
-        got[1], rawstd::URI(rawstd::URI(location_uri, uuid), snapshots[1]).str()
+        got[1], rawstd::URI(rawstd::URI(location_uri, uuid), versions[1]).str()
     );
 
     RawstdUUID expected;

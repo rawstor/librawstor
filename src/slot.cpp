@@ -64,7 +64,7 @@ unsigned int backoff_delay_ms(
 }
 
 // The idempotency key of one mutating call (create/remove/resize/
-// create_snapshot/remove_snapshot): generated once per Slot call, before
+// create_version/remove_version): generated once per Slot call, before
 // _with_retry(), so every retry of that call carries the same one. A
 // backend whose server applies mutations (the MDS, docs/mds.md,
 // "Idempotent mutations") replays the stored result of an idempotency_key it
@@ -82,9 +82,9 @@ RawstdUUID new_idempotency_key() {
 // A rejection retrying can never turn into success: the target object
 // doesn't exist (ENOENT), already exists where create() needs it not to
 // (EEXIST), the request itself is malformed (EINVAL), or the backend
-// permanently lacks a capability (ENOTSUP -- e.g. create_snapshot()/a
-// non-nil snapshot_id to remove() on file:// or classic LVM, docs/mds.md's
-// "Snapshots": no retry will ever make a backend grow native CoW support
+// permanently lacks a capability (ENOTSUP -- e.g. create_version()/a
+// non-nil version_id to remove() on file:// or classic LVM, docs/mds.md's
+// "Versions": no retry will ever make a backend grow native CoW support
 // it doesn't have), or the server doesn't know the command at all (ENOSYS
 // -- e.g. an older rawstor-ost/rawstor-mds), or the operation was
 // cancelled on purpose through its rawio::Queue (ECANCELED -- e.g. a
@@ -100,18 +100,18 @@ bool is_permanent_backend_error(int error) {
 }
 
 // Binds `backend` to `id`/`offset`'s live version, or one previously
-// snapshotted version of it if `snapshot_id` isn't nil (Backend::
-// set_object()/set_snapshot()'s own split) -- shared by Slot::open() and
+// created version of it if `version_id` isn't nil (Backend::
+// set_object()/set_version()'s own split) -- shared by Slot::open() and
 // invalidate_backend() below, both of which rebind to whichever
-// `id`/`offset`/`snapshot_id` this Slot itself was last opened with.
-rawstd::Task<void> set_object_or_snapshot(
+// `id`/`offset`/`version_id` this Slot itself was last opened with.
+rawstd::Task<void> set_object_or_version(
     rawstor::Backend& backend, const RawstdUUID& id, uint64_t offset, int flags,
-    const RawstdUUID& snapshot_id
+    const RawstdUUID& version_id
 ) {
-    if (rawstd_uuid_is_nil(&snapshot_id)) {
+    if (rawstd_uuid_is_nil(&version_id)) {
         co_await backend.set_object(id, offset, flags);
     } else {
-        co_await backend.set_snapshot(id, offset, snapshot_id);
+        co_await backend.set_version(id, offset, version_id);
     }
 }
 
@@ -196,7 +196,7 @@ Slot::Slot(Private, rawio::Queue& queue) :
     _id(std::nullopt),
     _offset(0),
     _flags(0),
-    _snapshot_id{},
+    _version_id{},
     _backend_index(0),
     _transparent_retry(true) {
 }
@@ -511,8 +511,8 @@ Slot::invalidate_backend(const std::shared_ptr<Backend>& be) {
                     // outside the handler.
                     std::exception_ptr eptr;
                     try {
-                        co_await set_object_or_snapshot(
-                            *backend, *_id, _offset, _flags, _snapshot_id
+                        co_await set_object_or_version(
+                            *backend, *_id, _offset, _flags, _version_id
                         );
                         // The result is unused -- nothing here needs it
                         // -- this is purely to keep the same SET_OBJECT+
@@ -520,7 +520,7 @@ Slot::invalidate_backend(const std::shared_ptr<Backend>& be) {
                         // gets (see Backend::set_object()'s own doc
                         // comment on why that's two separate calls now,
                         // not one that folds meta() in on its own).
-                        co_await backend->meta(*_id, _offset, _snapshot_id);
+                        co_await backend->meta(*_id, _offset, _version_id);
                     } catch (...) {
                         eptr = std::current_exception();
                     }
@@ -603,7 +603,7 @@ const rawstd::URI* Slot::location() const noexcept {
 
 rawstd::Task<void> Slot::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID snapshot_id
+    RawstdUUID& token, RawstdUUID version_id
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -613,7 +613,7 @@ rawstd::Task<void> Slot::list_chunks(
     try {
         co_await _with_retry(
             func_name, trace_event, &Backend::list_chunks, id, limit, chunks,
-            token, snapshot_id
+            token, version_id
         );
         _finish(t_call);
     } catch (...) {
@@ -622,8 +622,8 @@ rawstd::Task<void> Slot::list_chunks(
     }
 }
 
-rawstd::Task<void> Slot::create_snapshot(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+rawstd::Task<void> Slot::create_version(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -632,8 +632,8 @@ rawstd::Task<void> Slot::create_snapshot(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::create_snapshot,
-            new_idempotency_key(), id, offset, snapshot_id
+            func_name, trace_event, &Backend::create_version,
+            new_idempotency_key(), id, offset, version_id
         );
         _finish(t_call);
     } catch (...) {
@@ -700,8 +700,8 @@ rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t offset) {
     }
 }
 
-rawstd::Task<void> Slot::remove_snapshot(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+rawstd::Task<void> Slot::remove_version(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -710,8 +710,8 @@ rawstd::Task<void> Slot::remove_snapshot(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::remove_snapshot,
-            new_idempotency_key(), id, offset, snapshot_id
+            func_name, trace_event, &Backend::remove_version,
+            new_idempotency_key(), id, offset, version_id
         );
         _finish(t_call);
     } catch (...) {
@@ -721,7 +721,7 @@ rawstd::Task<void> Slot::remove_snapshot(
 }
 
 rawstd::Task<std::vector<RawstdUUID>>
-Slot::list_snapshots(const RawstdUUID& id, uint64_t offset) {
+Slot::list_versions(const RawstdUUID& id, uint64_t offset) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -729,7 +729,7 @@ Slot::list_snapshots(const RawstdUUID& id, uint64_t offset) {
 
     try {
         std::vector<RawstdUUID> result = co_await _with_retry(
-            func_name, trace_event, &Backend::list_snapshots, id, offset
+            func_name, trace_event, &Backend::list_versions, id, offset
         );
         _finish(t_call);
         co_return result;
@@ -758,7 +758,7 @@ rawstd::Task<RawstorLocationInfo> Slot::info() {
 
 rawstd::Task<RawstorObjectMeta> Slot::open(
     const RawstdUUID& id, uint64_t offset, int flags,
-    const RawstdUUID& snapshot_id
+    const RawstdUUID& version_id
 ) {
     // Set before any of the set_object() calls below: on failure,
     // invalidate_backend() reconnects and set_object()s the replacement
@@ -766,7 +766,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     _id = id;
     _offset = offset;
     _flags = flags;
-    _snapshot_id = snapshot_id;
+    _version_id = version_id;
 
     // Every backend's SET_OBJECT goes out up front, so they run
     // concurrently.
@@ -774,7 +774,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     set_objects.reserve(_backends.size());
     for (std::shared_ptr<Backend>& be : _backends) {
         set_objects.push_back(
-            set_object_or_snapshot(*be, id, offset, flags, snapshot_id)
+            set_object_or_version(*be, id, offset, flags, version_id)
         );
     }
 
@@ -821,7 +821,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // mds::Backend, whose per-member list may lead with an unreachable
     // (zero-filled) member.
     std::vector<RawstorObjectMeta> metas =
-        co_await meta(id, offset, snapshot_id);
+        co_await meta(id, offset, version_id);
     const RawstorObjectMeta* answer = &metas.front();
     for (const RawstorObjectMeta& m : metas) {
         if (m.sync_state.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
@@ -1000,7 +1000,7 @@ Slot::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
 }
 
 rawstd::Task<std::vector<RawstorObjectMeta>> Slot::meta(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -1009,7 +1009,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Slot::meta(
 
     try {
         std::vector<RawstorObjectMeta> result = co_await _with_retry(
-            func_name, trace_event, &Backend::meta, id, offset, snapshot_id
+            func_name, trace_event, &Backend::meta, id, offset, version_id
         );
         _finish(t_call);
         co_return result;
@@ -1020,7 +1020,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Slot::meta(
 }
 
 rawstd::Task<std::vector<rawstd::URI>> Slot::resolve_locations(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -1030,7 +1030,7 @@ rawstd::Task<std::vector<rawstd::URI>> Slot::resolve_locations(
     try {
         std::vector<rawstd::URI> result = co_await _with_retry(
             func_name, trace_event, &Backend::resolve_locations, id, offset,
-            snapshot_id
+            version_id
         );
         _finish(t_call);
         co_return result;

@@ -1,11 +1,11 @@
 #include "create.h"
+#include "create_version.h"
 #include "info.h"
 #include "list.h"
 #include "remove.h"
 #include "resize.h"
 #include "resolve.h"
 #include "show.h"
-#include "snapshot.h"
 #include "testio.h"
 
 #include "config.h"
@@ -50,8 +50,8 @@ static void usage(void) {
         "  show                  Show rawstor object\n"
         "  info                  Show rawstor location info\n"
         "  resolve               Resolve a mirrored object's split brain\n"
-        "  snapshot              Take a snapshot of an object\n"
-        "  list-snapshots        List an object's snapshots\n"
+        "  create-version        Create a version of an object\n"
+        "  list-versions         List an object's versions\n"
         "  testio                Test rawstor IO routines\n"
         "\n"
         "command options:        Run `<command> --help` to show command usage\n"
@@ -344,9 +344,9 @@ static void command_remove_usage(void) {
                 "\n"
                 "usage: rawstor [options] remove TARGET [command_options]\n"
                 "\n"
-                "A TARGET naming a bound snapshot version (as printed by "
+                "A TARGET naming a bound version (as printed by "
                 "`rawstor\n"
-                "snapshot`, e.g. ost://host:port/<uuid>/<snapshot_id>) "
+                "create-version`, e.g. ost://host:port/<uuid>/<version_id>) "
                 "destroys that\n"
                 "version instead of the live object. For an mds:// TARGET, "
                 "the MDS\n"
@@ -888,18 +888,18 @@ static int command_resolve(int argc, char** argv) {
     );
 }
 
-static void command_snapshot_usage(void) {
+static void command_create_version_usage(void) {
     fprintf(
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor [options] snapshot TARGET [-u UUID] "
+        "usage: rawstor [options] create-version TARGET [-u UUID] "
         "[command_options]\n"
         "\n"
-        "Takes a snapshot of an object, at whichever version TARGET and "
+        "Creates a version of an object, at whichever version TARGET and "
         "-u\n"
-        "resolve to (docs/concepts.md, \"Snapshot\"): the resulting\n"
-        "TARGET/SNAPSHOT_ID is printed to stdout on success (status "
+        "resolve to (docs/concepts.md, \"Version\"): the resulting\n"
+        "TARGET/VERSION_ID is printed to stdout on success (status "
         "messages go\n"
         "to stderr). Not supported on an object with file:// or "
         "classic-LVM\n"
@@ -909,10 +909,10 @@ static void command_snapshot_usage(void) {
         "mds://host:port/<id> or\n"
         "                        ost://host:port/<id>, or one already\n"
         "                        naming its own bound version "
-        "(TARGET/SNAPSHOT_ID,\n"
-        "                        as printed back by a previous snapshot) "
+        "(TARGET/VERSION_ID,\n"
+        "                        as printed back by a previous create-version) "
         "-- that\n"
-        "                        version is then the one taken, and -u "
+        "                        version is then the one created, and -u "
         "is not\n"
         "                        accepted.\n"
         "  -u, --uuid UUID       Explicit UUID for the new version (only "
@@ -926,7 +926,7 @@ static void command_snapshot_usage(void) {
     );
 };
 
-static int command_snapshot(int argc, char** argv) {
+static int command_create_version(int argc, char** argv) {
     const char* optstring = "hu:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -945,7 +945,7 @@ static int command_snapshot(int argc, char** argv) {
 
         switch (c) {
         case 'h':
-            command_snapshot_usage();
+            command_create_version_usage();
             return EXIT_SUCCESS;
 
         case 'u':
@@ -972,17 +972,17 @@ static int command_snapshot(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_snapshot(target_arg, uuid_arg);
+    return rawstor_cli_create_version(target_arg, uuid_arg);
 }
 
-static void command_list_snapshots_usage(void) {
+static void command_list_versions_usage(void) {
     fprintf(
         stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
                 "\n"
-                "usage: rawstor [options] list-snapshots TARGET "
+                "usage: rawstor [options] list-versions TARGET "
                 "[command_options]\n"
                 "\n"
-                "  TARGET                The object whose snapshots to list; "
+                "  TARGET                The object whose versions to list; "
                 "each one is\n"
                 "                        printed as its own target string, "
                 "oldest first.\n"
@@ -992,7 +992,7 @@ static void command_list_snapshots_usage(void) {
     );
 }
 
-static int command_list_snapshots(int argc, char** argv) {
+static int command_list_versions(int argc, char** argv) {
     const char* optstring = "h";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -1009,7 +1009,7 @@ static int command_list_snapshots(int argc, char** argv) {
 
         switch (c) {
         case 'h':
-            command_list_snapshots_usage();
+            command_list_versions_usage();
             return EXIT_SUCCESS;
 
         default:
@@ -1032,7 +1032,7 @@ static int command_list_snapshots(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_list_snapshots(target_arg);
+    return rawstor_cli_list_versions(target_arg);
 }
 
 static void command_testio_usage(void) {
@@ -1209,10 +1209,10 @@ static int run_command(
         ret = command_info(argc, argv);
     } else if (strcmp(command, "resolve") == 0) {
         ret = command_resolve(argc, argv);
-    } else if (strcmp(command, "list-snapshots") == 0) {
-        ret = command_list_snapshots(argc, argv);
-    } else if (strcmp(command, "snapshot") == 0) {
-        ret = command_snapshot(argc, argv);
+    } else if (strcmp(command, "list-versions") == 0) {
+        ret = command_list_versions(argc, argv);
+    } else if (strcmp(command, "create-version") == 0) {
+        ret = command_create_version(argc, argv);
     } else if (strcmp(command, "testio") == 0) {
         ret = command_testio(argc, argv);
     } else {

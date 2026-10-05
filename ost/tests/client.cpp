@@ -91,7 +91,7 @@ uint16_t Client::send_set_object(const RawstdUUID& id) {
                 .cmd = RAWSTOR_CMD_SET_OBJECT,
                 .cid = cid,
             },
-        .payload = {.object_id = {}, .offset = 0, .snapshot_id = {}, .val = 0},
+        .payload = {.object_id = {}, .offset = 0, .version_id = {}, .val = 0},
     };
     std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));
     send_all(_fd, &frame, sizeof(frame));

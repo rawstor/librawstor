@@ -56,8 +56,8 @@ struct ResizeResult {
     uint64_t old_nchunks;
 };
 
-/* One chunk copy holding a snapshot version. */
-struct SnapshotMember {
+/* One chunk copy holding a version. */
+struct VersionMember {
     uint64_t logical_index;
     RawstdUUID ost_id;
 };
@@ -94,8 +94,7 @@ private:
     void _check_topology(const Topology& topology);
     ObjectDescriptor _descriptor(const RawstdUUID& id);
     ObjectMap _open_live(const RawstdUUID& id);
-    ObjectMap
-    _open_snapshot(const RawstdUUID& id, const RawstdUUID& snapshot_id);
+    ObjectMap _open_version(const RawstdUUID& id, const RawstdUUID& version_id);
 
 public:
     ObjectStore(const std::string& path, Topology topology);
@@ -121,7 +120,7 @@ public:
 
     /*
      * Throws EBUSY if `topology` is missing an OST that still holds a
-     * chunk (or a snapshot member) of any stored object -- its slots
+     * chunk (or a version member) of any stored object -- its slots
      * would be left without an address. Every missing ost_id is logged.
      */
     void check_topology(const Topology& topology);
@@ -152,10 +151,10 @@ public:
     );
 
     /*
-     * A non-nil snapshot_id opens the registered snapshot view: the logical
+     * A non-nil version_id opens the registered version view: the logical
      * size frozen at commit, chunks routed to the recorded members only.
      */
-    ObjectMap open(const RawstdUUID& id, const RawstdUUID& snapshot_id);
+    ObjectMap open(const RawstdUUID& id, const RawstdUUID& version_id);
 
     /* Grow-only in v1. */
     ResizeResult resize(
@@ -164,26 +163,25 @@ public:
     );
 
     /*
-     * EBUSY while snapshots exist: they must be removed explicitly.
+     * EBUSY while versions exist: they must be removed explicitly.
      * Returns the map the object had, for the caller's fan-out destroy
      * of its chunks.
      */
     ObjectMap remove(const RawstdUUID& idempotency_key, const RawstdUUID& id);
 
     /*
-     * Registers the snapshot: members = exactly the chunk copies that
-     * hold it. `snapshot_id` is the caller's own already-generated version
+     * Registers the version: members = exactly the chunk copies that
+     * hold it. `version_id` is the caller's own already-generated version
      * id (like every object id -- client-generated, single point of
      * generation, see docs/mds.md) -- never nil (EINVAL; nil is reserved
      * for the live version) and not already registered (EEXIST). Every
-     * chunk of the object must be covered (an unreadable snapshot is
+     * chunk of the object must be covered (an unreadable version is
      * never registered — EINVAL). The object's logical size is frozen
-     * into the snapshot. Returns the bumped map_epoch.
+     * into the version. Returns the bumped map_epoch.
      */
-    uint64_t commit_snapshot(
+    uint64_t commit_version(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        const RawstdUUID& snapshot_id,
-        const std::vector<SnapshotMember>& members
+        const RawstdUUID& version_id, const std::vector<VersionMember>& members
     );
 
     /*
@@ -195,18 +193,18 @@ public:
     list_objects(const RawstdUUID& after, unsigned int limit, bool* more);
 
     /*
-     * Every snapshot registered for `id`, oldest first (snapshot ids are
+     * Every version registered for `id`, oldest first (version ids are
      * UUID v7). ENOENT for an unknown object.
      */
-    std::vector<RawstdUUID> list_snapshots(const RawstdUUID& id);
+    std::vector<RawstdUUID> list_versions(const RawstdUUID& id);
 
     /*
-     * Unregisters the snapshot (no new readers) and returns what was
+     * Unregisters the version (no new readers) and returns what was
      * registered: the member set for the caller's fan-out destroy.
      */
-    std::vector<SnapshotMember> remove_snapshot(
+    std::vector<VersionMember> remove_version(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        const RawstdUUID& snapshot_id
+        const RawstdUUID& version_id
     );
 
     /*
@@ -226,8 +224,8 @@ public:
      * must not silently drop an object it cannot reassemble, and it
      * cannot invent placement for a chunk with no surviving copies.
      *
-     * Snapshot versions are not rebuilt (docs/mds.md's own "Snapshot-
-     * version records are skipped (stage 2)"): no backend's own list()
+     * Versions are not rebuilt (docs/mds.md's own "Version
+     * records are skipped (stage 2)"): no backend's own list()
      * enumerates them yet, so the scan never sees one to register.
      *
      * The placement policy knobs (failure_domain, stripe_width, seed) are

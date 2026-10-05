@@ -22,8 +22,8 @@ namespace {
 using rawstor::mdsserver::ObjectMap;
 using rawstor::mdsserver::ObjectStore;
 using rawstor::mdsserver::PlacementSlot;
-using rawstor::mdsserver::SnapshotMember;
 using rawstor::mdsserver::Topology;
+using rawstor::mdsserver::VersionMember;
 
 // The most objects one LIST page carries; a request asking for more (or
 // for no particular number, 0) gets this many.
@@ -342,7 +342,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         std::vector<unsigned char> data;
         try {
             ObjectMap map = store.open(
-                uuid_of(payload.object_id), uuid_of(payload.snapshot_id)
+                uuid_of(payload.object_id), uuid_of(payload.version_id)
             );
             data = encode_object_map(*store.topology(), map);
         } catch (const std::system_error& e) {
@@ -399,19 +399,19 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         }
         break;
     }
-    case RAWSTOR_CMD_OBJ_LIST_SNAPSHOTS: {
+    case RAWSTOR_CMD_OBJ_LIST_VERSIONS: {
         RawstorFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
         std::vector<unsigned char> data;
         try {
             std::vector<RawstdUUID> ids =
-                store.list_snapshots(uuid_of(payload.object_id));
-            data.resize(ids.size() * sizeof(RawstorFrameSnapshotEntry));
+                store.list_versions(uuid_of(payload.object_id));
+            data.resize(ids.size() * sizeof(RawstorFrameVersionEntry));
             for (size_t i = 0; i < ids.size(); ++i) {
-                RawstorFrameSnapshotEntry entry{};
+                RawstorFrameVersionEntry entry{};
                 memcpy(
-                    entry.snapshot_id, ids[i].bytes, sizeof(entry.snapshot_id)
+                    entry.version_id, ids[i].bytes, sizeof(entry.version_id)
                 );
                 memcpy(data.data() + i * sizeof(entry), &entry, sizeof(entry));
             }
@@ -475,38 +475,38 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         }
         break;
     }
-    case RAWSTOR_CMD_OBJ_COMMIT_SNAPSHOT: {
-        RawstorFrameObjCommitSnapshotPayload payload;
+    case RAWSTOR_CMD_OBJ_COMMIT_VERSION: {
+        RawstorFrameObjCommitVersionPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         // Grown batch by batch as member records actually arrive, never
         // sized by the peer-supplied count up front: a bogus nmembers
         // can't force an allocation bigger than what was really sent.
-        std::vector<RawstorFrameObjSnapshotMemberPayload> wire_members;
+        std::vector<RawstorFrameObjVersionMemberPayload> wire_members;
         while (wire_members.size() < payload.nmembers) {
             size_t done = wire_members.size();
             size_t n = std::min<size_t>(256, payload.nmembers - done);
             wire_members.resize(done + n);
             co_await recv_all(
                 queue, fd, wire_members.data() + done,
-                n * sizeof(RawstorFrameObjSnapshotMemberPayload)
+                n * sizeof(RawstorFrameObjVersionMemberPayload)
             );
         }
         int32_t res = 0;
-        RawstorFrameObjSnapshotCommittedPayload out{};
+        RawstorFrameObjVersionCommittedPayload out{};
         try {
-            std::vector<SnapshotMember> members;
+            std::vector<VersionMember> members;
             members.reserve(wire_members.size());
-            for (const RawstorFrameObjSnapshotMemberPayload& m : wire_members) {
+            for (const RawstorFrameObjVersionMemberPayload& m : wire_members) {
                 members.push_back(
-                    SnapshotMember{
+                    VersionMember{
                         .logical_index = m.logical_index,
                         .ost_id = uuid_of(m.ost_id),
                     }
                 );
             }
-            out.map_epoch = store.commit_snapshot(
+            out.map_epoch = store.commit_version(
                 uuid_of(payload.idempotency_key), uuid_of(payload.id),
-                uuid_of(payload.snapshot_id), members
+                uuid_of(payload.version_id), members
             );
         } catch (const std::system_error& e) {
             res = -e.code().value();
@@ -520,21 +520,21 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         }
         break;
     }
-    case RAWSTOR_CMD_OBJ_REMOVE_SNAPSHOT: {
+    case RAWSTOR_CMD_OBJ_REMOVE_VERSION: {
         RawstorFrameObjOpPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
         std::vector<unsigned char> data;
         try {
-            std::vector<SnapshotMember> members = store.remove_snapshot(
+            std::vector<VersionMember> members = store.remove_version(
                 uuid_of(payload.idempotency_key), uuid_of(payload.id),
-                uuid_of(payload.snapshot_id)
+                uuid_of(payload.version_id)
             );
             data.resize(
-                members.size() * sizeof(RawstorFrameObjSnapshotMemberPayload)
+                members.size() * sizeof(RawstorFrameObjVersionMemberPayload)
             );
-            RawstorFrameObjSnapshotMemberPayload* out =
-                reinterpret_cast<RawstorFrameObjSnapshotMemberPayload*>(
+            RawstorFrameObjVersionMemberPayload* out =
+                reinterpret_cast<RawstorFrameObjVersionMemberPayload*>(
                     data.data()
                 );
             for (size_t i = 0; i < members.size(); ++i) {

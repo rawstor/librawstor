@@ -153,8 +153,8 @@ TEST(ChunkTest, flush_waits_for_writes_issued_before_it) {
 // could never actually occur and flush() would starve forever. Issuing a
 // large batch of writes strictly after flush() and confirming most of them
 // are still outstanding once flush() resolves demonstrates flush() is
-// waiting for its own fixed snapshot (see chunk.hpp), not for the backlog
-// to empty out.
+// waiting for its own fixed captured target (see chunk.hpp), not for the
+// backlog to empty out.
 //
 // A throttle limit of 1 is what keeps this deterministic rather than a
 // timing race: with it, write #2 onward cannot even be *dispatched* until

@@ -68,25 +68,25 @@ class Chunk;
 class Object : public RawstorObject {
 protected:
     rawio::Queue& _queue;
-    // The object's own id and bound snapshot version -- the same for
+    // The object's own id and bound version -- the same for
     // every chunk (Target's own constructor already validates this),
     // unlike a chunk's own backend locations, which nothing requires to
     // match another chunk's own (a multi-chunk target may place each
     // chunk on its own backend, e.g. per-chunk tiering) -- so locations
     // live per chunk instead (MultiChunkObject::ChunkEntry), not here.
-    // `_snapshot_id` is non-nil only for a snapshot opened RAWSTOR_READONLY
+    // `_version_id` is non-nil only for a version opened RAWSTOR_READONLY
     // (Target::open()'s own doc comment).
     RawstdUUID _id;
-    RawstdUUID _snapshot_id;
+    RawstdUUID _version_id;
     uint64_t _size;
 
     Object(
-        rawio::Queue& queue, const RawstdUUID& id,
-        const RawstdUUID& snapshot_id, uint64_t size
+        rawio::Queue& queue, const RawstdUUID& id, const RawstdUUID& version_id,
+        uint64_t size
     ) noexcept :
         _queue(queue),
         _id(id),
-        _snapshot_id(snapshot_id),
+        _version_id(version_id),
         _size(size) {}
 
     // Every I/O entry point below starts with the same logical-range
@@ -145,9 +145,8 @@ private:
     // MultiChunkObject, this class never reopens a chunk on its own, so
     // it never needs to remember its own locations past this call.
     SingleChunkObject(
-        rawio::Queue& queue, const RawstdUUID& id,
-        const RawstdUUID& snapshot_id, uint64_t size,
-        std::unique_ptr<Chunk> chunk
+        rawio::Queue& queue, const RawstdUUID& id, const RawstdUUID& version_id,
+        uint64_t size, std::unique_ptr<Chunk> chunk
     );
 
     friend class Target;
@@ -220,7 +219,7 @@ private:
 
     uint64_t _chunk_size;
     // Open flags every lazily opened chunk is opened with (together with
-    // the base Object's own `_snapshot_id`) -- the same ones Target::open()
+    // the base Object's own `_version_id`) -- the same ones Target::open()
     // opened the eagerly opened last chunk with.
     int _flags;
     std::vector<ChunkEntry> _chunks;
@@ -231,22 +230,22 @@ private:
     // positional offset (Target::open()'s own comment). `chunk_locations`
     // holds one entry per chunk, in order -- sized the same as `_chunks`
     // below, so `_chunks[i].locations = chunk_locations[i]`. `id`/
-    // `snapshot_id` are passed straight through to Object's own constructor.
+    // `version_id` are passed straight through to Object's own constructor.
     // `last_chunk`, the last chunk, already eagerly opened by
     // Target::open() (its own doc comment), is placed straight into
     // `_chunks.back()` here; every other entry starts unopened, lazily
     // opened on first touch.
     MultiChunkObject(
-        rawio::Queue& queue, const RawstdUUID& id,
-        const RawstdUUID& snapshot_id, uint64_t size, uint64_t chunk_size,
-        int flags, std::vector<std::vector<rawstd::URI>> chunk_locations,
+        rawio::Queue& queue, const RawstdUUID& id, const RawstdUUID& version_id,
+        uint64_t size, uint64_t chunk_size, int flags,
+        std::vector<std::vector<rawstd::URI>> chunk_locations,
         std::unique_ptr<Chunk> last_chunk
     );
 
     // Returns the chunk's already-open (or freshly opened) Chunk. A
     // pointer, not a reference: rawstd::Task<T> stores T in a
     // std::variant, which requires an object type. A fresh open uses
-    // this entry's own `locations`, `_id`/`_snapshot_id`, and
+    // this entry's own `locations`, `_id`/`_version_id`, and
     // `index * _chunk_size` as this chunk's own offset -- the positional
     // addressing scheme Target::open() already validated the target
     // string against before ever constructing this object.

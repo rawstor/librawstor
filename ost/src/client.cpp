@@ -143,10 +143,10 @@ int open_trampoline(ssize_t result, void* data) {
 }
 
 // `target` already has any bound version folded into its own trailing
-// path segment (Client::_targets()'s own `snapshot_id` parameter, called
+// path segment (Client::_targets()'s own `version_id` parameter, called
 // by _set_object() below) -- rawstor_target_open()'s `flags` is the only
 // other input this needs (a bound-version target can only be opened
-// RAWSTOR_READONLY, docs/mds.md, "Snapshots"). Taken by value: a
+// RAWSTOR_READONLY, docs/mds.md, "Versions"). Taken by value: a
 // coroutine parameter declared as a reference is not lifetime-extended
 // past the initiating call the way an ordinary function's would be.
 rawstd::Task<RawstorObject*>
@@ -697,7 +697,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
-            case RAWSTOR_CMD_SNAPSHOT: {
+            case RAWSTOR_CMD_CREATE_VERSION: {
                 RawstorFrameBasicPayload basic;
                 co_await recv_frame(
                     stream, &basic, sizeof(basic), fd, "request payload",
@@ -707,7 +707,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
-                _create_snapshot(weak, head, basic);
+                _create_version(weak, head, basic);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -739,7 +739,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
-            case RAWSTOR_CMD_LIST_SNAPSHOTS: {
+            case RAWSTOR_CMD_LIST_VERSIONS: {
                 RawstorFrameBasicPayload basic;
                 co_await recv_frame(
                     stream, &basic, sizeof(basic), fd, "request payload",
@@ -749,7 +749,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
-                _list_snapshots(weak, head, basic);
+                _list_versions(weak, head, basic);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -1120,11 +1120,11 @@ rawstd::DetachedTask Client::_release(
 
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-    RawstdUUID snapshot_id;
-    memcpy(snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id));
+    RawstdUUID version_id;
+    memcpy(version_id.bytes, payload.version_id, sizeof(payload.version_id));
 
     std::vector<rawstd::URI> targets =
-        client->_targets(uuid, payload.offset, snapshot_id);
+        client->_targets(uuid, payload.offset, version_id);
 
     int result = 0;
     try {
@@ -1155,12 +1155,12 @@ rawstd::DetachedTask Client::_release(
     }
 }
 
-// SNAPSHOT (docs/mds.md, "Snapshots"): forwarded to the same
+// CREATE_VERSION (docs/mds.md, "Versions"): forwarded to the same
 // rawstor_target_create() this server's own local backend(s) implement --
-// the bound snapshot_id baked into the target's own path (_targets()'s
-// own `snapshot_id` parameter) makes it take a CoW snapshot instead of
+// the bound version_id baked into the target's own path (_targets()'s
+// own `version_id` parameter) makes it take a CoW version instead of
 // creating a fresh object, same shape as _release() above.
-rawstd::DetachedTask Client::_create_snapshot(
+rawstd::DetachedTask Client::_create_version(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameBasicPayload payload
 ) {
@@ -1171,45 +1171,45 @@ rawstd::DetachedTask Client::_create_snapshot(
 
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-    // payload.snapshot_id is always a concrete, already-chosen id off the
-    // wire (never nil -- a plain OST-local snapshot always names an
+    // payload.version_id is always a concrete, already-chosen id off the
+    // wire (never nil -- a plain OST-local version always names an
     // exact version, client-generated like every object id).
-    RawstdUUID snapshot_id;
-    memcpy(snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id));
+    RawstdUUID version_id;
+    memcpy(version_id.bytes, payload.version_id, sizeof(payload.version_id));
 
     std::vector<rawstd::URI> targets =
-        client->_targets(uuid, payload.offset, snapshot_id);
+        client->_targets(uuid, payload.offset, version_id);
 
     int result = 0;
     try {
         std::string target = rawstd::URI::uris(targets);
-        // `target` already carries the bound snapshot_id (_targets() above)
-        // -- rawstor_target_create_snapshot() takes that as-is (its own
+        // `target` already carries the bound version_id (_targets() above)
+        // -- rawstor_target_create_version() takes that as-is (its own
         // mode 1, doc comment) and does the actual CoW; it is the only
         // entry point for this (create() rejects a bound target with
         // -EINVAL). The resulting target string it also returns is
         // discarded -- this wire command only reports success/failure.
         //
-        // NULL/0 asks for the snapshot target string's own length alone --
+        // NULL/0 asks for the version target string's own length alone --
         // the same snprintf(NULL, 0, ...) idiom rawstor_target_create_
-        // snapshot() itself just forwards to (target.cpp), needing no I/O
+        // version() itself just forwards to (target.cpp), needing no I/O
         // and creating nothing. send_trampoline() (above) already matches
         // its callback shape (ssize_t result/data). The second call, into
         // a buffer sized exactly for that length, does the real CoW.
         rawstd::CallbackAwaitable<size_t> length_awaiter;
-        int lres = rawstor_target_create_snapshot(
+        int lres = rawstor_target_create_version(
             client->_queue, target.c_str(), nullptr, nullptr, 0,
             send_trampoline, &length_awaiter
         );
         if (lres < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-lres);
         }
-        std::vector<char> snapshot_target(co_await length_awaiter + 1);
+        std::vector<char> version_target(co_await length_awaiter + 1);
 
         rawstd::CallbackAwaitable<void> awaiter;
-        int res = rawstor_target_create_snapshot(
-            client->_queue, target.c_str(), nullptr, snapshot_target.data(),
-            snapshot_target.size(), result_trampoline, &awaiter
+        int res = rawstor_target_create_version(
+            client->_queue, target.c_str(), nullptr, version_target.data(),
+            version_target.size(), result_trampoline, &awaiter
         );
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -1222,7 +1222,7 @@ rawstd::DetachedTask Client::_create_snapshot(
     bool send_failed = false;
     try {
         co_await client->_send_response(
-            RAWSTOR_CMD_SNAPSHOT, head.cid, result, 0
+            RAWSTOR_CMD_CREATE_VERSION, head.cid, result, 0
         );
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
@@ -1235,7 +1235,7 @@ rawstd::DetachedTask Client::_create_snapshot(
 
 // The full per-copy mirror consistency record: size/width/chunk_size plus
 // state/epoch/sync_id, via rawstor_target_meta() -- of the version
-// `payload.snapshot_id` names, or the live one when it's nil.
+// `payload.version_id` names, or the live one when it's nil.
 rawstd::DetachedTask Client::_meta(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameBasicPayload payload
@@ -1248,10 +1248,10 @@ rawstd::DetachedTask Client::_meta(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    RawstdUUID snapshot_id;
-    memcpy(snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id));
+    RawstdUUID version_id;
+    memcpy(version_id.bytes, payload.version_id, sizeof(payload.version_id));
     std::vector<rawstd::URI> targets =
-        client->_targets(uuid, payload.offset, snapshot_id);
+        client->_targets(uuid, payload.offset, version_id);
 
     // rawstor_target_meta() now reports one entry per URI (a URI that
     // didn't answer is zero-filled, RawstorObjectSyncStateValue's own doc
@@ -1327,10 +1327,10 @@ rawstd::DetachedTask Client::_meta(
     }
 }
 
-// Every snapshot of the object at `payload.object_id`/`payload.offset`
-// on this server's own locations, via rawstor_target_snapshots(): each
-// returned snapshot target string's own trailing id is one response row.
-rawstd::DetachedTask Client::_list_snapshots(
+// Every version of the object at `payload.object_id`/`payload.offset`
+// on this server's own locations, via rawstor_target_versions(): each
+// returned version target string's own trailing id is one response row.
+rawstd::DetachedTask Client::_list_versions(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameBasicPayload payload
 ) {
@@ -1346,12 +1346,12 @@ rawstd::DetachedTask Client::_list_snapshots(
 
     std::vector<unsigned char> data;
     int result = 0;
-    RawstorStringList* snapshots = nullptr;
+    RawstorStringList* versions = nullptr;
     try {
         std::string target = rawstd::URI::uris(targets);
         rawstd::CallbackAwaitable<void> awaiter;
-        int res = rawstor_target_snapshots(
-            client->_queue, target.c_str(), &snapshots, result_trampoline,
+        int res = rawstor_target_versions(
+            client->_queue, target.c_str(), &versions, result_trampoline,
             &awaiter
         );
         if (res < 0) {
@@ -1359,18 +1359,18 @@ rawstd::DetachedTask Client::_list_snapshots(
         }
         co_await awaiter;
 
-        for (const char** it = rawstor_string_list_iter(snapshots);
+        for (const char** it = rawstor_string_list_iter(versions);
              it != nullptr; it = rawstor_string_list_next(it)) {
             RawstdUUIDString id_string;
-            RawstorFrameSnapshotEntry entry{};
-            RawstdUUID snapshot_id;
-            if (rawstor_target_snapshot_id(*it, id_string, sizeof(id_string)) <
+            RawstorFrameVersionEntry entry{};
+            RawstdUUID version_id;
+            if (rawstor_target_version_id(*it, id_string, sizeof(id_string)) <
                     0 ||
-                rawstd_uuid_from_string(&snapshot_id, id_string) < 0) {
+                rawstd_uuid_from_string(&version_id, id_string) < 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
             }
             memcpy(
-                entry.snapshot_id, snapshot_id.bytes, sizeof(entry.snapshot_id)
+                entry.version_id, version_id.bytes, sizeof(entry.version_id)
             );
             size_t off = data.size();
             data.resize(off + sizeof(entry));
@@ -1379,17 +1379,17 @@ rawstd::DetachedTask Client::_list_snapshots(
     } catch (const std::system_error& e) {
         result = -e.code().value();
     }
-    rawstor_string_list_delete(snapshots);
+    rawstor_string_list_delete(versions);
 
     bool send_failed = false;
     try {
         if (result < 0) {
             co_await client->_send_response(
-                RAWSTOR_CMD_LIST_SNAPSHOTS, head.cid, result, 0
+                RAWSTOR_CMD_LIST_VERSIONS, head.cid, result, 0
             );
         } else {
             co_await client->_send_response(
-                RAWSTOR_CMD_LIST_SNAPSHOTS, head.cid, data.size(), 0, data
+                RAWSTOR_CMD_LIST_VERSIONS, head.cid, data.size(), 0, data
             );
         }
     } catch (const std::exception& e) {
@@ -1526,14 +1526,14 @@ rawstd::DetachedTask Client::_set_object(
 
         RawstdUUID uuid;
         memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-        // snapshot_id is the bound version -- nil for live, or a previously
-        // snapshotted id (docs/mds.md, "Snapshots").
-        RawstdUUID snapshot_id;
+        // version_id is the bound version -- nil for live, or a previously
+        // created id (docs/mds.md, "Versions").
+        RawstdUUID version_id;
         memcpy(
-            snapshot_id.bytes, payload.snapshot_id, sizeof(payload.snapshot_id)
+            version_id.bytes, payload.version_id, sizeof(payload.version_id)
         );
         target = rawstd::URI::uris(
-            client->_targets(uuid, payload.offset, snapshot_id)
+            client->_targets(uuid, payload.offset, version_id)
         );
     }
 
@@ -1941,7 +1941,7 @@ rawstd::DetachedTask Client::_write_zeroes(
 }
 
 std::vector<rawstd::URI> Client::_targets(
-    const RawstdUUID& uuid, uint64_t offset, const RawstdUUID& snapshot_id
+    const RawstdUUID& uuid, uint64_t offset, const RawstdUUID& version_id
 ) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&uuid, &uuid_string);
@@ -1953,10 +1953,10 @@ std::vector<rawstd::URI> Client::_targets(
     std::ostringstream offset_oss;
     offset_oss << std::hex << offset;
     std::string child = std::string(uuid_string) + "/" + offset_oss.str();
-    if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        RawstdUUIDString snapshot_string;
-        rawstd_uuid_to_string(&snapshot_id, &snapshot_string);
-        child += "/" + std::string(snapshot_string);
+    if (!rawstd_uuid_is_nil(&version_id)) {
+        RawstdUUIDString version_string;
+        rawstd_uuid_to_string(&version_id, &version_string);
+        child += "/" + std::string(version_string);
     }
 
     std::vector<rawstd::URI> ret;

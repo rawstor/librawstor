@@ -13,7 +13,7 @@ today.
 | OST (object storage server) | ✅ | `ost/` (`rawstor-ost`) |
 | OST ops: create / read / write / erase / delete | ✅ | `ALLOCATE` / `READ` / `WRITE` / `DISCARD`, `WRITE_ZEROES` / `RELEASE` ([Protocol](protocol.md)) |
 | Chunk size is a power of two | ✅ | `chunk_shift` in `include/rawstor/protocol.h` |
-| Chunk id with a version (snapshots) | ✅ | `snapshot_id`, see [MDS design](mds.md) |
+| Chunk id with a version | ✅ | `version_id`, see [MDS design](mds.md) |
 | MDS (object → chunks map) | ✅ | `mds/` (`rawstor-mds`) |
 | `getObj` / `getObjPart` / `getFreeOst` | ✅ | replaced by `OBJ_OPEN` + HRW placement (`mds/src/placement.cpp`) |
 | MDS sharding / clustering | ❌ | v1 is a single instance |
@@ -23,14 +23,14 @@ today.
 | Parallel reads from multiple OSTs | ❌ | reads go to one IN-SYNC mirror |
 | Hashsum | 🟡 | transport hash only (xxh3); no stored checksums |
 | Compression / encryption | ❌ | — |
-| `flush` / `snapshot` in the client API | ✅ | `rawstor_object_flush()`, `rawstor_target_create_snapshot()` |
+| `flush` / `version` in the client API | ✅ | `rawstor_object_flush()`, `rawstor_target_create_version()` |
 | Block storage client (VM) | ✅ | `vhost/`, `vhost-qemu/`, `vduse/` |
 | S3 gateway | ❌ | — |
 | User-chosen chunk size / distribution strategy | ✅ | `chunk_size`, `stripe_width`, `failure_domain` |
 | Mutable objects (block storage) | ✅ | — |
 | Immutable objects (object storage mode) | ❌ | — |
 
-Status: early design draft, predates chunk-addressing, mirroring, snapshots
+Status: early design draft, predates chunk-addressing, mirroring, versions
 and the MDS (see [Concepts](concepts.md), [Mirroring](mirroring.md)).
 Copied from [rawstor/rawstor_docs](https://github.com/rawstor/rawstor_docs)
 (CC0-1.0), originally authored by George Melikov.
@@ -58,7 +58,7 @@ classDiagram
     note for ost "Notes:
     chunk id is
     - objid:offset, we don't need anything else (?)
-    - + versionid, we need it for snapshots
+    - + versionid, we need it for versions
     The size of a chunk must be a power of two (TODO: size constraints)."
 
     class mds{
@@ -92,7 +92,7 @@ classDiagram
       +write(?)
       +read(?)
       +flush(?)
-      +snapshot(?)
+      +version(?)
     }
     class client_gateway_s3{
       <<Client example>>

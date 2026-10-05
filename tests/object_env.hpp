@@ -17,8 +17,8 @@ namespace tests {
 // the same way tests/test_mirror.cpp's tests::Server exercises the OST
 // wire protocol for plain Chunks. The OST's one backend is a fresh
 // TmpDir's file:// -- the only backend guaranteed available in a build/
-// test environment, which means every chunk's Backend::create_snapshot()/
-// remove() with a non-nil snapshot_id always answers -ENOTSUP (docs/mds.md:
+// test environment, which means every chunk's Backend::create_version()/
+// remove() with a non-nil version_id always answers -ENOTSUP (docs/mds.md:
 // "file:// backend has no CoW"). That is exactly the negative path this
 // environment exists to exercise end to end (the reservation/rollback
 // bookkeeping around a failed CoW); the real CoW positive path needs a

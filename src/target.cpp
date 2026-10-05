@@ -70,10 +70,10 @@ RawstdUUID uuid_from_target(const rawstd::URI& target) {
     return rawstor::parse_target_path(target.path().str()).id;
 }
 
-// The bound snapshot version embedded in a URI's own trailing path
+// The bound version embedded in a URI's own trailing path
 // segments, if any -- see TargetPath's own doc comment in target.hpp.
-RawstdUUID extract_snapshot_id(const rawstd::URI& uri) {
-    return rawstor::parse_target_path(uri.path().str()).snapshot_id;
+RawstdUUID extract_version_id(const rawstd::URI& uri) {
+    return rawstor::parse_target_path(uri.path().str()).version_id;
 }
 
 // This URI's own byte offset within the larger object it's one chunk of,
@@ -201,20 +201,20 @@ std::vector<rawstd::URI> locations_for(
 }
 
 // Every URI in `targets` must name the same logical resource as `id`/
-// `snapshot_id` -- compared on their *parsed* values (uuid_from_target()/
-// extract_snapshot_id()), not the raw path string, so equivalent-but-
+// `version_id` -- compared on their *parsed* values (uuid_from_target()/
+// extract_version_id()), not the raw path string, so equivalent-but-
 // differently-spelled URIs (e.g. "<uuid>" and "<uuid>/0" -- offset is
 // already guaranteed equal within one chunk's own uris, both landed in
 // the same bucket via extract_offset() in the constructor below) are
 // correctly accepted as the same resource rather than rejected as a
-// mismatch. Takes the expected id/snapshot_id explicitly rather than
+// mismatch. Takes the expected id/version_id explicitly rather than
 // deriving them from `targets.front()` itself, so the same check works
 // both within one chunk's own uris and across every chunk's own uris of
 // a multi-chunk target (Target's own class doc comment: the whole
-// target agrees on one id/snapshot_id, not just one chunk's own uris).
+// target agrees on one id/version_id, not just one chunk's own uris).
 void validate_same_uuid(
     const std::vector<rawstd::URI>& targets, const RawstdUUID& id,
-    const RawstdUUID& snapshot_id
+    const RawstdUUID& version_id
 ) {
     for (const auto& target : targets) {
         RawstdUUID other_id = uuid_from_target(target);
@@ -222,9 +222,9 @@ void validate_same_uuid(
             rawstd_error("Equal UUID expected\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
-        RawstdUUID other_snapshot_id = extract_snapshot_id(target);
-        if (rawstd_uuid_cmp(&other_snapshot_id, &snapshot_id) != 0) {
-            rawstd_error("Equal snapshot version expected\n");
+        RawstdUUID other_version_id = extract_version_id(target);
+        if (rawstd_uuid_cmp(&other_version_id, &version_id) != 0) {
+            rawstd_error("Equal version expected\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
     }
@@ -268,15 +268,15 @@ rawstd::Task<void> create_one(
 rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t offset = extract_offset(target);
-    RawstdUUID snapshot_id = extract_snapshot_id(target);
+    RawstdUUID version_id = extract_version_id(target);
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, strip_path(target), 1);
     std::exception_ptr error;
     try {
-        if (rawstd_uuid_is_nil(&snapshot_id)) {
+        if (rawstd_uuid_is_nil(&version_id)) {
             co_await slot->remove(id, offset);
         } else {
-            co_await slot->remove_snapshot(id, offset, snapshot_id);
+            co_await slot->remove_version(id, offset, version_id);
         }
     } catch (...) {
         error = std::current_exception();
@@ -287,9 +287,8 @@ rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
     }
 }
 
-rawstd::Task<void> create_snapshot_one(
-    rawio::Queue& queue, const rawstd::URI& target,
-    const RawstdUUID& snapshot_id
+rawstd::Task<void> create_version_one(
+    rawio::Queue& queue, const rawstd::URI& target, const RawstdUUID& version_id
 ) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t offset = extract_offset(target);
@@ -297,7 +296,7 @@ rawstd::Task<void> create_snapshot_one(
         co_await rawstor::Slot::create(queue, strip_path(target), 1);
     std::exception_ptr error;
     try {
-        co_await slot->create_snapshot(id, offset, snapshot_id);
+        co_await slot->create_version(id, offset, version_id);
     } catch (...) {
         error = std::current_exception();
     }
@@ -343,14 +342,14 @@ resize_one(rawio::Queue& queue, const rawstd::URI& target, uint64_t new_size) {
 // them.
 rawstd::Task<std::vector<RawstorObjectMeta>> meta_one(
     rawio::Queue& queue, rawstd::URI location, RawstdUUID id, uint64_t offset,
-    RawstdUUID snapshot_id
+    RawstdUUID version_id
 ) {
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location, 1);
     std::vector<RawstorObjectMeta> ret;
     std::exception_ptr error;
     try {
-        ret = co_await slot->meta(id, offset, snapshot_id);
+        ret = co_await slot->meta(id, offset, version_id);
     } catch (...) {
         error = std::current_exception();
     }
@@ -368,7 +367,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> meta_one(
 // moves on to the next one the same way it would for an unreachable one.
 rawstd::Task<std::vector<uint64_t>> chunks_one(
     rawio::Queue& queue, rawstd::URI location, RawstdUUID id,
-    RawstdUUID snapshot_id
+    RawstdUUID version_id
 ) {
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location, 1);
@@ -376,7 +375,7 @@ rawstd::Task<std::vector<uint64_t>> chunks_one(
     RawstdUUID token{};
     std::exception_ptr error;
     try {
-        co_await slot->list_chunks(id, 0, groups, token, snapshot_id);
+        co_await slot->list_chunks(id, 0, groups, token, version_id);
     } catch (...) {
         error = std::current_exception();
     }
@@ -390,9 +389,9 @@ rawstd::Task<std::vector<uint64_t>> chunks_one(
     co_return std::move(groups.front().offsets);
 }
 
-// One location's worth of Target::snapshots() -- same one-off shape as
-// meta_one() above, for Slot::list_snapshots().
-rawstd::Task<std::vector<RawstdUUID>> snapshots_one(
+// One location's worth of Target::versions() -- same one-off shape as
+// meta_one() above, for Slot::list_versions().
+rawstd::Task<std::vector<RawstdUUID>> versions_one(
     rawio::Queue& queue, rawstd::URI location, RawstdUUID id, uint64_t offset
 ) {
     std::unique_ptr<rawstor::Slot> slot =
@@ -400,7 +399,7 @@ rawstd::Task<std::vector<RawstdUUID>> snapshots_one(
     std::vector<RawstdUUID> ret;
     std::exception_ptr error;
     try {
-        ret = co_await slot->list_snapshots(id, offset);
+        ret = co_await slot->list_versions(id, offset);
     } catch (...) {
         error = std::current_exception();
     }
@@ -416,14 +415,14 @@ rawstd::Task<std::vector<RawstdUUID>> snapshots_one(
 // instead of Slot::meta().
 rawstd::Task<std::vector<rawstd::URI>> member_locations_one(
     rawio::Queue& queue, rawstd::URI location, RawstdUUID id, uint64_t offset,
-    RawstdUUID snapshot_id
+    RawstdUUID version_id
 ) {
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location, 1);
     std::vector<rawstd::URI> ret;
     std::exception_ptr error;
     try {
-        ret = co_await slot->resolve_locations(id, offset, snapshot_id);
+        ret = co_await slot->resolve_locations(id, offset, version_id);
     } catch (...) {
         error = std::current_exception();
     }
@@ -447,13 +446,13 @@ rawstd::Task<std::vector<rawstd::URI>> member_locations_one(
 // first answer.
 rawstd::Task<RawstorObjectSpec> resolve_spec(
     rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
-    uint64_t offset, RawstdUUID snapshot_id
+    uint64_t offset, RawstdUUID version_id
 ) {
     int first_error = 0;
     for (const auto& location : locations) {
         try {
             std::vector<RawstorObjectMeta> ms =
-                co_await meta_one(queue, location, id, offset, snapshot_id);
+                co_await meta_one(queue, location, id, offset, version_id);
             // An mds:// location reports every member of the chunk, a
             // member that didn't answer as a zero-filled (UNREACHABLE)
             // entry that may well come first: the spec is the first one
@@ -511,12 +510,12 @@ namespace rawstor {
 // real, always non-zero value otherwise -- its own comment).
 rawstd::Task<std::vector<RawstorObjectMeta>> resolve_meta(
     rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
-    uint64_t offset, RawstdUUID snapshot_id
+    uint64_t offset, RawstdUUID version_id
 ) {
     std::vector<rawstd::Task<std::vector<RawstorObjectMeta>>> tasks;
     tasks.reserve(locations.size());
     for (const auto& location : locations) {
-        tasks.push_back(meta_one(queue, location, id, offset, snapshot_id));
+        tasks.push_back(meta_one(queue, location, id, offset, version_id));
     }
 
     std::vector<RawstorObjectMeta> ret;
@@ -546,12 +545,12 @@ namespace {
 // not of one particular copy).
 rawstd::Task<std::vector<uint64_t>> resolve_chunks(
     rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
-    RawstdUUID snapshot_id
+    RawstdUUID version_id
 ) {
     int first_error = 0;
     for (const auto& location : locations) {
         try {
-            co_return co_await chunks_one(queue, location, id, snapshot_id);
+            co_return co_await chunks_one(queue, location, id, version_id);
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unreachable: %s\n", e.what());
             if (first_error == 0) {
@@ -571,13 +570,13 @@ rawstd::Task<std::vector<uint64_t>> resolve_chunks(
 // chunk as a whole, not of one particular copy.
 rawstd::Task<std::vector<rawstd::URI>> resolve_member_locations(
     rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
-    uint64_t offset, RawstdUUID snapshot_id
+    uint64_t offset, RawstdUUID version_id
 ) {
     int first_error = 0;
     for (const auto& location : locations) {
         try {
             co_return co_await member_locations_one(
-                queue, location, id, offset, snapshot_id
+                queue, location, id, offset, version_id
             );
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unreachable: %s\n", e.what());
@@ -712,23 +711,23 @@ rawstd::DetachedTask launch_remove_op_coro(
     }
 }
 
-// C ABI adapter for rawstor_target_create_snapshot()'s actual CoW-snapshot
-// step, once `t` is already the exact target to snapshot (rawstor_target_
-// create_snapshot() itself resolves the version id and, unless `t` was
-// already bound, splices it onto every URI -- so `t` here is always
-// already bound, as t.create_snapshot(queue) below requires). `length` is
-// threaded through as the success result -- rawstor_target_create_snapshot()
+// C ABI adapter for rawstor_target_create_version()'s actual CoW-version
+// step, once `t` is already the exact target to create a version of
+// (rawstor_target_ create_version() itself resolves the version id and, unless
+// `t` was already bound, splices it onto every URI -- so `t` here is always
+// already bound, as t.create_version(queue) below requires). `length` is
+// threaded through as the success result -- rawstor_target_create_version()
 // keeps its snprintf()-style contract (the resulting target string's length,
-// always < the buffer size on success) even though the actual snapshot is
+// always < the buffer size on success) even though the actual version is
 // asynchronous, same shape as location.cpp's own launch_create_op_coro() for
 // rawstor_location_create().
-rawstd::DetachedTask launch_create_snapshot_op_coro(
+rawstd::DetachedTask launch_create_version_op_coro(
     rawstor::Target t, rawio::Queue* queue, ssize_t length,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = length;
     try {
-        co_await t.create_snapshot(*queue);
+        co_await t.create_version(*queue);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -867,24 +866,24 @@ rawstd::DetachedTask launch_chunks_op_coro(
     }
 }
 
-// C ABI adapter for rawstor_target_snapshots(): every snapshot id becomes
+// C ABI adapter for rawstor_target_versions(): every version id becomes
 // that version's own target string -- every URI of `t`'s own live form
 // (any bound version stripped off first) with the id appended, the same
-// string rawstor_target_create_snapshot() prints.
-rawstd::DetachedTask launch_snapshots_op_coro(
-    rawstor::Target t, rawio::Queue* queue, RawstorStringList** snapshots,
+// string rawstor_target_create_version() prints.
+rawstd::DetachedTask launch_versions_op_coro(
+    rawstor::Target t, rawio::Queue* queue, RawstorStringList** versions,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     RawstorStringList* list = nullptr;
     try {
-        std::vector<RawstdUUID> ids = co_await t.snapshots(*queue);
+        std::vector<RawstdUUID> ids = co_await t.versions(*queue);
 
         std::vector<rawstd::URI> live;
         live.reserve(t.uris().size());
         for (const auto& uri : t.uris()) {
             live.push_back(
-                rawstd_uuid_is_nil(&t.snapshot_id()) ? uri : uri.parent()
+                rawstd_uuid_is_nil(&t.version_id()) ? uri : uri.parent()
             );
         }
 
@@ -916,7 +915,7 @@ rawstd::DetachedTask launch_snapshots_op_coro(
             *it = str;
         }
 
-        *snapshots = list;
+        *versions = list;
         list = nullptr;
         result = static_cast<ssize_t>(ids.size());
     } catch (const std::system_error& e) {
@@ -971,23 +970,23 @@ rawstd::DetachedTask launch_set_member_sync_state_op_coro(
 namespace rawstor {
 
 // See TargetPath's own doc comment in target.hpp for the three shapes
-// (physical-with-snapshot, physical-live, logical) parsed here.
+// (physical-with-version, physical-live, logical) parsed here.
 //
 // A location's own path can end in an arbitrary number of segments
 // before the identity even starts (e.g. file:///a/b/<uuid>), so the
 // identity is always read off the *end*: find the trailing run of
 // UUID-shaped segments (empty if the last segment isn't UUID-shaped at
-// all). A target binds at most one snapshot, so a run longer than two
+// all). A target binds at most one version, so a run longer than two
 // segments is EINVAL. If the run is non-empty and a valid hexadecimal
 // offset, with another UUID (the id) right before that, precede it, it's
-// the physical-with-snapshot shape -- offset from that hexadecimal
+// the physical-with-version shape -- offset from that hexadecimal
 // segment, id from the UUID before it, and the run (exactly one segment
-// here) the snapshot_id. If the run is non-empty but isn't preceded that
+// here) the version_id. If the run is non-empty but isn't preceded that
 // way, it's the logical shape instead: the run's first segment is the id
-// and its second, if any, the snapshot_id. If the run is empty (the last
+// and its second, if any, the version_id. If the run is empty (the last
 // segment is hexadecimal, not a UUID), the only remaining possibility is the
 // physical-live shape: that hexadecimal segment is the offset, and the UUID
-// right before it is the id, with no snapshot segment anywhere -- anything else
+// right before it is the id, with no version segment anywhere -- anything else
 // at this point is malformed. Hex, not decimal: every other numeric field this
 // codebase persists or transmits alongside a chunk's own identity
 // (meta_encode()'s own chunk_size, epoch, sync_id, ...) is already hex,
@@ -1012,7 +1011,7 @@ TargetPath parse_target_path(const std::string& path) {
     }
     if (chain > 2) {
         rawstd_error(
-            "Target path binds more than one snapshot: %s\n", path.c_str()
+            "Target path binds more than one version: %s\n", path.c_str()
         );
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -1029,13 +1028,13 @@ TargetPath parse_target_path(const std::string& path) {
             rawstd_uuid_from_string(&ret.id, id_segment.c_str()) == 0) {
             if (chain > 1) {
                 rawstd_error(
-                    "Target path binds more than one snapshot: %s\n",
+                    "Target path binds more than one version: %s\n",
                     path.c_str()
                 );
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
             ret.offset = offset;
-            rawstd_uuid_from_string(&ret.snapshot_id, segments.back().c_str());
+            rawstd_uuid_from_string(&ret.version_id, segments.back().c_str());
             ret.segments = static_cast<unsigned int>(chain + 2);
             return ret;
         }
@@ -1044,12 +1043,12 @@ TargetPath parse_target_path(const std::string& path) {
     if (chain > 0) {
         // No valid offset precedes the trailing UUID run -- the logical
         // shape (TargetPath's own doc comment): the run's first segment
-        // is the id, and its second, if any, the bound snapshot version.
+        // is the id, and its second, if any, the bound version.
         rawstd_uuid_from_string(
             &ret.id, segments[segments.size() - chain].c_str()
         );
         if (chain > 1) {
-            rawstd_uuid_from_string(&ret.snapshot_id, segments.back().c_str());
+            rawstd_uuid_from_string(&ret.version_id, segments.back().c_str());
         }
         ret.segments = static_cast<unsigned int>(chain);
         return ret;
@@ -1104,7 +1103,7 @@ Target::Target(const std::vector<rawstd::URI>& uris) {
     // as any other; validate_same_uuid() below then checks every URI of
     // every chunk actually agrees.
     _id = uuid_from_target(uris.front());
-    _snapshot_id = extract_snapshot_id(uris.front());
+    _version_id = extract_version_id(uris.front());
 
     std::map<uint64_t, std::vector<rawstd::URI>> by_offset;
     for (const rawstd::URI& uri : uris) {
@@ -1114,7 +1113,7 @@ Target::Target(const std::vector<rawstd::URI>& uris) {
     _uris.reserve(uris.size());
     for (auto& [offset, chunk_uris] : by_offset) {
         validate_different_uris(chunk_uris);
-        validate_same_uuid(chunk_uris, _id, _snapshot_id);
+        validate_same_uuid(chunk_uris, _id, _version_id);
         for (rawstd::URI& uri : chunk_uris) {
             _uris.push_back(std::move(uri));
         }
@@ -1142,15 +1141,15 @@ Location Target::location() const {
     return Location(stripped);
 }
 
-const RawstdUUID& Target::snapshot_id() const {
-    return _snapshot_id;
+const RawstdUUID& Target::version_id() const {
+    return _version_id;
 }
 
 rawstd::Task<void>
 Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
-    if (!rawstd_uuid_is_nil(&_snapshot_id)) {
-        // create() is only ever for a fresh object -- taking a snapshot
-        // of an existing one is create_snapshot()'s own job (this class's
+    if (!rawstd_uuid_is_nil(&_version_id)) {
+        // create() is only ever for a fresh object -- creating a version
+        // of an existing one is create_version()'s own job (this class's
         // own doc comment), never this method's.
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -1300,26 +1299,26 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     }
 }
 
-rawstd::Task<void> Target::create_snapshot(rawio::Queue& queue) const {
-    if (rawstd_uuid_is_nil(&_snapshot_id)) {
+rawstd::Task<void> Target::create_version(rawio::Queue& queue) const {
+    if (rawstd_uuid_is_nil(&_version_id)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    // Take the CoW snapshot as that exact version on every URI, so the
+    // Create the CoW version with that exact id on every URI, so the
     // version covers the whole chunk. ENOTSUP on a backend without native
     // CoW (file://, classic LVM).
     //
     // Every URI is attempted even if an earlier one fails, the first
     // error encountered reported -- but this can't just gather() them:
-    // on failure, the URIs THIS call did snapshot are rolled back (same
+    // on failure, the URIs THIS call did create it on are rolled back (same
     // reasoning as create()'s own rollback), or a partial failure would
-    // leave snapshots behind that nobody knows about. The URI that
+    // leave versions behind that nobody knows about. The URI that
     // failed is not rolled back, since it may name a pre-existing
-    // snapshot this call didn't create.
+    // version this call didn't create.
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_uris.size());
     for (const auto& uri : _uris) {
-        tasks.push_back(create_snapshot_one(queue, uri, _snapshot_id));
+        tasks.push_back(create_version_one(queue, uri, _version_id));
     }
 
     // co_await isn't allowed inside a catch block, so the failure is
@@ -1343,7 +1342,7 @@ rawstd::Task<void> Target::create_snapshot(rawio::Queue& queue) const {
                 co_await remove_many(queue, created);
             } catch (const std::exception& e) {
                 rawstd_error(
-                    "Failed to rollback create_snapshot operation: %s\n",
+                    "Failed to rollback create_version operation: %s\n",
                     e.what()
                 );
             }
@@ -1376,7 +1375,7 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
 
     RawstorObjectSpec ret = co_await resolve_spec(
         queue, locations_for(_uris, offsets.front(), opaque), id,
-        offsets.front(), _snapshot_id
+        offsets.front(), _version_id
     );
     if (ret.chunk_size != 0 && (opaque || offsets.size() > 1)) {
         ret.size = ret.chunk_size * offsets.size();
@@ -1402,14 +1401,14 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
 // Target::create() persisted on every member (the object's own policy,
 // always non-zero -- its own comment), and every chunk of one object
 // shares the same policy width by construction (docs/mds.md). A bound
-// snapshot reports that version's own copies (Backend::meta()'s own doc
+// version reports that version's own copies (Backend::meta()'s own doc
 // comment).
 rawstd::Task<std::vector<RawstorObjectMeta>>
 Target::meta(rawio::Queue& queue, uint64_t offset) const {
     bool opaque = is_opaque(_uris);
     RawstdUUID id = uuid_from_target(_uris.front());
     return resolve_meta(
-        queue, locations_for(_uris, offset, opaque), id, offset, _snapshot_id
+        queue, locations_for(_uris, offset, opaque), id, offset, _version_id
     );
 }
 
@@ -1435,7 +1434,7 @@ rawstd::Task<std::vector<uint64_t>> Target::chunks(rawio::Queue& queue) const {
 
     RawstdUUID id = uuid_from_target(_uris.front());
     co_return co_await resolve_chunks(
-        queue, locations_for(_uris, 0, true), id, _snapshot_id
+        queue, locations_for(_uris, 0, true), id, _version_id
     );
 }
 
@@ -1443,10 +1442,10 @@ rawstd::Task<std::vector<uint64_t>> Target::chunks(rawio::Queue& queue) const {
 // location that doesn't answer is skipped, and only none answering at all
 // fails the call.
 rawstd::Task<std::vector<RawstdUUID>>
-Target::snapshots(rawio::Queue& queue) const {
+Target::versions(rawio::Queue& queue) const {
     bool opaque = is_opaque(_uris);
     RawstdUUID id = uuid_from_target(_uris.front());
-    // A snapshot covers the whole object, so the first chunk's copies
+    // A version covers the whole object, so the first chunk's copies
     // answer for it; an mds:// backend ignores the offset.
     uint64_t offset = 0;
     if (!opaque) {
@@ -1458,7 +1457,7 @@ Target::snapshots(rawio::Queue& queue) const {
     std::vector<rawstd::Task<std::vector<RawstdUUID>>> tasks;
     tasks.reserve(locations.size());
     for (const auto& location : locations) {
-        tasks.push_back(snapshots_one(queue, location, id, offset));
+        tasks.push_back(versions_one(queue, location, id, offset));
     }
 
     std::vector<RawstdUUID> ret;
@@ -1509,7 +1508,7 @@ rawstd::Task<void> Target::set_member_sync_state(
     rawio::Queue& queue, uint64_t offset, size_t member_index,
     const RawstorObjectSyncState& sync_state
 ) const {
-    if (!rawstd_uuid_is_nil(&_snapshot_id)) {
+    if (!rawstd_uuid_is_nil(&_version_id)) {
         // Would otherwise rewrite the live chunk's state.
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -1519,7 +1518,7 @@ rawstd::Task<void> Target::set_member_sync_state(
     std::vector<rawstd::URI> members =
         opaque ? co_await resolve_member_locations(
                      queue, locations_for(_uris, offset, true), id, offset,
-                     _snapshot_id
+                     _version_id
                  )
                : locations_for(_uris, offset, false);
 
@@ -1549,9 +1548,9 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
     // attempted regardless of an earlier failure (gather() never
     // abandons a task still in flight). On failure, gather() surfaces
     // exactly one exception (not one per failed URI). remove_one() reads
-    // each URI's own bound snapshot version back out of its own path
-    // (extract_snapshot_id(), nil meaning the live version) and dispatches to
-    // Slot::remove()/remove_snapshot() accordingly -- this method itself
+    // each URI's own bound version back out of its own path
+    // (extract_version_id(), nil meaning the live version) and dispatches to
+    // Slot::remove()/remove_version() accordingly -- this method itself
     // stays a single entry point regardless, since the identity being
     // removed is already fully described by the target string.
     co_await remove_many(queue, _uris);
@@ -1595,9 +1594,9 @@ Target::resize(rawio::Queue& queue, uint64_t new_size) const {
 // spec, so its size comes from spec() instead, the same whole-object
 // derivation rawstor_target_spec() reports.
 //
-// A bound snapshot is a frozen, immutable copy, so it can only be opened
+// A bound version is a frozen, immutable copy, so it can only be opened
 // RAWSTOR_READONLY (nothing to write, nothing to reconcile); `flags` and
-// the bound snapshot id (nil for the live version) then ride down to
+// the bound version id (nil for the live version) then ride down to
 // every Chunk::create() below.
 rawstd::Task<std::unique_ptr<Object>>
 Target::open(rawio::Queue& queue, int flags) const {
@@ -1606,10 +1605,10 @@ Target::open(rawio::Queue& queue, int flags) const {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    RawstdUUID bound_snapshot_id = snapshot_id();
-    if (!rawstd_uuid_is_nil(&bound_snapshot_id) &&
+    RawstdUUID bound_version_id = version_id();
+    if (!rawstd_uuid_is_nil(&bound_version_id) &&
         (flags & RAWSTOR_READONLY) == 0) {
-        rawstd_error("A bound snapshot can only be opened RAWSTOR_READONLY\n");
+        rawstd_error("A bound version can only be opened RAWSTOR_READONLY\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
@@ -1641,10 +1640,10 @@ Target::open(rawio::Queue& queue, int flags) const {
 
     RawstdUUID last_id = uuid_from_target(chunks.back().front());
     uint64_t last_offset = extract_offset(chunks.back().front());
-    RawstdUUID last_snapshot_id = extract_snapshot_id(chunks.back().front());
+    RawstdUUID last_version_id = extract_version_id(chunks.back().front());
     std::unique_ptr<Chunk> last = co_await Chunk::create(
         queue, chunk_locations.back(), last_id, last_offset, flags,
-        last_snapshot_id
+        last_version_id
     );
 
     uint64_t chunk_size = last->spec().chunk_size;
@@ -1703,12 +1702,12 @@ Target::open(rawio::Queue& queue, int flags) const {
 
     if (chunks.size() == 1) {
         co_return std::unique_ptr<Object>(new SingleChunkObject(
-            queue, last_id, last_snapshot_id, size, std::move(last)
+            queue, last_id, last_version_id, size, std::move(last)
         ));
     }
 
     co_return std::unique_ptr<Object>(new MultiChunkObject(
-        queue, last_id, last_snapshot_id, size, chunk_size, flags,
+        queue, last_id, last_version_id, size, chunk_size, flags,
         std::move(chunk_locations), std::move(last)
     ));
 }
@@ -1942,14 +1941,14 @@ int rawstor_target_chunks(
     }
 }
 
-int rawstor_target_snapshots(
-    RawIOQueue* queue, const char* target, RawstorStringList** snapshots,
+int rawstor_target_versions(
+    RawIOQueue* queue, const char* target, RawstorStringList** versions,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        launch_snapshots_op_coro(
-            std::move(t), static_cast<rawio::Queue*>(queue), snapshots, cb, data
+        launch_versions_op_coro(
+            std::move(t), static_cast<rawio::Queue*>(queue), versions, cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;
@@ -1967,52 +1966,52 @@ int rawstor_target_snapshots(
 }
 
 // Three ways the version id actually used is picked, all resolved
-// synchronously (no I/O needed for any of them) before `snapshot_target` is
+// synchronously (no I/O needed for any of them) before `version_target` is
 // written:
 // - `target` already names a specific version of its own (its own path
-//   carries a trailing snapshot_id, e.g. as printed back by a previous
-//   rawstor_target_create_snapshot()/read by rawstor_target_snapshot_id())
-//   and `snapshot_id` here is NULL: that bound version IS the one used --
+//   carries a trailing version_id, e.g. as printed back by a previous
+//   rawstor_target_create_version()/read by rawstor_target_version_id())
+//   and `version_id` here is NULL: that bound version IS the one used --
 //   `target` itself is already the target to create.
-// - `target` names a plain object and `snapshot_id` here is NULL: a fresh
-//   id is generated (the single point every snapshot id is generated at,
+// - `target` names a plain object and `version_id` here is NULL: a fresh
+//   id is generated (the single point every version id is generated at,
 //   by analogy with how a fresh object id is generated in Location::
 //   create()/rawstor_location_create() -- rawstd_uuid7_init(), same
 //   function, same reasoning), then spliced onto every one of `target`'s
 //   own URIs.
-// - `snapshot_id` here is non-NULL: that caller-chosen version id is
+// - `version_id` here is non-NULL: that caller-chosen version id is
 //   spliced on the same way -- but only if `target` names a plain object;
 //   combining it with a `target` that already carries its own bound
 //   version would be ambiguous, so that combination fails with -EINVAL
 //   instead.
 // Either way, the resulting target string is written into
-// `snapshot_target`/`size` synchronously, before any I/O, same convention
+// `version_target`/`size` synchronously, before any I/O, same convention
 // as rawstor_location_create()'s own `target`/`size`.
-int rawstor_target_create_snapshot(
-    RawIOQueue* queue, const char* target, const char* snapshot_id,
-    char* snapshot_target, size_t size, int (*cb)(ssize_t result, void* data),
+int rawstor_target_create_version(
+    RawIOQueue* queue, const char* target, const char* version_id,
+    char* version_target, size_t size, int (*cb)(ssize_t result, void* data),
     void* data
 ) noexcept {
     try {
         // Validates `target` before resolving/writing anything to
-        // `snapshot_target` below -- an immediate failure (malformed
+        // `version_target` below -- an immediate failure (malformed
         // target) must leave it untouched, same as every other
         // immediate-failure case here.
         rawstor::Target t(rawstd::URI::uriv(target));
 
         RawstdUUID id;
         int res;
-        bool explicit_id = snapshot_id != nullptr;
+        bool explicit_id = version_id != nullptr;
         if (explicit_id) {
-            res = rawstd_uuid_from_string(&id, snapshot_id);
+            res = rawstd_uuid_from_string(&id, version_id);
             if (res < 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(-res);
             }
-            if (!rawstd_uuid_is_nil(&t.snapshot_id())) {
+            if (!rawstd_uuid_is_nil(&t.version_id())) {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
-        } else if (!rawstd_uuid_is_nil(&t.snapshot_id())) {
-            id = t.snapshot_id();
+        } else if (!rawstd_uuid_is_nil(&t.version_id())) {
+            id = t.version_id();
         } else {
             res = rawstd_uuid7_init(&id);
             if (res < 0) {
@@ -2026,8 +2025,8 @@ int rawstor_target_create_snapshot(
         // that target fresh -- the same way rawstor_location_create()
         // below builds a fresh Target under a caller-or-freshly-generated
         // id, rather than going through Location::create().
-        rawstor::Target snapshot = t;
-        if (rawstd_uuid_is_nil(&t.snapshot_id())) {
+        rawstor::Target version = t;
+        if (rawstd_uuid_is_nil(&t.version_id())) {
             RawstdUUIDString uuid_string;
             rawstd_uuid_to_string(&id, &uuid_string);
             std::vector<rawstd::URI> uris;
@@ -2035,12 +2034,12 @@ int rawstor_target_create_snapshot(
             for (const auto& uri : t.uris()) {
                 uris.emplace_back(uri, std::string(uuid_string));
             }
-            snapshot = rawstor::Target(uris);
+            version = rawstor::Target(uris);
         }
 
         res = snprintf(
-            snapshot_target, size, "%s",
-            rawstd::URI::uris(snapshot.uris()).c_str()
+            version_target, size, "%s",
+            rawstd::URI::uris(version.uris()).c_str()
         );
         if (res < 0) {
             return res;
@@ -2057,9 +2056,8 @@ int rawstor_target_create_snapshot(
             return 0;
         }
 
-        launch_create_snapshot_op_coro(
-            std::move(snapshot), static_cast<rawio::Queue*>(queue), res, cb,
-            data
+        launch_create_version_op_coro(
+            std::move(version), static_cast<rawio::Queue*>(queue), res, cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;
@@ -2100,14 +2098,14 @@ int rawstor_target_location(
     }
 }
 
-int rawstor_target_snapshot_id(
+int rawstor_target_version_id(
     const char* target, char* buf, size_t size
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        RawstdUUID snapshot_id = t.snapshot_id();
-        if (rawstd_uuid_is_nil(&snapshot_id)) {
-            // Live: no bound snapshot segment -- an empty string, same
+        RawstdUUID version_id = t.version_id();
+        if (rawstd_uuid_is_nil(&version_id)) {
+            // Live: no bound version segment -- an empty string, same
             // as rawstor_target_id()'s own convention has nothing
             // analogous to fall back to (every target always has a real
             // id).
@@ -2117,7 +2115,7 @@ int rawstor_target_snapshot_id(
             return 0;
         }
         RawstdUUIDString uuid_string;
-        rawstd_uuid_to_string(&snapshot_id, &uuid_string);
+        rawstd_uuid_to_string(&version_id, &uuid_string);
         int res = snprintf(buf, size, "%s", uuid_string);
         if (res < 0) {
             RAWSTD_THROW_ERRNO();

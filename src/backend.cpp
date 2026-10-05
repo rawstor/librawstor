@@ -73,24 +73,24 @@ Backend::create(rawio::Queue& queue, const rawstd::URI& location) {
 }
 
 rawstd::Task<void>
-Backend::set_snapshot(const RawstdUUID&, uint64_t, const RawstdUUID&) {
+Backend::set_version(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
-rawstd::Task<void> Backend::remove_snapshot(
+rawstd::Task<void> Backend::remove_version(
     const RawstdUUID&, const RawstdUUID&, uint64_t, const RawstdUUID&
 ) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
-rawstd::Task<void> Backend::create_snapshot(
+rawstd::Task<void> Backend::create_version(
     const RawstdUUID&, const RawstdUUID&, uint64_t, const RawstdUUID&
 ) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
 rawstd::Task<std::vector<RawstdUUID>>
-Backend::list_snapshots(const RawstdUUID&, uint64_t) {
+Backend::list_versions(const RawstdUUID&, uint64_t) {
     co_return std::vector<RawstdUUID>{};
 }
 

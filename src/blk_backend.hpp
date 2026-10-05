@@ -82,19 +82,19 @@ protected:
     virtual rawstd::Task<int>
     _open_object(const RawstdUUID& id, uint64_t offset, int flags) = 0;
 
-    // Opens one previously-snapshotted version of `id`/`offset`
-    // (`snapshot_id`, never nil -- see create_snapshot() below,
-    // docs/mds.md "Snapshots"). Default: ENOTSUP, covering
+    // Opens one previously-created version of `id`/`offset`
+    // (`version_id`, never nil -- see create_version() below,
+    // docs/mds.md "Versions"). Default: ENOTSUP, covering
     // file::Backend and lvm::Backend (no native CoW) without each
     // needing its own override; zfs::Backend overrides this with the
     // real thing.
-    virtual rawstd::Task<int> _open_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    virtual rawstd::Task<int> _open_version(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
     );
 
     // A blk-backed backend has no upfront connection step: the fd is
-    // opened lazily, by _open_object()/_open_snapshot() above, once
-    // set_object()/set_snapshot() knows which object id to open.
+    // opened lazily, by _open_object()/_open_version() above, once
+    // set_object()/set_version() knows which object id to open.
     rawstd::Task<void> _connect() override final;
 
     // Zeroes [offset, offset + size) of `target_fd` -- shared by
@@ -119,7 +119,7 @@ protected:
     rawstd::Task<bool> _exists(const std::string& path);
 
     // Real, current size of the block device `id`/`offset` (or its
-    // `snapshot_id` version, when non-nil) maps to (BLKGETSIZE64) --
+    // `version_id` version, when non-nil) maps to (BLKGETSIZE64) --
     // shared by lvm::Backend/zfs::Backend's own meta()
     // below: their own native tag/property storage never carries size
     // (see meta_encode()'s own doc comment), so this is always the
@@ -128,7 +128,7 @@ protected:
     // own meta() already gets size straight from its data file's own
     // stat().
     rawstd::Task<uint64_t> _blk_size(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
     );
 
     // Upper bound on meta_encode()'s own return value, comfortably
@@ -164,9 +164,9 @@ public:
     rawstd::Task<void>
     set_object(const RawstdUUID& id, uint64_t offset, int flags) override final;
 
-    rawstd::Task<void> set_snapshot(
+    rawstd::Task<void> set_version(
         const RawstdUUID& object_id, uint64_t offset,
-        const RawstdUUID& snapshot_id
+        const RawstdUUID& version_id
     ) override final;
 
     // Encodes/decodes a RawstorObjectSyncState plus a ChunkIdentity (the
