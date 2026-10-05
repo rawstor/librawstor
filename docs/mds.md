@@ -1150,8 +1150,8 @@ OST connections start with a 32KiB receive ring. Binding an object or a
 version grows it to the data-path size; variable-sized listings also grow
 it before sending a request. INFO polling needs only the initial ring.
 
-The systemd service lists these defaults and reads overrides from
-`/etc/rawstor-mds.conf`. The MDS logs the effective interval and concurrency
+A systemd instance (`rawstor-mds@<uuid>`) reads overrides from
+`/etc/rawstor/mds/<uuid>.conf`. The MDS logs the effective interval and concurrency
 at startup. `SIGHUP` reload also updates the collector: new OSTs are queued
 for probing immediately, removed OSTs are dropped from the database and aggregate, and
 an address change clears the old sample and availability. OSTs that stay in

@@ -152,6 +152,65 @@ Mirroring between two OST backends:
 rawstor-ost -b 0.0.0.0:7777 ost://left:7777,ost://right:7777
 ```
 
+### systemd instances
+
+The `rawstor-ost` deb/rpm package ships the `rawstor-ost@.service`
+template: one instance per OST, named after the OST's id (the `<uuid>` the
+MDS topology lists it under), configured by
+`/etc/rawstor/ost/<uuid>.conf`. Installing the package starts nothing; an
+instance without its config refuses to start. A host runs as many
+instances as it has OSTs, each on its own port and store.
+
+The config is an environment file (`KEY=VALUE` lines):
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `BIND_ADDR` | — (required) | `<ip>:<port>` to listen on, unique per host. |
+| `LOCATION` | `file:///var/lib/rawstor-ost/<uuid>` | Backing store this instance serves. |
+| `QUEUE_SIZE` | `4096` | `--queue-size`. |
+| `WORKERS` | `12` | `--workers`. |
+| `RAWSTOR_OPTS_*` | | Tuning knobs, see [Environment Variables](#environment-variables). |
+
+The instance runs as the `rawstor` user under `ProtectSystem=strict`. Its
+default store, `/var/lib/rawstor-ost/<uuid>` (`StateDirectory=`), is
+created on start and owned by `rawstor`; a disk mounted there needs no
+further configuration. A store anywhere else needs a per-instance drop-in
+granting the sandbox access to it, and must be writable by `rawstor`:
+
+```bash
+sudo systemctl edit rawstor-ost@<uuid>.service
+# [Service]
+# ReadWritePaths=/srv/disk1/rawstor
+```
+
+Two OSTs on one host:
+
+```bash
+OST1=$(cat /proc/sys/kernel/random/uuid)
+OST2=$(cat /proc/sys/kernel/random/uuid)
+echo "BIND_ADDR=0.0.0.0:7777" | sudo tee /etc/rawstor/ost/${OST1}.conf
+echo "BIND_ADDR=0.0.0.0:7778" | sudo tee /etc/rawstor/ost/${OST2}.conf
+sudo systemctl enable --now rawstor-ost@${OST1} rawstor-ost@${OST2}
+
+systemctl status rawstor-ost@${OST1}       # state
+journalctl -u rawstor-ost@${OST1}          # log
+rawstor info ost://127.0.0.1:7777          # serving?
+sudo systemctl restart rawstor-ost@${OST1}
+```
+
+Removing an instance never touches its store: stop and disable it, then
+delete its config. Recreating the same config later serves the same data
+again; the store itself is removed by hand, if at all.
+
+```bash
+sudo systemctl disable --now rawstor-ost@${OST2}
+sudo rm /etc/rawstor/ost/${OST2}.conf
+# data stays in /var/lib/rawstor-ost/${OST2}
+```
+
+A package upgrade restarts the running instances; removing the package
+stops them, leaving configs, stores and enablement in place.
+
 ## rawstor-vhost – vhost-user-blk Backend
 
 `rawstor-vhost` is a userspace VirtIO block device backend implementing the
@@ -442,20 +501,58 @@ rawstor resize mds://127.0.0.1:7776/018f4e2a-2000-7000-8000-000000000001 --size=
 ```
 
 Add an OST: append its line to `topology.conf` and send `SIGHUP`
-(`systemctl reload rawstor-mds`). New chunks may then be placed on it;
-existing ones stay where they are. A topology that drops an OST still
-holding chunks is refused, both on reload (the current one is kept) and at
-startup.
+(`systemctl reload rawstor-mds@<uuid>`). New chunks may then be placed on
+it; existing ones stay where they are. Client connections are kept. A
+topology that doesn't parse, or drops an OST still holding chunks, is
+refused: on reload the current one is kept and the reason logged
+(`Topology reload from ... failed, keeping the current one: ...`), at
+startup the MDS doesn't start.
 
-### Packaging
+### Packaging and systemd instances
 
 `rawstor-mds` ships in its own `rawstor-mds` deb/rpm package (needs
 `sqlite3`; skip building it with `--without-sqlite3`), along with the
-`rawstor-mds.service` systemd unit and `/etc/rawstor-mds/topology.conf`,
-a commented-out example with no OSTs. The service starts with it, but
-can't place any chunk until the admin lists the cluster's OSTs there and
-runs `systemctl reload rawstor-mds`. Local edits to it survive package
-upgrades.
+`rawstor-mds@.service` systemd template and a commented topology example,
+`/usr/share/doc/rawstor-mds/topology.conf`. One instance serves one
+cluster, named after the cluster's id and configured by
+`/etc/rawstor/mds/<uuid>.conf`. Installing the package starts nothing; an
+instance without its config refuses to start.
+
+The config is an environment file (`KEY=VALUE` lines):
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `BIND_ADDR` | — (required) | `<ip>:<port>` to listen on, unique per host. |
+| `TOPOLOGY_PATH` | `/etc/rawstor/mds/<uuid>.topology` | Topology file; must exist (may be empty) and be readable by `rawstor`. |
+| `DB_PATH` | `/var/lib/rawstor-mds/<uuid>/mds.db` | Database; its directory must be writable by `rawstor`. |
+| `QUEUE_SIZE` | `4096` | `--queue-size`. |
+| `WORKERS` | `4` | `--workers`. |
+| `RAWSTOR_MDS_OPTS_*`, `RAWSTOR_OPTS_*` | | Tuning knobs, see [Environment Variables](#environment-variables). |
+
+The instance runs as the `rawstor` user under `ProtectSystem=strict`;
+`/var/lib/rawstor-mds/<uuid>` (`StateDirectory=`) is created on start.
+A database anywhere else needs a drop-in (`ReadWritePaths=`), as for
+`rawstor-ost`.
+
+Two clusters on one host:
+
+```bash
+for C in ${CLUSTER1} ${CLUSTER2}; do
+    sudo cp my-${C}.topology /etc/rawstor/mds/${C}.topology
+done
+echo "BIND_ADDR=0.0.0.0:7776" | sudo tee /etc/rawstor/mds/${CLUSTER1}.conf
+echo "BIND_ADDR=0.0.0.0:7786" | sudo tee /etc/rawstor/mds/${CLUSTER2}.conf
+sudo systemctl enable --now rawstor-mds@${CLUSTER1} rawstor-mds@${CLUSTER2}
+
+rawstor info mds://127.0.0.1:7776          # serving?
+# edit /etc/rawstor/mds/${CLUSTER1}.topology, then
+sudo systemctl reload rawstor-mds@${CLUSTER1}
+journalctl -u rawstor-mds@${CLUSTER1} | grep Topology   # applied?
+```
+
+Removing an instance (`systemctl disable --now`, then deleting its config)
+keeps its database; a package upgrade restarts the running instances and
+removing the package stops them, leaving configs and databases in place.
 
 ## Testing
 

@@ -1,0 +1,67 @@
+[Unit]
+Description=Rawstor OST backend %i
+After=network-online.target
+Wants=network-online.target
+# One instance per OST: the instance name is the OST's id (the <uuid> the
+# MDS topology lists it under), and its configuration lives in
+# /etc/rawstor/ost/<uuid>.conf -- see README.md. An instance without one
+# fails to start rather than serving some default.
+AssertPathExists=/etc/rawstor/ost/%i.conf
+
+[Service]
+Type=simple
+# User=/Group= and the sandbox below are unit settings, not something the
+# instance's .conf file can change; adjust them with a drop-in instead of
+# editing this file:
+#   systemctl edit rawstor-ost@.service           # every instance
+#   systemctl edit rawstor-ost@<uuid>.service      # just <uuid>
+User=rawstor
+Group=rawstor
+# io_uring charges the memory it pins (e.g. every connection's registered
+# receive buffer ring) to RLIMIT_MEMLOCK summed over all processes of the
+# same user -- every rawstor instance on the host runs as rawstor and
+# shares that one budget, which the default 8MiB runs out of with a few
+# instances (ENOMEM setting up a connection).
+LimitMEMLOCK=infinity
+# The instance's own default backing store, created (and owned by
+# rawstor) on start and never removed by stop, disable or package removal.
+# A store mounted there needs no further configuration; a store anywhere
+# else needs a drop-in granting access to it, e.g.
+#   [Service]
+#   ReadWritePaths=/srv/disk1/rawstor
+StateDirectory=rawstor-ost/%i
+WorkingDirectory=/var/lib/rawstor-ost/%i
+# Defaults; /etc/rawstor/ost/<uuid>.conf below overrides any of them and
+# must set BIND_ADDR, which has no default: every instance on a host needs
+# a port of its own.
+# Backing store this OST serves - a Location (see "Core concepts" in
+# README.md), e.g. file:///var/lib/rawstor-ost/<uuid>.
+Environment=LOCATION=file:///var/lib/rawstor-ost/%i
+# rawstor-ost's own --queue-size/--workers (see its --help).
+Environment=QUEUE_SIZE=4096
+Environment=WORKERS=12
+# librawstor client/server tuning knobs (README.md's "Environment
+# Variables" section) are set in the same file as well, e.g.
+# RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT=128.
+EnvironmentFile=/etc/rawstor/ost/%i.conf
+ExecStart=/usr/bin/rawstor-ost --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} ${LOCATION}
+Restart=always
+RestartSec=10
+# sysexits.h codes rawstor-ost exits with when retrying won't help:
+# EX_USAGE (64) e.g. no BIND_ADDR in the instance's .conf, EX_NOINPUT (66)
+# the configured location doesn't exist, EX_NOPERM (77) permission denied
+# and EX_CONFIG (78) an invalid RAWSTOR_OPTS_* setting. Leave the unit
+# failed instead of restart-looping; other exit codes (e.g.
+# EX_UNAVAILABLE for an upstream ost:// backend that's merely down right
+# now) still retry.
+RestartPreventExitStatus=64 66 77 78
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

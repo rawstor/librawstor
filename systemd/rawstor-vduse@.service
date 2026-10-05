@@ -1,6 +1,6 @@
 [Unit]
 Description=Rawstor VDUSE virtio-blk backend for object %i
-After=network-online.target rawstor-ost.service
+After=network-online.target
 Wants=network-online.target
 # The vduse kernel module (modprobe vduse) is a manual, one-time host setup
 # step -- see the top-level README's "rawstor-vduse" section -- not

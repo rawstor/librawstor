@@ -1,6 +1,6 @@
 [Unit]
 Description=Rawstor vhost-user-blk backend for object %i
-After=network-online.target rawstor-ost.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]

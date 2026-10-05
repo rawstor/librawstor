@@ -1,0 +1,66 @@
+[Unit]
+Description=Rawstor MDS server %i
+After=network-online.target
+Wants=network-online.target
+# One instance per cluster: the instance name is the cluster's id, and its
+# configuration lives in /etc/rawstor/mds/<uuid>.conf -- see README.md.
+# An instance without one fails to start rather than serving some default.
+AssertPathExists=/etc/rawstor/mds/%i.conf
+
+[Service]
+Type=simple
+# User=/Group= and the sandbox below are unit settings, not something the
+# instance's .conf file can change; adjust them with a drop-in instead of
+# editing this file:
+#   systemctl edit rawstor-mds@.service           # every instance
+#   systemctl edit rawstor-mds@<uuid>.service      # just <uuid>
+User=rawstor
+Group=rawstor
+# io_uring charges the memory it pins to RLIMIT_MEMLOCK summed over all
+# processes of the same user, shared by every rawstor instance on the
+# host: see rawstor-ost@.service.
+LimitMEMLOCK=infinity
+# Holds the instance's database; created (and owned by rawstor) on start
+# and never removed by stop, disable or package removal.
+StateDirectory=rawstor-mds/%i
+WorkingDirectory=/var/lib/rawstor-mds/%i
+# Defaults; /etc/rawstor/mds/<uuid>.conf below overrides any of them and
+# must set BIND_ADDR, which has no default: every instance on a host needs
+# a port of its own.
+# SQLite database file (created if missing).
+Environment=DB_PATH=/var/lib/rawstor-mds/%i/mds.db
+# Static topology config (docs/mds.md): the OSTs and placement domains of
+# this cluster, in the format of /usr/share/doc/rawstor-mds/topology.conf.
+# Must exist: the instance does not start without one.
+Environment=TOPOLOGY_PATH=/etc/rawstor/mds/%i.topology
+# rawstor-mds's own --queue-size/--workers (see its --help).
+Environment=QUEUE_SIZE=4096
+Environment=WORKERS=4
+# MDS statistics collection (RAWSTOR_MDS_OPTS_*) and librawstor tuning
+# knobs (RAWSTOR_OPTS_*, README.md's "Environment Variables" section) are
+# set in the same file as well.
+EnvironmentFile=/etc/rawstor/mds/%i.conf
+ExecStart=/usr/bin/rawstor-mds --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --db=${DB_PATH} --topology=${TOPOLOGY_PATH}
+# Re-reads TOPOLOGY_PATH without a restart (SIGHUP), keeping every client
+# connection. A topology that doesn't parse, or drops an OST still holding
+# chunks, is refused and the current one kept; the reason is logged to
+# this instance's journal ("Topology reload from ... failed").
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+# sysexits.h codes rawstor-mds exits with when retrying won't help:
+# EX_USAGE (64) e.g. no BIND_ADDR in the instance's .conf, EX_NOINPUT (66)
+# e.g. a missing topology file, EX_NOPERM (77) permission denied and
+# EX_CONFIG (78) an invalid RAWSTOR_OPTS_* or RAWSTOR_MDS_OPTS_* setting.
+# Leave the unit failed instead of restart-looping.
+RestartPreventExitStatus=64 66 77 78
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
