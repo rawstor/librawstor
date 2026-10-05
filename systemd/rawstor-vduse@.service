@@ -30,6 +30,10 @@ Type=simple
 # (udev/60-rawstor-vduse.rules), which grants it to the "rawstor" group.
 User=rawstor
 Group=rawstor
+# io_uring charges the memory it pins to RLIMIT_MEMLOCK summed over all
+# processes of the same user, shared by every rawstor instance on the
+# host: see rawstor-ost@.service.
+LimitMEMLOCK=infinity
 # rawstor-vduse's own --num-queues/--write-cache (see its --help);
 # override in /etc/rawstor-vduse.conf below rather than editing this
 # file. One worker thread (and one connection to the backend) per

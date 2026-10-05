@@ -24,6 +24,10 @@ Type=simple
 # manipulation of unit files".
 User=rawstor
 Group=rawstor
+# io_uring charges the memory it pins to RLIMIT_MEMLOCK summed over all
+# processes of the same user, shared by every rawstor instance on the
+# host: see rawstor-ost@.service.
+LimitMEMLOCK=infinity
 RuntimeDirectory=rawstor
 # rawstor-vhost chmod()s the vhost-user socket to 0660 itself right after
 # creating it, so QEMU only needs to be in the "rawstor" group (see below)
