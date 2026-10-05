@@ -82,7 +82,7 @@ void usage() {
               << std::endl
               << "  --readonly            "
                  "Export the object read-only (VIRTIO_BLK_F_RO); "
-                 "required for a snapshot target"
+                 "required for a version target"
               << std::endl
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl

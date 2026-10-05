@@ -22,16 +22,16 @@ the code on 2026-10-04. *Stage* is this document's own numbering (see
 | `updatePlacement` / migration / rebalance | 1 | ❌ | — |
 | One connection per (OST, object) serving all its chunks | 1 | 🟡 | one connection pool per chunk slot (`SET_OBJECT` with the chunk offset) |
 | `--reconstruct`: rebuild the live map from `LIST` + `META` | 1 | ✅ | `mds/src/main.cpp` |
-| `--reconstruct`: register complete snapshot versions, collect garbage | 2 | ❌ | snapshot records are skipped |
+| `--reconstruct`: register complete versions, collect garbage | 2 | ❌ | version records are skipped |
 | Scrub: full MDS serving the same scan from its own index | — | ❌ | — |
-| `OBJ_COMMIT_SNAPSHOT` / `OBJ_REMOVE_SNAPSHOT` / `OBJ_LIST_SNAPSHOTS` | 2 | ✅ | `mds/src/client.cpp`, `src/mds_backend.cpp` |
-| Client-generated `snapshot_id`, CoW in descending chunk order | 2 | ✅ | `src/mds_backend.cpp` |
+| `OBJ_COMMIT_VERSION` / `OBJ_REMOVE_VERSION` / `OBJ_LIST_VERSIONS` | 2 | ✅ | `mds/src/client.cpp`, `src/mds_backend.cpp` |
+| Client-generated `version_id`, CoW in descending chunk order | 2 | ✅ | `src/mds_backend.cpp` |
 | Native CoW: `zfs://` | 2 | ✅ | `src/zfs_backend.cpp` |
 | Native CoW: `lvm://` (thin) | 2 | ❌ | `-ENOTSUP` |
-| `file://` snapshots refused with `-ENOTSUP` | 2 | ✅ | `src/file_backend.cpp` |
-| Object removal refused with `-EBUSY` while snapshots exist | 2 | ✅ | `mds/src/store.cpp` |
-| Snapshot redundancy status surfacing | 2 | ❌ | TODO |
-| vhost/QEMU flush hook for snapshots | 2 | ❌ | the CLI assumes no concurrent writer |
+| `file://` versions refused with `-ENOTSUP` | 2 | ✅ | `src/file_backend.cpp` |
+| Object removal refused with `-EBUSY` while versions exist | 2 | ✅ | `mds/src/store.cpp` |
+| Version redundancy status surfacing | 2 | ❌ | TODO |
+| vhost/QEMU flush hook for versions | 2 | ❌ | the CLI assumes no concurrent writer |
 | Backend health / `LOCATION_INFO` collector | — | ✅ | `mds/src/monitor.cpp`, `mds/src/opts.cpp` |
 | Protocol version + feature bits in `SET_OBJECT` | — | ❌ | — |
 | Unified response frame `{res, len, hash}` | — | ❌ | — |
@@ -39,7 +39,7 @@ the code on 2026-10-04. *Stage* is this document's own numbering (see
 | Witness: record kinds, voting rules, async updates, re-attach | 3 | ❌ | — |
 | MDS replication (primary + log) | v2+ | ❌ | — |
 | EC policy | v2+ | ❌ | — |
-| Stored checksums / scrub, snapshot redundancy repair | v2+ | ❌ | — |
+| Stored checksums / scrub, version redundancy repair | v2+ | ❌ | — |
 | Auth / capabilities, shrink, MGS as a service | open | ❌ | — |
 
 Metadata Storage Target (**MDS/MDT**) design, specialized for the **block
@@ -58,7 +58,7 @@ never passes through it.
 ```mermaid
 flowchart TB
     Client(["Client<br/>librawstor, mds://mds:7776/U"])
-    MDS[("rawstor-mds<br/>object map, snapshots<br/>(SQLite)")]
+    MDS[("rawstor-mds<br/>object map, versions<br/>(SQLite)")]
     Topo[/"topology.conf<br/>OST roster, domains, weights"/]
     subgraph OSTs ["rawstor-ost servers: the data"]
         direction LR
@@ -68,7 +68,7 @@ flowchart TB
     end
 
     Topo -. "read at start / SIGHUP" .-> MDS
-    Client -- "control: OBJ_CREATE / OBJ_OPEN / OBJ_RESIZE /<br/>OBJ_REMOVE / OBJ_*_SNAPSHOT*" --> MDS
+    Client -- "control: OBJ_CREATE / OBJ_OPEN / OBJ_RESIZE /<br/>OBJ_REMOVE / OBJ_*_VERSION*" --> MDS
     MDS -- "chunk map: slots + OST locations" --> Client
     Client == "data: READ / WRITE / ... to each chunk's OSTs<br/>(MDS not involved)" ==> OSTs
     MDS -. "reconstruct: LIST + META" .-> OSTs
@@ -80,13 +80,13 @@ flowchart TB
    object" (`getObj` / `getObjPart` / `getFreeOst` of `architecture.md`, refined
    below) and generate placements at create/grow time. This is the reason MDS
    exists; everything else layers on top.
-1. **Snapshot / version registry** — register client-generated `snapshot_id`s
-   and remember which members hold each snapshot.
+1. **Version registry** — register client-generated `version_id`s
+   and remember which members hold each version.
 2. **Witness** — metadata-only quorum member for client-side mirroring
    (restores auto-start for 2 data mirrors with one OST down; see
    `mirroring.md`, Quorum).
 
-Implementation order follows the same list: chunking first, snapshots second,
+Implementation order follows the same list: chunking first, versions second,
 witness third. All three are designed here so the later stages land without a
 redesign.
 
@@ -175,7 +175,7 @@ physical chunk_id = (id, chunk_offset, version, slot_index)
 ```
 
 A logical chunk has `width` slots (`slot_index` 0..width-1); see *Redundancy*.
-`version` is a UUID (`snapshot_id`, client-generated like every other id --
+`version` is a UUID (`version_id`, client-generated like every other id --
 never a monotonic counter), carried in its own field of the one payload
 every chunk-level command shares:
 
@@ -183,30 +183,30 @@ every chunk-level command shares:
 struct RawstorFrameBasicPayload {
     uint8_t  object_id[16];  // = id
     uint64_t offset;         // = chunk_offset (logical_index * chunk_size)
-    uint8_t  snapshot_id[16]; // = version; nil = live
+    uint8_t  version_id[16]; // = version; nil = live
     uint64_t val;
 } __attribute__((packed));
 ```
 
-Every chunk-level command (SET_OBJECT, RELEASE, SNAPSHOT, META, …) and
-OBJ_OPEN rides this payload; `snapshot_id` nil means "live" -- RELEASE
-removes the live version this way, and with a non-nil `snapshot_id` the
-same command removes that one snapshot. Commands that never bind a version
-leave it nil. OBJ_RESIZE, OBJ_REMOVE and OBJ_REMOVE_SNAPSHOT ride
-`RawstorFrameObjOpPayload { id[16]; idempotency_key[16]; snapshot_id[16];
+Every chunk-level command (SET_OBJECT, RELEASE, CREATE_VERSION, META, …) and
+OBJ_OPEN rides this payload; `version_id` nil means "live" -- RELEASE
+removes the live version this way, and with a non-nil `version_id` the
+same command removes that one version. Commands that never bind a version
+leave it nil. OBJ_RESIZE, OBJ_REMOVE and OBJ_REMOVE_VERSION ride
+`RawstorFrameObjOpPayload { id[16]; idempotency_key[16]; version_id[16];
 val; }` instead (see *Idempotent mutations*).
 On-OST layout (the slot's home, also where `chunk_meta` lives). `version`
 is part of the *logical* identity only: on CoW backends a version materializes as
-a **native snapshot of the slot's live volume**, not a separately named one —
-naming a volume per version would contradict the snapshot design (stage 2).
-`snapshot_id` is a UUID string wherever it appears in a name below, not a
+a **native version of the slot's live volume**, not a separately named one —
+naming a volume per version would contradict the version design (stage 2).
+`version_id` is a UUID string wherever it appears in a name below, not a
 number:
 
-| Backend | Slot home + metadata | Versions (`snapshot_id`) |
+| Backend | Slot home + metadata | Versions (`version_id`) |
 |---------|----------------------|----------------------|
 | `file://` | dir `<id>/<offset>/`, `data` + `meta` inside it | `-ENOTSUP` in v1 |
 | `lvm://`  | thin LV `<id>-<offset>`, meta in LVM tags | thin snapshot LV |
-| `zfs://`  | zvol `<id>:<offset>`, meta in user properties | `@s<snapshot_id>` |
+| `zfs://`  | zvol `<id>:<offset>`, meta in user properties | `@s<version_id>` |
 
 (The physical `<offset>` is never omitted, even "0" -- unlike the
 target-string syntax's own offset path segment (docs/concepts.md, "Chunk
@@ -236,7 +236,7 @@ chunk_meta {
   // to invert chunk_offset back into logical_index without a separate
   // lookup).
   chunk_size
-  version                  // snapshot_id this slot belongs to; nil = live
+  version                  // version_id this slot belongs to; nil = live
   redundancy               // mirror{R} | ec{k,m} — how to decode
   slot_index
   member_role              // data | witness — witness records are metadata-only
@@ -245,7 +245,7 @@ chunk_meta {
   // per-slot consistency (exists today, per mirroring.md)
   size, state, mirror_epoch, sync_id, sync_id_history[4]
   data_checksum            // per-slot, v3+ (scrub); reserved
-  snapshots[]              // version list present on this slot; reserved for stage 2
+  versions[]               // version list present on this slot; reserved for stage 2
 }
 ```
 
@@ -273,7 +273,7 @@ object_descriptor {
   },
   project_id, created_at,
   map_epoch                              // monotonic, ++ on any map/descriptor
-                                         // change (incl. snapshot, resize)
+                                         // change (incl. version, resize)
 }
 
 chunk_map[logical_index] = {
@@ -281,10 +281,10 @@ chunk_map[logical_index] = {
   // physical existence ("materialized") is an OST fact, not tracked strictly
 }
 
-snapshots[snapshot_id] = {                   // snapshot_id: UUID, client-generated
+versions[version_id] = {                   // version_id: UUID, client-generated
   created_at,
-  members: [ost_id],                     // who actually holds it (see Snapshots)
-  view: { logical_index -> version }     // cache over OST-side snapshots
+  members: [ost_id],                     // who actually holds it (see Versions)
+  view: { logical_index -> version }     // cache over OST-side versions
 }
 
 witness[id or (id, logical_index)] = {  // stage 3, not implemented yet
@@ -296,7 +296,7 @@ witness[id or (id, logical_index)] = {  // stage 3, not implemented yet
 
 The same model as a diagram: one descriptor per object, a `chunk_map`
 entry per chunk with `width` slots, each slot naming one OST from the
-topology; a snapshot records which slots hold it.
+topology; a version records which slots hold it.
 
 ```mermaid
 classDiagram
@@ -304,8 +304,8 @@ classDiagram
     object_descriptor "1" *-- "1" policy
     object_descriptor "1" *-- "nchunks" chunk_map : logical_index
     chunk_map "1" *-- "width" slot
-    object_descriptor "1" *-- "*" snapshot : snapshot_id
-    snapshot "1" o-- "*" slot : members
+    object_descriptor "1" *-- "*" version : version_id
+    version "1" o-- "*" slot : members
     object_descriptor "1" *-- "0..*" witness
     slot "*" --> "1" OST : ost_id
     class object_descriptor {
@@ -329,9 +329,9 @@ classDiagram
       slot_index
       ost_id
     }
-    class snapshot {
+    class version {
       <<registered after CoW>>
-      snapshot_id
+      version_id
       created_at
     }
     class witness {
@@ -350,7 +350,7 @@ classDiagram
 
 Two classes of state, by recoverability:
 
-- `object_descriptor` / `chunk_map` / `snapshots` — an **index**; DR = rebuild
+- `object_descriptor` / `chunk_map` / `versions` — an **index**; DR = rebuild
   by OST scan (below).
 - `witness` records (stage 3, not implemented yet; the SQLite store has no
   witness table) — **not** rebuildable by scan (they *are* the extra vote).
@@ -367,7 +367,7 @@ list of OSTs to scan. Being plain operator-authored config, it is also
 versioned and deployed like any other (git, config management). The MDS
 reads it at startup and re-reads it on `SIGHUP` (`systemctl reload
 rawstor-mds`); either way it is checked against the map: a topology missing
-an OST that still holds chunks (or snapshot members) is refused — the MDS
+an OST that still holds chunks (or version members) is refused — the MDS
 won't start, or keeps its current topology on reload — since those slots
 would be left without an address. `--reconstruct` skips the check: it
 rebuilds the map from the topology's own OSTs. A dynamic
@@ -381,7 +381,7 @@ not move the topology into the MDS database.
 | `createObject(size, chunk_size, policy) -> {id, map_epoch}` | once | no |
 | `openObject(id) -> {descriptor, map_epoch, chunk_map}` | at open | **only hot read**, client-cached |
 | `resizeObject(id, new_size)` | grow (v1: grow-only) | no |
-| `snapshot(id, snapshot_id)` | snapshot -- `snapshot_id` is client-generated, like `id` itself | no |
+| `version(id, version_id)` | version -- `version_id` is client-generated, like `id` itself | no |
 | `updatePlacement(id, index, slots)` | rebalance/recovery | rare |
 | `removeObject(id)` | delete | no |
 | witness get/put | open (incl. witness-assisted degraded open) / clean close / resync-complete; async after degrade | no (see Witness) |
@@ -404,9 +404,9 @@ does the wrong thing (a resize that already grew the map "sees" no chunks left
 to create). So every mutating request is made idempotent:
 
 - **`idempotency_key`.** `Slot` generates a UUID once per mutating call (create, remove,
-  resize, create_snapshot, remove_snapshot), before its retry loop, and every
+  resize, create_version, remove_version), before its retry loop, and every
   attempt carries that same one. `OBJ_CREATE`, `OBJ_RESIZE`, `OBJ_REMOVE`,
-  `OBJ_COMMIT_SNAPSHOT` and `OBJ_REMOVE_SNAPSHOT` send it ([protocol](protocol.md)).
+  `OBJ_COMMIT_VERSION` and `OBJ_REMOVE_VERSION` send it ([protocol](protocol.md)).
 - **The MDS records what it applied.** An `applied_mutations` table maps `idempotency_key` to the
   command, the object and the reply's result, written in the same SQLite
   transaction as the mutation itself -- a committed mutation always has its
@@ -425,10 +425,10 @@ to create). So every mutating request is made idempotent:
     time; an `EEXIST` copy was made by an earlier attempt and counts as done.
     No rollback: the chunks are in the map, and a retry fills in the rest.
   - *remove*: destroys the chunks of the returned map (`ENOENT` tolerated).
-  - *snapshot*: a CoW copy that already exists (`EEXIST`) was taken by an
-    earlier attempt (the `snapshot_id` is unique to the call); the commit then
+  - *version*: a CoW copy that already exists (`EEXIST`) was taken by an
+    earlier attempt (the `version_id` is unique to the call); the commit then
     replays.
-  - *snapshot remove*: destroys the replayed member set.
+  - *version remove*: destroys the replayed member set.
 
 ```mermaid
 sequenceDiagram
@@ -460,8 +460,8 @@ reserved ranges per role:
 0x01..  data:            READ, WRITE, DISCARD, ALLOCATE, RELEASE, FLUSH
 0x20..  shared metadata: META, SET_STATE               // the witness subset
 0x40..  object (MDS):    OBJ_CREATE, OBJ_OPEN, OBJ_RESIZE, OBJ_REMOVE,
-                         OBJ_COMMIT_SNAPSHOT, OBJ_REMOVE_SNAPSHOT,
-                         OBJ_LIST_SNAPSHOTS
+                         OBJ_COMMIT_VERSION, OBJ_REMOVE_VERSION,
+                         OBJ_LIST_VERSIONS
 ```
 
 - `SET_OBJECT` is the mandatory first command on **every** connection and
@@ -488,7 +488,7 @@ member on a plain `rawstor-ost` already speaks the witness subset.
 
 Example `CMD_OBJ_OPEN`:
 ```
-req  body: { id[16], snapshot_id[16] }                      // nil = live
+req  body: { id[16], version_id[16] }                      // nil = live
 resp: { res, len, hash }; body:
       { descriptor{...}, nchunks u32,
         entry[nchunks] { width u8,
@@ -613,7 +613,7 @@ client holds the cached map: which OST owns which (logical_index, slot)
   |- splits the request at chunk boundaries ONLY to pick owning OST(s)
   |- encodes per redundancy (mirror: copy; EC: shards)
   '- one connection per (OST, object):
-        SET_OBJECT(id, snapshot_id; nil = live)              <- once
+        SET_OBJECT(id, version_id; nil = live)              <- once
         READ/WRITE(offset = logical object offset, len)  <- many, pipelined by cid
               '- OST: offset -> local slot -> backing file/LV/zvol
 ```
@@ -656,7 +656,7 @@ a second counter:
   (migration/recovery only).
 
 `write: if client_map_epoch < slot.fence -> STALE -> client re-reads map ->
-retry`. Snapshot and resize bump `map_epoch` but record no watermark on any
+retry`. Version creation and resize bump `map_epoch` but record no watermark on any
 slot, so they *cannot* STALE anything — the "no STALE storm on un-migrated
 chunks" property is structural, not a convention about when to raise a gate.
 
@@ -721,28 +721,28 @@ marked **decommissioned** in the topology. If it ever comes back anyway, its
 copy is stale by mirror metadata (`sync_id` ancestry) and is caught at the
 mirroring layer — defense in depth, not the primary guard.
 
-## Snapshots (stage 2)
+## Versions (stage 2)
 
-Snapshots are **OST-side CoW** (native zfs/lvm-thin); the MDS only registers
+Versions are **OST-side CoW** (native zfs/lvm-thin); the MDS only registers
 them. Coordination is **client-driven**, per the mirroring identity model:
-drain + FLUSH first, so a snapshot is a crash-consistent point across all
+drain + FLUSH first, so a version is a crash-consistent point across all
 members, and only IN-SYNC members participate.
 
-`snapshot_id` is a UUID, generated by the client itself before any of this
+`version_id` is a UUID, generated by the client itself before any of this
 starts -- the same single point of generation every other id comes from
 (no round trip to reserve one: a client-generated id can't collide with a
 crashed attempt's leftovers, because there is no shared counter to leave
 a hole in):
 
 ```
-snapshot(id, snapshot_id):
+create_version(id, version_id):
   client: drain in-flight I/O, FLUSH all IN-SYNC members   (point-in-time barrier)
-  OST*:   each IN-SYNC member -> backend CoW (zfs snapshot zvol@s<snapshot_id> / lvcreate -s)
-  MDS:    OBJ_COMMIT_SNAPSHOT -> record snapshots[snapshot_id] { members = the IN-SYNC set },
-                             map_epoch++ -- rejects a snapshot_id already registered (EEXIST,
-                             the snapshots table's own primary key) or nil (EINVAL, reserved
+  OST*:   each IN-SYNC member -> backend CoW (zfs snapshot zvol@s<version_id> / lvcreate -s)
+  MDS:    OBJ_COMMIT_VERSION -> record versions[version_id] { members = the IN-SYNC set },
+                             map_epoch++ -- rejects a version_id already registered (EEXIST,
+                             the versions table's own primary key) or nil (EINVAL, reserved
                              for the live version)
-  read:   client SET_OBJECT(id, snapshot_id) -> OST serves that version
+  read:   client SET_OBJECT(id, version_id) -> OST serves that version
 ```
 
 ```mermaid
@@ -752,36 +752,36 @@ sequenceDiagram
     participant A as OST a (IN-SYNC)
     participant B as OST b (IN-SYNC)
     participant M as rawstor-mds
-    Note over C: snapshot_id generated by the client
+    Note over C: version_id generated by the client
     C->>C: drain in-flight I/O
     C->>A: FLUSH
     C->>B: FLUSH
-    C->>A: SNAPSHOT(snapshot_id): native CoW
-    C->>B: SNAPSHOT(snapshot_id): native CoW
-    C->>M: OBJ_COMMIT_SNAPSHOT(id, snapshot_id, members = {a, b})
+    C->>A: CREATE_VERSION(version_id): native CoW
+    C->>B: CREATE_VERSION(version_id): native CoW
+    C->>M: OBJ_COMMIT_VERSION(id, version_id, members = {a, b})
     M-->>C: map_epoch++
-    Note over C,M: later: SET_OBJECT(id, snapshot_id) reads that version
+    Note over C,M: later: SET_OBJECT(id, version_id) reads that version
 ```
 
-A crash before commit leaves unregistered native snapshots on the OSTs —
+A crash before commit leaves unregistered native versions on the OSTs —
 the same garbage class as a crashed deletion, reconciled by the
 reconstruct scan (below).
 
-- **`version` in chunk identity = `snapshot_id`** (nil = live). One namespace, no
+- **`version` in chunk identity = `version_id`** (nil = live). One namespace, no
   separate counter.
-- **In-sync snapshots are immutable → they never resync.** A member that was
-  STALE at snapshot time simply does not have that snapshot; rejoin/resync
+- **In-sync versions are immutable → they never resync.** A member that was
+  STALE at version time simply does not have that version; rejoin/resync
   covers the live version only (v1).
-- **Degraded objects:** the snapshot is taken on the IN-SYNC members only and
-  `snapshots[snapshot_id].members` records exactly who holds it. Snapshot reads
-  route only to recorded members. A snapshot may therefore have less
+- **Degraded objects:** the version is taken on the IN-SYNC members only and
+  `versions[version_id].members` records exactly who holds it. Version reads
+  route only to recorded members. A version may therefore have less
   redundancy than the object policy; this is surfaced in status, not silently
   repaired (v1; a repair = copy of an immutable version, safe to add later).
 - **Deletion:** MDS unregisters first (no new readers), then fan-out destroy
   on members; the reconstruct scan reconciles leftovers from a crash between
-  the two steps (an unreferenced snapshot version found on an OST is garbage,
+  the two steps (an unreferenced version found on an OST is garbage,
   collectable).
-- **`file://` backend has no CoW** → `snapshot` on an object with `file://`
+- **`file://` backend has no CoW** → `create-version` on an object with `file://`
   members fails with `-ENOTSUP` in v1 (no fallback copies behind the caller's
   back).
 
@@ -790,47 +790,47 @@ reconstruct scan (below).
 - **Classic LVM is `-ENOTSUP` too.** This section says lvm-*thin* for a
   reason: a classic LVM snapshot needs a preallocated COW area — a hidden
   full-size copy is exactly the fallback ruled out above. CoW on LVM waits
-  for an lvm-thin backend. zfs is the v1 CoW backend: snapshots are
-  `<parent>/<uuid>@s<snapshot_id>` (the `@s<id>` name *is* the version key —
-  nothing stored twice; `snapdev=visible` is set with every snapshot so
+  for an lvm-thin backend. zfs is the v1 CoW backend: versions are
+  `<parent>/<uuid>@s<version_id>` (the `@s<id>` name *is* the version key —
+  nothing stored twice; `snapdev=visible` is set with every version so
   each one that exists is also openable), read via
   `/dev/zvol/…@s<id>`, read-only at the device level too.
-- **Reads:** a trailing snapshot path segment on the regular open
-  (`mds://host:port/<id>/0/<snapshot_id>`, `ost://…/<uuid>/0/<snapshot_id>` -- the
-  offset segment is mandatory once a snapshot follows it,
-  docs/concepts.md's own "Chunk offset"), `snapshot_id` a UUID
+- **Reads:** a trailing version path segment on the regular open
+  (`mds://host:port/<id>/0/<version_id>`, `ost://…/<uuid>/0/<version_id>` -- the
+  offset segment is mandatory once a version follows it,
+  docs/concepts.md's own "Chunk offset"), `version_id` a UUID
   string; the wire carries it in SET_OBJECT's/OBJ_OPEN's own
-  `snapshot_id[16]` field (`RawstorFrameBasicPayload`), and META answers
+  `version_id[16]` field (`RawstorFrameBasicPayload`), and META answers
   about that version's own copy the same way. Opening a
-  snapshot **bypasses the mirror state machine
+  version **bypasses the mirror state machine
   entirely** — no metadata compare, no quorum, no barriers, no resync, no
   probe. That is not just an optimization: the frozen copy state is DIRTY
-  (snapshots are taken mid-session), which the live open logic would
+  (versions are taken mid-session), which the live open logic would
   treat as a crash to recover from. Immutability is what makes the bypass
   sound: one reachable member serves, writes fail with EROFS.
 - **The id can never alias a leftover of a crashed attempt**, without any
-  reservation step: `snapshot_id` is a client-generated UUID (like every
+  reservation step: `version_id` is a client-generated UUID (like every
   other id in this design), not a monotonic counter with a "next" value
-  a crash could leave pointing at something already used. `OBJ_COMMIT_SNAPSHOT`
-  itself is the only uniqueness check that's needed — the `snapshots`
-  table's own primary key rejects a duplicate `(id, snapshot_id)` with
+  a crash could leave pointing at something already used. `OBJ_COMMIT_VERSION`
+  itself is the only uniqueness check that's needed — the `versions`
+  table's own primary key rejects a duplicate `(id, version_id)` with
   `EEXIST`.
 - **Chunks are CoW'd in descending index order** (chunk 0 last). A crashed
   attempt therefore always leaves a hole at the low indices, and the
   reconstruct scan can never mistake a partial leftover for a complete
-  (legitimately shorter, pre-resize) snapshot: a contiguous `0..max`
+  (legitimately shorter, pre-resize) version: a contiguous `0..max`
   version proves itself, because index 0 exists only when every higher
   index was already done. Complete versions found by the scan are
   registered even if the commit never landed — they are indistinguishable
   from committed ones and just as consistent (drain + FLUSH preceded the
   CoWs); holed versions stay unregistered garbage.
-- **Object deletion order matches snapshot deletion**: the MDS
+- **Object deletion order matches version deletion**: the MDS
   unregisters the map first — which is also where "the object still has
-  snapshots" refuses with `-EBUSY` *before* any data is touched — then
+  versions" refuses with `-EBUSY` *before* any data is touched — then
   the chunk objects are destroyed.
-- **v1 caveat:** the CLI-driven snapshot assumes no concurrent writer —
+- **v1 caveat:** the CLI-driven version creation assumes no concurrent writer —
   the drain barrier is the writing client's duty and lives in its
-  process; a vhost/QEMU flush hook is future work. Snapshot redundancy
+  process; a vhost/QEMU flush hook is future work. Version redundancy
   status surfacing is still TODO.
 
 ## Witness (stage 3)
@@ -978,7 +978,7 @@ binary.
 | Option | Verdict |
 |---|---|
 | PostgreSQL | **Rejected.** An external server and its operational surface for kilobytes of state; breaks "MDS = one binary"; v2 replication must follow the epoch model anyway, not a DBMS's |
-| Own format (append-log + snapshot, or per-object files à la `.spec`) | Viable, zero dependencies, codebase style — but the fsync-ordering / torn-write / atomic-rename protocol must be designed and proven by us, and every schema change is manual |
+| Own format (append-log + version, or per-object files à la `.spec`) | Viable, zero dependencies, codebase style — but the fsync-ordering / torn-write / atomic-rename protocol must be designed and proven by us, and every schema change is manual |
 | **SQLite** (WAL mode; `synchronous=FULL` for witness and map mutations) | **Chosen.** Crash-safety and transactional atomicity by construction rather than by our own proof; trivial schema migrations; ubiquitous, dependency-wise in the same class as liburing/xxhash. Mutations are rare — they run on a worker thread reporting back to the I/O queue, the same pattern as the `file://` control plane |
 
 The asymmetry of the two state classes (map = recoverable cache, witness =
@@ -993,9 +993,9 @@ rebuild the map:
   for each OST: LIST -> physical ids, then per id: META -> chunk_meta
   drop member_role = witness records (metadata-only, not slots)
   group by (id, version): nil version -> live chunk_map,
-                                 version = snapshot_id -> snapshot view
+                                 version = version_id -> version view
   within each group: order by logical_index
-  -> reassembled maps (+ snapshot views)
+  -> reassembled maps (+ version views)
 ```
 
 ```mermaid
@@ -1009,9 +1009,9 @@ flowchart TB
     W -- yes --> Drop["dropped: metadata only, not a slot"]
     W -- no --> G["group by (id, version)"]
     G -- "nil version" --> Live["live chunk_map<br/>ordered by logical_index"]
-    G -- "snapshot_id" --> Snapshot["snapshot view"]
+    G -- "version_id" --> Version["version view"]
     Live --> DB[("rebuilt MDS index")]
-    Snapshot --> DB
+    Version --> DB
 ```
 
 No dedicated batch scan opcode: this is the same `LIST` + per-object `META`
@@ -1051,7 +1051,7 @@ of normal opens/closes.
   `logical_size` is simply the chunk count times `chunk_size` — a copy's
   own stored size, which a block backend may round up (LVM extent, ZFS
   volblocksize), plays no part.
-- Snapshot-version records are skipped (stage 2); the full MDS serving the
+- Version records are skipped (stage 2); the full MDS serving the
   same `LIST` + per-object `META` scan from its own index (the scrub
   comparison) is not implemented yet.
 
@@ -1063,7 +1063,7 @@ of normal opens/closes.
   (breaking change, free pre-install; resolves the `protocol.h` TODO).
 - `SET_OBJECT` handshake gains protocol version + feature bits.
 - `+uint64_t map_epoch` in the IO frame — epoch-fence.
-- `SET_OBJECT`: rides its own `snapshot_id[16]` field (nil = live), not `val`;
+- `SET_OBJECT`: rides its own `version_id[16]` field (nil = live), not `val`;
   `obj_id` = `id`.
 - Semantics: IO `offset` = logical object offset (OST resolves to a local slot).
 - Witness subset = existing `META` / `SET_STATE`; the meta body is extended
@@ -1080,14 +1080,14 @@ of normal opens/closes.
 1. **Chunking**: `CMD_OBJ_CREATE/OPEN/RESIZE/REMOVE`, HRW placement + topology config,
    explicit map in MDS (SQLite), client-side routing, `map_epoch` + fence watermark,
    `LIST` + per-object `META` reconstruct scan.
-2. **Snapshots**: `CMD_OBJ_COMMIT_SNAPSHOT/REMOVE_SNAPSHOT/LIST_SNAPSHOTS`, client-generated UUID
-   `version`/`snapshot_id` in chunk identity, member-set registry, deletion,
+2. **Versions**: `CMD_OBJ_COMMIT_VERSION/REMOVE_VERSION/LIST_VERSIONS`, client-generated UUID
+   `version`/`version_id` in chunk identity, member-set registry, deletion,
    `-ENOTSUP` on `file://`.
 3. **Witness**: metadata-only member in the target list, witness record kinds
    + voting rules in the client quorum logic, async post-degrade updates,
    re-attach.
 4. **v2+**: MDS replication (primary + log), EC policy, persistent
-   write-intent bitmap interplay, snapshot redundancy repair, stored
+   write-intent bitmap interplay, version redundancy repair, stored
    checksums / scrub.
 
 ## Open questions
@@ -1097,7 +1097,7 @@ of normal opens/closes.
   mechanics; the slot model and `chunk_meta.redundancy` already reserve the
   room.
 - **Resize: shrink** — v1 is grow-only; shrink interacts with placement GC
-  and snapshots, revisit later.
+  and versions, revisit later.
 - **MGS as a service** — v1 uses a static topology config; whether a dynamic
   MGS role (roster + topology + MDS address) is ever needed, and how refresh
   works, is deferred.
@@ -1123,7 +1123,7 @@ success or failure updates the database's availability and check time;
 success also replaces the space counters and sample time. Unsampled OSTs
 are unavailable. At MDS startup persisted counters are kept, but availability
 is cleared until probes succeed. Create and grow place new chunks only on
-available OSTs; existing chunk maps and snapshot members are unchanged.
+available OSTs; existing chunk maps and version members are unchanged.
 
 | Environment variable | Default | Meaning |
 |---|---|---|
@@ -1147,7 +1147,7 @@ order they asked. On shutdown the collector stops all loops and cancels the
 calls in flight, retries included, without recording their outcome.
 Retry budgets and timeouts use the `RAWSTOR_OPTS_*` knobs documented in README.
 OST connections start with a 32KiB receive ring. Binding an object or a
-snapshot grows it to the data-path size; variable-sized listings also grow
+version grows it to the data-path size; variable-sized listings also grow
 it before sending a request. INFO polling needs only the initial ring.
 
 The systemd service lists these defaults and reads overrides from
@@ -1158,4 +1158,4 @@ an address change clears the old sample and availability. OSTs that stay in
 the topology but are unavailable are probed again at once rather than at
 their next slot. In-flight results
 for a removed OST or its old address are ignored. The existing refusal to
-remove an OST that still holds chunks or snapshot members also applies.
+remove an OST that still holds chunks or version members also applies.

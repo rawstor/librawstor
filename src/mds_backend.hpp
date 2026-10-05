@@ -47,15 +47,15 @@ private:
 
     rawstd::Task<void> _connect() override;
 
-    // Shared by remove_snapshot() below.
-    rawstd::Task<void> _remove_snapshot(
+    // Shared by remove_version() below.
+    rawstd::Task<void> _remove_version(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        const RawstdUUID& snapshot_id
+        const RawstdUUID& version_id
     );
 
-    // Shared by set_object()/set_snapshot() below.
+    // Shared by set_object()/set_version() below.
     rawstd::Task<void>
-    _set_object(const RawstdUUID& id, const RawstdUUID& snapshot_id, int flags);
+    _set_object(const RawstdUUID& id, const RawstdUUID& version_id, int flags);
 
     // The nested Object every data-path method delegates to. Throws
     // ENOTCONN when there is none (after close(), or a re-open that
@@ -70,7 +70,7 @@ public:
     // own real chunk offsets, off its own WireMap.
     rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID snapshot_id = {}
+        RawstdUUID& token, RawstdUUID version_id = {}
     ) override;
 
     // `member_role` is unused: an mds:// object is always created whole,
@@ -91,12 +91,12 @@ public:
         const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
     ) override;
 
-    // Removes one previously committed snapshot, via _remove_snapshot()
+    // Removes one previously committed version, via _remove_version()
     // above. Same MDS-unregisters-first, best-effort per-chunk cleanup
     // convention as remove() above.
-    rawstd::Task<void> remove_snapshot(
+    rawstd::Task<void> remove_version(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& snapshot_id
+        uint64_t offset, const RawstdUUID& version_id
     ) override;
 
     // `offset` is always 0 here -- a single mds:// URI is never
@@ -107,24 +107,24 @@ public:
         uint64_t offset, uint64_t new_size
     ) override;
 
-    // MDS-orchestrated snapshot (docs/mds.md, "Snapshots (stage 2)"):
-    // `snapshot_id` is the caller's own already-generated version id (like
+    // MDS-orchestrated version (docs/mds.md, "Versions (stage 2)"):
+    // `version_id` is the caller's own already-generated version id (like
     // every object id -- client-generated, single point of generation,
-    // rawstor_target_create_snapshot(), target.h). There is no separate
+    // rawstor_target_create_version(), target.h). There is no separate
     // "assign" step: a client-generated id can never collide with a
     // crashed attempt's leftovers, so there's nothing for the MDS to
     // reserve ahead of time.
     // backend-CoWs every reachable chunk member under it (descending
     // logical index, so a crash midway always leaves a hole at the low
     // indices -- the reconstruct scan tells that apart from a
-    // legitimately shorter, pre-resize snapshot), then registers the
+    // legitimately shorter, pre-resize version), then registers the
     // surviving membership. v1 caveat (see the design doc): assumes no
     // concurrent writer -- draining/flushing an in-flight write session
     // is the writing client's own duty, not this call's. `offset`
     // is always 0, same reason as resize() above.
-    rawstd::Task<void> create_snapshot(
+    rawstd::Task<void> create_version(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& snapshot_id
+        uint64_t offset, const RawstdUUID& version_id
     ) override;
 
     // Resolves `offset` to one of this object's own real chunks (its
@@ -139,11 +139,10 @@ public:
     // method's own first entry as its answer (Backend::meta()'s own doc
     // comment).
     rawstd::Task<std::vector<RawstdUUID>>
-    list_snapshots(const RawstdUUID& id, uint64_t offset) override;
+    list_versions(const RawstdUUID& id, uint64_t offset) override;
 
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstdUUID& snapshot_id = {}
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) override;
 
     // Real: this chunk's own real members' own bare locations, off the
@@ -152,8 +151,7 @@ public:
     // real member directly (rawstor resolve's own --winner), which no
     // target string naming this mds:// object could ever do on its own.
     rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstdUUID& snapshot_id = {}
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) override;
 
     // No-op, for the same reason meta() above never persists anything of
@@ -175,13 +173,13 @@ public:
     rawstd::Task<void>
     set_object(const RawstdUUID& id, uint64_t offset, int flags) override;
 
-    // Same as set_object() above, for one previously committed snapshot:
-    // `snapshot_id` is folded into every chunk slot's own URI (its own
+    // Same as set_object() above, for one previously committed version:
+    // `version_id` is folded into every chunk slot's own URI (its own
     // trailing path segment, chunk_slot_target()'s own convention in
     // mds_backend.cpp), not passed down any other way.
-    rawstd::Task<void> set_snapshot(
+    rawstd::Task<void> set_version(
         const RawstdUUID& object_id, uint64_t offset,
-        const RawstdUUID& snapshot_id
+        const RawstdUUID& version_id
     ) override;
 
     rawstd::Task<void> close() override;

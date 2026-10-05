@@ -39,8 +39,8 @@ struct WireResized {
     uint64_t old_nchunks;
 };
 
-/* One chunk copy holding a snapshot version. */
-struct WireSnapshotMember {
+/* One chunk copy holding a version. */
+struct WireVersionMember {
     uint64_t logical_index;
     RawstdUUID ost_id;
 };
@@ -88,7 +88,7 @@ public:
     );
 
     rawstd::Task<WireMap>
-    open(const RawstdUUID& id, const RawstdUUID& snapshot_id);
+    open(const RawstdUUID& id, const RawstdUUID& version_id);
 
     rawstd::Task<WireResized> resize(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
@@ -100,18 +100,18 @@ public:
     remove(const RawstdUUID& idempotency_key, const RawstdUUID& id);
 
     /*
-     * Registers the snapshot; snapshot_id is the caller's own already-
+     * Registers the version; version_id is the caller's own already-
      * generated version id (like every object id). Returns the bumped
      * map_epoch.
      */
-    rawstd::Task<uint64_t> commit_snapshot(
+    rawstd::Task<uint64_t> commit_version(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        const RawstdUUID& snapshot_id,
-        const std::vector<WireSnapshotMember>& members
+        const RawstdUUID& version_id,
+        const std::vector<WireVersionMember>& members
     );
 
-    /* Every snapshot registered for `id`, in no particular order. */
-    rawstd::Task<std::vector<RawstdUUID>> list_snapshots(const RawstdUUID& id);
+    /* Every version registered for `id`, in no particular order. */
+    rawstd::Task<std::vector<RawstdUUID>> list_versions(const RawstdUUID& id);
 
     /*
      * One page of every object the MDS knows, ascending by id, strictly
@@ -122,9 +122,9 @@ public:
     list_objects(RawstdUUID& token, unsigned int limit);
 
     /* Unregisters and returns the member set for the fan-out destroy. */
-    rawstd::Task<std::vector<WireSnapshotMember>> remove_snapshot(
+    rawstd::Task<std::vector<WireVersionMember>> remove_version(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        const RawstdUUID& snapshot_id
+        const RawstdUUID& version_id
     );
 };
 

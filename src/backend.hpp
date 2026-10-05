@@ -102,12 +102,12 @@ public:
     // group per object, offset 0) and the filtered form off its own
     // WireMap.
     //
-    // A non-nil `snapshot_id` (only with a non-nil `id`) lists the chunks
+    // A non-nil `version_id` (only with a non-nil `id`) lists the chunks
     // that version of `id` has instead of the live ones; ENOTSUP on a
-    // backend without snapshots.
+    // backend without versions.
     virtual rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID snapshot_id = {}
+        RawstdUUID& token, RawstdUUID version_id = {}
     ) = 0;
 
     // `member_role` is the copy being created's own placement identity
@@ -123,23 +123,23 @@ public:
     ) = 0;
 
     // Removes the live version of `id`/`offset`. A version
-    // previously registered via create_snapshot() below is removed via
-    // remove_snapshot() below instead.
+    // previously registered via create_version() below is removed via
+    // remove_version() below instead.
     virtual rawstd::Task<void> remove(
         const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
     ) = 0;
 
-    // Removes one version previously registered via create_snapshot()
-    // below (`snapshot_id`, never nil -- nil is the live version, removed via
+    // Removes one version previously registered via create_version()
+    // below (`version_id`, never nil -- nil is the live version, removed via
     // remove() above). Default: ENOTSUP, covering file::Backend and
     // lvm::Backend (classic LVM has no thin CoW -- docs/mds.md's own
-    // "Snapshots" section) without each needing its own override;
+    // "Versions" section) without each needing its own override;
     // zfs::Backend overrides this with the real thing, mds::Backend
     // overrides it with its own MDS-orchestrated fan-out (see
     // mds_backend.cpp).
-    virtual rawstd::Task<void> remove_snapshot(
+    virtual rawstd::Task<void> remove_version(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& snapshot_id
+        uint64_t offset, const RawstdUUID& version_id
     );
 
     // The full creation-time shape (size/width/chunk_size) plus this
@@ -166,14 +166,13 @@ public:
     // WireMap) and reports every one of their real states, via the same
     // direct-to-Slot fan-out (mds_backend.cpp).
     //
-    // A non-nil `snapshot_id` reports that version's own copy instead of
-    // the live one: its shape as of the snapshot, and whatever sync
-    // identity the backend records for it (a snapshot is never opened
+    // A non-nil `version_id` reports that version's own copy instead of
+    // the live one: its shape as of the version, and whatever sync
+    // identity the backend records for it (a version is never opened
     // through the mirror state machine, so nothing acts on it). ENOTSUP
-    // on a backend without snapshots.
+    // on a backend without versions.
     virtual rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstdUUID& snapshot_id = {}
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) = 0;
 
     // Every real member's own bare location of the chunk at `offset` --
@@ -190,10 +189,9 @@ public:
     // real chunk offset, it resolves that chunk's own real OST members
     // (via its own WireMap) and returns every one of their real bare
     // locations, in the same order meta() above reports their state in --
-    // for `snapshot_id`'s own members when it's non-nil.
+    // for `version_id`'s own members when it's non-nil.
     virtual rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstdUUID& snapshot_id = {}
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) = 0;
 
     virtual rawstd::Task<void> set_sync_state(
@@ -211,51 +209,51 @@ public:
     // this call genuinely proves the object exists; an ost:// one's is a
     // real wire round trip either way), so a caller that also needs this
     // copy's own meta() (e.g. Slot::open(), see its own doc comment)
-    // calls it separately, afterward. A previously snapshotted version is
-    // bound via set_snapshot() below instead. `flags` is RAWSTOR_READONLY
+    // calls it separately, afterward. A previously created version is
+    // bound via set_version() below instead. `flags` is RAWSTOR_READONLY
     // or 0 (<rawstor/target.h>): READONLY opens the object read-only all
     // the way down to the final open (blk-backed: O_RDONLY; ost://: the
     // server's own rawstor_target_open() does the same).
     virtual rawstd::Task<void>
     set_object(const RawstdUUID& id, uint64_t offset, int flags) = 0;
 
-    // Same as set_object() above, but binds one previously snapshotted
-    // version of `object_id`/`offset` (`snapshot_id`, never nil -- see
-    // create_snapshot() below, docs/mds.md "Snapshots") instead of its
+    // Same as set_object() above, but binds one previously created
+    // version of `object_id`/`offset` (`version_id`, never nil -- see
+    // create_version() below, docs/mds.md "Versions") instead of its
     // live version. Default: ENOTSUP, covering file::Backend and
     // lvm::Backend (classic LVM has no thin CoW) without each needing its
     // own override; blk::Backend overrides this for its own subclasses
     // capable of it (currently zfs::Backend only), mds::Backend overrides
     // it with its own MDS-orchestrated fan-out (see mds_backend.cpp).
-    virtual rawstd::Task<void> set_snapshot(
+    virtual rawstd::Task<void> set_version(
         const RawstdUUID& object_id, uint64_t offset,
-        const RawstdUUID& snapshot_id
+        const RawstdUUID& version_id
     );
 
-    // Native CoW snapshot of the live version as `snapshot_id` (never nil --
+    // Native CoW version of the live version as `version_id` (never nil --
     // nil is the live version; like every object id, the caller
     // generates it itself before calling, docs/mds.md). Its removal is
-    // remove_snapshot() above, called with this same `snapshot_id`. Default:
+    // remove_version() above, called with this same `version_id`. Default:
     // ENOTSUP, covering file::Backend and lvm::Backend (classic LVM has no thin
-    // CoW -- docs/mds.md's own "Snapshots" section) without each needing
+    // CoW -- docs/mds.md's own "Versions" section) without each needing
     // its own override; zfs::Backend overrides this with the real thing,
     // mds::Backend overrides it with its own MDS-orchestrated fan-out
     // (see mds_backend.cpp).
-    virtual rawstd::Task<void> create_snapshot(
+    virtual rawstd::Task<void> create_version(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& snapshot_id
+        uint64_t offset, const RawstdUUID& version_id
     );
 
-    // Every version (snapshot_id) `id`/`offset` has been snapshotted as,
+    // Every version (version_id) `id`/`offset` has,
     // in no particular order. Default: an empty list, covering
-    // file::Backend and lvm::Backend, which hold no snapshots; zfs::Backend
-    // lists its own snapshot datasets, ost::Backend asks its server
-    // (LIST_SNAPSHOTS), mds::Backend asks the MDS (OBJ_LIST_SNAPSHOTS).
+    // file::Backend and lvm::Backend, which hold no versions; zfs::Backend
+    // lists its own version datasets, ost::Backend asks its server
+    // (LIST_VERSIONS), mds::Backend asks the MDS (OBJ_LIST_VERSIONS).
     virtual rawstd::Task<std::vector<RawstdUUID>>
-    list_snapshots(const RawstdUUID& id, uint64_t offset);
+    list_versions(const RawstdUUID& id, uint64_t offset);
 
     // Grows `id` to `new_size` (grow-only -- docs/mds.md: shrink
-    // interacts with GC and snapshots, deferred past v1). Default:
+    // interacts with GC and versions, deferred past v1). Default:
     // ENOTSUP, covering every backend a plain (non-mds://) target
     // addresses directly -- their own size is fixed at create() time.
     // mds::Backend overrides this with the real per-chunk

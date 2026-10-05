@@ -279,18 +279,18 @@ connect_one(rawio::Queue& queue, const rawstd::URI& location) {
 // survivor is known to be current. With every copy missing there's
 // nothing to vouch that the chunk never held data either. The survivors'
 // own META gives the recreated copy's size.
-// Never for a read-only open (it writes nothing) or a bound snapshot
+// Never for a read-only open (it writes nothing) or a bound version
 // version (a CoW version can't be regenerated from live data). A member
 // whose recreate fails just stays unreachable.
 rawstd::Task<void> recreate_missing(
     rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
     const RawstdUUID& id, uint64_t offset, int flags,
-    const RawstdUUID& snapshot_id,
+    const RawstdUUID& version_id,
     std::vector<std::unique_ptr<rawstor::Slot>>& slots,
     std::vector<RawstorObjectMeta>& metas, std::vector<bool>& opened,
     const std::vector<bool>& missing
 ) {
-    if ((flags & RAWSTOR_READONLY) != 0 || !rawstd_uuid_is_nil(&snapshot_id)) {
+    if ((flags & RAWSTOR_READONLY) != 0 || !rawstd_uuid_is_nil(&version_id)) {
         co_return;
     }
 
@@ -349,7 +349,7 @@ rawstd::Task<void> recreate_missing(
         try {
             slot = co_await connect_one(queue, locations[i]);
             co_await slot->create(id, offset, sp, RAWSTOR_MEMBER_DATA);
-            meta = co_await slot->open(id, offset, flags, snapshot_id);
+            meta = co_await slot->open(id, offset, flags, version_id);
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member recreate failed: %s\n", e.what());
             failed = true;
@@ -376,11 +376,11 @@ rawstd::Task<void> recreate_missing(
 rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
     const RawstdUUID& id, uint64_t offset, int flags,
-    const RawstdUUID& snapshot_id
+    const RawstdUUID& version_id
 ) {
     // Object's lazy per-chunk opening and tests/ call this directly, so
     // the location list is validated here. Identity needs no check: it
-    // arrives as the explicit `id`/`offset`/`snapshot_id` parameters.
+    // arrives as the explicit `id`/`offset`/`version_id` parameters.
     validate_not_empty(locations);
     validate_different_uris(locations);
 
@@ -466,7 +466,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     );
     for (size_t i = 0; i < slots.size(); ++i) {
         if (slots[i]) {
-            open_tasks[i] = slots[i]->open(id, offset, flags, snapshot_id);
+            open_tasks[i] = slots[i]->open(id, offset, flags, version_id);
         }
     }
 
@@ -512,7 +512,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     }
 
     co_await recreate_missing(
-        queue, locations, id, offset, flags, snapshot_id, slots, metas, opened,
+        queue, locations, id, offset, flags, version_id, slots, metas, opened,
         missing
     );
 
@@ -836,7 +836,7 @@ rawstd::Task<void> Chunk::_run_dirty_barrier() {
         // _dirty (e.g. a concurrent read-repair on another member): it
         // takes _degrade()'s "nothing acked yet" fast path and bumps
         // _unrecorded_stale without queuing, since that fast path only
-        // waits on this barrier once _dirty is true. Snapshot the count so
+        // waits on this barrier once _dirty is true. Capture the count so
         // the completion below only subtracts what this fan-out actually
         // recorded, instead of discarding a concurrent increment.
         size_t recorded_stale = _unrecorded_stale;
@@ -2162,7 +2162,7 @@ Chunk::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
 rawstd::Task<void> Chunk::flush() {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "flush()");
 
-    // Snapshotting _writes_issued now, rather than just waiting for
+    // Capturing _writes_issued now, rather than just waiting for
     // "nothing outstanding", is what keeps this from starving under a
     // continuous write stream: a live in-flight count can hover above zero
     // forever if a new write always fills the slot a completing one just

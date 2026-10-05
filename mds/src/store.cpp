@@ -50,24 +50,24 @@ constexpr const char* SCHEMA =
     "  PRIMARY KEY (id, logical_index, slot_index)"
     ") WITHOUT ROWID;"
     /*
-     * No ON DELETE CASCADE from objects: an object with snapshots must
+     * No ON DELETE CASCADE from objects: an object with versions must
      * not silently disappear — remove() refuses with EBUSY.
      */
-    "CREATE TABLE IF NOT EXISTS snapshots ("
+    "CREATE TABLE IF NOT EXISTS versions ("
     "  id BLOB NOT NULL REFERENCES objects(id),"
-    "  snapshot_id BLOB NOT NULL,"
+    "  version_id BLOB NOT NULL,"
     "  logical_size INTEGER NOT NULL,"
     "  created_at INTEGER NOT NULL,"
-    "  PRIMARY KEY (id, snapshot_id)"
+    "  PRIMARY KEY (id, version_id)"
     ") WITHOUT ROWID;"
-    "CREATE TABLE IF NOT EXISTS snapshot_members ("
+    "CREATE TABLE IF NOT EXISTS version_members ("
     "  id BLOB NOT NULL,"
-    "  snapshot_id BLOB NOT NULL,"
+    "  version_id BLOB NOT NULL,"
     "  logical_index INTEGER NOT NULL,"
     "  ost_id BLOB NOT NULL,"
-    "  PRIMARY KEY (id, snapshot_id, logical_index, ost_id),"
-    "  FOREIGN KEY (id, snapshot_id)"
-    "    REFERENCES snapshots(id, snapshot_id) ON DELETE CASCADE"
+    "  PRIMARY KEY (id, version_id, logical_index, ost_id),"
+    "  FOREIGN KEY (id, version_id)"
+    "    REFERENCES versions(id, version_id) ON DELETE CASCADE"
     ") WITHOUT ROWID;"
     /* Applied mutations by idempotency_key, for replaying a retried request. */
     "CREATE TABLE IF NOT EXISTS applied_mutations ("
@@ -263,8 +263,8 @@ enum class MutationKind : unsigned {
     create = 1,
     resize = 2,
     remove = 3,
-    commit_snapshot = 4,
-    remove_snapshot = 5,
+    commit_version = 4,
+    remove_version = 5,
 };
 
 // How long a record is kept: far beyond any client's retry window.
@@ -502,7 +502,7 @@ void ObjectStore::check_topology(const Topology& topology) {
 void ObjectStore::_check_topology(const Topology& topology) {
     Stmt select(
         _db, "SELECT ost_id FROM chunk_map"
-             " UNION SELECT ost_id FROM snapshot_members;"
+             " UNION SELECT ost_id FROM version_members;"
     );
 
     bool missing = false;
@@ -700,10 +700,10 @@ ObjectDescriptor ObjectStore::create(
 }
 
 ObjectMap
-ObjectStore::open(const RawstdUUID& id, const RawstdUUID& snapshot_id) {
+ObjectStore::open(const RawstdUUID& id, const RawstdUUID& version_id) {
     std::lock_guard<std::mutex> lock(_mutex);
-    if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        return _open_snapshot(id, snapshot_id);
+    if (!rawstd_uuid_is_nil(&version_id)) {
+        return _open_version(id, version_id);
     }
     return _open_live(id);
 }
@@ -774,7 +774,7 @@ ResizeResult ObjectStore::resize(
 
     validate_geometry(new_size, descriptor.chunk_size);
 
-    /* Grow-only in v1: shrink interacts with GC and snapshots. */
+    /* Grow-only in v1: shrink interacts with GC and versions. */
     if (new_size < descriptor.logical_size) {
         rawstd_error("Object shrink is not supported\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -893,8 +893,8 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
     Transaction tx(_db);
 
     exec(
-        _db, "DELETE FROM snapshot_members;"
-             "DELETE FROM snapshots;"
+        _db, "DELETE FROM version_members;"
+             "DELETE FROM versions;"
              "DELETE FROM objects;"
     );
 
@@ -991,13 +991,11 @@ ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
     Transaction tx(_db);
 
     {
-        /* An object with snapshots must not silently disappear. */
-        Stmt busy(
-            _db, "SELECT snapshot_id FROM snapshots WHERE id = ? LIMIT 1;"
-        );
+        /* An object with versions must not silently disappear. */
+        Stmt busy(_db, "SELECT version_id FROM versions WHERE id = ? LIMIT 1;");
         busy.bind_blob(1, id.bytes, sizeof(id.bytes));
         if (busy.step()) {
-            rawstd_error("Object has snapshots; remove them first\n");
+            rawstd_error("Object has versions; remove them first\n");
             RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
         }
     }
@@ -1044,41 +1042,40 @@ std::vector<RawstdUUID> ObjectStore::list_objects(
     return ret;
 }
 
-std::vector<RawstdUUID> ObjectStore::list_snapshots(const RawstdUUID& id) {
+std::vector<RawstdUUID> ObjectStore::list_versions(const RawstdUUID& id) {
     std::lock_guard<std::mutex> lock(_mutex);
     _descriptor(id);
 
     Stmt select(
-        _db, "SELECT snapshot_id FROM snapshots WHERE id = ?"
-             " ORDER BY snapshot_id;"
+        _db, "SELECT version_id FROM versions WHERE id = ?"
+             " ORDER BY version_id;"
     );
     select.bind_blob(1, id.bytes, sizeof(id.bytes));
     std::vector<RawstdUUID> ret;
     while (select.step()) {
-        RawstdUUID snapshot_id;
-        select.column_uuid(0, &snapshot_id);
-        ret.push_back(snapshot_id);
+        RawstdUUID version_id;
+        select.column_uuid(0, &version_id);
+        ret.push_back(version_id);
     }
     return ret;
 }
 
-ObjectMap ObjectStore::_open_snapshot(
-    const RawstdUUID& id, const RawstdUUID& snapshot_id
-) {
+ObjectMap
+ObjectStore::_open_version(const RawstdUUID& id, const RawstdUUID& version_id) {
     ObjectMap ret{};
     ret.descriptor = _descriptor(id);
 
     {
         Stmt select(
-            _db, "SELECT logical_size FROM snapshots"
-                 " WHERE id = ? AND snapshot_id = ?;"
+            _db, "SELECT logical_size FROM versions"
+                 " WHERE id = ? AND version_id = ?;"
         );
         select.bind_blob(1, id.bytes, sizeof(id.bytes))
-            .bind_blob(2, snapshot_id.bytes, sizeof(snapshot_id.bytes));
+            .bind_blob(2, version_id.bytes, sizeof(version_id.bytes));
         if (!select.step()) {
             RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
         }
-        /* The size the object had when the snapshot was taken. */
+        /* The size the object had when the version was taken. */
         ret.descriptor.logical_size = select.column_int64(0);
     }
 
@@ -1087,19 +1084,19 @@ ObjectMap ObjectStore::_open_snapshot(
     ret.chunks.resize(nchunks);
 
     Stmt select(
-        _db, "SELECT logical_index, ost_id FROM snapshot_members"
-             " WHERE id = ? AND snapshot_id = ?"
+        _db, "SELECT logical_index, ost_id FROM version_members"
+             " WHERE id = ? AND version_id = ?"
              " ORDER BY logical_index, ost_id;"
     );
     select.bind_blob(1, id.bytes, sizeof(id.bytes))
-        .bind_blob(2, snapshot_id.bytes, sizeof(snapshot_id.bytes));
+        .bind_blob(2, version_id.bytes, sizeof(version_id.bytes));
 
     uint64_t prev_index = 0;
     uint8_t slot = 0;
     while (select.step()) {
         uint64_t index = select.column_int64(0);
         if (index >= nchunks) {
-            rawstd_error("MDS store: snapshot member out of bounds\n");
+            rawstd_error("MDS store: version member out of bounds\n");
             RAWSTD_THROW_SYSTEM_ERROR(EIO);
         }
         if (index != prev_index) {
@@ -1112,10 +1109,10 @@ ObjectMap ObjectStore::_open_snapshot(
         ret.chunks[index].push_back(member);
     }
 
-    /* commit_snapshot() never registers a snapshot with an uncovered chunk. */
+    /* commit_version() never registers a version with an uncovered chunk. */
     for (size_t index = 0; index < ret.chunks.size(); ++index) {
         if (ret.chunks[index].empty()) {
-            rawstd_error("MDS store: snapshot is missing a chunk\n");
+            rawstd_error("MDS store: version is missing a chunk\n");
             RAWSTD_THROW_SYSTEM_ERROR(EIO);
         }
     }
@@ -1123,13 +1120,13 @@ ObjectMap ObjectStore::_open_snapshot(
     return ret;
 }
 
-uint64_t ObjectStore::commit_snapshot(
+uint64_t ObjectStore::commit_version(
     const RawstdUUID& idempotency_key, const RawstdUUID& id,
-    const RawstdUUID& snapshot_id, const std::vector<SnapshotMember>& members
+    const RawstdUUID& version_id, const std::vector<VersionMember>& members
 ) {
     std::lock_guard<std::mutex> lock(_mutex);
     if (std::optional<std::vector<unsigned char>> recorded = replay_mutation(
-            _db, idempotency_key, MutationKind::commit_snapshot, id
+            _db, idempotency_key, MutationKind::commit_version, id
         )) {
         return ResultReader(*recorded).get<uint64_t>();
     }
@@ -1138,27 +1135,27 @@ uint64_t ObjectStore::commit_snapshot(
     uint64_t nchunks =
         nchunks_of(descriptor.logical_size, descriptor.chunk_size);
 
-    if (rawstd_uuid_is_nil(&snapshot_id)) {
-        rawstd_error("A nil snapshot_id is the live version\n");
+    if (rawstd_uuid_is_nil(&version_id)) {
+        rawstd_error("A nil version_id is the live version\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
     /*
-     * Every chunk must be covered: an unreadable snapshot is never
+     * Every chunk must be covered: an unreadable version is never
      * registered. (A degraded object legitimately registers fewer members
      * per chunk than the policy width — recorded, not repaired.)
      */
     std::vector<bool> covered(nchunks, false);
-    for (const SnapshotMember& m : members) {
+    for (const VersionMember& m : members) {
         if (m.logical_index >= nchunks) {
-            rawstd_error("Snapshot member out of object bounds\n");
+            rawstd_error("Version member out of object bounds\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
         covered[m.logical_index] = true;
     }
     for (bool c : covered) {
         if (!c) {
-            rawstd_error("Snapshot does not cover every chunk\n");
+            rawstd_error("Version does not cover every chunk\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
     }
@@ -1169,12 +1166,12 @@ uint64_t ObjectStore::commit_snapshot(
 
     {
         Stmt insert(
-            _db, "INSERT INTO snapshots"
-                 " (id, snapshot_id, logical_size, created_at)"
+            _db, "INSERT INTO versions"
+                 " (id, version_id, logical_size, created_at)"
                  " VALUES (?, ?, ?, ?);"
         );
         insert.bind_blob(1, id.bytes, sizeof(id.bytes))
-            .bind_blob(2, snapshot_id.bytes, sizeof(snapshot_id.bytes))
+            .bind_blob(2, version_id.bytes, sizeof(version_id.bytes))
             .bind_int64(3, descriptor.logical_size)
             .bind_int64(4, static_cast<uint64_t>(time(nullptr)))
             .step();
@@ -1182,14 +1179,14 @@ uint64_t ObjectStore::commit_snapshot(
 
     {
         Stmt insert(
-            _db, "INSERT INTO snapshot_members"
-                 " (id, snapshot_id, logical_index, ost_id)"
+            _db, "INSERT INTO version_members"
+                 " (id, version_id, logical_index, ost_id)"
                  " VALUES (?, ?, ?, ?);"
         );
-        for (const SnapshotMember& m : members) {
+        for (const VersionMember& m : members) {
             insert.reset();
             insert.bind_blob(1, id.bytes, sizeof(id.bytes))
-                .bind_blob(2, snapshot_id.bytes, sizeof(snapshot_id.bytes))
+                .bind_blob(2, version_id.bytes, sizeof(version_id.bytes))
                 .bind_int64(3, m.logical_index)
                 .bind_blob(4, m.ost_id.bytes, sizeof(m.ost_id.bytes))
                 .step();
@@ -1204,7 +1201,7 @@ uint64_t ObjectStore::commit_snapshot(
     }
 
     record_mutation(
-        _db, idempotency_key, MutationKind::commit_snapshot, id,
+        _db, idempotency_key, MutationKind::commit_version, id,
         ResultWriter().put(map_epoch).data()
     );
 
@@ -1213,18 +1210,18 @@ uint64_t ObjectStore::commit_snapshot(
     return map_epoch;
 }
 
-std::vector<SnapshotMember> ObjectStore::remove_snapshot(
+std::vector<VersionMember> ObjectStore::remove_version(
     const RawstdUUID& idempotency_key, const RawstdUUID& id,
-    const RawstdUUID& snapshot_id
+    const RawstdUUID& version_id
 ) {
     std::lock_guard<std::mutex> lock(_mutex);
-    std::vector<SnapshotMember> ret;
+    std::vector<VersionMember> ret;
     if (std::optional<std::vector<unsigned char>> recorded = replay_mutation(
-            _db, idempotency_key, MutationKind::remove_snapshot, id
+            _db, idempotency_key, MutationKind::remove_version, id
         )) {
         ResultReader r(*recorded);
         ret.resize(r.get<uint64_t>());
-        for (SnapshotMember& m : ret) {
+        for (VersionMember& m : ret) {
             m.logical_index = r.get<uint64_t>();
             m.ost_id = r.get<RawstdUUID>();
         }
@@ -1235,14 +1232,14 @@ std::vector<SnapshotMember> ObjectStore::remove_snapshot(
 
     {
         Stmt select(
-            _db, "SELECT logical_index, ost_id FROM snapshot_members"
-                 " WHERE id = ? AND snapshot_id = ?"
+            _db, "SELECT logical_index, ost_id FROM version_members"
+                 " WHERE id = ? AND version_id = ?"
                  " ORDER BY logical_index, ost_id;"
         );
         select.bind_blob(1, id.bytes, sizeof(id.bytes))
-            .bind_blob(2, snapshot_id.bytes, sizeof(snapshot_id.bytes));
+            .bind_blob(2, version_id.bytes, sizeof(version_id.bytes));
         while (select.step()) {
-            SnapshotMember m{};
+            VersionMember m{};
             m.logical_index = select.column_int64(0);
             select.column_uuid(1, &m.ost_id);
             ret.push_back(m);
@@ -1251,11 +1248,11 @@ std::vector<SnapshotMember> ObjectStore::remove_snapshot(
 
     {
         Stmt del(
-            _db, "DELETE FROM snapshots"
-                 " WHERE id = ? AND snapshot_id = ?;"
+            _db, "DELETE FROM versions"
+                 " WHERE id = ? AND version_id = ?;"
         );
         del.bind_blob(1, id.bytes, sizeof(id.bytes))
-            .bind_blob(2, snapshot_id.bytes, sizeof(snapshot_id.bytes))
+            .bind_blob(2, version_id.bytes, sizeof(version_id.bytes))
             .step();
     }
 
@@ -1265,11 +1262,11 @@ std::vector<SnapshotMember> ObjectStore::remove_snapshot(
 
     ResultWriter w;
     w.put(static_cast<uint64_t>(ret.size()));
-    for (const SnapshotMember& m : ret) {
+    for (const VersionMember& m : ret) {
         w.put(m.logical_index).put(m.ost_id);
     }
     record_mutation(
-        _db, idempotency_key, MutationKind::remove_snapshot, id, w.data()
+        _db, idempotency_key, MutationKind::remove_version, id, w.data()
     );
 
     tx.commit();

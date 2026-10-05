@@ -905,13 +905,13 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
     return py_target;
 }
 
-// One rawstor_target_create_snapshot() attempt against a fresh queue,
+// One rawstor_target_create_version() attempt against a fresh queue,
 // driven to completion synchronously -- returns its own result unchanged
-// (the snapshot target string's own length on success, negative errno on
+// (the version target string's own length on success, negative errno on
 // failure; rawstor_sync_op_init()'s own failure already comes back in
 // that same shape, a negative errno).
-static ssize_t try_create_snapshot(
-    const char* target, const char* snapshot_id, char* snapshot_target,
+static ssize_t try_create_version(
+    const char* target, const char* version_id, char* version_target,
     size_t size
 ) {
     RawstorSyncOp op;
@@ -920,57 +920,56 @@ static ssize_t try_create_snapshot(
         return ires;
     }
 
-    int sres = rawstor_target_create_snapshot(
-        op.queue, target, snapshot_id, snapshot_target, size,
-        rawstor_sync_op_cb, &op
+    int sres = rawstor_target_create_version(
+        op.queue, target, version_id, version_target, size, rawstor_sync_op_cb,
+        &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);
     rawstor_sync_op_destroy(&op);
     return res;
 }
 
-// `snapshot_id` NULL (Python None): the version id is either already bound
+// `version_id` NULL (Python None): the version id is either already bound
 // in `target`'s own path, a caller-chosen one, or a freshly generated one
-// -- see rawstor_target_create_snapshot()'s own doc comment for the three
-// ways this resolves. Returns the snapshot's own target string (`target`
+// -- see rawstor_target_create_version()'s own doc comment for the three
+// ways this resolves. Returns the version's own target string (`target`
 // itself when already bound, or `target` with the id actually used spliced
 // onto it otherwise) -- same shape as object_create_at() above.
 PyObject*
-py_rawstor_object_create_snapshot(PyObject* Py_UNUSED(self), PyObject* args) {
+py_rawstor_object_create_version(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
-    const char* snapshot_id = NULL;
-    if (!PyArg_ParseTuple(args, "sz", &target, &snapshot_id)) {
+    const char* version_id = NULL;
+    if (!PyArg_ParseTuple(args, "sz", &target, &version_id)) {
         return NULL;
     }
 
-    // NULL/0 asks for the snapshot target string's own length alone --
-    // the same snprintf(NULL, 0, ...) idiom rawstor_target_create_snapshot()
+    // NULL/0 asks for the version target string's own length alone --
+    // the same snprintf(NULL, 0, ...) idiom rawstor_target_create_version()
     // itself just forwards to (target.cpp), needing no I/O and creating
     // nothing. The second call, into a buffer sized exactly for that
     // length, does the real CoW.
-    ssize_t res = try_create_snapshot(target, snapshot_id, NULL, 0);
+    ssize_t res = try_create_version(target, version_id, NULL, 0);
     if (res < 0) {
         set_os_error((int)-res);
         return NULL;
     }
 
-    char* snapshot_target = malloc((size_t)res + 1);
-    if (!snapshot_target) {
+    char* version_target = malloc((size_t)res + 1);
+    if (!version_target) {
         PyErr_NoMemory();
         return NULL;
     }
 
-    res = try_create_snapshot(
-        target, snapshot_id, snapshot_target, (size_t)res + 1
-    );
+    res =
+        try_create_version(target, version_id, version_target, (size_t)res + 1);
     if (res < 0) {
-        free(snapshot_target);
+        free(version_target);
         set_os_error((int)-res);
         return NULL;
     }
 
-    PyObject* py_result = PyUnicode_FromString(snapshot_target);
-    free(snapshot_target);
+    PyObject* py_result = PyUnicode_FromString(version_target);
+    free(version_target);
     return py_result;
 }
 
@@ -1245,7 +1244,7 @@ PyObject* py_rawstor_object_chunks(PyObject* Py_UNUSED(self), PyObject* args) {
 }
 
 PyObject*
-py_rawstor_object_snapshots(PyObject* Py_UNUSED(self), PyObject* args) {
+py_rawstor_object_versions(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
     if (!PyArg_ParseTuple(args, "s", &target)) {
         return NULL;
@@ -1258,7 +1257,7 @@ py_rawstor_object_snapshots(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
     RawstorStringList* list = NULL;
-    int sres = rawstor_target_snapshots(
+    int sres = rawstor_target_versions(
         op.queue, target, &list, rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);

@@ -34,7 +34,7 @@ test_all_SOURCES = main.cpp \
                    test_target.cpp
 test_all_LDADD = $(top_builddir)/src/librawstor.la
 
-# Object::create_snapshot()/snapshot_remove()'s real MDS+OST wire path
+# Object::create_version()/version_remove()'s real MDS+OST wire path
 # needs a live rawstor::mdsserver::Server + rawstor::ostserver::Server pair
 # (object_env.*) -- the OST side is always built, but mds/ (and its
 # rawstor::mdsserver::Server) only exists with sqlite3 (--without-sqlite3).

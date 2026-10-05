@@ -34,15 +34,15 @@ private:
     std::optional<RawstdUUID> _id;
     // The chunk offset/version open() bound _id to -- 0/0 (whole object,
     // live) unless open() was called otherwise (docs/mds.md, "Chunk
-    // identity"/"Snapshots"). Meaningless while _id is unset; carried
+    // identity"/"Versions"). Meaningless while _id is unset; carried
     // alongside it so a reconnected backend's own set_object()
     // (invalidate_backend()) rebinds to the same chunk/version, not
     // silently back to the whole object's own live one.
     uint64_t _offset;
     // The open flags (RAWSTOR_READONLY or 0) open() bound _id with --
-    // carried alongside _id/_offset/_snapshot_id for the same replay reason.
+    // carried alongside _id/_offset/_version_id for the same replay reason.
     int _flags;
-    RawstdUUID _snapshot_id;
+    RawstdUUID _version_id;
 
     std::vector<std::shared_ptr<Backend>> _backends;
     size_t _backend_index;
@@ -139,11 +139,11 @@ public:
     // Backend) already bound to one location.
     rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID snapshot_id = {}
+        RawstdUUID& token, RawstdUUID version_id = {}
     );
 
-    rawstd::Task<void> create_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    rawstd::Task<void> create_version(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
     );
 
     rawstd::Task<void>
@@ -157,20 +157,18 @@ public:
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset);
 
     rawstd::Task<std::vector<RawstdUUID>>
-    list_snapshots(const RawstdUUID& id, uint64_t offset);
+    list_versions(const RawstdUUID& id, uint64_t offset);
 
-    rawstd::Task<void> remove_snapshot(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    rawstd::Task<void> remove_version(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
     );
 
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstdUUID& snapshot_id = {}
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     );
 
     rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstdUUID& snapshot_id = {}
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     );
 
     rawstd::Task<void> set_sync_state(
@@ -194,15 +192,15 @@ public:
     // meta()'s own first entry is this location's own answer (its own
     // doc comment: every backend but mds::Backend only ever has the one
     // to give anyway). `flags` (RAWSTOR_READONLY or 0) goes to every
-    // Backend::set_object() (a non-nil `snapshot_id` binds via
-    // set_snapshot() instead, read-only by nature). Throws ENOTSUP if
+    // Backend::set_object() (a non-nil `version_id` binds via
+    // set_version() instead, read-only by nature). Throws ENOTSUP if
     // that answer's own member_role is RAWSTOR_MEMBER_WITNESS -- a
     // witness holds no data and is never a valid target for real I/O
     // (docs/mds.md, "Witness (stage 3)"); its own .cpp doc comment on
     // why this is the one place that needs to check.
     rawstd::Task<RawstorObjectMeta> open(
         const RawstdUUID& id, uint64_t offset, int flags,
-        const RawstdUUID& snapshot_id
+        const RawstdUUID& version_id
     );
 
     // Not called implicitly by ~Slot() (a coroutine can't run in a

@@ -25,7 +25,7 @@ libmdsstore_la_SOURCES = placement.cpp \
 # Split out from rawstor_mds_SOURCES (matching ost/src/Makefile.am's own
 # libost.la split) so tests/ can drive a real mdsserver::Server in-process,
 # the same way ost/tests/ already reuses ost::Server -- without this,
-# Object::create_snapshot()/snapshot_remove()'s actual MDS wire path would be
+# Object::create_version()/version_remove()'s actual MDS wire path would be
 # untestable outside of spawning the rawstor-mds binary itself.
 libmds_la_SOURCES = opts.cpp \
                     $(top_srcdir)/mds/include/mds/opts.hpp \

@@ -26,8 +26,8 @@ rawstor_SOURCES = create.c \
                   resolve.h \
                   show.c \
                   show.h \
-                  snapshot.c \
-                  snapshot.h \
+                  create_version.c \
+                  create_version.h \
                   testio.c \
                   testio.h
 

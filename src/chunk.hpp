@@ -159,12 +159,12 @@ private:
     // Ticket dispenser: each pwrite()/pwritev()/write_zeroes() call takes
     // the next one at entry (unsigned int ticket = _writes_issued++;) and
     // hands it to _write_finished() at its own completion, success or
-    // failure. flush() snapshots this as its own target and waits for
+    // failure. flush() captures this as its own target and waits for
     // _flush_barrier to reach it -- not a live in-flight gauge,
     // deliberately: waiting for "currently outstanding == 0" instead
     // would starve flush() forever under a continuous write stream, where
     // a new write can always slip into a slot a completing one just freed
-    // before the count ever touches zero. A fixed target, snapshotted
+    // before the count ever touches zero. A fixed target, captured
     // once, isn't affected by writes issued after flush() was called --
     // same as fsync() never covering a write that hasn't happened yet.
     // This is *not* a backpressure mechanism -- pwrite()/pwritev() never
@@ -179,7 +179,7 @@ private:
     // never promised to wait for (one issued after its own call) finishing
     // early instead of the one it actually means.
     std::unordered_set<unsigned int> _early_write_completions;
-    // flush() suspends here when its target (a snapshot of _writes_issued)
+    // flush() suspends here when its target (a captured _writes_issued)
     // is greater than the barrier's own count -- .value() is the
     // contiguous "every ticket below this has genuinely completed"
     // watermark _write_finished() maintains, not a raw tally of how many
@@ -367,7 +367,7 @@ private:
 public:
     // Connects every reachable backend in `locations` (all mirrors of the
     // one chunk `id`/`offset` names -- bare addresses, with no identity
-    // of their own: the caller already knows `id`/`offset`/`snapshot_id`, so
+    // of their own: the caller already knows `id`/`offset`/`version_id`, so
     // there's nothing left for a location to carry that isn't already a
     // parameter here) into a Slot (Slot::create()), SET_OBJECT+meta()-s
     // every connected member, then builds the Chunk itself -- deciding
@@ -383,14 +383,14 @@ public:
     // (<rawstor/target.h>): READONLY drops the quorum requirement (any
     // one reachable member is enough) and all background maintenance,
     // and makes every write fail with EROFS. `offset` is 0 for a plain,
-    // non-volume object or a volume's own chunk 0; `snapshot_id` is nil
+    // non-volume object or a volume's own chunk 0; `version_id` is nil
     // for the live version, or a version id previously registered via
-    // Target::create_snapshot() (docs/mds.md, "Snapshots") -- only ever
+    // Target::create_version() (docs/mds.md, "Versions") -- only ever
     // opened with READONLY (Target::open()'s own check).
     static rawstd::Task<std::unique_ptr<Chunk>> create(
         rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
         const RawstdUUID& id, uint64_t offset, int flags,
-        const RawstdUUID& snapshot_id
+        const RawstdUUID& version_id
     );
 
     Chunk(

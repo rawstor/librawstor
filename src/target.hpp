@@ -16,7 +16,7 @@
 namespace rawstor {
 
 // A target URI's own trailing path identity, in one of three shapes:
-// - Physical, with a bound snapshot: `/<uuid>/<offset>/<snapshot_id>`
+// - Physical, with a bound version: `/<uuid>/<offset>/<version_id>`
 //   -- offset always an explicit segment (even "0"), the convention
 //   every internal builder in this codebase uses (mds_backend.cpp's
 //   chunk_slot_target(), ost/src/client.cpp's _targets(), Target's own
@@ -24,34 +24,34 @@ namespace rawstor {
 //   object, since a chunk's own offset is a real, meaningful value
 //   there.
 // - Physical, live: `/<uuid>/<offset>` -- same convention, no bound
-//   snapshot at all; the common case for one chunk of a larger mds://
-//   object that has never been snapshotted.
-// - Logical: `/<uuid>[/<snapshot_id>]` -- no offset segment at all,
+//   version at all; the common case for one chunk of a larger mds://
+//   object that has never been versioned.
+// - Logical: `/<uuid>[/<version_id>]` -- no offset segment at all,
 //   implied 0. This is the shape a caller types by hand to name a plain
-//   (non-mds://-chunk) target's own bound snapshot -- there is no
+//   (non-mds://-chunk) target's own bound version -- there is no
 //   chunk-offset concept to name at that level, so spelling one out
 //   just to satisfy a parsing rule would be pure noise. A bare
-//   `/<uuid>`, with no offset and no snapshot at all, is this same
-//   shape without the snapshot segment.
+//   `/<uuid>`, with no offset and no version at all, is this same
+//   shape without the version segment.
 //
 // All three are really the same grammar read from the *end* (a target's
 // own location can itself carry an arbitrary path, e.g. file:///a/b, so
 // the identity can't be found any other way): find the trailing run of
-// UUID-shaped segments. A target binds at most one snapshot, so the run
-// is at most two segments long (id, snapshot_id) -- or one, when an
-// offset segment separates the id from the snapshot; anything longer is
+// UUID-shaped segments. A target binds at most one version, so the run
+// is at most two segments long (id, version_id) -- or one, when an
+// offset segment separates the id from the version; anything longer is
 // EINVAL. If a valid hexadecimal offset segment, and another UUID (the
-// id) right before that, precede the run, it's the physical-with-snapshot
+// id) right before that, precede the run, it's the physical-with-version
 // shape: offset comes from that hexadecimal segment, the id from the
-// UUID before it, and the run is the snapshot_id. If the run isn't
+// UUID before it, and the run is the version_id. If the run isn't
 // preceded that way but is still non-empty, it's the logical shape
 // instead: its first segment is the id and its second, if any, the
-// snapshot_id (a lone trailing UUID, the common case, is simply a bare id
-// with no snapshot at all). A location path that itself ends in a
+// version_id (a lone trailing UUID, the common case, is simply a bare id
+// with no version at all). A location path that itself ends in a
 // UUID-shaped directory is therefore ambiguous and not supported. If the
 // *last* segment isn't UUID-shaped at all (the run is empty), it must be
 // a hexadecimal offset with a UUID id right before it -- the
-// physical-live shape, no snapshot anywhere in the path. See
+// physical-live shape, no version anywhere in the path. See
 // parse_target_path()'s own comment in target.cpp for the exact
 // algorithm. `segments` is how many trailing path segments this
 // identity actually consumed -- callers that need the URI with the
@@ -60,7 +60,7 @@ namespace rawstor {
 struct TargetPath {
     RawstdUUID id;
     uint64_t offset;
-    RawstdUUID snapshot_id;
+    RawstdUUID version_id;
     unsigned int segments;
 };
 
@@ -70,18 +70,18 @@ struct TargetPath {
 // decode_token() in location.cpp), the identity's own path segments with
 // no scheme/host in front of them at all: the grammar only ever looks at
 // the path, so both are parsed identically. Throws EINVAL if the path's
-// last segment (past any snapshot/offset segments) isn't a valid UUID,
+// last segment (past any version/offset segments) isn't a valid UUID,
 // or an offset segment isn't a valid hexadecimal number.
 TargetPath parse_target_path(const std::string& path);
 
 // Every location's own mirror consistency state for the chunk at `id`/
-// `offset` (of its `snapshot_id` version, when non-nil), queried
+// `offset` (of its `version_id` version, when non-nil), queried
 // concurrently -- a location that doesn't answer gets a
 // zero-filled (UNREACHABLE) entry instead of failing the call (target.cpp's
 // own comment).
 rawstd::Task<std::vector<RawstorObjectMeta>> resolve_meta(
     rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
-    uint64_t offset, RawstdUUID snapshot_id
+    uint64_t offset, RawstdUUID version_id
 );
 
 class Location;
@@ -135,15 +135,15 @@ private:
     // The object's own identity -- the same for every URI in `_uris`,
     // across every chunk, not just within one (validated once, at
     // construction: the constructor's own comment, target.cpp). id/
-    // snapshot_id name *what* this target addresses -- a single value the
+    // version_id name *what* this target addresses -- a single value the
     // whole target agrees on, unlike location() (a chunk's own physical
     // placement, genuinely different chunk to chunk on a real
     // multi-chunk mds:// object) or a chunk's own offset (which tells it
     // apart from every other chunk of the same object, so has no
-    // whole-target value at all -- object_id()/snapshot_id()'s own doc
+    // whole-target value at all -- object_id()/version_id()'s own doc
     // comments below say more).
     RawstdUUID _id;
-    RawstdUUID _snapshot_id;
+    RawstdUUID _version_id;
 
 public:
     explicit Target(const std::vector<rawstd::URI>& uris);
@@ -158,12 +158,12 @@ public:
     // re-parsed on every call.
     const RawstdUUID& object_id() const;
 
-    // The bound snapshot version, if any -- the trailing snapshot path
+    // The bound version, if any -- the trailing version path
     // segment every URI in `_uris` agrees on (TargetPath's own doc
     // comment above; chunk_slot_target()'s own convention in
     // mds_backend.cpp), or nil (live) if absent. Same validated-once,
     // stored shape as object_id() above.
-    const RawstdUUID& snapshot_id() const;
+    const RawstdUUID& version_id() const;
 
     // Every backend location this target's own URIs touch, across every
     // chunk, not just the first -- each URI's own identity path
@@ -171,15 +171,15 @@ public:
     // deduplicated (a real multi-chunk mds:// object's own chunks can
     // legitimately land on the same OST as each other, nothing about
     // placement rules that out, and Location itself rejects a duplicate
-    // URI). Unlike object_id()/snapshot_id() above, there's no single
+    // URI). Unlike object_id()/version_id() above, there's no single
     // value every chunk agrees on to just validate-and-store -- this is a
     // set union, computed fresh each call.
     Location location() const;
 
-    // Deliberately no offset() accessor here, unlike object_id()/snapshot_id()/
+    // Deliberately no offset() accessor here, unlike object_id()/version_id()/
     // location() above: unlike those, one chunk's own offset within a
     // larger mds:// object has no sensible whole-target combination at
-    // all (not a single agreed value like id/snapshot_id, not a
+    // all (not a single agreed value like id/version_id, not a
     // meaningfully unioned set like location() -- an offset's entire
     // point is telling one chunk apart from every other chunk of the
     // same object, so there is no coherent "this target's own offset"
@@ -206,29 +206,29 @@ public:
     // the failing chunk's own mirrors got that far) is rolled back before
     // the error is rethrown -- all-or-nothing across every chunk. This is only
     // ever for a plain target: throws EINVAL if `this` already names its own
-    // bound version (snapshot_id() above, non-nil) -- taking a snapshot of an
-    // existing object is create_snapshot()'s own job below, never this
-    // method's, so there is no dispatch on snapshot_id() here at all.
+    // bound version (version_id() above, non-nil) -- creating a version of an
+    // existing object is create_version()'s own job below, never this
+    // method's, so there is no dispatch on version_id() here at all.
     rawstd::Task<void>
     create(rawio::Queue& queue, const RawstorObjectSpec& sp) const;
 
-    // Takes a native CoW snapshot of the live version as the version
-    // `this` is bound to (snapshot_id() above, a target string of the form
-    // <id>/<snapshot_id>) -- the only entry point for this (create() above
+    // Creates a native CoW version of the live object as the version
+    // `this` is bound to (version_id() above, a target string of the form
+    // <id>/<version_id>) -- the only entry point for this (create() above
     // never does it). Throws EINVAL for an unbound target: picking or
     // splicing the version id is the caller's job
-    // (rawstor_target_create_snapshot()). Only the target's own URIs are
+    // (rawstor_target_create_version()). Only the target's own URIs are
     // touched, and every one of them is still attempted even if an
     // earlier one fails, the first error encountered reported. ENOTSUP
     // on a backend without native CoW (file://, classic LVM). Not
     // generalized across every chunk of a multi-chunk string:
-    // mds::Backend's own create_snapshot() override already does that
+    // mds::Backend's own create_version() override already does that
     // itself, in descending logical-index order (docs/mds.md) --
     // chunk_uris_by_offset() (target.cpp) always walks a target string's
     // own chunks in ascending offset order, so this method has no way to
     // express that descending order even if it did fan out across every
     // chunk.
-    rawstd::Task<void> create_snapshot(rawio::Queue& queue) const;
+    rawstd::Task<void> create_version(rawio::Queue& queue) const;
 
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue) const;
     // One RawstorObjectMeta per URI of the chunk at `offset`, same order
@@ -243,12 +243,12 @@ public:
     // target, purely syntactic otherwise (see this method's own doc
     // comment in target.cpp).
     rawstd::Task<std::vector<uint64_t>> chunks(rawio::Queue& queue) const;
-    // Every version this object has been snapshotted as, oldest first
-    // (snapshot ids are UUID v7). Asks the backend, whichever version
+    // Every version this object has, oldest first
+    // (version ids are UUID v7). Asks the backend, whichever version
     // `this` is bound to: the MDS for an mds:// target, otherwise every
-    // copy of the object's first chunk, merged -- a snapshot taken on any
+    // copy of the object's first chunk, merged -- a version taken on any
     // copy is listed.
-    rawstd::Task<std::vector<RawstdUUID>> snapshots(rawio::Queue& queue) const;
+    rawstd::Task<std::vector<RawstdUUID>> versions(rawio::Queue& queue) const;
     // Writes `sync_state` to exactly one real member of the chunk at
     // `offset` -- `member_index` into that chunk's own real member list,
     // the same order rawstor_target_meta()'s own per-chunk result reports
@@ -267,10 +267,10 @@ public:
     // undo), so every URI of every chunk is still attempted even if some
     // others fail (gather() never abandons a task still in flight); on
     // failure, gather() surfaces exactly one exception (not one per
-    // failed URI). A bound snapshot version, if any, is already part of
+    // failed URI). A bound version, if any, is already part of
     // each URI's own path (same convention as open() below) -- removes
     // that one version instead of the live object, nil meaning the live
-    // version -- dispatched to Backend::remove()/remove_snapshot() per
+    // version -- dispatched to Backend::remove()/remove_version() per
     // URI (remove_one(), target.cpp), but this method itself stays a
     // single entry point: the identity being removed is already whatever
     // the target string itself names.
@@ -283,16 +283,16 @@ public:
     // learn chunk_size/the object's total size without inventing a new
     // non-URI syntax for them (see this method's own comment in
     // target.cpp) -- every other chunk, index 0 included, stays lazily
-    // opened (MultiChunkObject::_chunk()). A snapshot view, if any, is
-    // already part of each URI (the trailing snapshot path segment, same
+    // opened (MultiChunkObject::_chunk()). A version view, if any, is
+    // already part of each URI (the trailing version path segment, same
     // convention as chunk_slot_target() in mds_backend.cpp) -- there's
-    // no separate `snapshot_id` parameter here.
+    // no separate `version_id` parameter here.
     //
     // `flags` is RAWSTOR_READONLY or 0 (<rawstor/target.h>) -- a target
-    // naming a bound snapshot version can only be opened with
+    // naming a bound version can only be opened with
     // RAWSTOR_READONLY (EINVAL otherwise), which is then threaded through
     // every layer down to the final open (Chunk::create(), Slot::open(),
-    // Backend::set_object()/set_snapshot()).
+    // Backend::set_object()/set_version()).
     rawstd::Task<std::unique_ptr<Object>>
     open(rawio::Queue& queue, int flags) const;
 

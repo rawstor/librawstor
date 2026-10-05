@@ -356,10 +356,10 @@ int rawstor_target_set_member_sync_state(
 /**
  * @brief Asynchronously create a new empty object at the specified target.
  *
- * @p target must be plain (no bound snapshot version, see
- * rawstor_target_snapshot_id()) -- taking a snapshot of an existing object
- * is rawstor_target_create_snapshot()'s own job, never this function's; a
- * @p target that carries a bound snapshot version fails with @c -EINVAL.
+ * @p target must be plain (no bound version, see
+ * rawstor_target_version_id()) -- creating a version of an existing object
+ * is rawstor_target_create_version()'s own job, never this function's; a
+ * @p target that carries a bound version fails with @c -EINVAL.
  * This creates an object at the exact target location @p target names.
  * The object metadata (such as size) is provided via the @p spec
  * structure. The target string must follow the format described in the
@@ -376,7 +376,7 @@ int rawstor_target_set_member_sync_state(
  * @param target    Target string specifying the full identifier of the
  *                  object to create, e.g., "ost://host:port/<uuid>". Must
  *                  not be NULL, must be a valid target as per the
- *                  library's format, and must not carry a bound snapshot
+ *                  library's format, and must not carry a bound version
  *                  version (see above).
  * @param spec      Pointer to a RawstorObjectSpec structure containing the
  *                  desired object shape. The size field must be set to the
@@ -390,7 +390,7 @@ int rawstor_target_set_member_sync_state(
  * @param cb        Callback invoked on completion.
  *                  - @p result is zero on success, or a negative errno on
  *                    failure (e.g. @c -EINVAL for invalid target or spec,
- *                    or @p target carrying a bound snapshot version; @c -EIO
+ *                    or @p target carrying a bound version; @c -EIO
  *                    if no chunk member survived, mds:// target only; @c
  *                    -ENOMEM, etc; implementation‑defined beyond that).
  *                  - @p data is the same pointer passed as @p data below.
@@ -403,8 +403,8 @@ int rawstor_target_set_member_sync_state(
  *         actual create result is delivered via @p cb.
  *
  * @see RawstorObjectSpec
- * @see rawstor_target_create_snapshot
- * @see rawstor_target_snapshot_id
+ * @see rawstor_target_create_version
+ * @see rawstor_target_version_id
  * @see Locations and Targets:
  * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
@@ -414,7 +414,7 @@ int rawstor_target_create(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously remove an object -- or one of its snapshots --
+ * @brief Asynchronously remove an object -- or one of its versions --
  *        from the storage system.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
@@ -422,13 +422,13 @@ int rawstor_target_create(
  * target. If the target contains multiple URIs (mirroring or locality),
  * the object is removed from every backend in the list.
  *
- * A @p target that carries a bound snapshot version (its own trailing
- * "/<offset>/<snapshot_id>" path segments, present only alongside an explicit
- * offset -- see rawstor_target_snapshot_id()) instead destroys that one
+ * A @p target that carries a bound version (its own trailing
+ * "/<offset>/<version_id>" path segments, present only alongside an explicit
+ * offset -- see rawstor_target_version_id()) instead destroys that one
  * version -- there is no separate function for it: which identity gets
  * removed is already whatever @p target itself names, live object or a
- * specific snapshot. For an mds://host:port/<id> @p target naming a
- * snapshot version, the MDS unregisters it (no new readers) before a
+ * specific version. For an mds://host:port/<id> @p target naming a
+ * version, the MDS unregisters it (no new readers) before a
  * best-effort per-member fan-out destroy runs -- a member that can no
  * longer be resolved (location changed, OST replaced) is left for the
  * reconstruct scan rather than failing the call.
@@ -437,7 +437,7 @@ int rawstor_target_create(
  * @p cb once the operation completes.
  *
  * @param queue   Queue used to drive the asynchronous remove.
- * @param target  Target string identifying the object (or bound snapshot)
+ * @param target  Target string identifying the object (or bound version)
  *                to remove, e.g.:
  *                - "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00"
  *                - "file:///var/rawstor/019cbfad-a389-7d42-a0f6-c29993ac8c00"
@@ -497,8 +497,8 @@ int rawstor_target_remove(
  *                - "ost://host1:9090/abc,ost://host2:9090/abc"  (mirroring)
  *                - "file:///data/abc,ost://host1:9090/abc"      (locality)
  * @param flags   Open flags: 0, or RAWSTOR_READONLY. A @p target that
- *                names a bound snapshot version (see
- *                rawstor_target_snapshot_id()) can only be opened with
+ *                names a bound version (see
+ *                rawstor_target_version_id()) can only be opened with
  *                RAWSTOR_READONLY (@c -EINVAL otherwise). RAWSTOR_READONLY
  *                also lets a mirrored object open without a write quorum
  *                (reachable members are read from as-is: no mirror
@@ -679,26 +679,26 @@ int rawstor_target_chunks(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously list every snapshot of the object a target
+ * @brief Asynchronously list every version of the object a target
  *        addresses.
  *
- * Each snapshot is reported as its own target string: every URI of
+ * Each version is reported as its own target string: every URI of
  * @p target (with any version it is bound to stripped off) followed by the
- * snapshot's id -- the same string rawstor_target_create_snapshot() prints,
+ * version's id -- the same string rawstor_target_create_version() prints,
  * ready for rawstor_target_open()/_spec()/_remove(). Oldest first
- * (snapshot ids are UUID v7). For an mds:// target the MDS answers;
+ * (version ids are UUID v7). For an mds:// target the MDS answers;
  * otherwise every copy of the object's first chunk is asked and their
  * answers merged, a copy that doesn't answer being skipped. A backend
- * without snapshots (file://, classic LVM) reports none.
+ * without versions (file://, classic LVM) reports none.
  *
  * @param queue      Queue used to drive the asynchronous lookup.
  * @param target     Target string, see rawstor_target_id().
- * @param snapshots  On success, receives a newly allocated list of snapshot
+ * @param versions  On success, receives a newly allocated list of version
  *                   target strings, possibly empty (free it with
  *                   rawstor_string_list_delete()); left untouched on
  *                   failure. Must stay valid until @p cb runs.
  * @param cb         Callback invoked on completion.
- *                   - @p result is the number of snapshots on success, or
+ *                   - @p result is the number of versions on success, or
  *                     a negative errno on failure (e.g. @c -ENOTCONN if no
  *                     copy answered, @c -ENOENT for an mds:// object the MDS
  *                     doesn't know).
@@ -708,23 +708,23 @@ int rawstor_target_chunks(
  * @return 0 if the lookup was successfully queued; negative errno on
  *         immediate failure (in which case @p cb is never invoked).
  *
- * @see rawstor_target_create_snapshot
+ * @see rawstor_target_create_version
  * @see rawstor_string_list_delete
  */
-int rawstor_target_snapshots(
-    RawIOQueue* queue, const char* target, RawstorStringList** snapshots,
+int rawstor_target_versions(
+    RawIOQueue* queue, const char* target, RawstorStringList** versions,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Retrieve the snapshot version bound to a target string.
+ * @brief Retrieve the version bound to a target string.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
- * this function reads the trailing snapshot path segment (if any) off
+ * this function reads the trailing version path segment (if any) off
  * @p target's own path, in either of two equivalent shapes: logical
- * (`<uuid>/<snapshot_id>`, the shape a caller types for a plain target's own
- * bound snapshot -- no chunk-offset concept to name at that level) or
- * physical (`<uuid>/<offset>/<snapshot_id>`, offset never omitted even "0" --
+ * (`<uuid>/<version_id>`, the shape a caller types for a plain target's own
+ * bound version -- no chunk-offset concept to name at that level) or
+ * physical (`<uuid>/<offset>/<version_id>`, offset never omitted even "0" --
  * the shape internally used for one chunk of a larger mds:// object). This
  * is purely a syntactic operation on @p target -- no backend is contacted,
  * and the target need not exist.
@@ -734,7 +734,7 @@ int rawstor_target_snapshots(
  *                 -
  * "ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00/019cbfad-..."
  * @param buf      Output buffer for the bound version's UUID string, or an
- *                 empty string if @p target carries no bound snapshot
+ *                 empty string if @p target carries no bound version
  *                 (the live version). Same truncation convention as
  *                 rawstor_target_id().
  * @param size     Size of the output buffer in bytes (including space for the
@@ -750,13 +750,13 @@ int rawstor_target_snapshots(
  * @see rawstor_target_remove
  * @see rawstor_target_chunks
  */
-int rawstor_target_snapshot_id(
+int rawstor_target_version_id(
     const char* target, char* buf, size_t size
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously take a snapshot of a target, under whichever
- *        version id @p target/@p snapshot_id together resolve to, and
+ * @brief Asynchronously create a version of a target, under whichever
+ *        version id @p target/@p version_id together resolve to, and
  *        return the resulting target string.
  *
  * Every version id is client-generated, like every object id (see
@@ -764,55 +764,55 @@ int rawstor_target_snapshot_id(
  * mds://host:port/<id> @p target's own MDS just registers whichever id
  * the caller already generated and embedded in the resulting target, once every
  * reachable chunk member has been backend-CoW'd under it (docs/mds.md,
- * "Snapshots (stage 2)"). Three ways the id actually used is picked, all
+ * "Versions (stage 2)"). Three ways the id actually used is picked, all
  * resolved synchronously (no I/O needed for any of them):
  * - @p target already names a specific version of its own (its own path
- *   carries a trailing snapshot_id -- e.g. as read back by
- *   rawstor_target_snapshot_id(), or as this same function itself already
- *   printed into a previous @p snapshot_target) and @p snapshot_id here is
+ *   carries a trailing version_id -- e.g. as read back by
+ *   rawstor_target_version_id(), or as this same function itself already
+ *   printed into a previous @p version_target) and @p version_id here is
  *   NULL: that bound version IS the one taken -- @p target itself is
- *   already the snapshot's own target string.
- * - @p target names a plain object and @p snapshot_id here is NULL: a
+ *   already the version's own target string.
+ * - @p target names a plain object and @p version_id here is NULL: a
  *   fresh id is generated (rawstd_uuid7_init(), the same single point of
  *   generation a fresh object id comes from -- rawstor_location_create()).
- * - @p snapshot_id here is non-NULL: that caller-chosen version id is used
+ * - @p version_id here is non-NULL: that caller-chosen version id is used
  *   verbatim -- but only if @p target names a plain object; combining it
  *   with a @p target that already carries its own bound version is
  *   ambiguous and fails with @c -EINVAL instead.
  *
- * This then takes a plain native CoW snapshot as that exact version on
+ * This then creates a plain native CoW version with that exact id on
  * every URI in @p target (every URI is still attempted even if an earlier
  * one fails, and the first error encountered is reported); the caller
  * owns crash consistency -- all acknowledged writes must be flushed
  * before this call. The resulting target string -- @p target itself when
  * already bound, or @p target with the id actually used spliced onto every
- * URI otherwise, i.e. exactly what rawstor_target_snapshot_id() would read
- * back off it -- is written into @p snapshot_target, the same synchronous,
+ * URI otherwise, i.e. exactly what rawstor_target_version_id() would read
+ * back off it -- is written into @p version_target, the same synchronous,
  * before-any-I/O, snprintf()-style convention as rawstor_location_create()'s
  * own @p target/@p size:
  * - If the string fits, it is written before this call returns, the
- *   snapshot is queued, and @p cb eventually reports the string's length
+ *   version is queued, and @p cb eventually reports the string's length
  *   (excluding the terminating null; always less than @p size) once the
- *   snapshot is taken, or a negative errno if that fails.
- * - If @p snapshot_target is too small, no snapshot is taken and @p cb is
+ *   version is taken, or a negative errno if that fails.
+ * - If @p version_target is too small, no version is taken and @p cb is
  *   invoked synchronously, from within this same call, with the required
  *   length (excluding the terminating null; always >= @p size).
  *
- * @param queue    Queue used to drive the asynchronous snapshot.
+ * @param queue    Queue used to drive the asynchronous operation.
  * @param target   Target string, see rawstor_target_spec().
- * @param snapshot_id  The version id's UUID string, or NULL -- see above.
- * @param snapshot_target  Output buffer for the snapshot's own target
+ * @param version_id  The version id's UUID string, or NULL -- see above.
+ * @param version_target  Output buffer for the version's own target
  *                 string (may be NULL when @p size is 0), written
  *                 synchronously before this call returns
  *                 -- same truncation convention as
  *                 rawstor_location_create()'s own @p target (size it the
  *                 same way, e.g. 65536 bytes, not rawstor_target_id()'s
  *                 much smaller UUID-sized buffer).
- * @param size     Size of @p snapshot_target in bytes (including space for
+ * @param size     Size of @p version_target in bytes (including space for
  *                 the terminating null byte).
  * @param cb       Callback invoked on completion.
- *                 - @p result is the snapshot target string's length (see
- *                   above) on success or when @p snapshot_target was too
+ *                 - @p result is the version target string's length (see
+ *                   above) on success or when @p version_target was too
  *                   small, or a negative errno on failure (@c -ENOTSUP if a
  *                   backend has no CoW --
  *                   file://, classic LVM -- no fallback copies are made
@@ -822,17 +822,17 @@ int rawstor_target_snapshot_id(
  * @param data     User-defined context pointer passed unchanged to @p cb.
  *
  * @return 0 if @p cb has been (or will be) invoked -- synchronously
- *         (buffer too small) or once the snapshot completes; negative errno
+ *         (buffer too small) or once version creation completes; negative errno
  *         on immediate failure (e.g. @c -EINVAL if @p target already names
- *         its own bound version and @p snapshot_id is also non-NULL), in
+ *         its own bound version and @p version_id is also non-NULL), in
  *         which case @p cb is never invoked.
  *
  * @see rawstor_target_create
  * @see rawstor_target_remove
  */
-int rawstor_target_create_snapshot(
-    RawIOQueue* queue, const char* target, const char* snapshot_id,
-    char* snapshot_target, size_t size, int (*cb)(ssize_t result, void* data),
+int rawstor_target_create_version(
+    RawIOQueue* queue, const char* target, const char* version_id,
+    char* version_target, size_t size, int (*cb)(ssize_t result, void* data),
     void* data
 ) RAWSTOR_NOEXCEPT;
 
@@ -841,7 +841,7 @@ int rawstor_target_create_snapshot(
  *
  * Grow-only: a @p new_size smaller than the object's current size fails
  * with -EINVAL (docs/mds.md -- shrink interacts with GC and
- * snapshots, deferred past v1). Reserves placement for whatever new
+ * versions, deferred past v1). Reserves placement for whatever new
  * chunks the larger size needs on the MDS, then materializes exactly
  * those (not the whole map) on their OSTs -- existing chunks and their
  * data are untouched.

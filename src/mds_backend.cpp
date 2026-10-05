@@ -50,7 +50,7 @@ rawstd::URI slot_location(const WireSlot& slot) {
     return rawstd::URI(slot.location);
 }
 
-// One chunk slot's own target URI: "<uuid>/<offset>[/<snapshot_id>]"
+// One chunk slot's own target URI: "<uuid>/<offset>[/<version_id>]"
 // (Target's own doc comment) -- `uuid` is the whole object's own id,
 // unchanged for every one of its chunks (docs/mds.md, "Chunk identity":
 // obj_id = id -- the physical resource's own name is self-describing, so
@@ -61,13 +61,13 @@ rawstd::URI slot_location(const WireSlot& slot) {
 // stamped, even 0 for chunk 0 (unlike a plain, non-chunked target's own
 // offset segment, which parse_target_path() only ever sees omitted):
 // its presence is what marks this URI as one chunk of a larger object
-// rather than a standalone one. `snapshot_id` is what Target::snapshot_id()
+// rather than a standalone one. `version_id` is what Target::version_id()
 // reads back, omitted when nil (live). Throws if the MDS could not
 // resolve the OST: refuse loudly instead of silently opening
 // under-protected.
 rawstd::URI chunk_slot_target(
     const RawstdUUID& id, uint64_t index, const WireSlot& slot,
-    uint64_t chunk_size, const RawstdUUID& snapshot_id = {}
+    uint64_t chunk_size, const RawstdUUID& version_id = {}
 ) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
@@ -75,10 +75,10 @@ rawstd::URI chunk_slot_target(
     std::ostringstream oss;
     oss << slot_location(slot).str() << "/" << uuid_string;
     oss << "/" << std::hex << (index * chunk_size);
-    if (!rawstd_uuid_is_nil(&snapshot_id)) {
-        RawstdUUIDString snapshot_string;
-        rawstd_uuid_to_string(&snapshot_id, &snapshot_string);
-        oss << "/" << snapshot_string;
+    if (!rawstd_uuid_is_nil(&version_id)) {
+        RawstdUUIDString version_string;
+        rawstd_uuid_to_string(&version_id, &version_string);
+        oss << "/" << version_string;
     }
     return rawstd::URI(oss.str());
 }
@@ -113,13 +113,13 @@ uint64_t chunk_index_at(const WireMap& map, uint64_t offset) {
 }
 
 std::vector<rawstd::URI> chunk_targets(
-    const WireMap& map, uint64_t index, const RawstdUUID& snapshot_id = {}
+    const WireMap& map, uint64_t index, const RawstdUUID& version_id = {}
 ) {
     std::vector<rawstd::URI> ret;
     ret.reserve(map.chunks[index].size());
     for (const WireSlot& slot : map.chunks[index]) {
         ret.push_back(
-            chunk_slot_target(map.id, index, slot, map.chunk_size, snapshot_id)
+            chunk_slot_target(map.id, index, slot, map.chunk_size, version_id)
         );
     }
     return ret;
@@ -165,10 +165,10 @@ RawstorObjectSpec object_spec(const WireMap& map) {
 // here needs to mark where one chunk's own group ends and the next
 // begins.
 std::vector<rawstd::URI>
-build_target_uris(const WireMap& map, const RawstdUUID& snapshot_id) {
+build_target_uris(const WireMap& map, const RawstdUUID& version_id) {
     std::vector<rawstd::URI> uris;
     for (uint64_t i = 0; i < map.chunks.size(); ++i) {
-        std::vector<rawstd::URI> chunk = chunk_targets(map, i, snapshot_id);
+        std::vector<rawstd::URI> chunk = chunk_targets(map, i, version_id);
         uris.insert(uris.end(), chunk.begin(), chunk.end());
     }
     return uris;
@@ -193,12 +193,12 @@ rawstd::Task<void> Backend::_connect() {
 // addressed whole (Location::list() builds its target with no offset
 // segment). A non-nil `id` is the filtered form (Backend::list_chunks()'s
 // own doc comment): this object's own real chunk offsets -- or
-// `snapshot_id`'s, when non-nil -- off the matching WireMap; an `id` the
+// `version_id`'s, when non-nil -- off the matching WireMap; an `id` the
 // MDS doesn't know comes back as an empty listing, same as any other
 // backend holding nothing of it.
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID snapshot_id
+    RawstdUUID& token, RawstdUUID version_id
 ) {
     chunks.clear();
     if (rawstd_uuid_is_nil(&id)) {
@@ -214,7 +214,7 @@ rawstd::Task<void> Backend::list_chunks(
 
     WireMap map;
     try {
-        map = co_await _client.open(id, snapshot_id);
+        map = co_await _client.open(id, version_id);
     } catch (const std::system_error& e) {
         if (e.code().value() != ENOENT) {
             throw;
@@ -282,11 +282,11 @@ rawstd::Task<void> Backend::create(
     }
 }
 
-rawstd::Task<void> Backend::remove_snapshot(
+rawstd::Task<void> Backend::remove_version(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t,
-    const RawstdUUID& snapshot_id
+    const RawstdUUID& version_id
 ) {
-    co_await _remove_snapshot(idempotency_key, id, snapshot_id);
+    co_await _remove_version(idempotency_key, id, version_id);
 }
 
 rawstd::Task<void> Backend::remove(
@@ -294,11 +294,11 @@ rawstd::Task<void> Backend::remove(
 ) {
     /*
      * Unregister first (docs/mds.md, deletion order): the MDS is where
-     * "the object still has snapshots" refuses with EBUSY -- before any
+     * "the object still has versions" refuses with EBUSY -- before any
      * data is touched, not after -- and an unregistered map means no new
      * opens while the chunks below are destroyed. A crash in between
      * leaves unregistered chunk objects: the same garbage class as a
-     * crashed snapshot removal. The map to destroy comes back with the
+     * crashed version removal. The map to destroy comes back with the
      * reply -- also on a retry whose first reply got lost, when the
      * object is already gone (the MDS replays it by idempotency_key).
      */
@@ -371,12 +371,12 @@ rawstd::Task<void> Backend::resize(
     }
 }
 
-rawstd::Task<void> Backend::create_snapshot(
+rawstd::Task<void> Backend::create_version(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t,
-    const RawstdUUID& snapshot_id
+    const RawstdUUID& version_id
 ) {
-    if (rawstd_uuid_is_nil(&snapshot_id)) {
-        /* nil is the live version, never a snapshot. */
+    if (rawstd_uuid_is_nil(&version_id)) {
+        /* nil is the live version, never a created one. */
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
@@ -386,9 +386,9 @@ rawstd::Task<void> Backend::create_snapshot(
      * Chunks are CoW'd in descending index order (docs/mds.md): a crash
      * midway always leaves a hole at the low indices, so the reconstruct
      * scan can never mistake a partial leftover for a complete
-     * (legitimately shorter, pre-resize) snapshot.
+     * (legitimately shorter, pre-resize) version.
      */
-    std::vector<mds::WireSnapshotMember> members;
+    std::vector<mds::WireVersionMember> members;
     for (uint64_t i = map.chunks.size(); i-- > 0;) {
         bool any = false;
         std::exception_ptr last_error;
@@ -398,26 +398,26 @@ rawstd::Task<void> Backend::create_snapshot(
             }
             try {
                 Target t({chunk_slot_target(
-                    map.id, i, slot, map.chunk_size, snapshot_id
+                    map.id, i, slot, map.chunk_size, version_id
                 )});
-                // `t`'s own path already carries snapshot_id -- Target::
-                // create_snapshot()'s own already-bound branch takes it,
+                // `t`'s own path already carries version_id -- Target::
+                // create_version()'s own already-bound branch takes it,
                 // never create() (create() is only ever for a fresh
                 // object, this class's own doc comment).
                 try {
-                    co_await t.create_snapshot(_queue);
+                    co_await t.create_version(_queue);
                 } catch (const std::system_error& e) {
                     // Taken by an earlier attempt of this same call:
-                    // snapshot_id is unique to it.
+                    // version_id is unique to it.
                     if (e.code().value() != EEXIST) {
                         throw;
                     }
                 }
-                members.push_back(mds::WireSnapshotMember{i, slot.ost_id});
+                members.push_back(mds::WireVersionMember{i, slot.ost_id});
                 any = true;
             } catch (const std::exception& e) {
                 rawstd_error(
-                    "Object snapshot: chunk %llu, %s: %s\n",
+                    "Version create: chunk %llu, %s: %s\n",
                     static_cast<unsigned long long>(i), slot.location.c_str(),
                     e.what()
                 );
@@ -426,7 +426,7 @@ rawstd::Task<void> Backend::create_snapshot(
         }
         if (!any) {
             /*
-             * Nothing survived this chunk -- the snapshot would be
+             * Nothing survived this chunk -- the version would be
              * incomplete. Leave whatever native copies already landed on
              * lower-index chunks unregistered for the reconstruct scan
              * (docs/mds.md: "the same garbage class as a crashed
@@ -438,31 +438,31 @@ rawstd::Task<void> Backend::create_snapshot(
                 std::rethrow_exception(last_error);
             }
             rawstd_error(
-                "Object snapshot: chunk %llu has no reachable member\n",
+                "Version create: chunk %llu has no reachable member\n",
                 static_cast<unsigned long long>(i)
             );
             RAWSTD_THROW_SYSTEM_ERROR(EIO);
         }
     }
 
-    co_await _client.commit_snapshot(idempotency_key, id, snapshot_id, members);
+    co_await _client.commit_version(idempotency_key, id, version_id, members);
 }
 
-// Fan-out destroy of a previously committed snapshot -- the `snapshot_id`
+// Fan-out destroy of a previously committed version -- the `version_id`
 // branch of remove() above. The MDS unregisters it (no new
 // readers) before this returns the recorded member set; the per-member
 // destroy below is therefore best-effort cleanup -- a member that can no
 // longer be resolved (location changed, OST replaced) is left for the
 // reconstruct scan.
-rawstd::Task<void> Backend::_remove_snapshot(
+rawstd::Task<void> Backend::_remove_version(
     const RawstdUUID& idempotency_key, const RawstdUUID& id,
-    const RawstdUUID& snapshot_id
+    const RawstdUUID& version_id
 ) {
-    std::vector<mds::WireSnapshotMember> members =
-        co_await _client.remove_snapshot(idempotency_key, id, snapshot_id);
+    std::vector<mds::WireVersionMember> members =
+        co_await _client.remove_version(idempotency_key, id, version_id);
 
     /*
-     * The MDS has already unregistered the snapshot above (no new
+     * The MDS has already unregistered the version above (no new
      * readers); the destroy below is best-effort cleanup on whichever
      * members it recorded -- a member that no longer resolves (location
      * changed, OST replaced) is left for the reconstruct scan.
@@ -470,7 +470,7 @@ rawstd::Task<void> Backend::_remove_snapshot(
     WireMap map = co_await _client.open(id, RawstdUUID{});
 
     std::exception_ptr error;
-    for (const mds::WireSnapshotMember& m : members) {
+    for (const mds::WireVersionMember& m : members) {
         if (m.logical_index >= map.chunks.size()) {
             continue;
         }
@@ -484,18 +484,18 @@ rawstd::Task<void> Backend::_remove_snapshot(
             });
         if (it == slots.end() || it->location.empty()) {
             rawstd_error(
-                "Snapshot remove: chunk %llu member no longer resolvable\n",
+                "Version remove: chunk %llu member no longer resolvable\n",
                 static_cast<unsigned long long>(m.logical_index)
             );
             continue;
         }
         try {
             Target t({chunk_slot_target(
-                map.id, m.logical_index, *it, map.chunk_size, snapshot_id
+                map.id, m.logical_index, *it, map.chunk_size, version_id
             )});
             co_await t.remove(_queue);
         } catch (const std::exception& e) {
-            rawstd_error("Snapshot remove: %s\n", e.what());
+            rawstd_error("Version remove: %s\n", e.what());
             error = std::current_exception();
         }
     }
@@ -508,7 +508,7 @@ rawstd::Task<void> Backend::_remove_snapshot(
 // queries every one of that chunk's own real member locations
 // concurrently through Target's own resolve_meta() (target.cpp): every
 // location queried, a zero-filled entry for one that doesn't answer. A
-// non-nil `snapshot_id` resolves that version's own map and members.
+// non-nil `version_id` resolves that version's own map and members.
 // Every location here is already a bare ost:// member, never itself
 // mds://, so there's no further flattening to do. `offset` not landing on a
 // real chunk boundary (including a WireMap whose own chunk_size is somehow 0)
@@ -518,12 +518,12 @@ rawstd::Task<void> Backend::_remove_snapshot(
 // failure_domain/stripe_width from the map -- which is also what
 // rawstor_target_spec() reports, through resolve_spec().
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
-    WireMap map = co_await _client.open(id, snapshot_id);
+    WireMap map = co_await _client.open(id, version_id);
     uint64_t index = chunk_index_at(map, offset);
     std::vector<RawstorObjectMeta> ret = co_await resolve_meta(
-        _queue, chunk_locations(map, index), id, offset, snapshot_id
+        _queue, chunk_locations(map, index), id, offset, version_id
     );
     for (RawstorObjectMeta& m : ret) {
         if (m.sync_state.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
@@ -534,17 +534,17 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     co_return ret;
 }
 
-// The MDS's own snapshot registry for the whole object -- a snapshot
+// The MDS's own version registry for the whole object -- a version
 // covers every chunk, so `offset` plays no part.
 rawstd::Task<std::vector<RawstdUUID>>
-Backend::list_snapshots(const RawstdUUID& id, uint64_t) {
-    co_return co_await _client.list_snapshots(id);
+Backend::list_versions(const RawstdUUID& id, uint64_t) {
+    co_return co_await _client.list_versions(id);
 }
 
 rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& snapshot_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
-    WireMap map = co_await _client.open(id, snapshot_id);
+    WireMap map = co_await _client.open(id, version_id);
     uint64_t index = chunk_index_at(map, offset);
     co_return chunk_locations(map, index);
 }
@@ -562,10 +562,10 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
 }
 
 rawstd::Task<void> Backend::_set_object(
-    const RawstdUUID& id, const RawstdUUID& snapshot_id, int flags
+    const RawstdUUID& id, const RawstdUUID& version_id, int flags
 ) {
-    WireMap map = co_await _client.open(id, snapshot_id);
-    std::vector<rawstd::URI> target_uris = build_target_uris(map, snapshot_id);
+    WireMap map = co_await _client.open(id, version_id);
+    std::vector<rawstd::URI> target_uris = build_target_uris(map, version_id);
 
     if (_object) {
         co_await _object->close();
@@ -573,7 +573,7 @@ rawstd::Task<void> Backend::_set_object(
     }
 
     // `flags` (RAWSTOR_READONLY or 0) rides straight down into the nested
-    // per-chunk open, where a snapshot's chunks require READONLY.
+    // per-chunk open, where a version's chunks require READONLY.
     _object = co_await Target(target_uris).open(_queue, flags);
 }
 
@@ -582,11 +582,11 @@ Backend::set_object(const RawstdUUID& id, uint64_t, int flags) {
     co_await _set_object(id, RawstdUUID{}, flags);
 }
 
-rawstd::Task<void> Backend::set_snapshot(
-    const RawstdUUID& object_id, uint64_t, const RawstdUUID& snapshot_id
+rawstd::Task<void> Backend::set_version(
+    const RawstdUUID& object_id, uint64_t, const RawstdUUID& version_id
 ) {
-    // A snapshot is only ever opened read-only (Target::open()'s own check).
-    co_await _set_object(object_id, snapshot_id, RAWSTOR_READONLY);
+    // A version is only ever opened read-only (Target::open()'s own check).
+    co_await _set_object(object_id, version_id, RAWSTOR_READONLY);
 }
 
 Object& Backend::_opened() {

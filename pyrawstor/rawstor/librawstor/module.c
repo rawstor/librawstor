@@ -11,7 +11,7 @@ static PyMethodDef librawstor_methods[] = {
     {"object_list", py_rawstor_object_list, METH_VARARGS, NULL},
     {"object_create", py_rawstor_object_create, METH_VARARGS, NULL},
     {"object_create_at", py_rawstor_object_create_at, METH_VARARGS, NULL},
-    {"object_create_snapshot", py_rawstor_object_create_snapshot, METH_VARARGS,
+    {"object_create_version", py_rawstor_object_create_version, METH_VARARGS,
      NULL},
     {"object_spec", py_rawstor_object_spec, METH_VARARGS, NULL},
     {"object_meta", py_rawstor_object_meta, METH_VARARGS, NULL},
@@ -19,7 +19,7 @@ static PyMethodDef librawstor_methods[] = {
      METH_VARARGS, NULL},
     {"object_remove", py_rawstor_object_remove, METH_VARARGS, NULL},
     {"object_chunks", py_rawstor_object_chunks, METH_VARARGS, NULL},
-    {"object_snapshots", py_rawstor_object_snapshots, METH_VARARGS, NULL},
+    {"object_versions", py_rawstor_object_versions, METH_VARARGS, NULL},
     {"location_info", py_rawstor_location_info, METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL}
 };
