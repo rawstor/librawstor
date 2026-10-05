@@ -13,6 +13,9 @@ jobs:
         without-liburing:
         - 
         - --without-liburing
+        # Every object goes through an MDS (chunked and placed by it, one
+        # copy per chunk) onto the one store its topology lists: a local
+        # directory, or a rawstor-ost serving one.
         backend:
         - file
         - ost
@@ -26,16 +29,16 @@ jobs:
         include:
         - packages: liburing-dev
           without-liburing:
-        - location: file:///tmp/objects
+        - store: file:///tmp/objects
           backend: file
-        - location: ost://127.0.0.1:7777
+        - store: ost://127.0.0.1:7777
           backend: ost
 
     steps:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev libtool pkg-config ${{ matrix.packages }}
+        sudo apt-get install -y libxxhash-dev libsqlite3-dev libtool pkg-config ${{ matrix.packages }}
     - uses: actions/checkout@v7
       with:
         path: librawstor
@@ -68,11 +71,17 @@ jobs:
         mkdir ${GITHUB_WORKSPACE}/objects
         rawstor-ost --bind 127.0.0.1:7777 file://${GITHUB_WORKSPACE}/objects &
         sleep 10
+    - name: start rawstor-mds
+      run: |
+        mkdir -p /tmp/objects
+        echo "$(cat /proc/sys/kernel/random/uuid) ${{ matrix.store }} 100 host1" > ${GITHUB_WORKSPACE}/topology.conf
+        rawstor-mds --bind 127.0.0.1:7776 --db ${GITHUB_WORKSPACE}/mds.db --topology ${GITHUB_WORKSPACE}/topology.conf &
+        sleep 5
     - name: create object
       run: |
-        target=$(rawstor create ${{ matrix.location }} --size=1G --mirrors=1)
+        target=$(rawstor create mds://127.0.0.1:7776 --size=1G --chunk-size=256M --mirrors=1)
         echo "TARGET=${target}" >> $GITHUB_ENV
-        rawstor list ${{ matrix.location }}
+        rawstor list mds://127.0.0.1:7776
         rawstor testio ${target} --block-size=4K --io-depth=1 --count=1
     - name: fio
       run: |
@@ -98,6 +107,8 @@ jobs:
         if-no-files-found: error
     - name: remove object
       run: rawstor remove ${TARGET}
+    - name: stop rawstor-mds
+      run: killall rawstor-mds
     - name: (ost) stop rawstor-ost
       if: "${{ matrix.backend == 'ost' }}"
       run: killall rawstor-ost

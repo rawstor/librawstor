@@ -144,8 +144,9 @@ CI (`.github/workflows/dist.yml`) additionally runs a `linter` job
 message or name it as author/committer; then the `clang-format` check)
 and builds/tests across the deb/rpm packaging matrix
 (Ubuntu 24.04/26.04, AlmaLinux 9/10); `perftest.yml` runs fio-based
-performance tests on every push across the `file`/`ost`/`ost-legacy`
-backends and the io_uring/poll RawIO backends.
+performance tests on every push against an `mds://` object whose one
+store is either a local `file://` directory or a `rawstor-ost`
+(the `file`/`ost` backends), across the io_uring/poll RawIO backends.
 
 ## Code style
 
