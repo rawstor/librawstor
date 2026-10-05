@@ -1336,6 +1336,105 @@ TEST(MirrorQuorumTest, clean_close_stable_identity) {
 }
 
 /*
+ * A stale member whose own ancestor sync_id already records its exclusion
+ * does not change the membership: the first write keeps the identity, and
+ * the member rejoins on it.
+ */
+TEST(MirrorQuorumTest, recorded_stale_member_keeps_identity) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000af");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObjectSyncState fresh{};
+    fresh.epoch = 2;
+    fresh.sync_id = 0x1111111111111111ull;
+    fresh.sync_id_history[0] = 0x2222222222222222ull;
+    fresh.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    ASSERT_EQ(target_set_sync_state(queue, members.target(0), fresh), 0);
+
+    RawstorObjectSyncState stale{};
+    stale.epoch = 1;
+    stale.sync_id = 0x2222222222222222ull;
+    stale.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    ASSERT_EQ(target_set_sync_state(queue, members.target(1), stale), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+
+    std::string ping = "ping";
+    object_write(queue, object, ping.data(), ping.size(), 0, 0);
+
+    RawstorObjectSyncState a = disk_sync_state(members.meta(0));
+    EXPECT_EQ(a.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+    EXPECT_EQ(a.sync_id, fresh.sync_id);
+    EXPECT_EQ(a.epoch, fresh.epoch);
+
+    EXPECT_TRUE(
+        wait_member_synced(queue, members.target(0), members.target(1))
+    );
+    object_close_clean(queue, object);
+
+    a = disk_sync_state(members.meta(0));
+    RawstorObjectSyncState b = disk_sync_state(members.meta(1));
+    EXPECT_EQ(a.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(a.sync_id, fresh.sync_id);
+    EXPECT_EQ(a.epoch, fresh.epoch);
+    EXPECT_EQ(b.sync_id, fresh.sync_id);
+    EXPECT_EQ(b.epoch, fresh.epoch);
+}
+
+/*
+ * An unreachable member may still carry the current sync_id: a degraded
+ * open changes the membership, and the first write records it with a new
+ * one.
+ */
+TEST(MirrorQuorumTest, degraded_open_changes_identity) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000b1");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    std::string ping = "ping";
+    object_write(queue, object, ping.data(), ping.size(), 0, 0);
+    object_close_clean(queue, object);
+
+    RawstorObjectMeta first{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &first), 0);
+    ASSERT_NE(first.sync_state.sync_id, 0u);
+
+    members.drop(2);
+
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    object_write(queue, object, ping.data(), ping.size(), 8, 0);
+    object_close_clean(queue, object);
+
+    RawstorObjectMeta second{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &second), 0);
+    EXPECT_NE(second.sync_state.sync_id, first.sync_state.sync_id);
+    EXPECT_EQ(
+        second.sync_state.sync_id_history[0], first.sync_state.sync_id
+    );
+    EXPECT_EQ(second.sync_state.epoch, first.sync_state.epoch + 1);
+}
+
+/*
  * OST mirror over two scripted servers: the first member fails the read with
  * a payload error, the second serves the data; the client then repairs the
  * region on the first member (dirty gate on both members + rewrite).

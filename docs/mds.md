@@ -2,8 +2,8 @@
 
 ## Status
 
-Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. Checked against
-the code on 2026-10-04. *Stage* is this document's own numbering (see
+Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
+*Stage* is this document's own numbering (see
 *Implementation stages*); [Mirroring](mirroring.md) numbers its stages separately.
 
 | Feature | Stage | Status | Where |
@@ -45,7 +45,7 @@ the code on 2026-10-04. *Stage* is this document's own numbering (see
 Metadata Storage Target (**MDS/MDT**) design, specialized for the **block
 storage** use case: sparse (thin) allocation and large object chunks (1+ GiB).
 
-Status: **approved** (2026-07-06). Supersedes the earlier draft where the
+Status: **approved**. Supersedes the earlier draft where the
 *Decision revalidation* table below says so. Implementation progress is
 tracked in the *Status* table above; see also *Implementation stages*.
 
@@ -861,7 +861,8 @@ Only at non-hot moments, where a round-trip is already acceptable:
 |---|---|
 | open with write intent | `DIRTY_OPEN { sync_id }` (same barrier that marks data copies DIRTY) |
 | witness-assisted degraded open | `DIRTY_DEGRADED { new sync_id, survivors }` — **before the first write ack** |
-| resync completion / `resolve` | new `sync_id`, record kind back to `DIRTY_OPEN` — the session is still open (same barrier that promotes the SYNCING copy) |
+| resync completion | record kind back to `DIRTY_OPEN`, same `sync_id` (the rejoined copy adopts it; a growing set needs no new one) — the session is still open (same barrier that promotes the SYNCING copy) |
+| `resolve` | new `sync_id`, record kind back to `DIRTY_OPEN` |
 | clean close | `CLEAN { final sync_id }` |
 
 If a synchronous witness write fails, the session continues (the witness is
@@ -881,8 +882,10 @@ The witness's vote counts **only when its record is provably consistent**:
    **only of the single recorded survivor** (`|survivors| = 1`) whose
    `sync_id` matches. Rationale: once the surviving set is a single member, no
    further generation bump can happen away from it (a lone survivor has no one
-   left to exclude; with N≥3, ≤N/2 survivors freeze writes), and resync
-   completion — the only other bump — writes the witness synchronously.
+   left to exclude; with N≥3, ≤N/2 survivors freeze writes; `sync_id` only
+   changes when the membership shrinks — mirroring.md, *When `sync_id`
+   changes*), and resync completion, which grows the set back, writes the
+   witness synchronously.
 3. **Anything else — the witness abstains**: `DIRTY_OPEN`,
    `DIRTY_DEGRADED` with `|survivors| > 1`, a `sync_id` it cannot relate, or
    no record at all. Auto-start then falls back to the plain data-only quorum

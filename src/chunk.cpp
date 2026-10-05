@@ -781,6 +781,26 @@ void Chunk::_reconcile_sync_set() {
         rawstd_error("No trusted mirror member to serve from\n");
         RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
     }
+
+    /*
+     * sync_id changes only with the membership of the set. A member whose
+     * own record already proves it stale -- an ancestor or blank sync_id,
+     * or SYNCING -- was excluded by an earlier change, and reopening
+     * without it changes nothing. One that is unreachable (its copy may
+     * still carry the current sync_id) or excluded by size alone (F11)
+     * would read as in-sync at the next open: its exclusion is recorded
+     * by the dirty gate, with a new sync_id, before the first write.
+     */
+    for (const Member& m : _members) {
+        if (m.state == MemberState::IN_SYNC) {
+            continue;
+        }
+        if (!m.reachable ||
+            (m.meta.sync_state.sync_id == _sync_id &&
+             m.meta.sync_state.state != RAWSTOR_OBJECT_SYNC_STATE_SYNCING)) {
+            ++_unrecorded_stale;
+        }
+    }
 }
 
 RawstorObjectSyncState Chunk::_bump_sync_state() const {
@@ -825,8 +845,10 @@ rawstd::Task<void> Chunk::_with_dirty() {
 /*
  * Runs cont(0) once DIRTY is durably recorded on the in-sync members; the
  * first write (or read-repair) of a mirrored object passes through here
- * before anything is acknowledged. Membership changes (degraded open,
- * previously unrecorded stale members) and legacy sets get a fresh sync_id.
+ * before anything is acknowledged. Only a membership change not yet
+ * recorded (_unrecorded_stale: a degraded open, a member degraded while
+ * CLEAN) and a legacy set get a fresh sync_id; a set reopened with the
+ * same members -- stale ones included -- keeps its identity.
  */
 rawstd::Task<void> Chunk::_run_dirty_barrier() {
     _meta_gate.begin();
@@ -841,8 +863,7 @@ rawstd::Task<void> Chunk::_run_dirty_barrier() {
         // recorded, instead of discarding a concurrent increment.
         size_t recorded_stale = _unrecorded_stale;
 
-        bool bump = _in_sync_count() != _members.size() || _sync_id == 0 ||
-                    _unrecorded_stale > 0;
+        bool bump = _sync_id == 0 || _unrecorded_stale > 0;
 
         RawstorObjectSyncState m{};
         if (bump) {

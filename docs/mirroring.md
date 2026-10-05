@@ -2,8 +2,8 @@
 
 ## Status
 
-Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. Checked against
-the code on 2026-10-04. *Stage* is this document's own numbering (see
+Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
+*Stage* is this document's own numbering (see
 *Implementation stages*); [MDS design](mds.md) numbers its stages separately.
 
 | Feature | Stage | Status | Where |
@@ -56,7 +56,7 @@ Each backend stores, next to the chunk's data, a metadata record (an extension o
 | `size` | uint64 | Logical chunk size (as today) |
 | `state` | enum | `CLEAN` \| `DIRTY` \| `SYNCING` |
 | `epoch` | uint64 | Monotonic counter; bumped on every change of mirror-set health/membership |
-| `sync_id` | uint64 | Random id of the current sync set; regenerated on degrade and on resync completion |
+| `sync_id` | uint64 | Random id of the current sync set; regenerated only when the set's membership shrinks (see *When `sync_id` changes*) |
 | `sync_id_history[4]` | uint64[] | Previous `sync_id`s (ancestry), DRBD-generation-UUID style |
 
 `STALE` is not stored — it is derived by comparing copies.
@@ -134,6 +134,42 @@ A STALE copy is excluded from reads and writes. Once it is reachable again
 authoritative data onto it (`SYNCING`), and on completion it joins the
 current sync set as IN-SYNC.
 
+### When `sync_id` changes
+
+A `sync_id` names a membership: the set of copies holding every
+acknowledged write. It is regenerated (with `epoch`+1, the old one pushed
+to history) only when that membership shrinks, i.e. a copy that could
+still read as part of the current set is excluded from it:
+
+- **at runtime**, a member degraded by a write/session/read-repair
+  failure (F1, F2, F6) — behind the degrade barrier if the chunk is
+  `DIRTY`, otherwise by the dirty gate before the first write;
+- **at open**, a copy left out without its own record proving it stale:
+  an unreachable one (F4 — its record may well carry the current
+  `sync_id`, nothing tells otherwise) or one excluded by size alone with
+  the current `sync_id` (F11). The new `sync_id` is recorded by the
+  dirty gate, before the first write is acknowledged.
+
+Everything else keeps the identity:
+
+- **Reopening with the same membership**, stale copies included: a copy
+  on an ancestor `sync_id`, a blank one (`sync_id` 0), or one marked
+  `SYNCING` is already excluded by its own record, so a session that
+  starts and ends without it — e.g. it stays unreachable to the probe, or
+  its resync is interrupted again — writes the same `sync_id`/`epoch`.
+- **Rejoin** (F7): a resynced copy adopts the current `sync_id`/`epoch`;
+  the set grows, but no copy needs to be told it fell behind.
+- **Mark `DIRTY`, clean close**: only `state` changes.
+
+Two exceptions write a new `sync_id` without a membership change: a legacy
+set (every copy on `sync_id` 0) gets its first one at the first write, and
+`rawstor resolve` (F9) gives its winners a new dominant one.
+
+The open path cannot tell an unreachable copy excluded in an earlier
+session from one that just went down, so every session that starts with a
+copy unreachable moves to a new `sync_id` once it writes. This is
+conservative: the identity only churns while the copy stays down.
+
 ### Durability rule
 
 Metadata transitions (marking `DIRTY`, epoch/`sync_id` bump, resync completion) are performed on the backend **with fsync**, and **before** any dependent operation is acknowledged to the caller. These transitions are rare, so this is cheap. Data writes are *not* fsynced per-request; the resulting exposure is covered by rule F6 below.
@@ -183,7 +219,7 @@ flowchart TB
 ## Write lifecycle (all mirrors healthy)
 
 1. **Open:** read metadata of all copies, verify identity. The copies stay as they are (`CLEAN` after a clean close) -- opening alone, or a read-only session, never marks them.
-2. **First write** (or read-repair): mark all IN-SYNC copies `DIRTY` (fsync) before it is acknowledged; a changed membership (degraded open, stale copies) also gets a new `sync_id` here. Later writes skip this step.
+2. **First write** (or read-repair): mark all IN-SYNC copies `DIRTY` (fsync) before it is acknowledged; a membership change not yet recorded (a copy unreachable at open, or degraded while still `CLEAN`) also gets a new `sync_id` here — stale copies already on an ancestor `sync_id` don't (*When `sync_id` changes*). Later writes skip this step.
 3. **Write:** fan out to all IN-SYNC mirrors, acknowledge when all complete.
 4. **Clean close:** flush data, set all copies `CLEAN` with the same `epoch`/`sync_id` (fsync).
 
