@@ -205,7 +205,7 @@ number:
 | Backend | Slot home + metadata | Versions (`version_id`) |
 |---------|----------------------|----------------------|
 | `file://` | dir `<id>/<offset>/`, `data` + `meta` inside it | `-ENOTSUP` in v1 |
-| `lvm://`  | thin LV `<id>-<offset>`, meta in LVM tags | thin version LV |
+| `lvm://`  | thin LV `<id>-<offset>`, meta in LVM tags | thin snapshot LV |
 | `zfs://`  | zvol `<id>:<offset>`, meta in user properties | `@s<version_id>` |
 
 (The physical `<offset>` is never omitted, even "0" -- unlike the
@@ -735,9 +735,9 @@ crashed attempt's leftovers, because there is no shared counter to leave
 a hole in):
 
 ```
-version(id, version_id):
+create_version(id, version_id):
   client: drain in-flight I/O, FLUSH all IN-SYNC members   (point-in-time barrier)
-  OST*:   each IN-SYNC member -> backend CoW (zfs version zvol@s<version_id> / lvcreate -s)
+  OST*:   each IN-SYNC member -> backend CoW (zfs snapshot zvol@s<version_id> / lvcreate -s)
   MDS:    OBJ_COMMIT_VERSION -> record versions[version_id] { members = the IN-SYNC set },
                              map_epoch++ -- rejects a version_id already registered (EEXIST,
                              the versions table's own primary key) or nil (EINVAL, reserved
@@ -788,7 +788,7 @@ reconstruct scan (below).
 **v1 notes (shipped):**
 
 - **Classic LVM is `-ENOTSUP` too.** This section says lvm-*thin* for a
-  reason: a classic LVM version needs a preallocated COW area — a hidden
+  reason: a classic LVM snapshot needs a preallocated COW area — a hidden
   full-size copy is exactly the fallback ruled out above. CoW on LVM waits
   for an lvm-thin backend. zfs is the v1 CoW backend: versions are
   `<parent>/<uuid>@s<version_id>` (the `@s<id>` name *is* the version key —
