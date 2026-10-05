@@ -114,34 +114,54 @@ rm -rf %{buildroot}
 make install DESTDIR=%{buildroot} prefix=%{_prefix}
 find %{buildroot} -name '*.la' -delete
 mkdir -p %{buildroot}%{_unitdir}
-install -m 644 systemd/rawstor-ost.service %{buildroot}%{_unitdir}/rawstor-ost.service
+install -m 644 systemd/rawstor-ost@.service %{buildroot}%{_unitdir}/rawstor-ost@.service
 install -m 644 systemd/rawstor-vhost@.service %{buildroot}%{_unitdir}/rawstor-vhost@.service
 install -m 644 systemd/rawstor-vduse@.service %{buildroot}%{_unitdir}/rawstor-vduse@.service
-install -m 644 systemd/rawstor-mds.service %{buildroot}%{_unitdir}/rawstor-mds.service
-mkdir -p %{buildroot}%{_sysconfdir}/rawstor-mds
-install -m 644 mds/topology.conf %{buildroot}%{_sysconfdir}/rawstor-mds/topology.conf
+install -m 644 systemd/rawstor-mds@.service %{buildroot}%{_unitdir}/rawstor-mds@.service
+mkdir -p %{buildroot}%{_sysconfdir}/rawstor/ost
+mkdir -p %{buildroot}%{_sysconfdir}/rawstor/mds
 mkdir -p %{buildroot}/usr/lib/udev/rules.d
 install -m 644 udev/60-rawstor-vduse.rules %{buildroot}/usr/lib/udev/rules.d/60-rawstor-vduse.rules
-mkdir -p %{buildroot}/var/lib/rawstor
-mkdir -p %{buildroot}/var/lib/rawstor-mds
 
 %post -n rawstor-ost
-%systemd_post rawstor-ost.service
+# Nothing is started on install: an instance runs only once
+# /etc/rawstor/ost/<uuid>.conf exists and it is enabled (README.md).
+# Upgrade: restart the running instances so they pick up the new binary.
+if [ "$1" -gt 1 ] && [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || :
+    systemctl try-restart 'rawstor-ost@*.service' >/dev/null 2>&1 || :
+fi
 
 %preun -n rawstor-ost
-%systemd_preun rawstor-ost.service
+# Removal stops the running instances; configs, data and enablement stay.
+if [ "$1" -eq 0 ] && [ -d /run/systemd/system ]; then
+    systemctl stop 'rawstor-ost@*.service' >/dev/null 2>&1 || :
+fi
 
 %postun -n rawstor-ost
-%systemd_postun_with_restart rawstor-ost.service
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || :
+fi
 
 %post -n rawstor-mds
-%systemd_post rawstor-mds.service
+# Nothing is started on install: an instance runs only once
+# /etc/rawstor/mds/<uuid>.conf exists and it is enabled (README.md).
+# Upgrade: restart the running instances so they pick up the new binary.
+if [ "$1" -gt 1 ] && [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || :
+    systemctl try-restart 'rawstor-mds@*.service' >/dev/null 2>&1 || :
+fi
 
 %preun -n rawstor-mds
-%systemd_preun rawstor-mds.service
+# Removal stops the running instances; configs, data and enablement stay.
+if [ "$1" -eq 0 ] && [ -d /run/systemd/system ]; then
+    systemctl stop 'rawstor-mds@*.service' >/dev/null 2>&1 || :
+fi
 
 %postun -n rawstor-mds
-%systemd_postun_with_restart rawstor-mds.service
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || :
+fi
 
 %files
 %{_bindir}/rawstor
@@ -155,8 +175,9 @@ mkdir -p %{buildroot}/var/lib/rawstor-mds
 
 %files -n rawstor-ost
 %{_bindir}/rawstor-ost
-%{_unitdir}/rawstor-ost.service
-%dir %attr(0755, rawstor, rawstor) /var/lib/rawstor
+%{_unitdir}/rawstor-ost@.service
+%dir %{_sysconfdir}/rawstor
+%dir %{_sysconfdir}/rawstor/ost
 
 %files -n rawstor-vhost
 %{_bindir}/rawstor-vhost
@@ -169,7 +190,7 @@ mkdir -p %{buildroot}/var/lib/rawstor-mds
 
 %files -n rawstor-mds
 %{_bindir}/rawstor-mds
-%{_unitdir}/rawstor-mds.service
-%dir %{_sysconfdir}/rawstor-mds
-%config(noreplace) %{_sysconfdir}/rawstor-mds/topology.conf
-%dir %attr(0755, rawstor, rawstor) /var/lib/rawstor-mds
+%{_unitdir}/rawstor-mds@.service
+%doc mds/topology.conf
+%dir %{_sysconfdir}/rawstor
+%dir %{_sysconfdir}/rawstor/mds

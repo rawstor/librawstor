@@ -213,8 +213,6 @@ jobs:
         cp deb/librawstor/rawstor-mds.postinst debian
         cp deb/librawstor/rawstor-mds.prerm debian
         cp deb/librawstor/rules debian
-        cp systemd/rawstor-ost.service debian
-        cp systemd/rawstor-mds.service debian
         cp COPYING debian/copyright
         dpkg-buildpackage -us -uc
     - name: changelog
@@ -340,9 +338,13 @@ jobs:
     - name: test-librawstor
       run: rawstor --version
     - name: install-rawstor-ost
+      # Installing starts nothing: an instance runs once its
+      # /etc/rawstor/ost/<uuid>.conf exists.
       run: |
         sudo apt install -y ./librawstor.deb/rawstor-ost_*.deb
-        sudo systemctl start rawstor-ost.service
+        echo "BIND_ADDR=127.0.0.1:7777" | sudo tee /etc/rawstor/ost/018f4e2a-1111-7000-8000-000000000001.conf
+        sudo systemctl enable --now rawstor-ost@018f4e2a-1111-7000-8000-000000000001.service
+        sleep 1
     - name: test-rawstor-ost
       run: |
         rawstor-ost --version
@@ -371,22 +373,24 @@ jobs:
     - name: test-rawstor-vduse
       run: rawstor-vduse --version
     - name: install-rawstor-mds
-      # The package ships /etc/rawstor-mds/topology.conf as a commented-out
-      # example with no OSTs: install first, then list the one OST there.
+      # Start the instance with an empty topology, then list the one OST
+      # there and reload.
       run: |
         sudo apt install -y ./librawstor.deb/rawstor-mds_*.deb
-        grep -q '^# 018f4e2a' /etc/rawstor-mds/topology.conf
-        sudo systemctl start rawstor-mds.service
-        systemctl is-active rawstor-mds.service
-        echo "018f4e2a-1111-7000-8000-000000000001 ost://127.0.0.1:7777 100 dc1/row1/rack1/host1" | sudo tee /etc/rawstor-mds/topology.conf
+        echo "BIND_ADDR=127.0.0.1:7776" | sudo tee /etc/rawstor/mds/018f4e2a-3333-7000-8000-000000000001.conf
+        sudo touch /etc/rawstor/mds/018f4e2a-3333-7000-8000-000000000001.topology
+        sudo systemctl enable --now rawstor-mds@018f4e2a-3333-7000-8000-000000000001.service
+        sleep 1
+        systemctl is-active rawstor-mds@018f4e2a-3333-7000-8000-000000000001.service
+        echo "018f4e2a-1111-7000-8000-000000000001 ost://127.0.0.1:7777 100 dc1/row1/rack1/host1" | sudo tee /etc/rawstor/mds/018f4e2a-3333-7000-8000-000000000001.topology
         # reload only sends SIGHUP; give the MDS a moment to swap the
         # topology in, then confirm it did.
-        sudo systemctl reload rawstor-mds.service
+        sudo systemctl reload rawstor-mds@018f4e2a-3333-7000-8000-000000000001.service
         sleep 2
-        sudo journalctl -u rawstor-mds.service --no-pager | grep 'Topology reloaded from /etc/rawstor-mds/topology.conf'
+        sudo journalctl -u rawstor-mds@018f4e2a-3333-7000-8000-000000000001.service --no-pager | grep 'Topology reloaded from /etc/rawstor/mds/018f4e2a-3333-7000-8000-000000000001.topology'
     - name: test-rawstor-mds
-      # rawstor-ost.service (started above) is still running -- reuse it
-      # as the mds:// volume's one chunk member.
+      # The OST instance (started above) is still running -- reuse it as
+      # the mds:// volume's one chunk member.
       run: |
         rawstor-mds --version
         rawstor create -t mds://127.0.0.1:7776/018f4e2a-2222-7000-8000-000000000001 --size=1M --chunk-size=1M --mirrors=1
@@ -557,7 +561,8 @@ jobs:
       # started via systemctl here -- run the same command it would, by hand.
       run: |
         rawstor-ost --version
-        rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor &
+        mkdir -p /var/lib/rawstor-ost/test
+        rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor-ost/test &
         OST_PID=$!
         sleep 10
         rawstor create --size=1M --mirrors=1 ost://127.0.0.1:7777
@@ -578,7 +583,7 @@ jobs:
     - name: install-rawstor-mds
       run: |
         dnf -y install ./librawstor.rpm/rawstor-mds-[0-9]*.rpm
-        grep -q '^# 018f4e2a' /etc/rawstor-mds/topology.conf
+        test -d /etc/rawstor/mds
     - name: test-rawstor-mds
       # containers have no systemd/PID 1, so the .service unit cannot be
       # started via systemctl here -- run the same command it would, by
@@ -586,7 +591,8 @@ jobs:
       # was already killed at the end of that step).
       run: |
         rawstor-mds --version
-        rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor &
+        mkdir -p /var/lib/rawstor-ost/test
+        rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor-ost/test &
         OST_PID=$!
         sleep 10
         echo "018f4e2a-1111-7000-8000-000000000001 ost://127.0.0.1:7777 100 dc1/row1/rack1/host1" > /tmp/topology.conf

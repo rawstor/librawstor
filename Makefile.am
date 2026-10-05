@@ -70,10 +70,10 @@ EXTRA_DIST = deb/librawstor/compat \
              deb/python3-rawstor/compat \
              deb/python3-rawstor/format \
              deb/python3-rawstor/rules \
-             systemd/rawstor-ost.service \
+             systemd/rawstor-ost@.service \
              systemd/rawstor-vhost@.service \
              systemd/rawstor-vduse@.service \
-             systemd/rawstor-mds.service \
+             systemd/rawstor-mds@.service \
              mds/topology.conf \
              udev/60-rawstor-vduse.rules \
              .github/tools/deb-changelog.sh \

@@ -1,1 +1,2 @@
 usr/bin/rawstor-ost
+systemd/rawstor-ost@.service usr/lib/systemd/system

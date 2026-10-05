@@ -6,12 +6,20 @@ case "$1" in
         if ! getent group rawstor >/dev/null; then
             addgroup --system rawstor
         fi
-        mkdir -p /var/lib/rawstor
-        chmod 0755 /var/lib/rawstor
         if ! getent passwd rawstor >/dev/null; then
             adduser --system --no-create-home --ingroup rawstor --home /var/lib/rawstor --shell /usr/sbin/nologin rawstor
         fi
-        chown rawstor:rawstor /var/lib/rawstor
+        # Instance configs (/etc/rawstor/ost/<uuid>.conf) are written by the
+        # admin; nothing is started here -- an instance runs only once it
+        # is configured and enabled (README.md).
+        mkdir -p /etc/rawstor/ost
+
+        # Upgrade: restart the instances that are running, so they pick up
+        # the new binary; stopped ones stay stopped.
+        if [ -n "$2" ] && [ -d /run/systemd/system ]; then
+            systemctl daemon-reload || true
+            systemctl try-restart 'rawstor-ost@*.service' || true
+        fi
         ;;
 esac
 
