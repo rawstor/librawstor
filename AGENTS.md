@@ -179,8 +179,8 @@ backends and the io_uring/poll RawIO backends.
   (e.g. branch `add/v0.2.7` -> worktree `add+v0.2.7`).
 - Branch names: `<type>/<descriptive-name>` — `add/<feature-name>` for new
   features, `fix/<bug-description>` for bug fixes, `ref/<component-name>`
-  for refactoring (see README's Contributing section for the full
-  contributor workflow: fork, branch, PR).
+  for refactoring (see CONTRIBUTING.md for the full contributor
+  workflow: fork, branch, PR).
 - Commit subjects: `<type>(<scope>): <summary>`, lowercase, imperative
   mood — observed types across history: `add`, `fix`, `ref`, `docs`,
   `test`, `del`, `debug`. Scope is usually the component directory

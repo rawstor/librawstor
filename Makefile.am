@@ -70,6 +70,7 @@ EXTRA_DIST = deb/librawstor/compat \
              .github/tools/deb-changelog.sh \
              ChangeLog.md \
              README.md \
+             CONTRIBUTING.md \
              NEWS.md \
              changelog-authors.tsv
 
