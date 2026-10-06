@@ -2,8 +2,7 @@
 
 ## Status
 
-Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. Checked against
-the code on 2026-10-04.
+Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 
 | Feature | Status | Where |
 |---|---|---|

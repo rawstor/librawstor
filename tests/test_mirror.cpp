@@ -858,9 +858,11 @@ TEST(MirrorResyncTest, first_write_during_rejoin_keeps_identities_equal) {
     // disk: the resync is then still waiting for that write to finish.
     bool window = false;
     for (int i = 0; i < 100000 && !window; ++i) {
+        // The rejoin moves the set to a new sync_id first, on member 0.
+        RawstorObjectSyncState a = disk_sync_state(members.meta(0));
         RawstorObjectSyncState b = disk_sync_state(members.meta(1));
         window = b.state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN &&
-                 b.sync_id == fresh.sync_id;
+                 b.sync_id != fresh.sync_id && b.sync_id == a.sync_id;
         if (!window) {
             rawio_wait_timeout(queue, 1);
         }
@@ -1333,6 +1335,101 @@ TEST(MirrorQuorumTest, clean_close_stable_identity) {
     EXPECT_EQ(second.sync_state.sync_id, first.sync_state.sync_id);
     EXPECT_EQ(second.sync_state.epoch, first.sync_state.epoch);
     EXPECT_EQ(second.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+}
+
+/*
+ * A stale member whose own ancestor sync_id already records its exclusion
+ * does not change the membership: the first write keeps the identity.
+ * Its rejoin does, exactly once.
+ */
+TEST(MirrorQuorumTest, stale_member_bumps_identity_on_rejoin_only) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000af");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObjectSyncState fresh{};
+    fresh.epoch = 2;
+    fresh.sync_id = 0x1111111111111111ull;
+    fresh.sync_id_history[0] = 0x2222222222222222ull;
+    fresh.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    ASSERT_EQ(target_set_sync_state(queue, members.target(0), fresh), 0);
+
+    RawstorObjectSyncState stale{};
+    stale.epoch = 1;
+    stale.sync_id = 0x2222222222222222ull;
+    stale.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    ASSERT_EQ(target_set_sync_state(queue, members.target(1), stale), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+
+    std::string ping = "ping";
+    object_write(queue, object, ping.data(), ping.size(), 0, 0);
+
+    EXPECT_TRUE(
+        wait_member_synced(queue, members.target(0), members.target(1))
+    );
+    object_close_clean(queue, object);
+
+    RawstorObjectMeta am{};
+    RawstorObjectMeta bm{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &am), 0);
+    ASSERT_EQ(target_meta(queue, members.target(1), &bm), 0);
+    EXPECT_EQ(am.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_NE(am.sync_state.sync_id, fresh.sync_id);
+    EXPECT_EQ(am.sync_state.sync_id_history[0], fresh.sync_id);
+    EXPECT_EQ(am.sync_state.epoch, fresh.epoch + 1);
+    EXPECT_EQ(bm.sync_state.sync_id, am.sync_state.sync_id);
+    EXPECT_EQ(bm.sync_state.epoch, am.sync_state.epoch);
+}
+
+/*
+ * An unreachable member may still carry the current sync_id: a degraded
+ * open changes the membership, and the first write records it with a new
+ * one.
+ */
+TEST(MirrorQuorumTest, degraded_open_changes_identity) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000b1");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    std::string ping = "ping";
+    object_write(queue, object, ping.data(), ping.size(), 0, 0);
+    object_close_clean(queue, object);
+
+    RawstorObjectMeta first{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &first), 0);
+    ASSERT_NE(first.sync_state.sync_id, 0u);
+
+    members.drop(2);
+
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    object_write(queue, object, ping.data(), ping.size(), 8, 0);
+    object_close_clean(queue, object);
+
+    RawstorObjectMeta second{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &second), 0);
+    EXPECT_NE(second.sync_state.sync_id, first.sync_state.sync_id);
+    EXPECT_EQ(second.sync_state.sync_id_history[0], first.sync_state.sync_id);
+    EXPECT_EQ(second.sync_state.epoch, first.sync_state.epoch + 1);
 }
 
 /*

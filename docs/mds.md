@@ -2,9 +2,9 @@
 
 ## Status
 
-Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. Checked against
-the code on 2026-10-04. *Stage* is this document's own numbering (see
-*Implementation stages*); [Mirroring](mirroring.md) numbers its stages separately.
+Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. *Stage* is this
+document's own numbering (see *Implementation stages*); [Mirroring](mirroring.md)
+numbers its stages separately.
 
 | Feature | Stage | Status | Where |
 |---|---|---|---|
@@ -45,7 +45,7 @@ the code on 2026-10-04. *Stage* is this document's own numbering (see
 Metadata Storage Target (**MDS/MDT**) design, specialized for the **block
 storage** use case: sparse (thin) allocation and large object chunks (1+ GiB).
 
-Status: **approved** (2026-07-06). Supersedes the earlier draft where the
+Status: **approved**. Supersedes the earlier draft where the
 *Decision revalidation* table below says so. Implementation progress is
 tracked in the *Status* table above; see also *Implementation stages*.
 
