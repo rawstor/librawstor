@@ -12,6 +12,7 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
 libvhost_la_SOURCES = $(top_srcdir)/vhost/include/vhost/user_protocol.h \
+                      $(top_srcdir)/vhost/include/vhost/inflight.hpp \
                       $(top_srcdir)/vhost/include/vhost/ring.hpp \
                       $(top_srcdir)/vhost/include/vhost/virtqueue.hpp \
                       $(top_srcdir)/include/stdheaders/linux/vhost_types.h \

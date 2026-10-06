@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - Unreleased
 
 ### Added
+- `rawstor-vhost` supports `VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD`, and `rawstor-vduse` keeps an equivalent in-flight log in `/dev/shm`, so requests in flight when the backend crashes are resubmitted after it restarts instead of never completing.
 - `rawstor-ost@<uuid>.service` systemd template (one instance per OST, configured by `/etc/rawstor/ost/<uuid>.conf`, serving `/var/lib/rawstor/ost/<uuid>` by default), so a host runs several OSTs; installing the package starts nothing and an upgrade restarts the running instances, of `rawstor-mds@` too.
 - `rawstor info mds://` reads cached backend space statistics from MDS, with configurable periodic health probes and placement restricted to available backends.
 - N-way mirroring ([design](docs/mirroring.md)): quorum-gated open, degrade-and-continue writes, read failover and repair, and online resync of a stale, reconnected or missing member (a copy lost from one member is recreated at open while the remaining copies are still a majority), with each copy's own consistency state persisted by its backend (a `meta` file next to `file://`'s data, an LVM tag, a ZFS user property).

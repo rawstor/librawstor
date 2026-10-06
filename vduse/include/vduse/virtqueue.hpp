@@ -1,6 +1,7 @@
 #ifndef RAWSTOR_VDUSE_VIRTQUEUE_HPP
 #define RAWSTOR_VDUSE_VIRTQUEUE_HPP
 
+#include <vduse/inflight.hpp>
 #include <vduse/ring.hpp>
 
 #include <rawstd/pipe.hpp>
@@ -124,11 +125,14 @@ private:
     struct RunTask {
         std::function<void()> fn;
     };
+    struct SetInflight {
+        InflightRegion* region;
+    };
     struct Shutdown {};
 
     using Command = std::variant<
         SetVringSize, SetVringAddr, SetVringBase, SetKickFd, SetEnabled,
-        Retranslate, GetVqState, Pause, Resume, RunTask, Shutdown>;
+        SetInflight, Retranslate, GetVqState, Pause, Resume, RunTask, Shutdown>;
 
     Ring _ring;
 
@@ -150,6 +154,28 @@ private:
      * first completion always notifies unconditionally).
      */
     bool _signalled_used_valid;
+
+    /*
+     * This virtqueue's in-flight log (see set_inflight()), or nullptr.
+     * Shared memory that outlives this process: every pop() marks its
+     * head in flight, every push() clears it again.
+     */
+    InflightRegion* _inflight_log;
+    /* set_inflight() attached a log not yet checked against the ring --
+     * done by the next pop(), once the ring is mapped. */
+    bool _inflight_check_pending;
+    /* Pop order recorded in the log's InflightDesc::counter. */
+    uint64_t _inflight_counter;
+    /* Heads a previous instance left in flight, in the order it popped
+     * them: pop() hands these out again before anything new. */
+    std::deque<uint16_t> _resubmit;
+
+    /* Check a freshly attached log against the ring; see set_inflight(). */
+    void _check_inflight();
+
+    /* Build the chain starting at `head`; pop()'s second half. */
+    std::unique_ptr<DescChain>
+    _read_chain(uint16_t head, const AddressTranslator& translate);
 
     /* Set by attach(), before start(): which Device/index we belong to. */
     Device* _device;
@@ -188,6 +214,7 @@ private:
     void _apply(SetVringBase&& cmd);
     void _apply(SetKickFd&& cmd);
     void _apply(SetEnabled&& cmd);
+    void _apply(SetInflight&& cmd);
     void _apply(Retranslate&& cmd);
     void _apply(GetVqState&& cmd);
     void _apply(Pause&& cmd);
@@ -214,6 +241,9 @@ public:
         _enabled(false),
         _kick_armed(false),
         _signalled_used_valid(false),
+        _inflight_log(nullptr),
+        _inflight_check_pending(false),
+        _inflight_counter(0),
         _device(nullptr),
         _index(0),
         _queue(nullptr),
@@ -235,6 +265,18 @@ public:
     void set_vring_size(unsigned int size) { _ring.set_num(size); }
 
     void set_vring_base(uint16_t idx) noexcept { _last_avail_idx = idx; }
+
+    /**
+     * Attach (or, with nullptr, detach) this virtqueue's in-flight log.
+     * The next pop() checks it against the ring first: a region with
+     * version 0 is just initialized; otherwise it holds what a previous
+     * instance of this back-end left behind, and pop() resumes the ring
+     * at used->idx plus the number of heads still in flight -- each one
+     * popped and never completed -- handing those heads out again first,
+     * in their original order. Every head popped from then on is marked
+     * in flight until its push().
+     */
+    void set_inflight(InflightRegion* region) noexcept;
 
     void set_vring_addr(
         const AddressTranslator& translate, uint64_t desc_addr,
@@ -332,6 +374,13 @@ public:
      * kick_fd. A no-op if already in the requested state.
      */
     void post_set_enabled(bool enabled);
+
+    /**
+     * set_inflight() on this VirtQueue's own thread. `region` must stay
+     * mapped until a later post_set_inflight() (or stop()) has been
+     * applied -- pause() first to be sure.
+     */
+    void post_set_inflight(InflightRegion* region);
 
     /**
      * Re-resolve this virtqueue's ring to host virtual addresses using

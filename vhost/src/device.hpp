@@ -3,6 +3,7 @@
 
 #include "devregion.hpp"
 #include <stdheaders/linux/virtio_blk.h>
+#include <vhost/inflight.hpp>
 #include <vhost/user_protocol.h>
 #include <vhost/virtqueue.hpp>
 
@@ -93,6 +94,28 @@ private:
     std::atomic<bool> _wce_enabled;
     bool _postcopy_listening;
     int _wake_fd;
+
+    /* VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD shared memory: one
+     * InflightRegion per virtqueue index below _inflight_num_queues,
+     * each inflight_region_size(_inflight_queue_size) bytes. Control-plane
+     * thread only; each VirtQueue only ever touches its own region. */
+    int _inflight_fd;
+    void* _inflight_addr;
+    size_t _inflight_size;
+    uint16_t _inflight_num_queues;
+    uint16_t _inflight_queue_size;
+
+    /* Map `fd` as the in-flight memory and hand every VirtQueue its
+     * region, replacing (and unmapping) whatever was mapped before. Takes
+     * ownership of `fd`. */
+    void _map_inflight(
+        int fd, uint64_t mmap_size, uint64_t mmap_offset, uint16_t num_queues,
+        uint16_t queue_size
+    );
+
+    /* Virtqueue `index`'s InflightRegion, or nullptr if none is mapped
+     * for it. */
+    InflightRegion* _inflight_region(size_t index) const noexcept;
 
     /**
      * The VirtQueue at `index`, creating and start()ing it first if this
@@ -245,6 +268,24 @@ public:
     }
 
     uint64_t add_mem_reg(const VhostUserMemoryRegion& m, int fd);
+
+    /**
+     * VHOST_USER_GET_INFLIGHT_FD: allocate zeroed in-flight memory for
+     * `num_queues` virtqueues of up to `queue_size` heads and start using
+     * it. Returns its fd (still owned by Device) and sets `mmap_size`.
+     */
+    int get_inflight_fd(
+        uint16_t num_queues, uint16_t queue_size, uint64_t& mmap_size
+    );
+
+    /**
+     * VHOST_USER_SET_INFLIGHT_FD: start using the in-flight memory the
+     * front-end kept across a back-end restart. Takes ownership of `fd`.
+     */
+    void set_inflight_fd(
+        int fd, uint64_t mmap_size, uint64_t mmap_offset, uint16_t num_queues,
+        uint16_t queue_size
+    );
 
     void rem_mem_reg(const VhostUserMemoryRegion& m);
 

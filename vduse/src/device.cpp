@@ -15,6 +15,7 @@
 #include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -209,6 +210,8 @@ Device::Device(
     _vqs(num_queues),
     _vqs_enabled(num_queues, false),
     _reattached(false),
+    _inflight_addr(nullptr),
+    _inflight_size(0),
     _features(0),
     _write_cache_enabled(write_cache_enabled),
     _wake_fd(wake_fd),
@@ -362,8 +365,13 @@ Device::Device(
             }
         }
 
+        _open_inflight();
+
         rawstd_info("Waiting for connection on %s\n", dev_path.c_str());
     } catch (...) {
+        if (_inflight_addr != nullptr) {
+            munmap(_inflight_addr, _inflight_size);
+        }
         if (_fd != -1) {
             close(_fd);
         }
@@ -433,12 +441,19 @@ Device::~Device() {
         }
     }
 
+    if (_inflight_addr != nullptr) {
+        munmap(_inflight_addr, _inflight_size);
+    }
+
     if (_ctrl_fd != -1) {
         if (ioctl(_ctrl_fd, VDUSE_DESTROY_DEV, _name_buf)) {
             rawstd_error(
                 "Failed to destroy VDUSE device: %s\n", strerror(errno)
             );
             errno = 0;
+        } else if (!_inflight_path.empty()) {
+            // Nothing left for a later instance to resume.
+            unlink(_inflight_path.c_str());
         }
         if (close(_ctrl_fd)) {
             rawstd_error(
@@ -651,6 +666,19 @@ void Device::_enable_queue(size_t index, bool resume) {
         vq.post_set_vring_base(info.split.avail_index);
     }
 
+    // Resuming, the log holds what the previous instance left in flight
+    // (and overrides the base just set); otherwise the driver has set the
+    // ring up afresh and nothing from before applies. The VirtQueue is
+    // disabled and drained here, so nothing else touches its region.
+    InflightRegion* region = _inflight_region(index);
+    if (region != nullptr) {
+        if (!resume) {
+            std::memset(region, 0, inflight_region_size(_queue_size));
+            region->desc_num = static_cast<uint16_t>(_queue_size);
+        }
+        vq.post_set_inflight(region);
+    }
+
     int fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (fd == -1) {
         rawstd_error(
@@ -679,6 +707,72 @@ void Device::_enable_queue(size_t index, bool resume) {
     vq.post_set_kick_fd(fd);
     vq.post_set_enabled(true);
     _vqs_enabled[index] = true;
+}
+
+void Device::_open_inflight() {
+    std::string path =
+        std::string("/dev/shm/rawstor-vduse-") + _name_buf + ".inflight";
+    size_t size = _vqs.size() * inflight_region_size(_queue_size);
+
+    int fd = open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (fd == -1) {
+        rawstd_warning(
+            "vduse: no in-flight log, failed to open %s: %s\n", path.c_str(),
+            strerror(errno)
+        );
+        errno = 0;
+        return;
+    }
+
+    struct stat st;
+    bool reuse = _reattached && fstat(fd, &st) == 0 &&
+                 static_cast<size_t>(st.st_size) == size;
+    if (_reattached && !reuse) {
+        rawstd_warning(
+            "vduse: %s doesn't match this device, starting a fresh "
+            "in-flight log\n",
+            path.c_str()
+        );
+    }
+    if (!reuse && (ftruncate(fd, 0) || ftruncate(fd, size))) {
+        rawstd_warning(
+            "vduse: no in-flight log, failed to size %s: %s\n", path.c_str(),
+            strerror(errno)
+        );
+        errno = 0;
+        close(fd);
+        return;
+    }
+
+    void* addr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    int errsv = errno;
+    close(fd);
+    if (addr == MAP_FAILED) {
+        rawstd_warning(
+            "vduse: no in-flight log, failed to map %s: %s\n", path.c_str(),
+            strerror(errsv)
+        );
+        errno = 0;
+        return;
+    }
+
+    _inflight_path = path;
+    _inflight_addr = addr;
+    _inflight_size = size;
+
+    for (size_t i = 0; i < _vqs.size(); ++i) {
+        _inflight_region(i)->desc_num = static_cast<uint16_t>(_queue_size);
+    }
+}
+
+InflightRegion* Device::_inflight_region(size_t index) const noexcept {
+    if (_inflight_addr == nullptr) {
+        return nullptr;
+    }
+    return reinterpret_cast<InflightRegion*>(
+        static_cast<char*>(_inflight_addr) +
+        index * inflight_region_size(static_cast<uint16_t>(_queue_size))
+    );
 }
 
 void Device::_disable_queue(size_t index) {

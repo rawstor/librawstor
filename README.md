@@ -298,8 +298,10 @@ with `reconnect=1` on the QEMU chardev and an external supervisor (e.g.
 survive guest-side reconnects. Send `SIGINT`/`SIGTERM` to stop it: it
 first waits for every request already in flight to complete, so QEMU,
 reconnecting to the restarted backend, carries on exactly where it left
-off. A crash mid-request (no in-flight request log is kept) is visible to
-the guest as that request never completing.
+off. It also negotiates `VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD`: every
+request is logged in shared memory QEMU keeps across backend restarts, so
+after a crash the restarted backend resubmits whatever was left in
+flight, in its original order.
 
 ### Packaging and QEMU access
 
@@ -451,9 +453,11 @@ using it, resumes every ready virtqueue where the previous instance left
 off, without the driver noticing -- as long as it is back within the
 kernel's VDUSE message timeout (`/sys/class/vduse/UUID/msg_timeout`, 30 s
 by default), after which the kernel marks the device broken. Requests in
-flight during a crash are not resubmitted (no in-flight request log is
-kept): the guest sees them never complete, the same failure mode it
-already has to tolerate from a host crash. A reattached device keeps the
+flight during a crash are resubmitted too: every request is logged, in
+the same format as vhost-user's in-flight memory, in
+`/dev/shm/rawstor-vduse-UUID.inflight`, a tmpfs file that outlives the
+process but not a reboot (which takes the VDUSE device with it anyway),
+and is removed along with the device. A reattached device keeps the
 virtqueue count it was created with, so `--num-queues` must not change
 across restarts.
 

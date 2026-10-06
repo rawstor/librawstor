@@ -4,6 +4,7 @@
 #include "iovaregion.hpp"
 
 #include <stdheaders/linux/vduse.h>
+#include <vduse/inflight.hpp>
 #include <vduse/virtqueue.hpp>
 
 #include <rawstd/coro.hpp>
@@ -93,6 +94,25 @@ private:
     /* VDUSE_CREATE_DEV found the device already there, left behind by a
      * previous instance of this process -- see loop(). */
     bool _reattached;
+    /* In-flight log file (see _open_inflight()) and its mapping: one
+     * InflightRegion per virtqueue, inflight_region_size(_queue_size)
+     * bytes each. nullptr if it couldn't be set up. */
+    std::string _inflight_path;
+    void* _inflight_addr;
+    size_t _inflight_size;
+
+    /**
+     * Map the in-flight log for this device, a file under /dev/shm named
+     * after it: tmpfs, so it survives this process (unlike memory of its
+     * own) for as long as the kernel-side device itself can, i.e. until
+     * reboot. Reused as is when reattaching to a device it matches,
+     * zeroed otherwise. Failing to set it up only loses resubmission
+     * after a crash, so that's logged rather than thrown.
+     */
+    void _open_inflight();
+
+    /* Virtqueue `index`'s InflightRegion, or nullptr without a log. */
+    InflightRegion* _inflight_region(size_t index) const noexcept;
     std::atomic<uint64_t> _features;
     bool _write_cache_enabled;
     int _wake_fd;
