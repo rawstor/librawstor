@@ -1428,9 +1428,7 @@ TEST(MirrorQuorumTest, degraded_open_changes_identity) {
     RawstorObjectMeta second{};
     ASSERT_EQ(target_meta(queue, members.target(0), &second), 0);
     EXPECT_NE(second.sync_state.sync_id, first.sync_state.sync_id);
-    EXPECT_EQ(
-        second.sync_state.sync_id_history[0], first.sync_state.sync_id
-    );
+    EXPECT_EQ(second.sync_state.sync_id_history[0], first.sync_state.sync_id);
     EXPECT_EQ(second.sync_state.epoch, first.sync_state.epoch + 1);
 }
 
