@@ -13,7 +13,10 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include <algorithm>
+
 #include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -29,9 +32,19 @@
 // generous upper bound in practice (matches e.g. qemu's own vduse-blk
 // export default limit).
 #define MAX_QUEUE_SIZE 1024
-#define DEFAULT_NUM_QUEUES 16
 
 namespace {
+
+// --num-queues default: one virtqueue per CPU the kernel may ever bring
+// online (nr_cpu_ids), the most Linux's own virtio_blk will use anyway.
+// Capped to fit virtio_blk_config.num_queues (a 16-bit field).
+unsigned int default_num_queues() {
+    long n = sysconf(_SC_NPROCESSORS_CONF);
+    if (n < 1) {
+        return 1;
+    }
+    return static_cast<unsigned int>(std::min<long>(n, UINT16_MAX));
+}
 
 struct sigaction sact = {};
 
@@ -65,9 +78,11 @@ void usage() {
               << DEFAULT_QUEUE_SIZE << ", max: " << MAX_QUEUE_SIZE << ")"
               << std::endl
               << "  --num-queues N        "
-                 "Number of virtqueues, each served by its own thread "
-                 "(default: "
-              << DEFAULT_NUM_QUEUES << ")" << std::endl
+                 "Number of virtqueues advertised; each gets its own thread"
+              << std::endl
+              << "                        "
+                 "once the driver enables it (default: number of CPUs, "
+              << default_num_queues() << ")" << std::endl
               << "  --write-cache on|off  "
                  "Advertise a writeback (on) or write-through (off, default)"
               << std::endl
@@ -222,7 +237,7 @@ int main(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    unsigned int num_queues = DEFAULT_NUM_QUEUES;
+    unsigned int num_queues = default_num_queues();
     if (num_queues_arg != nullptr) {
         std::istringstream iss(num_queues_arg);
         if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> num_queues) ||
@@ -231,8 +246,9 @@ int main(int argc, char** argv) {
             return EX_USAGE;
         }
     }
-    if (num_queues == 0) {
-        std::cerr << "num-queues must be at least 1" << std::endl;
+    if (num_queues == 0 || num_queues > UINT16_MAX) {
+        std::cerr << "num-queues must be between 1 and " << UINT16_MAX
+                  << std::endl;
         return EX_USAGE;
     }
 

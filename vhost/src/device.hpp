@@ -31,9 +31,22 @@ namespace vhost {
  * own thread and its own `RawIOQueue`/`RawstorObject` -- see VirtQueue's
  * own class comment for that half.
  *
+ * `_vqs` holds a slot for every virtqueue index the front-end may use
+ * (max_queues(), what GET_QUEUE_NUM reports), but each VirtQueue -- and
+ * with it its thread and its own connection to the target -- is only
+ * created the first time a vhost-user message names its index (see
+ * _vq()). The front-end alone decides how many queues it wants (QEMU's
+ * own `num-queues=`, which also overrides `_config.num_queues` before
+ * the guest sees it), and QEMU sends SET_VRING_CALL for every one of
+ * them right at vhost_dev_init(), so that's how many get started.
+ *
  * State genuinely shared between the control-plane thread and every
  * VirtQueue worker thread is limited to what's below, each with its own
  * synchronization:
+ *  - `_vqs` slots: filled only by the control-plane thread (_vq()), under
+ *    a unique_lock on `_vqs_mutex`; other_vqs() (the only reader on a
+ *    VirtQueue thread) takes a shared_lock. Control-plane reads need no
+ *    lock, being on the only thread that ever writes.
  *  - `_regions` (guest memory map): `_regions_mutex`, a shared_mutex --
  *    guest_phys_to_va()/userspace_va_to_va() (the per-descriptor hot
  *    path) take a shared_lock, add_mem_reg()/rem_mem_reg() (rare
@@ -69,7 +82,10 @@ private:
     std::string _target;
     mutable std::shared_mutex _regions_mutex;
     std::vector<std::unique_ptr<DevRegion>> _regions;
-    std::vector<VirtQueue> _vqs;
+    unsigned int _queue_size;
+    bool _readonly;
+    mutable std::shared_mutex _vqs_mutex;
+    std::vector<std::unique_ptr<VirtQueue>> _vqs;
     int _backend_fd;
     std::atomic<uint64_t> _features;
     uint64_t _protocol_features;
@@ -78,7 +94,23 @@ private:
     bool _postcopy_listening;
     int _wake_fd;
 
+    /**
+     * The VirtQueue at `index`, creating and start()ing it first if this
+     * is the first time the front-end named that index -- blocks until
+     * its own connection to the target is up, and throws (failing the
+     * whole connection, like any other dispatch error) if it can't be.
+     * Throws std::out_of_range for an index >= max_queues().
+     */
+    VirtQueue& _vq(size_t index);
+
 public:
+    /**
+     * Upper bound on virtqueues a front-end may ask for, reported via
+     * GET_QUEUE_NUM: QEMU's own VIRTIO_QUEUE_MAX, which its
+     * vhost-user-blk `num-queues=` can't exceed anyway.
+     */
+    static constexpr size_t MAX_QUEUES = 1024;
+
     /**
      * `wake_fd`, if not -1, is treated as a stop request the moment it
      * becomes readable -- written to by main.cpp's SIGINT/SIGTERM
@@ -91,9 +123,8 @@ public:
      * keep it open for at least as long as this Device runs.
      */
     Device(
-        unsigned int queue_size, unsigned int num_queues,
-        const std::string& target, int fd, bool write_cache_enabled,
-        bool readonly, int wake_fd = -1
+        unsigned int queue_size, const std::string& target, int fd,
+        bool write_cache_enabled, bool readonly, int wake_fd = -1
     );
 
     Device(const Device&) = delete;
@@ -149,7 +180,7 @@ public:
         return _regions.size();
     }
 
-    inline size_t nqueues() const noexcept { return _vqs.size(); }
+    inline size_t max_queues() const noexcept { return _vqs.size(); }
 
     inline bool postcopy_listening() const noexcept {
         return _postcopy_listening;
@@ -219,9 +250,11 @@ public:
 
     /**
      * Every VirtQueue except `requester` -- see the class comment on
-     * VIRTIO_BLK_T_FLUSH fan-out, flush_task()'s only caller. Pointers
-     * into `_vqs`, stable for the Device's whole lifetime (never resized
-     * once constructed).
+     * VIRTIO_BLK_T_FLUSH fan-out, flush_task()'s only caller. Only the
+     * VirtQueues started so far: one started after this returns can't
+     * hold any write the flush would have to cover yet. Each pointer
+     * stays valid for the Device's whole lifetime (a started VirtQueue
+     * is never destroyed before ~Device()).
      */
     std::vector<VirtQueue*> other_vqs(VirtQueue& requester);
 
