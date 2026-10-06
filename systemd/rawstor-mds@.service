@@ -22,13 +22,13 @@ Group=rawstor
 LimitMEMLOCK=infinity
 # Holds the instance's database; created (and owned by rawstor) on start
 # and never removed by stop, disable or package removal.
-StateDirectory=rawstor-mds/%i
-WorkingDirectory=/var/lib/rawstor-mds/%i
+StateDirectory=rawstor/mds/%i
+WorkingDirectory=/var/lib/rawstor/mds/%i
 # Defaults; /etc/rawstor/mds/<uuid>.conf below overrides any of them and
 # must set BIND_ADDR, which has no default: every instance on a host needs
 # a port of its own.
 # SQLite database file (created if missing).
-Environment=DB_PATH=/var/lib/rawstor-mds/%i/mds.db
+Environment=DB_PATH=/var/lib/rawstor/mds/%i/mds.db
 # Static topology config (docs/mds.md): the OSTs and placement domains of
 # this cluster, in the format of /usr/share/doc/rawstor-mds/topology.conf.
 # Must exist: the instance does not start without one.

@@ -29,14 +29,14 @@ LimitMEMLOCK=infinity
 # else needs a drop-in granting access to it, e.g.
 #   [Service]
 #   ReadWritePaths=/srv/disk1/rawstor
-StateDirectory=rawstor-ost/%i
-WorkingDirectory=/var/lib/rawstor-ost/%i
+StateDirectory=rawstor/ost/%i
+WorkingDirectory=/var/lib/rawstor/ost/%i
 # Defaults; /etc/rawstor/ost/<uuid>.conf below overrides any of them and
 # must set BIND_ADDR, which has no default: every instance on a host needs
 # a port of its own.
 # Backing store this OST serves - a Location (see "Core concepts" in
-# README.md), e.g. file:///var/lib/rawstor-ost/<uuid>.
-Environment=LOCATION=file:///var/lib/rawstor-ost/%i
+# README.md), e.g. file:///var/lib/rawstor/ost/<uuid>.
+Environment=LOCATION=file:///var/lib/rawstor/ost/%i
 # rawstor-ost's own --queue-size/--workers (see its --help).
 Environment=QUEUE_SIZE=4096
 Environment=WORKERS=12
