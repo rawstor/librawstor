@@ -4,8 +4,7 @@
 
 Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 
-This page is an early draft; the table maps its components to what exists
-today.
+The table maps the page's components to what exists today.
 
 | Component / idea | Status | Where |
 |---|---|---|
