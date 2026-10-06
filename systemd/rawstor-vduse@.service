@@ -34,6 +34,11 @@ Group=rawstor
 # processes of the same user, shared by every rawstor instance on the
 # host: see rawstor-ost@.service.
 LimitMEMLOCK=infinity
+# Every virtqueue holds about five fds of its own (kick eventfd, wake
+# pipe, io_uring, its connection to the backend, ...), and one per host
+# CPU may be advertised -- past the usual soft limit of 1024 on a large
+# host.
+LimitNOFILE=65536
 # rawstor-vduse's own --write-cache (see its --help); override in
 # /etc/rawstor-vduse.conf below rather than editing this file. One worker
 # thread (and one connection to the backend) per virtqueue the driver

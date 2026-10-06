@@ -514,7 +514,22 @@ void Device::dispatch_control(
     case VDUSE_SET_STATUS:
         if (req.s.status & VIRTIO_CONFIG_S_DRIVER_OK) {
             rawstd_info("Client connected: %s\n", _name_buf);
-            _start_dataplane();
+            try {
+                _start_dataplane();
+            } catch (const std::exception& e) {
+                // Typically a VirtQueue that couldn't connect to the
+                // target: the driver would keep queuing requests on a
+                // ready queue nothing services, so stop the whole process
+                // (loop() rethrows this) instead of letting guest I/O
+                // hang silently -- its exit code tells the supervisor
+                // whether a restart can help.
+                rawstd_error(
+                    "vduse: failed to start dataplane: %s\n", e.what()
+                );
+                _fatal_error = std::current_exception();
+                _stop_requested = true;
+                break;
+            }
         } else if (req.s.status == 0) {
             rawstd_info("Client disconnected: %s\n", _name_buf);
             _stop_dataplane();
@@ -599,14 +614,7 @@ void Device::_enable_queue(size_t index) {
         return;
     }
 
-    VirtQueue* vqp;
-    try {
-        vqp = &_vq(index);
-    } catch (const std::exception& e) {
-        rawstd_error("vduse: failed to start vq[%zu]: %s\n", index, e.what());
-        return;
-    }
-    VirtQueue& vq = *vqp;
+    VirtQueue& vq = _vq(index);
 
     vq.post_set_vring_size(info.num);
     vq.post_set_vring_addr(info.desc_addr, info.driver_addr, info.device_addr);
@@ -757,6 +765,10 @@ void Device::loop() {
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
+    }
+
+    if (_fatal_error) {
+        std::rethrow_exception(_fatal_error);
     }
 }
 

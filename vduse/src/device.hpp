@@ -12,6 +12,7 @@
 #include <rawstor/rawio.h>
 
 #include <atomic>
+#include <exception>
 #include <memory>
 #include <shared_mutex>
 #include <string>
@@ -90,6 +91,9 @@ private:
     bool _write_cache_enabled;
     int _wake_fd;
     bool _stop_requested;
+    /* Set (along with _stop_requested) when DRIVER_OK handling fails;
+     * rethrown by loop(). */
+    std::exception_ptr _fatal_error;
 
     /**
      * The VirtQueue at `index`, creating and start()ing it first if it

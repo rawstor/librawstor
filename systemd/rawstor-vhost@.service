@@ -28,6 +28,10 @@ Group=rawstor
 # processes of the same user, shared by every rawstor instance on the
 # host: see rawstor-ost@.service.
 LimitMEMLOCK=infinity
+# Every virtqueue holds about five fds of its own (kick/call eventfds,
+# wake pipe, io_uring, its connection to the backend), and QEMU may set
+# up as many as 1024 of them -- well past the usual soft limit of 1024.
+LimitNOFILE=65536
 RuntimeDirectory=rawstor
 # rawstor-vhost chmod()s the vhost-user socket to 0660 itself right after
 # creating it, so QEMU only needs to be in the "rawstor" group (see below)
