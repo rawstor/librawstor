@@ -295,7 +295,11 @@ protocol error (e.g. failing to connect a new virtqueue to `TARGET`) is reported
 the process, rather than silently waiting for another connection. Pair it
 with `reconnect=1` on the QEMU chardev and an external supervisor (e.g.
 `systemd` with `Restart=always`, or a wrapper loop) if the backend needs to
-survive guest-side reconnects. Send `SIGINT`/`SIGTERM` to stop it.
+survive guest-side reconnects. Send `SIGINT`/`SIGTERM` to stop it: it
+first waits for every request already in flight to complete, so QEMU,
+reconnecting to the restarted backend, carries on exactly where it left
+off. A crash mid-request (no in-flight request log is kept) is visible to
+the guest as that request never completing.
 
 ### Packaging and QEMU access
 
@@ -438,11 +442,20 @@ device itself is destroyed out from under it -- unlike `rawstor-vhost`,
 there is no per-connection front-end to disconnect from, since the kernel
 is always "connected". Attaching the created device to the vDPA bus (`vdpa
 dev add name UUID mgmtdev vduse`) and, if applicable, driving it from a
-VMM, are separate, external steps. If the process is restarted while
-requests are in flight, it does not attempt to resubmit them (no
-inflight-request log is kept) -- a crash mid-request is visible to the
-guest as that request never completing, the same failure mode a guest
-already has to tolerate from a host crash.
+VMM, are separate, external steps.
+
+On `SIGINT`/`SIGTERM` it first waits for every request already in flight
+to complete. A device still bound to the vDPA bus outlives the process; a
+restarted `rawstor-vduse` reattaches to it and, if the driver is already
+using it, resumes every ready virtqueue where the previous instance left
+off, without the driver noticing -- as long as it is back within the
+kernel's VDUSE message timeout (`/sys/class/vduse/UUID/msg_timeout`, 30 s
+by default), after which the kernel marks the device broken. Requests in
+flight during a crash are not resubmitted (no in-flight request log is
+kept): the guest sees them never complete, the same failure mode it
+already has to tolerate from a host crash. A reattached device keeps the
+virtqueue count it was created with, so `--num-queues` must not change
+across restarts.
 
 ### Packaging and access
 

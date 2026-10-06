@@ -1145,6 +1145,20 @@ Device::Device(
 }
 
 Device::~Device() {
+    // Let every request already in flight complete (and its completion
+    // reach the used ring) before going away: on reconnecting, QEMU
+    // carries on from used->idx when GET_VRING_BASE went unanswered, so
+    // whatever is left in flight here would never complete for the guest.
+    // pause() rather than just stop(), since a VIRTIO_BLK_T_FLUSH still in
+    // flight on one VirtQueue needs every other one still running to
+    // complete -- see other_vqs().
+    rawstd_info("Waiting for in-flight requests to complete\n");
+    for (auto& vq : _vqs) {
+        if (vq != nullptr) {
+            vq->pause();
+        }
+    }
+
     // Each VirtQueue tears down its own kick_fd/call_fd ops, its own
     // RawstorObject and its own RawIOQueue on its own thread as part of
     // stop() -- see VirtQueue::_run().

@@ -235,6 +235,10 @@ void VirtQueue::post_set_vring_addr(
     _post(SetVringAddr{desc_addr, driver_addr, device_addr});
 }
 
+void VirtQueue::post_set_vring_base(std::optional<uint16_t> idx) {
+    _post(SetVringBase{idx});
+}
+
 void VirtQueue::post_set_kick_fd(int fd) {
     _post(SetKickFd{fd});
 }
@@ -290,6 +294,10 @@ void VirtQueue::_apply(SetVringAddr&& cmd) {
         [&device](uint64_t iova) { return device.iova_to_va(iova); },
         cmd.desc_addr, cmd.driver_addr, cmd.device_addr
     );
+}
+
+void VirtQueue::_apply(SetVringBase&& cmd) {
+    set_vring_base(cmd.idx.value_or(_used_idx));
 }
 
 void VirtQueue::_apply(SetKickFd&& cmd) {
@@ -414,6 +422,16 @@ void VirtQueue::_set_enabled(bool enabled) {
     if (enabled) {
         if (_kick_fd != -1) {
             arm_kick();
+        }
+        // Whatever the driver queued before kick_fd existed -- e.g. while
+        // this process was restarting, its kicks signalled into the
+        // previous instance's eventfd -- won't be kicked again.
+        try {
+            process_queue();
+        } catch (const std::exception& e) {
+            rawstd_error(
+                "vduse: vq %zu: failed to process queue: %s\n", _index, e.what()
+            );
         }
         return;
     }

@@ -98,6 +98,9 @@ private:
         uint64_t driver_addr;
         uint64_t device_addr;
     };
+    struct SetVringBase {
+        std::optional<uint16_t> idx;
+    };
     struct SetKickFd {
         int fd;
     };
@@ -124,8 +127,8 @@ private:
     struct Shutdown {};
 
     using Command = std::variant<
-        SetVringSize, SetVringAddr, SetKickFd, SetEnabled, Retranslate,
-        GetVqState, Pause, Resume, RunTask, Shutdown>;
+        SetVringSize, SetVringAddr, SetVringBase, SetKickFd, SetEnabled,
+        Retranslate, GetVqState, Pause, Resume, RunTask, Shutdown>;
 
     Ring _ring;
 
@@ -182,6 +185,7 @@ private:
 
     void _apply(SetVringSize&& cmd);
     void _apply(SetVringAddr&& cmd);
+    void _apply(SetVringBase&& cmd);
     void _apply(SetKickFd&& cmd);
     void _apply(SetEnabled&& cmd);
     void _apply(Retranslate&& cmd);
@@ -301,6 +305,15 @@ public:
     void post_set_vring_addr(
         uint64_t desc_addr, uint64_t driver_addr, uint64_t device_addr
     );
+
+    /**
+     * Set the avail ring index the next pop() starts from: `idx` if
+     * given (the driver-set state VDUSE_VQ_GET_INFO reports), otherwise
+     * the ring's own used->idx -- how far a previous instance of this
+     * process had got, valid only if it left nothing in flight. Without
+     * an `idx`, must follow post_set_vring_addr().
+     */
+    void post_set_vring_base(std::optional<uint16_t> idx);
 
     /**
      * Assign a freshly created, kernel-registered kick_fd (created and

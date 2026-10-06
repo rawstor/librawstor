@@ -207,6 +207,8 @@ Device::Device(
     _queue_size(queue_size),
     _readonly(readonly),
     _vqs(num_queues),
+    _vqs_enabled(num_queues, false),
+    _reattached(false),
     _features(0),
     _write_cache_enabled(write_cache_enabled),
     _wake_fd(wake_fd),
@@ -331,10 +333,17 @@ Device::Device(
         std::memcpy(devcfg->config, &config, config_size);
 
         // Tolerate EEXIST: a previous instance of this process may have
-        // crashed and left the kernel-side device around without ever
-        // reaching VDUSE_DESTROY_DEV; reattach to it instead of failing.
-        if (ioctl(_ctrl_fd, VDUSE_CREATE_DEV, devcfg) && errno != EEXIST) {
-            RAWSTD_THROW_ERRNO();
+        // crashed, or stopped while the device was still bound to a vDPA
+        // bus driver (which makes VDUSE_DESTROY_DEV fail), leaving the
+        // kernel-side device around; reattach to it instead of failing.
+        if (ioctl(_ctrl_fd, VDUSE_CREATE_DEV, devcfg)) {
+            if (errno != EEXIST) {
+                RAWSTD_THROW_ERRNO();
+            }
+            _reattached = true;
+            rawstd_info(
+                "vduse: reattaching to existing VDUSE device %s\n", _name_buf
+            );
         }
         errno = 0;
 
@@ -372,6 +381,20 @@ Device::Device(
 }
 
 Device::~Device() {
+    // Let every request already in flight complete (and its completion
+    // reach the used ring) before going away: whatever is left in flight
+    // here would never complete for the driver, and couldn't be picked up
+    // again by a later instance resuming from used->idx (see loop()).
+    // pause() rather than just stop(), since a VIRTIO_BLK_T_FLUSH still in
+    // flight on one VirtQueue needs every other one still running to
+    // complete -- see other_vqs().
+    rawstd_info("vduse: waiting for in-flight requests to complete\n");
+    for (auto& vq : _vqs) {
+        if (vq != nullptr) {
+            vq->pause();
+        }
+    }
+
     // Graceful, best-effort deassign of every virtqueue's kick_fd before
     // tearing anything else down -- mirrors what a driver-initiated
     // VDUSE_SET_STATUS(0) would do. post_set_enabled(false) is
@@ -515,7 +538,7 @@ void Device::dispatch_control(
         if (req.s.status & VIRTIO_CONFIG_S_DRIVER_OK) {
             rawstd_info("Client connected: %s\n", _name_buf);
             try {
-                _start_dataplane();
+                _start_dataplane(false);
             } catch (const std::exception& e) {
                 // Typically a VirtQueue that couldn't connect to the
                 // target: the driver would keep queuing requests on a
@@ -599,7 +622,11 @@ VirtQueue& Device::_vq(size_t index) {
     return *slot;
 }
 
-void Device::_enable_queue(size_t index) {
+void Device::_enable_queue(size_t index, bool resume) {
+    if (_vqs_enabled.at(index)) {
+        return;
+    }
+
     vduse_vq_info info = {};
     info.index = static_cast<uint32_t>(index);
     if (ioctl(_fd, VDUSE_VQ_GET_INFO, &info)) {
@@ -618,6 +645,11 @@ void Device::_enable_queue(size_t index) {
 
     vq.post_set_vring_size(info.num);
     vq.post_set_vring_addr(info.desc_addr, info.driver_addr, info.device_addr);
+    if (resume) {
+        vq.post_set_vring_base(std::nullopt);
+    } else {
+        vq.post_set_vring_base(info.split.avail_index);
+    }
 
     int fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (fd == -1) {
@@ -646,13 +678,15 @@ void Device::_enable_queue(size_t index) {
     // see VirtQueue::post_set_kick_fd()'s doc comment.
     vq.post_set_kick_fd(fd);
     vq.post_set_enabled(true);
+    _vqs_enabled[index] = true;
 }
 
 void Device::_disable_queue(size_t index) {
-    const auto& vq = _vqs.at(index);
-    if (vq == nullptr) {
+    if (!_vqs_enabled.at(index)) {
         return;
     }
+    _vqs_enabled[index] = false;
+    const auto& vq = _vqs[index];
 
     vq->post_set_enabled(false);
 
@@ -665,7 +699,7 @@ void Device::_disable_queue(size_t index) {
     errno = 0;
 }
 
-void Device::_start_dataplane() {
+void Device::_start_dataplane(bool resume) {
     uint64_t features = 0;
     if (ioctl(_fd, VDUSE_DEV_GET_FEATURES, &features)) {
         RAWSTD_THROW_ERRNO();
@@ -673,7 +707,7 @@ void Device::_start_dataplane() {
     _features.store(features, std::memory_order_relaxed);
 
     for (size_t i = 0; i < _vqs.size(); ++i) {
-        _enable_queue(i);
+        _enable_queue(i, resume);
     }
 }
 
@@ -750,6 +784,17 @@ rawstd::DetachedTask Device::_wake_task() {
 }
 
 void Device::loop() {
+    // A reattached device may already be in use: the driver has seen
+    // DRIVER_OK from it once and won't send VDUSE_SET_STATUS again, so
+    // start servicing whatever queues it has marked ready right away,
+    // carrying on from where the previous instance's completions left the
+    // ring -- exact as long as it exited with nothing in flight (see
+    // ~Device()). If the driver isn't that far yet, no queue is ready and
+    // its own DRIVER_OK later starts them as usual.
+    if (_reattached) {
+        _start_dataplane(true);
+    }
+
     dispatch_loop(_queue, _fd, *this);
     if (_wake_fd != -1) {
         _wake_task();

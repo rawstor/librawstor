@@ -201,6 +201,21 @@ TEST_F(VirtQueueWorkerTest, GetVqStateRoundTripsAcrossWorkerThread) {
     vq.stop();
 }
 
+TEST_F(VirtQueueWorkerTest, SetVringBaseAppliesOnWorkerThread) {
+    VirtQueue vq;
+    vq.start(scratch.target(), kQueueSize, false);
+
+    vq.post_set_vring_base(42);
+    EXPECT_EQ(vq.get_vq_state(), 42);
+
+    // Without an index the base comes from used->idx, as adopted by the
+    // last post_set_vring_addr() -- none here, so the fresh 0.
+    vq.post_set_vring_base(std::nullopt);
+    EXPECT_EQ(vq.get_vq_state(), 0);
+
+    vq.stop();
+}
+
 TEST_F(VirtQueueWorkerTest, PauseWithNothingInFlightReturnsImmediately) {
     VirtQueue vq;
     vq.start(scratch.target(), kQueueSize, false);
