@@ -204,6 +204,8 @@ Device::Device(
     _name_buf{},
     _queue(nullptr),
     _target(target),
+    _queue_size(queue_size),
+    _readonly(readonly),
     _vqs(num_queues),
     _features(0),
     _write_cache_enabled(write_cache_enabled),
@@ -233,7 +235,7 @@ Device::Device(
         // rawstor_target_spec() (unlike rawstor_target_open()) fetches an
         // object's spec without opening it -- exactly what's needed here,
         // since nothing on Device itself does data-plane I/O against the
-        // target: each VirtQueue below opens its own RawstorObject.
+        // target: each VirtQueue opens its own RawstorObject (see _vq()).
         RawstorObjectSpec spec = spec_object(_queue, target);
 
         rawstd_info(
@@ -351,28 +353,8 @@ Device::Device(
             }
         }
 
-        for (size_t i = 0; i < _vqs.size(); ++i) {
-            _vqs[i].attach(*this, i);
-        }
-
-        // Each VirtQueue opens its own RawstorObject (a fresh
-        // rawstor_target_open() against the same target) and runs on its
-        // own thread from here on -- see VirtQueue's class comment for
-        // why sharing one RawstorObject across threads isn't an option.
-        // start() blocks until each is actually up, so a failure partway
-        // through leaves only the earlier ones running, which the catch
-        // below stops before rethrowing.
-        for (auto& vq : _vqs) {
-            vq.start(target, queue_size, readonly);
-        }
-
         rawstd_info("Waiting for connection on %s\n", dev_path.c_str());
     } catch (...) {
-        for (auto& vq : _vqs) {
-            if (vq.running()) {
-                vq.stop();
-            }
-        }
         if (_fd != -1) {
             close(_fd);
         }
@@ -401,14 +383,15 @@ Device::~Device() {
     }
 
     // Each VirtQueue tears down its own kick_fd read, RawstorObject and
-    // RawIOQueue on its own thread as part of stop() -- a no-op for any
-    // VirtQueue that never started. Stopping every VirtQueue first
-    // (before this thread touches `_fd`/`_ctrl_fd` any further)
-    // guarantees none of them can still be calling
+    // RawIOQueue on its own thread as part of stop(). Stopping every
+    // VirtQueue first (before this thread touches `_fd`/`_ctrl_fd` any
+    // further) guarantees none of them can still be calling
     // inject_irq()/iova_to_va() on `*this` by the time the rest of the
     // device goes away.
     for (auto& vq : _vqs) {
-        vq.stop();
+        if (vq != nullptr) {
+            vq->stop();
+        }
     }
 
     if (_fd != -1) {
@@ -520,8 +503,10 @@ void Device::dispatch_control(
 ) {
     switch (req.type) {
     case VDUSE_GET_VQ_STATE: {
-        VirtQueue& vq = _vqs.at(req.vq_state.index);
-        resp.vq_state.split.avail_index = vq.get_vq_state();
+        // A VirtQueue never started has never consumed anything.
+        const auto& vq = _vqs.at(req.vq_state.index);
+        resp.vq_state.split.avail_index =
+            vq != nullptr ? vq->get_vq_state() : 0;
         resp.result = VDUSE_REQ_RESULT_OK;
         break;
     }
@@ -549,17 +534,23 @@ void Device::dispatch_control(
         // already translated has fully completed before we get here.
         // Mirrors vhost::Device::rem_mem_reg().
         for (auto& vq : _vqs) {
-            vq.pause();
+            if (vq != nullptr) {
+                vq->pause();
+            }
         }
         _remove_iova_regions(req.iova.start, req.iova.last);
         for (auto& vq : _vqs) {
             // Re-resolve any virtqueue whose ring is currently mapped --
             // a no-op (see VirtQueue::_apply(Retranslate&&)) for one
             // that's disabled/never enabled.
-            vq.post_retranslate();
+            if (vq != nullptr) {
+                vq->post_retranslate();
+            }
         }
         for (auto& vq : _vqs) {
-            vq.resume();
+            if (vq != nullptr) {
+                vq->resume();
+            }
         }
         resp.result = VDUSE_REQ_RESULT_OK;
         break;
@@ -571,9 +562,29 @@ void Device::dispatch_control(
     }
 }
 
-void Device::_enable_queue(size_t index) {
-    VirtQueue& vq = _vqs.at(index);
+VirtQueue& Device::_vq(size_t index) {
+    std::unique_ptr<VirtQueue>& slot = _vqs.at(index);
+    if (slot != nullptr) {
+        return *slot;
+    }
 
+    // Each VirtQueue opens its own RawstorObject (a fresh
+    // rawstor_target_open() against the same target) and runs on its own
+    // thread from here on -- see VirtQueue's class comment for why
+    // sharing one RawstorObject across threads isn't an option. start()
+    // blocks until it's actually up; if it throws, `vq` is back to its
+    // not-started state and simply destroyed, the slot left empty.
+    auto vq = std::make_unique<VirtQueue>();
+    vq->attach(*this, index);
+    vq->start(_target, _queue_size, _readonly);
+    rawstd_info("vduse: started vq[%zu]\n", index);
+
+    std::unique_lock lock(_vqs_mutex);
+    slot = std::move(vq);
+    return *slot;
+}
+
+void Device::_enable_queue(size_t index) {
     vduse_vq_info info = {};
     info.index = static_cast<uint32_t>(index);
     if (ioctl(_fd, VDUSE_VQ_GET_INFO, &info)) {
@@ -587,6 +598,15 @@ void Device::_enable_queue(size_t index) {
     if (!info.ready) {
         return;
     }
+
+    VirtQueue* vqp;
+    try {
+        vqp = &_vq(index);
+    } catch (const std::exception& e) {
+        rawstd_error("vduse: failed to start vq[%zu]: %s\n", index, e.what());
+        return;
+    }
+    VirtQueue& vq = *vqp;
 
     vq.post_set_vring_size(info.num);
     vq.post_set_vring_addr(info.desc_addr, info.driver_addr, info.device_addr);
@@ -621,9 +641,12 @@ void Device::_enable_queue(size_t index) {
 }
 
 void Device::_disable_queue(size_t index) {
-    VirtQueue& vq = _vqs.at(index);
+    const auto& vq = _vqs.at(index);
+    if (vq == nullptr) {
+        return;
+    }
 
-    vq.post_set_enabled(false);
+    vq->post_set_enabled(false);
 
     vduse_vq_eventfd ev = {};
     ev.index = static_cast<uint32_t>(index);
@@ -657,7 +680,9 @@ void Device::_stop_dataplane() {
     // before this clears every cached IOVA translation out from under a
     // request that might still be using one.
     for (auto& vq : _vqs) {
-        vq.pause();
+        if (vq != nullptr) {
+            vq->pause();
+        }
     }
 
     _features.store(0, std::memory_order_relaxed);
@@ -668,7 +693,9 @@ void Device::_stop_dataplane() {
     }
 
     for (auto& vq : _vqs) {
-        vq.resume();
+        if (vq != nullptr) {
+            vq->resume();
+        }
     }
 }
 
@@ -691,11 +718,11 @@ void Device::_remove_iova_regions(uint64_t start, uint64_t last) {
 }
 
 std::vector<VirtQueue*> Device::other_vqs(VirtQueue& requester) {
+    std::shared_lock lock(_vqs_mutex);
     std::vector<VirtQueue*> others;
-    others.reserve(_vqs.empty() ? 0 : _vqs.size() - 1);
-    for (VirtQueue& vq : _vqs) {
-        if (&vq != &requester) {
-            others.push_back(&vq);
+    for (auto& vq : _vqs) {
+        if (vq != nullptr && vq.get() != &requester) {
+            others.push_back(vq.get());
         }
     }
     return others;

@@ -23,7 +23,6 @@
 #include <system_error>
 
 #define DEFAULT_QUEUE_SIZE 4096
-#define DEFAULT_NUM_QUEUES 4
 
 namespace {
 
@@ -53,10 +52,6 @@ void usage() {
               << "  --queue-size SIZE     "
                  "RawIO queue size (default: "
               << DEFAULT_QUEUE_SIZE << ")" << std::endl
-              << "  --num-queues N        "
-                 "Number of virtqueues, each served by its own thread "
-                 "(default: "
-              << DEFAULT_NUM_QUEUES << ")" << std::endl
               << "  --write-cache on|off  "
                  "Advertise a writeback (on) or write-through (off, default)"
               << std::endl
@@ -107,13 +102,12 @@ void sact_handler(int) {
 }
 
 void server(
-    unsigned int queue_size, unsigned int num_queues, const std::string& target,
+    unsigned int queue_size, const std::string& target,
     const std::string& socket_path, bool write_cache_enabled, bool readonly,
     int wake_fd
 ) {
     rawstor::vhost::Server s(
-        queue_size, num_queues, target, socket_path, write_cache_enabled,
-        readonly, wake_fd
+        queue_size, target, socket_path, write_cache_enabled, readonly, wake_fd
     );
     s.loop();
 }
@@ -124,7 +118,6 @@ int main(int argc, char** argv) {
     const char* optstring = "hs:v";
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
-        {"num-queues", required_argument, nullptr, 'n'},
         {"queue-size", required_argument, nullptr, 'q'},
         {"readonly", no_argument, nullptr, 'r'},
         {"socket-path", required_argument, nullptr, 's'},
@@ -133,7 +126,6 @@ int main(int argc, char** argv) {
         {},
     };
 
-    const char* num_queues_arg = nullptr;
     const char* queue_size_arg = nullptr;
     const char* socket_path_arg = nullptr;
     const char* target_arg = nullptr;
@@ -149,10 +141,6 @@ int main(int argc, char** argv) {
         case 'h':
             usage();
             return EXIT_SUCCESS;
-
-        case 'n':
-            num_queues_arg = optarg;
-            break;
 
         case 'q':
             queue_size_arg = optarg;
@@ -197,20 +185,6 @@ int main(int argc, char** argv) {
             std::cerr << "queue-size must be unsigned integer" << std::endl;
             return EX_USAGE;
         }
-    }
-
-    unsigned int num_queues = DEFAULT_NUM_QUEUES;
-    if (num_queues_arg != nullptr) {
-        std::istringstream iss(num_queues_arg);
-        if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> num_queues) ||
-            !iss.eof()) {
-            std::cerr << "num-queues must be unsigned integer" << std::endl;
-            return EX_USAGE;
-        }
-    }
-    if (num_queues == 0) {
-        std::cerr << "num-queues must be at least 1" << std::endl;
-        return EX_USAGE;
     }
 
     if (socket_path_arg == nullptr) {
@@ -282,8 +256,8 @@ int main(int argc, char** argv) {
         }
 
         server(
-            queue_size, num_queues, target_arg, socket_path_arg,
-            write_cache_enabled, readonly, wake_pipe.read_fd()
+            queue_size, target_arg, socket_path_arg, write_cache_enabled,
+            readonly, wake_pipe.read_fd()
         );
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;

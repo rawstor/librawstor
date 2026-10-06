@@ -36,21 +36,20 @@ RuntimeDirectory=rawstor
 # the socket path without being root or in the "rawstor" group; connect(2)
 # is still blocked for them by the socket file's own 0660 mode.
 Environment=LOCATION=ost://127.0.0.1:7777
-# rawstor-vhost's own --num-queues/--write-cache (see its --help);
-# override in /etc/rawstor-vhost.conf below rather than editing this
-# file. One worker thread (and one connection to the backend) per
-# virtqueue; raise NUM_QUEUES for guests with more vCPUs queuing on more
-# virtio-blk queues, lower it to shrink the number of connections this
-# instance opens to the backend target. write-through (WRITE_CACHE=off)
-# makes every guest write durable on completion by forcing a journal
-# commit per write -- fine on a host whose filesystem commits quickly,
-# but observed to stall write RTTs into the tens of seconds under
-# concurrent load on a host where the backing disk's journal commit is
-# slow. writeback (on) avoids that per-write commit and instead relies
-# on the guest issuing an explicit flush when it needs durability, same
-# as any real disk with a volatile write cache; any modern guest kernel
-# does this correctly.
-Environment=NUM_QUEUES=4
+# rawstor-vhost's own --write-cache (see its --help); override in
+# /etc/rawstor-vhost.conf below rather than editing this file. One worker
+# thread (and one connection to the backend) per virtqueue, as many as
+# QEMU's own vhost-user-blk num-queues= asks for (by default the guest's
+# vCPU count) -- set num-queues= there to shrink the number of
+# connections this instance opens to the backend target. write-through
+# (WRITE_CACHE=off) makes every guest write durable on completion by
+# forcing a journal commit per write -- fine on a host whose filesystem
+# commits quickly, but observed to stall write RTTs into the tens of
+# seconds under concurrent load on a host where the backing disk's
+# journal commit is slow. writeback (on) avoids that per-write commit
+# and instead relies on the guest issuing an explicit flush when it
+# needs durability, same as any real disk with a volatile write cache;
+# any modern guest kernel does this correctly.
 Environment=WRITE_CACHE=on
 # librawstor client/server tuning knobs (see README.md's "Environment
 # Variables" section for what each one does); uncomment to override a
@@ -67,7 +66,7 @@ Environment=WRITE_CACHE=on
 #Environment=RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT=128
 #Environment=RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY=256M
 EnvironmentFile=-/etc/rawstor-vhost.conf
-ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock --num-queues=${NUM_QUEUES} --write-cache=${WRITE_CACHE} ${LOCATION}/%i
+ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock --write-cache=${WRITE_CACHE} ${LOCATION}/%i
 Restart=always
 RestartSec=2
 # sysexits.h codes rawstor-vhost exits with when retrying won't help:

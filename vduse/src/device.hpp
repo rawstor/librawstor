@@ -31,9 +31,21 @@ namespace vduse {
  * vhost::Device almost exactly; the two differ mainly in transport
  * (VDUSE's ioctl/IOTLB control plane vs. vhost-user's socket messages).
  *
+ * Unlike vhost-user, no front-end ever asks for a queue count: VDUSE
+ * fixes vq_num at VDUSE_CREATE_DEV, before any driver exists, so the
+ * caller picks how many virtqueues to advertise (`num_queues`,
+ * max_queues()). Each VirtQueue, and with it its thread and its own
+ * connection to the target, is only created once the driver actually
+ * marks that queue ready at DRIVER_OK (see _enable_queue()/_vq()) --
+ * e.g. Linux's own virtio_blk uses min(num_queues, nr_cpu_ids).
+ *
  * State genuinely shared between the control-plane thread and every
  * VirtQueue worker thread is limited to what's below, each with its own
  * synchronization:
+ *  - `_vqs` slots: filled only by the control-plane thread (_vq()), under
+ *    a unique_lock on `_vqs_mutex`; other_vqs() (the only reader on a
+ *    VirtQueue thread) takes a shared_lock. Control-plane reads need no
+ *    lock, being on the only thread that ever writes.
  *  - `_regions` (IOVA -> host VA cache): `_regions_mutex`, a
  *    shared_mutex -- iova_to_va() (the per-descriptor hot path, called
  *    from whichever VirtQueue thread is translating) takes a shared_lock
@@ -70,11 +82,21 @@ private:
     std::string _target;
     mutable std::shared_mutex _regions_mutex;
     std::vector<std::unique_ptr<IovaRegion>> _regions;
-    std::vector<VirtQueue> _vqs;
+    unsigned int _queue_size;
+    bool _readonly;
+    mutable std::shared_mutex _vqs_mutex;
+    std::vector<std::unique_ptr<VirtQueue>> _vqs;
     std::atomic<uint64_t> _features;
     bool _write_cache_enabled;
     int _wake_fd;
     bool _stop_requested;
+
+    /**
+     * The VirtQueue at `index`, creating and start()ing it first if it
+     * doesn't exist yet -- blocks until its own connection to the target
+     * is up, and throws if it can't be.
+     */
+    VirtQueue& _vq(size_t index);
 
     void _enable_queue(size_t index);
     void _disable_queue(size_t index);
@@ -135,7 +157,7 @@ public:
                (1ull << VIRTIO_RING_F_EVENT_IDX);
     }
 
-    inline size_t nqueues() const noexcept { return _vqs.size(); }
+    inline size_t max_queues() const noexcept { return _vqs.size(); }
 
     /**
      * Translate an IOVA (as found in a virtqueue's desc/driver/device
@@ -166,9 +188,11 @@ public:
 
     /**
      * Every VirtQueue except `requester` -- see the class comment on
-     * VIRTIO_BLK_T_FLUSH fan-out, flush_task()'s only caller. Pointers
-     * into `_vqs`, stable for the Device's whole lifetime (never resized
-     * once constructed).
+     * VIRTIO_BLK_T_FLUSH fan-out, flush_task()'s only caller. Only the
+     * VirtQueues started so far: one started after this returns can't
+     * hold any write the flush would have to cover yet. Each pointer
+     * stays valid for the Device's whole lifetime (a started VirtQueue
+     * is never destroyed before ~Device()).
      */
     std::vector<VirtQueue*> other_vqs(VirtQueue& requester);
 

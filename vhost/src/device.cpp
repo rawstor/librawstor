@@ -610,7 +610,7 @@ std::unique_ptr<Reply> set_protocol_features(DeviceOp& op) {
  * Query how many queues the back-end supports.
  */
 std::unique_ptr<Reply> get_queue_num(DeviceOp& op) {
-    return std::make_unique<U64Reply>(op, op.device().nqueues());
+    return std::make_unique<U64Reply>(op, op.device().max_queues());
 }
 
 /**
@@ -1045,13 +1045,15 @@ namespace rawstor {
 namespace vhost {
 
 Device::Device(
-    unsigned int queue_size, unsigned int num_queues, const std::string& target,
-    int fd, bool write_cache_enabled, bool readonly, int wake_fd
+    unsigned int queue_size, const std::string& target, int fd,
+    bool write_cache_enabled, bool readonly, int wake_fd
 ) :
     _fd(fd),
     _queue(nullptr),
     _target(target),
-    _vqs(num_queues),
+    _queue_size(queue_size),
+    _readonly(readonly),
+    _vqs(MAX_QUEUES),
     _backend_fd(-1),
     _features(
         1ull << VIRTIO_BLK_F_SIZE_MAX | 1ull << VIRTIO_BLK_F_SEG_MAX |
@@ -1079,7 +1081,7 @@ Device::Device(
         // rawstor_target_spec() (unlike rawstor_target_open()) fetches an
         // object's spec without opening it -- exactly what's needed here,
         // since nothing on Device itself does data-plane I/O against the
-        // target: each VirtQueue below opens its own RawstorObject.
+        // target: each VirtQueue opens its own RawstorObject (see _vq()).
         RawstorObjectSpec spec = spec_object(_queue, target);
 
         _config.capacity = spec.size >> VIRTIO_BLK_SECTOR_BITS;
@@ -1099,7 +1101,10 @@ Device::Device(
 
         _config.wce = write_cache_enabled; // VIRTIO_BLK_F_CONFIG_WCE
 
-        _config.num_queues = nqueues(); // VIRTIO_BLK_F_MQ
+        // VIRTIO_BLK_F_MQ -- QEMU overrides this with its own
+        // `num-queues=` before the guest ever reads it; see the class
+        // comment.
+        _config.num_queues = max_queues();
 
         // VIRTIO_BLK_F_DISCARD -- one segment per request (matches
         // discard_task()'s own per-segment dispatch loop,
@@ -1129,27 +1134,7 @@ Device::Device(
         _config.secure_erase_sector_alignment = 0;
 
         _config.zoned = {}; // VIRTIO_BLK_F_ZONED (unsupported)
-
-        for (size_t i = 0; i < _vqs.size(); ++i) {
-            _vqs[i].attach(*this, i);
-        }
-
-        // Each VirtQueue opens its own RawstorObject (a fresh
-        // rawstor_target_open() against the same target) and runs on its
-        // own thread from here on -- see VirtQueue's class comment for
-        // why sharing one RawstorObject across threads isn't an option.
-        // start() blocks until each is actually up, so a failure partway
-        // through leaves only the earlier ones running, which the catch
-        // below stops before rethrowing.
-        for (auto& vq : _vqs) {
-            vq.start(target, queue_size, readonly);
-        }
     } catch (...) {
-        for (auto& vq : _vqs) {
-            if (vq.running()) {
-                vq.stop();
-            }
-        }
         // _wake_fd itself needs no cleanup here: wake_task() (which is
         // what would ever arm a read on it) is only ever launched from
         // loop(), never reached during construction, and Device doesn't
@@ -1162,10 +1147,11 @@ Device::Device(
 Device::~Device() {
     // Each VirtQueue tears down its own kick_fd/call_fd ops, its own
     // RawstorObject and its own RawIOQueue on its own thread as part of
-    // stop() -- see VirtQueue::_run(). A no-op for any VirtQueue that
-    // never started.
+    // stop() -- see VirtQueue::_run().
     for (auto& vq : _vqs) {
-        vq.stop();
+        if (vq != nullptr) {
+            vq->stop();
+        }
     }
 
     int cres = rawio_cancel_all(_queue, _fd);
@@ -1224,9 +1210,13 @@ void Device::set_features(uint64_t features) {
 
     _features.store(features, std::memory_order_relaxed);
 
+    // Without VHOST_USER_F_PROTOCOL_FEATURES a ring starts out enabled;
+    // _vq() does the same for any VirtQueue created after this point.
     if (!(features & (1ull << VHOST_USER_F_PROTOCOL_FEATURES))) {
         for (auto& vq : _vqs) {
-            vq.post_set_enabled(true);
+            if (vq != nullptr) {
+                vq->post_set_enabled(true);
+            }
         }
     }
 }
@@ -1240,36 +1230,65 @@ uint64_t Device::get_protocol_features() const noexcept {
            _protocol_features;
 }
 
+VirtQueue& Device::_vq(size_t index) {
+    std::unique_ptr<VirtQueue>& slot = _vqs.at(index);
+    if (slot != nullptr) {
+        return *slot;
+    }
+
+    // Each VirtQueue opens its own RawstorObject (a fresh
+    // rawstor_target_open() against the same target) and runs on its own
+    // thread from here on -- see VirtQueue's class comment for why
+    // sharing one RawstorObject across threads isn't an option. start()
+    // blocks until it's actually up; if it throws, `vq` is back to its
+    // not-started state and simply destroyed, the slot left empty.
+    auto vq = std::make_unique<VirtQueue>();
+    vq->attach(*this, index);
+    vq->start(_target, _queue_size, _readonly);
+    rawstd_info("Started virtqueue %zu\n", index);
+
+    {
+        std::unique_lock lock(_vqs_mutex);
+        slot = std::move(vq);
+    }
+
+    if (!(get_features() & (1ull << VHOST_USER_F_PROTOCOL_FEATURES))) {
+        slot->post_set_enabled(true);
+    }
+
+    return *slot;
+}
+
 void Device::set_vring_size(size_t index, unsigned int size) {
-    _vqs.at(index).post_set_vring_size(size);
+    _vq(index).post_set_vring_size(size);
 }
 
 void Device::set_vring_base(size_t index, unsigned int idx) {
-    _vqs.at(index).post_set_vring_base(idx);
+    _vq(index).post_set_vring_base(idx);
 }
 
 void Device::set_vring_kick(size_t index, int fd) {
-    _vqs.at(index).post_set_kick_fd(fd);
+    _vq(index).post_set_kick_fd(fd);
 }
 
 void Device::set_vring_call(size_t index, int fd) {
-    _vqs.at(index).post_set_call_fd(fd);
+    _vq(index).post_set_call_fd(fd);
 }
 
 void Device::set_vring_err(size_t index, int fd) {
-    _vqs.at(index).post_set_err_fd(fd);
+    _vq(index).post_set_err_fd(fd);
 }
 
 void Device::set_vring_addr(const vhost_vring_addr& vra) {
-    _vqs.at(vra.index).post_set_vring_addr(vra);
+    _vq(vra.index).post_set_vring_addr(vra);
 }
 
 void Device::set_vring_enable(size_t index, bool enabled) {
-    _vqs.at(index).post_set_enabled(enabled);
+    _vq(index).post_set_enabled(enabled);
 }
 
 uint16_t Device::get_vring_base(size_t index) {
-    return _vqs.at(index).get_vring_base();
+    return _vq(index).get_vring_base();
 }
 
 void* Device::userspace_va_to_va(uint64_t userspace_addr) const noexcept {
@@ -1381,7 +1400,9 @@ void Device::rem_mem_reg(const VhostUserMemoryRegion& m) {
     // this region) and that every request it had already translated has
     // fully completed before we get here.
     for (auto& vq : _vqs) {
-        vq.pause();
+        if (vq != nullptr) {
+            vq->pause();
+        }
     }
 
     bool removed = false;
@@ -1403,7 +1424,9 @@ void Device::rem_mem_reg(const VhostUserMemoryRegion& m) {
     }
 
     for (auto& vq : _vqs) {
-        vq.resume();
+        if (vq != nullptr) {
+            vq->resume();
+        }
     }
 
     if (!removed) {
@@ -1415,11 +1438,11 @@ void Device::rem_mem_reg(const VhostUserMemoryRegion& m) {
 }
 
 std::vector<VirtQueue*> Device::other_vqs(VirtQueue& requester) {
+    std::shared_lock lock(_vqs_mutex);
     std::vector<VirtQueue*> others;
-    others.reserve(_vqs.empty() ? 0 : _vqs.size() - 1);
-    for (VirtQueue& vq : _vqs) {
-        if (&vq != &requester) {
-            others.push_back(&vq);
+    for (auto& vq : _vqs) {
+        if (vq != nullptr && vq.get() != &requester) {
+            others.push_back(vq.get());
         }
     }
     return others;

@@ -34,12 +34,13 @@ Group=rawstor
 # processes of the same user, shared by every rawstor instance on the
 # host: see rawstor-ost@.service.
 LimitMEMLOCK=infinity
-# rawstor-vduse's own --num-queues/--write-cache (see its --help);
-# override in /etc/rawstor-vduse.conf below rather than editing this
-# file. One worker thread (and one connection to the backend) per
-# virtqueue; raise NUM_QUEUES for guests with more vCPUs queuing on more
-# virtio-blk queues, lower it to shrink the number of connections this
-# instance opens to the backend target. write-through (WRITE_CACHE=off)
+# rawstor-vduse's own --write-cache (see its --help); override in
+# /etc/rawstor-vduse.conf below rather than editing this file. One worker
+# thread (and one connection to the backend) per virtqueue the driver
+# enables, out of the host's number of CPUs advertised (the most Linux's
+# virtio_blk will use); to cap the number of connections this instance
+# opens to the backend target, pass --num-queues via an ExecStart=
+# drop-in. write-through (WRITE_CACHE=off)
 # makes every guest write durable on completion by forcing a journal
 # commit per write -- fine on a host whose filesystem commits quickly,
 # but observed to stall write RTTs into the tens of seconds under
@@ -50,7 +51,6 @@ LimitMEMLOCK=infinity
 # README's "rawstor-vduse" section) -- writeback (on) just avoids paying
 # for the redundant per-write journal commit on top of that flush.
 Environment=LOCATION=ost://127.0.0.1:7777
-Environment=NUM_QUEUES=16
 Environment=WRITE_CACHE=on
 # librawstor client/server tuning knobs (see README.md's "Environment
 # Variables" section for what each one does); uncomment to override a
@@ -67,7 +67,7 @@ Environment=WRITE_CACHE=on
 #Environment=RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT=128
 #Environment=RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY=256M
 EnvironmentFile=-/etc/rawstor-vduse.conf
-ExecStart=/usr/bin/rawstor-vduse --num-queues=${NUM_QUEUES} --write-cache=${WRITE_CACHE} ${LOCATION}/%i
+ExecStart=/usr/bin/rawstor-vduse --write-cache=${WRITE_CACHE} ${LOCATION}/%i
 Restart=always
 RestartSec=2
 # sysexits.h codes rawstor-vduse exits with when retrying won't help:

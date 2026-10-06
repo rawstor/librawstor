@@ -229,7 +229,7 @@ multiple in-flight requests on a virtqueue may complete out of order.
 
 ### Usage
 
-`rawstor-vhost [-h] -s SOCKET_PATH TARGET [--queue-size SIZE] [--num-queues N] [--write-cache on|off] [--readonly] [-v]`
+`rawstor-vhost [-h] -s SOCKET_PATH TARGET [--queue-size SIZE] [--write-cache on|off] [--readonly] [-v]`
 
 ### Options
 
@@ -239,7 +239,6 @@ multiple in-flight requests on a virtqueue may complete out of order.
 | `-s, --socket-path PATH` | Location of the vhost-user Unix domain socket. |
 | `TARGET` | Comma‑separated list of rawstor backend targets (see [Concepts](https://github.com/rawstor/librawstor/blob/main/docs/concepts.md)). |
 | `--queue-size SIZE` | RawIO queue (`io_uring`) depth of each virtqueue's own queue. Default: `4096`. |
-| `--num-queues N` | Number of virtqueues advertised to the guest, each serviced by its own thread and its own connection to `TARGET`. The guest picks how many of these it actually uses (typically up to its vCPU count) via QEMU's own `num-queues=`. Default: `4`. |
 | `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest; write-through makes every write durable on completion, writeback relies on the guest issuing an explicit flush. |
 | `--readonly` | Export the object read-only: advertises `VIRTIO_BLK_F_RO` to the guest and opens `TARGET` with `RAWSTOR_READONLY` (no mirror write quorum needed; writes fail). Required to export a version target. |
 | `-v, --version` | Print version and exit. |
@@ -280,17 +279,19 @@ identify (`VIRTIO_BLK_T_GET_ID`) requests. A flush is device-wide: since
 each virtqueue has its own connection to `TARGET` (see below), a
 `VIRTIO_BLK_T_FLUSH` arriving on one makes durable every write issued
 through *any* of them, not just its own. `VIRTIO_BLK_F_MQ` is negotiated
-and genuinely serviced: `rawstor-vhost` advertises up to `--num-queues`
-virtqueues (a front-end learns the count via `VHOST_USER_GET_QUEUE_NUM`),
-each processed on its own thread and its own connection to `TARGET` in
-parallel.
+and genuinely serviced: the front-end alone decides how many virtqueues
+to use (QEMU's own `num-queues=`, which defaults to the guest's vCPU
+count; `rawstor-vhost` reports up to 1024 via `VHOST_USER_GET_QUEUE_NUM`),
+and each one it sets up is processed on its own thread and its own
+connection to `TARGET` in parallel, started the first time the front-end
+configures that queue.
 
 ### Notes
 
 `rawstor-vhost` serves exactly one front-end connection per process
 invocation: it accepts a connection on the socket, serves it until the
 front-end disconnects (exiting cleanly), and then exits. A setup or
-protocol error (e.g. a mismatched `num-queues`) is reported and also exits
+protocol error (e.g. failing to connect a new virtqueue to `TARGET`) is reported and also exits
 the process, rather than silently waiting for another connection. Pair it
 with `reconnect=1` on the QEMU chardev and an external supervisor (e.g.
 `systemd` with `Restart=always`, or a wrapper loop) if the backend needs to
@@ -370,7 +371,7 @@ vhost-user.
 | `-h, --help` | Show help message and exit. |
 | `TARGET` | Comma‑separated list of rawstor backend targets (see [Concepts](https://github.com/rawstor/librawstor/blob/main/docs/concepts.md)). Creates `/dev/vduse/UUID`, where `UUID` is the target object's own UUID -- there is no separate name to pick, since the UUID already uniquely and stably identifies it. |
 | `--queue-size SIZE` | Virtqueue size, a power of two, of each virtqueue's own queue. Default: `256`, max `1024`. |
-| `--num-queues N` | Number of virtqueues advertised to the guest, each serviced by its own thread and its own connection to `TARGET`. Default: `16`. |
+| `--num-queues N` | Number of virtqueues advertised to the guest. Each one the driver actually enables is serviced by its own thread and its own connection to `TARGET`, started at that point (Linux's `virtio_blk` enables up to its CPU count). Default: the host's number of CPUs. |
 | `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest. |
 | `--readonly` | Export the object read-only: advertises `VIRTIO_BLK_F_RO` to the guest and opens `TARGET` with `RAWSTOR_READONLY` (no mirror write quorum needed; writes fail). Required to export a version target. |
 | `-v, --version` | Print version and exit. |
@@ -413,9 +414,9 @@ identify (`VIRTIO_BLK_T_GET_ID`) requests. A flush is device-wide: since
 each virtqueue has its own connection to `TARGET` (see below), a
 `VIRTIO_BLK_T_FLUSH` arriving on one makes durable every write issued
 through *any* of them, not just its own. `VIRTIO_BLK_F_MQ` is negotiated
-and genuinely serviced: `rawstor-vduse` advertises up to `--num-queues`
-virtqueues, each processed on its own thread and its own connection to
-`TARGET` in parallel.
+and genuinely serviced: `rawstor-vduse` advertises `--num-queues`
+virtqueues, and each one the driver enables is processed on its own
+thread and its own connection to `TARGET` in parallel.
 
 Unlike vhost-user, VDUSE has no driver-writable config space at all --
 there is no protocol message equivalent to `VHOST_USER_SET_CONFIG` -- and
