@@ -35,7 +35,7 @@ rawstor-ost \
 ##
 # MDS Server (optional: only for chunked mds:// objects)
 #
-MDS_DATADIR=/var/lib/rawstor-mds
+MDS_DATADIR=/var/lib/rawstor/mds
 
 mkdir -p ${MDS_DATADIR}
 
@@ -166,13 +166,13 @@ The config is an environment file (`KEY=VALUE` lines):
 | Key | Default | Description |
 |-----|---------|-------------|
 | `BIND_ADDR` | — (required) | `<ip>:<port>` to listen on, unique per host. |
-| `LOCATION` | `file:///var/lib/rawstor-ost/<uuid>` | Backing store this instance serves. |
+| `LOCATION` | `file:///var/lib/rawstor/ost/<uuid>` | Backing store this instance serves. |
 | `QUEUE_SIZE` | `4096` | `--queue-size`. |
 | `WORKERS` | `12` | `--workers`. |
 | `RAWSTOR_OPTS_*` | | Tuning knobs, see [Environment Variables](#environment-variables). |
 
 The instance runs as the `rawstor` user under `ProtectSystem=strict`. Its
-default store, `/var/lib/rawstor-ost/<uuid>` (`StateDirectory=`), is
+default store, `/var/lib/rawstor/ost/<uuid>` (`StateDirectory=`), is
 created on start and owned by `rawstor`; a disk mounted there needs no
 further configuration. A store anywhere else needs a per-instance drop-in
 granting the sandbox access to it, and must be writable by `rawstor`:
@@ -205,7 +205,7 @@ again; the store itself is removed by hand, if at all.
 ```bash
 sudo systemctl disable --now rawstor-ost@${OST2}
 sudo rm /etc/rawstor/ost/${OST2}.conf
-# data stays in /var/lib/rawstor-ost/${OST2}
+# data stays in /var/lib/rawstor/ost/${OST2}
 ```
 
 A package upgrade restarts the running instances; removing the package
@@ -491,7 +491,7 @@ cat > topology.conf <<EOF
 018f4e2a-1000-7000-8000-000000000001 ost://host1:7777 100 dc1/row1/rack1/host1
 018f4e2a-1000-7000-8000-000000000002 ost://host2:7777 100 dc1/row1/rack1/host2
 EOF
-rawstor-mds -b 0.0.0.0:7776 -d /var/lib/rawstor-mds/mds.db -t topology.conf
+rawstor-mds -b 0.0.0.0:7776 -d /var/lib/rawstor/mds/mds.db -t topology.conf
 ```
 
 Create and grow an `mds://` object:
@@ -524,13 +524,13 @@ The config is an environment file (`KEY=VALUE` lines):
 |-----|---------|-------------|
 | `BIND_ADDR` | — (required) | `<ip>:<port>` to listen on, unique per host. |
 | `TOPOLOGY_PATH` | `/etc/rawstor/mds/<uuid>.topology` | Topology file; must exist (may be empty) and be readable by `rawstor`. |
-| `DB_PATH` | `/var/lib/rawstor-mds/<uuid>/mds.db` | Database; its directory must be writable by `rawstor`. |
+| `DB_PATH` | `/var/lib/rawstor/mds/<uuid>/mds.db` | Database; its directory must be writable by `rawstor`. |
 | `QUEUE_SIZE` | `4096` | `--queue-size`. |
 | `WORKERS` | `4` | `--workers`. |
 | `RAWSTOR_MDS_OPTS_*`, `RAWSTOR_OPTS_*` | | Tuning knobs, see [Environment Variables](#environment-variables). |
 
 The instance runs as the `rawstor` user under `ProtectSystem=strict`;
-`/var/lib/rawstor-mds/<uuid>` (`StateDirectory=`) is created on start.
+`/var/lib/rawstor/mds/<uuid>` (`StateDirectory=`) is created on start.
 A database anywhere else needs a drop-in (`ReadWritePaths=`), as for
 `rawstor-ost`.
 

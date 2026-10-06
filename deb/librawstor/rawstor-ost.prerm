@@ -2,7 +2,7 @@
 set -e
 
 # Package removal stops the running instances; their configs
-# (/etc/rawstor/ost), data (/var/lib/rawstor-ost) and enablement are left
+# (/etc/rawstor/ost), data (/var/lib/rawstor/ost) and enablement are left
 # alone, so reinstalling the package brings them back as they were.
 if [ "$1" = remove ] && [ -d /run/systemd/system ]; then
     systemctl stop 'rawstor-ost@*.service' || true

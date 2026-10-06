@@ -561,8 +561,8 @@ jobs:
       # started via systemctl here -- run the same command it would, by hand.
       run: |
         rawstor-ost --version
-        mkdir -p /var/lib/rawstor-ost/test
-        rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor-ost/test &
+        mkdir -p /var/lib/rawstor/ost/test
+        rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor/ost/test &
         OST_PID=$!
         sleep 10
         rawstor create --size=1M --mirrors=1 ost://127.0.0.1:7777
@@ -591,8 +591,8 @@ jobs:
       # was already killed at the end of that step).
       run: |
         rawstor-mds --version
-        mkdir -p /var/lib/rawstor-ost/test
-        rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor-ost/test &
+        mkdir -p /var/lib/rawstor/ost/test
+        rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor/ost/test &
         OST_PID=$!
         sleep 10
         echo "018f4e2a-1111-7000-8000-000000000001 ost://127.0.0.1:7777 100 dc1/row1/rack1/host1" > /tmp/topology.conf
