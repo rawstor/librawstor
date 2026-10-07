@@ -122,7 +122,7 @@ public:
     static rawstd::Task<std::unique_ptr<Slot>>
     create(rawio::Queue& queue, const rawstd::URI& location);
 
-    Slot(Private, rawio::Queue& queue);
+    Slot(Private, rawio::Queue& queue, std::shared_ptr<Backend> backend);
     Slot(const Slot&) = delete;
 
     Slot& operator=(const Slot&) = delete;

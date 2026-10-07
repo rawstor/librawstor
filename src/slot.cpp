@@ -190,12 +190,13 @@ auto retry_n_async(rawio::Queue& queue, const char* func_name, F&& attempt)
 
 namespace rawstor {
 
-Slot::Slot(Private, rawio::Queue& queue) :
+Slot::Slot(Private, rawio::Queue& queue, std::shared_ptr<Backend> backend) :
     _queue(queue),
     _id(std::nullopt),
     _offset(0),
     _flags(0),
     _version_id{},
+    _backend(std::move(backend)),
     _reconnecting(false),
     _transparent_retry(true) {
 }
@@ -212,9 +213,7 @@ Slot::create(rawio::Queue& queue, const rawstd::URI& location) {
     std::shared_ptr<Backend> backend =
         co_await Backend::create(queue, location);
 
-    std::unique_ptr<Slot> slot = std::make_unique<Slot>(Private(), queue);
-    slot->_backend = std::move(backend);
-    co_return slot;
+    co_return std::make_unique<Slot>(Private(), queue, std::move(backend));
 }
 
 void Slot::_finish(rawstor::telemetry::TimePoint t_call) {
