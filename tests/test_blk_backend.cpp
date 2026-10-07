@@ -117,10 +117,10 @@ rawstor::blk::Backend* open_blk_backend(
         run(queue,
             rawstor::Chunk::create(queue, {location}, id, 0, 0, RawstdUUID{}));
 
-    slot = run(queue, rawstor::Slot::create(queue, location, 1));
+    slot = run(queue, rawstor::Slot::create(queue, location));
     run(queue, slot->open(id, 0, 0, RawstdUUID{}));
 
-    return static_cast<rawstor::blk::Backend*>(slot->get_next_backend().get());
+    return static_cast<rawstor::blk::Backend*>(slot->get_backend().get());
 }
 
 // Backend::list_chunks() filtered by one id, against `location`: a
@@ -147,7 +147,7 @@ void expect_chunks_of_multichunk_object(const rawstd::URI& location) {
     run(*queue, loc.create(*queue, one_chunk));
 
     std::unique_ptr<rawstor::Slot> slot =
-        run(*queue, rawstor::Slot::create(*queue, location, 1));
+        run(*queue, rawstor::Slot::create(*queue, location));
 
     std::vector<rawstor::ChunkGroup> groups;
     RawstdUUID token{};
@@ -525,7 +525,7 @@ TEST(BlkBackendTest, witness_member_holds_no_data_and_refuses_real_io) {
     };
 
     std::unique_ptr<rawstor::Slot> slot =
-        run(*queue, rawstor::Slot::create(*queue, location, 1));
+        run(*queue, rawstor::Slot::create(*queue, location));
     run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_WITNESS));
 
     // Holds no data: its own "data" file exists (still enumerable --

@@ -1282,7 +1282,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
 // Genuinely requires RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE to be nonzero,
 // not just to "mean more" -- at the harness default (0, see tests/
 // main.cpp's own doc comment for why) every deduped op's retry is
-// immediate, so most of them race back to get_next_backend() before the
+// immediate, so most of them race back to get_backend() before the
 // winning reconnect above has actually installed the replacement,
 // collide with the still-stale backend again, and burn through
 // io_attempts on a single scripted reconnect this test never meant to

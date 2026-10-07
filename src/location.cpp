@@ -128,7 +128,7 @@ void encode_token(const RawstdUUID& id, RawstorPaginationToken& token) {
 rawstd::Task<RawstorLocationInfo>
 info_one(rawio::Queue& queue, const rawstd::URI& location) {
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, location, 1);
+        co_await rawstor::Slot::create(queue, location);
     RawstorLocationInfo ret{};
     std::exception_ptr error;
     try {
@@ -156,7 +156,7 @@ rawstd::Task<std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID>> list_one(
     std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID> ret;
     ret.second = token;
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, location, 1);
+        co_await rawstor::Slot::create(queue, location);
     std::exception_ptr error;
     try {
         co_await slot->list_chunks(RawstdUUID{}, limit, ret.first, ret.second);

@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Target strings returned by `rawstor_location_list()`/`_create()` always carry an explicit chunk offset segment (`<uuid>/0`); a target without one still parses as offset 0.
 - `rawstor-vhost`/`rawstor-vhost-qemu`/`rawstor testio`'s `--queue-size` defaults raised from 256 to 4096, matching `rawstor-ost`.
 - `rawstor-vduse`'s `--num-queues` defaults to the host's number of CPUs instead of `16`, and a virtqueue's thread and connection to the target are only started once the driver enables it.
+- The client opens exactly one connection per object chunk and backend (per mirror arm).
 - The OST wire protocol changed incompatibly (`LIST` entries carry a chunk offset, `RELEASE` also removes a version, new `META`/`SET_SYNC_STATE`/`CREATE_VERSION`/`LIST_VERSIONS`/`OBJ_*` commands); `rawstor-ost` and its clients must be upgraded together.
 
 ### Removed

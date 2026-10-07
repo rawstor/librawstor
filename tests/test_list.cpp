@@ -379,8 +379,8 @@ TEST(ListTest, invalidate_backend_on_metadata_only_connection) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
     std::unique_ptr<rawstor::Slot> slot =
-        run(*queue, rawstor::Slot::create(*queue, location, 1));
-    std::shared_ptr<rawstor::Backend> be = slot->get_next_backend();
+        run(*queue, rawstor::Slot::create(*queue, location));
+    std::shared_ptr<rawstor::Backend> be = slot->get_backend();
 
     EXPECT_NO_THROW(run(*queue, slot->invalidate_backend(be)));
 }

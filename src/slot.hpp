@@ -17,7 +17,6 @@
 #include <memory>
 #include <optional>
 #include <type_traits>
-#include <unordered_set>
 #include <vector>
 
 #include <cstddef>
@@ -44,14 +43,11 @@ private:
     int _flags;
     RawstdUUID _version_id;
 
-    std::vector<std::shared_ptr<Backend>> _backends;
-    size_t _backend_index;
+    std::shared_ptr<Backend> _backend;
 
-    // Backends currently being replaced by an in-flight
-    // invalidate_backend() call -- see that method's own doc comment for
-    // why this is needed now that it's a real coroutine instead of a
-    // fully-blocking call.
-    std::unordered_set<Backend*> _reconnecting;
+    // Set while an invalidate_backend() call is replacing _backend -- see
+    // that method's own doc comment for why concurrent callers need it.
+    bool _reconnecting;
 
     // When false, a retryable failure is not retried through
     // invalidate_backend(): it surfaces to the caller immediately, same as
@@ -71,7 +67,7 @@ private:
     void _finish(rawstor::telemetry::TimePoint t_call);
 
     // Shared retry-loop body for every data-path/metadata method: tries
-    // `method` against successive backends from the pool. Every failure
+    // `method` against _backend. Every failure
     // (a Backend throws a plain std::system_error for anything from a
     // malformed response to a dropped connection to a live backend's own
     // well-formed rejection -- Backend no longer classifies which) is
@@ -112,27 +108,26 @@ private:
     };
 
 public:
-    // Creates and connects `nbackends` Backends against `location`
-    // concurrently -- the returned Slot's backend pool is ready for
-    // get_next_backend()-based use (metadata methods, or open() to
-    // additionally set_object() the whole pool for the data-path
-    // methods) but nothing has been set_object()ed yet.
+    // Creates and connects the Slot's one Backend against `location` --
+    // the returned Slot is ready for get_backend()-based use (metadata
+    // methods, or open() to additionally set_object() it for the
+    // data-path methods) but nothing has been set_object()ed yet.
     static rawstd::Task<std::unique_ptr<Slot>>
-    create(rawio::Queue& queue, const rawstd::URI& location, size_t nbackends);
+    create(rawio::Queue& queue, const rawstd::URI& location);
 
     Slot(Private, rawio::Queue& queue);
     Slot(const Slot&) = delete;
 
     Slot& operator=(const Slot&) = delete;
 
-    std::shared_ptr<Backend> get_next_backend();
+    std::shared_ptr<Backend> get_backend();
     rawstd::Task<void> invalidate_backend(const std::shared_ptr<Backend>& be);
 
     void set_transparent_retry(bool enabled) noexcept;
 
     const rawstd::URI* location() const noexcept;
 
-    // Metadata operations, routed through the same backend pool and
+    // Metadata operations, routed through the same backend and
     // retry-with-invalidate-backend machinery (_with_retry()) as the
     // data-path methods below -- same shape as the matching Backend
     // methods they wrap, since a connect()ed Slot is (like a
@@ -178,20 +173,17 @@ public:
 
     rawstd::Task<RawstorLocationInfo> info();
 
-    // set_object()s every backend in the pool create() populated --
-    // must be called (at most once) after create(), before any data-path
-    // method below. A backend that fails is fixed up via
-    // invalidate_backend(), same recovery as the data-path/metadata
-    // methods get from _with_retry() -- not literally _with_retry()
-    // itself, since that picks one backend from the pool per call
-    // (retrying against another on failure) rather than target every
-    // backend the way this needs to. Returns a separate meta() read
-    // against whichever backend the pool now has (set_object() itself
-    // doesn't return it, see its own doc comment) -- spec.width on it is
+    // set_object()s the backend create() connected -- must be called (at
+    // most once) after create(), before any data-path method below. If
+    // that fails, the backend is fixed up via invalidate_backend(), same
+    // recovery as the data-path/metadata methods get from _with_retry().
+    // Returns a separate meta() read against whichever backend the Slot
+    // now has (set_object() itself doesn't return it, see its own doc
+    // comment) -- spec.width on it is
     // this copy's own persisted identity, not the target-wide count.
     // meta()'s own first entry is this location's own answer (its own
     // doc comment: every backend but mds::Backend only ever has the one
-    // to give anyway). `flags` (RAWSTOR_READONLY or 0) goes to every
+    // to give anyway). `flags` (RAWSTOR_READONLY or 0) goes to
     // Backend::set_object() (a non-nil `version_id` binds via
     // set_version() instead, read-only by nature). Throws ENOTSUP if
     // that answer's own member_role is RAWSTOR_MEMBER_WITNESS -- a

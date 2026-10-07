@@ -122,7 +122,7 @@ class Object;
 // SingleChunkObject or MultiChunkObject (object.hpp), depending on how
 // many chunks the target names, whose own Chunks it builds via
 // Chunk::create() (by analogy with Chunk::create() itself), keeping one
-// Slot per URI alive in each Chunk's own pool.
+// Slot per URI alive in each Chunk.
 class Target final {
 private:
     // The target string's own flat URI list, offset-sorted (see the

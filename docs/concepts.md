@@ -281,7 +281,7 @@ above.
 ## Slot
 
 A **Slot** is one physical mirror arm of a Chunk: a single URI, backed by
-one connection pool against one backend, responsible for retrying and
+one connection to one backend, responsible for retrying and
 reconnecting on that one arm independently of its siblings. Its URI form
 is a single, bare URI: `ost://h1:p1/<uuid>`. A Chunk with N mirrors has N
 Slots; a plain, unmirrored target's Chunk has exactly one.

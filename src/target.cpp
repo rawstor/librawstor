@@ -248,7 +248,7 @@ rawstd::Task<void> create_one(
     RawstdUUID id = uuid_from_target(target);
     uint64_t offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, strip_path(target), 1);
+        co_await rawstor::Slot::create(queue, strip_path(target));
     std::exception_ptr error;
     try {
         // Every target created through this, the ordinary create() path,
@@ -270,7 +270,7 @@ rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
     uint64_t offset = extract_offset(target);
     RawstdUUID version_id = extract_version_id(target);
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, strip_path(target), 1);
+        co_await rawstor::Slot::create(queue, strip_path(target));
     std::exception_ptr error;
     try {
         if (rawstd_uuid_is_nil(&version_id)) {
@@ -293,7 +293,7 @@ rawstd::Task<void> create_version_one(
     RawstdUUID id = uuid_from_target(target);
     uint64_t offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, strip_path(target), 1);
+        co_await rawstor::Slot::create(queue, strip_path(target));
     std::exception_ptr error;
     try {
         co_await slot->create_version(id, offset, version_id);
@@ -311,7 +311,7 @@ resize_one(rawio::Queue& queue, const rawstd::URI& target, uint64_t new_size) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t offset = extract_offset(target);
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, strip_path(target), 1);
+        co_await rawstor::Slot::create(queue, strip_path(target));
     std::exception_ptr error;
     try {
         co_await slot->resize(id, offset, new_size);
@@ -345,7 +345,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> meta_one(
     RawstdUUID version_id
 ) {
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, location, 1);
+        co_await rawstor::Slot::create(queue, location);
     std::vector<RawstorObjectMeta> ret;
     std::exception_ptr error;
     try {
@@ -370,7 +370,7 @@ rawstd::Task<std::vector<uint64_t>> chunks_one(
     RawstdUUID version_id
 ) {
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, location, 1);
+        co_await rawstor::Slot::create(queue, location);
     std::vector<rawstor::ChunkGroup> groups;
     RawstdUUID token{};
     std::exception_ptr error;
@@ -395,7 +395,7 @@ rawstd::Task<std::vector<RawstdUUID>> versions_one(
     rawio::Queue& queue, rawstd::URI location, RawstdUUID id, uint64_t offset
 ) {
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, location, 1);
+        co_await rawstor::Slot::create(queue, location);
     std::vector<RawstdUUID> ret;
     std::exception_ptr error;
     try {
@@ -418,7 +418,7 @@ rawstd::Task<std::vector<rawstd::URI>> member_locations_one(
     RawstdUUID version_id
 ) {
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, location, 1);
+        co_await rawstor::Slot::create(queue, location);
     std::vector<rawstd::URI> ret;
     std::exception_ptr error;
     try {
@@ -1527,7 +1527,7 @@ rawstd::Task<void> Target::set_member_sync_state(
     }
 
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, members[member_index], 1);
+        co_await rawstor::Slot::create(queue, members[member_index]);
     std::exception_ptr error;
     try {
         co_await slot->set_sync_state(id, offset, sync_state);
