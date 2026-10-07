@@ -23,6 +23,35 @@
 
 namespace {
 
+// A previous instance killed outright (SIGKILL, a crash) never got to
+// unlink its socket, so bind(2) would fail with EADDRINUSE and every
+// restart with it. Remove the socket file if nothing is listening on it
+// any more -- connecting is the only way to tell; a live instance still
+// makes bind(2) fail as before.
+void remove_stale_socket(const sockaddr_un& addr) {
+    struct stat st;
+    if (lstat(addr.sun_path, &st) || !S_ISSOCK(st.st_mode)) {
+        errno = 0;
+        return;
+    }
+
+    int probe = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (probe < 0) {
+        RAWSTD_THROW_ERRNO();
+    }
+    int res =
+        connect(probe, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr));
+    int errsv = errno;
+    close(probe);
+    if (res && errsv == ECONNREFUSED) {
+        rawstd_info("Removing stale socket %s\n", addr.sun_path);
+        if (unlink(addr.sun_path) && errno != ENOENT) {
+            RAWSTD_THROW_ERRNO();
+        }
+    }
+    errno = 0;
+}
+
 int open_unix_socket(const std::string& socket_path) {
     int server_socket = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_socket < 0) {
@@ -53,6 +82,8 @@ int open_unix_socket(const std::string& socket_path) {
                 << " characters";
             throw std::runtime_error(oss.str());
         }
+
+        remove_stale_socket(addr);
 
         if (bind(
                 server_socket, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)
