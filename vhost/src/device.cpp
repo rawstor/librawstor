@@ -7,6 +7,7 @@
 
 #include <rawstd/coro.hpp>
 #include <rawstd/endian.h>
+#include <rawstd/gcc.h>
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.h>
@@ -16,14 +17,19 @@
 #include <rawstor/rawio.h>
 #include <rawstor/target.h>
 
+#include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
+
+#include <fcntl.h>
 
 #include <errno.h>
 #include <inttypes.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -289,6 +295,33 @@ public:
         const vhost_vring_state& state = _op.payload().state;
         oss << "state(index=" << state.index << ", num=" << state.num << ")";
         return oss.str();
+    }
+};
+
+class InflightReply : public Reply {
+private:
+    DeviceOp& _op;
+
+public:
+    InflightReply(DeviceOp& op, const VhostUserInflight& inflight, int fd) :
+        Reply(op, sizeof(op.payload().inflight), 0, set_fd(op, fd)),
+        _op(op) {
+        _op.payload().inflight = inflight;
+    }
+
+    std::string str() const override {
+        std::ostringstream oss;
+        const VhostUserInflight& inflight = _op.payload().inflight;
+        oss << "inflight(mmap_size=" << inflight.mmap_size
+            << ", mmap_offset=" << inflight.mmap_offset << ")";
+        return oss.str();
+    }
+
+private:
+    // Reply's constructor copies the fds to send from op.fds().
+    static int set_fd(DeviceOp& op, int fd) {
+        op.fds().fds[0] = fd;
+        return 1;
     }
 };
 
@@ -735,6 +768,75 @@ std::unique_ptr<Reply> add_mem_reg(DeviceOp& op) {
  * VHOST_USER_ADD_MEM_REG. Identified by guest physical address and size; the
  * file descriptor, if any is attached, is not used.
  */
+/**
+ * Front-end asks for shared memory to track in-flight descriptors in,
+ * which it then keeps across back-end restarts and hands back via
+ * VHOST_USER_SET_INFLIGHT_FD.
+ */
+std::unique_ptr<Reply> get_inflight_fd(DeviceOp& op) {
+    const VhostUserHeader& header = op.header();
+    VhostUserFds& fds = op.fds();
+
+    if (fds.fd_num > 0) {
+        close_fds(fds);
+    }
+
+    if (header.size != sizeof(VhostUserInflight)) {
+        rawstd_error(
+            "Invalid get_inflight_fd message size: %u\n",
+            (unsigned int)header.size
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+
+    VhostUserInflight inflight = op.payload().inflight;
+    rawstd_debug(
+        "get_inflight_fd: num_queues=%u queue_size=%u\n",
+        (unsigned int)inflight.num_queues, (unsigned int)inflight.queue_size
+    );
+
+    int fd = op.device().get_inflight_fd(
+        inflight.num_queues, inflight.queue_size, inflight.mmap_size
+    );
+    inflight.mmap_offset = 0;
+
+    return std::make_unique<InflightReply>(op, inflight, fd);
+}
+
+/**
+ * Front-end hands back the in-flight memory it got from
+ * VHOST_USER_GET_INFLIGHT_FD -- on every device start, including after
+ * reconnecting to a restarted back-end.
+ */
+std::unique_ptr<Reply> set_inflight_fd(DeviceOp& op) {
+    const VhostUserHeader& header = op.header();
+    VhostUserFds& fds = op.fds();
+
+    if (fds.fd_num != 1 || header.size != sizeof(VhostUserInflight)) {
+        rawstd_error(
+            "Invalid set_inflight_fd message size: %u fds: %u\n",
+            (unsigned int)header.size, (unsigned int)fds.fd_num
+        );
+        close_fds(fds);
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+
+    const VhostUserInflight& inflight = op.payload().inflight;
+    rawstd_debug(
+        "set_inflight_fd: mmap_size=%" PRIu64 " mmap_offset=%" PRIu64
+        " num_queues=%u queue_size=%u\n",
+        inflight.mmap_size, inflight.mmap_offset,
+        (unsigned int)inflight.num_queues, (unsigned int)inflight.queue_size
+    );
+
+    op.device().set_inflight_fd(
+        fds.fds[0], inflight.mmap_size, inflight.mmap_offset,
+        inflight.num_queues, inflight.queue_size
+    );
+
+    return nullptr;
+}
+
 std::unique_ptr<Reply> rem_mem_reg(DeviceOp& op) {
     const VhostUserHeader& header = op.header();
     VhostUserPayload& payload = op.payload();
@@ -810,6 +912,10 @@ std::unique_ptr<Reply> response(DeviceOp& op) {
         return add_mem_reg(op);
     case VHOST_USER_REM_MEM_REG:
         return rem_mem_reg(op);
+    case VHOST_USER_GET_INFLIGHT_FD:
+        return get_inflight_fd(op);
+    case VHOST_USER_SET_INFLIGHT_FD:
+        return set_inflight_fd(op);
     default:
         rawstd_error("Unexpected request: %d\n", op.header().request);
         throw std::runtime_error("Unexpected request");
@@ -952,6 +1058,63 @@ rawstd::DetachedTask dispatch_loop(
     }
 }
 
+// In-flight memory dimensions as the front-end gives them: at most as
+// many queues as GET_QUEUE_NUM reports, each no bigger than a split ring
+// can be (2^15).
+void check_inflight_dimensions(uint16_t num_queues, uint16_t queue_size) {
+    if (num_queues == 0 || num_queues > rawstor::vhost::Device::MAX_QUEUES ||
+        queue_size == 0 || queue_size > 32768) {
+        rawstd_error(
+            "Invalid in-flight memory dimensions: %u queues of %u\n",
+            (unsigned int)num_queues, (unsigned int)queue_size
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+}
+
+// Zeroed anonymous shared memory of `size` bytes the front-end can map
+// too (it only ever receives the fd), for VHOST_USER_GET_INFLIGHT_FD.
+int create_shm(size_t size) {
+#if defined(RAWSTD_ON_LINUX)
+    int fd =
+        memfd_create("rawstor-vhost-inflight", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (fd == -1) {
+        RAWSTD_THROW_ERRNO();
+    }
+#else
+    static std::atomic<unsigned int> seq{0};
+    std::ostringstream name;
+    name << "/rawstor-vhost-inflight-" << getpid() << "-" << seq++;
+    int fd = shm_open(name.str().c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
+    if (fd == -1) {
+        RAWSTD_THROW_ERRNO();
+    }
+    shm_unlink(name.str().c_str());
+    int cres = rawstd_socket_set_cloexec(fd);
+    if (cres < 0) {
+        close(fd);
+        RAWSTD_THROW_SYSTEM_ERROR(-cres);
+    }
+#endif
+
+    if (ftruncate(fd, static_cast<off_t>(size))) {
+        int errsv = errno;
+        close(fd);
+        RAWSTD_THROW_SYSTEM_ERROR(errsv);
+    }
+
+#if defined(RAWSTD_ON_LINUX)
+    // The front-end can't resize it out from under our mapping.
+    if (fcntl(fd, F_ADD_SEALS, F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL)) {
+        int errsv = errno;
+        close(fd);
+        RAWSTD_THROW_SYSTEM_ERROR(errsv);
+    }
+#endif
+
+    return fd;
+}
+
 size_t find_mem_region_pos(
     const std::vector<std::unique_ptr<rawstor::vhost::DevRegion>>& regions,
     const VhostUserMemoryRegion& m
@@ -1069,7 +1232,12 @@ Device::Device(
     _config{},
     _wce_enabled(write_cache_enabled),
     _postcopy_listening(false),
-    _wake_fd(wake_fd) {
+    _wake_fd(wake_fd),
+    _inflight_fd(-1),
+    _inflight_addr(nullptr),
+    _inflight_size(0),
+    _inflight_num_queues(0),
+    _inflight_queue_size(0) {
     _regions.reserve(VHOST_USER_MAX_RAM_SLOTS);
 
     int res = rawio_queue_create(queue_size, &_queue);
@@ -1145,6 +1313,20 @@ Device::Device(
 }
 
 Device::~Device() {
+    // Let every request already in flight complete (and its completion
+    // reach the used ring) before going away: on reconnecting, QEMU
+    // carries on from used->idx when GET_VRING_BASE went unanswered, so
+    // whatever is left in flight here would never complete for the guest.
+    // pause() rather than just stop(), since a VIRTIO_BLK_T_FLUSH still in
+    // flight on one VirtQueue needs every other one still running to
+    // complete -- see other_vqs().
+    rawstd_info("Waiting for in-flight requests to complete\n");
+    for (auto& vq : _vqs) {
+        if (vq != nullptr) {
+            vq->pause();
+        }
+    }
+
     // Each VirtQueue tears down its own kick_fd/call_fd ops, its own
     // RawstorObject and its own RawIOQueue on its own thread as part of
     // stop() -- see VirtQueue::_run().
@@ -1152,6 +1334,14 @@ Device::~Device() {
         if (vq != nullptr) {
             vq->stop();
         }
+    }
+
+    // Only now that no VirtQueue can still be writing to it.
+    if (_inflight_addr != nullptr) {
+        munmap(_inflight_addr, _inflight_size);
+    }
+    if (_inflight_fd != -1) {
+        close(_inflight_fd);
     }
 
     int cres = rawio_cancel_all(_queue, _fd);
@@ -1226,7 +1416,8 @@ uint64_t Device::get_protocol_features() const noexcept {
             1ull << VHOST_USER_PROTOCOL_F_BACKEND_REQ |
             1ull << VHOST_USER_PROTOCOL_F_REPLY_ACK |
             1ull << VHOST_USER_PROTOCOL_F_CONFIGURE_MEM_SLOTS |
-            1ull << VHOST_USER_PROTOCOL_F_CONFIG) |
+            1ull << VHOST_USER_PROTOCOL_F_CONFIG |
+            1ull << VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD) |
            _protocol_features;
 }
 
@@ -1246,6 +1437,11 @@ VirtQueue& Device::_vq(size_t index) {
     vq->attach(*this, index);
     vq->start(_target, _queue_size, _readonly);
     rawstd_info("Started virtqueue %zu\n", index);
+
+    InflightRegion* region = _inflight_region(index);
+    if (region != nullptr) {
+        vq->post_set_inflight(region);
+    }
 
     {
         std::unique_lock lock(_vqs_mutex);
@@ -1354,6 +1550,107 @@ void Device::set_config(
 
     _config.wce = *data;
     _wce_enabled.store(*data != 0, std::memory_order_relaxed);
+}
+
+InflightRegion* Device::_inflight_region(size_t index) const noexcept {
+    if (_inflight_addr == nullptr || index >= _inflight_num_queues) {
+        return nullptr;
+    }
+    return reinterpret_cast<InflightRegion*>(
+        static_cast<char*>(_inflight_addr) +
+        index * inflight_region_size(_inflight_queue_size)
+    );
+}
+
+void Device::_map_inflight(
+    int fd, uint64_t mmap_size, uint64_t mmap_offset, uint16_t num_queues,
+    uint16_t queue_size
+) {
+    try {
+        check_inflight_dimensions(num_queues, queue_size);
+        if (mmap_size < num_queues * inflight_region_size(queue_size)) {
+            throw std::runtime_error(
+                "in-flight memory too small for its queues"
+            );
+        }
+        // mmap() itself happily maps past the end of a short file; the
+        // first access there would SIGBUS.
+        struct stat st;
+        if (fstat(fd, &st)) {
+            RAWSTD_THROW_ERRNO();
+        }
+        uint64_t file_size = static_cast<uint64_t>(st.st_size);
+        if (mmap_offset > file_size || mmap_size > file_size - mmap_offset) {
+            throw std::runtime_error("in-flight memory fd is too short");
+        }
+    } catch (...) {
+        close(fd);
+        throw;
+    }
+
+    void* addr = mmap(
+        nullptr, mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
+        static_cast<off_t>(mmap_offset)
+    );
+    if (addr == MAP_FAILED) {
+        int errsv = errno;
+        close(fd);
+        RAWSTD_THROW_SYSTEM_ERROR(errsv);
+    }
+
+    // No VirtQueue may touch the old regions once they're unmapped below:
+    // paused, none pops or completes anything, and the SetInflight posted
+    // after each pause() is applied before its resume().
+    for (auto& vq : _vqs) {
+        if (vq != nullptr) {
+            vq->pause();
+        }
+    }
+
+    void* old_addr = _inflight_addr;
+    size_t old_size = _inflight_size;
+    int old_fd = _inflight_fd;
+
+    _inflight_fd = fd;
+    _inflight_addr = addr;
+    _inflight_size = mmap_size;
+    _inflight_num_queues = num_queues;
+    _inflight_queue_size = queue_size;
+
+    for (uint16_t i = 0; i < num_queues; ++i) {
+        _inflight_region(i)->desc_num = queue_size;
+    }
+
+    for (size_t i = 0; i < _vqs.size(); ++i) {
+        if (_vqs[i] != nullptr) {
+            _vqs[i]->post_set_inflight(_inflight_region(i));
+            _vqs[i]->resume();
+        }
+    }
+
+    if (old_addr != nullptr) {
+        munmap(old_addr, old_size);
+    }
+    if (old_fd != -1) {
+        close(old_fd);
+    }
+}
+
+int Device::get_inflight_fd(
+    uint16_t num_queues, uint16_t queue_size, uint64_t& mmap_size
+) {
+    check_inflight_dimensions(num_queues, queue_size);
+    mmap_size = num_queues * inflight_region_size(queue_size);
+    int fd = create_shm(mmap_size);
+    _map_inflight(fd, mmap_size, 0, num_queues, queue_size);
+    return fd;
+}
+
+void Device::set_inflight_fd(
+    int fd, uint64_t mmap_size, uint64_t mmap_offset, uint16_t num_queues,
+    uint16_t queue_size
+) {
+    _map_inflight(fd, mmap_size, mmap_offset, num_queues, queue_size);
 }
 
 uint64_t Device::add_mem_reg(const VhostUserMemoryRegion& m, int fd) {

@@ -4,6 +4,7 @@
 #include "iovaregion.hpp"
 
 #include <stdheaders/linux/vduse.h>
+#include <vduse/inflight.hpp>
 #include <vduse/virtqueue.hpp>
 
 #include <rawstd/coro.hpp>
@@ -87,6 +88,31 @@ private:
     bool _readonly;
     mutable std::shared_mutex _vqs_mutex;
     std::vector<std::unique_ptr<VirtQueue>> _vqs;
+    /* Which virtqueues _enable_queue() has handed a kick_fd to and not
+     * yet _disable_queue()d. Control-plane thread only. */
+    std::vector<bool> _vqs_enabled;
+    /* VDUSE_CREATE_DEV found the device already there, left behind by a
+     * previous instance of this process -- see loop(). */
+    bool _reattached;
+    /* In-flight log file (see _open_inflight()) and its mapping: one
+     * InflightRegion per virtqueue, inflight_region_size(_queue_size)
+     * bytes each. nullptr if it couldn't be set up. */
+    std::string _inflight_path;
+    void* _inflight_addr;
+    size_t _inflight_size;
+
+    /**
+     * Map the in-flight log for this device, a file under /dev/shm named
+     * after it: tmpfs, so it survives this process (unlike memory of its
+     * own) for as long as the kernel-side device itself can, i.e. until
+     * reboot. Reused as is when reattaching to a device it matches,
+     * zeroed otherwise. Failing to set it up only loses resubmission
+     * after a crash, so that's logged rather than thrown.
+     */
+    void _open_inflight();
+
+    /* Virtqueue `index`'s InflightRegion, or nullptr without a log. */
+    InflightRegion* _inflight_region(size_t index) const noexcept;
     std::atomic<uint64_t> _features;
     bool _write_cache_enabled;
     int _wake_fd;
@@ -102,9 +128,15 @@ private:
      */
     VirtQueue& _vq(size_t index);
 
-    void _enable_queue(size_t index);
+    /**
+     * Start servicing virtqueue `index` if the driver has marked it
+     * ready; a no-op if it already is serviced. `resume` picks up the
+     * ring where a previous instance of this process left it (used->idx)
+     * instead of at the driver-set state -- see loop().
+     */
+    void _enable_queue(size_t index, bool resume);
     void _disable_queue(size_t index);
-    void _start_dataplane();
+    void _start_dataplane(bool resume);
     void _stop_dataplane();
     void _remove_iova_regions(uint64_t start, uint64_t last);
 

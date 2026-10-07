@@ -15,6 +15,7 @@
 #include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -207,6 +208,10 @@ Device::Device(
     _queue_size(queue_size),
     _readonly(readonly),
     _vqs(num_queues),
+    _vqs_enabled(num_queues, false),
+    _reattached(false),
+    _inflight_addr(nullptr),
+    _inflight_size(0),
     _features(0),
     _write_cache_enabled(write_cache_enabled),
     _wake_fd(wake_fd),
@@ -331,10 +336,17 @@ Device::Device(
         std::memcpy(devcfg->config, &config, config_size);
 
         // Tolerate EEXIST: a previous instance of this process may have
-        // crashed and left the kernel-side device around without ever
-        // reaching VDUSE_DESTROY_DEV; reattach to it instead of failing.
-        if (ioctl(_ctrl_fd, VDUSE_CREATE_DEV, devcfg) && errno != EEXIST) {
-            RAWSTD_THROW_ERRNO();
+        // crashed, or stopped while the device was still bound to a vDPA
+        // bus driver (which makes VDUSE_DESTROY_DEV fail), leaving the
+        // kernel-side device around; reattach to it instead of failing.
+        if (ioctl(_ctrl_fd, VDUSE_CREATE_DEV, devcfg)) {
+            if (errno != EEXIST) {
+                RAWSTD_THROW_ERRNO();
+            }
+            _reattached = true;
+            rawstd_info(
+                "vduse: reattaching to existing VDUSE device %s\n", _name_buf
+            );
         }
         errno = 0;
 
@@ -353,8 +365,13 @@ Device::Device(
             }
         }
 
+        _open_inflight();
+
         rawstd_info("Waiting for connection on %s\n", dev_path.c_str());
     } catch (...) {
+        if (_inflight_addr != nullptr) {
+            munmap(_inflight_addr, _inflight_size);
+        }
         if (_fd != -1) {
             close(_fd);
         }
@@ -372,6 +389,20 @@ Device::Device(
 }
 
 Device::~Device() {
+    // Let every request already in flight complete (and its completion
+    // reach the used ring) before going away: whatever is left in flight
+    // here would never complete for the driver, and couldn't be picked up
+    // again by a later instance resuming from used->idx (see loop()).
+    // pause() rather than just stop(), since a VIRTIO_BLK_T_FLUSH still in
+    // flight on one VirtQueue needs every other one still running to
+    // complete -- see other_vqs().
+    rawstd_info("vduse: waiting for in-flight requests to complete\n");
+    for (auto& vq : _vqs) {
+        if (vq != nullptr) {
+            vq->pause();
+        }
+    }
+
     // Graceful, best-effort deassign of every virtqueue's kick_fd before
     // tearing anything else down -- mirrors what a driver-initiated
     // VDUSE_SET_STATUS(0) would do. post_set_enabled(false) is
@@ -410,12 +441,19 @@ Device::~Device() {
         }
     }
 
+    if (_inflight_addr != nullptr) {
+        munmap(_inflight_addr, _inflight_size);
+    }
+
     if (_ctrl_fd != -1) {
         if (ioctl(_ctrl_fd, VDUSE_DESTROY_DEV, _name_buf)) {
             rawstd_error(
                 "Failed to destroy VDUSE device: %s\n", strerror(errno)
             );
             errno = 0;
+        } else if (!_inflight_path.empty()) {
+            // Nothing left for a later instance to resume.
+            unlink(_inflight_path.c_str());
         }
         if (close(_ctrl_fd)) {
             rawstd_error(
@@ -515,7 +553,7 @@ void Device::dispatch_control(
         if (req.s.status & VIRTIO_CONFIG_S_DRIVER_OK) {
             rawstd_info("Client connected: %s\n", _name_buf);
             try {
-                _start_dataplane();
+                _start_dataplane(false);
             } catch (const std::exception& e) {
                 // Typically a VirtQueue that couldn't connect to the
                 // target: the driver would keep queuing requests on a
@@ -599,7 +637,11 @@ VirtQueue& Device::_vq(size_t index) {
     return *slot;
 }
 
-void Device::_enable_queue(size_t index) {
+void Device::_enable_queue(size_t index, bool resume) {
+    if (_vqs_enabled.at(index)) {
+        return;
+    }
+
     vduse_vq_info info = {};
     info.index = static_cast<uint32_t>(index);
     if (ioctl(_fd, VDUSE_VQ_GET_INFO, &info)) {
@@ -618,6 +660,24 @@ void Device::_enable_queue(size_t index) {
 
     vq.post_set_vring_size(info.num);
     vq.post_set_vring_addr(info.desc_addr, info.driver_addr, info.device_addr);
+    if (resume) {
+        vq.post_set_vring_base(std::nullopt);
+    } else {
+        vq.post_set_vring_base(info.split.avail_index);
+    }
+
+    // Resuming, the log holds what the previous instance left in flight
+    // (and overrides the base just set); otherwise the driver has set the
+    // ring up afresh and nothing from before applies. The VirtQueue is
+    // disabled and drained here, so nothing else touches its region.
+    InflightRegion* region = _inflight_region(index);
+    if (region != nullptr) {
+        if (!resume) {
+            std::memset(region, 0, inflight_region_size(_queue_size));
+            region->desc_num = static_cast<uint16_t>(_queue_size);
+        }
+        vq.post_set_inflight(region);
+    }
 
     int fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (fd == -1) {
@@ -646,13 +706,98 @@ void Device::_enable_queue(size_t index) {
     // see VirtQueue::post_set_kick_fd()'s doc comment.
     vq.post_set_kick_fd(fd);
     vq.post_set_enabled(true);
+    _vqs_enabled[index] = true;
+}
+
+void Device::_open_inflight() {
+    std::string path =
+        std::string("/dev/shm/rawstor-vduse-") + _name_buf + ".inflight";
+    size_t size = _vqs.size() * inflight_region_size(_queue_size);
+
+    // /dev/shm is world-writable and the name predictable: never follow a
+    // symlink planted there, and only ever use (let alone truncate) a file
+    // that is entirely our own -- one someone else created or can also
+    // write could truncate a file they pointed it at, or feed us forged
+    // in-flight heads on reattach.
+    int fd =
+        open(path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd == -1) {
+        rawstd_warning(
+            "vduse: no in-flight log, failed to open %s: %s\n", path.c_str(),
+            strerror(errno)
+        );
+        errno = 0;
+        return;
+    }
+
+    struct stat st;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_uid != geteuid() ||
+        (st.st_mode & 077) || st.st_nlink != 1) {
+        rawstd_warning(
+            "vduse: no in-flight log, %s is not a private regular file of "
+            "this user\n",
+            path.c_str()
+        );
+        errno = 0;
+        close(fd);
+        return;
+    }
+
+    bool reuse = _reattached && static_cast<size_t>(st.st_size) == size;
+    if (_reattached && !reuse) {
+        rawstd_warning(
+            "vduse: %s doesn't match this device, starting a fresh "
+            "in-flight log\n",
+            path.c_str()
+        );
+    }
+    if (!reuse && (ftruncate(fd, 0) || ftruncate(fd, size))) {
+        rawstd_warning(
+            "vduse: no in-flight log, failed to size %s: %s\n", path.c_str(),
+            strerror(errno)
+        );
+        errno = 0;
+        close(fd);
+        return;
+    }
+
+    void* addr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    int errsv = errno;
+    close(fd);
+    if (addr == MAP_FAILED) {
+        rawstd_warning(
+            "vduse: no in-flight log, failed to map %s: %s\n", path.c_str(),
+            strerror(errsv)
+        );
+        errno = 0;
+        return;
+    }
+
+    _inflight_path = path;
+    _inflight_addr = addr;
+    _inflight_size = size;
+
+    for (size_t i = 0; i < _vqs.size(); ++i) {
+        _inflight_region(i)->desc_num = static_cast<uint16_t>(_queue_size);
+    }
+}
+
+InflightRegion* Device::_inflight_region(size_t index) const noexcept {
+    if (_inflight_addr == nullptr) {
+        return nullptr;
+    }
+    return reinterpret_cast<InflightRegion*>(
+        static_cast<char*>(_inflight_addr) +
+        index * inflight_region_size(static_cast<uint16_t>(_queue_size))
+    );
 }
 
 void Device::_disable_queue(size_t index) {
-    const auto& vq = _vqs.at(index);
-    if (vq == nullptr) {
+    if (!_vqs_enabled.at(index)) {
         return;
     }
+    _vqs_enabled[index] = false;
+    const auto& vq = _vqs[index];
 
     vq->post_set_enabled(false);
 
@@ -665,7 +810,7 @@ void Device::_disable_queue(size_t index) {
     errno = 0;
 }
 
-void Device::_start_dataplane() {
+void Device::_start_dataplane(bool resume) {
     uint64_t features = 0;
     if (ioctl(_fd, VDUSE_DEV_GET_FEATURES, &features)) {
         RAWSTD_THROW_ERRNO();
@@ -673,7 +818,7 @@ void Device::_start_dataplane() {
     _features.store(features, std::memory_order_relaxed);
 
     for (size_t i = 0; i < _vqs.size(); ++i) {
-        _enable_queue(i);
+        _enable_queue(i, resume);
     }
 }
 
@@ -750,6 +895,17 @@ rawstd::DetachedTask Device::_wake_task() {
 }
 
 void Device::loop() {
+    // A reattached device may already be in use: the driver has seen
+    // DRIVER_OK from it once and won't send VDUSE_SET_STATUS again, so
+    // start servicing whatever queues it has marked ready right away,
+    // carrying on from where the previous instance's completions left the
+    // ring -- exact as long as it exited with nothing in flight (see
+    // ~Device()). If the driver isn't that far yet, no queue is ready and
+    // its own DRIVER_OK later starts them as usual.
+    if (_reattached) {
+        _start_dataplane(true);
+    }
+
     dispatch_loop(_queue, _fd, *this);
     if (_wake_fd != -1) {
         _wake_task();

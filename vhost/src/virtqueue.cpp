@@ -14,9 +14,13 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <atomic>
+#include <stdexcept>
+#include <vector>
+
 #include <cerrno>
 #include <cstring>
-#include <stdexcept>
 
 // ---------------------------------------------------------------------
 // This file owns two things: the ring mechanism (unchanged from before
@@ -315,6 +319,10 @@ void VirtQueue::post_set_enabled(bool enabled) {
     _post(SetEnabled{enabled});
 }
 
+void VirtQueue::post_set_inflight(InflightRegion* region) {
+    _post(SetInflight{region});
+}
+
 uint16_t VirtQueue::get_vring_base() {
     GetVringBase cmd;
     std::future<uint16_t> f = cmd.reply.promise.get_future();
@@ -378,6 +386,10 @@ void VirtQueue::_apply(SetVringAddr&& cmd) {
 
 void VirtQueue::_apply(SetEnabled&& cmd) {
     _set_enabled(cmd.enabled);
+}
+
+void VirtQueue::_apply(SetInflight&& cmd) {
+    set_inflight(cmd.region);
 }
 
 void VirtQueue::_apply(GetVringBase&& cmd) {
@@ -570,6 +582,16 @@ std::unique_ptr<DescChain> VirtQueue::pop(const AddressTranslator& translate) {
         return nullptr;
     }
 
+    if (_inflight_check_pending) {
+        _check_inflight();
+    }
+
+    if (!_resubmit.empty()) {
+        uint16_t head = _resubmit.front();
+        _resubmit.pop_front();
+        return _read_chain(head, translate);
+    }
+
     uint16_t avail_idx = RAWSTD_LE16TOH(_ring.avail_idx());
     if (_last_avail_idx == avail_idx) {
         return nullptr;
@@ -578,6 +600,24 @@ std::unique_ptr<DescChain> VirtQueue::pop(const AddressTranslator& translate) {
     uint16_t head = RAWSTD_LE16TOH(_ring.avail_ring(_last_avail_idx));
     _last_avail_idx = static_cast<uint16_t>(_last_avail_idx + 1);
 
+    if (head >= num) {
+        throw std::runtime_error("vhost: descriptor head out of range");
+    }
+
+    if (_inflight_log != nullptr) {
+        // Marked before the chain is even parsed: a head popped but
+        // dropped as malformed still counts as popped-and-not-completed,
+        // which is what _check_inflight() derives last_avail_idx from.
+        _inflight_log->desc[head].counter = _inflight_counter++;
+        _inflight_log->desc[head].inflight = 1;
+    }
+
+    return _read_chain(head, translate);
+}
+
+std::unique_ptr<DescChain>
+VirtQueue::_read_chain(uint16_t head, const AddressTranslator& translate) {
+    unsigned int num = _ring.num();
     if (head >= num) {
         throw std::runtime_error("vhost: descriptor head out of range");
     }
@@ -664,6 +704,11 @@ std::unique_ptr<DescChain> VirtQueue::pop(const AddressTranslator& translate) {
 }
 
 void VirtQueue::push(uint16_t head, uint32_t len) {
+    if (_inflight_log != nullptr) {
+        _inflight_log->last_batch_head = head;
+        std::atomic_thread_fence(std::memory_order_release);
+    }
+
     uint16_t pos = _used_idx;
 
     _ring.set_used(
@@ -679,6 +724,88 @@ void VirtQueue::push(uint16_t head, uint32_t len) {
      */
     __sync_synchronize();
     _ring.set_used_idx(RAWSTD_LE16TOH(_used_idx));
+
+    if (_inflight_log != nullptr) {
+        std::atomic_thread_fence(std::memory_order_release);
+        _inflight_log->desc[head].inflight = 0;
+        std::atomic_thread_fence(std::memory_order_release);
+        _inflight_log->used_idx = _used_idx;
+    }
+}
+
+void VirtQueue::set_inflight(InflightRegion* region) noexcept {
+    _inflight_log = region;
+    _inflight_check_pending = region != nullptr;
+    _resubmit.clear();
+}
+
+void VirtQueue::_check_inflight() {
+    _inflight_check_pending = false;
+    InflightRegion* log = _inflight_log;
+
+    if (log->desc_num < _ring.num()) {
+        rawstd_error(
+            "vhost: vq %zu: in-flight log holds %u heads, ring has %u; "
+            "not tracking in-flight requests\n",
+            _index, static_cast<unsigned int>(log->desc_num), _ring.num()
+        );
+        _inflight_log = nullptr;
+        return;
+    }
+
+    if (log->version == 0) {
+        log->version = inflight_version;
+        return;
+    }
+
+    uint16_t used_idx = RAWSTD_LE16TOH(_ring.used_idx());
+    _used_idx = used_idx;
+
+    // Died after publishing used->idx for last_batch_head but before
+    // recording that here: that head did complete.
+    if (log->used_idx != used_idx) {
+        if (log->last_batch_head < log->desc_num) {
+            log->desc[log->last_batch_head].inflight = 0;
+        }
+        std::atomic_thread_fence(std::memory_order_release);
+        log->used_idx = used_idx;
+    }
+
+    // A head is only ever marked once popped, so always below the ring
+    // size; one beyond it is garbage (or a log written for a bigger
+    // ring) that must not reach _read_chain().
+    std::vector<uint16_t> heads;
+    for (uint16_t i = 0; i < log->desc_num; ++i) {
+        if (!log->desc[i].inflight) {
+            continue;
+        }
+        if (i >= _ring.num()) {
+            rawstd_warning(
+                "vhost: vq %zu: dropping in-flight head %u beyond ring size "
+                "%u\n",
+                _index, static_cast<unsigned int>(i), _ring.num()
+            );
+            log->desc[i].inflight = 0;
+            continue;
+        }
+        heads.push_back(i);
+    }
+    std::sort(heads.begin(), heads.end(), [log](uint16_t a, uint16_t b) {
+        return log->desc[a].counter < log->desc[b].counter;
+    });
+
+    // Everything popped either completed (counted in used->idx) or is
+    // still in flight.
+    _last_avail_idx = static_cast<uint16_t>(used_idx + heads.size());
+    _inflight_counter = heads.empty() ? 0 : log->desc[heads.back()].counter + 1;
+    _resubmit.assign(heads.begin(), heads.end());
+
+    if (!heads.empty()) {
+        rawstd_info(
+            "vhost: vq %zu: resubmitting %zu request(s) left in flight\n",
+            _index, heads.size()
+        );
+    }
 }
 
 bool VirtQueue::should_notify(bool event_idx_negotiated) noexcept {

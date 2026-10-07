@@ -11,7 +11,8 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-libvduse_la_SOURCES = $(top_srcdir)/vduse/include/vduse/ring.hpp \
+libvduse_la_SOURCES = $(top_srcdir)/vduse/include/vduse/inflight.hpp \
+                      $(top_srcdir)/vduse/include/vduse/ring.hpp \
                       $(top_srcdir)/vduse/include/vduse/request.hpp \
                       $(top_srcdir)/vduse/include/vduse/virtqueue.hpp \
                       $(top_srcdir)/include/stdheaders/linux/vduse.h \

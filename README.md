@@ -295,7 +295,13 @@ protocol error (e.g. failing to connect a new virtqueue to `TARGET`) is reported
 the process, rather than silently waiting for another connection. Pair it
 with `reconnect=1` on the QEMU chardev and an external supervisor (e.g.
 `systemd` with `Restart=always`, or a wrapper loop) if the backend needs to
-survive guest-side reconnects. Send `SIGINT`/`SIGTERM` to stop it.
+survive guest-side reconnects. Send `SIGINT`/`SIGTERM` to stop it: it
+first waits for every request already in flight to complete, so QEMU,
+reconnecting to the restarted backend, carries on exactly where it left
+off. It also negotiates `VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD`: every
+request is logged in shared memory QEMU keeps across backend restarts, so
+after a crash the restarted backend resubmits whatever was left in
+flight, in its original order.
 
 ### Packaging and QEMU access
 
@@ -438,11 +444,22 @@ device itself is destroyed out from under it -- unlike `rawstor-vhost`,
 there is no per-connection front-end to disconnect from, since the kernel
 is always "connected". Attaching the created device to the vDPA bus (`vdpa
 dev add name UUID mgmtdev vduse`) and, if applicable, driving it from a
-VMM, are separate, external steps. If the process is restarted while
-requests are in flight, it does not attempt to resubmit them (no
-inflight-request log is kept) -- a crash mid-request is visible to the
-guest as that request never completing, the same failure mode a guest
-already has to tolerate from a host crash.
+VMM, are separate, external steps.
+
+On `SIGINT`/`SIGTERM` it first waits for every request already in flight
+to complete. A device still bound to the vDPA bus outlives the process; a
+restarted `rawstor-vduse` reattaches to it and, if the driver is already
+using it, resumes every ready virtqueue where the previous instance left
+off, without the driver noticing -- as long as it is back within the
+kernel's VDUSE message timeout (`/sys/class/vduse/UUID/msg_timeout`, 30 s
+by default), after which the kernel marks the device broken. Requests in
+flight during a crash are resubmitted too: every request is logged, in
+the same format as vhost-user's in-flight memory, in
+`/dev/shm/rawstor-vduse-UUID.inflight`, a tmpfs file that outlives the
+process but not a reboot (which takes the VDUSE device with it anyway),
+and is removed along with the device. A reattached device keeps the
+virtqueue count it was created with, so `--num-queues` must not change
+across restarts.
 
 ### Packaging and access
 

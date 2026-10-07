@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - Unreleased
 
 ### Added
+- `rawstor-vhost` supports `VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD`, and `rawstor-vduse` keeps an equivalent in-flight log in `/dev/shm`, so requests in flight when the backend crashes are resubmitted after it restarts instead of never completing.
 - `rawstor-ost@<uuid>.service` systemd template (one instance per OST, configured by `/etc/rawstor/ost/<uuid>.conf`, serving `/var/lib/rawstor/ost/<uuid>` by default), so a host runs several OSTs; installing the package starts nothing and an upgrade restarts the running instances, of `rawstor-mds@` too.
 - `rawstor info mds://` reads cached backend space statistics from MDS, with configurable periodic health probes and placement restricted to available backends.
 - N-way mirroring ([design](docs/mirroring.md)): quorum-gated open, degrade-and-continue writes, read failover and repair, and online resync of a stale, reconnected or missing member (a copy lost from one member is recreated at open while the remaining copies are still a majority), with each copy's own consistency state persisted by its backend (a `meta` file next to `file://`'s data, an LVM tag, a ZFS user property).
@@ -37,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rawstor-vhost`'s `--num-queues`: it now serves as many virtqueues as the front-end sets up (QEMU's own `num-queues=`), so QEMU no longer fails to start a guest with more vCPUs than `--num-queues` (default `4`).
 
 ### Fixed
+- A restarted `rawstor-vduse` now resumes serving a device the driver is already using instead of leaving its I/O hanging, and starts each virtqueue from the driver-set ring state, so a guest that resets the device and sets it up again no longer hangs either.
+- `rawstor-vhost`/`rawstor-vduse` now let in-flight requests complete on `SIGINT`/`SIGTERM` instead of dropping them, so a planned restart is invisible to the guest.
+- `rawstor-vhost` killed outright left its socket file behind, and every restart then failed with "Address already in use"; a socket nothing listens on any more is now removed at startup, and a second instance started on the same socket now fails right away instead.
 - Object I/O now rejects ranges whose offset plus size would overflow, preventing access to the beginning of a multi-chunk object.
 - `rawstor-ost` now answers `-ENOSYS` for a command it doesn't recognize instead of just dropping the connection, so a newer client can tell "unsupported" apart from a transport failure.
 - The `rawstor-vduse` deb package (present since 0.2.10) was never actually built or published: CI's packaging job never copied its `.install`/`.postinst`/`.prerm` files into place.
