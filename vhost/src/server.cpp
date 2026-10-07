@@ -8,7 +8,9 @@
 
 #include <rawstor/rawstor.h>
 
+#include <fcntl.h>
 #include <inttypes.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -23,11 +25,37 @@
 
 namespace {
 
+// Take `<socket_path>.lock`, failing with EADDRINUSE if another
+// rawstor-vhost already holds it -- i.e. is serving (or still setting up,
+// or tearing down) that socket. The lock file is never unlinked: removing
+// it would let two instances each lock a different inode under the same
+// name.
+int lock_socket_path(const std::string& socket_path) {
+    std::string lock_path = socket_path + ".lock";
+    int fd = open(lock_path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0660);
+    if (fd == -1) {
+        RAWSTD_THROW_ERRNO();
+    }
+    if (flock(fd, LOCK_EX | LOCK_NB)) {
+        int errsv = errno;
+        close(fd);
+        if (errsv == EWOULDBLOCK) {
+            rawstd_error(
+                "Another rawstor-vhost already serves %s\n", socket_path.c_str()
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EADDRINUSE);
+        }
+        RAWSTD_THROW_SYSTEM_ERROR(errsv);
+    }
+    return fd;
+}
+
 // A previous instance killed outright (SIGKILL, a crash) never got to
 // unlink its socket, so bind(2) would fail with EADDRINUSE and every
-// restart with it. Remove the socket file if nothing is listening on it
-// any more -- connecting is the only way to tell; a live instance still
-// makes bind(2) fail as before.
+// restart with it. Called with the path's lock held (lock_socket_path()),
+// so no other rawstor-vhost can be binding it concurrently; the connect
+// probe only guards against some unrelated process listening there,
+// which still makes bind(2) fail as before.
 void remove_stale_socket(const sockaddr_un& addr) {
     struct stat st;
     if (lstat(addr.sun_path, &st) || !S_ISSOCK(st.st_mode)) {
@@ -146,8 +174,15 @@ Server::Server(
     _socket_path(socket_path),
     _write_cache_enabled(write_cache_enabled),
     _readonly(readonly),
-    _fd(open_unix_socket(_socket_path)),
+    _lock_fd(lock_socket_path(_socket_path)),
+    _fd(-1),
     _wake_fd(wake_fd) {
+    try {
+        _fd = open_unix_socket(_socket_path);
+    } catch (...) {
+        close(_lock_fd);
+        throw;
+    }
 }
 
 Server::~Server() {
@@ -158,6 +193,10 @@ Server::~Server() {
         oss << "Failed to close socket " << _socket_path << ": " << e.what();
         rawstd_error("%s\n", oss.str().c_str());
     }
+
+    // Only once the socket is gone, so the next instance can't find it
+    // half torn down.
+    close(_lock_fd);
 }
 
 void Server::loop() {

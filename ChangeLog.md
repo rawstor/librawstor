@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - A restarted `rawstor-vduse` now resumes serving a device the driver is already using instead of leaving its I/O hanging, and starts each virtqueue from the driver-set ring state, so a guest that resets the device and sets it up again no longer hangs either.
 - `rawstor-vhost`/`rawstor-vduse` now let in-flight requests complete on `SIGINT`/`SIGTERM` instead of dropping them, so a planned restart is invisible to the guest.
-- `rawstor-vhost` killed outright left its socket file behind, and every restart then failed with "Address already in use"; a socket nothing listens on any more is now removed at startup.
+- `rawstor-vhost` killed outright left its socket file behind, and every restart then failed with "Address already in use"; a socket nothing listens on any more is now removed at startup, and a second instance started on the same socket now fails right away instead.
 - Object I/O now rejects ranges whose offset plus size would overflow, preventing access to the beginning of a multi-chunk object.
 - `rawstor-ost` now answers `-ENOSYS` for a command it doesn't recognize instead of just dropping the connection, so a newer client can tell "unsupported" apart from a transport failure.
 - The `rawstor-vduse` deb package (present since 0.2.10) was never actually built or published: CI's packaging job never copied its `.install`/`.postinst`/`.prerm` files into place.

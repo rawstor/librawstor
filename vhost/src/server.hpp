@@ -13,6 +13,11 @@ private:
     std::string _socket_path;
     bool _write_cache_enabled;
     bool _readonly;
+    /* flock()ed `<socket path>.lock`, held for this Server's whole
+     * lifetime: at most one rawstor-vhost serves a given socket path, so
+     * whatever socket file it finds there at startup is stale -- see
+     * open_unix_socket(). */
+    int _lock_fd;
     int _fd;
     int _wake_fd;
 
