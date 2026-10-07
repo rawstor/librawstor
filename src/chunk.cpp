@@ -33,6 +33,10 @@
 #include <system_error>
 #include <utility>
 
+#include <fcntl.h>
+#include <poll.h>
+#include <unistd.h>
+
 #include <cerrno>
 #include <cinttypes>
 #include <cstddef>
@@ -110,6 +114,65 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
 
 namespace rawstor {
 
+namespace {
+
+/*
+ * One-shot wakeup across threads: a coroutine waits on its own queue for
+ * the read end of a pipe to turn readable, any thread wakes it by writing
+ * one byte. A plain pipe rather than an eventfd, so it builds on macOS.
+ */
+class Wake final {
+private:
+    int _fds[2];
+
+public:
+    Wake() {
+        if (pipe(_fds) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+        for (int fd : _fds) {
+            if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) == -1 ||
+                fcntl(fd, F_SETFD, FD_CLOEXEC) == -1) {
+                int error = errno;
+                close(_fds[0]);
+                close(_fds[1]);
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+        }
+    }
+    Wake(const Wake&) = delete;
+    Wake(Wake&&) = delete;
+    Wake& operator=(const Wake&) = delete;
+    Wake& operator=(Wake&&) = delete;
+
+    ~Wake() {
+        close(_fds[0]);
+        close(_fds[1]);
+    }
+
+    void signal() noexcept {
+        char c = 0;
+        ssize_t res = write(_fds[1], &c, 1);
+        (void)res;
+    }
+
+    rawstd::Task<void> wait(rawio::Queue& queue) {
+        co_await queue.poll(_fds[0], POLLIN);
+    }
+};
+
+using WaitList = std::vector<std::shared_ptr<Wake>>;
+
+// Called with the owning mutex held.
+void notify_all(WaitList& list) noexcept {
+    for (const std::shared_ptr<Wake>& wake : list) {
+        wake->signal();
+    }
+    list.clear();
+}
+
+} // namespace
+
 /*
  * Control transitions take `busy` (_shared_lock()), held across their
  * own metadata round trips; every field below is written only with both
@@ -144,9 +207,13 @@ struct SharedControl {
     // recorded with a new sync_id yet.
     size_t unrecorded_stale = 0;
 
+    // Waiting for `busy` to clear.
+    WaitList lock_waiters;
+
     void unlock() noexcept {
         std::lock_guard<std::mutex> guard(mu);
         busy = false;
+        notify_all(lock_waiters);
     }
 };
 
@@ -181,20 +248,40 @@ std::shared_ptr<SharedControl> shared_control(
     return ret;
 }
 
-// Polls rather than parks: transitions are rare, and the holder may run
-// on another thread's queue, which has no way to resume a coroutine
-// parked on this one.
-rawstd::Task<void> shared_lock(rawio::Queue& queue, SharedControl& shared) {
+/*
+ * Suspends on `queue` until `ready()`, evaluated with shared.mu held,
+ * returns true; `ready()` may act on the state it found (e.g. take a
+ * lock). Whoever changes what `ready()` depends on notifies `list`. The
+ * waker may run on another thread, which cannot resume a coroutine of
+ * this queue directly: it signals this waiter's own Wake instead, and the
+ * waiter rechecks after every wakeup.
+ */
+rawstd::Task<void> wait_until(
+    rawio::Queue& queue, SharedControl& shared, WaitList& list,
+    std::function<bool()> ready
+) {
     for (;;) {
+        std::shared_ptr<Wake> wake;
         {
             std::lock_guard<std::mutex> guard(shared.mu);
-            if (!shared.busy) {
-                shared.busy = true;
+            if (ready()) {
                 co_return;
             }
+            wake = std::make_shared<Wake>();
+            list.push_back(wake);
         }
-        co_await queue.timeout(100);
+        co_await wake->wait(queue);
     }
+}
+
+rawstd::Task<void> shared_lock(rawio::Queue& queue, SharedControl& shared) {
+    co_await wait_until(queue, shared, shared.lock_waiters, [&shared]() {
+        if (shared.busy) {
+            return false;
+        }
+        shared.busy = true;
+        return true;
+    });
 }
 
 } // namespace
@@ -2071,16 +2158,23 @@ rawstd::DetachedTask Chunk::_resync_finish() {
         // another writer of this process joined since the resync started
         // (that one never duplicated its writes onto it). Taken without
         // waiting, so the commit stays free of suspensions: a transition
-        // of another writer still holding the lock means trying again.
+        // of another writer still holding the lock means trying again
+        // once it is released.
         bool sole = false;
         bool held = false;
-        {
+        std::shared_ptr<Wake> wake;
+        try {
             std::lock_guard<std::mutex> lock(shared->mu);
             sole = shared->writers == 1 && shared->joins == _resync_joins;
             if (sole && !shared->busy) {
                 shared->busy = true;
                 held = true;
+            } else if (sole) {
+                wake = std::make_shared<Wake>();
+                shared->lock_waiters.push_back(wake);
             }
+        } catch (const std::system_error&) {
+            // No Wake to park on: try again right away.
         }
         if (!sole) {
             _resync_abort("another writer joined");
@@ -2089,10 +2183,8 @@ rawstd::DetachedTask Chunk::_resync_finish() {
         if (held) {
             break;
         }
-        // Best-effort pause: on a failure to submit it, just retry now.
-        try {
-            co_await _queue.timeout(100);
-        } catch (const std::exception&) {
+        if (wake) {
+            co_await wake->wait(_queue);
         }
         if (gone()) {
             co_return;
