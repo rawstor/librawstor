@@ -202,6 +202,26 @@ TEST_F(VirtQueueInflightTest, ClearsLastBatchHeadPublishedButNotRecorded) {
     EXPECT_EQ(vq.last_avail_idx(), 1);
 }
 
+TEST_F(VirtQueueInflightTest, DropsInFlightHeadBeyondRing) {
+    // A log written for a bigger ring (or corrupted) marks head 12,
+    // which this 8-entry ring can't have popped; only head 3 is real.
+    mem.publish_avail(3);
+
+    FakeInflightLog log(2 * kQueueSize);
+    log.region->version = 1;
+    log.region->desc[3] = {1, {}, 0, 0};
+    log.region->desc[12] = {1, {}, 0, 1};
+
+    vq.set_inflight(log.region);
+
+    std::unique_ptr<DescChain> chain = vq.pop(IdentityTranslator());
+    ASSERT_NE(chain, nullptr);
+    EXPECT_EQ(chain->head, 3);
+    EXPECT_EQ(log.region->desc[12].inflight, 0);
+    EXPECT_EQ(vq.last_avail_idx(), 1);
+    EXPECT_EQ(vq.pop(IdentityTranslator()), nullptr);
+}
+
 TEST_F(VirtQueueInflightTest, LogSmallerThanRingIsIgnored) {
     FakeInflightLog log(kQueueSize / 2);
     vq.set_inflight(log.region);

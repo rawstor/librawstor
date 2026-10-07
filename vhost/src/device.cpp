@@ -19,6 +19,7 @@
 
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 
 #include <fcntl.h>
@@ -1057,6 +1058,20 @@ rawstd::DetachedTask dispatch_loop(
     }
 }
 
+// In-flight memory dimensions as the front-end gives them: at most as
+// many queues as GET_QUEUE_NUM reports, each no bigger than a split ring
+// can be (2^15).
+void check_inflight_dimensions(uint16_t num_queues, uint16_t queue_size) {
+    if (num_queues == 0 || num_queues > rawstor::vhost::Device::MAX_QUEUES ||
+        queue_size == 0 || queue_size > 32768) {
+        rawstd_error(
+            "Invalid in-flight memory dimensions: %u queues of %u\n",
+            (unsigned int)num_queues, (unsigned int)queue_size
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+}
+
 // Zeroed anonymous shared memory of `size` bytes the front-end can map
 // too (it only ever receives the fd), for VHOST_USER_GET_INFLIGHT_FD.
 int create_shm(size_t size) {
@@ -1551,10 +1566,26 @@ void Device::_map_inflight(
     int fd, uint64_t mmap_size, uint64_t mmap_offset, uint16_t num_queues,
     uint16_t queue_size
 ) {
-    if (num_queues == 0 || queue_size == 0 ||
-        mmap_size < num_queues * inflight_region_size(queue_size)) {
+    try {
+        check_inflight_dimensions(num_queues, queue_size);
+        if (mmap_size < num_queues * inflight_region_size(queue_size)) {
+            throw std::runtime_error(
+                "in-flight memory too small for its queues"
+            );
+        }
+        // mmap() itself happily maps past the end of a short file; the
+        // first access there would SIGBUS.
+        struct stat st;
+        if (fstat(fd, &st)) {
+            RAWSTD_THROW_ERRNO();
+        }
+        uint64_t file_size = static_cast<uint64_t>(st.st_size);
+        if (mmap_offset > file_size || mmap_size > file_size - mmap_offset) {
+            throw std::runtime_error("in-flight memory fd is too short");
+        }
+    } catch (...) {
         close(fd);
-        throw std::runtime_error("in-flight memory too small for its queues");
+        throw;
     }
 
     void* addr = mmap(
@@ -1608,6 +1639,7 @@ void Device::_map_inflight(
 int Device::get_inflight_fd(
     uint16_t num_queues, uint16_t queue_size, uint64_t& mmap_size
 ) {
+    check_inflight_dimensions(num_queues, queue_size);
     mmap_size = num_queues * inflight_region_size(queue_size);
     int fd = create_shm(mmap_size);
     _map_inflight(fd, mmap_size, 0, num_queues, queue_size);

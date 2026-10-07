@@ -618,6 +618,9 @@ std::unique_ptr<DescChain> VirtQueue::pop(const AddressTranslator& translate) {
 std::unique_ptr<DescChain>
 VirtQueue::_read_chain(uint16_t head, const AddressTranslator& translate) {
     unsigned int num = _ring.num();
+    if (head >= num) {
+        throw std::runtime_error("vhost: descriptor head out of range");
+    }
 
     std::unique_ptr<DescChain> chain = std::make_unique<DescChain>();
     chain->head = head;
@@ -768,11 +771,24 @@ void VirtQueue::_check_inflight() {
         log->used_idx = used_idx;
     }
 
+    // A head is only ever marked once popped, so always below the ring
+    // size; one beyond it is garbage (or a log written for a bigger
+    // ring) that must not reach _read_chain().
     std::vector<uint16_t> heads;
     for (uint16_t i = 0; i < log->desc_num; ++i) {
-        if (log->desc[i].inflight) {
-            heads.push_back(i);
+        if (!log->desc[i].inflight) {
+            continue;
         }
+        if (i >= _ring.num()) {
+            rawstd_warning(
+                "vhost: vq %zu: dropping in-flight head %u beyond ring size "
+                "%u\n",
+                _index, static_cast<unsigned int>(i), _ring.num()
+            );
+            log->desc[i].inflight = 0;
+            continue;
+        }
+        heads.push_back(i);
     }
     std::sort(heads.begin(), heads.end(), [log](uint16_t a, uint16_t b) {
         return log->desc[a].counter < log->desc[b].counter;

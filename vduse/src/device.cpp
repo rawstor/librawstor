@@ -714,7 +714,13 @@ void Device::_open_inflight() {
         std::string("/dev/shm/rawstor-vduse-") + _name_buf + ".inflight";
     size_t size = _vqs.size() * inflight_region_size(_queue_size);
 
-    int fd = open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    // /dev/shm is world-writable and the name predictable: never follow a
+    // symlink planted there, and only ever use (let alone truncate) a file
+    // that is entirely our own -- one someone else created or can also
+    // write could truncate a file they pointed it at, or feed us forged
+    // in-flight heads on reattach.
+    int fd =
+        open(path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (fd == -1) {
         rawstd_warning(
             "vduse: no in-flight log, failed to open %s: %s\n", path.c_str(),
@@ -725,8 +731,19 @@ void Device::_open_inflight() {
     }
 
     struct stat st;
-    bool reuse = _reattached && fstat(fd, &st) == 0 &&
-                 static_cast<size_t>(st.st_size) == size;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_uid != geteuid() ||
+        (st.st_mode & 077) || st.st_nlink != 1) {
+        rawstd_warning(
+            "vduse: no in-flight log, %s is not a private regular file of "
+            "this user\n",
+            path.c_str()
+        );
+        errno = 0;
+        close(fd);
+        return;
+    }
+
+    bool reuse = _reattached && static_cast<size_t>(st.st_size) == size;
     if (_reattached && !reuse) {
         rawstd_warning(
             "vduse: %s doesn't match this device, starting a fresh "
