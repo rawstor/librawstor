@@ -44,7 +44,7 @@ jobs:
     - name: configure
       run: ./configure
     - name: make distcheck
-      run: make distcheck
+      run: make -j$(nproc) distcheck
     - uses: actions/upload-artifact@v7
       with:
         name: sources
