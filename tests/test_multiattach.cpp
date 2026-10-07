@@ -12,6 +12,7 @@
 #include <cerrno>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <sstream>
@@ -88,6 +89,18 @@ target_meta(Queue& queue, const std::string& target, RawstorObjectMeta* meta) {
     return res < 0 ? res : 0;
 }
 
+// `target` names exactly one member, so that member is index 0.
+ssize_t target_set_sync_state(
+    Queue& queue, const std::string& target,
+    const RawstorObjectSyncState& sync_state
+) {
+    return rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
+        return rawstor_target_set_member_sync_state(
+            queue, target.c_str(), 0, 0, &sync_state, cb, data
+        );
+    });
+}
+
 ssize_t object_close(Queue& queue, RawstorObject* object) {
     return rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
         return rawstor_object_close(object, cb, data);
@@ -158,6 +171,14 @@ public:
     }
 
     void drop(size_t i) const { fs::remove_all(_dirs[i]); }
+
+    // The first `size` bytes of member i's copy of chunk 0.
+    std::string data(size_t i, size_t size) const {
+        std::ifstream f(_dirs[i] / _uuid / "0" / "data", std::ios::binary);
+        std::string ret(size, '\0');
+        f.read(ret.data(), static_cast<std::streamsize>(size));
+        return ret;
+    }
 
     // A disk that comes back later with the contents it had when saved.
     void save(size_t i) const {
@@ -412,4 +433,117 @@ TEST(MultiattachTest, degraded_open_recorded_by_adopting_writer) {
         ancestor = ancestor || h == before.sync_state.sync_id;
     }
     EXPECT_TRUE(ancestor);
+}
+
+/*
+ * An online resync of a stale member while several queues of the process
+ * write to the object: every queue duplicates its writes onto the member,
+ * the sweeper never overwrites them with older data, and the member
+ * rejoins byte-identical to the in-sync copy.
+ */
+TEST(MultiattachTest, resync_while_queues_write) {
+    Members members(2, "00000000-0000-7000-8000-0000000000c7");
+    const size_t size = 16ull << 20;
+    {
+        Queue queue(16);
+        RawstorObjectSpec spec = spec_n(2);
+        spec.size = size;
+        ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+        // Member 1 is one sync set behind member 0, holding other data.
+        RawstorObjectSyncState fresh{};
+        fresh.epoch = 2;
+        fresh.sync_id = 0x1111111111111111ull;
+        fresh.sync_id_history[0] = 0x2222222222222222ull;
+        fresh.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+        ASSERT_EQ(target_set_sync_state(queue, members.target(0), fresh), 0);
+        RawstorObjectSyncState stale{};
+        stale.epoch = 1;
+        stale.sync_id = 0x2222222222222222ull;
+        stale.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+        ASSERT_EQ(target_set_sync_state(queue, members.target(1), stale), 0);
+
+        for (size_t i = 0; i < 2; ++i) {
+            RawstorObject* member = nullptr;
+            ASSERT_EQ(target_open(queue, members.target(i), &member), 0);
+            std::string garbage(1 << 20, static_cast<char>('0' + i));
+            for (uint64_t off = 0; off < size; off += garbage.size()) {
+                ASSERT_EQ(
+                    object_write(
+                        queue, member, garbage.data(), garbage.size(), off
+                    ),
+                    0
+                );
+            }
+            ASSERT_EQ(object_close(queue, member), 0);
+        }
+    }
+
+    const size_t nthreads = 3;
+    std::string target = members.target_all();
+    std::atomic<bool> synced{false};
+    std::atomic<int> failures{0};
+
+    testing::internal::CaptureStderr();
+    std::vector<std::thread> threads;
+    for (size_t t = 0; t < nthreads; ++t) {
+        threads.emplace_back([&, t]() {
+            Queue queue(16);
+            RawstorObject* object = nullptr;
+            if (target_open(queue, target, &object) != 0) {
+                ++failures;
+                return;
+            }
+            std::string block(16 << 10, '\0');
+            uint64_t seed = 0x9e3779b97f4a7c15ull * (t + 1);
+            for (int i = 0; i < 200000 && !synced; ++i) {
+                seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+                // Each queue its own blocks: overlapping in-flight writes of
+                // different queues leave their region unspecified.
+                uint64_t blocks = size / block.size() / nthreads;
+                uint64_t off =
+                    ((seed >> 33) % blocks * nthreads + t) * block.size();
+                memset(
+                    block.data(), 'a' + (int)((seed >> 20) % 26), block.size()
+                );
+                if (object_write(
+                        queue, object, block.data(), block.size(), off
+                    ) != 0) {
+                    ++failures;
+                    break;
+                }
+                if (t == 0 && i % 64 == 0) {
+                    RawstorObjectMeta a{};
+                    RawstorObjectMeta b{};
+                    if (target_meta(queue, members.target(0), &a) == 0 &&
+                        target_meta(queue, members.target(1), &b) == 0 &&
+                        b.sync_state.state !=
+                            RAWSTOR_OBJECT_SYNC_STATE_SYNCING &&
+                        b.sync_state.sync_id == a.sync_state.sync_id) {
+                        synced = true;
+                    }
+                }
+            }
+            // The member got its final state; the commit lets it join once
+            // no write is in flight, run by the owner's queue: keep every
+            // queue turning for a while before closing (closing the owner
+            // ends the resync).
+            for (int k = 0; k < 20; ++k) {
+                rawio_wait_timeout(queue, 10);
+            }
+            if (object_close(queue, object) != 0) {
+                ++failures;
+            }
+        });
+    }
+    for (std::thread& th : threads) {
+        th.join();
+    }
+    std::string log = testing::internal::GetCapturedStderr();
+
+    ASSERT_EQ(failures.load(), 0);
+    EXPECT_TRUE(synced);
+    EXPECT_NE(log.find("rejoined the set"), std::string::npos);
+    EXPECT_EQ(log.find("Mirror resync aborted"), std::string::npos);
+    EXPECT_TRUE(members.data(0, size) == members.data(1, size));
 }

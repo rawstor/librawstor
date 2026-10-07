@@ -174,6 +174,41 @@ void notify_all(WaitList& list) noexcept {
 } // namespace
 
 /*
+ * The process's online resync of one member (docs/mirroring.md, online
+ * resync), shared by every writer of the process and guarded by
+ * SharedControl::mu: a needs-copy bitmap over RESYNC_CHUNK regions, the
+ * region the owner's sweeper is copying, the regions client writes are in
+ * flight on, and which writers duplicate their writes onto the member.
+ */
+struct SharedResync {
+    // JOINING: waiting for every writer of the process to attach and for
+    // the writes each started before attaching to settle. SWEEP: copying.
+    // FINISHING: the owner commits the member's rejoin.
+    enum class Phase { JOINING, SWEEP, FINISHING };
+
+    uint64_t generation = 0;
+    const Chunk* owner = nullptr;
+    size_t idx = 0;
+    size_t chunk = 0;
+    std::vector<bool> bits;
+    size_t remaining = 0;
+    size_t cursor = 0;
+    ssize_t copying = -1;
+    // Tracked client writes in flight per region, and in total.
+    std::unordered_map<size_t, size_t> inflight;
+    size_t tracked = 0;
+    // Writers duplicating onto the member; those of them with writes
+    // from before attaching still in flight.
+    std::set<const Chunk*> attached;
+    std::set<const Chunk*> pending;
+    Phase phase = Phase::JOINING;
+    // Set once the member carries its SYNCING mark and the owner attached:
+    // until then the resync only holds the process's slot, and nothing may
+    // be duplicated onto the member yet.
+    bool announced = false;
+};
+
+/*
  * Control transitions take `busy` (_shared_lock()), held across their
  * own metadata round trips; every field below is written only with both
  * `busy` and `mu` held, and read with either. `gen` is bumped on every
@@ -187,10 +222,7 @@ struct SharedControl {
 
     // Writable Chunks of this process currently open on the chunk.
     size_t writers = 0;
-    // Bumped on every open: a resync started by the sole writer must not
-    // complete once another one joined (it never duplicated its writes
-    // onto the SYNCING member).
-    uint64_t joins = 0;
+    std::set<const Chunk*> chunks;
 
     // A sync set has been adopted from the members (false again once the
     // last writer closed: the next open reads the members afresh).
@@ -209,6 +241,18 @@ struct SharedControl {
 
     // Waiting for `busy` to clear.
     WaitList lock_waiters;
+
+    // The running resync, nullptr when none. resync_seq is bumped on every
+    // start and end, so the write path can tell without the lock whether
+    // anything changed since it last looked.
+    std::unique_ptr<SharedResync> resync;
+    uint64_t resync_generation = 0;
+    std::atomic<uint64_t> resync_seq{0};
+    // Parked on the resync's state: the owner's sweeper and finisher, and
+    // client writes waiting for the region being copied.
+    WaitList resync_waiters;
+    // Every Chunk's resync watcher (_resync_watch()).
+    WaitList watch_waiters;
 
     void unlock() noexcept {
         std::lock_guard<std::mutex> guard(mu);
@@ -305,6 +349,10 @@ void Chunk::_mark_dirty_local() noexcept {
 
 void Chunk::_shared_adopt() {
     std::lock_guard<std::mutex> guard(_shared->mu);
+    _shared_adopt_locked();
+}
+
+void Chunk::_shared_adopt_locked() {
     if (!_shared->valid) {
         return;
     }
@@ -333,11 +381,16 @@ void Chunk::_shared_adopt() {
     if (_shared->dirty && !_dirty) {
         _mark_dirty_local();
     }
+    _resync_fixup_locked();
     _shared_gen = _shared->gen.load(std::memory_order_acquire);
 }
 
 void Chunk::_shared_publish() {
     std::lock_guard<std::mutex> guard(_shared->mu);
+    _shared_publish_locked();
+}
+
+void Chunk::_shared_publish_locked() {
     _shared->valid = true;
     _shared->size = _size;
     _shared->epoch = _epoch;
@@ -398,9 +451,12 @@ Chunk::Chunk(
     _background(0),
     _shared(std::move(shared)),
     _shared_gen(0),
-    _resync_joins(0),
     _writes_in_flight(0),
-    _resync_generation(0),
+    _resync_attached(0),
+    _resync_attach_epoch(0),
+    _resync_untracked(0),
+    _resync_seen(0),
+    _watch_seen(0),
     _probe_pending(false),
     _writes_issued(0),
     _unflushed(false) {
@@ -423,6 +479,9 @@ Chunk::Chunk(
     // starts resyncing it -- detached, driven by their own continuations
     // from here on.
     if (!_readonly) {
+        if (_shared) {
+            _resync_watch();
+        }
         _probe_setup();
         _resync_maybe_start();
     }
@@ -460,11 +519,27 @@ public:
 void Chunk::_abort_background() noexcept {
     _closing = true;
 
-    // The interrupted copy stays SYNCING on the member, untrusted until a
-    // later open resyncs it again (docs/mirroring.md, case F8).
-    if (_resync != nullptr) {
-        _resync_abort("object closing");
+    if (!_shared) {
+        return;
     }
+
+    // A resync this Chunk owns ends with it: the interrupted copy stays
+    // SYNCING on the member, untrusted until a later resync
+    // (docs/mirroring.md, case F8). One it only takes part in goes on
+    // without it.
+    std::lock_guard<std::mutex> lock(_shared->mu);
+    _shared->chunks.erase(this);
+    SharedResync* r = _shared->resync.get();
+    if (r != nullptr) {
+        if (r->owner == this) {
+            _resync_abort_locked(r->generation, "object closing");
+        } else {
+            r->attached.erase(this);
+            r->pending.erase(this);
+        }
+    }
+    notify_all(_shared->resync_waiters);
+    notify_all(_shared->watch_waiters);
 }
 
 rawstd::Task<void> Chunk::_stop_background() {
@@ -653,7 +728,6 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         co_await shared_lock(queue, *shared);
         std::lock_guard<std::mutex> guard(shared->mu);
         ++shared->writers;
-        ++shared->joins;
     }
     struct SharedOpenGuard {
         std::shared_ptr<SharedControl> shared;
@@ -891,6 +965,29 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
                 lost.push_back(i);
             }
         }
+
+        // A writer opening while the process resyncs a member duplicates
+        // its writes onto it from its first one, or the resync cannot go
+        // on.
+        {
+            std::lock_guard<std::mutex> guard(shared->mu);
+            shared->chunks.insert(chunk.get());
+            // One not announced yet is left to this Chunk's watcher.
+            SharedResync* r = shared->resync.get();
+            if (r != nullptr && r->announced) {
+                Member& m = chunk->_members[r->idx];
+                if (m.slot && m.reachable) {
+                    chunk->_resync_attach_locked(r->generation);
+                } else {
+                    chunk->_resync_abort_locked(
+                        r->generation, "a writer cannot reach the member"
+                    );
+                }
+            }
+            chunk->_resync_seen =
+                shared->resync_seq.load(std::memory_order_acquire);
+        }
+
         shared_guard.shared->unlock();
         shared_guard.shared.reset();
     }
@@ -1541,31 +1638,17 @@ Chunk::_set_sync_state_one(size_t idx, RawstorObjectSyncState sync_state) {
  * sweeper copying one chunk at a time from an in-sync source, mutually
  * exclusive with client writes per chunk.
  */
-struct Chunk::ResyncState {
-    // FINISHING: _resync_finish() is running; it alone ends the resync.
-    enum class Phase { START_DRAIN, SWEEP, FINISH_DRAIN, FINISHING };
-
-    // Captured by every chunk-copy completion so it can tell whether it
-    // still belongs to the current resync (see Chunk::_resync_generation).
-    size_t generation;
-    Phase phase;
-    size_t idx;
-    size_t chunk;
-    std::vector<bool> bits;
-    size_t remaining;
-    size_t cursor;
-    ssize_t copying;
-    bool sweep_blocked;
-    // Shared with the in-flight chunk copy: the resync may be aborted (or
-    // the object destroyed) while the kernel still owns the buffer.
-    std::shared_ptr<std::vector<char>> buf;
-    std::unordered_map<size_t, size_t> inflight;
-    // Bumped once per chunk-copy settle event (or resync abort) -- a
-    // client write that overlaps the sweeper's current chunk parks on
-    // "the next bump" and re-checks the overlap itself on each wake (the
-    // sweeper may have moved on to a different chunk, or the resync may
-    // be gone entirely, by the time it runs again).
-    rawstd::Barrier chunk_barrier;
+/*
+ * What one mirrored write registered with the process's resync: whether it
+ * is tracked (its regions count as in flight, the commit waits for it),
+ * the resync it was tracked under, the SYNCING member it is duplicated
+ * onto, and the attach epoch it started under (see _resync_untracked).
+ */
+struct Chunk::ResyncTicket {
+    bool tracked = false;
+    uint64_t generation = 0;
+    ssize_t syncing = -1;
+    uint64_t epoch = 0;
 };
 
 struct Chunk::FanOutWriteState {
@@ -1621,23 +1704,14 @@ rawstd::Task<size_t> Chunk::_fan_out_write(
     uint64_t offset, size_t size,
     std::function<rawstd::Task<size_t>(Slot&)> issue
 ) {
-    // A write overlapping the chunk the sweeper is copying right now
-    // parks until the copy completes: the copy would otherwise overwrite
-    // the fresher data on the target member. Re-checked after every resume --
-    // the sweeper may have moved on to a different chunk, or the resync
-    // may be gone entirely (aborted, or finished), by the time this runs
-    // again.
-    for (;;) {
-        if (_resync == nullptr || size == 0 || _resync->copying < 0) {
-            break;
-        }
-        uint64_t lo = (uint64_t)_resync->copying * _resync->chunk;
-        uint64_t hi = lo + _resync->chunk;
-        if (!((uint64_t)offset < hi && (uint64_t)offset + size > lo)) {
-            break;
-        }
-        rawstd::Barrier& chunk_barrier = _resync->chunk_barrier;
-        co_await chunk_barrier.at_least(chunk_barrier.value() + 1);
+    // Off the lock entirely unless this Chunk takes part in a resync or the
+    // process's resync state changed since it last looked.
+    ResyncTicket ticket;
+    ticket.epoch = _resync_attach_epoch;
+    if (_shared &&
+        (_resync_attached != 0 ||
+         _shared->resync_seq.load(std::memory_order_acquire) != _resync_seen)) {
+        co_await _resync_enter(offset, size, ticket);
     }
 
     std::vector<size_t> idxs;
@@ -1649,73 +1723,44 @@ rawstd::Task<size_t> Chunk::_fan_out_write(
     }
 
     if (idxs.empty()) {
+        if (ticket.tracked) {
+            _resync_leave(ticket, offset, size, false, false);
+        }
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    ssize_t syncing = -1;
-    if (_resync != nullptr &&
-        _members[_resync->idx].state == MemberState::SYNCING) {
-        syncing = (ssize_t)_resync->idx;
-    }
-
     ++_writes_in_flight;
-    if (_resync != nullptr && size > 0) {
-        size_t first = (size_t)(offset / (uint64_t)_resync->chunk);
-        size_t last =
-            (size_t)((offset + (uint64_t)size - 1) / (uint64_t)_resync->chunk);
-        for (size_t c = first; c <= last; ++c) {
-            ++_resync->inflight[c];
-        }
-    }
 
     auto st = std::make_shared<FanOutWriteState>();
-    st->has_syncing = syncing >= 0;
+    st->has_syncing = ticket.syncing >= 0;
 
     std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(idxs.size() + (syncing >= 0 ? 1 : 0));
+    tasks.reserve(idxs.size() + (st->has_syncing ? 1 : 0));
     for (size_t idx : idxs) {
         tasks.push_back(_fan_out_write_one(idx, issue, st));
     }
-    if (syncing >= 0) {
+    if (st->has_syncing) {
         tasks.push_back(
-            _fan_out_write_syncing_one((size_t)syncing, size, issue, st)
+            _fan_out_write_syncing_one((size_t)ticket.syncing, size, issue, st)
         );
     }
     co_await rawstd::gather(std::move(tasks));
 
     --_writes_in_flight;
 
-    if (_resync != nullptr && size > 0) {
-        size_t first = (size_t)(offset / (uint64_t)_resync->chunk);
-        size_t last =
-            (size_t)((offset + (uint64_t)size - 1) / (uint64_t)_resync->chunk);
-        for (size_t c = first; c <= last; ++c) {
-            auto it = _resync->inflight.find(c);
-            if (it != _resync->inflight.end() && --it->second == 0) {
-                _resync->inflight.erase(it);
-            }
+    if (ticket.tracked) {
+        _resync_leave(ticket, offset, size, st->has_syncing, st->syncing_ok);
+    } else if (ticket.epoch != _resync_attach_epoch && _resync_untracked > 0 &&
+               --_resync_untracked == 0) {
+        // The last write this Chunk started before it attached to the
+        // resync: the sweep may start as far as this Chunk is concerned.
+        std::lock_guard<std::mutex> lock(_shared->mu);
+        SharedResync* r = _shared->resync.get();
+        if (r != nullptr && r->generation == _resync_attached) {
+            r->pending.erase(this);
         }
-
-        // A chunk fully covered by a write that reached the SYNCING member
-        // no longer needs to be copied.
-        if (st->syncing_ok) {
-            for (size_t c = first; c <= last && c < _resync->bits.size(); ++c) {
-                uint64_t lo = (uint64_t)c * _resync->chunk;
-                uint64_t hi = std::min<uint64_t>(lo + _resync->chunk, _size);
-                if ((uint64_t)offset <= lo && (uint64_t)offset + size >= hi &&
-                    _resync->bits[c]) {
-                    _resync->bits[c] = false;
-                    --_resync->remaining;
-                }
-            }
-        }
+        notify_all(_shared->resync_waiters);
     }
-
-    if (_resync != nullptr && st->has_syncing && !st->syncing_ok) {
-        _resync_abort("write to the resync target failed");
-    }
-
-    _write_settled();
 
     if (st->failed.empty()) {
         co_return st->result;
@@ -1734,94 +1779,180 @@ rawstd::Task<size_t> Chunk::_flush_one(Slot& slot) {
     co_return 0;
 }
 
-// Called once a mirrored write's fan-out has fully settled -- advances
-// whichever resync phase is waiting on the in-flight count reaching zero,
-// or wakes the sweeper's own per-chunk block.
-void Chunk::_write_settled() noexcept {
-    if (_resync != nullptr) {
-        _resync_advance_on_settle();
+/*
+ * Called with _shared->mu held: brings this Chunk's own SYNCING members in
+ * line with the process -- in-sync again once the process says so (the
+ * resync committed), STALE once no resync this Chunk is attached to holds
+ * them any more (aborted).
+ */
+void Chunk::_resync_fixup_locked() noexcept {
+    SharedResync* r = _shared->resync.get();
+    bool mine = r != nullptr && r->generation == _resync_attached;
+    if (!mine) {
+        _resync_attached = 0;
     }
-    // Last: a resync finisher waiting for writes resumes inline here and
-    // may end the resync.
-    _write_settle_barrier.advance();
-}
-
-void Chunk::_resync_advance_on_settle() noexcept {
-    switch (_resync->phase) {
-    case ResyncState::Phase::START_DRAIN:
-        if (_writes_in_flight == 0) {
-            _resync->phase = ResyncState::Phase::SWEEP;
-            _resync_sweep();
+    for (size_t i = 0; i < _members.size(); ++i) {
+        Member& m = _members[i];
+        if (m.state != MemberState::SYNCING || (mine && i == r->idx)) {
+            continue;
         }
-        break;
-    case ResyncState::Phase::SWEEP:
-        if (_resync->sweep_blocked) {
-            _resync->sweep_blocked = false;
-            _resync_sweep();
+        if (!_shared->stale[i]) {
+            m.state = MemberState::IN_SYNC;
+            m.meta.sync_state.epoch = _shared->epoch;
+            m.meta.sync_state.sync_id = _shared->sync_id;
+            memcpy(
+                m.meta.sync_state.sync_id_history, _shared->sync_id_history,
+                sizeof(m.meta.sync_state.sync_id_history)
+            );
+        } else {
+            // The probe brings the member back for a later resync.
+            m.state = MemberState::STALE;
+            m.reachable = false;
         }
-        break;
-    case ResyncState::Phase::FINISH_DRAIN:
-        if (_writes_in_flight == 0) {
-            _resync_finish();
-        }
-        break;
-    case ResyncState::Phase::FINISHING:
-        break;
     }
 }
 
-// Picks the first STALE, reachable member (no resync already running) and
-// starts bringing it back into the set. A no-op for a single-target
-// object, with no such member, or with an empty object.
+/*
+ * Registers a write with the process's resync before it is issued: parks
+ * while it overlaps the region the sweeper is copying (the copy would
+ * otherwise overwrite the fresher data on the member), then counts its
+ * regions as in flight and duplicates it onto the SYNCING member -- in
+ * one critical section, so the sweeper never picks a region a write is
+ * about to reach.
+ */
+rawstd::Task<void>
+Chunk::_resync_enter(uint64_t offset, size_t size, ResyncTicket& ticket) {
+    SharedControl& shared = *_shared;
+    co_await wait_until(_queue, shared, shared.resync_waiters, [&]() {
+        _resync_seen = shared.resync_seq.load(std::memory_order_acquire);
+        _resync_fixup_locked();
+        SharedResync* r = shared.resync.get();
+        if (r == nullptr || r->generation != _resync_attached) {
+            return true;
+        }
+        if (size > 0 && r->copying >= 0) {
+            uint64_t lo = (uint64_t)r->copying * r->chunk;
+            uint64_t hi = lo + r->chunk;
+            if (offset < hi && offset + size > lo) {
+                return false;
+            }
+        }
+        ticket.tracked = true;
+        ticket.generation = r->generation;
+        ticket.syncing = (ssize_t)r->idx;
+        ++r->tracked;
+        if (size > 0) {
+            size_t first = (size_t)(offset / r->chunk);
+            size_t last = (size_t)((offset + size - 1) / r->chunk);
+            for (size_t c = first; c <= last; ++c) {
+                ++r->inflight[c];
+            }
+        }
+        return true;
+    });
+}
+
+// Unregisters a tracked write once every member answered it.
+void Chunk::_resync_leave(
+    const ResyncTicket& ticket, uint64_t offset, size_t size, bool written,
+    bool written_ok
+) noexcept {
+    std::lock_guard<std::mutex> lock(_shared->mu);
+    SharedResync* r = _shared->resync.get();
+    if (r != nullptr && r->generation == ticket.generation) {
+        --r->tracked;
+        if (size > 0) {
+            size_t first = (size_t)(offset / r->chunk);
+            size_t last = (size_t)((offset + size - 1) / r->chunk);
+            for (size_t c = first; c <= last; ++c) {
+                auto it = r->inflight.find(c);
+                if (it != r->inflight.end() && --it->second == 0) {
+                    r->inflight.erase(it);
+                }
+            }
+            // A region fully covered by a write that reached the member
+            // no longer needs to be copied.
+            if (written && written_ok) {
+                for (size_t c = first; c <= last && c < r->bits.size(); ++c) {
+                    uint64_t lo = (uint64_t)c * r->chunk;
+                    uint64_t hi = std::min<uint64_t>(lo + r->chunk, _size);
+                    if (offset <= lo && offset + size >= hi && r->bits[c]) {
+                        r->bits[c] = false;
+                        --r->remaining;
+                    }
+                }
+            }
+        }
+        if (written && !written_ok) {
+            _resync_abort_locked(
+                ticket.generation, "write to the resync target failed"
+            );
+        }
+    }
+    notify_all(_shared->resync_waiters);
+}
+
+// Picks the first STALE, reachable member (no resync already running in
+// the process) and starts bringing it back into the set, with this Chunk
+// as the resync's owner. A no-op for a single-target object, with no such
+// member, or with an empty object.
 rawstd::DetachedTask Chunk::_resync_maybe_start() {
     // Unlike the rest of this function's own co_awaits (narrowly caught
     // below, by design -- a transient wire error there just means "try
-    // again next tick/probe"), a ResyncState allocation failure has
-    // nothing narrower to catch it: DetachedTask's own unhandled_exception()
-    // can only stash it for a later, unrelated rethrow_if_pending() call to
-    // misattribute (see its own doc comment) -- caught here instead, same
-    // as _degrade_detached()/_read_repair()/_probe_watch()'s own blanket
+    // again next tick/probe"), an allocation failure has nothing narrower
+    // to catch it: DetachedTask's own unhandled_exception() can only stash
+    // it for a later, unrelated rethrow_if_pending() call to misattribute
+    // (see its own doc comment) -- caught here instead, same as
+    // _degrade_detached()/_read_repair()/_probe_watch()'s own blanket
     // catch.
     BackgroundGuard guard(*this);
     try {
-        std::weak_ptr<void> alive = _alive;
-
-        if (_closing || _members.size() == 1 || _resync != nullptr ||
-            _size == 0) {
+        if (_closing || !_shared || _members.size() == 1 || _size == 0) {
             co_return;
         }
 
-        // Another writer of this process would not duplicate its writes
-        // onto the SYNCING member.
-        if (_shared) {
-            std::lock_guard<std::mutex> guard(_shared->mu);
-            if (_shared->writers != 1) {
-                co_return;
+        auto candidate = [this]() {
+            if (_in_sync_count() == 0) {
+                return _members.size();
             }
-            _resync_joins = _shared->joins;
-        }
-
-        for (const Member& m : _members) {
-            if (m.state == MemberState::SYNCING) {
-                /* A start is already in flight. */
-                co_return;
+            for (size_t i = 0; i < _members.size(); ++i) {
+                if (_members[i].state == MemberState::STALE &&
+                    _members[i].reachable) {
+                    return i;
+                }
             }
-        }
-
-        if (_in_sync_count() == 0) {
+            return _members.size();
+        };
+        if (candidate() == _members.size()) {
             co_return;
         }
 
+        // One resync at a time in the process: the slot is claimed under
+        // the lock before anything goes to the member. Not a transition --
+        // the member stays out of the set until the commit -- so the
+        // transition lock stays free for the barriers meanwhile (the first
+        // write's dirty barrier, typically).
         size_t idx = _members.size();
-        for (size_t i = 0; i < _members.size(); ++i) {
-            if (_members[i].state == MemberState::STALE &&
-                _members[i].reachable) {
-                idx = i;
-                break;
+        uint64_t generation = 0;
+        {
+            std::lock_guard<std::mutex> lock(_shared->mu);
+            if (_shared->resync != nullptr) {
+                co_return;
             }
-        }
-        if (idx == _members.size()) {
-            co_return;
+            _shared_adopt_locked();
+            idx = candidate();
+            if (idx == _members.size()) {
+                co_return;
+            }
+            auto r = std::make_unique<SharedResync>();
+            r->generation = ++_shared->resync_generation;
+            r->owner = this;
+            r->idx = idx;
+            r->chunk = RESYNC_CHUNK;
+            r->bits.assign((size_t)((_size + r->chunk - 1) / r->chunk), true);
+            r->remaining = r->bits.size();
+            generation = r->generation;
+            _shared->resync = std::move(r);
         }
 
         rawstd_info(
@@ -1835,23 +1966,11 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
         RawstorObjectSyncState m = _members[idx].meta.sync_state;
         m.state = RAWSTOR_OBJECT_SYNC_STATE_SYNCING;
 
-        _members[idx].state = MemberState::SYNCING;
-
         int error = 0;
         try {
             co_await _members[idx].slot->set_sync_state(_id, _offset, m);
         } catch (const std::system_error& e) {
             error = e.code().value();
-        }
-
-        if (alive.expired()) {
-            co_return;
-        }
-
-        // Left SYNCING on the member: untrusted until a later open.
-        if (_closing) {
-            _members[idx].state = MemberState::STALE;
-            co_return;
         }
 
         if (error == ENOSYS) {
@@ -1862,193 +1981,343 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
             error = 0;
         }
 
-        if (error) {
-            rawstd_error(
-                "Mirror resync: SYNCING mark failed: %s\n", strerror(error)
-            );
-            _members[idx].state = MemberState::STALE;
-            _members[idx].reachable = false;
-            co_return;
+        {
+            std::lock_guard<std::mutex> lock(_shared->mu);
+            SharedResync* r = _shared->resync.get();
+            if (r == nullptr || r->generation != generation) {
+                // Aborted meanwhile (e.g. a writer that opened could not
+                // reach the member).
+                co_return;
+            }
+            if (error || _closing) {
+                // Not announced yet: nobody attached, nothing to wake.
+                _shared->resync.reset();
+                if (error) {
+                    rawstd_error(
+                        "Mirror resync: SYNCING mark failed: %s\n",
+                        strerror(error)
+                    );
+                    _members[idx].reachable = false;
+                }
+                co_return;
+            }
+            r->announced = true;
+            _resync_attach_locked(generation);
+            _shared->resync_seq.fetch_add(1, std::memory_order_acq_rel);
+            notify_all(_shared->watch_waiters);
         }
 
-        size_t chunk = RESYNC_CHUNK;
-        size_t nbits = (size_t)((_size + chunk - 1) / chunk);
-        ++_resync_generation;
-        _resync = std::make_unique<ResyncState>(ResyncState{
-            _resync_generation,
-            ResyncState::Phase::START_DRAIN,
-            idx,
-            chunk,
-            std::vector<bool>(nbits, true),
-            nbits,
-            0,
-            -1,
-            false,
-            std::make_shared<std::vector<char>>(chunk),
-            {},
-            {}
-        });
-
-        // Writes issued before the resync started are not tracked in the
-        // chunk bookkeeping: sweep only once they have drained.
-        if (_writes_in_flight == 0) {
-            _resync->phase = ResyncState::Phase::SWEEP;
-            _resync_sweep();
-        }
+        _resync_run(generation);
     } catch (const std::exception& e) {
         rawstd_error("Mirror resync failed to start: %s\n", e.what());
     }
 }
 
-rawstd::DetachedTask Chunk::_resync_sweep() {
-    BackgroundGuard guard(*this);
-    std::weak_ptr<void> alive = _alive;
-
-    if (_resync == nullptr || _resync->phase != ResyncState::Phase::SWEEP ||
-        _resync->copying >= 0) {
-        co_return;
+/*
+ * Called with _shared->mu held, for the resync `generation` (which must be
+ * the running one): this Chunk duplicates its writes onto the member from
+ * now on. The writes it already has in flight were not duplicated, so the
+ * sweep waits for them (pending) before copying anything.
+ */
+void Chunk::_resync_attach_locked(uint64_t generation) {
+    SharedResync* r = _shared->resync.get();
+    _members[r->idx].state = MemberState::SYNCING;
+    r->attached.insert(this);
+    _resync_attached = generation;
+    ++_resync_attach_epoch;
+    _resync_untracked = _writes_in_flight;
+    if (_resync_untracked > 0) {
+        r->pending.insert(this);
     }
-
-    if (_resync->remaining == 0) {
-        _resync->phase = ResyncState::Phase::FINISH_DRAIN;
-        if (_writes_in_flight == 0) {
-            _resync_finish();
-        }
-        co_return;
-    }
-
-    size_t n = _resync->bits.size();
-    size_t found = n;
-    for (size_t scan = 0; scan < n; ++scan) {
-        size_t c = (_resync->cursor + scan) % n;
-        if (!_resync->bits[c]) {
-            continue;
-        }
-        auto it = _resync->inflight.find(c);
-        if (it != _resync->inflight.end() && it->second > 0) {
-            continue;
-        }
-        found = c;
-        break;
-    }
-
-    if (found == n) {
-        // Every dirty chunk has a client write in flight; resumed by
-        // _write_settled().
-        _resync->sweep_blocked = true;
-        co_return;
-    }
-
-    size_t src = _members.size();
-    for (size_t i = 0; i < _members.size(); ++i) {
-        if (_members[i].state == MemberState::IN_SYNC) {
-            src = i;
-            break;
-        }
-    }
-    if (src == _members.size()) {
-        _resync_abort("no in-sync source");
-        co_return;
-    }
-
-    size_t c = found;
-    _resync->copying = (ssize_t)c;
-    uint64_t off = (uint64_t)c * _resync->chunk;
-    size_t len = (size_t)std::min<uint64_t>(_resync->chunk, _size - off);
-
-    // Kept alive across the co_await regardless of a concurrent
-    // _resync_abort() (e.g. from _fan_out_write()) resetting _resync while
-    // the kernel still owns this buffer.
-    std::shared_ptr<std::vector<char>> buf = _resync->buf;
-    // This resync may be aborted and replaced by a new one (for a
-    // different member) while this read is in flight: _resync itself is
-    // non-null again once that happens, but it is not the ResyncState this
-    // completion was issued for, and must not be touched.
-    size_t generation = _resync->generation;
-
-    size_t result = 0;
-    int error = 0;
-    try {
-        result = co_await _members[src].slot->pread(buf->data(), len, off);
-    } catch (const std::system_error& e) {
-        error = e.code().value();
-    }
-
-    if (alive.expired() || _resync == nullptr ||
-        _resync->generation != generation) {
-        co_return;
-    }
-
-    if (error || result != len) {
-        _resync_abort("source read failed");
-        co_return;
-    }
-
-    // The source may have degraded while the read was in flight; retry
-    // the chunk from another source.
-    if (_members[src].state != MemberState::IN_SYNC) {
-        _resync->copying = -1;
-        _resync->chunk_barrier.advance();
-        _resync_sweep();
-        co_return;
-    }
-
-    // An all-zero block (typically never written) goes out as
-    // write_zeroes(): no payload on the wire, and the target stays sparse
-    // (unmap) instead of being filled with explicit zeros.
-    const char* data = buf->data();
-    bool zero = data[0] == 0 && memcmp(data, data + 1, len - 1) == 0;
-
-    size_t wresult = 0;
-    int werror = 0;
-    try {
-        Slot& target = *_members[_resync->idx].slot;
-        if (zero) {
-            wresult = co_await target.write_zeroes(len, off, true, false);
-        } else {
-            wresult = co_await target.pwrite(data, len, off, false);
-        }
-    } catch (const std::system_error& e) {
-        werror = e.code().value();
-    }
-
-    if (alive.expired() || _resync == nullptr ||
-        _resync->generation != generation) {
-        co_return;
-    }
-
-    if (werror || wresult != len) {
-        _resync_abort("target write failed");
-        co_return;
-    }
-
-    if (_resync->bits[c]) {
-        _resync->bits[c] = false;
-        --_resync->remaining;
-    }
-    _resync->cursor = c + 1 < _resync->bits.size() ? c + 1 : 0;
-    _resync->copying = -1;
-
-    _resync->chunk_barrier.advance();
-
-    _resync_sweep();
+    notify_all(_shared->resync_waiters);
 }
 
-rawstd::DetachedTask Chunk::_resync_finish() {
-    BackgroundGuard guard(*this);
-    std::weak_ptr<void> alive = _alive;
+/*
+ * Attaches this Chunk to the process's resync `generation` started by
+ * another one: connects to the member first if this Chunk has no session
+ * to it. Failing to reach it aborts the resync -- a writer that cannot
+ * duplicate its writes onto the member must not let it rejoin.
+ */
+rawstd::Task<void> Chunk::_resync_attach(uint64_t generation, size_t idx) {
+    Member& member = _members[idx];
+    if (!member.slot || !member.reachable) {
+        std::unique_ptr<Slot> slot;
+        int error = 0;
+        try {
+            slot = co_await Slot::create(
+                _queue, member.location, rawstor_opts_sessions()
+            );
+            co_await slot->open(_id, _offset, 0, RawstdUUID{});
+        } catch (const std::system_error& e) {
+            error = e.code().value();
+        } catch (const std::exception& e) {
+            rawstd_warning("%s\n", e.what());
+            error = EIO;
+        }
+        if (_closing) {
+            co_return;
+        }
+        if (error) {
+            _resync_abort(generation, "a writer cannot reach the member");
+            co_return;
+        }
+        member.slot = std::move(slot);
+        member.reachable = true;
+        member.probe_announced = false;
+        if (_dirty) {
+            member.slot->set_transparent_retry(false);
+        }
+    }
 
-    // All chunks are copied and no client write is in flight: the member is
-    // byte-identical to the in-sync set. Move the set to a new identity,
-    // adopt it durably, then let the member serve reads.
-    size_t idx = _resync->idx;
-    // See _resync_sweep(): this resync may be aborted (a concurrent write
-    // duplicated onto the still-SYNCING target can fail right up until the
-    // state flips below) and replaced by a new one for a different member.
-    size_t generation = _resync->generation;
-    // The only finisher of this resync: writes settling from now on do not
-    // start another one.
-    _resync->phase = ResyncState::Phase::FINISHING;
+    std::lock_guard<std::mutex> lock(_shared->mu);
+    SharedResync* r = _shared->resync.get();
+    if (_closing || r == nullptr || r->generation != generation ||
+        r->attached.count(this) != 0) {
+        co_return;
+    }
+    _resync_attach_locked(generation);
+}
+
+/*
+ * Every writable mirrored Chunk runs one watcher on its own queue: woken
+ * whenever the process's resync starts or ends, it attaches this Chunk to
+ * a new one (so an idle queue duplicates its writes too) and brings its
+ * own member states in line once one ended.
+ */
+rawstd::DetachedTask Chunk::_resync_watch() {
+    BackgroundGuard guard(*this);
+    try {
+        for (;;) {
+            uint64_t generation = 0;
+            size_t idx = 0;
+            co_await wait_until(
+                _queue, *_shared, _shared->watch_waiters, [&]() {
+                    if (_closing) {
+                        return true;
+                    }
+                    uint64_t seq =
+                        _shared->resync_seq.load(std::memory_order_acquire);
+                    if (seq == _watch_seen) {
+                        return false;
+                    }
+                    _watch_seen = seq;
+                    _resync_fixup_locked();
+                    SharedResync* r = _shared->resync.get();
+                    if (r != nullptr && r->announced &&
+                        r->attached.count(this) == 0) {
+                        generation = r->generation;
+                        idx = r->idx;
+                    }
+                    return true;
+                }
+            );
+            if (_closing) {
+                co_return;
+            }
+            if (generation != 0) {
+                co_await _resync_attach(generation, idx);
+            }
+        }
+    } catch (const std::exception& e) {
+        rawstd_error("Mirror resync watcher failed: %s\n", e.what());
+    }
+}
+
+/*
+ * The owner's side of a resync: waits for every writer of the process to
+ * attach, sweeps the needs-copy regions one at a time from an in-sync
+ * source, mutually exclusive with client writes to that region, then
+ * finishes. Every step re-checks, under the lock, that the resync is still
+ * this one: any writer may abort it meanwhile.
+ */
+rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
+    BackgroundGuard guard(*this);
+    try {
+        SharedControl& shared = *_shared;
+        auto gone_locked = [&]() {
+            SharedResync* r = shared.resync.get();
+            return _closing || r == nullptr || r->generation != generation;
+        };
+
+        bool stop = false;
+        co_await wait_until(_queue, shared, shared.resync_waiters, [&]() {
+            if (gone_locked()) {
+                stop = true;
+                return true;
+            }
+            SharedResync* r = shared.resync.get();
+            for (const Chunk* c : shared.chunks) {
+                if (r->attached.count(c) == 0) {
+                    return false;
+                }
+            }
+            if (!r->pending.empty()) {
+                return false;
+            }
+            r->phase = SharedResync::Phase::SWEEP;
+            return true;
+        });
+        if (stop) {
+            co_return;
+        }
+
+        std::vector<char> buf(RESYNC_CHUNK);
+
+        for (;;) {
+            size_t c = 0;
+            size_t idx = 0;
+            bool done = false;
+            co_await wait_until(_queue, shared, shared.resync_waiters, [&]() {
+                if (gone_locked()) {
+                    stop = true;
+                    return true;
+                }
+                SharedResync* r = shared.resync.get();
+                if (r->remaining == 0) {
+                    r->phase = SharedResync::Phase::FINISHING;
+                    done = true;
+                    return true;
+                }
+                size_t n = r->bits.size();
+                for (size_t scan = 0; scan < n; ++scan) {
+                    size_t k = (r->cursor + scan) % n;
+                    if (!r->bits[k] || r->inflight.count(k) != 0) {
+                        continue;
+                    }
+                    r->copying = (ssize_t)k;
+                    c = k;
+                    idx = r->idx;
+                    return true;
+                }
+                // Every region left has a client write in flight.
+                return false;
+            });
+            if (stop) {
+                co_return;
+            }
+            if (done) {
+                break;
+            }
+
+            // In-sync for the process, not just for this Chunk: another
+            // writer may have excluded a member this one has not adopted
+            // the exclusion of yet, and that copy no longer gets the
+            // writes acknowledged since.
+            auto source_ok = [&](size_t i) {
+                return _members[i].state == MemberState::IN_SYNC &&
+                       !shared.stale[i];
+            };
+            size_t src = _members.size();
+            {
+                std::lock_guard<std::mutex> lock(shared.mu);
+                for (size_t i = 0; i < _members.size(); ++i) {
+                    if (source_ok(i)) {
+                        src = i;
+                        break;
+                    }
+                }
+            }
+            if (src == _members.size()) {
+                _resync_abort(generation, "no in-sync source");
+                co_return;
+            }
+
+            uint64_t off = (uint64_t)c * RESYNC_CHUNK;
+            size_t len = (size_t)std::min<uint64_t>(RESYNC_CHUNK, _size - off);
+
+            size_t result = 0;
+            int error = 0;
+            try {
+                result =
+                    co_await _members[src].slot->pread(buf.data(), len, off);
+            } catch (const std::system_error& e) {
+                error = e.code().value();
+            }
+
+            bool source_left = false;
+            {
+                std::lock_guard<std::mutex> lock(shared.mu);
+                if (gone_locked()) {
+                    co_return;
+                }
+                source_left = !source_ok(src);
+            }
+
+            // The source may have been excluded while the read was in
+            // flight, by any writer of the process; retry the region from
+            // another source.
+            if (source_left) {
+                std::lock_guard<std::mutex> lock(shared.mu);
+                if (!gone_locked()) {
+                    shared.resync->copying = -1;
+                    notify_all(shared.resync_waiters);
+                }
+                continue;
+            }
+
+            if (error || result != len) {
+                _resync_abort(generation, "source read failed");
+                co_return;
+            }
+
+            // An all-zero block (typically never written) goes out as
+            // write_zeroes(): no payload on the wire, and the target stays
+            // sparse (unmap) instead of being filled with explicit zeros.
+            const char* data = buf.data();
+            bool zero = data[0] == 0 && memcmp(data, data + 1, len - 1) == 0;
+
+            size_t wresult = 0;
+            int werror = 0;
+            try {
+                Slot& target = *_members[idx].slot;
+                if (zero) {
+                    wresult =
+                        co_await target.write_zeroes(len, off, true, false);
+                } else {
+                    wresult = co_await target.pwrite(data, len, off, false);
+                }
+            } catch (const std::system_error& e) {
+                werror = e.code().value();
+            }
+
+            if (werror || wresult != len) {
+                _resync_abort(generation, "target write failed");
+                co_return;
+            }
+
+            std::lock_guard<std::mutex> lock(shared.mu);
+            if (gone_locked()) {
+                co_return;
+            }
+            SharedResync* r = shared.resync.get();
+            if (r->bits[c]) {
+                r->bits[c] = false;
+                --r->remaining;
+            }
+            r->cursor = c + 1 < r->bits.size() ? c + 1 : 0;
+            r->copying = -1;
+            notify_all(shared.resync_waiters);
+        }
+
+        co_await _resync_finish(generation);
+    } catch (const std::exception& e) {
+        rawstd_error("Mirror resync failed: %s\n", e.what());
+        _resync_abort(generation, "internal error");
+    }
+}
+
+/*
+ * Every region is copied: moves the set to a new identity (the rejoin
+ * barrier), records it on the member, and lets the member join -- for
+ * every writer of the process at once.
+ */
+rawstd::Task<void> Chunk::_resync_finish(uint64_t generation) {
+    SharedControl& shared = *_shared;
+    size_t idx = 0;
+    {
+        std::lock_guard<std::mutex> lock(shared.mu);
+        idx = shared.resync->idx;
+    }
 
     auto identity = [this]() {
         RawstorObjectSyncState m{};
@@ -2068,9 +2337,13 @@ rawstd::DetachedTask Chunk::_resync_finish() {
                    sizeof(a.sync_id_history)
                ) == 0;
     };
+    auto gone_locked = [&]() {
+        SharedResync* r = shared.resync.get();
+        return _closing || r == nullptr || r->generation != generation;
+    };
     auto gone = [&]() {
-        return alive.expired() || _resync == nullptr ||
-               _resync->generation != generation;
+        std::lock_guard<std::mutex> lock(shared.mu);
+        return gone_locked();
     };
 
     // Gate has no queue of its own: re-check after every wake-up.
@@ -2082,10 +2355,10 @@ rawstd::DetachedTask Chunk::_resync_finish() {
     }
 
     try {
-        co_await _run_rejoin_barrier();
+        co_await _run_rejoin_barrier(generation);
     } catch (const std::system_error&) {
         if (!gone()) {
-            _resync_abort("sync set update failed");
+            _resync_abort(generation, "sync set update failed");
         }
         co_return;
     }
@@ -2094,121 +2367,114 @@ rawstd::DetachedTask Chunk::_resync_finish() {
         co_return;
     }
 
-    // Shared with the other writers of this process; see the commit point
-    // below.
-    std::shared_ptr<SharedControl> shared = _shared;
-
-    // Neither _meta_gate nor client writes are held off while this writes
-    // to a member that may never answer. Instead the member joins the set
-    // only once, with no suspension in between: no barrier is running
-    // (one running alongside records a new identity on the in-sync
-    // members only, so the member is written again), no write is in
-    // flight (one started meanwhile was duplicated onto the member, and
-    // aborts the resync itself if it failed there), and the identity it
-    // holds is still current. Gate has no queue of its own, so re-check
-    // after every wake-up.
+    // Neither _meta_gate, the transition lock nor client writes are held
+    // off while this writes to a member that may never answer. Instead the
+    // member joins the set in one critical section, once: no barrier of
+    // this Chunk is running and no other writer holds the transition lock
+    // (either would record a new identity the member does not have yet),
+    // no tracked write is in flight anywhere in the process (one started
+    // meanwhile was duplicated onto the member, and aborts the resync
+    // itself if it failed there), and the identity the member holds is
+    // still current. Each of those is re-checked after every wake-up.
     RawstorObjectSyncState m = identity();
+    bool written = false;
     while (true) {
-        int error = 0;
-        try {
-            co_await _members[idx].slot->set_sync_state(_id, _offset, m);
-        } catch (const std::system_error& e) {
-            error = e.code().value();
-        }
-
-        if (gone()) {
-            co_return;
-        }
-
-        if (error == ENOSYS) {
-            error = 0;
-        }
-
-        if (error) {
-            _resync_abort("final state update failed");
-            co_return;
-        }
-
-        while (true) {
-            if (_meta_gate.running()) {
-                co_await _meta_gate.settle();
-            } else if (_writes_in_flight != 0) {
-                co_await _write_settle_barrier.at_least(
-                    _write_settle_barrier.value() + 1
-                );
-            } else {
-                break;
+        if (!written) {
+            int error = 0;
+            try {
+                co_await _members[idx].slot->set_sync_state(_id, _offset, m);
+            } catch (const std::system_error& e) {
+                error = e.code().value();
             }
+
             if (gone()) {
                 co_return;
             }
+
+            if (error == ENOSYS) {
+                error = 0;
+            }
+
+            if (error) {
+                _resync_abort(generation, "final state update failed");
+                co_return;
+            }
+            written = true;
+        }
+
+        if (_meta_gate.running()) {
+            co_await _meta_gate.settle();
+            if (gone()) {
+                co_return;
+            }
+            continue;
         }
 
         RawstorObjectSyncState current = identity();
         if (!same(current, m)) {
             m = current;
+            written = false;
             continue;
         }
 
-        if (!shared) {
-            break;
-        }
-
-        // The member joins the process-wide set too, so it must not if
-        // another writer of this process joined since the resync started
-        // (that one never duplicated its writes onto it). Taken without
-        // waiting, so the commit stays free of suspensions: a transition
-        // of another writer still holding the lock means trying again
-        // once it is released.
-        bool sole = false;
-        bool held = false;
         std::shared_ptr<Wake> wake;
-        try {
-            std::lock_guard<std::mutex> lock(shared->mu);
-            sole = shared->writers == 1 && shared->joins == _resync_joins;
-            if (sole && !shared->busy) {
-                shared->busy = true;
-                held = true;
-            } else if (sole) {
-                wake = std::make_shared<Wake>();
-                shared->lock_waiters.push_back(wake);
+        bool committed = false;
+        bool moved = false;
+        {
+            std::lock_guard<std::mutex> lock(shared.mu);
+            if (gone_locked()) {
+                co_return;
             }
-        } catch (const std::system_error&) {
-            // No Wake to park on: try again right away.
+            SharedResync* r = shared.resync.get();
+            if (r->tracked != 0) {
+                wake = std::make_shared<Wake>();
+                shared.resync_waiters.push_back(wake);
+            } else if (shared.busy) {
+                wake = std::make_shared<Wake>();
+                shared.lock_waiters.push_back(wake);
+            } else {
+                // Another writer's transition may have moved the set
+                // meanwhile: the member must get that identity first.
+                _shared_adopt_locked();
+                moved = !same(identity(), m);
+            }
+            if (!wake && !moved) {
+                _members[idx].state = MemberState::IN_SYNC;
+                _members[idx].meta.sync_state = m;
+                _members[idx].meta.spec.size = _size;
+                if (_writes_frozen && !_below_write_quorum(_in_sync_count())) {
+                    rawstd_info(
+                        "Mirror write quorum restored: unfreezing writes\n"
+                    );
+                    _writes_frozen = false;
+                }
+                _shared_publish_locked();
+                shared.resync.reset();
+                _resync_attached = 0;
+                shared.resync_seq.fetch_add(1, std::memory_order_acq_rel);
+                notify_all(shared.resync_waiters);
+                notify_all(shared.watch_waiters);
+                committed = true;
+            }
         }
-        if (!sole) {
-            _resync_abort("another writer joined");
-            co_return;
-        }
-        if (held) {
+        if (committed) {
             break;
         }
-        if (wake) {
-            co_await wake->wait(_queue);
+        if (moved) {
+            m = identity();
+            written = false;
+            continue;
         }
+        co_await wake->wait(_queue);
         if (gone()) {
             co_return;
         }
-    }
-
-    _members[idx].state = MemberState::IN_SYNC;
-    _members[idx].meta.sync_state = m;
-    _members[idx].meta.spec.size = _size;
-    _resync.reset();
-    if (shared) {
-        _shared_publish();
-        shared->unlock();
     }
 
     rawstd_info(
         "Mirror resync: the member rejoined the set: %s\n",
         _member_str(_members[idx]).c_str()
     );
-
-    if (_writes_frozen && !_below_write_quorum(_in_sync_count())) {
-        rawstd_info("Mirror write quorum restored: unfreezing writes\n");
-        _writes_frozen = false;
-    }
 
     _resync_maybe_start();
 }
@@ -2218,28 +2484,26 @@ rawstd::DetachedTask Chunk::_resync_finish() {
  * new sync_id (docs/mirroring.md, When sync_id changes) before the
  * rejoining member adopts it. Until then that member is still SYNCING on
  * its old record, so an interruption leaves it stale either way. The
- * caller has waited for _meta_gate to settle.
+ * caller has waited for _meta_gate to settle. A transition of the whole
+ * process: recorded under its lock and published before anything else of
+ * the process can adopt the set.
  */
-rawstd::Task<void> Chunk::_run_rejoin_barrier() {
+rawstd::Task<void> Chunk::_run_rejoin_barrier(uint64_t generation) {
     _meta_gate.begin();
 
-    // A new sync_id for the whole process: recorded under its lock and
-    // published before anything else of the process can adopt the set.
-    // The resync only goes on while this Chunk is still its sole writer.
     bool locked = false;
     try {
-        if (_shared) {
-            co_await _shared_lock();
-            locked = true;
-            _shared_adopt();
-            bool sole = false;
-            {
-                std::lock_guard<std::mutex> lock(_shared->mu);
-                sole = _shared->writers == 1 && _shared->joins == _resync_joins;
-            }
-            if (!sole) {
-                RAWSTD_THROW_SYSTEM_ERROR(ECANCELED);
-            }
+        co_await _shared_lock();
+        locked = true;
+        _shared_adopt();
+        bool current = false;
+        {
+            std::lock_guard<std::mutex> lock(_shared->mu);
+            SharedResync* r = _shared->resync.get();
+            current = r != nullptr && r->generation == generation;
+        }
+        if (!current) {
+            RAWSTD_THROW_SYSTEM_ERROR(ECANCELED);
         }
     } catch (...) {
         if (locked) {
@@ -2284,39 +2548,45 @@ rawstd::Task<void> Chunk::_run_rejoin_barrier() {
                 mirror.meta.sync_state = m;
             }
         }
-        if (locked) {
-            _shared_publish();
-        }
+        _shared_publish();
     } catch (...) {
-        if (locked) {
-            _shared_publish();
-            _shared_unlock();
-        }
+        _shared_publish();
+        _shared_unlock();
         _meta_gate.end();
         throw;
     }
 
-    if (locked) {
-        _shared_unlock();
-    }
+    _shared_unlock();
     _meta_gate.end();
 }
 
-void Chunk::_resync_abort(const char* reason) noexcept {
-    size_t idx = _resync->idx;
-    rawstd_error(
-        "Mirror resync aborted: %s: %s\n", _member_str(_members[idx]).c_str(),
-        reason
-    );
-    _members[idx].state = MemberState::STALE;
-    _members[idx].reachable = false;
+void Chunk::_resync_abort(uint64_t generation, const char* reason) noexcept {
+    std::lock_guard<std::mutex> lock(_shared->mu);
+    _resync_abort_locked(generation, reason);
+}
 
-    // Moved out, not advanced in place: advance()'s resumes must see
-    // _resync already reset (a waiter re-checks _resync == nullptr first
-    // thing on wake), same as _fan_out_write()'s own wait loop relies on.
-    rawstd::Barrier chunk_barrier = std::move(_resync->chunk_barrier);
-    _resync.reset();
-    chunk_barrier.advance();
+/*
+ * Called with _shared->mu held. Ends the resync `generation`, if it is
+ * still the running one: the member stays SYNCING on disk, untrusted until
+ * a later resync (docs/mirroring.md, case F8); every writer of the process
+ * marks it STALE and unreachable, so the probe brings it back later.
+ */
+void Chunk::_resync_abort_locked(
+    uint64_t generation, const char* reason
+) noexcept {
+    SharedResync* r = _shared->resync.get();
+    if (r == nullptr || r->generation != generation) {
+        return;
+    }
+    rawstd_error(
+        "Mirror resync aborted: %s: %s\n",
+        _member_str(_members[r->idx]).c_str(), reason
+    );
+    _shared->resync.reset();
+    _shared->resync_seq.fetch_add(1, std::memory_order_acq_rel);
+    _resync_fixup_locked();
+    notify_all(_shared->resync_waiters);
+    notify_all(_shared->watch_waiters);
 }
 
 // Launches _probe_watch() (a no-op for a single-target object).
@@ -2380,7 +2650,7 @@ rawstd::DetachedTask Chunk::_probe_tick() {
 
     // Not a BackgroundGuard user: the reconnect goes through a Slot of its
     // own, never through a member's, so close() need not wait for it.
-    if (_closing || _probe_pending || _resync != nullptr) {
+    if (_closing || _probe_pending || _resync_attached != 0) {
         co_return;
     }
 
