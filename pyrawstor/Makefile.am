@@ -99,7 +99,6 @@ test: $(builddir)/build-stamp
 endif
 
 clean-local:
-	$(PYTHON) $(builddir)/setup.py clean --all
 	@if [ "$(srcdir)" != "$(builddir)" ]; then \
 	    rm -rf \
 	        rawstor \
@@ -109,6 +108,7 @@ clean-local:
 	fi
 	-find . -name __pycache__ -exec rm -r {} \;
 	-rm -rf \
+	    $(builddir)/build \
 	    $(builddir)/build-stamp \
 	    $(builddir)/dist \
 	    $(builddir)/sources-stamp
