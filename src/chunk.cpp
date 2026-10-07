@@ -18,9 +18,12 @@
 #include <rawstd/uri.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <exception>
 #include <limits>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <optional>
 #include <random>
@@ -107,6 +110,175 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
 
 namespace rawstor {
 
+/*
+ * Control transitions take `busy` (_shared_lock()), held across their
+ * own metadata round trips; every field below is written only with both
+ * `busy` and `mu` held, and read with either. `gen` is bumped on every
+ * publish so the write path can tell, with one atomic load, whether
+ * another Chunk of this process changed anything since it last adopted.
+ */
+struct SharedControl {
+    std::mutex mu;
+    bool busy = false;
+    std::atomic<uint64_t> gen{0};
+
+    // Writable Chunks of this process currently open on the chunk.
+    size_t writers = 0;
+    // Bumped on every open: a resync started by the sole writer must not
+    // complete once another one joined (it never duplicated its writes
+    // onto the SYNCING member).
+    uint64_t joins = 0;
+
+    // A sync set has been adopted from the members (false again once the
+    // last writer closed: the next open reads the members afresh).
+    bool valid = false;
+    bool dirty = false;
+    bool frozen = false;
+    uint64_t size = 0;
+    uint64_t epoch = 0;
+    uint64_t sync_id = 0;
+    uint64_t sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY] = {};
+    // Members excluded from the process-wide mirror set.
+    std::vector<bool> stale;
+    // Chunk::_unrecorded_stale of the process: exclusions no barrier has
+    // recorded with a new sync_id yet.
+    size_t unrecorded_stale = 0;
+
+    void unlock() noexcept {
+        std::lock_guard<std::mutex> guard(mu);
+        busy = false;
+    }
+};
+
+namespace {
+
+std::shared_ptr<SharedControl> shared_control(
+    const RawstdUUID& id, uint64_t offset,
+    const std::vector<rawstd::URI>& locations
+) {
+    static std::mutex registry_mu;
+    static std::map<std::string, std::weak_ptr<SharedControl>> registry;
+
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+    std::ostringstream key;
+    key << uuid_string << "/" << std::hex << offset;
+    for (const rawstd::URI& location : locations) {
+        key << "," << location.str();
+    }
+
+    std::lock_guard<std::mutex> guard(registry_mu);
+    for (auto it = registry.begin(); it != registry.end();) {
+        it = it->second.expired() ? registry.erase(it) : std::next(it);
+    }
+    std::weak_ptr<SharedControl>& slot = registry[key.str()];
+    std::shared_ptr<SharedControl> ret = slot.lock();
+    if (!ret) {
+        ret = std::make_shared<SharedControl>();
+        ret->stale.assign(locations.size(), false);
+        slot = ret;
+    }
+    return ret;
+}
+
+// Polls rather than parks: transitions are rare, and the holder may run
+// on another thread's queue, which has no way to resume a coroutine
+// parked on this one.
+rawstd::Task<void> shared_lock(rawio::Queue& queue, SharedControl& shared) {
+    for (;;) {
+        {
+            std::lock_guard<std::mutex> guard(shared.mu);
+            if (!shared.busy) {
+                shared.busy = true;
+                co_return;
+            }
+        }
+        co_await queue.timeout(100);
+    }
+}
+
+} // namespace
+
+rawstd::Task<void> Chunk::_shared_lock() {
+    co_await shared_lock(_queue, *_shared);
+}
+
+void Chunk::_shared_unlock() noexcept {
+    _shared->unlock();
+}
+
+void Chunk::_mark_dirty_local() noexcept {
+    _dirty = true;
+    for (Member& mirror : _members) {
+        if (mirror.slot) {
+            mirror.slot->set_transparent_retry(false);
+        }
+    }
+}
+
+void Chunk::_shared_adopt() {
+    std::lock_guard<std::mutex> guard(_shared->mu);
+    if (!_shared->valid) {
+        return;
+    }
+    _size = _shared->size;
+    _epoch = _shared->epoch;
+    _sync_id = _shared->sync_id;
+    memcpy(
+        _sync_id_history, _shared->sync_id_history, sizeof(_sync_id_history)
+    );
+    _writes_frozen = _writes_frozen || _shared->frozen;
+    _unrecorded_stale = _shared->unrecorded_stale;
+    for (size_t i = 0; i < _members.size(); ++i) {
+        Member& m = _members[i];
+        if (_shared->stale[i] && m.state == MemberState::IN_SYNC) {
+            m.state = MemberState::STALE;
+        }
+        if (m.state == MemberState::IN_SYNC) {
+            m.meta.sync_state.epoch = _epoch;
+            m.meta.sync_state.sync_id = _sync_id;
+            memcpy(
+                m.meta.sync_state.sync_id_history, _sync_id_history,
+                sizeof(m.meta.sync_state.sync_id_history)
+            );
+        }
+    }
+    if (_shared->dirty && !_dirty) {
+        _mark_dirty_local();
+    }
+    _shared_gen = _shared->gen.load(std::memory_order_acquire);
+}
+
+void Chunk::_shared_publish() {
+    std::lock_guard<std::mutex> guard(_shared->mu);
+    _shared->valid = true;
+    _shared->size = _size;
+    _shared->epoch = _epoch;
+    _shared->sync_id = _sync_id;
+    memcpy(
+        _shared->sync_id_history, _sync_id_history, sizeof(_sync_id_history)
+    );
+    _shared->dirty = _dirty;
+    _shared->frozen = _writes_frozen;
+    _shared->unrecorded_stale = _unrecorded_stale;
+    for (size_t i = 0; i < _members.size(); ++i) {
+        _shared->stale[i] = _members[i].state != MemberState::IN_SYNC;
+    }
+    _shared_gen = _shared->gen.fetch_add(1, std::memory_order_acq_rel) + 1;
+}
+
+rawstd::Task<void> Chunk::_shared_refresh() {
+    if (!_shared ||
+        _shared_gen == _shared->gen.load(std::memory_order_acquire)) {
+        co_return;
+    }
+    _meta_gate.begin();
+    co_await _shared_lock();
+    _shared_adopt();
+    _shared_unlock();
+    _meta_gate.end();
+}
+
 // The heavy async work -- standing up a Slot per URI, meta()-ing each --
 // still lives in create() below, the one place that actually constructs
 // a Chunk (by analogy with Slot(Private, queue)): a constructor can't
@@ -118,7 +290,8 @@ namespace rawstor {
 // is safe to let unwind through a throwing constructor.
 Chunk::Chunk(
     Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
-    bool readonly, RawstorObjectSpec spec, std::vector<Member> members
+    bool readonly, RawstorObjectSpec spec, std::vector<Member> members,
+    std::shared_ptr<SharedControl> shared
 ) :
     _queue(queue),
     _id(id),
@@ -136,6 +309,9 @@ Chunk::Chunk(
     _alive(std::make_shared<char>()),
     _closing(false),
     _background(0),
+    _shared(std::move(shared)),
+    _shared_gen(0),
+    _resync_joins(0),
     _writes_in_flight(0),
     _resync_generation(0),
     _probe_pending(false),
@@ -143,8 +319,15 @@ Chunk::Chunk(
     _unflushed(false) {
     if (_members.size() == 1) {
         _members.front().state = MemberState::IN_SYNC;
+    } else if (_shared && _shared->valid) {
+        // Another writer of this process already decided the sync set:
+        // the members' own records may be mid-transition right now.
+        _shared_adopt();
     } else {
         _reconcile_sync_set();
+        if (_shared) {
+            _shared_publish();
+        }
     }
 
     // Both are no-ops for a single-target object; a mirrored one starts
@@ -221,6 +404,16 @@ Chunk::~Chunk() {
             }
         } catch (const std::exception& e) {
             rawstd_error("Chunk::~Chunk(): %s\n", e.what());
+        }
+    }
+
+    // Torn down without close(): the members stay DIRTY (the safe
+    // direction), and the next open reads them afresh once no writer of
+    // this process is left.
+    if (_shared) {
+        std::lock_guard<std::mutex> guard(_shared->mu);
+        if (--_shared->writers == 0) {
+            _shared->valid = false;
         }
     }
 
@@ -362,6 +555,35 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // arrives as the explicit `id`/`offset`/`version_id` parameters.
     validate_not_empty(locations);
     validate_different_uris(locations);
+
+    // A writable, live, mirrored open joins this process's one writer of
+    // the chunk: held across the whole open, so it never reads the
+    // members' records halfway through another Chunk's transition.
+    std::shared_ptr<SharedControl> shared;
+    if ((flags & RAWSTOR_READONLY) == 0 && rawstd_uuid_is_nil(&version_id) &&
+        locations.size() > 1) {
+        shared = shared_control(id, offset, locations);
+        co_await shared_lock(queue, *shared);
+        std::lock_guard<std::mutex> guard(shared->mu);
+        ++shared->writers;
+        ++shared->joins;
+    }
+    struct SharedOpenGuard {
+        std::shared_ptr<SharedControl> shared;
+        bool opened = false;
+        ~SharedOpenGuard() {
+            if (!shared) {
+                return;
+            }
+            if (!opened) {
+                std::lock_guard<std::mutex> guard(shared->mu);
+                if (--shared->writers == 0) {
+                    shared->valid = false;
+                }
+            }
+            shared->unlock();
+        }
+    } shared_guard{shared};
 
     // Every location's Slot goes out concurrently instead of one at a
     // time -- just Slot::create(), kept in a plain local vector parallel
@@ -566,10 +788,31 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // it's actually trustworthy enough to open from (the single-member
     // shortcut, or _reconcile_sync_set()'s own quorum/split-brain/no-
     // trusted-member analysis) is the constructor's own job from here.
-    co_return std::make_unique<Chunk>(
+    std::unique_ptr<Chunk> chunk = std::make_unique<Chunk>(
         Private(), queue, id, offset, (flags & RAWSTOR_READONLY) != 0,
-        std::move(spec), std::move(members)
+        std::move(spec), std::move(members), shared
     );
+    shared_guard.opened = true;
+
+    // Members this open could not reach but the process still counts
+    // in-sync: excluded for every writer of the process before anything
+    // is written through this Chunk.
+    std::vector<size_t> lost;
+    if (shared) {
+        for (size_t i = 0; i < chunk->_members.size(); ++i) {
+            if (!chunk->_members[i].reachable && !shared->stale[i]) {
+                lost.push_back(i);
+            }
+        }
+        shared_guard.shared->unlock();
+        shared_guard.shared.reset();
+    }
+
+    if (!lost.empty()) {
+        co_await chunk->_degrade(std::move(lost));
+    }
+
+    co_return chunk;
 }
 
 void Chunk::_write_finished(unsigned int ticket) noexcept {
@@ -814,6 +1057,8 @@ rawstd::Task<void> Chunk::_with_dirty() {
         co_await _meta_gate.settle();
     }
 
+    co_await _shared_refresh();
+
     if (_writes_frozen) {
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
@@ -835,6 +1080,26 @@ rawstd::Task<void> Chunk::_with_dirty() {
  */
 rawstd::Task<void> Chunk::_run_dirty_barrier() {
     _meta_gate.begin();
+
+    bool locked = false;
+    try {
+        if (_shared) {
+            co_await _shared_lock();
+            locked = true;
+            _shared_adopt();
+        }
+    } catch (...) {
+        _meta_gate.end();
+        throw;
+    }
+
+    // Another writer of this process already recorded DIRTY.
+    if (locked && _dirty) {
+        _shared_unlock();
+        _meta_gate.end();
+        co_await _degrade({});
+        co_return;
+    }
 
     try {
         // A degrade can race this barrier while the object is still not
@@ -902,12 +1167,28 @@ rawstd::Task<void> Chunk::_run_dirty_barrier() {
                 mirror.slot->set_transparent_retry(false);
             }
         }
+        if (locked) {
+            _shared_publish();
+        }
     } catch (...) {
+        if (locked) {
+            _shared_publish();
+            _shared_unlock();
+        }
         _meta_gate.end();
         throw;
     }
 
+    if (locked) {
+        _shared_unlock();
+    }
     _meta_gate.end();
+
+    if (_shared) {
+        // Members this Chunk lost but the process still counts in-sync.
+        co_await _degrade({});
+        co_return;
+    }
 
     // A degrade that raced this barrier (see recorded_stale above) left
     // its exclusion unrecorded on the survivors: now that _dirty is set,
@@ -946,6 +1227,12 @@ rawstd::Task<void> Chunk::_degrade(std::vector<size_t> idxs) {
         }
     }
 
+    if (_shared) {
+        co_await _meta_gate.settle();
+        co_await _run_shared_degrade_barrier();
+        co_return;
+    }
+
     if (!_dirty) {
         co_return;
     }
@@ -953,6 +1240,95 @@ rawstd::Task<void> Chunk::_degrade(std::vector<size_t> idxs) {
     co_await _meta_gate.settle();
 
     co_await _run_degrade_barrier();
+}
+
+/*
+ * The process-wide counterpart of _run_degrade_barrier(): records every
+ * member this Chunk excluded that the process still counts in-sync --
+ * once, for every writer of the process. A member another Chunk already
+ * excluded is just adopted; while the process has nothing DIRTY the
+ * exclusion is only published, and the first dirty barrier records it.
+ */
+rawstd::Task<void> Chunk::_run_shared_degrade_barrier() {
+    _meta_gate.begin();
+    try {
+        co_await _shared_lock();
+    } catch (...) {
+        _meta_gate.end();
+        throw;
+    }
+
+    try {
+        _shared_adopt();
+
+        bool need = false;
+        for (size_t i = 0; i < _members.size(); ++i) {
+            if (_members[i].state == MemberState::STALE && !_shared->stale[i]) {
+                need = true;
+                ++_unrecorded_stale;
+            }
+        }
+
+        if (need && _dirty) {
+            size_t survivors = _in_sync_count();
+            if (survivors == 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(EIO);
+            }
+            if (_below_write_quorum(survivors)) {
+                rawstd_error(
+                    "Mirror survivors below write quorum: freezing writes\n"
+                );
+                _writes_frozen = true;
+                RAWSTD_THROW_SYSTEM_ERROR(EIO);
+            }
+
+            RawstorObjectSyncState m = _bump_sync_state();
+
+            co_await _run_meta_fan_out(m);
+
+            size_t survivors2 = _in_sync_count();
+            if (survivors2 == 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(EIO);
+            }
+            if (_below_write_quorum(survivors2)) {
+                rawstd_error(
+                    "Mirror survivors below write quorum: freezing writes\n"
+                );
+                _writes_frozen = true;
+                RAWSTD_THROW_SYSTEM_ERROR(EIO);
+            }
+
+            _epoch = m.epoch;
+            _sync_id = m.sync_id;
+            memcpy(
+                _sync_id_history, m.sync_id_history, sizeof(_sync_id_history)
+            );
+            _unrecorded_stale = 0;
+            for (Member& mirror : _members) {
+                if (mirror.state == MemberState::IN_SYNC) {
+                    mirror.meta.sync_state.epoch = m.epoch;
+                    mirror.meta.sync_state.sync_id = m.sync_id;
+                    memcpy(
+                        mirror.meta.sync_state.sync_id_history,
+                        m.sync_id_history,
+                        sizeof(mirror.meta.sync_state.sync_id_history)
+                    );
+                }
+            }
+        }
+
+        if (need) {
+            _shared_publish();
+        }
+    } catch (...) {
+        _shared_publish();
+        _shared_unlock();
+        _meta_gate.end();
+        throw;
+    }
+
+    _shared_unlock();
+    _meta_gate.end();
 }
 
 rawstd::Task<void> Chunk::_run_degrade_barrier() {
@@ -1328,6 +1704,16 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
             co_return;
         }
 
+        // Another writer of this process would not duplicate its writes
+        // onto the SYNCING member.
+        if (_shared) {
+            std::lock_guard<std::mutex> guard(_shared->mu);
+            if (_shared->writers != 1) {
+                co_return;
+            }
+            _resync_joins = _shared->joins;
+        }
+
         for (const Member& m : _members) {
             if (m.state == MemberState::SYNCING) {
                 /* A start is already in flight. */
@@ -1621,6 +2007,10 @@ rawstd::DetachedTask Chunk::_resync_finish() {
         co_return;
     }
 
+    // Shared with the other writers of this process; see the commit point
+    // below.
+    std::shared_ptr<SharedControl> shared = _shared;
+
     // Neither _meta_gate nor client writes are held off while this writes
     // to a member that may never answer. Instead the member joins the set
     // only once, with no suspension in between: no barrier is running
@@ -1668,16 +2058,55 @@ rawstd::DetachedTask Chunk::_resync_finish() {
         }
 
         RawstorObjectSyncState current = identity();
-        if (same(current, m)) {
+        if (!same(current, m)) {
+            m = current;
+            continue;
+        }
+
+        if (!shared) {
             break;
         }
-        m = current;
+
+        // The member joins the process-wide set too, so it must not if
+        // another writer of this process joined since the resync started
+        // (that one never duplicated its writes onto it). Taken without
+        // waiting, so the commit stays free of suspensions: a transition
+        // of another writer still holding the lock means trying again.
+        bool sole = false;
+        bool held = false;
+        {
+            std::lock_guard<std::mutex> lock(shared->mu);
+            sole = shared->writers == 1 && shared->joins == _resync_joins;
+            if (sole && !shared->busy) {
+                shared->busy = true;
+                held = true;
+            }
+        }
+        if (!sole) {
+            _resync_abort("another writer joined");
+            co_return;
+        }
+        if (held) {
+            break;
+        }
+        // Best-effort pause: on a failure to submit it, just retry now.
+        try {
+            co_await _queue.timeout(100);
+        } catch (const std::exception&) {
+        }
+        if (gone()) {
+            co_return;
+        }
     }
 
     _members[idx].state = MemberState::IN_SYNC;
     _members[idx].meta.sync_state = m;
     _members[idx].meta.spec.size = _size;
     _resync.reset();
+    if (shared) {
+        _shared_publish();
+        shared->unlock();
+    }
 
     rawstd_info(
         "Mirror resync: the member rejoined the set: %s\n",
@@ -1701,6 +2130,32 @@ rawstd::DetachedTask Chunk::_resync_finish() {
  */
 rawstd::Task<void> Chunk::_run_rejoin_barrier() {
     _meta_gate.begin();
+
+    // A new sync_id for the whole process: recorded under its lock and
+    // published before anything else of the process can adopt the set.
+    // The resync only goes on while this Chunk is still its sole writer.
+    bool locked = false;
+    try {
+        if (_shared) {
+            co_await _shared_lock();
+            locked = true;
+            _shared_adopt();
+            bool sole = false;
+            {
+                std::lock_guard<std::mutex> lock(_shared->mu);
+                sole = _shared->writers == 1 && _shared->joins == _resync_joins;
+            }
+            if (!sole) {
+                RAWSTD_THROW_SYSTEM_ERROR(ECANCELED);
+            }
+        }
+    } catch (...) {
+        if (locked) {
+            _shared_unlock();
+        }
+        _meta_gate.end();
+        throw;
+    }
 
     try {
         // The new sync_id also records any exclusion still pending (a
@@ -1737,11 +2192,21 @@ rawstd::Task<void> Chunk::_run_rejoin_barrier() {
                 mirror.meta.sync_state = m;
             }
         }
+        if (locked) {
+            _shared_publish();
+        }
     } catch (...) {
+        if (locked) {
+            _shared_publish();
+            _shared_unlock();
+        }
         _meta_gate.end();
         throw;
     }
 
+    if (locked) {
+        _shared_unlock();
+    }
     _meta_gate.end();
 }
 
@@ -2306,11 +2771,21 @@ rawstd::Task<void> Chunk::close() {
     // the connections down below would race it out from under itself.
     co_await _meta_gate.settle();
 
+    // Only the last writer of this process marks the members CLEAN: the
+    // others may still be writing.
+    bool last = true;
+    if (_shared) {
+        co_await _shared_lock();
+        _shared_adopt();
+        std::lock_guard<std::mutex> guard(_shared->mu);
+        last = --_shared->writers == 0;
+    }
+
     // A mirrored, DIRTY object gets a durable CLEAN mark before teardown --
     // a clean close, so the next open() doesn't pay for a spurious dirty
     // gate (docs/mirroring.md). Left DIRTY (the safe direction) on any
     // error here; the object is destroyed anyway.
-    if (_members.size() > 1 && _dirty && !flush_failed) {
+    if (_members.size() > 1 && _dirty && !flush_failed && last) {
         if (_in_sync_count() > 0) {
             _meta_gate.begin();
             try {
@@ -2335,6 +2810,17 @@ rawstd::Task<void> Chunk::close() {
             }
             _meta_gate.end();
         }
+    }
+
+    if (_shared) {
+        if (last) {
+            std::lock_guard<std::mutex> guard(_shared->mu);
+            _shared->valid = false;
+            _shared->dirty = false;
+            _shared->gen.fetch_add(1, std::memory_order_acq_rel);
+        }
+        _shared_unlock();
+        _shared.reset();
     }
 
     std::vector<rawstd::Task<void>> tasks;

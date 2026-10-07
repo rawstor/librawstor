@@ -23,6 +23,13 @@ namespace rawstor {
 
 class Slot;
 
+// Process-wide control state of one mirrored chunk, shared by every
+// writable Chunk this process opened on the same members (one per
+// virtqueue of a multiqueue device): the process is one writer of the
+// chunk (docs/multiattach.md), so membership, DIRTY and the sync set are
+// decided once for all of its queues.
+struct SharedControl;
+
 // Chunk mirrors a single logical chunk (1..N slots, one per replica) over
 // its own Slot pool -- the sole building block Object routes I/O to. Not a
 // RawstorObject itself: only Object is ever handed out as a top-level
@@ -131,6 +138,13 @@ private:
     // _abort_background(), then waits for _background to reach zero.
     rawstd::Task<void> _stop_background();
 
+    // nullptr for a single-member, READONLY or bound-version chunk.
+    std::shared_ptr<SharedControl> _shared;
+    // SharedControl::gen this Chunk last adopted.
+    uint64_t _shared_gen;
+    // SharedControl::joins when the running resync started.
+    uint64_t _resync_joins;
+
     // Mirrored writes currently in flight -- resync drain bookkeeping
     // (_write_settled() below), separate from _writes_issued/
     // _flush_barrier's own flush-barrier accounting.
@@ -215,6 +229,21 @@ private:
 
     size_t _in_sync_count() const noexcept;
 
+    // Serializes control transitions (open, dirty/degrade barriers, resync
+    // completion, close) across every Chunk sharing _shared, whichever
+    // thread or queue each runs on. Never blocks the queue.
+    rawstd::Task<void> _shared_lock();
+    void _shared_unlock() noexcept;
+    // Both called with _shared_lock() held: _shared_adopt() takes over
+    // what another Chunk of this process already decided (sync set,
+    // DIRTY, members it excluded); _shared_publish() records this Chunk's
+    // own decision for the others.
+    void _shared_adopt();
+    void _shared_publish();
+    // Adopts a newer SharedControl::gen, if any, outside a barrier.
+    rawstd::Task<void> _shared_refresh();
+    void _mark_dirty_local() noexcept;
+
     // `m`'s own chunk, as a target URI (location/id/offset), for logs.
     std::string _member_str(const Member& m) const;
 
@@ -257,6 +286,7 @@ private:
     // Excludes members from the mirror set (docs/mirroring.md, case F1/F6).
     rawstd::Task<void> _degrade(std::vector<size_t> idxs);
     rawstd::Task<void> _run_degrade_barrier();
+    rawstd::Task<void> _run_shared_degrade_barrier();
 
     // Persists `sync_state` on every in-sync member; members that fail the
     // update are marked STALE. Never throws -- the caller re-checks
@@ -401,7 +431,8 @@ public:
 
     Chunk(
         Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
-        bool readonly, RawstorObjectSpec spec, std::vector<Member> members
+        bool readonly, RawstorObjectSpec spec, std::vector<Member> members,
+        std::shared_ptr<SharedControl> shared
     );
     Chunk(const Chunk&) = delete;
     Chunk(Chunk&&) = delete;
