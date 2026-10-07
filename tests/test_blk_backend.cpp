@@ -551,6 +551,25 @@ TEST(BlkBackendTest, witness_member_holds_no_data_and_refuses_real_io) {
     EXPECT_TRUE(threw);
 }
 
+// close() drops the Slot's backend: a later open() must fail cleanly
+// instead of dereferencing it.
+TEST(BlkBackendTest, open_after_close_throws) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location(dir.uri());
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+
+    std::unique_ptr<rawstor::Slot> slot =
+        run(*queue, rawstor::Slot::create(*queue, location));
+    run(*queue, slot->close());
+
+    EXPECT_THROW(
+        run(*queue, slot->open(id, 0, 0, RawstdUUID{})), std::runtime_error
+    );
+}
+
 TEST(BackendChunksTest, file_reports_every_offset_of_id) {
     rawstor::tests::TmpDir dir;
     expect_chunks_of_multichunk_object(rawstd::URI(dir.uri()));

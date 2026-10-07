@@ -73,6 +73,9 @@ private:
     // already in flight.
     rawstd::Task<void> _reconnect(std::shared_ptr<Backend> be);
 
+    // _backend, or throws once close() has dropped it.
+    std::shared_ptr<Backend> _get_backend() const;
+
     // Shared retry-loop body for every data-path/metadata method: tries
     // `method` against _backend. Every failure
     // (a Backend throws a plain std::system_error for anything from a

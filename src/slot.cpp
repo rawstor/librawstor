@@ -216,6 +216,14 @@ Slot::create(rawio::Queue& queue, const rawstd::URI& location) {
     co_return std::make_unique<Slot>(Private(), queue, std::move(backend));
 }
 
+std::shared_ptr<Backend> Slot::_get_backend() const {
+    if (_backend == nullptr) {
+        throw std::runtime_error("Slot has no backend");
+    }
+
+    return _backend;
+}
+
 void Slot::_finish(rawstor::telemetry::TimePoint t_call) {
     rawstor::telemetry::TimePoint lat = rawstor::telemetry::now() - t_call;
     rawstor::telemetry::record_lat(lat);
@@ -239,10 +247,7 @@ rawstd::Task<T> Slot::_with_retry(
     unsigned int attempt = 0;
 
     for (;;) {
-        if (_backend == nullptr) {
-            throw std::runtime_error("Slot has no backend");
-        }
-        std::shared_ptr<Backend> be = _backend;
+        std::shared_ptr<Backend> be = _get_backend();
 
         // co_await is not permitted inside a catch handler, so the catch
         // block below only records what happened; every co_await this
@@ -700,7 +705,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     _flags = flags;
     _version_id = version_id;
 
-    std::shared_ptr<Backend> be = _backend;
+    std::shared_ptr<Backend> be = _get_backend();
 
     // co_await isn't allowed inside a catch block, so the failure is only
     // recorded here; acting on it happens just below, outside the
