@@ -42,7 +42,7 @@ TEST(OptsTest, invalid_environment_fails_and_keeps_current_options) {
     for (Case c : {
              Case{"RAWSTOR_OPTS_IO_ATTEMPTS", "0"},
              Case{"RAWSTOR_OPTS_IO_ATTEMPTS", "ten"},
-             Case{"RAWSTOR_OPTS_SESSIONS", ""},
+             Case{"RAWSTOR_OPTS_LIST_LIMIT", ""},
              Case{"RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER", "101"},
              Case{"RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX", "4294968"},
              Case{"RAWSTOR_OPTS_TCP_USER_TIMEOUT", "2147483648"},

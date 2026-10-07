@@ -21,7 +21,6 @@ extern "C" {
 
 struct RawstorOpts {
     unsigned int io_attempts;
-    unsigned int sessions;
     unsigned int so_sndtimeo;
     unsigned int so_rcvtimeo;
     unsigned int tcp_user_timeout;

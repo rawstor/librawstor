@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - The deprecated synchronous `rawstor_object_spec()`/`_list()`/`_create()`/`_create_at()`/`_remove()`/`_open()`/`_id()`/`_location()`, in favor of the async `rawstor_target_*()`/`rawstor_location_*()` API.
 - The deprecated `-l`/`--location` and `-t`/`--target` flags (`rawstor list`/`create`/`remove`/`show`/`testio`, `rawstor-ost`, `rawstor-vhost`) in favor of the positional `LOCATION`/`TARGET` argument (`rawstor create -t TARGET` is unaffected), and the `rawstor-cli` compat symlink from the deb/rpm packages.
+- The `RAWSTOR_OPTS_SESSIONS` environment variable, `rawstor --sessions` and `RawstorOpts.sessions`. Breaking C API change.
 - The `SPEC` OST wire command (added in 0.2.3), superseded by `META`; a `rawstor-ost` from this release rejects it with `-ENOSYS`.
 - `rawstor-vhost`'s `--num-queues`: it now serves as many virtqueues as the front-end sets up (QEMU's own `num-queues=`), so QEMU no longer fails to start a guest with more vCPUs than `--num-queues` (default `4`).
 
