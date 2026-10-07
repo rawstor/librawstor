@@ -79,8 +79,8 @@ constexpr long staging_min_age_seconds = 300;
 
 // Guards Backend::_cleanup_staging_lvs() so the orphan sweep for a given
 // VG runs at most once per process, regardless of how many Backend
-// instances end up connected to it over time (one per Slot pool
-// slot, plus reconnects) -- listing/removing the same (already-gone,
+// instances end up connected to it over time (one per Slot,
+// plus reconnects) -- listing/removing the same (already-gone,
 // after the first sweep) orphans repeatedly would be pure waste.
 std::mutex swept_vgs_mutex;
 std::unordered_set<std::string> swept_vgs;

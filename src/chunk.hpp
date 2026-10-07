@@ -59,7 +59,7 @@ private:
     // The chunk offset this Chunk was open()ed at -- 0 for a plain,
     // non-volume object or a volume's own chunk 0 (docs/mds.md, "Chunk
     // identity"). Carried alongside _id so a reconnected member's own
-    // set_object() (Slot::invalidate_backend()) and the reconnect probe's
+    // set_object() (Slot::_reconnect()) and the reconnect probe's
     // own re-open() (_probe_tick()) rebind to the same chunk, not
     // silently chunk 0's.
     uint64_t _offset;
@@ -232,13 +232,12 @@ private:
     // by the constructor below, for every mirrors >= 2 open (mirrors ==
     // 1 skips it -- see the constructor's own comment) -- a throw here
     // (quorum lost, split brain, no trusted member left) aborts
-    // construction, same as Slot::create()'s own all-or-nothing
-    // gather() over Backend::create(): whichever Slots _members
-    // already holds by then are simply dropped, not gracefully
-    // co_await-closed (a constructor can't co_await) -- each one's own
-    // destructor still tears down its sockets/registrations safely on
-    // its own, the same safety net Backend's own destructor already is
-    // for a Slot torn down this way instead of via close().
+    // construction: whichever Slots _members already holds by then are
+    // simply dropped, not gracefully co_await-closed (a constructor
+    // can't co_await) -- each one's own destructor still tears down its
+    // sockets/registrations safely on its own, the same safety net
+    // Backend's own destructor already is for a Slot torn down this way
+    // instead of via close().
     void _reconcile_sync_set();
 
     // New epoch, freshly generated sync_id, with the chunk's own current

@@ -4,7 +4,6 @@
 
 #include "opts.h"
 #include "rawio_sync.hpp"
-#include "slot.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -362,27 +361,6 @@ TEST(ListTest, pagination) {
             });
         EXPECT_EQ(res, 0);
     }
-}
-
-// Location::list()/create() and Target::create()/remove()/spec() all use
-// a Slot::create()-only, never-open()-ed Slot for their
-// metadata work -- unlike a data-path Slot, _id stays unset on
-// one of these for its whole lifetime. invalidate_backend()'s reconnect
-// path used to call the replacement backend's set_object(*_id)
-// unconditionally regardless -- dereferencing an unset
-// std::optional<RawstdUUID> the very first time a metadata op actually
-// needed to reconnect a backend, not something any of ListTest's other
-// cases above exercise (they never fail an op in the first place).
-TEST(ListTest, invalidate_backend_on_metadata_only_connection) {
-    rawstor::tests::TmpDir dir;
-    rawstd::URI location(dir.uri());
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
-
-    std::unique_ptr<rawstor::Slot> slot =
-        run(*queue, rawstor::Slot::create(*queue, location, 1));
-    std::shared_ptr<rawstor::Backend> be = slot->get_next_backend();
-
-    EXPECT_NO_THROW(run(*queue, slot->invalidate_backend(be)));
 }
 
 } // unnamed namespace

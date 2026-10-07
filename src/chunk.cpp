@@ -239,28 +239,7 @@ Chunk::~Chunk() {
     }
 }
 
-// One location's worth of create()'s own connect phase: just stand up a
-// Slot (its own backend pool) against it -- SET_OBJECT (Slot::open()) is
-// a separate, later step (below), once quorum/spec/meta/split-brain
-// analysis has actually decided this member is being kept, rather than
-// telling a backend it's now serving this object only to immediately
-// close it again over a quorum or split-brain rejection. Factored out so
-// create() can fan these out across every location via gather()-like
-// concurrency instead of awaiting them one at a time, by analogy with
-// Slot::create()'s own backend pool.
 namespace {
-
-// An mds:// location gets exactly one backend: each mds::Backend opens
-// its own nested whole-object Target (with its own mirror state machine
-// per chunk), so a pool of them would run several independent state
-// machines over the same members. Its inner per-OST slots are pooled
-// as usual.
-rawstd::Task<std::unique_ptr<rawstor::Slot>>
-connect_one(rawio::Queue& queue, const rawstd::URI& location) {
-    unsigned int sessions =
-        location.scheme() == "mds" ? 1 : rawstor_opts_sessions();
-    co_return co_await rawstor::Slot::create(queue, location, sessions);
-}
 
 // F10 (docs/mirroring.md): a member whose own copy is missing
 // (`missing`, its open failed ENOENT on a location that's still there)
@@ -347,7 +326,7 @@ rawstd::Task<void> recreate_missing(
         RawstorObjectMeta meta{};
         bool failed = false;
         try {
-            slot = co_await connect_one(queue, locations[i]);
+            slot = co_await Slot::create(queue, locations[i]);
             co_await slot->create(id, offset, sp, RAWSTOR_MEMBER_DATA);
             meta = co_await slot->open(id, offset, flags, version_id);
         } catch (const std::system_error& e) {
@@ -387,12 +366,15 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // Every location's Slot goes out concurrently instead of one at a
     // time -- just Slot::create(), kept in a plain local vector parallel
     // to `locations`; the Member list is built from it only once every
-    // connect/open below has settled. connect_one()'s own comment on why
-    // SET_OBJECT is a separate, later step.
+    // connect/open below has settled. SET_OBJECT (Slot::open()) is a
+    // separate, later step, once quorum/spec/meta/split-brain analysis has
+    // actually decided this member is being kept, rather than telling a
+    // backend it's now serving this object only to immediately close it
+    // again over a quorum or split-brain rejection.
     std::vector<rawstd::Task<std::unique_ptr<Slot>>> connect_tasks;
     connect_tasks.reserve(locations.size());
     for (const auto& location : locations) {
-        connect_tasks.push_back(connect_one(queue, location));
+        connect_tasks.push_back(Slot::create(queue, location));
     }
 
     // A connect failure Slot::create() itself classifies as
@@ -1874,7 +1856,7 @@ rawstd::DetachedTask Chunk::_probe_tick() {
     std::unique_ptr<Slot> slot;
     int error = 0;
     try {
-        slot = co_await Slot::create(queue, location, rawstor_opts_sessions());
+        slot = co_await Slot::create(queue, location);
         if (alive.expired() || _closing) {
             co_return;
         }

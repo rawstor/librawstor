@@ -200,6 +200,39 @@ TEST(OstLocationInfoTest, location_info) {
     EXPECT_EQ(info.total, sent_info.total);
 }
 
+// rawstor_location_info() runs on a Slot that is never open()ed, so _id
+// stays unset for its whole lifetime: reconnecting after the first
+// connection drops must not try to set_object() the replacement.
+TEST(OstLocationInfoTest, reconnects_without_object) {
+    rawstor::tests::Server server(8755, 256);
+
+    rawstd::URI location_uri("ost://127.0.0.1:8755");
+    std::string location = location_uri.str();
+
+    RawstorLocationInfo sent_info{
+        .used = 1ull << 20,
+        .total = 1ull << 30,
+    };
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_location_info_request();
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_location_info(RAWSTOR_MAGIC, 0, sent_info);
+    }
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorLocationInfo info = {};
+    ssize_t res = location_info(*queue, location, &info);
+    EXPECT_EQ(res, 0);
+    EXPECT_EQ(info.used, sent_info.used);
+    EXPECT_EQ(info.total, sent_info.total);
+}
+
 // Cancelling the queue ends an operation's retries at once: a cancelled
 // backoff wait is not followed by another attempt.
 TEST(OstLocationInfoTest, cancel_all_stops_retries) {

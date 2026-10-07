@@ -491,7 +491,7 @@ TEST(OstIOTest, set_object_fail) {
     // always fails, as here, never gets that far. Every attempt is the
     // same single failing SET_OBJECT: Slot::open()'s own first attempt
     // (against the backend create() already connected) plus
-    // invalidate_backend()'s own internal retry (rawstor_opts_io_attempts()
+    // _reconnect()'s own internal retry (rawstor_opts_io_attempts()
     // attempts) -- one more than io_attempts total sessions, every one
     // starting with a fresh SET_OBJECT (cid 0).
     for (unsigned int i = 0; i < rawstor_opts_io_attempts() + 1; ++i) {
@@ -550,7 +550,7 @@ TEST(OstIOTest, set_object_disconnect) {
     // and closed, with no read or response of its own scripted. Same
     // count as set_object_fail/set_object_error above, and for the same
     // reason -- Slot::open()'s own first attempt (against the backend
-    // create() already connected) plus invalidate_backend()'s own
+    // create() already connected) plus _reconnect()'s own
     // internal retry (rawstor_opts_io_attempts() attempts).
     for (unsigned int i = 0; i < rawstor_opts_io_attempts() + 1; ++i) {
         rawstor::tests::Session s(server);
@@ -575,7 +575,7 @@ TEST(OstIOTest, write_fail) {
     // The first session is the one Target::open() itself drives:
     // Slot::open() sends SET_OBJECT (Backend::set_object()) and then META
     // (Backend::meta()). Every session after it is a lower-level
-    // reconnect from the write retry below via Slot::invalidate_backend(),
+    // reconnect from the write retry below via Slot::_reconnect(),
     // which sends the same SET_OBJECT, META pair.
     {
         rawstor::tests::Session s(server);
@@ -701,7 +701,7 @@ TEST(OstIOTest, write_backend_error_retries_with_reconnect) {
     // The first session is the one Target::open() itself drives:
     // Slot::open() sends SET_OBJECT (Backend::set_object()) and then META
     // (Backend::meta()). The reconnect session below goes through
-    // Slot::invalidate_backend() instead, which sends the same
+    // Slot::_reconnect() instead, which sends the same
     // SET_OBJECT, META pair.
     {
         rawstor::tests::Session s(server);
@@ -753,7 +753,7 @@ TEST(OstIOTest, write_hash_mismatch_reconnects) {
     // The first session is the one Target::open() itself drives:
     // Slot::open() sends SET_OBJECT (Backend::set_object()) and then META
     // (Backend::meta()). The reconnect session below goes through
-    // Slot::invalidate_backend() instead, which sends the same
+    // Slot::_reconnect() instead, which sends the same
     // SET_OBJECT, META pair.
     {
         rawstor::tests::Session s(server);
@@ -797,7 +797,7 @@ TEST(OstIOTest, write_disconnect) {
     // The first session is the one Target::open() itself drives:
     // Slot::open() sends SET_OBJECT (Backend::set_object()) and then META
     // (Backend::meta()). Every lower-level reconnect from the write retry
-    // below goes through Slot::invalidate_backend(), which sends the same
+    // below goes through Slot::_reconnect(), which sends the same
     // SET_OBJECT, META pair.
     {
         rawstor::tests::Session s(server);
@@ -1031,7 +1031,7 @@ void auto_respond_writes_then_flush_and_release(
 // response carrying an unexpected cmd (a plain std::system_error, not a
 // dropped connection: nothing about the wire ever looks broken, no
 // FIN/RST at any point), which Slot::_with_retry() reacts to by
-// calling invalidate_backend(): swap in a fresh backend, then
+// calling _reconnect(): swap in a fresh backend, then
 // Backend::close() the old one. The second write is already sitting in
 // that same old backend's _ops, purely waiting on a response of its own,
 // when this happens -- _recv_pump has nothing of its own to ever notice
@@ -1050,7 +1050,7 @@ void auto_respond_writes_then_flush_and_release(
 // with a well-formed-but-wrong-cmd response instead means nothing on the
 // wire ever looks wrong at the socket level, so there's nothing for
 // recv_pump to independently detect; the only thing that can ever tear
-// this backend down is the explicit invalidate_backend() -> Backend::
+// this backend down is the explicit _reconnect() -> Backend::
 // close() path this test exists to cover.
 TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     Queue queue(16);
@@ -1067,7 +1067,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     // destructor unconditionally queues an actual close() of the
     // connection, which would send a FIN -- exactly what this test needs
     // to avoid (see the TEST's own doc comment above). This backend is
-    // instead left to the client's own invalidate_backend() to tear
+    // instead left to the client's own _reconnect() to tear
     // down; the server side only ever forget()s its bookkeeping of it
     // (see forget()'s own doc comment in server.hpp).
     server.accept("SESSION <<<");
@@ -1163,7 +1163,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
                 "RAWSTOR_CMD_SET_OBJECT >>>", &retry_set_object_response,
                 sizeof(retry_set_object_response)
             );
-            // invalidate_backend() reconnects via Backend::create() +
+            // _reconnect() reconnects via Backend::create() +
             // set_object() same as Target::open() itself, so this retry
             // target also gets a META round trip.
             server.read(
@@ -1269,7 +1269,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
 // genuine close, matching a real dropped connection). Backend::
 // _fail_in_flight() force-fails every one of them synchronously, in a
 // single loop, so their Slot::_with_retry() coroutines all resume
-// in a tight burst -- each one's own invalidate_backend(be) call races
+// in a tight burst -- each one's own _reconnect(be) call races
 // the very same `be`: exactly one wins Slot::_reconnecting's dedup
 // and actually reconnects, the rest return immediately and fall straight
 // into their own backoff wait (Queue::timeout()), submitted back to back
@@ -1282,7 +1282,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
 // Genuinely requires RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE to be nonzero,
 // not just to "mean more" -- at the harness default (0, see tests/
 // main.cpp's own doc comment for why) every deduped op's retry is
-// immediate, so most of them race back to get_next_backend() before the
+// immediate, so most of them retry before the
 // winning reconnect above has actually installed the replacement,
 // collide with the still-stale backend again, and burn through
 // io_attempts on a single scripted reconnect this test never meant to
@@ -1387,7 +1387,7 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
                         &retry_set_object_response,
                         sizeof(retry_set_object_response)
                     );
-                    // invalidate_backend() reconnects via Backend::create()
+                    // _reconnect() reconnects via Backend::create()
                     // + set_object() same as Target::open() itself, so
                     // this retry target also gets a META round trip.
                     server.read(

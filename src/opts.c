@@ -8,7 +8,6 @@
 #include <stddef.h>
 
 #define RAWSTOR_OPTS_IO_ATTEMPTS 10
-#define RAWSTOR_OPTS_SESSIONS 1
 #define RAWSTOR_OPTS_SO_SNDTIMEO 5000
 #define RAWSTOR_OPTS_SO_RCVTIMEO 5000
 #define RAWSTOR_OPTS_TCP_USER_TIMEOUT 5000
@@ -73,8 +72,6 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts) {
     } options[] = {
         {given.io_attempts, "RAWSTOR_OPTS_IO_ATTEMPTS", 0,
          RAWSTOR_OPTS_IO_ATTEMPTS, 1, UINT_MAX, &resolved.io_attempts},
-        {given.sessions, "RAWSTOR_OPTS_SESSIONS", 0, RAWSTOR_OPTS_SESSIONS, 1,
-         UINT_MAX, &resolved.sessions},
         // Zero disables each of these timeouts.
         {given.so_sndtimeo, "RAWSTOR_OPTS_SO_SNDTIMEO", 0,
          RAWSTOR_OPTS_SO_SNDTIMEO, 0, UINT_MAX, &resolved.so_sndtimeo},
@@ -130,10 +127,6 @@ void rawstor_opts_terminate(void) {
 
 unsigned int rawstor_opts_io_attempts(void) {
     return _rawstor_opts.io_attempts;
-}
-
-unsigned int rawstor_opts_sessions(void) {
-    return _rawstor_opts.sessions;
 }
 
 unsigned int rawstor_opts_so_sndtimeo(void) {

@@ -39,7 +39,6 @@ static void usage(void) {
         "\n"
         "options:\n"
         "  -h, --help            Show this help message and exit\n"
-        "  --sessions            Number of opened sessions per object\n"
         "  -v, --version         Rawstor version\n"
         "\n"
         "command:\n"
@@ -1242,12 +1241,10 @@ int main(int argc, char** argv) {
     const char* optstring = "+hv";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
-        {"sessions", required_argument, NULL, 's'},
         {"version", no_argument, NULL, 'v'},
         {},
     };
 
-    char* sessions_arg = NULL;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
         if (c == -1)
@@ -1257,10 +1254,6 @@ int main(int argc, char** argv) {
         case 'h':
             usage();
             return EXIT_SUCCESS;
-
-        case 's':
-            sessions_arg = optarg;
-            break;
 
         case 'v':
             version();
@@ -1277,13 +1270,6 @@ int main(int argc, char** argv) {
     }
 
     struct RawstorOpts opts = {};
-
-    if (sessions_arg != NULL) {
-        if (sscanf(sessions_arg, "%u", &opts.sessions) != 1) {
-            fprintf(stderr, "sessions argument must be unsigned integer\n");
-            return EX_USAGE;
-        }
-    }
 
     sact.sa_handler = sact_handler;
     sigemptyset(&sact.sa_mask);

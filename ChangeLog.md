@@ -29,11 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Target strings returned by `rawstor_location_list()`/`_create()` always carry an explicit chunk offset segment (`<uuid>/0`); a target without one still parses as offset 0.
 - `rawstor-vhost`/`rawstor-vhost-qemu`/`rawstor testio`'s `--queue-size` defaults raised from 256 to 4096, matching `rawstor-ost`.
 - `rawstor-vduse`'s `--num-queues` defaults to the host's number of CPUs instead of `16`, and a virtqueue's thread and connection to the target are only started once the driver enables it.
+- The client opens exactly one connection per object chunk and backend (per mirror arm).
 - The OST wire protocol changed incompatibly (`LIST` entries carry a chunk offset, `RELEASE` also removes a version, new `META`/`SET_SYNC_STATE`/`CREATE_VERSION`/`LIST_VERSIONS`/`OBJ_*` commands); `rawstor-ost` and its clients must be upgraded together.
 
 ### Removed
 - The deprecated synchronous `rawstor_object_spec()`/`_list()`/`_create()`/`_create_at()`/`_remove()`/`_open()`/`_id()`/`_location()`, in favor of the async `rawstor_target_*()`/`rawstor_location_*()` API.
 - The deprecated `-l`/`--location` and `-t`/`--target` flags (`rawstor list`/`create`/`remove`/`show`/`testio`, `rawstor-ost`, `rawstor-vhost`) in favor of the positional `LOCATION`/`TARGET` argument (`rawstor create -t TARGET` is unaffected), and the `rawstor-cli` compat symlink from the deb/rpm packages.
+- The `RAWSTOR_OPTS_SESSIONS` environment variable, `rawstor --sessions` and `RawstorOpts.sessions`. Breaking C API change.
 - The `SPEC` OST wire command (added in 0.2.3), superseded by `META`; a `rawstor-ost` from this release rejects it with `-ENOSYS`.
 - `rawstor-vhost`'s `--num-queues`: it now serves as many virtqueues as the front-end sets up (QEMU's own `num-queues=`), so QEMU no longer fails to start a guest with more vCPUs than `--num-queues` (default `4`).
 
