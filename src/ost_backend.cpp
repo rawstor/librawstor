@@ -1287,7 +1287,7 @@ rawstd::Task<void> Backend::close() {
     // left to clean up" and returns without touching _ops -- true when
     // close() is called once every op has already finished, but not when
     // a *sibling* op's own failure is what triggered this close() (e.g.
-    // via Slot::invalidate_backend(), reacting to any
+    // via Slot::_reconnect(), reacting to any
     // std::system_error one op's own Slot::_with_retry() caught --
     // a dropped connection, but just as easily a well-formed error
     // response for one op on an otherwise perfectly healthy connection,

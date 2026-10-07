@@ -35,7 +35,7 @@ private:
     // live) unless open() was called otherwise (docs/mds.md, "Chunk
     // identity"/"Versions"). Meaningless while _id is unset; carried
     // alongside it so a reconnected backend's own set_object()
-    // (invalidate_backend()) rebinds to the same chunk/version, not
+    // (_reconnect()) rebinds to the same chunk/version, not
     // silently back to the whole object's own live one.
     uint64_t _offset;
     // The open flags (RAWSTOR_READONLY or 0) open() bound _id with --
@@ -45,12 +45,12 @@ private:
 
     std::shared_ptr<Backend> _backend;
 
-    // Set while an invalidate_backend() call is replacing _backend -- see
-    // that method's own doc comment for why concurrent callers need it.
+    // Set while _reconnect() is replacing _backend -- see its own doc
+    // comment.
     bool _reconnecting;
 
     // When false, a retryable failure is not retried through
-    // invalidate_backend(): it surfaces to the caller immediately, same as
+    // _reconnect(): it surfaces to the caller immediately, same as
     // a permanent rejection. A mirrored Chunk disables this once it is
     // DIRTY -- a reconnected backend may be talking to a restarted server
     // that lost acknowledged writes, so the caller must degrade the mirror
@@ -66,12 +66,19 @@ private:
     // report here.
     void _finish(rawstor::telemetry::TimePoint t_call);
 
+    // Replaces `be` with a freshly connected backend (set_object()-ed
+    // again if open() has run), retrying up to rawstor_opts_io_attempts()
+    // times, then close()s `be`. A no-op if `be` is no longer _backend
+    // (already replaced, or the Slot closed) or another _reconnect() is
+    // already in flight.
+    rawstd::Task<void> _reconnect(std::shared_ptr<Backend> be);
+
     // Shared retry-loop body for every data-path/metadata method: tries
     // `method` against _backend. Every failure
     // (a Backend throws a plain std::system_error for anything from a
     // malformed response to a dropped connection to a live backend's own
     // well-formed rejection -- Backend no longer classifies which) is
-    // handled the same way: reconnect via invalidate_backend() and retry,
+    // handled the same way: reconnect via _reconnect() and retry,
     // up to rawstor_opts_io_attempts() times total, unless it's a
     // rejection retrying can never fix (e.g. ENOENT -- see
     // is_permanent_backend_error() in slot.cpp), which fails
@@ -109,9 +116,9 @@ private:
 
 public:
     // Creates and connects the Slot's one Backend against `location` --
-    // the returned Slot is ready for get_backend()-based use (metadata
-    // methods, or open() to additionally set_object() it for the
-    // data-path methods) but nothing has been set_object()ed yet.
+    // the returned Slot is ready for the metadata methods (or open() to
+    // additionally set_object() it for the data-path methods), but
+    // nothing has been set_object()ed yet.
     static rawstd::Task<std::unique_ptr<Slot>>
     create(rawio::Queue& queue, const rawstd::URI& location);
 
@@ -119,9 +126,6 @@ public:
     Slot(const Slot&) = delete;
 
     Slot& operator=(const Slot&) = delete;
-
-    std::shared_ptr<Backend> get_backend();
-    rawstd::Task<void> invalidate_backend(const std::shared_ptr<Backend>& be);
 
     void set_transparent_retry(bool enabled) noexcept;
 
@@ -175,7 +179,7 @@ public:
 
     // set_object()s the backend create() connected -- must be called (at
     // most once) after create(), before any data-path method below. If
-    // that fails, the backend is fixed up via invalidate_backend(), same
+    // that fails, the backend is fixed up via _reconnect(), same
     // recovery as the data-path/metadata methods get from _with_retry().
     // Returns a separate meta() read against whichever backend the Slot
     // now has (set_object() itself doesn't return it, see its own doc

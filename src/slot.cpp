@@ -102,7 +102,7 @@ bool is_permanent_backend_error(int error) {
 // Binds `backend` to `id`/`offset`'s live version, or one previously
 // created version of it if `version_id` isn't nil (Backend::
 // set_object()/set_version()'s own split) -- shared by Slot::open() and
-// invalidate_backend() below, both of which rebind to whichever
+// _reconnect() below, both of which rebind to whichever
 // `id`/`offset`/`version_id` this Slot itself was last opened with.
 rawstd::Task<void> set_object_or_version(
     rawstor::Backend& backend, const RawstdUUID& id, uint64_t offset, int flags,
@@ -118,7 +118,7 @@ rawstd::Task<void> set_object_or_version(
 // Retries `attempt()` up to rawstor_opts_io_attempts() times, sharing the
 // same "log and retry, or log and rethrow on the last one" shape across
 // every bounded-retry loop in this file that doesn't need the
-// EBUSY-vs-reconnect policy: invalidate_backend()'s backend replacement.
+// EBUSY-vs-reconnect policy: _reconnect()'s backend replacement.
 // `attempt()` returns a Task<T> that this coroutine itself co_await's, so
 // retrying composes as an ordinary suspension/resumption instead of a
 // nested synchronous pump -- unlike the old callback-based retry_n() this
@@ -229,7 +229,7 @@ rawstd::Task<T> Slot::_with_retry(
     std::type_identity_t<Args>... args
 ) {
     // One retry budget, one behavior, regardless of what went wrong:
-    // reconnect via invalidate_backend() and retry, up to
+    // reconnect via _reconnect() and retry, up to
     // rawstor_opts_io_attempts() attempts total, unless the failure is
     // one is_permanent_backend_error() already knows retrying can never
     // fix (e.g. ENOENT), which fails immediately instead. The one
@@ -240,11 +240,14 @@ rawstd::Task<T> Slot::_with_retry(
     unsigned int attempt = 0;
 
     for (;;) {
-        std::shared_ptr<Backend> be = get_backend();
+        if (_backend == nullptr) {
+            throw std::runtime_error("Slot has no backend");
+        }
+        std::shared_ptr<Backend> be = _backend;
 
         // co_await is not permitted inside a catch handler, so the catch
         // block below only records what happened; every co_await this
-        // needs (invalidate_backend(), the backoff wait) happens after
+        // needs (_reconnect(), the backoff wait) happens after
         // execution has left it entirely, keyed off `retry`.
         bool retry = false;
         bool give_up = false;
@@ -342,15 +345,14 @@ rawstd::Task<T> Slot::_with_retry(
                 // Not thrown here: `be` is presumed broken exactly like any
                 // other retryable failure and still needs closing below,
                 // or it leaks its recv-multishot registration -- but
-                // unlike a normal retry cycle, reconnecting via
-                // invalidate_backend() would be a new, unbudgeted
-                // connection attempt nothing asked for (this op is done
-                // retrying), so this only closes `be` in place, leaving it
-                // in `_backend` exactly as before -- the next op to pick
-                // it up via get_backend() sees a plain dead-fd
-                // failure and reconnects through its own normal retry
-                // cycle instead. `eptr` carries the original failure past
-                // that close(), since it's what actually gets reported.
+                // unlike a normal retry cycle, reconnecting via _reconnect()
+                // would be a new, unbudgeted connection attempt nothing
+                // asked for (this op is done retrying), so this only closes
+                // `be` in place, leaving it as _backend -- the next op sees
+                // a plain dead-fd failure and reconnects through its own
+                // normal retry cycle instead. `eptr` carries the original
+                // failure past that close(), since it's what actually gets
+                // reported.
                 give_up = true;
                 eptr = std::current_exception();
             } else {
@@ -380,7 +382,7 @@ rawstd::Task<T> Slot::_with_retry(
         if (retry) {
             if (error != EBUSY) {
                 try {
-                    co_await invalidate_backend(be);
+                    co_await _reconnect(be);
                 } catch (const std::system_error& e2) {
                     // A reconnect that hits another retryable failure is
                     // exactly what this loop's own budget exists to ride
@@ -425,50 +427,33 @@ rawstd::Task<T> Slot::_with_retry(
     }
 }
 
-std::shared_ptr<Backend> Slot::get_backend() {
-    if (_backend == nullptr) {
-        throw std::runtime_error("Slot has no backend");
-    }
-
-    return _backend;
-}
-
-rawstd::Task<void>
-Slot::invalidate_backend(const std::shared_ptr<Backend>& be) {
-    if (be != _backend) {
-        // Already replaced (or closed) by someone else -- nothing to do.
-        co_return;
-    }
-
-    // Two concurrent callers can both observe the exact same broken
-    // backend here: e.g. two pwrite()s in flight against it both fail
-    // once it drops, and both reach this same point before either has
-    // had a chance to replace it. Without deduplication both would open
-    // their own independent replacement connection for the *same*
+rawstd::Task<void> Slot::_reconnect(std::shared_ptr<Backend> be) {
+    // Several operations in flight against the same backend all fail
+    // once it drops, and each of them gets here. Only the first one
+    // reconnects; the rest return immediately and their own next attempt
+    // picks up whatever _backend is by then -- the still-broken one if
+    // this reconnect hasn't finished yet (that attempt simply fails fast
+    // and retries again), or the replacement. Reconnecting once per
+    // caller instead would open several replacements for the same
     // failure -- wasteful, and observably wrong for a caller that expects
     // at most one reconnect per broken backend (e.g. a scripted test
-    // server good for exactly N connections). Only the first caller
-    // actually reconnects; a second, concurrent caller just returns
-    // immediately and lets its own next attempt pick up whatever ends up
-    // installed via get_backend() -- the still-stale backend if the
-    // winner hasn't finished yet (that attempt simply fails fast and
-    // retries again), or the fresh replacement if it has.
-    if (_reconnecting) {
+    // server good for exactly N connections).
+    if (be != _backend || _reconnecting) {
         co_return;
     }
     _reconnecting = true;
 
+    // Open the replacement before touching _backend: if this itself fails
+    // (e.g. the server is unreachable under load, exhausting its own
+    // retries below), the broken backend stays in place, so the next
+    // operation that picks it up just fails and reconnects again instead
+    // of finding no backend at all. co_await isn't allowed inside a catch
+    // block, so the failure is only recorded here.
+    std::shared_ptr<Backend> new_backend;
+    std::exception_ptr eptr;
     try {
-        // Open the replacement before touching _backend: if this itself
-        // fails (e.g. the server is unreachable under load, exhausting
-        // its own retries below), leave the broken-but-present backend
-        // in place rather than dropping it first and never getting a
-        // replacement -- a Slot without a backend permanently breaks every
-        // future op on it (get_backend() throws), while leaving the stale
-        // one just means the next op that picks it up retries
-        // invalidate_backend() again instead of failing forever.
-        std::shared_ptr<Backend> new_backend = co_await retry_n_async(
-            _queue, "Slot::invalidate_backend",
+        new_backend = co_await retry_n_async(
+            _queue, "Slot::_reconnect",
             [&]() -> rawstd::Task<std::shared_ptr<Backend>> {
                 std::shared_ptr<Backend> backend =
                     co_await Backend::create(_queue, be->location());
@@ -480,88 +465,64 @@ Slot::invalidate_backend(const std::shared_ptr<Backend>& be) {
                 // ops don't need SET_OBJECT first, so just skip it here.
                 if (_id) {
                     // A backend that fails set_object() never becomes
-                    // _backend, so nothing else will ever close()
-                    // it -- do that here before rethrowing, or it leaks
-                    // its recv-multishot registration. co_await isn't
-                    // allowed inside a catch block, so the failure is
-                    // only recorded here; close()ing happens just below,
-                    // outside the handler.
-                    std::exception_ptr eptr;
+                    // _backend, so nothing else will ever close() it --
+                    // do that here before rethrowing, or it leaks its
+                    // recv-multishot registration.
+                    std::exception_ptr set_eptr;
                     try {
                         co_await set_object_or_version(
                             *backend, *_id, _offset, _flags, _version_id
                         );
-                        // The result is unused -- nothing here needs it
-                        // -- this is purely to keep the same SET_OBJECT+
-                        // META wire round trip every set_object() caller
-                        // gets (see Backend::set_object()'s own doc
-                        // comment on why that's two separate calls now,
-                        // not one that folds meta() in on its own).
+                        // The result is unused -- this is purely to keep
+                        // the same SET_OBJECT+META wire round trip every
+                        // set_object() caller gets (see
+                        // Backend::set_object()'s own doc comment).
                         co_await backend->meta(*_id, _offset, _version_id);
                     } catch (...) {
-                        eptr = std::current_exception();
+                        set_eptr = std::current_exception();
                     }
-                    if (eptr) {
+                    if (set_eptr) {
                         try {
                             co_await backend->close();
                         } catch (const std::exception& e) {
                             rawstd_warning(
-                                "Slot::invalidate_backend(): close "
-                                "after failed set_object(): %s\n",
+                                "Slot::_reconnect(): close after failed "
+                                "set_object(): %s\n",
                                 e.what()
                             );
                         }
-                        std::rethrow_exception(eptr);
+                        std::rethrow_exception(set_eptr);
                     }
                 }
                 co_return backend;
             }
         );
-        _reconnecting = false;
-
-        // Re-check instead of trusting the check at the top across the
-        // co_await above: close() could have dropped _backend while this
-        // one was suspended.
-        if (_backend == be) {
-            std::shared_ptr<Backend> old_backend = _backend;
-            _backend = new_backend;
-
-            // The Slot no longer references it, but old_backend (the very
-            // backend that got broken in the first place) is still
-            // connected -- close() it gracefully rather than letting this
-            // local go out of scope and destruct it, or it leaks its
-            // recv-multishot registration.
-            try {
-                co_await old_backend->close();
-            } catch (const std::exception& e) {
-                rawstd_warning(
-                    "Slot::invalidate_backend(): close on replaced "
-                    "backend: %s\n",
-                    e.what()
-                );
-            }
-        } else {
-            // The Slot was closed while this one was off reconnecting --
-            // new_backend is fully connected but redundant; nothing will
-            // ever install it. Same rationale as old_backend above: close() it
-            // explicitly here, or its recv-multishot registration leaks --
-            // ~Backend()'s own cancel is fire-and-forget (only actually
-            // processed on this Queue's next wait()/wait_timeout(), which
-            // nothing guarantees will happen once the last reference to
-            // new_backend drops).
-            try {
-                co_await new_backend->close();
-            } catch (const std::exception& e) {
-                rawstd_warning(
-                    "Slot::invalidate_backend(): close on redundant "
-                    "replacement backend: %s\n",
-                    e.what()
-                );
-            }
-        }
     } catch (...) {
-        _reconnecting = false;
-        throw;
+        eptr = std::current_exception();
+    }
+
+    // close() may have dropped _backend while this was suspended above:
+    // then new_backend is redundant and gets closed instead of installed.
+    std::shared_ptr<Backend> retired = new_backend;
+    if (!eptr && _backend == be) {
+        retired = std::move(_backend);
+        _backend = new_backend;
+    }
+
+    _reconnecting = false;
+
+    if (eptr) {
+        std::rethrow_exception(eptr);
+    }
+
+    // Close the retired backend gracefully rather than letting it
+    // destruct: ~Backend()'s own cancel is fire-and-forget (only processed
+    // on this Queue's next wait()/wait_timeout(), which nothing guarantees
+    // will happen), so it would leak its recv-multishot registration.
+    try {
+        co_await retired->close();
+    } catch (const std::exception& e) {
+        rawstd_warning("Slot::_reconnect(): close: %s\n", e.what());
     }
 }
 
@@ -732,15 +693,15 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     const RawstdUUID& id, uint64_t offset, int flags,
     const RawstdUUID& version_id
 ) {
-    // Set before any of the set_object() calls below: on failure,
-    // invalidate_backend() reconnects and set_object()s the replacement
+    // Set before the set_object() call below: on failure,
+    // _reconnect() reconnects and set_object()s the replacement
     // itself, using these same members.
     _id = id;
     _offset = offset;
     _flags = flags;
     _version_id = version_id;
 
-    std::shared_ptr<Backend> be = get_backend();
+    std::shared_ptr<Backend> be = _backend;
 
     // co_await isn't allowed inside a catch block, so the failure is only
     // recorded here; acting on it happens just below, outside the
@@ -760,10 +721,10 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     }
 
     if (failed) {
-        // invalidate_backend() has its own retry
-        // (rawstor_opts_io_attempts() attempts); if that still fails, its
-        // exception propagates straight out.
-        co_await invalidate_backend(be);
+        // _reconnect() has its own retry (rawstor_opts_io_attempts()
+        // attempts); if that still fails, its exception propagates
+        // straight out.
+        co_await _reconnect(be);
     }
 
     // set_object() itself doesn't return the object's meta (see its own

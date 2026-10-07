@@ -59,7 +59,7 @@ private:
     // The chunk offset this Chunk was open()ed at -- 0 for a plain,
     // non-volume object or a volume's own chunk 0 (docs/mds.md, "Chunk
     // identity"). Carried alongside _id so a reconnected member's own
-    // set_object() (Slot::invalidate_backend()) and the reconnect probe's
+    // set_object() (Slot::_reconnect()) and the reconnect probe's
     // own re-open() (_probe_tick()) rebind to the same chunk, not
     // silently chunk 0's.
     uint64_t _offset;

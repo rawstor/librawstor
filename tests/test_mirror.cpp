@@ -1466,7 +1466,7 @@ TEST(MirrorOstTest, read_failover_and_repair) {
     // step (see its own comment), concurrently, on their first session --
     // Chunk::create()'s own overall spec comes straight out of that same
     // META answer (see its own comment), no separate round trip. Every
-    // later low-level reconnect (invalidate_backend()) goes through
+    // later low-level reconnect (_reconnect()) goes through
     // Backend::set_object() only, but it always folds its own META fetch
     // in on success too, so each reopened session below still gets its
     // own SET_OBJECT+META pair.
