@@ -585,22 +585,24 @@ TEST(GatherTest, cancel_reaches_every_task_past_a_throwing_one) {
 // ---------------------------------------------------------------------
 
 TEST(AnyTest, returns_first_success_ignoring_earlier_failures) {
-    std::vector<rawstd::Task<int>> tasks;
-    tasks.push_back(gather_throws("first"));
-    tasks.push_back(immediate_value(2));
-    tasks.push_back(gather_throws("third"));
-
-    rawstd::Task<int> t = rawstd::any(std::move(tasks));
+    rawstd::Task<int> t = rawstd::any(3, [](size_t i) -> rawstd::Task<int> {
+        switch (i) {
+        case 0:
+            return gather_throws("first");
+        case 1:
+            return immediate_value(2);
+        default:
+            return gather_throws("third");
+        }
+    });
     EXPECT_TRUE(t.done());
     EXPECT_EQ(t.get(), 2);
 }
 
 TEST(AnyTest, rethrows_when_every_task_fails) {
-    std::vector<rawstd::Task<int>> tasks;
-    tasks.push_back(gather_throws("first"));
-    tasks.push_back(gather_throws("second"));
-
-    rawstd::Task<int> t = rawstd::any(std::move(tasks));
+    rawstd::Task<int> t = rawstd::any(2, [](size_t i) {
+        return gather_throws(i == 0 ? "first" : "second");
+    });
     EXPECT_TRUE(t.done());
     try {
         t.get();
@@ -611,8 +613,8 @@ TEST(AnyTest, rethrows_when_every_task_fails) {
 }
 
 TEST(AnyTest, empty_input_throws) {
-    std::vector<rawstd::Task<int>> tasks;
-    rawstd::Task<int> t = rawstd::any(std::move(tasks));
+    rawstd::Task<int> t =
+        rawstd::any(0, [](size_t) { return immediate_value(0); });
     EXPECT_TRUE(t.done());
     EXPECT_THROW(t.get(), std::invalid_argument);
 }
@@ -625,10 +627,9 @@ suspend_then_return_value(std::coroutine_handle<>* slot, int v) {
 
 TEST(AnyTest, resumes_once_a_suspended_task_succeeds) {
     std::coroutine_handle<> slot;
-    std::vector<rawstd::Task<int>> tasks;
-    tasks.push_back(suspend_then_return_value(&slot, 5));
-
-    rawstd::Task<int> t = rawstd::any(std::move(tasks));
+    rawstd::Task<int> t = rawstd::any(1, [&slot](size_t) {
+        return suspend_then_return_value(&slot, 5);
+    });
     EXPECT_FALSE(t.done());
 
     ASSERT_TRUE(slot);
@@ -651,11 +652,12 @@ TEST(AnyTest, waits_for_an_uncancellable_loser) {
     // before it finishes (Task<T>'s own precondition: see coro.hpp).
     std::coroutine_handle<> slot;
     bool drained = false;
-    std::vector<rawstd::Task<int>> tasks;
-    tasks.push_back(suspend_then_return_and_flag(&slot, &drained));
-    tasks.push_back(immediate_value(1));
-
-    rawstd::Task<int> t = rawstd::any(std::move(tasks));
+    rawstd::Task<int> t = rawstd::any(2, [&](size_t i) -> rawstd::Task<int> {
+        if (i == 0) {
+            return suspend_then_return_and_flag(&slot, &drained);
+        }
+        return immediate_value(1);
+    });
     EXPECT_FALSE(t.done());
 
     ASSERT_TRUE(slot);
@@ -668,11 +670,12 @@ TEST(AnyTest, waits_for_an_uncancellable_loser) {
 TEST(AnyTest, cancels_losers_once_one_succeeds) {
     std::coroutine_handle<> winner_slot;
     std::coroutine_handle<> loser_slot;
-    std::vector<rawstd::Task<int>> tasks;
-    tasks.push_back(cancellable_then_return(&loser_slot));
-    tasks.push_back(suspend_then_return_value(&winner_slot, 5));
-
-    rawstd::Task<int> t = rawstd::any(std::move(tasks));
+    rawstd::Task<int> t = rawstd::any(2, [&](size_t i) -> rawstd::Task<int> {
+        if (i == 0) {
+            return cancellable_then_return(&loser_slot);
+        }
+        return suspend_then_return_value(&winner_slot, 5);
+    });
     EXPECT_FALSE(t.done());
 
     ASSERT_TRUE(winner_slot);
@@ -689,11 +692,9 @@ TEST(AnyTest, cancels_losers_once_one_succeeds) {
 TEST(AnyTest, cancel_cancels_every_task) {
     std::coroutine_handle<> slot_a;
     std::coroutine_handle<> slot_b;
-    std::vector<rawstd::Task<int>> tasks;
-    tasks.push_back(cancellable_then_return(&slot_a));
-    tasks.push_back(cancellable_then_return(&slot_b));
-
-    rawstd::Task<int> t = rawstd::any(std::move(tasks));
+    rawstd::Task<int> t = rawstd::any(2, [&](size_t i) {
+        return cancellable_then_return(i == 0 ? &slot_a : &slot_b);
+    });
     EXPECT_TRUE(t.cancel());
 
     ASSERT_TRUE(slot_b);
@@ -705,22 +706,46 @@ TEST(AnyTest, cancel_cancels_every_task) {
     EXPECT_EQ(ecanceled_or_value(t), -ECANCELED);
 }
 
-TEST(AnyTest, void_overload_succeeds) {
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.push_back(void_throws());
-    tasks.push_back(void_ok());
+TEST(AnyTest, failed_start_cancels_and_awaits_started_tasks) {
+    // The second start throws while the first task is already suspended
+    // on its operation: that task is cancelled, any() finishes only once
+    // it has, and the start's own exception is what any() reports.
+    std::coroutine_handle<> slot;
+    size_t started = 0;
+    rawstd::Task<int> t = rawstd::any(3, [&](size_t i) -> rawstd::Task<int> {
+        if (i == 1) {
+            throw std::runtime_error("start");
+        }
+        ++started;
+        return cancellable_then_return(&slot);
+    });
+    EXPECT_EQ(started, 1u);
+    EXPECT_FALSE(t.done());
 
-    rawstd::Task<void> t = rawstd::any(std::move(tasks));
+    ASSERT_TRUE(slot);
+    slot.resume();
+    EXPECT_TRUE(t.done());
+    try {
+        t.get();
+        FAIL() << "expected any() to rethrow";
+    } catch (const std::runtime_error& e) {
+        EXPECT_STREQ(e.what(), "start");
+    }
+}
+
+TEST(AnyTest, void_tasks_succeed) {
+    rawstd::Task<void> t = rawstd::any(2, [](size_t i) -> rawstd::Task<void> {
+        if (i == 0) {
+            return void_throws();
+        }
+        return void_ok();
+    });
     EXPECT_TRUE(t.done());
     EXPECT_NO_THROW(t.get());
 }
 
-TEST(AnyTest, void_overload_rethrows_when_every_task_fails) {
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.push_back(void_throws());
-    tasks.push_back(void_throws());
-
-    rawstd::Task<void> t = rawstd::any(std::move(tasks));
+TEST(AnyTest, void_tasks_rethrow_when_every_task_fails) {
+    rawstd::Task<void> t = rawstd::any(2, [](size_t) { return void_throws(); });
     EXPECT_TRUE(t.done());
     EXPECT_THROW(t.get(), std::runtime_error);
 }
