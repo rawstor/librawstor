@@ -178,6 +178,23 @@ void Chunk::_write_finished(unsigned int ticket) noexcept {
     }
 }
 
+class Chunk::WriteTicket final {
+private:
+    Chunk& _chunk;
+    unsigned int _ticket;
+
+public:
+    explicit WriteTicket(Chunk& chunk) noexcept :
+        _chunk(chunk),
+        _ticket(chunk._writes_issued++) {}
+    WriteTicket(const WriteTicket&) = delete;
+    WriteTicket(WriteTicket&&) = delete;
+    WriteTicket& operator=(const WriteTicket&) = delete;
+    WriteTicket& operator=(WriteTicket&&) = delete;
+
+    ~WriteTicket() { _chunk._write_finished(_ticket); }
+};
+
 Chunk::~Chunk() {
     for (auto& slot : _slots) {
         try {
@@ -241,20 +258,16 @@ Chunk::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
         (intmax_t)offset, sync
     );
 
-    unsigned int ticket = _writes_issued++;
-
-    std::vector<rawstd::Task<size_t>> tasks;
-    tasks.reserve(_slots.size());
-    for (auto& slot : _slots) {
-        tasks.push_back(slot->pwrite(buf, size, offset, sync));
-    }
+    WriteTicket ticket(*this);
 
     /**
      * TODO: Handle partial tasks.
      */
     try {
-        std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
-        _write_finished(ticket);
+        std::vector<size_t> results =
+            co_await rawstd::gather(_slots.size(), [&](size_t i) {
+                return _slots[i]->pwrite(buf, size, offset, sync);
+            });
         _dirty = true;
         size_t result = *std::min_element(results.begin(), results.end());
         RAWSTD_TRACE_EVENT_MESSAGE(
@@ -262,7 +275,6 @@ Chunk::pwrite(const void* buf, size_t size, off_t offset, bool sync) {
         );
         co_return result;
     } catch (const std::system_error& e) {
-        _write_finished(ticket);
         rawstd_error("%s\n", strerror(e.code().value()));
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = 0, error = %d\n", EIO
@@ -279,20 +291,16 @@ rawstd::Task<size_t> Chunk::pwritev(
         (intmax_t)offset, sync
     );
 
-    unsigned int ticket = _writes_issued++;
-
-    std::vector<rawstd::Task<size_t>> tasks;
-    tasks.reserve(_slots.size());
-    for (auto& slot : _slots) {
-        tasks.push_back(slot->pwritev(iov, niov, size, offset, sync));
-    }
+    WriteTicket ticket(*this);
 
     /**
      * TODO: Handle partial tasks.
      */
     try {
-        std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
-        _write_finished(ticket);
+        std::vector<size_t> results =
+            co_await rawstd::gather(_slots.size(), [&](size_t i) {
+                return _slots[i]->pwritev(iov, niov, size, offset, sync);
+            });
         _dirty = true;
         size_t result = *std::min_element(results.begin(), results.end());
         RAWSTD_TRACE_EVENT_MESSAGE(
@@ -300,7 +308,6 @@ rawstd::Task<size_t> Chunk::pwritev(
         );
         co_return result;
     } catch (const std::system_error& e) {
-        _write_finished(ticket);
         rawstd_error("%s\n", strerror(e.code().value()));
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = 0, error = %d\n", EIO
@@ -320,14 +327,11 @@ rawstd::Task<size_t> Chunk::discard(size_t size, off_t offset) {
     // set _dirty: flush() has nothing to wait for or durability-cover on
     // its account. Still fanned out to every mirror in _slots, same as a
     // write, so every replica's space accounting stays consistent.
-    std::vector<rawstd::Task<size_t>> tasks;
-    tasks.reserve(_slots.size());
-    for (auto& slot : _slots) {
-        tasks.push_back(slot->discard(size, offset));
-    }
-
     try {
-        std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
+        std::vector<size_t> results =
+            co_await rawstd::gather(_slots.size(), [&](size_t i) {
+                return _slots[i]->discard(size, offset);
+            });
         size_t result = *std::min_element(results.begin(), results.end());
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = %zu, error = 0\n", result
@@ -350,17 +354,13 @@ Chunk::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
         size, (intmax_t)offset, unmap, sync
     );
 
-    unsigned int ticket = _writes_issued++;
-
-    std::vector<rawstd::Task<size_t>> tasks;
-    tasks.reserve(_slots.size());
-    for (auto& slot : _slots) {
-        tasks.push_back(slot->write_zeroes(size, offset, unmap, sync));
-    }
+    WriteTicket ticket(*this);
 
     try {
-        std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
-        _write_finished(ticket);
+        std::vector<size_t> results =
+            co_await rawstd::gather(_slots.size(), [&](size_t i) {
+                return _slots[i]->write_zeroes(size, offset, unmap, sync);
+            });
         _dirty = true;
         size_t result = *std::min_element(results.begin(), results.end());
         RAWSTD_TRACE_EVENT_MESSAGE(
@@ -368,7 +368,6 @@ Chunk::write_zeroes(size_t size, off_t offset, bool unmap, bool sync) {
         );
         co_return result;
     } catch (const std::system_error& e) {
-        _write_finished(ticket);
         rawstd_error("%s\n", strerror(e.code().value()));
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = 0, error = %d\n", EIO
@@ -401,14 +400,10 @@ rawstd::Task<void> Chunk::flush() {
         co_return;
     }
 
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(_slots.size());
-    for (auto& slot : _slots) {
-        tasks.push_back(slot->flush());
-    }
-
     try {
-        co_await rawstd::gather(std::move(tasks));
+        co_await rawstd::gather(_slots.size(), [&](size_t i) {
+            return _slots[i]->flush();
+        });
         _dirty = false;
         RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = 0\n");
     } catch (const std::system_error& e) {
@@ -440,12 +435,6 @@ rawstd::Task<void> Chunk::close() {
         );
     }
 
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(_slots.size());
-    for (auto& slot : _slots) {
-        tasks.push_back(slot->close());
-    }
-
     // Every Slot is closed concurrently; every one is still attempted
     // regardless of an earlier failure (gather() never abandons a task
     // still in flight). _slots is cleared either way once gather()
@@ -453,7 +442,9 @@ rawstd::Task<void> Chunk::close() {
     // ~Chunk() (which still runs once the caller deletes this Chunk after
     // this Task completes) has nothing left to close.
     try {
-        co_await rawstd::gather(std::move(tasks));
+        co_await rawstd::gather(_slots.size(), [&](size_t i) {
+            return _slots[i]->close();
+        });
         if (flush_failed) {
             RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", EIO);
             RAWSTD_THROW_SYSTEM_ERROR(EIO);

@@ -252,13 +252,10 @@ rawstd::Task<RawstorLocationInfo> Location::info(rawio::Queue& queue) {
     validate_not_empty(_uris);
     validate_different_uris(_uris);
 
-    std::vector<rawstd::Task<RawstorLocationInfo>> tasks;
-    tasks.reserve(_uris.size());
-    for (const auto& location : _uris) {
-        tasks.push_back(info_one(queue, location));
-    }
     std::vector<RawstorLocationInfo> infos =
-        co_await rawstd::gather(std::move(tasks));
+        co_await rawstd::gather(_uris.size(), [&](size_t i) {
+            return info_one(queue, _uris[i]);
+        });
 
     RawstorLocationInfo ret = infos.front();
     for (const auto& it : infos) {
@@ -286,14 +283,10 @@ rawstd::Task<void> Location::list(
     // Every URI's LIST goes out concurrently instead of one at a time;
     // the per-URI uuids/token are only merged below, once every URI has
     // answered.
-    std::vector<rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>>>
-        tasks;
-    tasks.reserve(_uris.size());
-    for (const auto& location : _uris) {
-        tasks.push_back(list_one(queue, location, limit, token_uuid));
-    }
     std::vector<std::pair<std::vector<RawstdUUID>, RawstdUUID>> listings =
-        co_await rawstd::gather(std::move(tasks));
+        co_await rawstd::gather(_uris.size(), [&](size_t i) {
+            return list_one(queue, _uris[i], limit, token_uuid);
+        });
 
     auto cmp = [](const RawstdUUID& lhs, const RawstdUUID& rhs) -> bool {
         return rawstd_uuid_cmp(&lhs, &rhs) < 0;

@@ -417,17 +417,48 @@ public:
 
 } // namespace detail
 
+namespace detail {
+
+template <typename>
+struct task_value;
+
+template <typename T>
+struct task_value<Task<T>> {
+    using type = T;
+};
+
+template <typename T>
+struct gather_result {
+    using type = std::vector<T>;
+};
+
+template <>
+struct gather_result<void> {
+    using type = void;
+};
+
+} // namespace detail
+
 /**
- * Runs every Task<T> in `tasks` to completion, in the order given, without
- * ever destroying one that's still suspended -- Task<T>'s own precondition
- * (see above) forbids that, so every task is `co_await`-ed even after an
+ * Starts `n` tasks, `start(0)` .. `start(n - 1)`, in order, each returning
+ * a Task<T>, and runs every one of them to completion without ever
+ * destroying one that's still suspended -- Task<T>'s own precondition (see
+ * above) forbids that, so every task is `co_await`-ed even after an
  * earlier one has already failed. On success, returns each task's result
- * in the same order; if any task threw, the first exception seen (in
- * award order) is rethrown once every task has finished, and whatever
- * partial results were collected are discarded.
+ * in the same order (nothing for Task<void>); if any task threw, the first
+ * exception seen (in start order) is rethrown once every task has
+ * finished, and whatever partial results were collected are discarded.
  *
- * Cancelling the returned task cancels every task in `tasks` (see
- * Task<T>::cancel()); gather() still waits for all of them to finish.
+ * The tasks are started here, from inside gather()'s own frame, rather
+ * than handed over already running: starting one may throw (an allocation
+ * failure, typically) once earlier ones are running, and only gather() can
+ * still wait for those. It then cancels them (see Task<T>::cancel()),
+ * awaits them, and rethrows the exception that stopped the start.
+ * Everything gather() allocates itself is allocated before the first task
+ * starts.
+ *
+ * Cancelling the returned task cancels every started task; gather() still
+ * waits for all of them to finish.
  *
  * This intentionally carries no per-task identity: a caller that needs to
  * know *which* task failed (e.g. to reconnect just that one session)
@@ -440,14 +471,33 @@ public:
  * See any() below (defined after DetachedTask, which it's built on) for
  * the opposite policy: only one task needs to succeed.
  */
-template <typename T>
-Task<std::vector<T>> gather(std::vector<Task<T>> tasks) {
-    std::vector<T> results;
-    results.reserve(tasks.size());
+template <
+    typename F, typename T = typename detail::task_value<
+                    std::invoke_result_t<F&, size_t>>::type>
+Task<typename detail::gather_result<T>::type> gather(size_t n, F start) {
+    std::vector<Task<T>> tasks;
+    std::conditional_t<std::is_void_v<T>, std::monostate, std::vector<T>>
+        results;
     std::exception_ptr error;
+    try {
+        tasks.reserve(n);
+        if constexpr (!std::is_void_v<T>) {
+            results.reserve(n);
+        }
+        for (size_t i = 0; i < n; ++i) {
+            tasks.push_back(start(i));
+        }
+    } catch (...) {
+        error = std::current_exception();
+        detail::cancel_all(tasks);
+    }
     for (Task<T>& t : tasks) {
         try {
-            results.push_back(co_await detail::GatherPoint<T>(t, tasks));
+            if constexpr (std::is_void_v<T>) {
+                co_await detail::GatherPoint<void>(t, tasks);
+            } else {
+                results.push_back(co_await detail::GatherPoint<T>(t, tasks));
+            }
         } catch (...) {
             if (!error) {
                 error = std::current_exception();
@@ -457,25 +507,8 @@ Task<std::vector<T>> gather(std::vector<Task<T>> tasks) {
     if (error) {
         std::rethrow_exception(error);
     }
-    co_return results;
-}
-
-// std::vector<void> can't be named, so T = void gets its own overload
-// instead of an explicit specialization of the one above (which would
-// have to name Task<std::vector<void>> just to declare it).
-inline Task<void> gather(std::vector<Task<void>> tasks) {
-    std::exception_ptr error;
-    for (Task<void>& t : tasks) {
-        try {
-            co_await detail::GatherPoint<void>(t, tasks);
-        } catch (...) {
-            if (!error) {
-                error = std::current_exception();
-            }
-        }
-    }
-    if (error) {
-        std::rethrow_exception(error);
+    if constexpr (!std::is_void_v<T>) {
+        co_return results;
     }
 }
 
@@ -650,13 +683,13 @@ public:
 } // namespace detail
 
 /**
- * Runs every Task<T> in `tasks` concurrently and returns the result of
- * whichever one succeeds first, cancelling every other task (see
- * Task<T>::cancel()) as soon as it does. This is `gather()`'s opposite:
- * `gather()` needs every task to succeed and reports one combined
- * failure; `any()` needs only one to succeed and only fails if every task
- * does -- the same relationship as JS's `Promise.any()` to
- * `Promise.all()`.
+ * Starts `n` tasks, `start(0)` .. `start(n - 1)`, in order, each returning
+ * a Task<T>, runs them concurrently and returns the result of whichever
+ * one succeeds first, cancelling every other task (see Task<T>::cancel())
+ * as soon as it does. This is `gather()`'s opposite: `gather()` needs
+ * every task to succeed and reports one combined failure; `any()` needs
+ * only one to succeed and only fails if every task does -- the same
+ * relationship as JS's `Promise.any()` to `Promise.all()`.
  *
  * Like gather(), any() returns only once every task has finished: a
  * cancelled loser still has to unwind whatever it was waiting on first,
@@ -664,31 +697,77 @@ public:
  * loser that never reaches a Cancellable awaitable is waited for until
  * its natural end. Whatever the losers resolve with -- ECANCELED, a late
  * success that beat its own cancellation, a genuine failure -- is
- * discarded. Cancelling the returned task cancels every task in `tasks`.
+ * discarded. Cancelling the returned task cancels every started task.
  *
  * If every task fails, the exception belonging to whichever one finished
  * failing *first* (in completion order -- this is a genuine race, unlike
- * gather()'s strictly award-order iteration) is rethrown.
+ * gather()'s strictly start-order iteration) is rethrown.
  *
- * `tasks` must not be empty -- there is no "first successful" result to
- * return otherwise -- and throws std::invalid_argument if it is.
+ * Like gather(), any() starts the tasks itself, from inside its own frame:
+ * starting one -- or the watcher that waits on it for any() -- may throw
+ * (an allocation failure, typically) once earlier ones are running. The
+ * tasks already running are then cancelled and awaited, and the exception
+ * that stopped the start is rethrown, even if one of them succeeded.
+ *
+ * `n` must not be zero -- there is no "first successful" result to return
+ * otherwise -- and throws std::invalid_argument if it is.
  */
-template <typename T>
-Task<T> any(std::vector<Task<T>> tasks) {
-    if (tasks.empty()) {
-        throw std::invalid_argument("any(): tasks must not be empty");
+template <
+    typename F, typename T = typename detail::task_value<
+                    std::invoke_result_t<F&, size_t>>::type>
+Task<T> any(size_t n, F start) {
+    if (n == 0) {
+        throw std::invalid_argument("any(): n must not be zero");
     }
 
     detail::AnyState<T> state;
-    state.tasks = std::move(tasks);
-    state.pending = state.tasks.size();
+    std::exception_ptr error;
+    try {
+        // Reserved up front: every watcher holds a reference into it.
+        state.tasks.reserve(n);
+        for (size_t i = 0; i < n; ++i) {
+            state.tasks.push_back(start(i));
+        }
+    } catch (...) {
+        error = std::current_exception();
+    }
 
-    for (Task<T>& t : state.tasks) {
-        detail::any_watch<T>(state, t);
+    // A watcher counts itself out of `pending` when its task finishes,
+    // possibly at once: counted in just before it starts, and back out if
+    // starting it throws.
+    size_t watched = 0;
+    try {
+        for (; watched < state.tasks.size(); ++watched) {
+            ++state.pending;
+            try {
+                detail::any_watch<T>(state, state.tasks[watched]);
+            } catch (...) {
+                --state.pending;
+                throw;
+            }
+        }
+    } catch (...) {
+        if (!error) {
+            error = std::current_exception();
+        }
+    }
+
+    if (error) {
+        state.cancel();
+        // No watcher waits on these: any() waits on them itself.
+        for (size_t i = watched; i < state.tasks.size(); ++i) {
+            try {
+                co_await state.tasks[i];
+            } catch (...) {
+            }
+        }
     }
 
     co_await detail::AnyPoint<T>(state);
 
+    if (error) {
+        std::rethrow_exception(error);
+    }
     if (!state.result) {
         std::rethrow_exception(state.first_error);
     }

@@ -88,6 +88,11 @@ private:
     // been reached (see flush()).
     void _write_finished(unsigned int ticket) noexcept;
 
+    // Takes the next ticket (_writes_issued) for one write and hands it to
+    // _write_finished() however that write ends, an exception included:
+    // flush() waits for every ticket issued before it.
+    class WriteTicket;
+
     // Chunk is final -- unlike Backend::Private (which every backend
     // subclass's own constructor also needs to name), only create() (a
     // static member of Chunk itself, so no friend declaration is needed)

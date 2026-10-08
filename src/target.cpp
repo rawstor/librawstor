@@ -111,12 +111,9 @@ rawstd::Task<void> remove_one(rawio::Queue& queue, const rawstd::URI& target) {
 // REMOVE every URI in `targets` concurrently.
 rawstd::Task<void>
 remove_many(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(targets.size());
-    for (const auto& target : targets) {
-        tasks.push_back(remove_one(queue, target));
-    }
-    co_await rawstd::gather(std::move(tasks));
+    co_await rawstd::gather(targets.size(), [&](size_t i) {
+        return remove_one(queue, targets[i]);
+    });
 }
 
 // C ABI adapter for rawstor_target_open(): mirrors the rest of the
