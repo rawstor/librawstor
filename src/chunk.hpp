@@ -160,9 +160,11 @@ private:
     bool _probe_pending;
 
     // Ticket dispenser: each pwrite()/pwritev()/write_zeroes() call takes
-    // the next one at entry (unsigned int ticket = _writes_issued++;) and
-    // hands it to _write_finished() at its own completion, success or
-    // failure. flush() captures this as its own target and waits for
+    // the next one at entry (WriteTicket below) and hands it to
+    // _write_finished() once it ends, success or failure -- after a
+    // successful write marked itself _unflushed, since finishing the ticket
+    // is what wakes the flush() waiting for it. flush() captures this as
+    // its own target and waits for
     // _flush_barrier to reach it -- not a live in-flight gauge,
     // deliberately: waiting for "currently outstanding == 0" instead
     // would starve flush() forever under a continuous write stream, where
@@ -212,6 +214,10 @@ private:
     // early arrivals doesn't each wait for its own individual turn once the
     // one actually blocking them finally lands.
     void _write_finished(unsigned int ticket) noexcept;
+
+    // Takes the next ticket (_writes_issued) for one write and hands it to
+    // _write_finished() in its destructor, however the write ends.
+    class WriteTicket;
 
     size_t _in_sync_count() const noexcept;
 
