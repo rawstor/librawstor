@@ -36,10 +36,14 @@ concept Cancellable = requires(A& a) {
 template <typename A>
 class CancelPoint;
 
-// The cancellation bookkeeping shared by Task<T>'s and Task<void>'s
-// promise types.
+// What Task<T>'s and Task<void>'s promise types share: eager start,
+// symmetric transfer back to the awaiting coroutine, and cancellation
+// bookkeeping.
 class TaskPromiseBase {
-public:
+private:
+    template <typename A>
+    friend class CancelPoint;
+
     std::coroutine_handle<> _continuation = std::noop_coroutine();
 
     // The Cancellable awaitable this coroutine is currently suspended on,
@@ -50,6 +54,28 @@ public:
     // A cancel() that found nothing cancellable to deliver to: handed to
     // the next Cancellable awaitable this coroutine co_awaits instead.
     bool _cancel_pending = false;
+
+    class final_awaiter {
+    public:
+        bool await_ready() noexcept { return false; }
+
+        template <typename P>
+        std::coroutine_handle<>
+        await_suspend(std::coroutine_handle<P> h) noexcept {
+            return static_cast<TaskPromiseBase&>(h.promise())._continuation;
+        }
+
+        void await_resume() noexcept {}
+    };
+
+public:
+    std::suspend_never initial_suspend() noexcept { return {}; }
+
+    final_awaiter final_suspend() noexcept { return {}; }
+
+    void set_continuation(std::coroutine_handle<> h) noexcept {
+        _continuation = h;
+    }
 
     void cancel() {
         if (_cancel_fn != nullptr && _cancel_fn(_cancel_arg)) {
@@ -155,21 +181,6 @@ public:
             return Task(handle_type::from_promise(*this));
         }
 
-        std::suspend_never initial_suspend() noexcept { return {}; }
-
-        struct final_awaiter {
-            bool await_ready() noexcept { return false; }
-
-            std::coroutine_handle<>
-            await_suspend(std::coroutine_handle<promise_type> h) noexcept {
-                return h.promise()._continuation;
-            }
-
-            void await_resume() noexcept {}
-        };
-
-        final_awaiter final_suspend() noexcept { return {}; }
-
         void return_value(T value) {
             _result.template emplace<T>(std::move(value));
         }
@@ -257,7 +268,7 @@ public:
         // somewhere deeper in its own body, waiting on its own dependency.
         // Just remember who to resume, via symmetric transfer, once it
         // eventually reaches final_suspend().
-        _h.promise()._continuation = awaiting;
+        _h.promise().set_continuation(awaiting);
     }
 
     T await_resume() { return _extract(); }
@@ -280,21 +291,6 @@ public:
         Task get_return_object() noexcept {
             return Task(handle_type::from_promise(*this));
         }
-
-        std::suspend_never initial_suspend() noexcept { return {}; }
-
-        struct final_awaiter {
-            bool await_ready() noexcept { return false; }
-
-            std::coroutine_handle<>
-            await_suspend(std::coroutine_handle<promise_type> h) noexcept {
-                return h.promise()._continuation;
-            }
-
-            void await_resume() noexcept {}
-        };
-
-        final_awaiter final_suspend() noexcept { return {}; }
 
         void return_void() noexcept {}
 
@@ -355,7 +351,7 @@ public:
     bool await_ready() const noexcept { return _h.done(); }
 
     void await_suspend(std::coroutine_handle<> awaiting) noexcept {
-        _h.promise()._continuation = awaiting;
+        _h.promise().set_continuation(awaiting);
     }
 
     void await_resume() { _rethrow_if_needed(); }
