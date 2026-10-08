@@ -432,3 +432,109 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
     }
     flush_task.get();
 }
+
+// flush() waiting for a write must still flush it once that write
+// completes. The write's completion is what wakes flush(), right inside
+// the write's own bookkeeping, so the write has to mark the chunk dirty
+// before it lets flush() go -- otherwise flush() finds nothing dirty
+// (nothing was ever written before this write) and reports success
+// without sending FLUSH at all.
+TEST(ChunkTest, flush_flushes_the_write_it_waited_for) {
+    rawstor::tests::Server server(8753, 256);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+    rawstd::URI location("ost://127.0.0.1:8753");
+    rawstor::Target target({rawstd::URI(location, uuid_string)});
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    RawstorObjectSpec spec{.size = 1ull << 20};
+    run(*queue, target.create(*queue, spec));
+
+    // Left open for the whole test, see
+    // flush_does_not_resolve_on_write_completing_out_of_order.
+    rawstor::tests::Session s(server);
+    s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+
+    std::unique_ptr<rawstor::Chunk> object =
+        run(*queue, rawstor::Chunk::create(*queue, target));
+
+    std::string payload = "durable-me";
+    rawstd::Task<size_t> write_task =
+        object->pwrite(payload.data(), payload.size(), 0, false);
+    ASSERT_FALSE(write_task.done());
+
+    rawstd::Task<void> flush_task = object->flush();
+    ASSERT_FALSE(flush_task.done());
+
+    std::atomic<uint16_t> cid_write{0};
+    server.read(
+        "WRITE head <<<", sizeof(RawstorOSTFrameHead),
+        [&cid_write](const void* buf) {
+            cid_write = static_cast<const RawstorOSTFrameHead*>(buf)->cid;
+        }
+    );
+    server.read(
+        "WRITE rest <<<",
+        sizeof(RawstorOSTFrameIO) - sizeof(RawstorOSTFrameHead) +
+            payload.size(),
+        [](const void*) {}
+    );
+
+    wait_for_nonzero(*queue, cid_write);
+    RawstorOSTFrameResponse write_response = {
+        .head{
+            .magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_WRITE, .cid = cid_write
+        },
+        .body = {.res = static_cast<int32_t>(payload.size()), .hash = 0},
+    };
+    server.write(
+        "RAWSTOR_CMD_WRITE >>>", &write_response, sizeof(write_response)
+    );
+    // The server runs its script in order: FLUSH is read only after the
+    // write is answered, just as the client sends it.
+    std::atomic<uint16_t> cid_flush{0};
+    server.read(
+        "FLUSH head <<<", sizeof(RawstorOSTFrameHead),
+        [&cid_flush](const void* buf) {
+            cid_flush = static_cast<const RawstorOSTFrameHead*>(buf)->cid;
+        }
+    );
+    server.read(
+        "FLUSH rest <<<",
+        sizeof(RawstorOSTFrameBasic) - sizeof(RawstorOSTFrameHead),
+        [](const void*) {}
+    );
+
+    while (!write_task.done()) {
+        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+    EXPECT_EQ(write_task.get(), payload.size());
+
+    // The write is in; flush() must now be waiting for its own FLUSH, not
+    // done already.
+    EXPECT_FALSE(flush_task.done());
+
+    wait_for_nonzero(*queue, cid_flush);
+    RawstorOSTFrameResponse flush_response = {
+        .head{
+            .magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_FLUSH, .cid = cid_flush
+        },
+        .body = {.res = 0, .hash = 0},
+    };
+    server.write(
+        "RAWSTOR_CMD_FLUSH >>>", &flush_response, sizeof(flush_response)
+    );
+
+    while (!flush_task.done()) {
+        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+    }
+    flush_task.get();
+}
