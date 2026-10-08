@@ -34,6 +34,38 @@ struct suspend_once {
     void await_resume() const noexcept {}
 };
 
+// suspend_once's Cancellable counterpart, standing in for a reactor
+// operation: cancel() only records the request (the test still resumes
+// the slot by hand, as the reactor would deliver the completion later),
+// and await_resume() then reports ECANCELED.
+struct cancellable_once {
+    std::coroutine_handle<>* slot;
+    bool cancelled = false;
+
+    bool await_ready() const noexcept { return false; }
+
+    void await_suspend(std::coroutine_handle<> h) noexcept { *slot = h; }
+
+    void await_resume() const {
+        if (cancelled) {
+            throw std::system_error(ECANCELED, std::generic_category());
+        }
+    }
+
+    bool cancel() noexcept {
+        cancelled = true;
+        return true;
+    }
+};
+
+int ecanceled_or_value(rawstd::Task<int>& t) {
+    try {
+        return t.get();
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    }
+}
+
 rawstd::Task<int> immediate_value(int v) {
     co_return v;
 }
@@ -133,6 +165,119 @@ TEST(TaskTest, move_only) {
     rawstd::Task<int> b = std::move(a);
     EXPECT_TRUE(b.done());
     EXPECT_EQ(b.get(), 1);
+}
+
+// ---------------------------------------------------------------------
+// Task<T>::cancel()
+// ---------------------------------------------------------------------
+
+rawstd::Task<int> cancellable_then_return(std::coroutine_handle<>* slot) {
+    cancellable_once op{slot};
+    co_await op;
+    co_return 7;
+}
+
+TEST(TaskCancelTest, done_task_returns_false) {
+    rawstd::Task<int> t = immediate_value(1);
+    EXPECT_FALSE(t.cancel());
+    EXPECT_EQ(t.get(), 1);
+}
+
+TEST(TaskCancelTest, reaches_cancellable_awaitable) {
+    std::coroutine_handle<> slot;
+    rawstd::Task<int> t = cancellable_then_return(&slot);
+
+    EXPECT_TRUE(t.cancel());
+    // cancel() only requests: the task stays suspended until whatever it
+    // waits on actually completes.
+    EXPECT_FALSE(t.done());
+
+    ASSERT_TRUE(slot);
+    slot.resume();
+    EXPECT_TRUE(t.done());
+    EXPECT_EQ(ecanceled_or_value(t), -ECANCELED);
+}
+
+rawstd::Task<int> outer_of(rawstd::Task<int> inner) {
+    int v = co_await inner;
+    co_return v + 1;
+}
+
+TEST(TaskCancelTest, propagates_through_nested_tasks) {
+    std::coroutine_handle<> slot;
+    rawstd::Task<int> t = outer_of(outer_of(cancellable_then_return(&slot)));
+
+    EXPECT_TRUE(t.cancel());
+    EXPECT_FALSE(t.done());
+
+    ASSERT_TRUE(slot);
+    slot.resume();
+    EXPECT_TRUE(t.done());
+    EXPECT_EQ(ecanceled_or_value(t), -ECANCELED);
+}
+
+TEST(TaskCancelTest, uncancelled_task_completes_normally) {
+    std::coroutine_handle<> slot;
+    rawstd::Task<int> t = cancellable_then_return(&slot);
+
+    ASSERT_TRUE(slot);
+    slot.resume();
+    EXPECT_TRUE(t.done());
+    EXPECT_EQ(t.get(), 7);
+}
+
+rawstd::Task<int> plain_then_cancellable(
+    std::coroutine_handle<>* plain_slot, std::coroutine_handle<>* slot,
+    bool* reached
+) {
+    co_await suspend_once{plain_slot};
+    *reached = true;
+    cancellable_once op{slot};
+    co_await op;
+    co_return 7;
+}
+
+TEST(TaskCancelTest, waits_for_next_cancellable_awaitable) {
+    // Nothing is ever thrown into a task from outside: a cancel() that
+    // lands on a non-cancellable suspension point stays pending and is
+    // handed to the next cancellable awaitable instead.
+    std::coroutine_handle<> plain_slot;
+    std::coroutine_handle<> slot;
+    bool reached = false;
+    rawstd::Task<int> t = plain_then_cancellable(&plain_slot, &slot, &reached);
+
+    EXPECT_TRUE(t.cancel());
+    EXPECT_FALSE(t.done());
+
+    ASSERT_TRUE(plain_slot);
+    plain_slot.resume();
+    EXPECT_TRUE(reached);
+    EXPECT_FALSE(t.done());
+
+    ASSERT_TRUE(slot);
+    slot.resume();
+    EXPECT_TRUE(t.done());
+    EXPECT_EQ(ecanceled_or_value(t), -ECANCELED);
+}
+
+rawstd::Task<int> catches_cancellation(std::coroutine_handle<>* slot) {
+    try {
+        co_await cancellable_then_return(slot);
+    } catch (const std::system_error&) {
+        co_return 42;
+    }
+    co_return 0;
+}
+
+TEST(TaskCancelTest, cancelled_task_may_still_succeed) {
+    std::coroutine_handle<> slot;
+    rawstd::Task<int> t = catches_cancellation(&slot);
+
+    EXPECT_TRUE(t.cancel());
+    ASSERT_TRUE(slot);
+    slot.resume();
+    EXPECT_TRUE(t.done());
+    EXPECT_EQ(t.get(), 42);
 }
 
 // ---------------------------------------------------------------------
@@ -277,6 +422,32 @@ TEST(GatherTest, void_overload_rethrows) {
     EXPECT_THROW(t.get(), std::runtime_error);
 }
 
+TEST(GatherTest, cancel_cancels_every_task) {
+    // Cancelling gather() while it awaits the first task must reach the
+    // second one too, not just the one currently being awaited.
+    std::coroutine_handle<> slot_a;
+    std::coroutine_handle<> slot_b;
+    std::vector<rawstd::Task<int>> tasks;
+    tasks.push_back(cancellable_then_return(&slot_a));
+    tasks.push_back(cancellable_then_return(&slot_b));
+
+    rawstd::Task<std::vector<int>> t = rawstd::gather(std::move(tasks));
+    EXPECT_TRUE(t.cancel());
+
+    ASSERT_TRUE(slot_b);
+    slot_b.resume();
+    EXPECT_FALSE(t.done());
+    ASSERT_TRUE(slot_a);
+    slot_a.resume();
+    EXPECT_TRUE(t.done());
+    try {
+        t.get();
+        FAIL() << "expected gather() to rethrow";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ECANCELED);
+    }
+}
+
 // ---------------------------------------------------------------------
 // any()
 // ---------------------------------------------------------------------
@@ -342,15 +513,10 @@ suspend_then_return_and_flag(std::coroutine_handle<>* slot, bool* drained) {
     co_return 99;
 }
 
-TEST(AnyTest, drains_a_suspended_loser_in_the_background) {
-    // any() must not resolve on the suspended loser (it isn't done()
-    // yet), but it also must not block on it -- the synchronous winner
-    // resolves the whole thing immediately. The loser is only expected
-    // to finish once *its own* suspension point is resumed,
-    // asynchronously, well after any() has already returned -- proving
-    // it was kept alive and driven to completion in the background
-    // rather than dropped (which Task<T>'s own precondition forbids: see
-    // coro.hpp).
+TEST(AnyTest, waits_for_an_uncancellable_loser) {
+    // The loser never reaches a cancellable awaitable, so the winner's
+    // cancel() can't cut it short -- but any() still must not return
+    // before it finishes (Task<T>'s own precondition: see coro.hpp).
     std::coroutine_handle<> slot;
     bool drained = false;
     std::vector<rawstd::Task<int>> tasks;
@@ -358,13 +524,53 @@ TEST(AnyTest, drains_a_suspended_loser_in_the_background) {
     tasks.push_back(immediate_value(1));
 
     rawstd::Task<int> t = rawstd::any(std::move(tasks));
-    EXPECT_TRUE(t.done());
-    EXPECT_EQ(t.get(), 1);
-    EXPECT_FALSE(drained);
+    EXPECT_FALSE(t.done());
 
     ASSERT_TRUE(slot);
     slot.resume();
     EXPECT_TRUE(drained);
+    EXPECT_TRUE(t.done());
+    EXPECT_EQ(t.get(), 1);
+}
+
+TEST(AnyTest, cancels_losers_once_one_succeeds) {
+    std::coroutine_handle<> winner_slot;
+    std::coroutine_handle<> loser_slot;
+    std::vector<rawstd::Task<int>> tasks;
+    tasks.push_back(cancellable_then_return(&loser_slot));
+    tasks.push_back(suspend_then_return_value(&winner_slot, 5));
+
+    rawstd::Task<int> t = rawstd::any(std::move(tasks));
+    EXPECT_FALSE(t.done());
+
+    ASSERT_TRUE(winner_slot);
+    winner_slot.resume();
+    // Won, but the cancelled loser hasn't unwound yet.
+    EXPECT_FALSE(t.done());
+
+    ASSERT_TRUE(loser_slot);
+    loser_slot.resume();
+    EXPECT_TRUE(t.done());
+    EXPECT_EQ(t.get(), 5);
+}
+
+TEST(AnyTest, cancel_cancels_every_task) {
+    std::coroutine_handle<> slot_a;
+    std::coroutine_handle<> slot_b;
+    std::vector<rawstd::Task<int>> tasks;
+    tasks.push_back(cancellable_then_return(&slot_a));
+    tasks.push_back(cancellable_then_return(&slot_b));
+
+    rawstd::Task<int> t = rawstd::any(std::move(tasks));
+    EXPECT_TRUE(t.cancel());
+
+    ASSERT_TRUE(slot_b);
+    slot_b.resume();
+    EXPECT_FALSE(t.done());
+    ASSERT_TRUE(slot_a);
+    slot_a.resume();
+    EXPECT_TRUE(t.done());
+    EXPECT_EQ(ecanceled_or_value(t), -ECANCELED);
 }
 
 TEST(AnyTest, void_overload_succeeds) {
