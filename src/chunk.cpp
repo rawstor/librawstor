@@ -592,6 +592,23 @@ void Chunk::_write_finished(unsigned int ticket) noexcept {
     }
 }
 
+class Chunk::WriteTicket final {
+private:
+    Chunk& _chunk;
+    unsigned int _ticket;
+
+public:
+    explicit WriteTicket(Chunk& chunk) noexcept :
+        _chunk(chunk),
+        _ticket(chunk._writes_issued++) {}
+    WriteTicket(const WriteTicket&) = delete;
+    WriteTicket(WriteTicket&&) = delete;
+    WriteTicket& operator=(const WriteTicket&) = delete;
+    WriteTicket& operator=(WriteTicket&&) = delete;
+
+    ~WriteTicket() { _chunk._write_finished(_ticket); }
+};
+
 size_t Chunk::_in_sync_count() const noexcept {
     size_t ret = 0;
     for (const Member& m : _members) {
@@ -2102,7 +2119,7 @@ Chunk::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
         RAWSTD_THROW_SYSTEM_ERROR(EROFS);
     }
 
-    unsigned int ticket = _writes_issued++;
+    WriteTicket ticket(*this);
 
     try {
         co_await _with_dirty();
@@ -2112,14 +2129,12 @@ Chunk::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
                 return slot.pwrite(buf, size, offset, sync);
             }
         );
-        _write_finished(ticket);
         _unflushed = true;
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = %zu, error = 0\n", result
         );
         co_return result;
     } catch (const std::exception& e) {
-        _write_finished(ticket);
         rawstd_error("%s\n", e.what());
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = 0, error = %s\n", e.what()
@@ -2141,7 +2156,7 @@ rawstd::Task<size_t> Chunk::pwritev(
         RAWSTD_THROW_SYSTEM_ERROR(EROFS);
     }
 
-    unsigned int ticket = _writes_issued++;
+    WriteTicket ticket(*this);
 
     try {
         co_await _with_dirty();
@@ -2152,14 +2167,12 @@ rawstd::Task<size_t> Chunk::pwritev(
                 return slot.pwritev(iov, niov, size, offset, sync);
             }
         );
-        _write_finished(ticket);
         _unflushed = true;
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = %zu, error = 0\n", result
         );
         co_return result;
     } catch (const std::exception& e) {
-        _write_finished(ticket);
         rawstd_error("%s\n", e.what());
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = 0, error = %s\n", e.what()
@@ -2224,7 +2237,7 @@ Chunk::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
         RAWSTD_THROW_SYSTEM_ERROR(EROFS);
     }
 
-    unsigned int ticket = _writes_issued++;
+    WriteTicket ticket(*this);
 
     try {
         co_await _with_dirty();
@@ -2234,14 +2247,12 @@ Chunk::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
                 return slot.write_zeroes(size, offset, unmap, sync);
             }
         );
-        _write_finished(ticket);
         _unflushed = true;
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = %zu, error = 0\n", result
         );
         co_return result;
     } catch (const std::exception& e) {
-        _write_finished(ticket);
         rawstd_error("%s\n", e.what());
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "result = 0, error = %s\n", e.what()
