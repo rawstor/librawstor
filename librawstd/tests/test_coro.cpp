@@ -279,6 +279,49 @@ TEST(TaskCancelTest, cancelled_task_may_still_succeed) {
     EXPECT_EQ(t.get(), 42);
 }
 
+struct throws_on_suspend {
+    bool* cancelled;
+
+    bool await_ready() const noexcept { return false; }
+
+    void await_suspend(std::coroutine_handle<>) {
+        throw std::runtime_error("suspend");
+    }
+
+    void await_resume() const noexcept {}
+
+    bool cancel() noexcept {
+        *cancelled = true;
+        return true;
+    }
+};
+
+rawstd::Task<int>
+survives_throwing_suspend(bool* cancelled, std::coroutine_handle<>* slot) {
+    try {
+        co_await throws_on_suspend{cancelled};
+    } catch (const std::runtime_error&) {
+    }
+    co_await suspend_once{slot};
+    co_return 7;
+}
+
+TEST(TaskCancelTest, throwing_await_suspend_unregisters_awaitable) {
+    // The throwing awaitable is a temporary, gone once its co_await
+    // expression unwinds: a later cancel() must not reach it.
+    bool cancelled = false;
+    std::coroutine_handle<> slot;
+    rawstd::Task<int> t = survives_throwing_suspend(&cancelled, &slot);
+
+    EXPECT_TRUE(t.cancel());
+    EXPECT_FALSE(cancelled);
+
+    ASSERT_TRUE(slot);
+    slot.resume();
+    EXPECT_TRUE(t.done());
+    EXPECT_EQ(t.get(), 7);
+}
+
 // ---------------------------------------------------------------------
 // Deep chain, resumed from the bottom: verifies that the final_suspend()
 // -> continuation resumption cascade is a symmetric-transfer tail chain,
@@ -438,6 +481,47 @@ TEST(GatherTest, cancel_cancels_every_task) {
     EXPECT_FALSE(t.done());
     ASSERT_TRUE(slot_a);
     slot_a.resume();
+    EXPECT_TRUE(t.done());
+    try {
+        t.get();
+        FAIL() << "expected gather() to rethrow";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ECANCELED);
+    }
+}
+
+struct cancel_throws {
+    std::coroutine_handle<>* slot;
+
+    bool await_ready() const noexcept { return false; }
+
+    void await_suspend(std::coroutine_handle<> h) noexcept { *slot = h; }
+
+    void await_resume() const noexcept {}
+
+    bool cancel() { throw std::runtime_error("cancel"); }
+};
+
+rawstd::Task<int> cancel_throws_then_return(std::coroutine_handle<>* slot) {
+    co_await cancel_throws{slot};
+    co_return 7;
+}
+
+TEST(GatherTest, cancel_reaches_every_task_past_a_throwing_one) {
+    std::coroutine_handle<> slot_a;
+    std::coroutine_handle<> slot_b;
+    std::vector<rawstd::Task<int>> tasks;
+    tasks.push_back(cancel_throws_then_return(&slot_a));
+    tasks.push_back(cancellable_then_return(&slot_b));
+
+    rawstd::Task<std::vector<int>> t = rawstd::gather(std::move(tasks));
+    EXPECT_TRUE(t.cancel());
+
+    ASSERT_TRUE(slot_a);
+    slot_a.resume();
+    EXPECT_FALSE(t.done());
+    ASSERT_TRUE(slot_b);
+    slot_b.resume();
     EXPECT_TRUE(t.done());
     try {
         t.get();

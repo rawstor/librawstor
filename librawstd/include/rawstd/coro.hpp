@@ -130,8 +130,19 @@ public:
             // await_suspend() may resume it before returning.
             _promise._cancel_fn = &_cancel;
             _promise._cancel_arg = &_inner;
+            try {
+                return _inner.await_suspend(h);
+            } catch (...) {
+                // The exception resumes the coroutine without
+                // await_resume(), and `_inner` may be a temporary that
+                // dies along with this co_await expression.
+                _promise._cancel_fn = nullptr;
+                _promise._cancel_arg = nullptr;
+                throw;
+            }
+        } else {
+            return _inner.await_suspend(h);
         }
-        return _inner.await_suspend(h);
     }
 
     decltype(auto) await_resume() {
@@ -361,6 +372,23 @@ public:
 
 namespace detail {
 
+// Cancels every task in `tasks` that is still running, for gather() and
+// any(). A cancel request that fails to go out (e.g. no room to submit
+// it) only leaves that task to run to its natural end, which both of them
+// wait for either way -- not worth skipping the remaining tasks or
+// failing the caller's own cancel() over.
+template <typename T>
+bool cancel_all(std::vector<Task<T>>& tasks) noexcept {
+    bool cancelled = false;
+    for (Task<T>& t : tasks) {
+        try {
+            cancelled |= t.cancel();
+        } catch (...) {
+        }
+    }
+    return cancelled;
+}
+
 // gather()'s view of the one task it is awaiting right now: cancelling it
 // cancels every task gather() still holds, not just that one -- the rest
 // are already running too (Task<T> starts eagerly), and gather() will
@@ -384,13 +412,7 @@ public:
 
     T await_resume() { return _task.await_resume(); }
 
-    bool cancel() {
-        bool cancelled = false;
-        for (Task<T>& t : _tasks) {
-            cancelled |= t.cancel();
-        }
-        return cancelled;
-    }
+    bool cancel() noexcept { return cancel_all(_tasks); }
 };
 
 } // namespace detail
@@ -562,19 +584,7 @@ struct AnyState {
     std::exception_ptr first_error;
     std::coroutine_handle<> waiter;
 
-    // A cancel request that fails to go out (e.g. no room to submit it)
-    // only leaves that task to run to its natural end, which any() waits
-    // for either way -- not worth failing the whole race over.
-    bool cancel() noexcept {
-        bool cancelled = false;
-        for (Task<T>& t : tasks) {
-            try {
-                cancelled |= t.cancel();
-            } catch (...) {
-            }
-        }
-        return cancelled;
-    }
+    bool cancel() noexcept { return cancel_all(tasks); }
 };
 
 // Drives one of any()'s tasks to completion on its behalf: a task has a
