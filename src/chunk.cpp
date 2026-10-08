@@ -1043,12 +1043,9 @@ rawstd::Task<void> Chunk::_run_meta_fan_out(RawstorObjectSyncState sync_state) {
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(idxs.size());
-    for (size_t idx : idxs) {
-        tasks.push_back(_set_sync_state_one(idx, sync_state));
-    }
-    co_await rawstd::gather(std::move(tasks));
+    co_await rawstd::gather(idxs.size(), [&](size_t i) {
+        return _set_sync_state_one(idxs[i], sync_state);
+    });
 }
 
 rawstd::Task<void>
@@ -2353,14 +2350,13 @@ rawstd::Task<void> Chunk::close() {
         }
     }
 
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(_members.size());
+    std::vector<Slot*> slots;
+    slots.reserve(_members.size());
     for (auto& m : _members) {
         // An unreachable member's slot has no Slot to close.
-        if (!m.slot) {
-            continue;
+        if (m.slot) {
+            slots.push_back(m.slot.get());
         }
-        tasks.push_back(m.slot->close());
     }
 
     // Every Slot is closed concurrently; every one is still attempted
@@ -2370,7 +2366,9 @@ rawstd::Task<void> Chunk::close() {
     // ~Chunk() (which still runs once the caller deletes this Chunk
     // after this Task completes) has nothing left to close.
     try {
-        co_await rawstd::gather(std::move(tasks));
+        co_await rawstd::gather(slots.size(), [&](size_t i) {
+            return slots[i]->close();
+        });
         if (flush_failed) {
             RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "error = %d\n", EIO);
             RAWSTD_THROW_SYSTEM_ERROR(EIO);

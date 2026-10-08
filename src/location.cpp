@@ -337,13 +337,10 @@ Location::Location(const std::vector<rawstd::URI>& uris) : _uris(uris) {
 }
 
 rawstd::Task<RawstorLocationInfo> Location::info(rawio::Queue& queue) const {
-    std::vector<rawstd::Task<RawstorLocationInfo>> tasks;
-    tasks.reserve(_uris.size());
-    for (const auto& location : _uris) {
-        tasks.push_back(info_one(queue, location));
-    }
     std::vector<RawstorLocationInfo> infos =
-        co_await rawstd::gather(std::move(tasks));
+        co_await rawstd::gather(_uris.size(), [&](size_t i) {
+            return info_one(queue, _uris[i]);
+        });
 
     RawstorLocationInfo ret = infos.front();
     for (const auto& it : infos) {
@@ -368,14 +365,10 @@ rawstd::Task<void> Location::list(
     // Every URI's LIST goes out concurrently instead of one at a time;
     // the per-URI groups/token are only merged below, once every URI has
     // answered.
-    std::vector<rawstd::Task<std::pair<std::vector<ChunkGroup>, RawstdUUID>>>
-        tasks;
-    tasks.reserve(_uris.size());
-    for (const auto& location : _uris) {
-        tasks.push_back(list_one(queue, location, limit, token_id));
-    }
     std::vector<std::pair<std::vector<ChunkGroup>, RawstdUUID>> listings =
-        co_await rawstd::gather(std::move(tasks));
+        co_await rawstd::gather(_uris.size(), [&](size_t i) {
+            return list_one(queue, _uris[i], limit, token_id);
+        });
 
     // Merged across every URI, by id: each URI's own list_chunks() already
     // groups its own offsets under one id (ChunkGroup, backend.hpp), but

@@ -417,68 +417,6 @@ public:
 
 } // namespace detail
 
-/**
- * Runs every Task<T> in `tasks` to completion, in the order given, without
- * ever destroying one that's still suspended -- Task<T>'s own precondition
- * (see above) forbids that, so every task is `co_await`-ed even after an
- * earlier one has already failed. On success, returns each task's result
- * in the same order; if any task threw, the first exception seen (in
- * award order) is rethrown once every task has finished, and whatever
- * partial results were collected are discarded.
- *
- * Cancelling the returned task cancels every task in `tasks` (see
- * Task<T>::cancel()); gather() still waits for all of them to finish.
- *
- * This intentionally carries no per-task identity: a caller that needs to
- * know *which* task failed (e.g. to reconnect just that one session)
- * doesn't fit gather() and should keep its own loop instead. Every
- * current call site either wants all-or-nothing (a fresh session pool, a
- * mirrored write) or reacts to the batch as a whole regardless of which
- * member failed (re-set_object()ing every session in the pool, logging
- * one line instead of one per session on teardown).
- *
- * See any() below (defined after DetachedTask, which it's built on) for
- * the opposite policy: only one task needs to succeed.
- */
-template <typename T>
-Task<std::vector<T>> gather(std::vector<Task<T>> tasks) {
-    std::vector<T> results;
-    results.reserve(tasks.size());
-    std::exception_ptr error;
-    for (Task<T>& t : tasks) {
-        try {
-            results.push_back(co_await detail::GatherPoint<T>(t, tasks));
-        } catch (...) {
-            if (!error) {
-                error = std::current_exception();
-            }
-        }
-    }
-    if (error) {
-        std::rethrow_exception(error);
-    }
-    co_return results;
-}
-
-// std::vector<void> can't be named, so T = void gets its own overload
-// instead of an explicit specialization of the one above (which would
-// have to name Task<std::vector<void>> just to declare it).
-inline Task<void> gather(std::vector<Task<void>> tasks) {
-    std::exception_ptr error;
-    for (Task<void>& t : tasks) {
-        try {
-            co_await detail::GatherPoint<void>(t, tasks);
-        } catch (...) {
-            if (!error) {
-                error = std::current_exception();
-            }
-        }
-    }
-    if (error) {
-        std::rethrow_exception(error);
-    }
-}
-
 namespace detail {
 
 template <typename>
@@ -502,19 +440,36 @@ struct gather_result<void> {
 } // namespace detail
 
 /**
- * gather() over `n` tasks it starts itself: `start(0)` .. `start(n - 1)`,
- * in order, each returning a Task<T>. Starting a task may throw (an
- * allocation failure, typically) once earlier ones are already running --
- * a batch the caller could not unwind, since destroying a running Task<T>
- * is not allowed. Started here instead, from inside gather()'s own frame:
- * the tasks already running are then cancelled (see Task<T>::cancel()) and
- * awaited, and the exception that stopped the start is rethrown.
+ * Starts `n` tasks, `start(0)` .. `start(n - 1)`, in order, each returning
+ * a Task<T>, and runs every one of them to completion without ever
+ * destroying one that's still suspended -- Task<T>'s own precondition (see
+ * above) forbids that, so every task is `co_await`-ed even after an
+ * earlier one has already failed. On success, returns each task's result
+ * in the same order (nothing for Task<void>); if any task threw, the first
+ * exception seen (in start order) is rethrown once every task has
+ * finished, and whatever partial results were collected are discarded.
+ *
+ * The tasks are started here, from inside gather()'s own frame, rather
+ * than handed over already running: starting one may throw (an allocation
+ * failure, typically) once earlier ones are running, and only gather() can
+ * still wait for those. It then cancels them (see Task<T>::cancel()),
+ * awaits them, and rethrows the exception that stopped the start.
  * Everything gather() allocates itself is allocated before the first task
  * starts.
  *
- * Otherwise the same as gather() over the started tasks: every one is
- * awaited, the results come back in order (void for Task<void>), and the
- * first exception is rethrown once all have finished.
+ * Cancelling the returned task cancels every started task; gather() still
+ * waits for all of them to finish.
+ *
+ * This intentionally carries no per-task identity: a caller that needs to
+ * know *which* task failed (e.g. to reconnect just that one session)
+ * doesn't fit gather() and should keep its own loop instead. Every
+ * current call site either wants all-or-nothing (a fresh session pool, a
+ * mirrored write) or reacts to the batch as a whole regardless of which
+ * member failed (re-set_object()ing every session in the pool, logging
+ * one line instead of one per session on teardown).
+ *
+ * See any() below (defined after DetachedTask, which it's built on) for
+ * the opposite policy: only one task needs to succeed.
  */
 template <
     typename F, typename T = typename detail::task_value<

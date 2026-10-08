@@ -381,31 +381,32 @@ rawstd::Task<int> gather_throws(const char* msg) {
 }
 
 TEST(GatherTest, collects_results_in_order) {
-    std::vector<rawstd::Task<int>> tasks;
-    tasks.push_back(immediate_value(1));
-    tasks.push_back(immediate_value(2));
-    tasks.push_back(immediate_value(3));
-
-    rawstd::Task<std::vector<int>> t = rawstd::gather(std::move(tasks));
+    rawstd::Task<std::vector<int>> t = rawstd::gather(3, [](size_t i) {
+        return immediate_value(static_cast<int>(i) + 1);
+    });
     EXPECT_TRUE(t.done());
     EXPECT_EQ(t.get(), (std::vector<int>{1, 2, 3}));
 }
 
 TEST(GatherTest, empty_input_returns_empty_vector) {
-    std::vector<rawstd::Task<int>> tasks;
-
-    rawstd::Task<std::vector<int>> t = rawstd::gather(std::move(tasks));
+    rawstd::Task<std::vector<int>> t =
+        rawstd::gather(0, [](size_t) { return immediate_value(0); });
     EXPECT_TRUE(t.done());
     EXPECT_TRUE(t.get().empty());
 }
 
 TEST(GatherTest, rethrows_first_exception_after_awaiting_all) {
-    std::vector<rawstd::Task<int>> tasks;
-    tasks.push_back(gather_throws("first"));
-    tasks.push_back(immediate_value(2));
-    tasks.push_back(gather_throws("second"));
-
-    rawstd::Task<std::vector<int>> t = rawstd::gather(std::move(tasks));
+    rawstd::Task<std::vector<int>> t =
+        rawstd::gather(3, [](size_t i) -> rawstd::Task<int> {
+            switch (i) {
+            case 0:
+                return gather_throws("first");
+            case 1:
+                return immediate_value(2);
+            default:
+                return gather_throws("second");
+            }
+        });
     EXPECT_TRUE(t.done());
     try {
         t.get();
@@ -427,40 +428,87 @@ TEST(GatherTest, awaits_every_task_even_after_an_earlier_failure) {
     // it must keep awaiting task[1] here before it's allowed to finish at
     // all, even though task[0] has already thrown.
     std::coroutine_handle<> slot;
-    std::vector<rawstd::Task<int>> tasks;
-    tasks.push_back(gather_throws("early"));
-    tasks.push_back(suspend_then_throw(&slot));
-
-    rawstd::Task<std::vector<int>> t = rawstd::gather(std::move(tasks));
+    rawstd::Task<std::vector<int>> t =
+        rawstd::gather(2, [&slot](size_t i) -> rawstd::Task<int> {
+            if (i == 0) {
+                return gather_throws("early");
+            }
+            return suspend_then_throw(&slot);
+        });
     EXPECT_FALSE(t.done());
 
     ASSERT_TRUE(slot);
     slot.resume();
 
     EXPECT_TRUE(t.done());
-    EXPECT_THROW(t.get(), std::runtime_error);
+    try {
+        t.get();
+        FAIL() << "expected gather() to rethrow";
+    } catch (const std::runtime_error& e) {
+        EXPECT_STREQ(e.what(), "early");
+    }
 }
 
 rawstd::Task<void> void_ok() {
     co_return;
 }
 
-TEST(GatherTest, void_overload_succeeds) {
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.push_back(void_ok());
-    tasks.push_back(void_ok());
-
-    rawstd::Task<void> t = rawstd::gather(std::move(tasks));
+TEST(GatherTest, void_tasks_succeed) {
+    size_t started = 0;
+    rawstd::Task<void> t = rawstd::gather(2, [&started](size_t) {
+        ++started;
+        return void_ok();
+    });
     EXPECT_TRUE(t.done());
     EXPECT_NO_THROW(t.get());
+    EXPECT_EQ(started, 2u);
 }
 
-TEST(GatherTest, void_overload_rethrows) {
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.push_back(void_ok());
-    tasks.push_back(void_throws());
+TEST(GatherTest, void_tasks_rethrow) {
+    rawstd::Task<void> t =
+        rawstd::gather(2, [](size_t i) -> rawstd::Task<void> {
+            if (i == 0) {
+                return void_ok();
+            }
+            return void_throws();
+        });
+    EXPECT_TRUE(t.done());
+    EXPECT_THROW(t.get(), std::runtime_error);
+}
 
-    rawstd::Task<void> t = rawstd::gather(std::move(tasks));
+TEST(GatherTest, failed_start_cancels_and_awaits_started_tasks) {
+    // The second start throws while the first task is already suspended
+    // on its operation: that task is cancelled, not destroyed, gather()
+    // finishes only once it has, and the start's own exception wins over
+    // the ECANCELED the cancelled task reports.
+    std::coroutine_handle<> slot;
+    size_t started = 0;
+    rawstd::Task<std::vector<int>> t =
+        rawstd::gather(3, [&](size_t i) -> rawstd::Task<int> {
+            if (i == 1) {
+                throw std::runtime_error("start");
+            }
+            ++started;
+            return cancellable_then_return(&slot);
+        });
+    EXPECT_EQ(started, 1u);
+    EXPECT_FALSE(t.done());
+
+    ASSERT_TRUE(slot);
+    slot.resume();
+    EXPECT_TRUE(t.done());
+    try {
+        t.get();
+        FAIL() << "expected gather() to rethrow";
+    } catch (const std::runtime_error& e) {
+        EXPECT_STREQ(e.what(), "start");
+    }
+}
+
+TEST(GatherTest, failed_first_start_rethrows_at_once) {
+    rawstd::Task<void> t = rawstd::gather(2, [](size_t) -> rawstd::Task<void> {
+        throw std::runtime_error("start");
+    });
     EXPECT_TRUE(t.done());
     EXPECT_THROW(t.get(), std::runtime_error);
 }
@@ -470,11 +518,9 @@ TEST(GatherTest, cancel_cancels_every_task) {
     // second one too, not just the one currently being awaited.
     std::coroutine_handle<> slot_a;
     std::coroutine_handle<> slot_b;
-    std::vector<rawstd::Task<int>> tasks;
-    tasks.push_back(cancellable_then_return(&slot_a));
-    tasks.push_back(cancellable_then_return(&slot_b));
-
-    rawstd::Task<std::vector<int>> t = rawstd::gather(std::move(tasks));
+    rawstd::Task<std::vector<int>> t = rawstd::gather(2, [&](size_t i) {
+        return cancellable_then_return(i == 0 ? &slot_a : &slot_b);
+    });
     EXPECT_TRUE(t.cancel());
 
     ASSERT_TRUE(slot_b);
@@ -511,11 +557,13 @@ rawstd::Task<int> cancel_throws_then_return(std::coroutine_handle<>* slot) {
 TEST(GatherTest, cancel_reaches_every_task_past_a_throwing_one) {
     std::coroutine_handle<> slot_a;
     std::coroutine_handle<> slot_b;
-    std::vector<rawstd::Task<int>> tasks;
-    tasks.push_back(cancel_throws_then_return(&slot_a));
-    tasks.push_back(cancellable_then_return(&slot_b));
-
-    rawstd::Task<std::vector<int>> t = rawstd::gather(std::move(tasks));
+    rawstd::Task<std::vector<int>> t =
+        rawstd::gather(2, [&](size_t i) -> rawstd::Task<int> {
+            if (i == 0) {
+                return cancel_throws_then_return(&slot_a);
+            }
+            return cancellable_then_return(&slot_b);
+        });
     EXPECT_TRUE(t.cancel());
 
     ASSERT_TRUE(slot_a);
@@ -530,88 +578,6 @@ TEST(GatherTest, cancel_reaches_every_task_past_a_throwing_one) {
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), ECANCELED);
     }
-}
-
-// ---------------------------------------------------------------------
-// gather() over a task factory
-// ---------------------------------------------------------------------
-
-TEST(GatherFactoryTest, collects_results_in_order) {
-    rawstd::Task<std::vector<int>> t = rawstd::gather(3, [](size_t i) {
-        return immediate_value(static_cast<int>(i) + 1);
-    });
-    EXPECT_TRUE(t.done());
-    EXPECT_EQ(t.get(), (std::vector<int>{1, 2, 3}));
-}
-
-TEST(GatherFactoryTest, void_tasks) {
-    size_t started = 0;
-    rawstd::Task<void> t = rawstd::gather(2, [&started](size_t) {
-        ++started;
-        return void_ok();
-    });
-    EXPECT_TRUE(t.done());
-    EXPECT_NO_THROW(t.get());
-    EXPECT_EQ(started, 2u);
-}
-
-TEST(GatherFactoryTest, awaits_every_task_and_rethrows_first_failure) {
-    std::coroutine_handle<> slot;
-    rawstd::Task<std::vector<int>> t =
-        rawstd::gather(2, [&slot](size_t i) -> rawstd::Task<int> {
-            if (i == 0) {
-                return gather_throws("early");
-            }
-            return suspend_then_throw(&slot);
-        });
-    EXPECT_FALSE(t.done());
-
-    ASSERT_TRUE(slot);
-    slot.resume();
-    EXPECT_TRUE(t.done());
-    try {
-        t.get();
-        FAIL() << "expected gather() to rethrow";
-    } catch (const std::runtime_error& e) {
-        EXPECT_STREQ(e.what(), "early");
-    }
-}
-
-TEST(GatherFactoryTest, failed_start_cancels_and_awaits_started_tasks) {
-    // The second start throws while the first task is already suspended
-    // on its operation: that task is cancelled, not destroyed, gather()
-    // finishes only once it has, and the start's own exception wins over
-    // the ECANCELED the cancelled task reports.
-    std::coroutine_handle<> slot;
-    size_t started = 0;
-    rawstd::Task<std::vector<int>> t =
-        rawstd::gather(3, [&](size_t i) -> rawstd::Task<int> {
-            if (i == 1) {
-                throw std::runtime_error("start");
-            }
-            ++started;
-            return cancellable_then_return(&slot);
-        });
-    EXPECT_EQ(started, 1u);
-    EXPECT_FALSE(t.done());
-
-    ASSERT_TRUE(slot);
-    slot.resume();
-    EXPECT_TRUE(t.done());
-    try {
-        t.get();
-        FAIL() << "expected gather() to rethrow";
-    } catch (const std::runtime_error& e) {
-        EXPECT_STREQ(e.what(), "start");
-    }
-}
-
-TEST(GatherFactoryTest, failed_first_start_rethrows_at_once) {
-    rawstd::Task<void> t = rawstd::gather(2, [](size_t) -> rawstd::Task<void> {
-        throw std::runtime_error("start");
-    });
-    EXPECT_TRUE(t.done());
-    EXPECT_THROW(t.get(), std::runtime_error);
 }
 
 // ---------------------------------------------------------------------

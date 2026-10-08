@@ -251,6 +251,10 @@ private:
     // string against before ever constructing this object.
     rawstd::Task<Chunk*> _chunk(uint32_t index);
 
+    // Every chunk opened so far, in order -- the ones flush()/close() act
+    // on.
+    std::vector<Chunk*> _open_chunks() const;
+
     // Splits [offset, offset+size) at _chunk_size boundaries.
     std::vector<ObjectSegment> _segments(uint64_t offset, size_t size) const;
 
