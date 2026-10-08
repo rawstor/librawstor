@@ -1195,64 +1195,42 @@ rawstd::Task<size_t> Chunk::_fan_out_write(
         syncing = (ssize_t)_resync->idx;
     }
 
-    ++_writes_in_flight;
-    if (_resync != nullptr && size > 0) {
-        size_t first = (size_t)(offset / (uint64_t)_resync->chunk);
-        size_t last =
-            (size_t)((offset + (uint64_t)size - 1) / (uint64_t)_resync->chunk);
-        for (size_t c = first; c <= last; ++c) {
-            ++_resync->inflight[c];
-        }
-    }
-
     auto st = std::make_shared<FanOutWriteState>();
     st->has_syncing = syncing >= 0;
 
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(idxs.size() + (syncing >= 0 ? 1 : 0));
-    for (size_t idx : idxs) {
-        tasks.push_back(_fan_out_write_one(idx, issue, st));
-    }
-    if (syncing >= 0) {
-        tasks.push_back(
-            _fan_out_write_syncing_one((size_t)syncing, size, issue, st)
-        );
-    }
-    co_await rawstd::gather(std::move(tasks));
+    {
+        // Settles the write however this block ends, an exception
+        // included; before any degrade below, which a resync draining
+        // writes must not wait for. A duplicate that never reported
+        // success (st->syncing_ok) aborts the resync.
+        struct Settle {
+            Chunk& chunk;
+            uint64_t offset;
+            size_t size;
+            const FanOutWriteState& st;
+            size_t regions = 0;
+            ~Settle() { chunk._write_settle(offset, size, regions, st); }
+        } settle{*this, offset, size, *st};
 
-    --_writes_in_flight;
-
-    if (_resync != nullptr && size > 0) {
-        size_t first = (size_t)(offset / (uint64_t)_resync->chunk);
-        size_t last =
-            (size_t)((offset + (uint64_t)size - 1) / (uint64_t)_resync->chunk);
-        for (size_t c = first; c <= last; ++c) {
-            auto it = _resync->inflight.find(c);
-            if (it != _resync->inflight.end() && --it->second == 0) {
-                _resync->inflight.erase(it);
+        ++_writes_in_flight;
+        if (_resync != nullptr && size > 0) {
+            size_t first = (size_t)(offset / (uint64_t)_resync->chunk);
+            size_t last = (size_t)((offset + (uint64_t)size - 1) /
+                                   (uint64_t)_resync->chunk);
+            for (size_t c = first; c <= last; ++c) {
+                ++_resync->inflight[c];
+                ++settle.regions;
             }
         }
 
-        // A chunk fully covered by a write that reached the SYNCING member
-        // no longer needs to be copied.
-        if (st->syncing_ok) {
-            for (size_t c = first; c <= last && c < _resync->bits.size(); ++c) {
-                uint64_t lo = (uint64_t)c * _resync->chunk;
-                uint64_t hi = std::min<uint64_t>(lo + _resync->chunk, _size);
-                if ((uint64_t)offset <= lo && (uint64_t)offset + size >= hi &&
-                    _resync->bits[c]) {
-                    _resync->bits[c] = false;
-                    --_resync->remaining;
-                }
+        size_t n = idxs.size() + (syncing >= 0 ? 1 : 0);
+        co_await rawstd::gather(n, [&](size_t i) {
+            if (i < idxs.size()) {
+                return _fan_out_write_one(idxs[i], issue, st);
             }
-        }
+            return _fan_out_write_syncing_one((size_t)syncing, size, issue, st);
+        });
     }
-
-    if (_resync != nullptr && st->has_syncing && !st->syncing_ok) {
-        _resync_abort("write to the resync target failed");
-    }
-
-    _write_settled();
 
     if (st->failed.empty()) {
         co_return st->result;
@@ -1269,6 +1247,44 @@ rawstd::Task<size_t> Chunk::_fan_out_write(
 rawstd::Task<size_t> Chunk::_flush_one(Slot& slot) {
     co_await slot.flush();
     co_return 0;
+}
+
+void Chunk::_write_settle(
+    uint64_t offset, size_t size, size_t regions, const FanOutWriteState& st
+) noexcept {
+    --_writes_in_flight;
+
+    if (_resync != nullptr && regions > 0) {
+        size_t first = (size_t)(offset / (uint64_t)_resync->chunk);
+        size_t last =
+            (size_t)((offset + (uint64_t)size - 1) / (uint64_t)_resync->chunk);
+        for (size_t c = first; c < first + regions; ++c) {
+            auto it = _resync->inflight.find(c);
+            if (it != _resync->inflight.end() && --it->second == 0) {
+                _resync->inflight.erase(it);
+            }
+        }
+
+        // A chunk fully covered by a write that reached the SYNCING member
+        // no longer needs to be copied.
+        if (st.syncing_ok) {
+            for (size_t c = first; c <= last && c < _resync->bits.size(); ++c) {
+                uint64_t lo = (uint64_t)c * _resync->chunk;
+                uint64_t hi = std::min<uint64_t>(lo + _resync->chunk, _size);
+                if ((uint64_t)offset <= lo && (uint64_t)offset + size >= hi &&
+                    _resync->bits[c]) {
+                    _resync->bits[c] = false;
+                    --_resync->remaining;
+                }
+            }
+        }
+    }
+
+    if (_resync != nullptr && st.has_syncing && !st.syncing_ok) {
+        _resync_abort("write to the resync target failed");
+    }
+
+    _write_settled();
 }
 
 // Called once a mirrored write's fan-out has fully settled -- advances
