@@ -3,12 +3,14 @@
 
 #include <rawstd/gpp.hpp>
 
+#include <concepts>
 #include <coroutine>
 #include <deque>
 #include <exception>
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -16,6 +18,106 @@
 #include <sys/types.h>
 
 namespace rawstd {
+
+namespace detail {
+
+// An awaitable that can be asked to stop waiting early: `cancel()`
+// requests that whatever it is suspended on be abandoned, so the awaiting
+// coroutine gets resumed sooner -- typically with an error (ECANCELED) out
+// of await_resume(), or with its natural result if the request lost the
+// race. cancel() only *requests*: it must never resume anything inline.
+// It returns false when there was nothing left to cancel (the operation
+// had already finished), true once the request has been passed on.
+template <typename A>
+concept Cancellable = requires(A& a) {
+    { a.cancel() } -> std::convertible_to<bool>;
+};
+
+template <typename A>
+class CancelPoint;
+
+// The cancellation bookkeeping shared by Task<T>'s and Task<void>'s
+// promise types.
+class TaskPromiseBase {
+public:
+    std::coroutine_handle<> _continuation = std::noop_coroutine();
+
+    // The Cancellable awaitable this coroutine is currently suspended on,
+    // if any (see CancelPoint).
+    bool (*_cancel_fn)(void*) = nullptr;
+    void* _cancel_arg = nullptr;
+
+    // A cancel() that found nothing cancellable to deliver to: handed to
+    // the next Cancellable awaitable this coroutine co_awaits instead.
+    bool _cancel_pending = false;
+
+    void cancel() {
+        if (_cancel_fn != nullptr && _cancel_fn(_cancel_arg)) {
+            return;
+        }
+        _cancel_pending = true;
+    }
+
+    // Covers both lvalue awaitables (a named Task<T>, a CallbackAwaitable
+    // local) and prvalue ones (`co_await queue.read(...)`): a temporary in
+    // a co_await expression lives until the end of that full-expression,
+    // i.e. across the suspension, so holding a reference to it is safe.
+    template <typename A>
+    CancelPoint<std::remove_reference_t<A>> await_transform(A&& a) noexcept {
+        return CancelPoint<std::remove_reference_t<A>>(a, *this);
+    }
+};
+
+// What Task<T>::promise_type::await_transform() wraps every co_await-ed
+// awaitable in: forwards the awaitable protocol to it unchanged and, if it
+// is Cancellable, lets Task<T>::cancel() reach it while the coroutine is
+// suspended on it -- or, for a cancel() still pending from an earlier,
+// non-cancellable suspension, hands it over before suspending.
+template <typename A>
+class CancelPoint final {
+private:
+    A& _inner;
+    TaskPromiseBase& _promise;
+
+    static bool _cancel(void* inner) {
+        return static_cast<A*>(inner)->cancel();
+    }
+
+public:
+    CancelPoint(A& inner, TaskPromiseBase& promise) noexcept :
+        _inner(inner),
+        _promise(promise) {}
+
+    bool await_ready() {
+        if constexpr (Cancellable<A>) {
+            if (_promise._cancel_pending && _inner.cancel()) {
+                _promise._cancel_pending = false;
+            }
+        }
+        return _inner.await_ready();
+    }
+
+    template <typename P>
+    decltype(auto) await_suspend(std::coroutine_handle<P> h) {
+        if constexpr (Cancellable<A>) {
+            // Registered before handing `h` over: the inner
+            // await_suspend() may resume it before returning.
+            _promise._cancel_fn = &_cancel;
+            _promise._cancel_arg = &_inner;
+        }
+        return _inner.await_suspend(h);
+    }
+
+    decltype(auto) await_resume() {
+        if constexpr (Cancellable<A>) {
+            _promise._cancel_fn = nullptr;
+            _promise._cancel_arg = nullptr;
+        }
+        return _inner.await_resume();
+    }
+};
+
+} // namespace detail
 
 /**
  * A minimal, single-owner, eagerly-started coroutine return type.
@@ -47,7 +149,7 @@ public:
     // Must stay public: std::coroutine_traits looks this up as
     // Task<T>::promise_type from outside the class, per the language's
     // coroutine protocol -- it can't live in a private/protected section.
-    class promise_type {
+    class promise_type : public detail::TaskPromiseBase {
     public:
         Task get_return_object() noexcept {
             return Task(handle_type::from_promise(*this));
@@ -78,7 +180,6 @@ public:
             );
         }
 
-        std::coroutine_handle<> _continuation = std::noop_coroutine();
         std::variant<std::monostate, T, std::exception_ptr> _result;
     };
 
@@ -125,6 +226,27 @@ public:
     // i.e. is suspended at its final suspension point.
     bool done() const noexcept { return !_h || _h.done(); }
 
+    // Requests cancellation of a still-running task; a no-op returning
+    // false once it is done(). The request reaches whatever the task is
+    // suspended on right now if that is Cancellable (see
+    // detail::Cancellable: a nested Task<U>, a rawio::Awaitable<U>,
+    // gather()/any()), otherwise the next Cancellable awaitable the task
+    // co_awaits -- nothing is ever thrown into the task from outside, so
+    // it is never torn away from an operation still in flight (see the
+    // precondition above). What it observes is whatever that awaitable
+    // reports once it stops waiting: ECANCELED, typically, or a normal
+    // result if the request lost the race. The task is free to handle
+    // that like any other error, so a cancelled task can still finish
+    // successfully; one that never reaches a Cancellable awaitable again
+    // just runs to its natural end.
+    bool cancel() {
+        if (done()) {
+            return false;
+        }
+        _h.promise().cancel();
+        return true;
+    }
+
     // Awaitable interface: lets one Task<T> be `co_await`-ed from inside
     // another coroutine's body.
     bool await_ready() const noexcept { return _h.done(); }
@@ -153,7 +275,7 @@ public:
     // Must stay public: std::coroutine_traits looks this up as
     // Task<void>::promise_type from outside the class, per the language's
     // coroutine protocol -- it can't live in a private/protected section.
-    class promise_type {
+    class promise_type : public detail::TaskPromiseBase {
     public:
         Task get_return_object() noexcept {
             return Task(handle_type::from_promise(*this));
@@ -180,7 +302,6 @@ public:
             _exception = std::current_exception();
         }
 
-        std::coroutine_handle<> _continuation = std::noop_coroutine();
         std::exception_ptr _exception;
     };
 
@@ -223,6 +344,14 @@ public:
 
     bool done() const noexcept { return !_h || _h.done(); }
 
+    bool cancel() {
+        if (done()) {
+            return false;
+        }
+        _h.promise().cancel();
+        return true;
+    }
+
     bool await_ready() const noexcept { return _h.done(); }
 
     void await_suspend(std::coroutine_handle<> awaiting) noexcept {
@@ -234,6 +363,42 @@ public:
     void get() { _rethrow_if_needed(); }
 };
 
+namespace detail {
+
+// gather()'s view of the one task it is awaiting right now: cancelling it
+// cancels every task gather() still holds, not just that one -- the rest
+// are already running too (Task<T> starts eagerly), and gather() will
+// await each of them next anyway.
+template <typename T>
+class GatherPoint final {
+private:
+    Task<T>& _task;
+    std::vector<Task<T>>& _tasks;
+
+public:
+    GatherPoint(Task<T>& task, std::vector<Task<T>>& tasks) noexcept :
+        _task(task),
+        _tasks(tasks) {}
+
+    bool await_ready() const noexcept { return _task.await_ready(); }
+
+    void await_suspend(std::coroutine_handle<> h) noexcept {
+        _task.await_suspend(h);
+    }
+
+    T await_resume() { return _task.await_resume(); }
+
+    bool cancel() {
+        bool cancelled = false;
+        for (Task<T>& t : _tasks) {
+            cancelled |= t.cancel();
+        }
+        return cancelled;
+    }
+};
+
+} // namespace detail
+
 /**
  * Runs every Task<T> in `tasks` to completion, in the order given, without
  * ever destroying one that's still suspended -- Task<T>'s own precondition
@@ -242,6 +407,9 @@ public:
  * in the same order; if any task threw, the first exception seen (in
  * award order) is rethrown once every task has finished, and whatever
  * partial results were collected are discarded.
+ *
+ * Cancelling the returned task cancels every task in `tasks` (see
+ * Task<T>::cancel()); gather() still waits for all of them to finish.
  *
  * This intentionally carries no per-task identity: a caller that needs to
  * know *which* task failed (e.g. to reconnect just that one session)
@@ -261,7 +429,7 @@ Task<std::vector<T>> gather(std::vector<Task<T>> tasks) {
     std::exception_ptr error;
     for (Task<T>& t : tasks) {
         try {
-            results.push_back(co_await t);
+            results.push_back(co_await detail::GatherPoint<T>(t, tasks));
         } catch (...) {
             if (!error) {
                 error = std::current_exception();
@@ -281,7 +449,7 @@ inline Task<void> gather(std::vector<Task<void>> tasks) {
     std::exception_ptr error;
     for (Task<void>& t : tasks) {
         try {
-            co_await t;
+            co_await detail::GatherPoint<void>(t, tasks);
         } catch (...) {
             if (!error) {
                 error = std::current_exception();
@@ -383,95 +551,118 @@ public:
 
 namespace detail {
 
-// Shared race state for any<T>(): outlives any<T>() itself once a winner
-// is found -- see any_watch()'s doc comment for why. Every field is only
-// ever touched from this thread (the whole reactor is single-threaded/
-// pull-based), so plain fields are enough; no atomics.
+template <typename T>
+using AnyResult = std::conditional_t<std::is_void_v<T>, std::monostate, T>;
+
+// Race state for any(): lives in any()'s own frame, which outlives every
+// watcher -- any() only returns once all of them have finished. Every
+// field is only ever touched from this thread (the whole reactor is
+// single-threaded/pull-based), so plain fields are enough; no atomics.
 template <typename T>
 struct AnyState {
     std::vector<Task<T>> tasks;
     size_t pending = 0;
-    std::optional<T> result;
+    std::optional<AnyResult<T>> result;
     std::exception_ptr first_error;
     std::coroutine_handle<> waiter;
+
+    // A cancel request that fails to go out (e.g. no room to submit it)
+    // only leaves that task to run to its natural end, which any() waits
+    // for either way -- not worth failing the whole race over.
+    bool cancel() noexcept {
+        bool cancelled = false;
+        for (Task<T>& t : tasks) {
+            try {
+                cancelled |= t.cancel();
+            } catch (...) {
+            }
+        }
+        return cancelled;
+    }
 };
 
-// Drives tasks[i] to completion on any<T>()'s behalf, detached from it:
-// the first watcher to see its task succeed wins the race and (if
-// any<T>() is still suspended waiting for one) resumes it; a
-// losing/failing task is never abandoned mid-flight -- Task<T>'s own
-// precondition forbids destroying one still suspended on something that
-// will resume it later -- so every watcher keeps running, in the
-// background if need be, until its task reaches done(). Once every
-// watcher has finished, the last one's `state` copy drops the final
-// reference and `state->tasks` (by then all done()) is destroyed safely.
-//
-// A losing task's *result* (or exception) is simply discarded here: this
-// is best-effort cancellation only, in the sense of "any<T>() stops
-// waiting on it," not a request to unwind whatever the task is internally
-// doing. A task that wraps I/O and wants to actually stop early has to
-// arrange that itself (e.g. reacting to its own cancellation token, or
-// calling rawio::Queue::cancel() on its own in-flight operation) --
-// any<T>() has no visibility into what a Task<T> is suspended on.
+// Drives one of any()'s tasks to completion on its behalf: a task has a
+// single continuation, so waiting on all of them at once takes one
+// detached watcher per task. The first watcher to see its task succeed
+// keeps the result and cancels every other task; the last one to finish
+// resumes any(). Nothing escapes a watcher (see DetachedTask's own doc
+// comment on why that would need rethrow_if_pending()), and it touches
+// `state` only before that final resume(), after which any() may already
+// be gone.
 template <typename T>
-DetachedTask any_watch(std::shared_ptr<AnyState<T>> state, size_t i) {
-    bool ok = false;
-    std::optional<T> value;
-    std::exception_ptr error;
+DetachedTask any_watch(AnyState<T>& state, Task<T>& task) {
+    bool won = false;
     try {
-        value.emplace(co_await state->tasks[i]);
-        ok = true;
-    } catch (...) {
-        error = std::current_exception();
-    }
-
-    if (ok) {
-        if (!state->result) {
-            state->result.emplace(std::move(*value));
+        if constexpr (std::is_void_v<T>) {
+            co_await task;
+            if (!state.result) {
+                state.result.emplace();
+                won = true;
+            }
+        } else {
+            T value = co_await task;
+            if (!state.result) {
+                state.result.emplace(std::move(value));
+                won = true;
+            }
         }
-    } else if (!state->first_error) {
-        state->first_error = error;
+    } catch (...) {
+        if (!state.first_error) {
+            state.first_error = std::current_exception();
+        }
     }
 
-    bool last = --state->pending == 0;
-    if (state->waiter && (ok || last)) {
-        std::exchange(state->waiter, {}).resume();
+    // Cancelled before this watcher counts itself out, so `pending` can't
+    // reach zero (and free `state`) while the loop is still running.
+    if (won) {
+        state.cancel();
+    }
+    if (--state.pending == 0 && state.waiter) {
+        std::exchange(state.waiter, {}).resume();
     }
 }
 
 template <typename T>
-struct AnyAwaiter {
-    std::shared_ptr<AnyState<T>> state;
+class AnyPoint final {
+private:
+    AnyState<T>& _state;
 
-    bool await_ready() const noexcept {
-        return state->result.has_value() || state->pending == 0;
-    }
+public:
+    explicit AnyPoint(AnyState<T>& state) noexcept : _state(state) {}
+
+    bool await_ready() const noexcept { return _state.pending == 0; }
 
     void await_suspend(std::coroutine_handle<> h) noexcept {
-        state->waiter = h;
+        _state.waiter = h;
     }
 
     void await_resume() const noexcept {}
+
+    bool cancel() noexcept { return _state.cancel(); }
 };
 
 } // namespace detail
 
 /**
  * Runs every Task<T> in `tasks` concurrently and returns the result of
- * whichever one succeeds first; every other task is treated as cancelled,
- * in the best-effort sense described on any_watch() above (this function
- * stops waiting on it, but -- per Task<T>'s own precondition -- still
- * drives it to completion in the background instead of destroying it
- * mid-flight, and simply discards whatever it eventually resolves with).
- * This is `gather()`'s opposite: `gather()` needs every task to succeed
- * and reports one combined failure; `any()` needs only one to succeed and
- * only fails if every task does -- the same relationship as JS's
- * `Promise.any()` to `Promise.all()`.
+ * whichever one succeeds first, cancelling every other task (see
+ * Task<T>::cancel()) as soon as it does. This is `gather()`'s opposite:
+ * `gather()` needs every task to succeed and reports one combined
+ * failure; `any()` needs only one to succeed and only fails if every task
+ * does -- the same relationship as JS's `Promise.any()` to
+ * `Promise.all()`.
+ *
+ * Like gather(), any() returns only once every task has finished: a
+ * cancelled loser still has to unwind whatever it was waiting on first,
+ * and Task<T>'s own precondition forbids destroying it before then. A
+ * loser that never reaches a Cancellable awaitable is waited for until
+ * its natural end. Whatever the losers resolve with -- ECANCELED, a late
+ * success that beat its own cancellation, a genuine failure -- is
+ * discarded. Cancelling the returned task cancels every task in `tasks`.
  *
  * If every task fails, the exception belonging to whichever one finished
  * failing *first* (in completion order -- this is a genuine race, unlike
- * gather()'s strictly award-order iteration) is rethrown once the last
- * task has finished.
+ * gather()'s strictly award-order iteration) is rethrown.
  *
  * `tasks` must not be empty -- there is no "first successful" result to
  * return otherwise -- and throws std::invalid_argument if it is.
@@ -482,99 +673,21 @@ Task<T> any(std::vector<Task<T>> tasks) {
         throw std::invalid_argument("any(): tasks must not be empty");
     }
 
-    auto state = std::make_shared<detail::AnyState<T>>();
-    state->tasks = std::move(tasks);
-    state->pending = state->tasks.size();
+    detail::AnyState<T> state;
+    state.tasks = std::move(tasks);
+    state.pending = state.tasks.size();
 
-    for (size_t i = 0; i < state->tasks.size(); ++i) {
-        detail::any_watch<T>(state, i);
-    }
-    // Checked once, after every watcher above has been launched (rather
-    // than after each one individually, as DetachedTask's own discipline
-    // would otherwise call for): the loop must finish spawning a watcher
-    // for every task before this function is allowed to fail and unwind,
-    // or a not-yet-watched task would be left with nothing to ever drive
-    // it to done() -- see AnyState's own comment on why that matters.
-    DetachedTask::rethrow_if_pending();
-
-    co_await detail::AnyAwaiter<T>{state};
-
-    if (state->result.has_value()) {
-        co_return std::move(*state->result);
-    }
-    std::rethrow_exception(state->first_error);
-}
-
-namespace detail {
-
-// void can't live in std::optional<T>/be co_await-ed into a value the way
-// AnyState<T>::result holds one -- same split as Task<T>/Task<void> and
-// gather()'s own two overloads above.
-struct AnyStateVoid {
-    std::vector<Task<void>> tasks;
-    size_t pending = 0;
-    bool succeeded = false;
-    std::exception_ptr first_error;
-    std::coroutine_handle<> waiter;
-};
-
-inline DetachedTask
-any_watch_void(std::shared_ptr<AnyStateVoid> state, size_t i) {
-    bool ok = false;
-    std::exception_ptr error;
-    try {
-        co_await state->tasks[i];
-        ok = true;
-    } catch (...) {
-        error = std::current_exception();
+    for (Task<T>& t : state.tasks) {
+        detail::any_watch<T>(state, t);
     }
 
-    if (ok) {
-        state->succeeded = true;
-    } else if (!state->first_error) {
-        state->first_error = error;
+    co_await detail::AnyPoint<T>(state);
+
+    if (!state.result) {
+        std::rethrow_exception(state.first_error);
     }
-
-    bool last = --state->pending == 0;
-    if (state->waiter && (ok || last)) {
-        std::exchange(state->waiter, {}).resume();
-    }
-}
-
-struct AnyAwaiterVoid {
-    std::shared_ptr<AnyStateVoid> state;
-
-    bool await_ready() const noexcept {
-        return state->succeeded || state->pending == 0;
-    }
-
-    void await_suspend(std::coroutine_handle<> h) noexcept {
-        state->waiter = h;
-    }
-
-    void await_resume() const noexcept {}
-};
-
-} // namespace detail
-
-inline Task<void> any(std::vector<Task<void>> tasks) {
-    if (tasks.empty()) {
-        throw std::invalid_argument("any(): tasks must not be empty");
-    }
-
-    auto state = std::make_shared<detail::AnyStateVoid>();
-    state->tasks = std::move(tasks);
-    state->pending = state->tasks.size();
-
-    for (size_t i = 0; i < state->tasks.size(); ++i) {
-        detail::any_watch_void(state, i);
-    }
-    DetachedTask::rethrow_if_pending();
-
-    co_await detail::AnyAwaiterVoid{state};
-
-    if (!state->succeeded) {
-        std::rethrow_exception(state->first_error);
+    if constexpr (!std::is_void_v<T>) {
+        co_return std::move(*state.result);
     }
 }
 
