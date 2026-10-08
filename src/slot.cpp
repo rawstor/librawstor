@@ -167,17 +167,13 @@ rawstd::Task<std::unique_ptr<Slot>> Slot::create(
     // Chunk's constructor) is each caller's own job, not this one's.
     //
     // Task<T> starts eagerly, right up to its first real suspension
-    // point -- building the whole vector before handing it to gather()
-    // submits every backend's connect up front, so they run concurrently
-    // instead of one full round-trip at a time.
-    std::vector<rawstd::Task<std::shared_ptr<Backend>>> creates;
-    creates.reserve(nbackends);
-    for (size_t i = 0; i < nbackends; ++i) {
-        creates.push_back(Backend::create(queue, location));
-    }
-
+    // point -- gather() starts every backend's connect before awaiting
+    // any, so they run concurrently instead of one full round-trip at a
+    // time.
     std::vector<std::shared_ptr<Backend>> backends =
-        co_await rawstd::gather(std::move(creates));
+        co_await rawstd::gather(nbackends, [&](size_t) {
+            return Backend::create(queue, location);
+        });
 
     std::unique_ptr<Slot> slot = std::make_unique<Slot>(Private(), queue);
     slot->_backends = std::move(backends);
@@ -625,18 +621,14 @@ rawstd::Task<void> Slot::open(Chunk* chunk) {
 
     // Every backend's SET_OBJECT goes out up front, so they run
     // concurrently.
-    std::vector<rawstd::Task<void>> set_objects;
-    set_objects.reserve(_backends.size());
-    for (std::shared_ptr<Backend>& be : _backends) {
-        set_objects.push_back(be->set_object(chunk));
-    }
-
     // co_await isn't allowed inside a catch block, so the failure is only
     // recorded here; acting on it happens just below, outside the
     // handler.
     bool failed = false;
     try {
-        co_await rawstd::gather(std::move(set_objects));
+        co_await rawstd::gather(_backends.size(), [&](size_t i) {
+            return _backends[i]->set_object(chunk);
+        });
     } catch (const std::system_error& e) {
         failed = true;
         rawstd_warning(
@@ -650,26 +642,19 @@ rawstd::Task<void> Slot::open(Chunk* chunk) {
         // just the failed one(s). invalidate_backend() has its own retry
         // (rawstor_opts_io_attempts() attempts each); if any of those
         // still fails, that exception propagates straight out.
-        std::vector<rawstd::Task<void>> invalidates;
-        invalidates.reserve(_backends.size());
-        for (std::shared_ptr<Backend>& be : _backends) {
-            invalidates.push_back(invalidate_backend(be));
-        }
-        co_await rawstd::gather(std::move(invalidates));
+        co_await rawstd::gather(_backends.size(), [&](size_t i) {
+            return invalidate_backend(_backends[i]);
+        });
     }
 }
 
 rawstd::Task<void> Slot::close() {
     // Every backend's close goes out up front, so they run concurrently
     // instead of one at a time.
-    std::vector<rawstd::Task<void>> closes;
-    closes.reserve(_backends.size());
-    for (std::shared_ptr<Backend>& be : _backends) {
-        closes.push_back(be->close());
-    }
-
     try {
-        co_await rawstd::gather(std::move(closes));
+        co_await rawstd::gather(_backends.size(), [&](size_t i) {
+            return _backends[i]->close();
+        });
     } catch (const std::exception& e) {
         // Best-effort teardown -- gather() only surfaces the first
         // backend's failure, not which one, but that's fine here: this
