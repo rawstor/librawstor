@@ -23,6 +23,14 @@ namespace rawstor {
 
 class Slot;
 
+// Process-wide control state of one mirrored chunk, shared by every
+// writable Chunk this process opened on the same members (one per
+// virtqueue of a multiqueue device): the process is one writer of the
+// chunk (docs/multiattach.md), so membership, DIRTY and the sync set are
+// decided once for all of its queues.
+struct SharedControl;
+struct SharedResync;
+
 // Chunk mirrors a single logical chunk (1..N slots, one per replica) over
 // its own Slot pool -- the sole building block Object routes I/O to. Not a
 // RawstorObject itself: only Object is ever handed out as a top-level
@@ -30,7 +38,7 @@ class Slot;
 // Target::open()/Object, via the create() factory below.
 class Chunk final {
 private:
-    struct ResyncState;
+    struct ResyncTicket;
 
     // IN_SYNC - the member carries every acknowledged write; serves I/O.
     // STALE   - the member is excluded (unreachable, degraded or behind).
@@ -131,26 +139,29 @@ private:
     // _abort_background(), then waits for _background to reach zero.
     rawstd::Task<void> _stop_background();
 
-    // Mirrored writes currently in flight -- resync drain bookkeeping
-    // (_write_settled() below), separate from _writes_issued/
-    // _flush_barrier's own flush-barrier accounting.
+    // nullptr for a single-member, READONLY or bound-version chunk.
+    std::shared_ptr<SharedControl> _shared;
+    // SharedControl::gen this Chunk last adopted.
+    uint64_t _shared_gen;
+
+    // Mirrored writes of this Chunk currently in flight -- resync attach
+    // bookkeeping (_resync_untracked below), separate from
+    // _writes_issued/_flush_barrier's own flush-barrier accounting.
     size_t _writes_in_flight;
-    // Bumped every time a mirrored write settles (_write_settled()): the
-    // resync finisher waits on it for the writes started meanwhile. Kept
-    // here rather than in ResyncState, which a resumed finisher may reset.
-    rawstd::Barrier _write_settle_barrier;
 
-    // Active online resync, one member at a time (nullptr when none is in
-    // progress).
-    std::unique_ptr<ResyncState> _resync;
-
-    // Bumped every time a new ResyncState is created. Chunk-copy
-    // completions capture the generation they were issued under: a
-    // completion whose generation no longer matches _resync's (the resync
-    // it belonged to was aborted and possibly replaced by a new one) must
-    // not touch the current _resync, even though _resync itself is
-    // non-null again.
-    size_t _resync_generation;
+    // The process's resync (SharedResync) this Chunk duplicates its writes
+    // for, by generation; 0 when none. _resync_attach_epoch is bumped on
+    // every attach and each write remembers the epoch it started under:
+    // _resync_untracked counts the writes still in flight that started
+    // before the latest attach (not duplicated onto the member, so the
+    // sweep waits for them).
+    uint64_t _resync_attached;
+    uint64_t _resync_attach_epoch;
+    size_t _resync_untracked;
+    // SharedControl::resync_seq as the write path and the watcher last
+    // saw it.
+    uint64_t _resync_seen;
+    uint64_t _watch_seen;
 
     // Periodic reconnect probe for unreachable members
     // (mirror_probe_interval), driven by _queue.timeout_multishot() in
@@ -215,6 +226,24 @@ private:
 
     size_t _in_sync_count() const noexcept;
 
+    // Serializes control transitions (open, dirty/degrade barriers, resync
+    // completion, close) across every Chunk sharing _shared, whichever
+    // thread or queue each runs on. Never blocks the queue.
+    rawstd::Task<void> _shared_lock();
+    void _shared_unlock() noexcept;
+    // Both called with _shared_lock() held: _shared_adopt() takes over
+    // what another Chunk of this process already decided (sync set,
+    // DIRTY, members it excluded); _shared_publish() records this Chunk's
+    // own decision for the others.
+    void _shared_adopt();
+    void _shared_publish();
+    // The same, with SharedControl::mu already held.
+    void _shared_adopt_locked();
+    void _shared_publish_locked();
+    // Adopts a newer SharedControl::gen, if any, outside a barrier.
+    rawstd::Task<void> _shared_refresh();
+    void _mark_dirty_local() noexcept;
+
     // `m`'s own chunk, as a target URI (location/id/offset), for logs.
     std::string _member_str(const Member& m) const;
 
@@ -257,6 +286,7 @@ private:
     // Excludes members from the mirror set (docs/mirroring.md, case F1/F6).
     rawstd::Task<void> _degrade(std::vector<size_t> idxs);
     rawstd::Task<void> _run_degrade_barrier();
+    rawstd::Task<void> _run_shared_degrade_barrier();
 
     // Persists `sync_state` on every in-sync member; members that fail the
     // update are marked STALE. Never throws -- the caller re-checks
@@ -291,41 +321,52 @@ private:
         std::shared_ptr<FanOutWriteState> st
     );
 
-    // Called once a mirrored write's fan-out (_fan_out_write() above) has
-    // fully settled (every member's own completion, including the SYNCING
-    // one if any, has been accounted for) -- advances whichever resync
-    // phase is waiting on the in-flight count reaching zero, or the
-    // sweeper's own per-chunk block.
-    void _write_settled() noexcept;
-    void _resync_advance_on_settle() noexcept;
-
-    // Online resync of one member (docs/mirroring.md, resync algorithm): a
-    // needs-copy bitmap over RESYNC_CHUNK-sized chunks, client writes
-    // duplicated onto the SYNCING member (_fan_out_write() above), and a
-    // sweeper copying one chunk at a time from an in-sync source, mutually
-    // exclusive with client writes to that chunk. Picks the first STALE,
-    // reachable member with no resync already running; a no-op otherwise
-    // (single target, no stale-but-reachable member, or already resyncing).
-    // Detached: driven entirely by its own continuations (the SYNCING
-    // mark's completion, _write_settled() above, each sweep step), not by
-    // a caller awaiting it.
+    // Online resync of one member (docs/mirroring.md, online resync), run
+    // by the process as a whole (SharedResync): one Chunk owns it, every
+    // writable Chunk of the process duplicates its writes onto the SYNCING
+    // member.
+    //
+    // _resync_enter()/_resync_leave() bracket every mirrored write while a
+    // resync runs: enter parks while the write overlaps the region being
+    // copied, then tracks it and picks the member to duplicate onto;
+    // leave untracks it, clears fully rewritten regions and aborts the
+    // resync if the duplicate failed.
+    rawstd::Task<void>
+    _resync_enter(uint64_t offset, size_t size, ResyncTicket& ticket);
+    void _resync_leave(
+        const ResyncTicket& ticket, uint64_t offset, size_t size, bool written,
+        bool written_ok
+    ) noexcept;
+    // With SharedControl::mu held: this Chunk's SYNCING members follow the
+    // process (in-sync once the resync committed, STALE once it ended
+    // otherwise).
+    void _resync_fixup_locked() noexcept;
+    // Starts a resync of the first STALE, reachable member, owned by this
+    // Chunk, unless one is running in the process already; a no-op
+    // otherwise (single target, no such member, empty object).
     rawstd::DetachedTask _resync_maybe_start();
-    // One sweep step: copies the next needs-copy chunk with no client
-    // write in flight on it (parking as _resync->sweep_blocked if every
-    // dirty chunk currently has one; _write_settled() resumes it), or
-    // moves on to FINISH_DRAIN once every chunk is copied.
-    rawstd::DetachedTask _resync_sweep();
-    // Every chunk copied and no client write in flight: durably adopts
-    // the current sync-set identity on the member, then lets it serve reads.
-    rawstd::DetachedTask _resync_finish();
+    // Attaches this Chunk to the running resync `generation`: the first
+    // with SharedControl::mu held and a session to the member already
+    // there, the second connecting to it first.
+    void _resync_attach_locked(uint64_t generation);
+    rawstd::Task<void> _resync_attach(uint64_t generation, size_t idx);
+    // Every writable mirrored Chunk's watcher: attaches it to a resync
+    // another Chunk starts, and follows one that ends.
+    rawstd::DetachedTask _resync_watch();
+    // The owner: waits for every writer to attach, sweeps, then finishes
+    // (_resync_finish(): the rejoin barrier, the member's record, and the
+    // commit that lets it serve reads).
+    rawstd::DetachedTask _resync_run(uint64_t generation);
+    rawstd::Task<void> _resync_finish(uint64_t generation);
     // Moves the in-sync members to a new sync_id before a rejoining member
-    // adopts it (docs/mirroring.md, When sync_id changes).
-    rawstd::Task<void> _run_rejoin_barrier();
-    // Marks the resync's member STALE (unreachable, so the probe retries
-    // later) and wakes every writer parked on a chunk overlap. Synchronous
-    // -- safe to call from anywhere already holding _resync, including
-    // mid-fan-out bookkeeping.
-    void _resync_abort(const char* reason) noexcept;
+    // adopts it (docs/mirroring.md, When sync_id changes); throws
+    // ECANCELED once `generation` is no longer the running resync.
+    rawstd::Task<void> _run_rejoin_barrier(uint64_t generation);
+    // Ends the resync `generation` if it is still running: every writer
+    // of the process marks the member STALE and unreachable (the probe
+    // retries later), and every waiter on it wakes up.
+    void _resync_abort(uint64_t generation, const char* reason) noexcept;
+    void _resync_abort_locked(uint64_t generation, const char* reason) noexcept;
 
     // Launches _probe_watch() as a detached loop, for as long as the
     // object is alive (a no-op for a single-target object). _probe_watch()
@@ -401,7 +442,8 @@ public:
 
     Chunk(
         Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
-        bool readonly, RawstorObjectSpec spec, std::vector<Member> members
+        bool readonly, RawstorObjectSpec spec, std::vector<Member> members,
+        std::shared_ptr<SharedControl> shared
     );
     Chunk(const Chunk&) = delete;
     Chunk(Chunk&&) = delete;
