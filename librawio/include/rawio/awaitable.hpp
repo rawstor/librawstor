@@ -63,6 +63,17 @@ public:
     // (or instead of) awaiting this object -- exactly like today's
     // `rawio::Event* event = queue->read(...)` pattern.
     Event* event() const noexcept { return _event; }
+
+    // Makes this awaitable rawstd::detail::Cancellable, so
+    // rawstd::Task<T>::cancel() reaches the operation a task is suspended
+    // on: a fire-and-forget Queue::cancel(), whose outcome (ECANCELED, or
+    // the natural result if it lost the race) arrives through
+    // await_resume() as usual. Only valid while the operation is still
+    // in flight, like event() itself.
+    bool cancel() {
+        _queue->cancel(_event);
+        return true;
+    }
 };
 
 } // namespace rawio
