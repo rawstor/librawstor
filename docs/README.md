@@ -5,3 +5,4 @@
 - [Protocol](protocol.md) -- the wire protocol `rawstor-ost` and `rawstor-mds` speak: commands and frame layouts.
 - [MDS design](mds.md) -- the metadata storage target: placement, chunk allocation, versions.
 - [Mirroring](mirroring.md) -- N-way mirror failure model and recovery.
+- [CASPaxos](caspaxos.md) -- the leaderless replicated register multi-attach agrees through.
