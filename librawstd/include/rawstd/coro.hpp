@@ -481,6 +481,84 @@ inline Task<void> gather(std::vector<Task<void>> tasks) {
 
 namespace detail {
 
+template <typename>
+struct task_value;
+
+template <typename T>
+struct task_value<Task<T>> {
+    using type = T;
+};
+
+template <typename T>
+struct gather_result {
+    using type = std::vector<T>;
+};
+
+template <>
+struct gather_result<void> {
+    using type = void;
+};
+
+} // namespace detail
+
+/**
+ * gather() over `n` tasks it starts itself: `start(0)` .. `start(n - 1)`,
+ * in order, each returning a Task<T>. Starting a task may throw (an
+ * allocation failure, typically) once earlier ones are already running --
+ * a batch the caller could not unwind, since destroying a running Task<T>
+ * is not allowed. Started here instead, from inside gather()'s own frame:
+ * the tasks already running are then cancelled (see Task<T>::cancel()) and
+ * awaited, and the exception that stopped the start is rethrown.
+ * Everything gather() allocates itself is allocated before the first task
+ * starts.
+ *
+ * Otherwise the same as gather() over the started tasks: every one is
+ * awaited, the results come back in order (void for Task<void>), and the
+ * first exception is rethrown once all have finished.
+ */
+template <
+    typename F, typename T = typename detail::task_value<
+                    std::invoke_result_t<F&, size_t>>::type>
+Task<typename detail::gather_result<T>::type> gather(size_t n, F start) {
+    std::vector<Task<T>> tasks;
+    std::conditional_t<std::is_void_v<T>, std::monostate, std::vector<T>>
+        results;
+    std::exception_ptr error;
+    try {
+        tasks.reserve(n);
+        if constexpr (!std::is_void_v<T>) {
+            results.reserve(n);
+        }
+        for (size_t i = 0; i < n; ++i) {
+            tasks.push_back(start(i));
+        }
+    } catch (...) {
+        error = std::current_exception();
+        detail::cancel_all(tasks);
+    }
+    for (Task<T>& t : tasks) {
+        try {
+            if constexpr (std::is_void_v<T>) {
+                co_await detail::GatherPoint<void>(t, tasks);
+            } else {
+                results.push_back(co_await detail::GatherPoint<T>(t, tasks));
+            }
+        } catch (...) {
+            if (!error) {
+                error = std::current_exception();
+            }
+        }
+    }
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    if constexpr (!std::is_void_v<T>) {
+        co_return results;
+    }
+}
+
+namespace detail {
+
 // DetachedTask::promise_type::unhandled_exception() stashes here instead
 // of rethrowing directly -- see DetachedTask's own doc comment for why a
 // direct rethrow isn't safe. Consumed (and cleared) by
