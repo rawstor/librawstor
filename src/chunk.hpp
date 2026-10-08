@@ -297,6 +297,12 @@ private:
     // phase is waiting on the in-flight count reaching zero, or the
     // sweeper's own per-chunk block.
     void _write_settled() noexcept;
+    // Undoes what _fan_out_write() counted for one write in flight --
+    // _writes_in_flight and the first `regions` resync regions it
+    // touches -- and settles it with the resync, then _write_settled().
+    void _write_settle(
+        uint64_t offset, size_t size, size_t regions, const FanOutWriteState& st
+    ) noexcept;
     void _resync_advance_on_settle() noexcept;
 
     // Online resync of one member (docs/mirroring.md, resync algorithm): a

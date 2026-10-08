@@ -593,12 +593,9 @@ rawstd::Task<std::vector<rawstd::URI>> resolve_member_locations(
 // REMOVE every URI in `targets` concurrently.
 rawstd::Task<void>
 remove_many(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(targets.size());
-    for (const auto& target : targets) {
-        tasks.push_back(remove_one(queue, target));
-    }
-    co_await rawstd::gather(std::move(tasks));
+    co_await rawstd::gather(targets.size(), [&](size_t i) {
+        return remove_one(queue, targets[i]);
+    });
 }
 
 // C ABI adapter for rawstor_target_open(): mirrors the rest of the
@@ -1566,12 +1563,9 @@ Target::resize(rawio::Queue& queue, uint64_t new_size) const {
     // implements resize() at all (Backend::resize()'s own ENOTSUP
     // default), so this simply reports that instead of guessing which
     // mirror alone should have grown.
-    std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(uris.size());
-    for (const auto& uri : uris) {
-        tasks.push_back(resize_one(queue, uri, new_size));
-    }
-    co_await rawstd::gather(std::move(tasks));
+    co_await rawstd::gather(uris.size(), [&](size_t i) {
+        return resize_one(queue, uris[i], new_size);
+    });
 }
 
 // Opens the object this target addresses. Only the last chunk is opened

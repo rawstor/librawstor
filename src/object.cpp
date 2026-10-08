@@ -94,6 +94,16 @@ MultiChunkObject::MultiChunkObject(
 
 MultiChunkObject::~MultiChunkObject() = default;
 
+std::vector<Chunk*> MultiChunkObject::_open_chunks() const {
+    std::vector<Chunk*> ret;
+    for (const ChunkEntry& entry : _chunks) {
+        if (entry.chunk != nullptr) {
+            ret.push_back(entry.chunk.get());
+        }
+    }
+    return ret;
+}
+
 rawstd::Task<Chunk*> MultiChunkObject::_chunk(uint32_t index) {
     ChunkEntry& entry = _chunks.at(index);
 
@@ -204,12 +214,10 @@ rawstd::Task<size_t> MultiChunkObject::_rw_segments(
         co_return co_await chunk->pread(at, segment.size, segment.chunk_offset);
     };
 
-    std::vector<rawstd::Task<size_t>> tasks;
-    tasks.reserve(segments.size());
-    for (const ObjectSegment& segment : segments) {
-        tasks.push_back(rw_one(segment));
-    }
-    std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
+    std::vector<size_t> results =
+        co_await rawstd::gather(segments.size(), [&](size_t i) {
+            return rw_one(segments[i]);
+        });
     size_t total = 0;
     for (size_t r : results) {
         total += r;
@@ -249,12 +257,10 @@ rawstd::Task<size_t> MultiChunkObject::_rwv_segments(
         );
     };
 
-    std::vector<rawstd::Task<size_t>> tasks;
-    tasks.reserve(segments.size());
-    for (const ObjectSegment& segment : segments) {
-        tasks.push_back(rwv_one(segment));
-    }
-    std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
+    std::vector<size_t> results =
+        co_await rawstd::gather(segments.size(), [&](size_t i) {
+            return rwv_one(segments[i]);
+        });
     size_t total = 0;
     for (size_t r : results) {
         total += r;
@@ -344,12 +350,10 @@ rawstd::Task<size_t> MultiChunkObject::discard(size_t size, uint64_t offset) {
         co_return co_await chunk->discard(s.size, s.chunk_offset);
     };
 
-    std::vector<rawstd::Task<size_t>> tasks;
-    tasks.reserve(segments.size());
-    for (const ObjectSegment& segment : segments) {
-        tasks.push_back(discard_one(segment));
-    }
-    std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
+    std::vector<size_t> results =
+        co_await rawstd::gather(segments.size(), [&](size_t i) {
+            return discard_one(segments[i]);
+        });
     size_t total = 0;
     for (size_t r : results) {
         total += r;
@@ -379,12 +383,10 @@ rawstd::Task<size_t> MultiChunkObject::write_zeroes(
         );
     };
 
-    std::vector<rawstd::Task<size_t>> tasks;
-    tasks.reserve(segments.size());
-    for (const ObjectSegment& segment : segments) {
-        tasks.push_back(write_zeroes_one(segment));
-    }
-    std::vector<size_t> results = co_await rawstd::gather(std::move(tasks));
+    std::vector<size_t> results =
+        co_await rawstd::gather(segments.size(), [&](size_t i) {
+            return write_zeroes_one(segments[i]);
+        });
     size_t total = 0;
     for (size_t r : results) {
         total += r;
@@ -393,23 +395,17 @@ rawstd::Task<size_t> MultiChunkObject::write_zeroes(
 }
 
 rawstd::Task<void> MultiChunkObject::flush() {
-    std::vector<rawstd::Task<void>> tasks;
-    for (ChunkEntry& entry : _chunks) {
-        if (entry.chunk != nullptr) {
-            tasks.push_back(entry.chunk->flush());
-        }
-    }
-    co_await rawstd::gather(std::move(tasks));
+    std::vector<Chunk*> chunks = _open_chunks();
+    co_await rawstd::gather(chunks.size(), [&](size_t i) {
+        return chunks[i]->flush();
+    });
 }
 
 rawstd::Task<void> MultiChunkObject::close() {
-    std::vector<rawstd::Task<void>> tasks;
-    for (ChunkEntry& entry : _chunks) {
-        if (entry.chunk != nullptr) {
-            tasks.push_back(entry.chunk->close());
-        }
-    }
-    co_await rawstd::gather(std::move(tasks));
+    std::vector<Chunk*> chunks = _open_chunks();
+    co_await rawstd::gather(chunks.size(), [&](size_t i) {
+        return chunks[i]->close();
+    });
     for (ChunkEntry& entry : _chunks) {
         entry.chunk.reset();
     }
