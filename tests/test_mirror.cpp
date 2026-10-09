@@ -777,7 +777,17 @@ TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
     ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
 
     /* The short member is excluded at open (not silently adopted as a
-     * smaller logical size) and resynced online. */
+     * smaller logical size) and resynced online. Excluded by size alone,
+     * it still carries the set's sync_id: the resync is done once its
+     * rejoin has moved the set to a new one. */
+    bool rejoined = false;
+    for (int i = 0; i < 3000 && !rejoined; ++i) {
+        rawio_wait_timeout(queue, 10);
+        RawstorObjectMeta a{};
+        rejoined = target_meta(queue, members.target(0), &a) == 0 &&
+                   a.config.sync_id != established.sync_id;
+    }
+    EXPECT_TRUE(rejoined);
     EXPECT_TRUE(
         wait_member_synced(queue, members.target(0), members.target(1))
     );
