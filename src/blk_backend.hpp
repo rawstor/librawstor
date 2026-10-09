@@ -251,7 +251,7 @@ public:
     // apply one at a time.
     rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags
+        const RawstorObjectConfig& config, unsigned int flags, uint8_t position
     ) override final;
 
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(
@@ -267,7 +267,8 @@ public:
     rawstd::Task<SyncReply> sync_accept(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config, unsigned int flags, uint32_t sessions
+        const RawstorObjectConfig& config, unsigned int flags,
+        uint32_t sessions, uint8_t position
     ) override final;
 
     // No universal answer for a raw block device -- left pure virtual

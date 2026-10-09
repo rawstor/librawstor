@@ -15,6 +15,9 @@
 #include <vector>
 
 namespace rawstor {
+
+struct LocalMember;
+
 namespace ostserver {
 
 class Server;
@@ -30,6 +33,12 @@ private:
     int _fd;
     RawIOEvent* _recv_event;
     RawstorObject* _object;
+    // The copy _object is set to, when this server is one copy of its own
+    // (one file://, lvm:// or zfs:// location; docs/mirroring.md, "One
+    // copy per server"): every write is admitted on it by its epoch
+    // (docs/multiattach.md, "Epoch on writes") and RESYNC writes consult
+    // it. Null otherwise, and for a bound version.
+    std::shared_ptr<rawstor::LocalMember> _member;
 
     // Drives this Client's whole request-dispatch lifetime: registers the
     // multishot recv, then loops co_awaiting one length-prefixed frame at
@@ -124,7 +133,8 @@ private:
     // blk_backend.hpp's _throttle_acquire()), so this just dispatches.
     static rawstd::DetachedTask _dispatch_write(
         std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t offset,
-        bool sync, std::shared_ptr<std::vector<unsigned char>> data
+        uint8_t flags, uint64_t epoch,
+        std::shared_ptr<std::vector<unsigned char>> data
     );
     static rawstd::DetachedTask _discard(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
@@ -135,7 +145,7 @@ private:
         RawstorFrameIOPayload payload
     );
     static rawstd::DetachedTask
-    _flush(std::weak_ptr<Client> weak, RawstorFrameHead head);
+    _flush(std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t epoch);
     static rawstd::DetachedTask _set_config(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameSetConfigPayload payload

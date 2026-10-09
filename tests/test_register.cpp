@@ -1,3 +1,4 @@
+#include "local_member.hpp"
 #include "opts.h"
 #include "server.hpp"
 #include "session.hpp"
@@ -19,6 +20,8 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 /*
  * The requests of a chunk's configuration register (docs/multiattach.md,
@@ -96,7 +99,7 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
     config.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
     reply =
         run(*queue,
-            target.sync_accept(*queue, 0, 0, {4, 1}, {5, 1}, config, 0, 0));
+            target.sync_accept(*queue, 0, 0, {4, 1}, {5, 1}, config, 0, 0, 0));
     EXPECT_TRUE(reply.ok);
 
     // What the member persisted, read back the ordinary way.
@@ -113,7 +116,7 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
     // A configuration set outside the register keeps the ballots: an old
     // ballot is still refused afterwards.
     config.epoch = 10;
-    run(*queue, target.set_member_config(*queue, 0, 0, config, 0));
+    run(*queue, target.set_member_config(*queue, 0, 0, config, 0, 0));
     meta = run(*queue, target.meta(*queue, 0)).front();
     EXPECT_EQ(meta.config.epoch, 10u);
     EXPECT_EQ(meta.promised.counter, 5u);
@@ -154,7 +157,7 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     config.nroles = 3;
     config.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     rawstd::Task<rawstor::Backend::SyncReply> task = target.sync_accept(
-        *queue, 0, 0, {5, 0x77}, {6, 0x77}, config, RAWSTOR_SYNC_ALONE, 2
+        *queue, 0, 0, {5, 0x77}, {6, 0x77}, config, RAWSTOR_SYNC_ALONE, 2, 1
     );
 
     for (int i = 0; i < 5000 && !got; ++i) {
@@ -173,6 +176,7 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     EXPECT_EQ(seen.payload.config.resync_owner, 0x77u);
     EXPECT_EQ(seen.payload.flags, RAWSTOR_SYNC_FLAG_ALONE);
     EXPECT_EQ(seen.payload.sessions, 2u);
+    EXPECT_EQ(seen.payload.position, 1);
     ASSERT_EQ(seen.payload.config.nroles, 3);
     EXPECT_EQ(seen.payload.config.roles[2], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
 
@@ -204,4 +208,121 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     EXPECT_EQ(reply.meta.accepted.proposer, 0x11u);
     ASSERT_EQ(reply.meta.config.nroles, 3);
     EXPECT_EQ(reply.meta.config.roles[0], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
+}
+
+namespace {
+
+// Drives `queue` a few rounds without anything to wait for.
+void spin(rawio::Queue& queue) {
+    for (int i = 0; i < 5; ++i) {
+        try {
+            queue.wait_timeout(1);
+        } catch (const std::exception&) {
+        }
+    }
+}
+
+} // namespace
+
+// Fencing by epoch on a copy (docs/multiattach.md, "Epoch on writes"): a
+// raise refuses older epochs at once, then waits for the writes admitted
+// under them, letting go of the record meanwhile so one of them can take
+// it for its DIRTY mark.
+TEST(LocalMemberTest, admits_by_epoch_and_drains_on_raise) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
+    rawstor::LocalMember member;
+    member.learn_epoch(5);
+
+    uint64_t generation = 0;
+    EXPECT_FALSE(member.admit(4, generation));
+    uint64_t unfenced = 0;
+    EXPECT_TRUE(member.admit(0, unfenced));
+    ASSERT_TRUE(member.admit(5, generation));
+
+    run(*queue, member.record.lock(*queue));
+    rawstd::Task<bool> raise = member.raise_epoch(*queue, 7);
+    uint64_t other = 0;
+    EXPECT_FALSE(member.admit(5, other));
+    spin(*queue);
+    EXPECT_FALSE(raise.done());
+
+    // The record is free while the raise waits.
+    rawstd::Task<void> dirty_mark = member.record.lock(*queue);
+    spin(*queue);
+    ASSERT_TRUE(dirty_mark.done());
+    dirty_mark.get();
+    member.record.unlock();
+
+    member.release(generation);
+    EXPECT_TRUE(run(*queue, std::move(raise)));
+    EXPECT_TRUE(member.admit(7, other));
+    member.release(other);
+
+    // Held again on return: nothing else gets it until it is let go.
+    rawstd::Task<void> next = member.record.lock(*queue);
+    spin(*queue);
+    EXPECT_FALSE(next.done());
+    member.record.unlock();
+    run(*queue, std::move(next));
+    member.record.unlock();
+
+    // Nothing in flight: no wait, the record never let go.
+    run(*queue, member.record.lock(*queue));
+    EXPECT_FALSE(run(*queue, member.raise_epoch(*queue, 9)));
+    member.record.unlock();
+}
+
+// What client writes reached while the copy is SYNCING, as a RESYNC write
+// sees it, and a client write waiting for an overlapping RESYNC write in
+// flight (docs/multiattach.md, "Resync across processes").
+TEST(LocalMemberTest, resync_skips_written_sectors_and_holds_overlaps) {
+    using Ranges = rawstor::LocalMember::Ranges;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
+    rawstor::LocalMember member;
+    Ranges runs;
+
+    // Not SYNCING: nothing is recorded, and a RESYNC write has nothing to
+    // go by.
+    run(*queue, member.client_write(*queue, 0, 4096));
+    EXPECT_FALSE(member.resync_begin(0, 4096, runs));
+    member.follow_role(RAWSTOR_OBJECT_MEMBER_SYNCING);
+    ASSERT_TRUE(member.resync_begin(0, 4096, runs));
+    EXPECT_EQ(runs, (Ranges{{0, 4096}}));
+    member.resync_end(0, 4096);
+
+    // Sector 1 whole and sector 3 in part; one far region.
+    run(*queue, member.client_write(*queue, 512, 512));
+    run(*queue, member.client_write(*queue, 1536 + 100, 10));
+    run(*queue, member.client_write(*queue, (1 << 20) + 512, 1024));
+    ASSERT_TRUE(member.resync_begin(0, 2048, runs));
+    EXPECT_EQ(runs, (Ranges{{0, 512}, {1024, 2048}}));
+
+    // Overlapping the RESYNC write still in flight: waits for it.
+    rawstd::Task<void> held = member.client_write(*queue, 1024, 512);
+    spin(*queue);
+    EXPECT_FALSE(held.done());
+    member.resync_end(0, 2048);
+    run(*queue, std::move(held));
+    ASSERT_TRUE(member.resync_begin(0, 2048, runs));
+    EXPECT_EQ(runs, (Ranges{{0, 512}, {1536, 2048}}));
+    member.resync_end(0, 2048);
+
+    // Staying SYNCING keeps the record.
+    member.follow_role(RAWSTOR_OBJECT_MEMBER_SYNCING);
+    ASSERT_TRUE(member.resync_begin(1 << 20, 2048, runs));
+    EXPECT_EQ(
+        runs,
+        (Ranges{
+            {1 << 20, (1 << 20) + 512}, {(1 << 20) + 1536, (1 << 20) + 2048}
+        })
+    );
+    member.resync_end(1 << 20, 2048);
+
+    // Any other role drops it.
+    member.follow_role(RAWSTOR_OBJECT_MEMBER_IN_SYNC);
+    EXPECT_FALSE(member.resync_begin(0, 2048, runs));
+    member.follow_role(RAWSTOR_OBJECT_MEMBER_SYNCING);
+    ASSERT_TRUE(member.resync_begin(0, 2048, runs));
+    EXPECT_EQ(runs, (Ranges{{0, 2048}}));
+    member.resync_end(0, 2048);
 }

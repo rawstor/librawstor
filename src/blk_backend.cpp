@@ -1,5 +1,6 @@
 #include "blk_backend.hpp"
 
+#include "config_wire.hpp"
 #include "opts.h"
 
 #include <rawio/awaitable.hpp>
@@ -299,6 +300,13 @@ Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
         co_await member->record.lock(_queue);
         RecordLockGuard guard{*member};
         ++member->writers;
+        // A volume without a record yet has no configuration to fence by.
+        try {
+            member->learn_epoch(
+                (co_await _meta(id, offset, RawstdUUID{})).front().config.epoch
+            );
+        } catch (const std::system_error&) {
+        }
         _member = std::move(member);
         _member_id = id;
         _member_offset = offset;
@@ -307,11 +315,12 @@ Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
 
 rawstd::Task<void> Backend::set_config(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int flags
+    unsigned int flags, uint8_t position
 ) {
     std::shared_ptr<LocalMember> member = local_member(location(), id, offset);
     co_await member->record.lock(_queue);
     RecordLockGuard guard{*member};
+    co_await member->raise_epoch(_queue, config.epoch);
 
     // The copy keeps its own state. A volume without a record yet (F10)
     // starts CLEAN: nothing was written to it under one.
@@ -330,6 +339,7 @@ rawstd::Task<void> Backend::set_config(
                            : RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
     }
     co_await _write_record(id, offset, record);
+    member->follow_role(role_of(config, position));
     member->dirty.store(
         record.state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         std::memory_order_release
@@ -359,33 +369,42 @@ rawstd::Task<Backend::SyncReply> Backend::sync_prepare(
 rawstd::Task<Backend::SyncReply> Backend::sync_accept(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
     const RawstorObjectBallot& next, const RawstorObjectConfig& config,
-    unsigned int flags, uint32_t sessions
+    unsigned int flags, uint32_t sessions, uint8_t position
 ) {
     std::shared_ptr<LocalMember> member = local_member(location(), id, offset);
     co_await member->record.lock(_queue);
     RecordLockGuard guard{*member};
 
-    RawstorObjectMeta meta = (co_await _meta(id, offset, RawstdUUID{})).front();
-    // Deciding alone on two members is safe only while no other writer is
-    // known to the copy: one with a session open, or one that dropped its
-    // session and may be deciding alone on the other member right now.
-    if ((flags & RAWSTOR_SYNC_ALONE) != 0 &&
-        (member->writers.load() > sessions ||
-         meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST)) {
-        RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
+    RawstorObjectMeta meta{};
+    rawstd::caspaxos::AcceptorState<RawstorObjectConfig> state{};
+    bool ok = false;
+    // Decided on the record as it is once the epoch is raised: raising may
+    // let go of the record meanwhile (LocalMember::raise_epoch()).
+    for (bool again = true; again;) {
+        meta = (co_await _meta(id, offset, RawstdUUID{})).front();
+        // Deciding alone on two members is safe only while no other writer
+        // is known to the copy: one with a session open, or one that
+        // dropped its session and may be deciding alone on the other
+        // member right now.
+        if ((flags & RAWSTOR_SYNC_ALONE) != 0 &&
+            (member->writers.load() > sessions ||
+             meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST)) {
+            RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
+        }
+        state = {
+            ballot_from(meta.promised), ballot_from(meta.accepted), meta.config
+        };
+        ok = rawstd::caspaxos::accept(
+            state, ballot_from(ballot), config, ballot_from(next)
+        );
+        again = ok && co_await member->raise_epoch(_queue, config.epoch);
     }
-
-    rawstd::caspaxos::AcceptorState<RawstorObjectConfig> state{
-        ballot_from(meta.promised), ballot_from(meta.accepted), meta.config
-    };
-    bool ok = rawstd::caspaxos::accept(
-        state, ballot_from(ballot), config, ballot_from(next)
-    );
     if (ok) {
         meta.promised = ballot_to(state.promised);
         meta.accepted = ballot_to(state.accepted);
         meta.config = state.value;
         co_await _write_record(id, offset, record_of(meta, meta.state));
+        member->follow_role(role_of(meta.config, position));
     }
     meta.writers = member->writers.load();
     co_return SyncReply{ok, meta};

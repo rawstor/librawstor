@@ -80,7 +80,7 @@ Backend::sync_prepare(const RawstdUUID&, uint64_t, const RawstorObjectBallot&) {
 rawstd::Task<Backend::SyncReply> Backend::sync_accept(
     const RawstdUUID&, uint64_t, const RawstorObjectBallot&,
     const RawstorObjectBallot&, const RawstorObjectConfig&, unsigned int,
-    uint32_t
+    uint32_t, uint8_t
 ) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
 }

@@ -1447,7 +1447,7 @@ rawstd::Task<void> Chunk::_set_config_one(
         co_return;
     }
     try {
-        co_await _members[idx].slot->set_config(_id, _offset, config, 0);
+        co_await _members[idx].slot->set_config(_id, _offset, config, 0, idx);
     } catch (const std::system_error& e) {
         int error = e.code().value();
         if (error == ENOSYS) {
@@ -1861,7 +1861,7 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
 
         int error = 0;
         try {
-            co_await _members[idx].slot->set_config(_id, _offset, m, 0);
+            co_await _members[idx].slot->set_config(_id, _offset, m, 0, idx);
         } catch (const std::system_error& e) {
             error = e.code().value();
         }
@@ -2252,7 +2252,7 @@ rawstd::Task<void> Chunk::_resync_finish(uint64_t generation) {
 
     int error = 0;
     try {
-        co_await _members[idx].slot->set_config(_id, _offset, m, 0);
+        co_await _members[idx].slot->set_config(_id, _offset, m, 0, idx);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }

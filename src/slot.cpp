@@ -978,7 +978,7 @@ rawstd::Task<Backend::SyncReply> Slot::sync_prepare(
 rawstd::Task<Backend::SyncReply> Slot::sync_accept(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
     const RawstorObjectBallot& next, const RawstorObjectConfig& config,
-    unsigned int flags, uint32_t sessions
+    unsigned int flags, uint32_t sessions, uint8_t position
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -988,7 +988,7 @@ rawstd::Task<Backend::SyncReply> Slot::sync_accept(
     try {
         Backend::SyncReply result = co_await _with_retry(
             func_name, trace_event, &Backend::sync_accept, id, offset, ballot,
-            next, config, flags, sessions
+            next, config, flags, sessions, position
         );
         _finish(t_call);
         co_return result;
@@ -1004,7 +1004,7 @@ rawstd::Task<void> Slot::leave() {
 
 rawstd::Task<void> Slot::set_config(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int flags
+    unsigned int flags, uint8_t position
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -1014,7 +1014,7 @@ rawstd::Task<void> Slot::set_config(
     try {
         co_await _with_retry(
             func_name, trace_event, &Backend::set_config, id, offset, config,
-            flags
+            flags, position
         );
         _finish(t_call);
     } catch (...) {
