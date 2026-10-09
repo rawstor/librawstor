@@ -269,8 +269,8 @@ route across many.
 A **Chunk** is one logical piece of an Object's data — for a plain
 target, the whole object; for an `mds://` object, one fixed-size slice of
 it (docs/mds.md: with 1 GiB chunks, a 1 TiB object has ≤ 1024 chunks). A
-Chunk owns the mirror-consistency protocol (DIRTY/CLEAN/SYNCING,
-epoch/sync_id, degrade/resync — docs/mirroring.md) across its own one or
+Chunk owns the mirror-consistency protocol (member roles, sync_id
+and epoch, degrade/resync — docs/mirroring.md) across its own one or
 more Slots. Its URI form is exactly a plain target's own: one URI per
 mirror, comma-separated, all sharing the same UUID —
 `ost://h1:p1/<uuid>,ost://h2:p2/<uuid>`. A single-chunk Object's one

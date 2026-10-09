@@ -10,7 +10,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Response `hash` (xxh3 with libxxhash) | ✅ | `librawstd/src/hash.c` |
 | Session: `SET_OBJECT` | ✅ | OST `ost/src/client.cpp`, MDS `mds/src/client.cpp` |
 | Data: `READ` `WRITE` `DISCARD` `ALLOCATE` `RELEASE` `FLUSH` `WRITE_ZEROES` | ✅ | OST server + `src/ost_backend.cpp` |
-| Metadata: `META` `SET_SYNC_STATE` `CREATE_VERSION` `LIST_VERSIONS` | ✅ | OST server + `src/ost_backend.cpp` |
+| Metadata: `META` `SET_CONFIG` `LEAVE` `CREATE_VERSION` `LIST_VERSIONS` | ✅ | OST server + `src/ost_backend.cpp` |
 | `LIST`, `LOCATION_INFO` | ✅ | OST and MDS servers, both clients |
 | Object: `OBJ_CREATE` `OBJ_OPEN` `OBJ_RESIZE` `OBJ_REMOVE` | ✅ | MDS server + `src/mds_client.cpp` |
 | Object versions: `OBJ_COMMIT_VERSION` `OBJ_REMOVE_VERSION` `OBJ_LIST_VERSIONS` | ✅ | MDS server + `src/mds_client.cpp` |
@@ -68,7 +68,7 @@ Every request and every response starts with the same 8-byte head.
 
 One command space for every role, grouped into ranges: `0x00` session (every
 role), `0x01..0x1f` data (OST), `0x20..0x3f` metadata shared by OST and MDS,
-`0x40..0x5f` object (MDS). `SET_SYNC_STATE` and `META` predate the grouping and
+`0x40..0x5f` object (MDS). `SET_CONFIG` and `META` predate the grouping and
 keep `0x0b`/`0x0c`.
 
 | cmd | name | role | request payload | response payload |
@@ -83,10 +83,11 @@ keep `0x0b`/`0x0c`.
 | `0x08` | `LOCATION_INFO` | OST / MDS | Basic (unused) | `RawstorLocationInfo` |
 | `0x09` | `FLUSH` | OST | Basic (unused) | — |
 | `0x0a` | `WRITE_ZEROES` | OST | IO (`flags`: `SYNC`, `UNMAP`) | — |
-| `0x0b` | `SET_SYNC_STATE` | OST | SyncState | — |
+| `0x0b` | `SET_CONFIG` | OST | SetConfig | — |
 | `0x0c` | `META` | OST | Basic (`offset` = chunk offset, `version_id`, nil = live) | Meta |
 | `0x0d` | `CREATE_VERSION` | OST | Basic (`version_id` = new version) | — |
 | `0x0e` | `LIST_VERSIONS` | OST | Basic (`offset` = chunk offset) | Version rows |
+| `0x0f` | `LEAVE` | OST | Basic (unused) | — |
 | `0x40` | `OBJ_CREATE` | MDS | ObjCreate | ObjCreated |
 | `0x41` | `OBJ_OPEN` | MDS | Basic (`version_id`, nil = live) | ObjDescriptor + chunks |
 | `0x42` | `OBJ_RESIZE` | MDS | ObjOp (`val` = new size) | ObjResized |
@@ -209,9 +210,44 @@ otherwise. `flags`:
      +-------------------------------------------+
 ```
 
-### SyncState — 73 bytes
+### Config — 304 bytes
 
-Sets one copy's mirror consistency state (see [mirroring](mirroring.md)).
+The chunk's configuration (`RawstorObjectConfig`): its sync set and every
+member's role, `nroles` entries of `enum RawstorObjectMemberRole` (0
+unknown, 1 in-sync, 2 syncing, 3 excluded), the rest zero. Carried in
+SetConfig and Meta; see [mirroring](mirroring.md#states-and-roles).
+
+```text
+     +0         +1         +2         +3         +4         +5         +6         +7
+     +---------------------------------------------------------------------------------------+
+  0  |                                    uint64_t epoch                                     |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+  8  |                                   uint64_t sync_id                                    |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+ 16  |                            uint64_t sync_id_history[0..3]                             |
+     |                                      (32 bytes)                                       |
+     +----------+----------------------------------------------------------------------------+
+ 48  |  nroles  |                              uint8_t roles[255]                            |
+     |          |                                    ...                                     |
+     +----------+----------------------------------------------------------------------------+
+304
+```
+
+### SetConfig — 329 bytes
+
+Records the chunk's configuration on one copy (`SET_CONFIG`). The copy's
+own state is not set: the copy keeps it ([mirroring](mirroring.md#dirty-clean-and-lost)),
+but for `flags` bit 0, `RAWSTOR_CONFIG_CLEAR_LOST`, which turns a `LOST`
+copy `CLEAN` (no session open for writing) or `DIRTY`. A server with
+several locations keeps no record of the copy it is and answers `-ENOSYS`
+([mirroring](mirroring.md#one-copy-per-server)).
+
+`LEAVE` (Basic, unused) is a session's clean departure from the object it
+set: the server closes it cleanly, and a copy with no session open for
+writing left marks itself `CLEAN`. A session that wrote and ends any other
+way -- disconnect, a new `SET_OBJECT` -- leaves a `DIRTY` copy `LOST`.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -225,27 +261,12 @@ Sets one copy's mirror consistency state (see [mirroring](mirroring.md)).
  16  |                                 uint64_t chunk_offset                                 |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
- 24  |                                    uint64_t epoch                                     |
-     |                                                                                       |
-     +---------------------------------------------------------------------------------------+
- 32  |                                   uint64_t sync_id                                    |
-     |                                                                                       |
-     +---------------------------------------------------------------------------------------+
- 40  |                              uint64_t sync_id_history[0]                              |
-     |                                                                                       |
-     +---------------------------------------------------------------------------------------+
- 48  |                              uint64_t sync_id_history[1]                              |
-     |                                                                                       |
-     +---------------------------------------------------------------------------------------+
- 56  |                              uint64_t sync_id_history[2]                              |
-     |                                                                                       |
-     +---------------------------------------------------------------------------------------+
- 64  |                              uint64_t sync_id_history[3]                              |
-     |                                                                                       |
-     +----------+----------------------------------------------------------------------------+
- 72  |  state   |
+ 24  Config (304 bytes)
+     +----------+
+328  |  flags   |
      |          |
      +----------+
+329
 ```
 
 ### Allocate — 44 bytes
@@ -318,38 +339,25 @@ in no particular order. An empty payload means the object has no versions
      +---------------------------------------------------------------------------------------+
 ```
 
-### Meta — 60 bytes
+### Meta — 320 bytes
 
-Everything about one stored copy: its size, its placement identity and its
-mirror consistency state.
+Everything about one stored copy: its size, its placement identity, its own
+state (`CLEAN`, `DIRTY`, `LOST`), how many sessions have it open for
+writing right now (`writers`), and the chunk's configuration as last set on
+it (a [Config](#config--304-bytes), at offset 16). A server with several
+locations reports a zero Config.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
      +---------------------------------------------------------------------------------------+
   0  |                                     uint64_t size                                     |
      |                                                                                       |
-     +---------------------------------------------------------------------------------------+
-  8  |                                    uint64_t epoch                                     |
-     |                                                                                       |
-     +---------------------------------------------------------------------------------------+
- 16  |                                   uint64_t sync_id                                    |
-     |                                                                                       |
-     +---------------------------------------------------------------------------------------+
- 24  |                              uint64_t sync_id_history[0]                              |
-     |                                                                                       |
-     +---------------------------------------------------------------------------------------+
- 32  |                              uint64_t sync_id_history[1]                              |
-     |                                                                                       |
-     +---------------------------------------------------------------------------------------+
- 40  |                              uint64_t sync_id_history[2]                              |
-     |                                                                                       |
-     +---------------------------------------------------------------------------------------+
- 48  |                              uint64_t sync_id_history[3]                              |
-     |                                                                                       |
      +----------+----------+----------+----------+-------------------------------------------+
- 56  |  state   |  chunk_  |  width   | member_  |
-     |          |  shift   |          |   role   |
-     +----------+----------+----------+----------+
+  8  |  state   |  chunk_  |  width   | member_  |              uint32_t writers             |
+     |          |  shift   |          |   role   |                                           |
+     +----------+----------+----------+----------+-------------------------------------------+
+ 16  Config (304 bytes)
+320
 ```
 
 ### RawstorLocationInfo — 16 bytes

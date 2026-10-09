@@ -136,10 +136,13 @@ private:
     );
     static rawstd::DetachedTask
     _flush(std::weak_ptr<Client> weak, RawstorFrameHead head);
-    static rawstd::DetachedTask _set_state(
+    static rawstd::DetachedTask _set_config(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
-        RawstorFrameSyncStatePayload payload
+        RawstorFrameSetConfigPayload payload
     );
+    // The session's clean departure: closes the object it set cleanly.
+    static rawstd::DetachedTask
+    _leave(std::weak_ptr<Client> weak, RawstorFrameHead head);
     // Every configured location's own URI for `uuid`, with `offset`/
     // `version_id` folded into each one's own path as
     // "<uuid>[/<offset>[/<version_id>]]" (TargetPath's own doc comment,

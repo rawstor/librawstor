@@ -310,13 +310,18 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
 
     RawstorFrameMetaPayload clean_meta = {
         .size = 1ull << 20,
-        .epoch = 0,
-        .sync_id = 0,
-        .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
+        .writers = 0,
+        .config = {
+            .epoch = 0,
+            .sync_id = 0,
+            .sync_id_history = {},
+            .nroles = 0,
+            .roles = {},
+        },
     };
 
     // Left open for the whole test -- see server.hpp's Session::~Session()
@@ -460,13 +465,18 @@ TEST(ChunkTest, flush_flushes_the_write_it_waited_for) {
 
     RawstorFrameMetaPayload clean_meta = {
         .size = 1ull << 20,
-        .epoch = 0,
-        .sync_id = 0,
-        .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
+        .writers = 0,
+        .config = {
+            .epoch = 0,
+            .sync_id = 0,
+            .sync_id_history = {},
+            .nroles = 0,
+            .roles = {},
+        },
     };
 
     // Left open for the whole test, see

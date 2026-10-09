@@ -48,7 +48,9 @@ public:
 
     void cmd_set_state_request();
     void cmd_set_state_response(uint32_t magic, uint16_t cid, int32_t res);
+    // SET_CONFIG.
     void cmd_set_state(uint32_t magic, uint16_t cid, int32_t res);
+    void cmd_leave(uint32_t magic, uint16_t cid, int32_t res);
 
     void cmd_location_info_request();
     void cmd_location_info_response(

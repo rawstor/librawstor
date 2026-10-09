@@ -573,3 +573,169 @@ TEST(OstClientTest, list_reports_every_chunk_offset) {
     std::memcpy(row_id.bytes, entries[2].id, sizeof(row_id.bytes));
     EXPECT_EQ(rawstd_uuid_cmp(&row_id, &nil_id), 0);
 }
+
+namespace {
+
+RawstorObjectSyncStateValue stored_state(
+    RawIOQueue* queue, const std::string& location, const RawstdUUID& id
+) {
+    RawstdUUIDString id_string;
+    rawstd_uuid_to_string(&id, &id_string);
+    std::string target = location + "/" + id_string;
+
+    RawstorObjectMeta meta{};
+    bool done = false;
+    ssize_t result = 0;
+    struct Ctx {
+        bool* done;
+        ssize_t* result;
+    } ctx{&done, &result};
+    int res = rawstor_target_meta(
+        queue, target.c_str(), 0, &meta, 1,
+        [](ssize_t r, void* data) {
+            Ctx* c = static_cast<Ctx*>(data);
+            *c->result = r;
+            *c->done = true;
+            return 0;
+        },
+        &ctx
+    );
+    EXPECT_EQ(res, 0);
+    EXPECT_TRUE(pump_until(queue, [&] { return done; }));
+    EXPECT_GE(result, 0);
+    return meta.state;
+}
+
+void write_and_wait(
+    rawstor::ostserver::tests::Client& client, RawIOQueue* queue
+) {
+    std::string payload = "ping";
+    client.send_write(0, payload.data(), payload.size(), false);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    ASSERT_EQ(
+        client.recv_response().body.res, static_cast<int32_t>(payload.size())
+    );
+}
+
+} // namespace
+
+// A session's LEAVE closes its object cleanly, and the copy goes CLEAN
+// once no session open for writing is left; a session that wrote and
+// whose connection drops without one leaves the copy LOST
+// (docs/mirroring.md, "DIRTY, CLEAN and LOST").
+TEST(OstClientTest, leave_cleans_and_a_dropped_writer_loses) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+    rawstor::ostserver::tests::Queue queue;
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+
+    {
+        auto [raw_client, client_fd] = connect_client(server, queue);
+        ClientCleanup server_client(std::move(raw_client), queue);
+        rawstor::ostserver::tests::Client client(client_fd);
+
+        client.send_allocate(id, 4096, 1);
+        ASSERT_TRUE(pump_until(queue, [&] {
+            return client.bytes_available() >= sizeof(RawstorFrameResponse);
+        }));
+        ASSERT_EQ(client.recv_response().body.res, 0);
+
+        client.send_set_object(id);
+        ASSERT_TRUE(pump_until(queue, [&] {
+            return client.bytes_available() >= sizeof(RawstorFrameResponse);
+        }));
+        ASSERT_EQ(client.recv_response().body.res, 0);
+
+        write_and_wait(client, queue);
+        EXPECT_EQ(
+            stored_state(queue, dir.uri(), id), RAWSTOR_OBJECT_SYNC_STATE_DIRTY
+        );
+
+        client.send_leave();
+        ASSERT_TRUE(pump_until(queue, [&] {
+            return client.bytes_available() >= sizeof(RawstorFrameResponse);
+        }));
+        RawstorFrameResponse response = client.recv_response();
+        EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_LEAVE);
+        EXPECT_EQ(response.body.res, 0);
+        EXPECT_EQ(
+            stored_state(queue, dir.uri(), id), RAWSTOR_OBJECT_SYNC_STATE_CLEAN
+        );
+    }
+
+    {
+        auto [raw_client, client_fd] = connect_client(server, queue);
+        ClientCleanup server_client(std::move(raw_client), queue);
+        {
+            rawstor::ostserver::tests::Client client(client_fd);
+            client.send_set_object(id);
+            ASSERT_TRUE(pump_until(queue, [&] {
+                return client.bytes_available() >= sizeof(RawstorFrameResponse);
+            }));
+            ASSERT_EQ(client.recv_response().body.res, 0);
+            write_and_wait(client, queue);
+        }
+        // The client's end is closed without a LEAVE.
+    }
+    // The server's Client goes away with the connection, closing the
+    // object it set as an unclean departure.
+    EXPECT_EQ(
+        stored_state(queue, dir.uri(), id), RAWSTOR_OBJECT_SYNC_STATE_LOST
+    );
+}
+
+// A server with several locations is still one copy to its clients, but
+// keeps no record of that copy: the locations' records belong to its own
+// mirror of them. It answers SET_CONFIG with -ENOSYS and reports no sync
+// identity (docs/mirroring.md, "One copy per server").
+TEST(OstClientTest, several_locations_keep_no_record_of_the_copy) {
+    rawstor::ostserver::tests::TmpDir a;
+    rawstor::ostserver::tests::TmpDir b;
+    std::string locations = a.uri() + "," + b.uri();
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, locations.c_str());
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    auto expect_response = [&](RawstorCommandType cmd, int32_t res) {
+        ASSERT_TRUE(pump_until(queue, [&] {
+            return client.bytes_available() >= sizeof(RawstorFrameResponse);
+        }));
+        RawstorFrameResponse response = client.recv_response();
+        EXPECT_EQ(response.head.cmd, cmd);
+        EXPECT_EQ(response.body.res, res);
+    };
+
+    client.send_allocate(id, 4096, 2);
+    expect_response(RAWSTOR_CMD_ALLOCATE, 0);
+
+    RawstorFrameSetConfig set{};
+    std::memcpy(set.payload.object_id, id.bytes, sizeof(id.bytes));
+    set.payload.config.epoch = 3;
+    set.payload.config.sync_id = 0x33;
+    client.send_set_config(set);
+    expect_response(RAWSTOR_CMD_SET_CONFIG, -ENOSYS);
+
+    client.send_meta(id, 0);
+    RawstorFrameMetaPayload meta{};
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >=
+               sizeof(RawstorFrameResponse) + sizeof(meta);
+    }));
+    RawstorFrameResponse response = client.recv_response(&meta, sizeof(meta));
+    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_META);
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(sizeof(meta)));
+    EXPECT_EQ(meta.size, 4096u);
+    EXPECT_EQ(meta.config.epoch, 0u);
+    EXPECT_EQ(meta.config.sync_id, 0u);
+    EXPECT_EQ(meta.config.nroles, 0);
+}

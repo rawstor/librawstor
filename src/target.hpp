@@ -114,7 +114,7 @@ class Object;
 // before returning.
 // create()/remove() work across every chunk (see each one's own
 // comment) -- spec() only ever operates on the target's own
-// first chunk, and meta()/set_member_sync_state() each touch exactly one
+// first chunk, and meta()/set_member_config() each touch exactly one
 // chunk, the one named by their own explicit `offset` parameter
 // (chunk_uris_at_offset() in target.cpp) -- never "every chunk"; a
 // caller wanting that loops over every offset itself. open() is the one
@@ -187,7 +187,7 @@ public:
     // wants one specific URI's own offset already has that URI in hand
     // (uris() above) and can ask parse_target_path() directly, the same
     // way this class's own free functions in target.cpp do. meta()/
-    // set_sync_state() below take an explicit `offset` parameter for the
+    // set_config() below take an explicit `offset` parameter for the
     // same reason: neither has a coherent "every chunk" answer to give
     // without one -- a caller wanting every chunk loops over each one's
     // own offset itself (spec()'s own size/chunk_size say how many there
@@ -249,7 +249,7 @@ public:
     // copy of the object's first chunk, merged -- a version taken on any
     // copy is listed.
     rawstd::Task<std::vector<RawstdUUID>> versions(rawio::Queue& queue) const;
-    // Writes `sync_state` to exactly one real member of the chunk at
+    // Writes `config` to exactly one real member of the chunk at
     // `offset` -- `member_index` into that chunk's own real member list,
     // the same order rawstor_target_meta()'s own per-chunk result reports
     // their state in. This is rawstor resolve's own --winner: declaring
@@ -258,9 +258,11 @@ public:
     // no chunk sits at `offset`, EINVAL if `member_index` names no real
     // member of it (see this method's own doc comment in target.cpp for
     // how an opaque, e.g. mds://, target's real member list is resolved).
-    rawstd::Task<void> set_member_sync_state(
+    // `config` is taken by value: it outlives the caller's argument,
+    // across the connect.
+    rawstd::Task<void> set_member_config(
         rawio::Queue& queue, uint64_t offset, size_t member_index,
-        const RawstorObjectSyncState& sync_state
+        RawstorObjectConfig config, unsigned int flags
     ) const;
     // Removes every URI of every chunk concurrently -- unlike create()
     // above, there's no rollback to speak of (removal has nothing to

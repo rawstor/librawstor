@@ -141,10 +141,12 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) override;
 
-    rawstd::Task<void> set_sync_state(
+    rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectSyncState& sync_state
+        const RawstorObjectConfig& config, unsigned int flags
     ) override;
+
+    rawstd::Task<void> leave() override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
 

@@ -1,5 +1,6 @@
 #include "ost_backend.hpp"
 
+#include "config_wire.hpp"
 #include "opts.h"
 #include "telemetry.hpp"
 
@@ -753,42 +754,31 @@ public:
 // just object_id/offset/val like BackendOpBasic below), so it needs its own
 // request shape -- the response is otherwise the same no-payload
 // acknowledgement as BackendOpFlush above.
-class BackendOpSetState final : public BackendOp {
+class BackendOpSetConfig final : public BackendOp {
 private:
-    RawstorFrameSyncState _request;
+    RawstorFrameSetConfig _request;
 
 public:
-    BackendOpSetState(
+    BackendOpSetConfig(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const RawstdUUID& id, uint64_t chunk_offset,
-        const RawstorObjectSyncState& sync_state,
+        const RawstorObjectConfig& config, unsigned int flags,
         const rawstd::TraceEvent& trace_event
     ) :
-        BackendOp(backend, cid, trace_event, "set_sync_state", 0, 0),
-        _request({
-            .head =
-                {
-                    .magic = RAWSTOR_MAGIC,
-                    .cmd = RAWSTOR_CMD_SET_SYNC_STATE,
-                    .cid = cid,
-                },
-            .payload = {
-                .object_id = {},
-                .chunk_offset = chunk_offset,
-                .epoch = sync_state.epoch,
-                .sync_id = sync_state.sync_id,
-                .sync_id_history = {},
-                .state = static_cast<RawstorSyncStateType>(sync_state.state),
-            },
-        }) {
+        BackendOp(backend, cid, trace_event, "set_config", 0, 0),
+        _request{} {
+        _request.head = {
+            .magic = RAWSTOR_MAGIC,
+            .cmd = RAWSTOR_CMD_SET_CONFIG,
+            .cid = cid,
+        };
         memcpy(
             _request.payload.object_id, id.bytes,
             sizeof(_request.payload.object_id)
         );
-        memcpy(
-            _request.payload.sync_id_history, sync_state.sync_id_history,
-            sizeof(_request.payload.sync_id_history)
-        );
+        _request.payload.chunk_offset = chunk_offset;
+        _request.payload.config = rawstor::config_to_wire(config);
+        _request.payload.flags = static_cast<uint8_t>(flags);
     }
 
     const void* request_data() const noexcept { return &_request; }
@@ -804,13 +794,12 @@ public:
         }
 
         if (!error) {
-            error =
-                validate_cmd(response->head.cmd, RAWSTOR_CMD_SET_SYNC_STATE);
+            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_SET_CONFIG);
         }
 
         _dispatch(0, error);
 
-        // A set_sync_state response never carries a body, regardless of
+        // A set_config response never carries a body, regardless of
         // error.
         return 0;
     }
@@ -1574,14 +1563,9 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
         // fallback).
         ret.spec.width = payload.width;
         ret.spec.chunk_size = chunk_shift_to_size(payload.chunk_shift);
-        ret.sync_state.epoch = payload.epoch;
-        ret.sync_state.sync_id = payload.sync_id;
-        memcpy(
-            ret.sync_state.sync_id_history, payload.sync_id_history,
-            sizeof(ret.sync_state.sync_id_history)
-        );
-        ret.sync_state.state =
-            static_cast<RawstorObjectSyncStateValue>(payload.state);
+        ret.state = static_cast<RawstorObjectSyncStateValue>(payload.state);
+        ret.writers = payload.writers;
+        ret.config = rawstor::config_from_wire(payload.config);
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -1618,16 +1602,22 @@ Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     co_return std::vector<rawstd::URI>{location()};
 }
 
-rawstd::Task<void> Backend::set_sync_state(
-    const RawstdUUID& id, uint64_t offset,
-    const RawstorObjectSyncState& sync_state
+rawstd::Task<void> Backend::leave() {
+    RawstdUUID unused_id = {};
+    co_await _basic_request(RAWSTOR_CMD_LEAVE, "leave", unused_id, 0);
+}
+
+rawstd::Task<void> Backend::set_config(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
+    unsigned int flags
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
 
-    std::shared_ptr<BackendOpSetState> op = std::make_shared<BackendOpSetState>(
-        std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        id, offset, sync_state, trace_event
-    );
+    std::shared_ptr<BackendOpSetConfig> op =
+        std::make_shared<BackendOpSetConfig>(
+            std::static_pointer_cast<Backend>(shared_from_this()),
+            _cid_counter++, id, offset, config, flags, trace_event
+        );
     _add_op(op);
 
     try {
