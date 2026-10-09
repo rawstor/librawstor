@@ -178,6 +178,16 @@ public:
         const RawstorObjectConfig& config, unsigned int flags
     );
 
+    rawstd::Task<Backend::SyncReply> sync_prepare(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+    );
+
+    rawstd::Task<Backend::SyncReply> sync_accept(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config, unsigned int flags, uint32_t sessions
+    );
+
     // The writer's clean departure from this member's session
     // (Backend::leave()), on the session as it is: a session already
     // gone has left uncleanly anyway.

@@ -725,6 +725,13 @@ TEST(OstClientTest, several_locations_keep_no_record_of_the_copy) {
     client.send_set_config(set);
     expect_response(RAWSTOR_CMD_SET_CONFIG, -ENOSYS);
 
+    RawstorFrameSyncPropose prepare{};
+    prepare.head.cmd = RAWSTOR_CMD_SYNC_PREPARE;
+    std::memcpy(prepare.payload.object_id, id.bytes, sizeof(id.bytes));
+    prepare.payload.ballot = {1, 1};
+    client.send_sync(prepare);
+    expect_response(RAWSTOR_CMD_SYNC_PREPARE, -ENOSYS);
+
     client.send_meta(id, 0);
     RawstorFrameMetaPayload meta{};
     ASSERT_TRUE(pump_until(queue, [&] {
@@ -738,4 +745,106 @@ TEST(OstClientTest, several_locations_keep_no_record_of_the_copy) {
     EXPECT_EQ(meta.config.epoch, 0u);
     EXPECT_EQ(meta.config.sync_id, 0u);
     EXPECT_EQ(meta.config.nroles, 0);
+}
+
+namespace {
+
+RawstorFrameSyncPropose sync_frame(
+    RawstorCommandType cmd, const RawstdUUID& id, uint64_t counter,
+    uint64_t proposer
+) {
+    RawstorFrameSyncPropose frame{};
+    frame.head.cmd = cmd;
+    std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));
+    frame.payload.ballot = {counter, proposer};
+    return frame;
+}
+
+RawstorFrameSyncReplyPayload sync_round_trip(
+    rawstor::ostserver::tests::Client& client, RawIOQueue* queue,
+    const RawstorFrameSyncPropose& frame
+) {
+    client.send_sync(frame);
+    RawstorFrameSyncReplyPayload reply{};
+    EXPECT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >=
+               sizeof(RawstorFrameResponse) + sizeof(reply);
+    }));
+    RawstorFrameResponse response = client.recv_response(&reply, sizeof(reply));
+    EXPECT_EQ(response.head.cmd, frame.head.cmd);
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(sizeof(reply)));
+    return reply;
+}
+
+} // namespace
+
+// The copy's record as a register acceptor (docs/multiattach.md, "The
+// register"): rawstor-ost applies the rawstd::caspaxos rules to its copy's
+// record and replies with that record whether the request succeeded or
+// not.
+TEST(OstClientTest, sync_register_promises_and_accepts) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    client.send_allocate(id, 4096, 1);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    ASSERT_EQ(client.recv_response().body.res, 0);
+
+    RawstorFrameSyncReplyPayload reply = sync_round_trip(
+        client, queue, sync_frame(RAWSTOR_CMD_SYNC_PREPARE, id, 2, 7)
+    );
+    EXPECT_EQ(reply.ok, 1);
+    EXPECT_EQ(reply.meta.promised.counter, 2u);
+    EXPECT_EQ(reply.meta.promised.proposer, 7u);
+    EXPECT_EQ(reply.meta.accepted.counter, 0u);
+
+    // A lower ballot is refused, and the reply shows the promise that
+    // beat it.
+    reply = sync_round_trip(
+        client, queue, sync_frame(RAWSTOR_CMD_SYNC_PREPARE, id, 1, 9)
+    );
+    EXPECT_EQ(reply.ok, 0);
+    EXPECT_EQ(reply.meta.promised.counter, 2u);
+    EXPECT_EQ(reply.meta.promised.proposer, 7u);
+
+    RawstorFrameSyncPropose accept =
+        sync_frame(RAWSTOR_CMD_SYNC_ACCEPT, id, 2, 7);
+    accept.payload.next = {3, 7};
+    accept.payload.config.epoch = 5;
+    accept.payload.config.sync_id = 0xabc;
+    accept.payload.config.nroles = 1;
+    accept.payload.config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    reply = sync_round_trip(client, queue, accept);
+    EXPECT_EQ(reply.ok, 1);
+    EXPECT_EQ(reply.meta.config.epoch, 5u);
+    EXPECT_EQ(reply.meta.config.sync_id, 0xabcu);
+    EXPECT_EQ(reply.meta.accepted.counter, 2u);
+    EXPECT_EQ(reply.meta.promised.counter, 3u);
+    ASSERT_EQ(reply.meta.config.nroles, 1);
+    EXPECT_EQ(reply.meta.config.roles[0], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
+
+    // The same ballot again: already accepted under it, refused, and the
+    // reply carries the value it holds.
+    accept.payload.config.epoch = 6;
+    reply = sync_round_trip(client, queue, accept);
+    EXPECT_EQ(reply.ok, 0);
+    EXPECT_EQ(reply.meta.config.epoch, 5u);
+
+    // The promised next ballot goes through without a prepare.
+    accept.payload.ballot = {3, 7};
+    accept.payload.next = {0, 0};
+    reply = sync_round_trip(client, queue, accept);
+    EXPECT_EQ(reply.ok, 1);
+    EXPECT_EQ(reply.meta.config.epoch, 6u);
+    EXPECT_EQ(reply.meta.accepted.counter, 3u);
 }

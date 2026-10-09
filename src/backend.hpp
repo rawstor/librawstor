@@ -209,6 +209,29 @@ public:
         const RawstorObjectConfig& config, unsigned int flags
     ) = 0;
 
+    // A member's reply to SYNC_PREPARE/SYNC_ACCEPT: whether it promised
+    // or accepted, and its whole record either way (docs/caspaxos.md).
+    struct SyncReply {
+        bool ok;
+        RawstorObjectMeta meta;
+    };
+
+    // The two requests of the chunk's configuration register
+    // (docs/multiattach.md, "The register"), applied to this copy's record
+    // with the rawstd::caspaxos acceptor rules and persisted before the
+    // reply. sync_accept() takes the register's value from `config`; with
+    // RAWSTOR_SYNC_ALONE in `flags` it fails with EBUSY while more than
+    // `sessions` sessions have the copy open for writing or the copy is
+    // LOST. Default: ENOSYS, for a backend that holds no copy of its own.
+    virtual rawstd::Task<SyncReply> sync_prepare(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+    );
+    virtual rawstd::Task<SyncReply> sync_accept(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config, unsigned int flags, uint32_t sessions
+    );
+
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 
     // Binds this Backend to the live version of `id`/`offset` -- data-path

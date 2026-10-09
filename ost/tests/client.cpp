@@ -117,6 +117,14 @@ uint16_t Client::send_set_config(RawstorFrameSetConfig frame) {
     return cid;
 }
 
+uint16_t Client::send_sync(RawstorFrameSyncPropose frame) {
+    uint16_t cid = _next_cid++;
+    frame.head.magic = RAWSTOR_MAGIC;
+    frame.head.cid = cid;
+    send_all(_fd, &frame, sizeof(frame));
+    return cid;
+}
+
 uint16_t Client::send_leave() {
     uint16_t cid = _next_cid++;
     RawstorFrameBasic frame{};

@@ -961,6 +961,59 @@ rawstd::DetachedTask launch_set_member_config_op_coro(
     }
 }
 
+// Same shape as launch_set_member_config_op_coro() above, for
+// Target::sync_prepare()/sync_accept(): `reply` is filled before `cb`
+// runs with a zero result.
+rawstd::DetachedTask launch_sync_op_coro(
+    rawstd::Task<rawstor::Backend::SyncReply> op, RawstorObjectSyncReply* reply,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        // GCC 11 (AlmaLinux 9) ICEs ("no suspend point info ... not
+        // supported by dump_decl") on a named local direct-initialized
+        // from co_await inside a try block (see Slot::_with_retry());
+        // declaring it apart from the co_await sidesteps it.
+        rawstor::Backend::SyncReply r{};
+        r = co_await op;
+        reply->ok = r.ok ? 1 : 0;
+        reply->meta = r.meta;
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+// Runs one register request against `t`, which lives in this frame for
+// the request's whole life.
+rawstd::Task<rawstor::Backend::SyncReply> sync_prepare_coro(
+    rawstor::Target t, rawio::Queue* queue, uint64_t offset,
+    size_t member_index, RawstorObjectBallot ballot
+) {
+    co_return co_await t.sync_prepare(*queue, offset, member_index, ballot);
+}
+
+rawstd::Task<rawstor::Backend::SyncReply> sync_accept_coro(
+    rawstor::Target t, rawio::Queue* queue, uint64_t offset,
+    size_t member_index, RawstorObjectBallot ballot, RawstorObjectBallot next,
+    RawstorObjectConfig config, unsigned int flags, uint32_t sessions
+) {
+    co_return co_await t.sync_accept(
+        *queue, offset, member_index, ballot, next, config, flags, sessions
+    );
+}
+
 } // namespace
 
 namespace rawstor {
@@ -1512,9 +1565,8 @@ Target::versions(rawio::Queue& queue) const {
 // same position in both. A caller wanting every member of the chunk
 // written calls this once per member instead of relying on any fan-out
 // here.
-rawstd::Task<void> Target::set_member_config(
-    rawio::Queue& queue, uint64_t offset, size_t member_index,
-    RawstorObjectConfig config, unsigned int flags
+rawstd::Task<rawstd::URI> Target::_member_location(
+    rawio::Queue& queue, uint64_t offset, size_t member_index
 ) const {
     if (!rawstd_uuid_is_nil(&_version_id)) {
         // Would otherwise rewrite the live chunk's state.
@@ -1533,9 +1585,19 @@ rawstd::Task<void> Target::set_member_config(
     if (member_index >= members.size()) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
+    co_return members[member_index];
+}
+
+rawstd::Task<void> Target::set_member_config(
+    rawio::Queue& queue, uint64_t offset, size_t member_index,
+    RawstorObjectConfig config, unsigned int flags
+) const {
+    rawstd::URI location =
+        co_await _member_location(queue, offset, member_index);
+    RawstdUUID id = uuid_from_target(_uris.front());
 
     std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, members[member_index]);
+        co_await rawstor::Slot::create(queue, location);
     std::exception_ptr error;
     try {
         co_await slot->set_config(id, offset, config, flags);
@@ -1546,6 +1608,57 @@ rawstd::Task<void> Target::set_member_config(
     if (error) {
         std::rethrow_exception(error);
     }
+}
+
+rawstd::Task<Backend::SyncReply> Target::sync_prepare(
+    rawio::Queue& queue, uint64_t offset, size_t member_index,
+    RawstorObjectBallot ballot
+) const {
+    rawstd::URI location =
+        co_await _member_location(queue, offset, member_index);
+    RawstdUUID id = uuid_from_target(_uris.front());
+
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, location);
+    Backend::SyncReply reply{};
+    std::exception_ptr error;
+    try {
+        reply = co_await slot->sync_prepare(id, offset, ballot);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    co_return reply;
+}
+
+rawstd::Task<Backend::SyncReply> Target::sync_accept(
+    rawio::Queue& queue, uint64_t offset, size_t member_index,
+    RawstorObjectBallot ballot, RawstorObjectBallot next,
+    RawstorObjectConfig config, unsigned int flags, uint32_t sessions
+) const {
+    rawstd::URI location =
+        co_await _member_location(queue, offset, member_index);
+    RawstdUUID id = uuid_from_target(_uris.front());
+
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, location);
+    Backend::SyncReply reply{};
+    std::exception_ptr error;
+    try {
+        reply = co_await slot->sync_accept(
+            id, offset, ballot, next, config, flags, sessions
+        );
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    co_return reply;
 }
 
 rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
@@ -2126,6 +2239,66 @@ int rawstor_target_version_id(
             RAWSTD_THROW_ERRNO();
         }
         return res;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_target_sync_prepare(
+    RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
+    const RawstorObjectBallot* ballot, RawstorObjectSyncReply* reply,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Target t(rawstd::URI::uriv(target));
+        launch_sync_op_coro(
+            sync_prepare_coro(
+                std::move(t), static_cast<rawio::Queue*>(queue), offset,
+                member_index, *ballot
+            ),
+            reply, cb, data
+        );
+        rawstd::DetachedTask::rethrow_if_pending();
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_target_sync_accept(
+    RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
+    const RawstorObjectBallot* ballot, const RawstorObjectBallot* next,
+    const RawstorObjectConfig* config, unsigned int flags, uint32_t sessions,
+    RawstorObjectSyncReply* reply, int (*cb)(ssize_t result, void* data),
+    void* data
+) noexcept {
+    try {
+        rawstor::Target t(rawstd::URI::uriv(target));
+        launch_sync_op_coro(
+            sync_accept_coro(
+                std::move(t), static_cast<rawio::Queue*>(queue), offset,
+                member_index, *ballot, *next, *config, flags, sessions
+            ),
+            reply, cb, data
+        );
+        rawstd::DetachedTask::rethrow_if_pending();
+        return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
     } catch (const std::bad_alloc& e) {

@@ -32,7 +32,7 @@ namespace {
 
 // file::Backend pairs each object's data file with a fixed-size `meta`
 // file (blk_backend.hpp's META_MAX_SIZE) that "used" now accounts for too.
-constexpr uint64_t META_FILE_SIZE = 512;
+constexpr uint64_t META_FILE_SIZE = 1024;
 
 struct ScopedOpts {
     explicit ScopedOpts(

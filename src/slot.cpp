@@ -955,6 +955,49 @@ rawstd::Task<std::vector<rawstd::URI>> Slot::resolve_locations(
     }
 }
 
+rawstd::Task<Backend::SyncReply> Slot::sync_prepare(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        Backend::SyncReply result = co_await _with_retry(
+            func_name, trace_event, &Backend::sync_prepare, id, offset, ballot
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<Backend::SyncReply> Slot::sync_accept(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
+    const RawstorObjectBallot& next, const RawstorObjectConfig& config,
+    unsigned int flags, uint32_t sessions
+) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        Backend::SyncReply result = co_await _with_retry(
+            func_name, trace_event, &Backend::sync_accept, id, offset, ballot,
+            next, config, flags, sessions
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
 rawstd::Task<void> Slot::leave() {
     co_await _backend->leave();
 }

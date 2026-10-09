@@ -9,7 +9,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. *Stage* is
 |---|---|---|---|
 | `Ballot`, `AcceptorState<V>`, acceptor rules `prepare()` / `accept()` | 1 | ✅ | `librawstd/include/rawstd/caspaxos.hpp`, `librawstd/tests/test_caspaxos.cpp` |
 | `accept()` promising the proposer's next ballot (one-round changes) | 1 | ✅ | `rawstd::caspaxos::accept()` |
-| The chunk record as an acceptor: `SYNC_PREPARE` / `SYNC_ACCEPT` | 1 | ❌ | [Multi-attach](multiattach.md#the-register-caspaxos) |
+| The chunk record as an acceptor: `SYNC_PREPARE` / `SYNC_ACCEPT` | 1 | ✅ | `src/blk_backend.cpp`, `ost/src/client.cpp`; [Multi-attach](multiattach.md#the-register-caspaxos) |
 | `Proposer<V>`: the two phases as a coroutine over a pluggable transport | 2 | ❌ | — |
 | Proposer skipping phase 1 after its own decision | 2 | ❌ | — |
 

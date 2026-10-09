@@ -801,6 +801,21 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
+            case RAWSTOR_CMD_SYNC_PREPARE:
+            case RAWSTOR_CMD_SYNC_ACCEPT: {
+                RawstorFrameSyncProposePayload propose_payload;
+                co_await recv_frame(
+                    stream, &propose_payload, sizeof(propose_payload), fd,
+                    "request payload", &stream_failed
+                );
+                client = weak.lock();
+                if (client == nullptr) {
+                    co_return;
+                }
+                _sync(weak, head, propose_payload);
+                rawstd::DetachedTask::rethrow_if_pending();
+                break;
+            }
             case RAWSTOR_CMD_SET_CONFIG: {
                 RawstorFrameSetConfigPayload set_config_payload;
                 co_await recv_frame(
@@ -1311,6 +1326,8 @@ rawstd::DetachedTask Client::_meta(
             // mirror, not of the copy it is to its clients (_set_config()):
             // it reports none -- a copy without state tracking.
             meta.config = RawstorObjectConfig{};
+            meta.promised = RawstorObjectBallot{};
+            meta.accepted = RawstorObjectBallot{};
         }
     } catch (const std::system_error& e) {
         result = -e.code().value();
@@ -1323,14 +1340,9 @@ rawstd::DetachedTask Client::_meta(
                 RAWSTOR_CMD_META, head.cid, result, 0
             );
         } else {
-            RawstorFrameMetaPayload body_out{};
-            body_out.size = meta.spec.size;
-            body_out.state = static_cast<RawstorSyncStateType>(meta.state);
-            body_out.chunk_shift = chunk_size_to_shift(meta.spec.chunk_size);
-            body_out.width = static_cast<uint8_t>(meta.spec.width);
-            body_out.member_role = static_cast<uint8_t>(meta.member_role);
-            body_out.writers = meta.writers;
-            body_out.config = rawstor::config_to_wire(meta.config);
+            RawstorFrameMetaPayload body_out = rawstor::meta_to_wire(
+                meta, chunk_size_to_shift(meta.spec.chunk_size)
+            );
             std::vector<unsigned char> data(sizeof(body_out));
             memcpy(data.data(), &body_out, sizeof(body_out));
             co_await client->_send_response(
@@ -1468,6 +1480,80 @@ rawstd::DetachedTask Client::_set_config(
         co_await client->_send_response(
             RAWSTOR_CMD_SET_CONFIG, head.cid, result, 0
         );
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        send_failed = true;
+    }
+    if (send_failed) {
+        co_await client->_server.del_client(client->_fd);
+    }
+}
+
+rawstd::DetachedTask Client::_sync(
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameSyncProposePayload payload
+) {
+    std::shared_ptr<Client> client = weak.lock();
+    if (client == nullptr) {
+        co_return;
+    }
+
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
+    std::vector<rawstd::URI> targets =
+        client->_targets(uuid, payload.chunk_offset);
+
+    RawstorObjectBallot ballot = rawstor::ballot_from_wire(payload.ballot);
+    RawstorObjectBallot next = rawstor::ballot_from_wire(payload.next);
+    RawstorObjectConfig config = rawstor::config_from_wire(payload.config);
+    unsigned int flags =
+        (payload.flags & RAWSTOR_SYNC_FLAG_ALONE) != 0 ? RAWSTOR_SYNC_ALONE : 0;
+
+    // One copy, as for SET_CONFIG (_set_config()).
+    int result = 0;
+    RawstorObjectSyncReply reply{};
+    if (targets.size() != 1) {
+        result = -ENOSYS;
+    } else {
+        try {
+            std::string target = rawstd::URI::uris(targets);
+            rawstd::CallbackAwaitable<void> awaiter;
+            int res =
+                head.cmd == RAWSTOR_CMD_SYNC_PREPARE
+                    ? rawstor_target_sync_prepare(
+                          client->_queue, target.c_str(), payload.chunk_offset,
+                          0, &ballot, &reply, result_trampoline, &awaiter
+                      )
+                    : rawstor_target_sync_accept(
+                          client->_queue, target.c_str(), payload.chunk_offset,
+                          0, &ballot, &next, &config, flags, payload.sessions,
+                          &reply, result_trampoline, &awaiter
+                      );
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
+            co_await awaiter;
+        } catch (const std::system_error& e) {
+            result = -e.code().value();
+        }
+    }
+
+    bool send_failed = false;
+    try {
+        if (result < 0) {
+            co_await client->_send_response(head.cmd, head.cid, result, 0);
+        } else {
+            RawstorFrameSyncReplyPayload body_out{};
+            body_out.ok = reply.ok != 0 ? 1 : 0;
+            body_out.meta = rawstor::meta_to_wire(
+                reply.meta, chunk_size_to_shift(reply.meta.spec.chunk_size)
+            );
+            std::vector<unsigned char> data(sizeof(body_out));
+            memcpy(data.data(), &body_out, sizeof(body_out));
+            co_await client->_send_response(
+                head.cmd, head.cid, data.size(), 0, data
+            );
+        }
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
         send_failed = true;

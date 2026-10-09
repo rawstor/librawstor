@@ -161,14 +161,17 @@ protected:
     // record to this constant instead of guessing; nothing outside the
     // class hierarchy needs it, unlike meta_encode()/meta_decode()
     // themselves (public further down, for tests/).
-    static constexpr size_t META_MAX_SIZE = 512;
+    static constexpr size_t META_MAX_SIZE = 1024;
 
 public:
-    // What a copy's record holds besides its ChunkIdentity: its own state
-    // and the chunk's configuration as last set on it.
+    // What a copy's record holds besides its ChunkIdentity: its own state,
+    // and its replica of the chunk's configuration register -- the
+    // configuration as last set on it and the register's ballots.
     struct Record {
         RawstorObjectSyncStateValue state;
         RawstorObjectConfig config;
+        RawstorObjectBallot promised;
+        RawstorObjectBallot accepted;
     };
 
 protected:
@@ -219,9 +222,10 @@ public:
     // Encodes/decodes a Record plus a ChunkIdentity (the latter stamped at
     // create and never changed again) as a compact colon-separated string
     // of hex fields, the roles one digit per member (enum
-    // RawstorObjectMemberRole), "-" when none are recorded, e.g.
-    // "version=1:state=1:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:roles=-:
-    // member_role=0:width=0:chunk_size=0" -- shared by every blk-backed
+    // RawstorObjectMemberRole), "-" when none are recorded, and a ballot
+    // as "counter.proposer", e.g. "version=1:state=1:epoch=0:sync_id=0:
+    // h0=0:h1=0:h2=0:h3=0:resync_owner=0:promised=0.0:accepted=0.0:
+    // roles=-:member_role=0:width=0:chunk_size=0" -- shared by every blk-backed
     // subclass's own native per-copy metadata storage: lvm::Backend's LVM
     // tag, zfs::Backend's ZFS user property, and file::Backend's own
     // on-disk .meta file (NUL-padded out to META_MAX_SIZE bytes -- see
@@ -252,6 +256,18 @@ public:
 
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+    ) override final;
+
+    // The register's requests: read the record, apply the
+    // rawstd::caspaxos acceptor rules and write it back if they succeeded.
+    rawstd::Task<SyncReply> sync_prepare(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+    ) override final;
+
+    rawstd::Task<SyncReply> sync_accept(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config, unsigned int flags, uint32_t sessions
     ) override final;
 
     // No universal answer for a raw block device -- left pure virtual

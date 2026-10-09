@@ -315,13 +315,17 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
-        .config = {
-            .epoch = 0,
-            .sync_id = 0,
-            .sync_id_history = {},
-            .nroles = 0,
-            .roles = {},
-        },
+        .config =
+            {
+                .epoch = 0,
+                .sync_id = 0,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
     };
 
     // Left open for the whole test -- see server.hpp's Session::~Session()
@@ -470,13 +474,17 @@ TEST(ChunkTest, flush_flushes_the_write_it_waited_for) {
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
-        .config = {
-            .epoch = 0,
-            .sync_id = 0,
-            .sync_id_history = {},
-            .nroles = 0,
-            .roles = {},
-        },
+        .config =
+            {
+                .epoch = 0,
+                .sync_id = 0,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
     };
 
     // Left open for the whole test, see

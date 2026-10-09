@@ -488,6 +488,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_meta(
     ret.member_role = identity.member_role;
     ret.state = record.state;
     ret.config = record.config;
+    ret.promised = record.promised;
+    ret.accepted = record.accepted;
 
     co_return std::vector<RawstorObjectMeta>{ret};
 }

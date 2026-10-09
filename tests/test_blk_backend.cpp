@@ -421,10 +421,13 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     c.sync_id_history[1] = 1;
     c.sync_id_history[2] = 2;
     c.sync_id_history[3] = 3;
+    c.resync_owner = 0x77;
     c.nroles = 3;
     c.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
     c.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
     c.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    record.promised = {0x12, 0x34};
+    record.accepted = {0x56, 0x78};
 
     rawstor::blk::Backend::ChunkIdentity identity{};
     identity.member_role = RAWSTOR_MEMBER_WITNESS;
@@ -443,6 +446,11 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     for (size_t i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; ++i) {
         EXPECT_EQ(d.sync_id_history[i], c.sync_id_history[i]);
     }
+    EXPECT_EQ(d.resync_owner, 0x77u);
+    EXPECT_EQ(decoded.promised.counter, 0x12u);
+    EXPECT_EQ(decoded.promised.proposer, 0x34u);
+    EXPECT_EQ(decoded.accepted.counter, 0x56u);
+    EXPECT_EQ(decoded.accepted.proposer, 0x78u);
     ASSERT_EQ(d.nroles, 3);
     EXPECT_EQ(d.roles[0], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
     EXPECT_EQ(d.roles[1], RAWSTOR_OBJECT_MEMBER_SYNCING);
@@ -463,6 +471,9 @@ TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
     for (uint64_t& h : c.sync_id_history) {
         h = ~0ull;
     }
+    c.resync_owner = ~0ull;
+    record.promised = {~0ull, ~0ull};
+    record.accepted = {~0ull, ~0ull};
     c.nroles = RAWSTOR_OBJECT_MAX_WIDTH;
     for (uint8_t& r : c.roles) {
         r = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
@@ -519,7 +530,8 @@ TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
     EXPECT_THROW(
         rawstor::blk::Backend::meta_decode(
             "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
-            "roles=-:member_role=0:width=0:chunk_size=0",
+            "resync_owner=0:promised=0.0:accepted=0.0:roles=-:member_role=0:"
+            "width=0:chunk_size=0",
             &record, &identity
         ),
         std::system_error

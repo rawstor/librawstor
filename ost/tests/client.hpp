@@ -41,6 +41,8 @@ public:
     uint16_t send_meta(const RawstdUUID& id, uint64_t chunk_offset);
     uint16_t send_set_config(RawstorFrameSetConfig frame);
     uint16_t send_leave();
+    // SYNC_PREPARE/SYNC_ACCEPT (`frame.head.cmd`); the cid is filled in.
+    uint16_t send_sync(RawstorFrameSyncPropose frame);
     uint16_t
     send_write(uint64_t offset, const void* buf, size_t size, bool sync);
     uint16_t send_read(uint64_t offset, uint32_t size);

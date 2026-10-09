@@ -88,6 +88,8 @@ keep `0x0b`/`0x0c`.
 | `0x0d` | `CREATE_VERSION` | OST | Basic (`version_id` = new version) | — |
 | `0x0e` | `LIST_VERSIONS` | OST | Basic (`offset` = chunk offset) | Version rows |
 | `0x0f` | `LEAVE` | OST | Basic (unused) | — |
+| `0x10` | `SYNC_PREPARE` | OST | SyncPropose (`ballot` only) | SyncReply |
+| `0x11` | `SYNC_ACCEPT` | OST | SyncPropose | SyncReply |
 | `0x40` | `OBJ_CREATE` | MDS | ObjCreate | ObjCreated |
 | `0x41` | `OBJ_OPEN` | MDS | Basic (`version_id`, nil = live) | ObjDescriptor + chunks |
 | `0x42` | `OBJ_RESIZE` | MDS | ObjOp (`val` = new size) | ObjResized |
@@ -210,10 +212,11 @@ otherwise. `flags`:
      +-------------------------------------------+
 ```
 
-### Config — 304 bytes
+### Config — 312 bytes
 
-The chunk's configuration (`RawstorObjectConfig`): its sync set and every
-member's role, `nroles` entries of `enum RawstorObjectMemberRole` (0
+The chunk's configuration (`RawstorObjectConfig`): its sync set, the
+writer running the resync of the syncing member (`resync_owner`, 0 when
+none) and every member's role, `nroles` entries of `enum RawstorObjectMemberRole` (0
 unknown, 1 in-sync, 2 syncing, 3 excluded), the rest zero. Carried in
 SetConfig and Meta; see [mirroring](mirroring.md#states-and-roles).
 
@@ -228,21 +231,43 @@ SetConfig and Meta; see [mirroring](mirroring.md#states-and-roles).
      +---------------------------------------------------------------------------------------+
  16  |                            uint64_t sync_id_history[0..3]                             |
      |                                      (32 bytes)                                       |
+     +---------------------------------------------------------------------------------------+
+ 48  |                                 uint64_t resync_owner                                 |
+     |                                                                                       |
      +----------+----------------------------------------------------------------------------+
- 48  |  nroles  |                              uint8_t roles[255]                            |
+ 56  |  nroles  |                              uint8_t roles[255]                            |
      |          |                                    ...                                     |
      +----------+----------------------------------------------------------------------------+
-304
+312
 ```
 
-### SetConfig — 329 bytes
+### Ballot — 16 bytes
+
+A ballot of the configuration register (`RawstorObjectBallot`):
+`(counter, proposer)`, ordered by counter, then by proposer
+([CASPaxos](caspaxos.md)).
+
+```text
+     +0         +1         +2         +3         +4         +5         +6         +7
+     +---------------------------------------------------------------------------------------+
+  0  |                                   uint64_t counter                                    |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+  8  |                                   uint64_t proposer                                   |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+16
+```
+
+### SetConfig — 337 bytes
 
 Records the chunk's configuration on one copy (`SET_CONFIG`). The copy's
 own state is not set: the copy keeps it ([mirroring](mirroring.md#dirty-clean-and-lost)),
 but for `flags` bit 0, `RAWSTOR_CONFIG_CLEAR_LOST`, which turns a `LOST`
 copy `CLEAN` (no session open for writing) or `DIRTY`. A server with
 several locations keeps no record of the copy it is and answers `-ENOSYS`
-([mirroring](mirroring.md#one-copy-per-server)).
+([mirroring](mirroring.md#one-copy-per-server)). The copy's ballots stay
+as they are: only the register's own requests change them.
 
 `LEAVE` (Basic, unused) is a session's clean departure from the object it
 set: the server closes it cleanly, and a copy with no session open for
@@ -261,12 +286,46 @@ way -- disconnect, a new `SET_OBJECT` -- leaves a `DIRTY` copy `LOST`.
  16  |                                 uint64_t chunk_offset                                 |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
- 24  Config (304 bytes)
+ 24  Config (312 bytes)
      +----------+
-328  |  flags   |
+336  |  flags   |
      |          |
      +----------+
-329
+337
+```
+
+### SyncPropose — 373 bytes
+
+The two requests of a chunk's configuration register
+([multi-attach](multiattach.md#the-register-caspaxos),
+[CASPaxos](caspaxos.md)). `SYNC_PREPARE` asks the member to promise
+`ballot` and leaves the rest zero. `SYNC_ACCEPT` asks it to accept the
+register's value -- the Config -- under `ballot`, and to promise `next` on
+success (zero for none). `flags` bit 0 is `ALONE`: the member refuses with
+`-EBUSY` while more than `sessions` sessions have the copy open for
+writing, or while the copy is `LOST`. A server with several locations
+answers `-ENOSYS`.
+
+```text
+     +0         +1         +2         +3         +4         +5         +6         +7
+     +---------------------------------------------------------------------------------------+
+  0  |                                                                                       |
+     |                                 uint8_t object_id[16]                                 |
+     |                                                                                       |
+  8  |                                                                                       |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+ 16  |                                 uint64_t chunk_offset                                 |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+ 24  Ballot ballot (16 bytes)
+ 40  Ballot next (16 bytes)
+ 56  Config (312 bytes)
+     +-------------------------------------------+----------+
+368  |              uint32_t sessions            |  flags   |
+     |                                           |          |
+     +-------------------------------------------+----------+
+373
 ```
 
 ### Allocate — 44 bytes
@@ -339,13 +398,15 @@ in no particular order. An empty payload means the object has no versions
      +---------------------------------------------------------------------------------------+
 ```
 
-### Meta — 320 bytes
+### Meta — 360 bytes
 
 Everything about one stored copy: its size, its placement identity, its own
 state (`CLEAN`, `DIRTY`, `LOST`), how many sessions have it open for
 writing right now (`writers`), and the chunk's configuration as last set on
-it (a [Config](#config--304-bytes), at offset 16). A server with several
-locations reports a zero Config.
+it (a [Config](#config--312-bytes), at offset 16), and the copy's
+replica of the register's ballots: the highest it promised and the one
+its Config was accepted under. A server with several locations reports a
+zero Config and zero ballots.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -356,8 +417,25 @@ locations reports a zero Config.
   8  |  state   |  chunk_  |  width   | member_  |              uint32_t writers             |
      |          |  shift   |          |   role   |                                           |
      +----------+----------+----------+----------+-------------------------------------------+
- 16  Config (304 bytes)
-320
+ 16  Config (312 bytes)
+328  Ballot promised (16 bytes)
+344  Ballot accepted (16 bytes)
+360
+```
+
+### SyncReply — 361 bytes
+
+`SYNC_PREPARE`/`SYNC_ACCEPT`'s reply, sent whether the member promised or
+accepted (`ok` = 1) or refused (`ok` = 0): its whole record, a
+[Meta](#meta--360-bytes), follows at offset 1, so a refused proposer sees
+the actual value.
+
+```text
+     +0         +1
+     +----------+--------------------------------------
+  0  |    ok    |  Meta (360 bytes)
+     +----------+--------------------------------------
+361
 ```
 
 ### RawstorLocationInfo — 16 bytes
