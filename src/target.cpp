@@ -1167,6 +1167,18 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
         rawstd_error("Spec width (%u) is too large\n", sp.width);
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
+    // A chunk has at most RAWSTOR_OBJECT_MAX_WIDTH members (one role byte
+    // each), as Chunk::create() checks at open: none is created that could
+    // not be opened.
+    for (const std::vector<rawstd::URI>& uris : chunks) {
+        if (uris.size() > RAWSTOR_OBJECT_MAX_WIDTH) {
+            rawstd_error(
+                "Too many uris: %zu, at most %d\n", uris.size(),
+                RAWSTOR_OBJECT_MAX_WIDTH
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
     if (sp.failure_domain > UINT8_MAX) {
         rawstd_error(
             "Spec failure_domain (%u) is too large\n", sp.failure_domain
