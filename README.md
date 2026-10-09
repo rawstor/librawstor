@@ -8,6 +8,7 @@
 > [Protocol](docs/protocol.md) ·
 > [MDS design](docs/mds.md) ·
 > [Mirroring](docs/mirroring.md) ·
+> [Multi-attach](docs/multiattach.md) ·
 > [CASPaxos](docs/caspaxos.md)
 
 ## TL;DR

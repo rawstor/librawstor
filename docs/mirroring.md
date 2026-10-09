@@ -24,7 +24,7 @@ numbers its stages separately.
 | Online resync with in-memory bitmap, region locks, zero-region `write_zeroes` | 3 | ✅ | `src/chunk.cpp` (`RESYNC_CHUNK`) |
 | Reconnect probe and automatic rejoin of STALE mirrors | 3 | ✅ | `src/chunk.cpp` (`_probe_watch()`) |
 | Several writable opens in one process (multiqueue) | 3 | ✅ | `src/chunk.cpp` (`MirrorControl`), `tests/test_multiqueue.cpp` |
-| Several writer processes (multi-attach) | — | ❌ | — |
+| Several writer processes (multi-attach) | — | 🟡 | [Multi-attach](multiattach.md): stage 1 (protocol, member side) done, stage 2 (several processes) not |
 | `rawstor show -v` per-chunk / per-mirror state | — | ✅ | `cli/show.c` |
 | `rawstor resolve TARGET --winner=N [--offset]` | — | ✅ | `cli/resolve.c` |
 | Force-open below quorum (CLI / opts) | — | ❌ | — |
@@ -45,7 +45,7 @@ Error codes: open without quorum (including the case where every mirror is unrea
 
 ## Model and assumptions
 
-- **One writer process per object.** An object is a virtual disk used by one client process at a time (e.g. one VM via `rawstor-vhost` or the QEMU driver); multi-attach (several writer processes) is not supported. Enforcing exclusivity (leases / exclusive open) is out of scope and is assumed. Inside that process the object may be open for writing several times -- every virtqueue of a multiqueue `rawstor-vhost`/`rawstor-vduse` device opens it on its own thread -- and those opens act as one writer (*Writers*).
+- **One writer process per object.** An object is a virtual disk used by one client process at a time (e.g. one VM via `rawstor-vhost` or the QEMU driver); multi-attach (several writer processes) is not supported yet ([Multi-attach](multiattach.md)). Enforcing exclusivity (leases / exclusive open) is out of scope and is assumed. Inside that process the object may be open for writing several times -- every virtqueue of a multiqueue `rawstor-vhost`/`rawstor-vduse` device opens it on its own thread -- and those opens act as one writer (*Writers*).
 - **Overlapping writes in flight at once** (two writes to the same blocks, the second issued before the first completed, through one open or several) leave those blocks unspecified, and the copies may differ there: each copy applies them in its own order. A guest never relies on that (page-cache writeback never has two writes of one page in flight); it is the same contract a single disk gives racing O_DIRECT writes.
 - **Client-side replication.** The client fans out writes to all mirrors; OSTs do not know about each other and never talk to each other.
 - **Identity** means: after recovery completes, all IN-SYNC copies are byte-for-byte equal. Writes that were never acknowledged to the caller may land on any subset of copies or none (RAID1 write-hole semantics — the application must not rely on them).
@@ -126,7 +126,8 @@ never learn of. Any pairing occurs:
 
 The roles are in the order the writer lists the chunk's members (a plain
 target's URIs, an `mds://` chunk's placement), so a copy's own role is the
-entry at its own position in that order. The writer fills `roles` from its
+entry at its own position in that order; `SET_CONFIG` carries that
+position for its receiver. The writer fills `roles` from its
 members' states in every configuration it sets. An unreachable copy's
 record keeps whatever it last held, which is why only a copy's own role is
 read from its record, never another member's: a copy whose own role is
@@ -178,8 +179,11 @@ stores it on: the client counts it as one member, with one position in
 - **Several locations**: the server opens them as a mirror of its own,
   whose records hold that inner mirror's configuration. The copy the
   server is to its clients has no record of its own to keep, so the
-  server keeps none: it answers `SET_CONFIG` with `-ENOSYS` and reports no
-  configuration in `META` (`sync_id` 0, no roles). To a client that
+  server keeps none: it answers `SET_CONFIG`, `SYNC_PREPARE` and
+  `SYNC_ACCEPT` with `-ENOSYS`, reports no configuration in `META`
+  (`sync_id` 0, no roles, no ballots), and refuses writes stamped with an
+  epoch or flagged `RESYNC` with `-EOPNOTSUPP`
+  ([multi-attach](multiattach.md#epoch-on-writes)). To a client that
   mirrors across servers it is a copy without state tracking: next to an
   established sync set it reads as stale, and is resynced in full at
   every open. A client that does not mirror (one member) is unaffected.
