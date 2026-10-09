@@ -78,9 +78,8 @@ public:
     // close(); a session closed without it left uncleanly
     // (docs/mirroring.md, "DIRTY, CLEAN and LOST"): the copy, if DIRTY and
     // written through this session, becomes LOST. A clean departure of the
-    // last session open for writing marks the copy CLEAN instead. Default:
-    // nothing, for a backend that holds no copy of its own.
-    virtual rawstd::Task<void> leave();
+    // last session open for writing marks the copy CLEAN instead.
+    virtual rawstd::Task<void> leave() = 0;
 
     // `chunks`: overwritten with this page's own ChunkGroups, one per id,
     // each carrying every offset this backend holds for that id

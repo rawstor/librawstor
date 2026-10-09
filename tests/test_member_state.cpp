@@ -1,4 +1,5 @@
 #include "object.hpp"
+#include "object_env.hpp"
 #include "opts.h"
 #include "target.hpp"
 #include "tmp_dir.hpp"
@@ -12,9 +13,11 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 /*
  * A copy keeps its own DIRTY/CLEAN/LOST from the sessions writing it
@@ -188,4 +191,56 @@ TEST(MemberStateTest, set_config_keeps_the_state_and_records_roles) {
     EXPECT_EQ(meta.config.roles[1], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
 
     run(*queue, a->close());
+}
+
+// An mds:// object passes its writer's departure on to the chunks it
+// opens: a clean close leaves their copies CLEAN, an abandoned one LOST.
+// The OST marks a dropped session's copy as it notices the drop, on its
+// own thread, so the state is waited for.
+TEST(MemberStateTest, mds_object_passes_departure_to_its_chunks) {
+    rawstor::tests::ObjectEnv env(8830, 8831);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
+    rawstor::Target target(
+        {rawstd::URI(rawstd::URI(env.location()), id_string(new_id()))}
+    );
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .width = 1,
+        .chunk_size = 1u << 20,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    run(*queue, target.create(*queue, spec));
+
+    auto wait_state = [&](RawstorObjectSyncStateValue state) {
+        RawstorObjectSyncStateValue seen = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+        for (int i = 0; i < 500; ++i) {
+            seen = run(*queue, target.meta(*queue, 0)).front().state;
+            if (seen == state) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return seen;
+    };
+
+    std::unique_ptr<rawstor::Object> a = run(*queue, target.open(*queue, 0));
+    write_one(*queue, *a);
+    EXPECT_EQ(
+        wait_state(RAWSTOR_OBJECT_SYNC_STATE_DIRTY),
+        RAWSTOR_OBJECT_SYNC_STATE_DIRTY
+    );
+    run(*queue, a->close());
+    EXPECT_EQ(
+        wait_state(RAWSTOR_OBJECT_SYNC_STATE_CLEAN),
+        RAWSTOR_OBJECT_SYNC_STATE_CLEAN
+    );
+
+    std::unique_ptr<rawstor::Object> b = run(*queue, target.open(*queue, 0));
+    write_one(*queue, *b);
+    run(*queue, b->close(false));
+    EXPECT_EQ(
+        wait_state(RAWSTOR_OBJECT_SYNC_STATE_LOST),
+        RAWSTOR_OBJECT_SYNC_STATE_LOST
+    );
 }

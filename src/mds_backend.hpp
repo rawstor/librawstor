@@ -44,6 +44,9 @@ class Backend final : public rawstor::Backend {
 private:
     mds::Client _client;
     std::unique_ptr<Object> _object;
+    // leave() was called: close() closes the nested Object cleanly, so its
+    // chunks leave their members in turn.
+    bool _left;
 
     rawstd::Task<void> _connect() override;
 
@@ -183,6 +186,10 @@ public:
     ) override;
 
     rawstd::Task<void> close() override;
+
+    // The session's clean departure, passed on to the nested Object's
+    // chunks by close().
+    rawstd::Task<void> leave() override;
 
     rawstd::Task<size_t>
     pread(void* buf, size_t size, uint64_t offset) override;
