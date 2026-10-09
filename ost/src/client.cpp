@@ -2,6 +2,7 @@
 
 #include <ost/server.hpp>
 
+#include "object.hpp"
 #include "target.hpp"
 
 #include <rawio/queue.hpp>
@@ -182,9 +183,7 @@ rawstd::Task<void> co_object_close(RawstorObject* object, bool clean) {
     co_await awaiter;
 }
 
-// Shared by pread/pwrite -- both share the same result/error/data
-// callback shape (see co_object_flush()'s own flush_trampoline() below
-// for why flush isn't part of this group).
+// Adapts the read result/error callback to a coroutine.
 int io_trampoline(size_t result, int error, void* data) {
     static_cast<rawstd::CallbackAwaitable<size_t>*>(data)->complete(
         result, error
@@ -203,61 +202,6 @@ rawstd::Task<size_t> co_object_pread(
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
     co_return co_await awaiter;
-}
-
-rawstd::Task<size_t> co_object_pwrite(
-    RawstorObject* object, const void* buf, size_t size, uint64_t offset,
-    bool sync
-) {
-    rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawstor_object_pwrite(
-        object, buf, size, offset, sync, io_trampoline, &awaiter
-    );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_return co_await awaiter;
-}
-
-rawstd::Task<size_t>
-co_object_discard(RawstorObject* object, size_t size, uint64_t offset) {
-    rawstd::CallbackAwaitable<size_t> awaiter;
-    int res =
-        rawstor_object_discard(object, size, offset, io_trampoline, &awaiter);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_return co_await awaiter;
-}
-
-rawstd::Task<size_t> co_object_write_zeroes(
-    RawstorObject* object, size_t size, uint64_t offset, bool unmap, bool sync
-) {
-    rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawstor_object_write_zeroes(
-        object, size, offset, unmap, sync, io_trampoline, &awaiter
-    );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_return co_await awaiter;
-}
-
-// rawstor_object_flush()'s own callback shape (ssize_t result) -- there's
-// nothing else to report, unlike io_trampoline()'s pread/pwrite group
-// above.
-int flush_trampoline(ssize_t result, void* data) {
-    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
-    return 0;
-}
-
-rawstd::Task<void> co_object_flush(RawstorObject* object) {
-    rawstd::CallbackAwaitable<void> awaiter;
-    int res = rawstor_object_flush(object, flush_trampoline, &awaiter);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_await awaiter;
 }
 
 // rawio_close()'s callback delivers a single combined "0 or -errno"
@@ -782,7 +726,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
-                _flush(weak, head);
+                _flush(weak, head, basic.val);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -1484,17 +1428,14 @@ rawstd::DetachedTask Client::_set_config(
     if (targets.size() != 1) {
         result = -ENOSYS;
     } else {
+        // Through Target rather than the C API: the copy's position among
+        // the client's members goes along, not this server's own.
         try {
-            std::string target = rawstd::URI::uris(targets);
-            rawstd::CallbackAwaitable<void> awaiter;
-            int res = rawstor_target_set_member_config(
-                client->_queue, target.c_str(), payload.chunk_offset, 0,
-                &config, payload.flags, result_trampoline, &awaiter
+            rawstor::Target target(targets);
+            co_await target.set_member_config(
+                *static_cast<rawio::Queue*>(client->_queue),
+                payload.chunk_offset, 0, config, payload.flags, payload.position
             );
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
-            }
-            co_await awaiter;
         } catch (const std::system_error& e) {
             result = -e.code().value();
         }
@@ -1549,24 +1490,25 @@ rawstd::DetachedTask Client::_sync(
     if (targets.size() != 1) {
         result = -ENOSYS;
     } else {
+        // Through Target, as for SET_CONFIG.
         try {
-            std::string target = rawstd::URI::uris(targets);
-            rawstd::CallbackAwaitable<void> awaiter;
-            int res =
-                head.cmd == RAWSTOR_CMD_SYNC_PREPARE
-                    ? rawstor_target_sync_prepare(
-                          client->_queue, target.c_str(), payload.chunk_offset,
-                          0, &ballot, &reply, result_trampoline, &awaiter
-                      )
-                    : rawstor_target_sync_accept(
-                          client->_queue, target.c_str(), payload.chunk_offset,
-                          0, &ballot, &next, &config, flags, payload.sessions,
-                          &reply, result_trampoline, &awaiter
-                      );
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            rawstor::Target target(targets);
+            rawio::Queue& queue = *static_cast<rawio::Queue*>(client->_queue);
+            // GCC 11 ICE: no co_await in a declaration's initializer here
+            // (launch_sync_op_coro(), src/target.cpp).
+            rawstor::Backend::SyncReply r{};
+            if (head.cmd == RAWSTOR_CMD_SYNC_PREPARE) {
+                r = co_await target.sync_prepare(
+                    queue, payload.chunk_offset, 0, ballot
+                );
+            } else {
+                r = co_await target.sync_accept(
+                    queue, payload.chunk_offset, 0, ballot, next, config, flags,
+                    payload.sessions, payload.position
+                );
             }
-            co_await awaiter;
+            reply.ok = r.ok ? 1 : 0;
+            reply.meta = r.meta;
         } catch (const std::system_error& e) {
             result = -e.code().value();
         }
@@ -1716,9 +1658,9 @@ rawstd::DetachedTask Client::_set_object(
         memcpy(
             version_id.bytes, payload.version_id, sizeof(payload.version_id)
         );
-        target = rawstd::URI::uris(
-            client->_targets(uuid, payload.offset, version_id)
-        );
+        std::vector<rawstd::URI> targets =
+            client->_targets(uuid, payload.offset, version_id);
+        target = rawstd::URI::uris(targets);
     }
 
     RawstorObject* object = nullptr;
@@ -1896,15 +1838,15 @@ rawstd::DetachedTask Client::_write(
     }
 
     _dispatch_write(
-        weak, head, payload.offset, (payload.flags & RAWSTOR_FLAG_SYNC) != 0,
-        data
+        weak, head, payload.offset, payload.flags, payload.epoch, data
     );
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
 rawstd::DetachedTask Client::_dispatch_write(
     std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t offset,
-    bool sync, std::shared_ptr<std::vector<unsigned char>> data
+    uint8_t flags, uint64_t epoch,
+    std::shared_ptr<std::vector<unsigned char>> data
 ) {
     RawstorObject* object;
     {
@@ -1915,11 +1857,17 @@ rawstd::DetachedTask Client::_dispatch_write(
         object = client->_object;
     }
 
+    bool sync = (flags & RAWSTOR_FLAG_SYNC) != 0;
+
     size_t result = 0;
     int error = 0;
     try {
-        result = co_await co_object_pwrite(
-            object, data->data(), data->size(), offset, sync
+        if (object == nullptr) {
+            RAWSTD_THROW_SYSTEM_ERROR(EBADF);
+        }
+        result = co_await static_cast<rawstor::Object*>(object)->pwrite(
+            data->data(), data->size(), offset, sync, epoch,
+            (flags & RAWSTOR_FLAG_RESYNC) != 0
         );
     } catch (const std::system_error& e) {
         error = e.code().value();
@@ -1948,8 +1896,9 @@ rawstd::DetachedTask Client::_dispatch_write(
     }
 }
 
-rawstd::DetachedTask
-Client::_flush(std::weak_ptr<Client> weak, RawstorFrameHead head) {
+rawstd::DetachedTask Client::_flush(
+    std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t epoch
+) {
     RawstorObject* object;
     {
         std::shared_ptr<Client> client = weak.lock();
@@ -1976,7 +1925,10 @@ Client::_flush(std::weak_ptr<Client> weak, RawstorFrameHead head) {
 
     int error = 0;
     try {
-        co_await co_object_flush(object);
+        if (object == nullptr) {
+            RAWSTD_THROW_SYSTEM_ERROR(EBADF);
+        }
+        co_await static_cast<rawstor::Object*>(object)->flush(epoch);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -2033,8 +1985,12 @@ rawstd::DetachedTask Client::_discard(
     size_t result = 0;
     int error = 0;
     try {
-        result =
-            co_await co_object_discard(object, payload.len, payload.offset);
+        if (object == nullptr) {
+            RAWSTD_THROW_SYSTEM_ERROR(EBADF);
+        }
+        result = co_await static_cast<rawstor::Object*>(object)->discard(
+            payload.len, payload.offset, payload.epoch
+        );
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -2095,8 +2051,12 @@ rawstd::DetachedTask Client::_write_zeroes(
     size_t result = 0;
     int error = 0;
     try {
-        result = co_await co_object_write_zeroes(
-            object, payload.len, payload.offset, unmap, sync
+        if (object == nullptr) {
+            RAWSTD_THROW_SYSTEM_ERROR(EBADF);
+        }
+        result = co_await static_cast<rawstor::Object*>(object)->write_zeroes(
+            payload.len, payload.offset, unmap, sync, payload.epoch,
+            (payload.flags & RAWSTOR_FLAG_RESYNC) != 0
         );
     } catch (const std::system_error& e) {
         error = e.code().value();

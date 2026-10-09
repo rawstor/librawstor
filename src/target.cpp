@@ -942,7 +942,8 @@ rawstd::DetachedTask launch_set_member_config_op_coro(
     ssize_t result = 0;
     try {
         co_await t.set_member_config(
-            *queue, offset, member_index, config, flags
+            *queue, offset, member_index, config, flags,
+            static_cast<uint8_t>(member_index)
         );
     } catch (const std::system_error& e) {
         result = -e.code().value();
@@ -1010,7 +1011,8 @@ rawstd::Task<rawstor::Backend::SyncReply> sync_accept_coro(
     RawstorObjectConfig config, unsigned int flags, uint32_t sessions
 ) {
     co_return co_await t.sync_accept(
-        *queue, offset, member_index, ballot, next, config, flags, sessions
+        *queue, offset, member_index, ballot, next, config, flags, sessions,
+        static_cast<uint8_t>(member_index)
     );
 }
 
@@ -1590,7 +1592,7 @@ rawstd::Task<rawstd::URI> Target::_member_location(
 
 rawstd::Task<void> Target::set_member_config(
     rawio::Queue& queue, uint64_t offset, size_t member_index,
-    RawstorObjectConfig config, unsigned int flags
+    RawstorObjectConfig config, unsigned int flags, uint8_t position
 ) const {
     rawstd::URI location =
         co_await _member_location(queue, offset, member_index);
@@ -1600,7 +1602,7 @@ rawstd::Task<void> Target::set_member_config(
         co_await rawstor::Slot::create(queue, location);
     std::exception_ptr error;
     try {
-        co_await slot->set_config(id, offset, config, flags);
+        co_await slot->set_config(id, offset, config, flags, position);
     } catch (...) {
         error = std::current_exception();
     }
@@ -1637,7 +1639,8 @@ rawstd::Task<Backend::SyncReply> Target::sync_prepare(
 rawstd::Task<Backend::SyncReply> Target::sync_accept(
     rawio::Queue& queue, uint64_t offset, size_t member_index,
     RawstorObjectBallot ballot, RawstorObjectBallot next,
-    RawstorObjectConfig config, unsigned int flags, uint32_t sessions
+    RawstorObjectConfig config, unsigned int flags, uint32_t sessions,
+    uint8_t position
 ) const {
     rawstd::URI location =
         co_await _member_location(queue, offset, member_index);
@@ -1649,7 +1652,7 @@ rawstd::Task<Backend::SyncReply> Target::sync_accept(
     std::exception_ptr error;
     try {
         reply = co_await slot->sync_accept(
-            id, offset, ballot, next, config, flags, sessions
+            id, offset, ballot, next, config, flags, sessions, position
         );
     } catch (...) {
         error = std::current_exception();

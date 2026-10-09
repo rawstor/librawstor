@@ -41,18 +41,21 @@ private:
     rawstd::Task<void> _depart(std::shared_ptr<Backend> be);
     rawstd::Task<void> _lose_backend(std::shared_ptr<Backend> be);
 
+    class Admission;
+    class Resync;
+
     rawstd::Task<void> _set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags
+        const RawstorObjectConfig& config, unsigned int flags, uint8_t position
     );
-
     rawstd::Task<Backend::SyncReply> _sync_prepare(
         const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
     );
     rawstd::Task<Backend::SyncReply> _sync_accept(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config, unsigned int flags, uint32_t sessions
+        const RawstorObjectConfig& config, unsigned int flags,
+        uint32_t sessions, uint8_t position
     );
 
     // Set by open() (see its own doc comment) -- unset means this
@@ -204,7 +207,7 @@ public:
 
     rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags
+        const RawstorObjectConfig& config, unsigned int flags, uint8_t position
     );
 
     rawstd::Task<Backend::SyncReply> sync_prepare(
@@ -214,7 +217,8 @@ public:
     rawstd::Task<Backend::SyncReply> sync_accept(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config, unsigned int flags, uint32_t sessions
+        const RawstorObjectConfig& config, unsigned int flags,
+        uint32_t sessions, uint8_t position
     );
 
     // The writer's clean departure from this member's session
@@ -258,20 +262,25 @@ public:
     rawstd::Task<size_t>
     preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset);
 
-    rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, uint64_t offset, bool sync);
+    rawstd::Task<size_t> pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync,
+        uint64_t epoch = 0, bool resync = false
+    );
 
     rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync
     );
 
-    rawstd::Task<size_t> discard(size_t size, uint64_t offset);
-
     rawstd::Task<size_t>
-    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync);
+    discard(size_t size, uint64_t offset, uint64_t epoch = 0);
 
-    rawstd::Task<void> flush();
+    rawstd::Task<size_t> write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0,
+        bool resync = false
+    );
+
+    rawstd::Task<void> flush(uint64_t epoch = 0);
 };
 
 } // namespace rawstor

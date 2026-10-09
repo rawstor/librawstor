@@ -42,10 +42,11 @@ rawstd::Task<size_t> SingleChunkObject::preadv(
 }
 
 rawstd::Task<size_t> SingleChunkObject::pwrite(
-    const void* buf, size_t size, uint64_t offset, bool sync
+    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch,
+    bool resync
 ) {
     _check_range(offset, size);
-    co_return co_await _chunk->pwrite(buf, size, offset, sync);
+    co_return co_await _chunk->pwrite(buf, size, offset, sync, epoch, resync);
 }
 
 rawstd::Task<size_t> SingleChunkObject::pwritev(
@@ -55,20 +56,24 @@ rawstd::Task<size_t> SingleChunkObject::pwritev(
     co_return co_await _chunk->pwritev(iov, niov, size, offset, sync);
 }
 
-rawstd::Task<size_t> SingleChunkObject::discard(size_t size, uint64_t offset) {
+rawstd::Task<size_t>
+SingleChunkObject::discard(size_t size, uint64_t offset, uint64_t epoch) {
     _check_range(offset, size);
-    co_return co_await _chunk->discard(size, offset);
+    co_return co_await _chunk->discard(size, offset, epoch);
 }
 
 rawstd::Task<size_t> SingleChunkObject::write_zeroes(
-    size_t size, uint64_t offset, bool unmap, bool sync
+    size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch,
+    bool resync
 ) {
     _check_range(offset, size);
-    co_return co_await _chunk->write_zeroes(size, offset, unmap, sync);
+    co_return co_await _chunk->write_zeroes(
+        size, offset, unmap, sync, epoch, resync
+    );
 }
 
-rawstd::Task<void> SingleChunkObject::flush() {
-    co_await _chunk->flush();
+rawstd::Task<void> SingleChunkObject::flush(uint64_t epoch) {
+    co_await _chunk->flush(epoch);
 }
 
 rawstd::Task<void> SingleChunkObject::close(bool clean) {
@@ -284,8 +289,13 @@ MultiChunkObject::pread(void* buf, size_t size, uint64_t offset) {
 }
 
 rawstd::Task<size_t> MultiChunkObject::pwrite(
-    const void* buf, size_t size, uint64_t offset, bool sync
+    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch,
+    bool resync
 ) {
+    if (epoch != 0 || resync) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    }
+
     _check_range(offset, size);
 
     uint32_t index;
@@ -333,7 +343,12 @@ rawstd::Task<size_t> MultiChunkObject::pwritev(
     co_return co_await _rwv_segments(segments, true, sync, iov, niov, size);
 }
 
-rawstd::Task<size_t> MultiChunkObject::discard(size_t size, uint64_t offset) {
+rawstd::Task<size_t>
+MultiChunkObject::discard(size_t size, uint64_t offset, uint64_t epoch) {
+    if (epoch != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    }
+
     _check_range(offset, size);
 
     uint32_t index;
@@ -362,8 +377,13 @@ rawstd::Task<size_t> MultiChunkObject::discard(size_t size, uint64_t offset) {
 }
 
 rawstd::Task<size_t> MultiChunkObject::write_zeroes(
-    size_t size, uint64_t offset, bool unmap, bool sync
+    size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch,
+    bool resync
 ) {
+    if (epoch != 0 || resync) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    }
+
     _check_range(offset, size);
 
     uint32_t index;
@@ -394,7 +414,11 @@ rawstd::Task<size_t> MultiChunkObject::write_zeroes(
     co_return total;
 }
 
-rawstd::Task<void> MultiChunkObject::flush() {
+rawstd::Task<void> MultiChunkObject::flush(uint64_t epoch) {
+    if (epoch != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    }
+
     std::vector<Chunk*> chunks = _open_chunks();
     co_await rawstd::gather(chunks.size(), [&](size_t i) {
         return chunks[i]->flush();

@@ -202,7 +202,7 @@ rawstd::Task<void> Backend::set_state(
 
 rawstd::Task<void> Backend::set_config(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int
+    unsigned int, uint8_t
 ) {
     RawstorObjectMeta meta{};
     meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
@@ -235,7 +235,7 @@ rawstd::Task<Backend::SyncReply> Backend::sync_prepare(
 rawstd::Task<Backend::SyncReply> Backend::sync_accept(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot&,
     const RawstorObjectBallot&, const RawstorObjectConfig&, unsigned int,
-    uint32_t, const SyncReply& proposed
+    uint32_t, uint8_t, const SyncReply& proposed
 ) {
     if (proposed.ok) {
         co_await _write_meta(
@@ -327,7 +327,7 @@ void Backend::meta_decode(
     *promised = RawstorObjectBallot{};
     *accepted = RawstorObjectBallot{};
     *identity = ChunkIdentity{};
-    RawstorObjectConfig& c = (*config);
+    RawstorObjectConfig& c = *config;
     unsigned int version = 0;
     unsigned int parsed_state = 0;
     unsigned int member_role = 0;
@@ -367,7 +367,7 @@ void Backend::meta_decode(
         }
     }
     c.nroles = static_cast<uint8_t>(nroles);
-    (*state) = static_cast<RawstorObjectSyncStateValue>(parsed_state);
+    *state = static_cast<RawstorObjectSyncStateValue>(parsed_state);
     identity->member_role = static_cast<RawstorMemberRole>(member_role);
     identity->width = static_cast<uint8_t>(width);
 }
@@ -395,8 +395,10 @@ Backend::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
     );
 }
 
-rawstd::Task<size_t>
-Backend::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
+rawstd::Task<size_t> Backend::pwrite(
+    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t, bool
+) {
+
     rawstd_debug(
         "%s(): fd = %d, size = %zu, offset = %" PRIu64 ", sync = %d\n",
         __FUNCTION__, fd(), size, offset, sync
@@ -440,7 +442,8 @@ rawstd::Task<size_t> Backend::pwritev(
     co_return result;
 }
 
-rawstd::Task<size_t> Backend::discard(size_t size, uint64_t offset) {
+rawstd::Task<size_t> Backend::discard(size_t size, uint64_t offset, uint64_t) {
+
     rawstd_debug(
         "%s(): fd = %d, size = %zu, offset = %" PRIu64 "\n", __FUNCTION__, fd(),
         size, offset
@@ -466,8 +469,10 @@ rawstd::Task<size_t> Backend::discard(size_t size, uint64_t offset) {
     co_return size;
 }
 
-rawstd::Task<size_t>
-Backend::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
+rawstd::Task<size_t> Backend::write_zeroes(
+    size_t size, uint64_t offset, bool unmap, bool sync, uint64_t, bool
+) {
+
     rawstd_debug(
         "%s(): fd = %d, size = %zu, offset = %" PRIu64
         ", unmap = %d, sync = %d\n",
@@ -497,7 +502,8 @@ Backend::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
     co_return size;
 }
 
-rawstd::Task<void> Backend::flush() {
+rawstd::Task<void> Backend::flush(uint64_t) {
+
     rawstd_debug("%s(): fd = %d\n", __FUNCTION__, fd());
 
     co_await _queue.fsync(fd(), /*datasync=*/true);

@@ -1,6 +1,7 @@
 #include "object.hpp"
 #include "object_env.hpp"
 #include "opts.h"
+#include "slot.hpp"
 #include "target.hpp"
 #include "tmp_dir.hpp"
 
@@ -20,7 +21,10 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
+
+#include <cerrno>
 
 /*
  * A copy keeps its own DIRTY/CLEAN/LOST from the sessions writing it
@@ -151,13 +155,13 @@ TEST(MemberStateTest, abandoned_writer_loses_the_copy) {
     write_one(*queue, *b);
     RawstorObjectConfig config = f.meta(*queue).config;
     config.epoch += 1;
-    run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0));
+    run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0, 0));
     run(*queue, b->close());
     EXPECT_EQ(f.meta(*queue).state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
 
     // Only an explicit clear does.
     run(*queue, f.target.set_member_config(
-                    *queue, 0, 0, config, RAWSTOR_CONFIG_CLEAR_LOST
+                    *queue, 0, 0, config, RAWSTOR_CONFIG_CLEAR_LOST, 0
                 ));
     EXPECT_EQ(f.meta(*queue).state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 }
@@ -188,7 +192,7 @@ TEST(MemberStateTest, set_config_keeps_the_state_and_records_roles) {
     config.nroles = 2;
     config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
     config.roles[1] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
-    run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0));
+    run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0, 0));
 
     RawstorObjectMeta meta = f.meta(*queue);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
@@ -252,6 +256,37 @@ TEST(MemberStateTest, mds_object_passes_departure_to_its_chunks) {
     );
 }
 
+// A writer that dropped its session may be deciding alone on the other
+// member of two: a LOST copy refuses to decide alone (docs/multiattach.md,
+// "N = 2").
+TEST(MemberStateTest, lost_copy_refuses_to_decide_alone) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
+    MemberObject f;
+    f.create(*queue);
+
+    std::unique_ptr<rawstor::Object> a = run(*queue, f.target.open(*queue, 0));
+    write_one(*queue, *a);
+    run(*queue, a->close(false));
+    ASSERT_EQ(f.meta(*queue).state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+
+    RawstorObjectConfig config = f.meta(*queue).config;
+    config.epoch += 1;
+    try {
+        run(*queue,
+            f.target.sync_accept(
+                *queue, 0, 0, {1, 0x77}, {}, config, RAWSTOR_SYNC_ALONE, 0, 0
+            ));
+        FAIL() << "accepted alone on a LOST copy";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EBUSY);
+    }
+
+    rawstor::Backend::SyncReply reply =
+        run(*queue,
+            f.target.sync_accept(*queue, 0, 0, {1, 0x77}, {}, config, 0, 0, 0));
+    EXPECT_TRUE(reply.ok);
+}
+
 // Each writer has its own thread and Queue; metadata uses a third Slot.
 // Phase barriers let us inspect completed operations without timing probes.
 namespace {
@@ -275,7 +310,7 @@ void expect_clear_lost_with_writer(MemberObject& f) {
     RawstorObjectConfig config = meta.config;
     ++config.epoch;
     run(*queue, f.target.set_member_config(
-                    *queue, 0, 0, config, RAWSTOR_CONFIG_CLEAR_LOST
+                    *queue, 0, 0, config, RAWSTOR_CONFIG_CLEAR_LOST, 0
                 ));
     meta = f.meta(*queue);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
@@ -330,9 +365,9 @@ void expect_thread_shared_copy_state(MemberObject& f) {
             config.sync_id = 0x44;
             config.nroles = 1;
             config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
-            EXPECT_NO_THROW(
-                run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0))
-            );
+            EXPECT_NO_THROW(run(
+                *queue, f.target.set_member_config(*queue, 0, 0, config, 0, 0)
+            ));
         }
         phase.arrive_and_wait();
         EXPECT_NO_THROW({
@@ -390,6 +425,149 @@ TEST(MemberStateTest, ost_threads_share_copy_state_and_metadata_transitions) {
     expect_thread_shared_copy_state(f);
 }
 
+namespace {
+
+void expect_copy_write_requests(const rawstd::URI& location) {
+    auto queue = rawio::Queue::create(16);
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    RawstdUUIDString id_string;
+    rawstd_uuid_to_string(&id, &id_string);
+    rawstor::Target target({rawstd::URI(location, id_string)});
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .width = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    run(*queue, target.create(*queue, spec));
+    auto writer = run(*queue, rawstor::Slot::create(*queue, location));
+    auto peer = run(*queue, rawstor::Slot::create(*queue, location));
+    run(*queue, writer->open(id, 0, 0, RawstdUUID{}));
+    run(*queue, peer->open(id, 0, 0, RawstdUUID{}));
+
+    auto expect_stale = [&](rawstd::Task<size_t> task) {
+        try {
+            run(*queue, std::move(task));
+            ADD_FAILURE() << "stale request accepted";
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), ESTALE);
+        }
+    };
+    RawstorObjectConfig config{};
+    config.epoch = 5;
+    config.nroles = 1;
+    config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    run(*queue, peer->set_config(id, 0, config, 0, 0));
+    std::string client_data(512, 'W');
+    expect_stale(
+        writer->pwrite(client_data.data(), client_data.size(), 512, false, 4)
+    );
+    expect_stale(writer->discard(512, 0, 4));
+    expect_stale(writer->write_zeroes(512, 0, false, false, 4));
+    try {
+        run(*queue, writer->flush(4));
+        ADD_FAILURE() << "stale flush accepted";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ESTALE);
+    }
+    // RESYNC needs a copy currently tracking client writes.
+    expect_stale(writer->pwrite(
+        client_data.data(), client_data.size(), 0, false, 5, true
+    ));
+
+    config.epoch = 7;
+    config.roles[0] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+    run(*queue, peer->set_config(id, 0, config, 0, 0));
+    ASSERT_EQ(
+        run(*queue, writer->pwrite(
+                        client_data.data(), client_data.size(), 512, false, 7
+                    )),
+        client_data.size()
+    );
+    // Partial-sector client writes do not protect the whole sector.
+    ASSERT_EQ(
+        run(*queue, writer->pwrite(client_data.data(), 10, 1636, false, 7)), 10u
+    );
+    std::string repair(2048, 'R');
+    ASSERT_EQ(
+        run(*queue,
+            peer->pwrite(repair.data(), repair.size(), 0, false, 7, true)),
+        repair.size()
+    );
+    std::string data(2048, '\0');
+    ASSERT_EQ(
+        run(*queue, writer->pread(data.data(), data.size(), 0)), data.size()
+    );
+    EXPECT_EQ(
+        data, std::string(512, 'R') + client_data + std::string(1024, 'R')
+    );
+    ASSERT_EQ(
+        run(*queue, peer->write_zeroes(data.size(), 0, false, false, 7, true)),
+        data.size()
+    );
+    ASSERT_EQ(
+        run(*queue, writer->pread(data.data(), data.size(), 0)), data.size()
+    );
+    EXPECT_EQ(
+        data, std::string(512, '\0') + client_data + std::string(1024, '\0')
+    );
+
+    // Raising the configuration on another open preserves admitted data.
+    std::string block(4096, 'A');
+    auto written = writer->pwrite(block.data(), block.size(), 4096, false, 7);
+    bool remote = location.scheme() == "ost";
+    if (remote) {
+        // A second connection may deliver SET_CONFIG before the first
+        // connection has delivered this write. Await its acknowledgement.
+        EXPECT_EQ(run(*queue, std::move(written)), block.size());
+    }
+    config.epoch = 9;
+    config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    run(*queue, peer->set_config(id, 0, config, 0, 0));
+    std::string actual(block.size(), '\0');
+    ASSERT_EQ(
+        run(*queue, peer->pread(actual.data(), actual.size(), 4096)),
+        actual.size()
+    );
+    EXPECT_EQ(actual, block);
+    if (!remote) {
+        EXPECT_EQ(run(*queue, std::move(written)), block.size());
+    }
+    expect_stale(
+        writer->pwrite(client_data.data(), client_data.size(), 0, false, 7)
+    );
+    expect_stale(peer->pwrite(repair.data(), repair.size(), 0, false, 9, true));
+    EXPECT_EQ(
+        run(*queue, writer->pwrite(
+                        client_data.data(), client_data.size(), 0, false, 0
+                    )),
+        client_data.size()
+    );
+    run(*queue, writer->flush(9));
+    run(*queue, peer->flush(9));
+    run(*queue, writer->leave());
+    run(*queue, peer->leave());
+    run(*queue, writer->close());
+    run(*queue, peer->close());
+    auto meta = run(*queue, target.meta(*queue, 0)).front();
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(meta.writers, 0u);
+}
+
+} // namespace
+
+TEST(MemberStateTest, shared_copy_fences_and_preserves_client_sectors) {
+    rawstor::tests::TmpDir dir;
+    expect_copy_write_requests(rawstd::URI(dir.uri()));
+}
+
+TEST(MemberStateTest, ost_forwards_copy_write_requests_to_slot) {
+    rawstor::tests::ObjectEnv env(8796, 8797);
+    expect_copy_write_requests(rawstd::URI("ost://127.0.0.1:8797"));
+}
+
 TEST(MemberStateTest, clear_lost_keeps_an_open_writer_dirty) {
     MemberObject f;
     expect_clear_lost_with_writer(f);
@@ -399,35 +577,4 @@ TEST(MemberStateTest, ost_clear_lost_keeps_an_open_writer_dirty) {
     rawstor::tests::ObjectEnv env(8786, 8787);
     MemberObject f(rawstd::URI("ost://127.0.0.1:8787"));
     expect_clear_lost_with_writer(f);
-}
-
-// A writer that dropped its session may be deciding alone on the other
-// member of two: a LOST copy refuses to decide alone (docs/multiattach.md,
-// "N = 2").
-TEST(MemberStateTest, lost_copy_refuses_to_decide_alone) {
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
-    MemberObject f;
-    f.create(*queue);
-
-    std::unique_ptr<rawstor::Object> a = run(*queue, f.target.open(*queue, 0));
-    write_one(*queue, *a);
-    run(*queue, a->close(false));
-    ASSERT_EQ(f.meta(*queue).state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
-
-    RawstorObjectConfig config = f.meta(*queue).config;
-    config.epoch += 1;
-    try {
-        run(*queue,
-            f.target.sync_accept(
-                *queue, 0, 0, {1, 0x77}, {}, config, RAWSTOR_SYNC_ALONE, 0
-            ));
-        FAIL() << "accepted alone on a LOST copy";
-    } catch (const std::system_error& e) {
-        EXPECT_EQ(e.code().value(), EBUSY);
-    }
-
-    rawstor::Backend::SyncReply reply =
-        run(*queue,
-            f.target.sync_accept(*queue, 0, 0, {1, 0x77}, {}, config, 0, 0));
-    EXPECT_TRUE(reply.ok);
 }

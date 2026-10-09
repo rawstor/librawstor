@@ -1447,7 +1447,7 @@ rawstd::Task<void> Chunk::_set_config_one(
         co_return;
     }
     try {
-        co_await _members[idx].slot->set_config(_id, _offset, config, 0);
+        co_await _members[idx].slot->set_config(_id, _offset, config, 0, idx);
     } catch (const std::system_error& e) {
         int error = e.code().value();
         if (error == ENOSYS) {
@@ -1861,7 +1861,7 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
 
         int error = 0;
         try {
-            co_await _members[idx].slot->set_config(_id, _offset, m, 0);
+            co_await _members[idx].slot->set_config(_id, _offset, m, 0, idx);
         } catch (const std::system_error& e) {
             error = e.code().value();
         }
@@ -2252,7 +2252,7 @@ rawstd::Task<void> Chunk::_resync_finish(uint64_t generation) {
 
     int error = 0;
     try {
-        co_await _members[idx].slot->set_config(_id, _offset, m, 0);
+        co_await _members[idx].slot->set_config(_id, _offset, m, 0, idx);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -2664,8 +2664,25 @@ Chunk::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
     }
 }
 
-rawstd::Task<size_t>
-Chunk::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
+rawstd::Task<size_t> Chunk::pwrite(
+    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch,
+    bool resync
+) {
+    if (epoch != 0 || resync) {
+        if (_members.size() != 1) {
+            RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+        }
+        if (_readonly) {
+            RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+        }
+        WriteTicket ticket(*this);
+        size_t result = co_await _members.front().slot->pwrite(
+            buf, size, offset, sync, epoch, resync
+        );
+        _unflushed = true;
+        co_return result;
+    }
+
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pwrite(): size = %zu, offset = %" PRIu64 ", sync = %d\n", size,
         offset, sync
@@ -2682,8 +2699,9 @@ Chunk::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
         co_await _with_dirty();
         size_t result = co_await _fan_out_write(
             offset, size,
-            [buf, size, offset, sync](Slot& slot) -> rawstd::Task<size_t> {
-                return slot.pwrite(buf, size, offset, sync);
+            [buf, size, offset, sync, epoch,
+             resync](Slot& slot) -> rawstd::Task<size_t> {
+                return slot.pwrite(buf, size, offset, sync, epoch, resync);
             }
         );
         _unflushed = true;
@@ -2738,7 +2756,22 @@ rawstd::Task<size_t> Chunk::pwritev(
     }
 }
 
-rawstd::Task<size_t> Chunk::discard(size_t size, uint64_t offset) {
+rawstd::Task<size_t>
+Chunk::discard(size_t size, uint64_t offset, uint64_t epoch) {
+    if (epoch != 0) {
+        if (_members.size() != 1) {
+            RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+        }
+        if (_readonly) {
+            RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+        }
+        WriteTicket ticket(*this);
+        size_t result =
+            co_await _members.front().slot->discard(size, offset, epoch);
+        _unflushed = true;
+        co_return result;
+    }
+
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "discard(): size = %zu, offset = %" PRIu64 "\n", size, offset
     );
@@ -2763,8 +2796,8 @@ rawstd::Task<size_t> Chunk::discard(size_t size, uint64_t offset) {
     // other in-sync member, purely for its own space-accounting consistency.
     try {
         size_t result = co_await _fan_out_write(
-            0, 0, [size, offset](Slot& slot) -> rawstd::Task<size_t> {
-                return slot.discard(size, offset);
+            0, 0, [size, offset, epoch](Slot& slot) -> rawstd::Task<size_t> {
+                return slot.discard(size, offset, epoch);
             }
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
@@ -2780,8 +2813,25 @@ rawstd::Task<size_t> Chunk::discard(size_t size, uint64_t offset) {
     }
 }
 
-rawstd::Task<size_t>
-Chunk::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
+rawstd::Task<size_t> Chunk::write_zeroes(
+    size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch,
+    bool resync
+) {
+    if (epoch != 0 || resync) {
+        if (_members.size() != 1) {
+            RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+        }
+        if (_readonly) {
+            RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+        }
+        WriteTicket ticket(*this);
+        size_t result = co_await _members.front().slot->write_zeroes(
+            size, offset, unmap, sync, epoch, resync
+        );
+        _unflushed = true;
+        co_return result;
+    }
+
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o',
         "write_zeroes(): size = %zu, offset = %" PRIu64
@@ -2800,8 +2850,11 @@ Chunk::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
         co_await _with_dirty();
         size_t result = co_await _fan_out_write(
             offset, size,
-            [size, offset, unmap, sync](Slot& slot) -> rawstd::Task<size_t> {
-                return slot.write_zeroes(size, offset, unmap, sync);
+            [size, offset, unmap, sync, epoch,
+             resync](Slot& slot) -> rawstd::Task<size_t> {
+                return slot.write_zeroes(
+                    size, offset, unmap, sync, epoch, resync
+                );
             }
         );
         _unflushed = true;
@@ -2818,7 +2871,21 @@ Chunk::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
     }
 }
 
-rawstd::Task<void> Chunk::flush() {
+rawstd::Task<void> Chunk::flush(uint64_t epoch) {
+    if (epoch != 0) {
+        if (_members.size() != 1) {
+            RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+        }
+        co_await _flush_barrier.at_least(_writes_issued);
+        co_await _members.front().slot->flush(epoch);
+        _unflushed = false;
+        co_return;
+    }
+
+    if ((epoch != 0) && _members.size() != 1) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    }
+
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "flush()");
 
     // Capturing _writes_issued now, rather than just waiting for

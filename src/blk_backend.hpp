@@ -78,8 +78,7 @@ public:
     // A chunk's own placement identity (docs/mds.md, chunk_meta), minus
     // size and mutable copy metadata: stamped at create, immutable afterwards,
     // persisted alongside the copy metadata by meta_encode()/meta_decode()
-    // below
-    // -- _write_meta() must read the existing record and carry this
+    // below. _write_meta() must read the existing record and carry this
     // part through unchanged rather than reset it, since it never
     // receives this identity itself. chunk_size here is always the full
     // byte value -- RawstorFrameAllocatePayload's own chunk_shift is
@@ -215,7 +214,7 @@ public:
 
     rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags
+        const RawstorObjectConfig& config, unsigned int flags, uint8_t position
     ) override final;
 
     rawstd::Task<SyncReply> sync_prepare(
@@ -227,7 +226,7 @@ public:
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
         const RawstorObjectConfig& config, unsigned int flags,
-        uint32_t sessions, const SyncReply& proposed
+        uint32_t sessions, uint8_t position, const SyncReply& proposed
     ) override final;
 
     rawstd::Task<size_t>
@@ -238,7 +237,8 @@ public:
     ) override final;
 
     rawstd::Task<size_t> pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync
+        const void* buf, size_t size, uint64_t offset, bool sync,
+        uint64_t epoch = 0, bool resync = false
     ) override final;
 
     rawstd::Task<size_t> pwritev(
@@ -246,13 +246,15 @@ public:
         bool sync
     ) override final;
 
-    rawstd::Task<size_t> discard(size_t size, uint64_t offset) override final;
+    rawstd::Task<size_t>
+    discard(size_t size, uint64_t offset, uint64_t epoch = 0) override final;
 
     rawstd::Task<size_t> write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0,
+        bool resync = false
     ) override final;
 
-    rawstd::Task<void> flush() override final;
+    rawstd::Task<void> flush(uint64_t epoch = 0) override final;
 
     // For tests/ to verify write-throttling (see pwrite()/pwritev() and
     // _throttle_acquire()) without depending on real storage-completion

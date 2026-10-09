@@ -308,7 +308,7 @@ TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_offset) {
     RawstorObjectConfig config = metas[0].config;
     config.epoch += 1;
     config.sync_id = 0x1234;
-    run(*queue, target.set_member_config(*queue, chunk_size, 0, config, 0));
+    run(*queue, target.set_member_config(*queue, chunk_size, 0, config, 0, 0));
 
     metas = run(*queue, target.meta(*queue, chunk_size));
     ASSERT_EQ(metas.size(), 1u);
@@ -328,7 +328,7 @@ TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_offset) {
     }
     try {
         run(*queue,
-            target.set_member_config(*queue, 3 * chunk_size, 0, config, 0));
+            target.set_member_config(*queue, 3 * chunk_size, 0, config, 0, 0));
         ADD_FAILURE()
             << "set_member_config() at an offset with no chunk succeeded";
     } catch (const std::system_error& e) {

@@ -337,6 +337,7 @@ public:
                     .hash = 0,
                     .len = (uint32_t)_size,
                     .flags = 0,
+                    .epoch = 0,
                 },
         }),
         _hash(0) {}
@@ -419,6 +420,7 @@ public:
                     .hash = 0,
                     .len = (uint32_t)_size,
                     .flags = 0,
+                    .epoch = 0,
                 },
         }),
         _hash(0) {}
@@ -479,7 +481,7 @@ public:
     BackendOpWrite(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const void* buf, size_t size, uint64_t offset, bool sync,
-        const rawstd::TraceEvent& trace_event
+        const rawstd::TraceEvent& trace_event, uint64_t epoch, bool resync
     ) :
         BackendOp(backend, cid, trace_event, "pwrite", size, offset),
         _request({
@@ -493,7 +495,11 @@ public:
                 .offset = (uint64_t)offset,
                 .hash = hash(buf, size),
                 .len = (uint32_t)size,
-                .flags = static_cast<uint8_t>(sync ? RAWSTOR_FLAG_SYNC : 0),
+                .flags = static_cast<uint8_t>(
+                    (sync ? RAWSTOR_FLAG_SYNC : 0) |
+                    (resync ? RAWSTOR_FLAG_RESYNC : 0)
+                ),
+                .epoch = epoch,
             },
         }) {
         _iov.reserve(2);
@@ -568,6 +574,7 @@ public:
                 .hash = hash(iov, niov),
                 .len = (uint32_t)size,
                 .flags = static_cast<uint8_t>(sync ? RAWSTOR_FLAG_SYNC : 0),
+                .epoch = 0,
             },
         }) {
         _iov.reserve(1 + niov);
@@ -629,7 +636,8 @@ public:
     BackendOpNoPayloadIO(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         RawstorCommandType cmd, const char* op_name, size_t size,
-        uint64_t offset, uint8_t flags, const rawstd::TraceEvent& trace_event
+        uint64_t offset, uint8_t flags, const rawstd::TraceEvent& trace_event,
+        uint64_t epoch
     ) :
         BackendOp(backend, cid, trace_event, op_name, size, offset),
         _cmd(cmd),
@@ -645,6 +653,7 @@ public:
                 .hash = 0,
                 .len = (uint32_t)size,
                 .flags = flags,
+                .epoch = epoch,
             },
         }) {}
 
@@ -678,11 +687,12 @@ class BackendOpDiscard final : public BackendOpNoPayloadIO {
 public:
     BackendOpDiscard(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
-        size_t size, uint64_t offset, const rawstd::TraceEvent& trace_event
+        size_t size, uint64_t offset, const rawstd::TraceEvent& trace_event,
+        uint64_t epoch
     ) :
         BackendOpNoPayloadIO(
             backend, cid, RAWSTOR_CMD_DISCARD, "discard", size, offset, 0,
-            trace_event
+            trace_event, epoch
         ) {}
 };
 
@@ -691,13 +701,14 @@ public:
     BackendOpWriteZeroes(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         size_t size, uint64_t offset, bool unmap, bool sync,
-        const rawstd::TraceEvent& trace_event
+        const rawstd::TraceEvent& trace_event, uint64_t epoch, bool resync
     ) :
         BackendOpNoPayloadIO(
             backend, cid, RAWSTOR_CMD_WRITE_ZEROES, "write_zeroes", size,
             offset,
-            (unmap ? RAWSTOR_FLAG_UNMAP : 0) | (sync ? RAWSTOR_FLAG_SYNC : 0),
-            trace_event
+            (unmap ? RAWSTOR_FLAG_UNMAP : 0) | (sync ? RAWSTOR_FLAG_SYNC : 0) |
+                (resync ? RAWSTOR_FLAG_RESYNC : 0),
+            trace_event, epoch
         ) {}
 };
 
@@ -708,7 +719,7 @@ private:
 public:
     BackendOpFlush(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
-        const rawstd::TraceEvent& trace_event
+        const rawstd::TraceEvent& trace_event, uint64_t epoch
     ) :
         BackendOp(backend, cid, trace_event, "flush", 0, 0),
         _request({
@@ -722,7 +733,7 @@ public:
                 .object_id = {},
                 .offset = 0,
                 .version_id = {},
-                .val = 0,
+                .val = epoch,
             },
         }) {}
 
@@ -761,7 +772,7 @@ public:
     BackendOpSetConfig(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const RawstdUUID& id, uint64_t chunk_offset,
-        const RawstorObjectConfig& config, unsigned int flags,
+        const RawstorObjectConfig& config, unsigned int flags, uint8_t position,
         const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "set_config", 0, 0),
@@ -786,6 +797,7 @@ public:
         _request.payload.config.nroles = config.nroles;
         memcpy(_request.payload.config.roles, config.roles, config.nroles);
         _request.payload.flags = static_cast<uint8_t>(flags);
+        _request.payload.position = position;
     }
 
     const void* request_data() const noexcept { return &_request; }
@@ -1743,7 +1755,7 @@ rawstd::Task<rawstor::Backend::SyncReply> Backend::sync_prepare(
 rawstd::Task<rawstor::Backend::SyncReply> Backend::sync_accept(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
     const RawstorObjectBallot& next, const RawstorObjectConfig& config,
-    unsigned int flags, uint32_t sessions, const SyncReply&
+    unsigned int flags, uint32_t sessions, uint8_t position, const SyncReply&
 ) {
     RawstorFrameSyncPropose request{};
     request.head.magic = RAWSTOR_MAGIC;
@@ -1764,6 +1776,7 @@ rawstd::Task<rawstor::Backend::SyncReply> Backend::sync_accept(
     request.payload.sessions = sessions;
     request.payload.flags =
         (flags & RAWSTOR_SYNC_ALONE) != 0 ? RAWSTOR_SYNC_FLAG_ALONE : 0;
+    request.payload.position = position;
     co_return co_await _sync_request(request, "sync_accept");
 }
 
@@ -1781,14 +1794,14 @@ rawstd::Task<void> Backend::set_state(
 
 rawstd::Task<void> Backend::set_config(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int flags
+    unsigned int flags, uint8_t position
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpSetConfig> op =
         std::make_shared<BackendOpSetConfig>(
             std::static_pointer_cast<Backend>(shared_from_this()),
-            _cid_counter++, id, offset, config, flags, trace_event
+            _cid_counter++, id, offset, config, flags, position, trace_event
         );
     _add_op(op);
 
@@ -2067,8 +2080,10 @@ Backend::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
     co_return co_await *op;
 }
 
-rawstd::Task<size_t>
-Backend::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
+rawstd::Task<size_t> Backend::pwrite(
+    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch,
+    bool resync
+) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %" PRIu64 ", sync = %d\n", fd(),
         size, offset, sync
@@ -2076,7 +2091,7 @@ Backend::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
 
     std::shared_ptr<BackendOpWrite> op = std::make_shared<BackendOpWrite>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        buf, size, offset, sync, trace_event
+        buf, size, offset, sync, trace_event, epoch, resync
     );
     _add_op(op);
 
@@ -2124,14 +2139,15 @@ rawstd::Task<size_t> Backend::pwritev(
     co_return co_await *op;
 }
 
-rawstd::Task<size_t> Backend::discard(size_t size, uint64_t offset) {
+rawstd::Task<size_t>
+Backend::discard(size_t size, uint64_t offset, uint64_t epoch) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %" PRIu64 "\n", fd(), size, offset
     );
 
     std::shared_ptr<BackendOpDiscard> op = std::make_shared<BackendOpDiscard>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        size, offset, trace_event
+        size, offset, trace_event, epoch
     );
     _add_op(op);
 
@@ -2150,8 +2166,10 @@ rawstd::Task<size_t> Backend::discard(size_t size, uint64_t offset) {
     co_return co_await *op;
 }
 
-rawstd::Task<size_t>
-Backend::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
+rawstd::Task<size_t> Backend::write_zeroes(
+    size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch,
+    bool resync
+) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's',
         "fd = %d, size = %zu, offset = %" PRIu64 ", unmap = %d, sync = %d\n",
@@ -2161,7 +2179,8 @@ Backend::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
     std::shared_ptr<BackendOpWriteZeroes> op =
         std::make_shared<BackendOpWriteZeroes>(
             std::static_pointer_cast<Backend>(shared_from_this()),
-            _cid_counter++, size, offset, unmap, sync, trace_event
+            _cid_counter++, size, offset, unmap, sync, trace_event, epoch,
+            resync
         );
     _add_op(op);
 
@@ -2180,12 +2199,12 @@ Backend::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
     co_return co_await *op;
 }
 
-rawstd::Task<void> Backend::flush() {
+rawstd::Task<void> Backend::flush(uint64_t epoch) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpFlush> op = std::make_shared<BackendOpFlush>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        trace_event
+        trace_event, epoch
     );
     _add_op(op);
 

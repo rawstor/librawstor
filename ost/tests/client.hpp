@@ -43,6 +43,13 @@ public:
     uint16_t send_leave();
     // SYNC_PREPARE/SYNC_ACCEPT (`frame.head.cmd`); the cid is filled in.
     uint16_t send_sync(RawstorFrameSyncPropose frame);
+    // WRITE/FLUSH stamped with the writer's configuration epoch, WRITE
+    // with RAWSTOR_FLAG_* `flags`.
+    uint16_t send_write_at_epoch(
+        uint64_t offset, const void* buf, size_t size, uint64_t epoch,
+        uint8_t flags = 0
+    );
+    uint16_t send_flush_at_epoch(uint64_t epoch);
     uint16_t
     send_write(uint64_t offset, const void* buf, size_t size, bool sync);
     uint16_t send_read(uint64_t offset, uint32_t size);

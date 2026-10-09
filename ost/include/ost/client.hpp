@@ -15,6 +15,7 @@
 #include <vector>
 
 namespace rawstor {
+
 namespace ostserver {
 
 class Server;
@@ -124,7 +125,8 @@ private:
     // blk_backend.hpp's _throttle_acquire()), so this just dispatches.
     static rawstd::DetachedTask _dispatch_write(
         std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t offset,
-        bool sync, std::shared_ptr<std::vector<unsigned char>> data
+        uint8_t flags, uint64_t epoch,
+        std::shared_ptr<std::vector<unsigned char>> data
     );
     static rawstd::DetachedTask _discard(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
@@ -135,7 +137,7 @@ private:
         RawstorFrameIOPayload payload
     );
     static rawstd::DetachedTask
-    _flush(std::weak_ptr<Client> weak, RawstorFrameHead head);
+    _flush(std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t epoch);
     static rawstd::DetachedTask _set_config(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameSetConfigPayload payload

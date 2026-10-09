@@ -112,20 +112,25 @@ public:
     virtual rawstd::Task<size_t>
     preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) = 0;
 
-    virtual rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, uint64_t offset, bool sync) = 0;
+    virtual rawstd::Task<size_t> pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync,
+        uint64_t epoch = 0, bool resync = false
+    ) = 0;
 
     virtual rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync
     ) = 0;
 
-    virtual rawstd::Task<size_t> discard(size_t size, uint64_t offset) = 0;
-
     virtual rawstd::Task<size_t>
-    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) = 0;
+    discard(size_t size, uint64_t offset, uint64_t epoch = 0) = 0;
 
-    virtual rawstd::Task<void> flush() = 0;
+    virtual rawstd::Task<size_t> write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0,
+        bool resync = false
+    ) = 0;
+
+    virtual rawstd::Task<void> flush(uint64_t epoch = 0) = 0;
 
     // `clean`: the writer is done cleanly (Chunk::close()); false for a
     // writer gone mid-flight -- rawstor_object_abandon().
@@ -163,20 +168,25 @@ public:
         iovec* iov, unsigned int niov, size_t size, uint64_t offset
     ) override;
 
-    rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, uint64_t offset, bool sync) override;
+    rawstd::Task<size_t> pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync,
+        uint64_t epoch = 0, bool resync = false
+    ) override;
 
     rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync
     ) override;
 
-    rawstd::Task<size_t> discard(size_t size, uint64_t offset) override;
-
     rawstd::Task<size_t>
-    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) override;
+    discard(size_t size, uint64_t offset, uint64_t epoch = 0) override;
 
-    rawstd::Task<void> flush() override;
+    rawstd::Task<size_t> write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0,
+        bool resync = false
+    ) override;
+
+    rawstd::Task<void> flush(uint64_t epoch = 0) override;
 
     rawstd::Task<void> close(bool clean = true) override;
 };
@@ -303,20 +313,25 @@ public:
         iovec* iov, unsigned int niov, size_t size, uint64_t offset
     ) override;
 
-    rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, uint64_t offset, bool sync) override;
+    rawstd::Task<size_t> pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync,
+        uint64_t epoch = 0, bool resync = false
+    ) override;
 
     rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync
     ) override;
 
-    rawstd::Task<size_t> discard(size_t size, uint64_t offset) override;
-
     rawstd::Task<size_t>
-    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) override;
+    discard(size_t size, uint64_t offset, uint64_t epoch = 0) override;
 
-    rawstd::Task<void> flush() override;
+    rawstd::Task<size_t> write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0,
+        bool resync = false
+    ) override;
+
+    rawstd::Task<void> flush(uint64_t epoch = 0) override;
 
     rawstd::Task<void> close(bool clean = true) override;
 };

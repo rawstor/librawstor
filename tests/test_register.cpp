@@ -19,6 +19,8 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 /*
  * The requests of a chunk's configuration register (docs/multiattach.md,
@@ -96,7 +98,7 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
     config.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
     reply =
         run(*queue,
-            target.sync_accept(*queue, 0, 0, {4, 1}, {5, 1}, config, 0, 0));
+            target.sync_accept(*queue, 0, 0, {4, 1}, {5, 1}, config, 0, 0, 0));
     EXPECT_TRUE(reply.ok);
 
     // What the member persisted, read back the ordinary way.
@@ -113,7 +115,7 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
     // A configuration set outside the register keeps the ballots: an old
     // ballot is still refused afterwards.
     config.epoch = 10;
-    run(*queue, target.set_member_config(*queue, 0, 0, config, 0));
+    run(*queue, target.set_member_config(*queue, 0, 0, config, 0, 0));
     meta = run(*queue, target.meta(*queue, 0)).front();
     EXPECT_EQ(meta.config.epoch, 10u);
     EXPECT_EQ(meta.promised.counter, 5u);
@@ -159,7 +161,7 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     config.nroles = 3;
     config.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     rawstd::Task<rawstor::Backend::SyncReply> task = target.sync_accept(
-        *queue, 0, 0, {5, 0x77}, {6, 0x77}, config, RAWSTOR_SYNC_ALONE, 2
+        *queue, 0, 0, {5, 0x77}, {6, 0x77}, config, RAWSTOR_SYNC_ALONE, 2, 1
     );
 
     for (int i = 0; i < 5000 && !got; ++i) {
@@ -178,6 +180,7 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     EXPECT_EQ(seen.payload.config.resync_owner, 0x77u);
     EXPECT_EQ(seen.payload.flags, RAWSTOR_SYNC_FLAG_ALONE);
     EXPECT_EQ(seen.payload.sessions, 2u);
+    EXPECT_EQ(seen.payload.position, 1);
     ASSERT_EQ(seen.payload.config.nroles, 3);
     EXPECT_EQ(seen.payload.config.roles[2], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
 
