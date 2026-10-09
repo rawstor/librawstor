@@ -109,6 +109,13 @@ Queue::~Queue() {
 }
 
 Session& Queue::_get_session(int fd) {
+    // ::poll() skips a negative fd for good, so an operation on one would
+    // never complete: it fails at once instead, as the uring backend's
+    // does (EBADF) -- e.g. an operation on a connection already closed.
+    if (fd < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EBADF);
+    }
+
     std::unordered_map<int, std::shared_ptr<Session>>::iterator it =
         _sessions.find(fd);
     if (it != _sessions.end()) {
