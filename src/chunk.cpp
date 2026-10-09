@@ -66,6 +66,21 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
     }
 }
 
+// A chunk's members each have a role in its configuration, one byte per
+// member (RawstorObjectConfig::roles) and a one-byte position: at most
+// RAWSTOR_OBJECT_MAX_WIDTH of them.
+void validate_width(const std::vector<rawstd::URI>& uris) {
+    if (uris.size() <= RAWSTOR_OBJECT_MAX_WIDTH) {
+        return;
+    }
+
+    rawstd_error(
+        "Too many uris: %zu, at most %d\n", uris.size(),
+        RAWSTOR_OBJECT_MAX_WIDTH
+    );
+    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+}
+
 // A nonzero random sync-set id; zero is reserved for legacy copies.
 uint64_t random_sync_id() {
     static thread_local std::mt19937_64 rng{std::random_device{}()};
@@ -364,6 +379,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // the location list is validated here. Identity needs no check: it
     // arrives as the explicit `id`/`offset`/`version_id` parameters.
     validate_not_empty(locations);
+    validate_width(locations);
     validate_different_uris(locations);
 
     // Every location's Slot goes out concurrently instead of one at a
@@ -814,9 +830,9 @@ RawstorObjectConfig Chunk::_current_config() const {
     m.epoch = _epoch;
     m.sync_id = _sync_id;
     memcpy(m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history));
-    size_t n = std::min<size_t>(_members.size(), RAWSTOR_OBJECT_MAX_WIDTH);
-    m.nroles = static_cast<uint8_t>(n);
-    for (size_t i = 0; i < n; ++i) {
+    // At most RAWSTOR_OBJECT_MAX_WIDTH members (validate_width()).
+    m.nroles = static_cast<uint8_t>(_members.size());
+    for (size_t i = 0; i < _members.size(); ++i) {
         switch (_members[i].state) {
         case MemberState::IN_SYNC:
             m.roles[i] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
