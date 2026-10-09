@@ -155,6 +155,42 @@ TEST_F(BasicsTest, send) {
     EXPECT_EQ(strcmp(server_buf, client_buf), 0);
 }
 
+// An operation on a negative fd (e.g. a connection already closed) fails
+// with EBADF on every backend, instead of waiting for readiness that never
+// comes.
+TEST(BadFdTest, operations_fail_with_ebadf) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    char buf[] = "data";
+    int send_error = 0;
+    int read_error = 0;
+    auto send_op = [&]() -> rawstd::Task<void> {
+        try {
+            co_await queue->send(-1, buf, sizeof(buf), 0);
+        } catch (const std::system_error& e) {
+            send_error = e.code().value();
+        }
+    };
+    auto read_op = [&]() -> rawstd::Task<void> {
+        try {
+            co_await queue->read(-1, buf, sizeof(buf));
+        } catch (const std::system_error& e) {
+            read_error = e.code().value();
+        }
+    };
+    rawstd::Task<void> send_task = send_op();
+    rawstd::Task<void> read_task = read_op();
+    for (int i = 0; i < 100 && !(send_task.done() && read_task.done()); ++i) {
+        try {
+            queue->wait_timeout(10);
+        } catch (const std::system_error&) {
+        }
+    }
+    ASSERT_TRUE(send_task.done());
+    ASSERT_TRUE(read_task.done());
+    EXPECT_EQ(send_error, EBADF);
+    EXPECT_EQ(read_error, EBADF);
+}
+
 TEST(OpenCloseTest, basics) {
     std::filesystem::path path =
         std::filesystem::temp_directory_path() / "rawio_tests";
