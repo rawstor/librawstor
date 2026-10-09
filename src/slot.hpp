@@ -46,6 +46,15 @@ private:
         const RawstorObjectConfig& config, unsigned int flags
     );
 
+    rawstd::Task<Backend::SyncReply> _sync_prepare(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+    );
+    rawstd::Task<Backend::SyncReply> _sync_accept(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config, unsigned int flags, uint32_t sessions
+    );
+
     // Set by open() (see its own doc comment) -- unset means this
     // Slot is only ever used for metadata (list/create/remove/
     // meta/info), which needs no SET_OBJECT step of its own.
@@ -196,6 +205,16 @@ public:
     rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectConfig& config, unsigned int flags
+    );
+
+    rawstd::Task<Backend::SyncReply> sync_prepare(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+    );
+
+    rawstd::Task<Backend::SyncReply> sync_accept(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config, unsigned int flags, uint32_t sessions
     );
 
     // The writer's clean departure from this member's session

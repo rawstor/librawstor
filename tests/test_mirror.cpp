@@ -851,13 +851,17 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
         .width = 2,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
-        .config = {
-            .epoch = 1,
-            .sync_id = 0x2222222222222222ull,
-            .sync_id_history = {},
-            .nroles = 0,
-            .roles = {},
-        },
+        .config =
+            {
+                .epoch = 1,
+                .sync_id = 0x2222222222222222ull,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
     };
     std::atomic<bool> syncing_sent(false);
     std::atomic<bool> final_state_sent(false);
@@ -1373,13 +1377,17 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
-        .config = {
-            .epoch = 0,
-            .sync_id = 0,
-            .sync_id_history = {},
-            .nroles = 0,
-            .roles = {},
-        },
+        .config =
+            {
+                .epoch = 0,
+                .sync_id = 0,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
     };
 
     /*
@@ -1455,13 +1463,17 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
-        .config = {
-            .epoch = 0,
-            .sync_id = 0,
-            .sync_id_history = {},
-            .nroles = 0,
-            .roles = {},
-        },
+        .config =
+            {
+                .epoch = 0,
+                .sync_id = 0,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
     };
 
     {
@@ -1539,13 +1551,17 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
-        .config = {
-            .epoch = 0,
-            .sync_id = 0,
-            .sync_id_history = {},
-            .nroles = 0,
-            .roles = {},
-        },
+        .config =
+            {
+                .epoch = 0,
+                .sync_id = 0,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
     };
 
     {
@@ -1610,13 +1626,17 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
-        .config = {
-            .epoch = 0,
-            .sync_id = 0,
-            .sync_id_history = {},
-            .nroles = 0,
-            .roles = {},
-        },
+        .config =
+            {
+                .epoch = 0,
+                .sync_id = 0,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
     };
 
     {

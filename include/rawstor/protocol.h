@@ -80,6 +80,13 @@ extern "C" {
  * A session that wrote and ends any other way leaves a DIRTY copy LOST.
  */
 #define RAWSTOR_CMD_LEAVE 0x0f
+/*
+ * The two requests of a chunk's configuration register (docs/multiattach.md,
+ * "The register"): RawstorFrameSyncPropose in, RawstorFrameSyncReplyPayload
+ * out.
+ */
+#define RAWSTOR_CMD_SYNC_PREPARE 0x10
+#define RAWSTOR_CMD_SYNC_ACCEPT 0x11
 
 /*
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/open/
@@ -243,16 +250,23 @@ struct RawstorFrameIO {
     struct RawstorFrameIOPayload payload;
 } RAWSTOR_PACKED;
 
+/* A ballot of the configuration register: ordered by counter, then proposer. */
+struct RawstorFrameBallot {
+    uint64_t counter;
+    uint64_t proposer;
+} RAWSTOR_PACKED;
+
 /*
  * The chunk's configuration (struct RawstorObjectConfig, <rawstor/
- * target.h>): its sync set and every member's role, `nroles` entries of
- * enum RawstorObjectMemberRole, the rest zero. sync_id_history length
- * must match RAWSTOR_OBJECT_SYNC_ID_HISTORY.
+ * target.h>): its sync set, the resync owner and every member's role,
+ * `nroles` entries of enum RawstorObjectMemberRole, the rest zero.
+ * sync_id_history length must match RAWSTOR_OBJECT_SYNC_ID_HISTORY.
  */
 struct RawstorFrameConfig {
     uint64_t epoch;
     uint64_t sync_id;
     uint64_t sync_id_history[4];
+    uint64_t resync_owner;
     uint8_t nroles;
     uint8_t roles[255];
 } RAWSTOR_PACKED;
@@ -355,6 +369,46 @@ struct RawstorFrameMetaPayload {
     /* Sessions open for writing on this copy right now. */
     uint32_t writers;
     struct RawstorFrameConfig config;
+    /* The copy's replica of the register: its ballots. */
+    struct RawstorFrameBallot promised;
+    struct RawstorFrameBallot accepted;
+} RAWSTOR_PACKED;
+
+/*
+ * SYNC_PREPARE/SYNC_ACCEPT's request. SYNC_PREPARE uses object_id,
+ * chunk_offset and ballot only, the rest zero. SYNC_ACCEPT also carries
+ * the ballot to promise on success (`next`, zero for none), the register's
+ * value (`config`) and `flags` (RAWSTOR_SYNC_FLAG_*): with
+ * RAWSTOR_SYNC_FLAG_ALONE the member refuses (-EBUSY) while more than
+ * `sessions` sessions have the copy open for writing, or once a writer
+ * left it LOST.
+ */
+struct RawstorFrameSyncProposePayload {
+    uint8_t object_id[16];
+    uint64_t chunk_offset;
+    struct RawstorFrameBallot ballot;
+    struct RawstorFrameBallot next;
+    struct RawstorFrameConfig config;
+    uint32_t sessions;
+    uint8_t flags;
+} RAWSTOR_PACKED;
+
+#define RAWSTOR_SYNC_FLAG_ALONE (1u << 0)
+
+/* SYNC_PREPARE / SYNC_ACCEPT request */
+struct RawstorFrameSyncPropose {
+    struct RawstorFrameHead head;
+    struct RawstorFrameSyncProposePayload payload;
+} RAWSTOR_PACKED;
+
+/*
+ * SYNC_PREPARE/SYNC_ACCEPT's response payload: whether the member promised
+ * or accepted, and its whole record either way -- a refused request still
+ * shows the proposer the actual value.
+ */
+struct RawstorFrameSyncReplyPayload {
+    uint8_t ok;
+    struct RawstorFrameMetaPayload meta;
 } RAWSTOR_PACKED;
 
 /*
@@ -528,11 +582,14 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 20);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 24);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameVersionEntry, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 21);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameConfig, 304);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetConfigPayload, 329);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBallot, 16);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameConfig, 312);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetConfigPayload, 337);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncProposePayload, 373);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAllocatePayload, 44);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameResponseBody, 12);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 320);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 360);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncReplyPayload, 361);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjPolicy, 19);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjCreatePayload, 60);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjOpPayload, 56);

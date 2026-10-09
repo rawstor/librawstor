@@ -400,3 +400,34 @@ TEST(MemberStateTest, ost_clear_lost_keeps_an_open_writer_dirty) {
     MemberObject f(rawstd::URI("ost://127.0.0.1:8787"));
     expect_clear_lost_with_writer(f);
 }
+
+// A writer that dropped its session may be deciding alone on the other
+// member of two: a LOST copy refuses to decide alone (docs/multiattach.md,
+// "N = 2").
+TEST(MemberStateTest, lost_copy_refuses_to_decide_alone) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
+    MemberObject f;
+    f.create(*queue);
+
+    std::unique_ptr<rawstor::Object> a = run(*queue, f.target.open(*queue, 0));
+    write_one(*queue, *a);
+    run(*queue, a->close(false));
+    ASSERT_EQ(f.meta(*queue).state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+
+    RawstorObjectConfig config = f.meta(*queue).config;
+    config.epoch += 1;
+    try {
+        run(*queue,
+            f.target.sync_accept(
+                *queue, 0, 0, {1, 0x77}, {}, config, RAWSTOR_SYNC_ALONE, 0
+            ));
+        FAIL() << "accepted alone on a LOST copy";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EBUSY);
+    }
+
+    rawstor::Backend::SyncReply reply =
+        run(*queue,
+            f.target.sync_accept(*queue, 0, 0, {1, 0x77}, {}, config, 0, 0));
+    EXPECT_TRUE(reply.ok);
+}

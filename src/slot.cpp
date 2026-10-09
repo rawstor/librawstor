@@ -10,6 +10,7 @@
 #include <rawio/awaitable.hpp>
 #include <rawio/queue.hpp>
 
+#include <rawstd/caspaxos.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
@@ -32,6 +33,14 @@
 #include <cstring>
 
 namespace {
+
+rawstd::caspaxos::Ballot ballot_from(const RawstorObjectBallot& b) noexcept {
+    return rawstd::caspaxos::Ballot{b.counter, b.proposer};
+}
+
+RawstorObjectBallot ballot_to(const rawstd::caspaxos::Ballot& b) noexcept {
+    return RawstorObjectBallot{b.counter, b.proposer};
+}
 
 // Releases a member's record lock on every way out of a coroutine.
 struct RecordLockGuard {
@@ -1126,6 +1135,112 @@ rawstd::Task<std::vector<rawstd::URI>> Slot::resolve_locations(
         std::vector<rawstd::URI> result = co_await _with_retry(
             func_name, trace_event, &Backend::resolve_locations, id, offset,
             version_id
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<Backend::SyncReply> Slot::_sync_prepare(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+) {
+    std::shared_ptr<CopyState> member = _copy_state(id, offset);
+    co_await member->record.lock(_queue);
+    RecordLockGuard guard{member->record};
+    std::shared_ptr<Backend> be = _get_backend();
+    RawstorObjectMeta meta =
+        (co_await be->meta(id, offset, RawstdUUID{})).front();
+    rawstd::caspaxos::Acceptor<RawstorObjectConfig> state{
+        ballot_from(meta.promised), ballot_from(meta.accepted), meta.config
+    };
+    bool ok = state.prepare(ballot_from(ballot));
+    if (ok) {
+        meta.promised = ballot_to(state.promised());
+    }
+    meta.writers = std::max(meta.writers, member->writers.load());
+    Backend::SyncReply proposed{ok, meta};
+    Backend::SyncReply reply =
+        co_await be->sync_prepare(id, offset, ballot, proposed);
+    reply.meta.writers = std::max(reply.meta.writers, member->writers.load());
+    co_return reply;
+}
+
+rawstd::Task<Backend::SyncReply> Slot::sync_prepare(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        Backend::SyncReply result = co_await _with_retry(
+            func_name, trace_event, &Slot::_sync_prepare, id, offset, ballot
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<Backend::SyncReply> Slot::_sync_accept(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
+    const RawstorObjectBallot& next, const RawstorObjectConfig& config,
+    unsigned int flags, uint32_t sessions
+) {
+    std::shared_ptr<CopyState> member = _copy_state(id, offset);
+    co_await member->record.lock(_queue);
+    RecordLockGuard guard{member->record};
+    std::shared_ptr<Backend> be = _get_backend();
+    RawstorObjectMeta meta{};
+    rawstd::caspaxos::Acceptor<RawstorObjectConfig> state{};
+    bool ok = false;
+    {
+        meta = (co_await be->meta(id, offset, RawstdUUID{})).front();
+        meta.writers = std::max(meta.writers, member->writers.load());
+        if ((flags & RAWSTOR_SYNC_ALONE) != 0 &&
+            (meta.writers > sessions ||
+             meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST)) {
+            RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
+        }
+        state = {
+            ballot_from(meta.promised), ballot_from(meta.accepted), meta.config
+        };
+        ok = state.accept(ballot_from(ballot), config, ballot_from(next));
+    }
+    if (ok) {
+        meta.promised = ballot_to(state.promised());
+        meta.accepted = ballot_to(state.accepted());
+        meta.config = state.value();
+    }
+    meta.writers = std::max(meta.writers, member->writers.load());
+    Backend::SyncReply proposed{ok, meta};
+    Backend::SyncReply reply = co_await be->sync_accept(
+        id, offset, ballot, next, config, flags, sessions, proposed
+    );
+    reply.meta.writers = std::max(reply.meta.writers, member->writers.load());
+    co_return reply;
+}
+
+rawstd::Task<Backend::SyncReply> Slot::sync_accept(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
+    const RawstorObjectBallot& next, const RawstorObjectConfig& config,
+    unsigned int flags, uint32_t sessions
+) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        Backend::SyncReply result = co_await _with_retry(
+            func_name, trace_event, &Slot::_sync_accept, id, offset, ballot,
+            next, config, flags, sessions
         );
         _finish(t_call);
         co_return result;

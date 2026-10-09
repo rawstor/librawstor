@@ -194,7 +194,9 @@ rawstd::Task<void> Backend::set_state(
         (co_await this->meta(id, offset, RawstdUUID{})).front();
     if (meta.state == expected) {
         meta.state = state;
-        co_await _write_meta(id, offset, meta.state, meta.config);
+        co_await _write_meta(
+            id, offset, meta.state, meta.config, meta.promised, meta.accepted
+        );
     }
 }
 
@@ -212,7 +214,36 @@ rawstd::Task<void> Backend::set_config(
         }
     }
     meta.config = config;
-    co_await _write_meta(id, offset, meta.state, meta.config);
+    co_await _write_meta(
+        id, offset, meta.state, meta.config, meta.promised, meta.accepted
+    );
+}
+
+rawstd::Task<Backend::SyncReply> Backend::sync_prepare(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot&,
+    const SyncReply& proposed
+) {
+    if (proposed.ok) {
+        co_await _write_meta(
+            id, offset, proposed.meta.state, proposed.meta.config,
+            proposed.meta.promised, proposed.meta.accepted
+        );
+    }
+    co_return proposed;
+}
+
+rawstd::Task<Backend::SyncReply> Backend::sync_accept(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot&,
+    const RawstorObjectBallot&, const RawstorObjectConfig&, unsigned int,
+    uint32_t, const SyncReply& proposed
+) {
+    if (proposed.ok) {
+        co_await _write_meta(
+            id, offset, proposed.meta.state, proposed.meta.config,
+            proposed.meta.promised, proposed.meta.accepted
+        );
+    }
+    co_return proposed;
 }
 
 rawstd::Task<void> Backend::set_version(
@@ -254,6 +285,7 @@ rawstd::Task<uint64_t> Backend::_blk_size(
 
 std::string Backend::meta_encode(
     RawstorObjectSyncStateValue state, const RawstorObjectConfig& config,
+    const RawstorObjectBallot& promised, const RawstorObjectBallot& accepted,
     const ChunkIdentity& identity
 ) {
     const RawstorObjectConfig& c = config;
@@ -269,12 +301,15 @@ std::string Backend::meta_encode(
     int n = snprintf(
         buf, sizeof(buf),
         "version=%u:state=%u:epoch=%" PRIx64 ":sync_id=%" PRIx64 ":h0=%" PRIx64
-        ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64
+        ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64 ":resync_owner=%" PRIx64
+        ":promised=%" PRIx64 ".%" PRIx64 ":accepted=%" PRIx64 ".%" PRIx64
         ":roles=%s:member_role=%u:width=%u:chunk_size=%" PRIx64,
         META_FORMAT_VERSION, (unsigned int)state, c.epoch, c.sync_id,
         c.sync_id_history[0], c.sync_id_history[1], c.sync_id_history[2],
-        c.sync_id_history[3], roles.c_str(), (unsigned int)identity.member_role,
-        (unsigned int)identity.width, identity.chunk_size
+        c.sync_id_history[3], c.resync_owner, promised.counter,
+        promised.proposer, accepted.counter, accepted.proposer, roles.c_str(),
+        (unsigned int)identity.member_role, (unsigned int)identity.width,
+        identity.chunk_size
     );
     if (n < 0 || static_cast<size_t>(n) >= sizeof(buf)) {
         RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
@@ -284,12 +319,15 @@ std::string Backend::meta_encode(
 
 void Backend::meta_decode(
     const std::string& value, RawstorObjectSyncStateValue* state,
-    RawstorObjectConfig* config, ChunkIdentity* identity
+    RawstorObjectConfig* config, RawstorObjectBallot* promised,
+    RawstorObjectBallot* accepted, ChunkIdentity* identity
 ) {
     *state = RawstorObjectSyncStateValue{};
     *config = RawstorObjectConfig{};
+    *promised = RawstorObjectBallot{};
+    *accepted = RawstorObjectBallot{};
     *identity = ChunkIdentity{};
-    RawstorObjectConfig& c = *config;
+    RawstorObjectConfig& c = (*config);
     unsigned int version = 0;
     unsigned int parsed_state = 0;
     unsigned int member_role = 0;
@@ -301,13 +339,16 @@ void Backend::meta_decode(
     int n = sscanf(
         v.c_str(),
         "version=%u:state=%u:epoch=%" SCNx64 ":sync_id=%" SCNx64 ":h0=%" SCNx64
-        ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64
+        ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64 ":resync_owner=%" SCNx64
+        ":promised=%" SCNx64 ".%" SCNx64 ":accepted=%" SCNx64 ".%" SCNx64
         ":roles=%256[0-9-]:member_role=%u:width=%u:chunk_size=%" SCNx64 "%n",
         &version, &parsed_state, &c.epoch, &c.sync_id, &c.sync_id_history[0],
         &c.sync_id_history[1], &c.sync_id_history[2], &c.sync_id_history[3],
-        roles, &member_role, &width, &identity->chunk_size, &consumed
+        &c.resync_owner, &(*promised).counter, &(*promised).proposer,
+        &(*accepted).counter, &(*accepted).proposer, roles, &member_role,
+        &width, &identity->chunk_size, &consumed
     );
-    if (n != 12 || static_cast<size_t>(consumed) != v.size() ||
+    if (n != 17 || static_cast<size_t>(consumed) != v.size() ||
         version != META_FORMAT_VERSION) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
@@ -326,7 +367,7 @@ void Backend::meta_decode(
         }
     }
     c.nroles = static_cast<uint8_t>(nroles);
-    *state = static_cast<RawstorObjectSyncStateValue>(parsed_state);
+    (*state) = static_cast<RawstorObjectSyncStateValue>(parsed_state);
     identity->member_role = static_cast<RawstorMemberRole>(member_role);
     identity->width = static_cast<uint8_t>(width);
 }

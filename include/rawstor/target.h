@@ -140,6 +140,15 @@ enum RawstorObjectMemberRole {
 };
 
 /**
+ * @brief A proposal number of the chunk's configuration register
+ *        (docs/caspaxos.md): ordered by counter, then by proposer.
+ */
+struct RawstorObjectBallot {
+    uint64_t counter;
+    uint64_t proposer;
+};
+
+/**
  * @brief The chunk's configuration, as a writer sets it on a copy.
  *
  * Its sync set (`epoch`, `sync_id` and its history) and every member's
@@ -157,6 +166,8 @@ struct RawstorObjectConfig {
     uint64_t sync_id; /**< Id of the sync set this copy belongs to. */
     /** Ancestor sync ids, newest first; 0 marks unused entries. */
     uint64_t sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
+    /** Writer running the resync of the syncing member, 0 when none. */
+    uint64_t resync_owner;
     /** Number of entries in `roles`; 0 when no roles are recorded. */
     uint8_t nroles;
     /** enum RawstorObjectMemberRole per member, in member order. */
@@ -178,7 +189,9 @@ struct RawstorObjectConfig {
  * ways), the copy's own member_role, its own `state` and the number of
  * sessions open for writing on it right now (`writers`), both kept by the
  * copy itself, and the chunk's configuration as last written to it
- * (`config`, the part rawstor_target_set_member_config() sets).
+ * (`config`, the part rawstor_target_set_member_config() sets). `config`
+ * with `promised`/`accepted` is the copy's replica of the chunk's
+ * configuration register (docs/multiattach.md, "The register").
  * `spec.width` is that copy's own persisted width -- the width
  * rawstor_target_create() was given -- reported verbatim; unlike
  * rawstor_target_spec(), nothing is recomputed locally.
@@ -200,6 +213,10 @@ struct RawstorObjectMeta {
     /** Sessions open for writing on the copy right now. */
     uint32_t writers;
     struct RawstorObjectConfig config;
+    /** Highest ballot this copy promised. */
+    struct RawstorObjectBallot promised;
+    /** Ballot `config` was accepted under. */
+    struct RawstorObjectBallot accepted;
 };
 
 /**
@@ -397,6 +414,77 @@ int rawstor_target_meta(
 int rawstor_target_set_member_config(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
     const struct RawstorObjectConfig* config, unsigned int flags,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * rawstor_target_sync_accept() flag: decide on this member alone. Refused
+ * (-EBUSY) while more sessions than the caller's own have the copy open
+ * for writing, or while the copy is LOST (docs/multiattach.md, "N = 2").
+ */
+#define RAWSTOR_SYNC_ALONE (1u << 0)
+
+/**
+ * @brief A member's reply to a request of the chunk's configuration
+ *        register.
+ *
+ * `ok` is nonzero if the member promised (rawstor_target_sync_prepare())
+ * or accepted (rawstor_target_sync_accept()); `meta` is its whole record
+ * either way, so a refused request still shows the actual value
+ * (docs/caspaxos.md).
+ */
+struct RawstorObjectSyncReply {
+    int ok;
+    struct RawstorObjectMeta meta;
+};
+
+/**
+ * @brief Asynchronously ask one member of a chunk to promise a ballot
+ *        (phase 1 of the chunk's configuration register,
+ *        docs/multiattach.md, "The register").
+ *
+ * Addresses the member as rawstor_target_set_member_config() does
+ * (@p target, @p offset, @p member_index). The member promises @p ballot if
+ * it is above both the ballot it promised and the ballot its
+ * configuration was accepted under, persists that, and replies with its
+ * whole record in @p reply either way.
+ *
+ * @param reply  Filled before @p cb runs with a zero result. Must remain
+ *               valid until then.
+ *
+ * @return 0 if the request was queued; negative errno on immediate
+ *         failure (in which case @p cb is never invoked). A member that
+ *         holds no copy of its own (an mds:// location, a rawstor-ost with
+ *         several locations) fails with -ENOSYS.
+ */
+int rawstor_target_sync_prepare(
+    RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
+    const struct RawstorObjectBallot* ballot,
+    struct RawstorObjectSyncReply* reply, int (*cb)(ssize_t result, void* data),
+    void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously ask one member of a chunk to accept a
+ *        configuration (phase 2 of the chunk's configuration register).
+ *
+ * The member accepts if @p ballot is not below the ballot it promised and
+ * above the ballot its configuration was accepted under: it then records
+ * @p config as accepted under @p ballot, and promises @p next if that is
+ * above @p ballot. It persists that and replies with its whole record in
+ * @p reply either way. With RAWSTOR_SYNC_ALONE in @p flags the request
+ * fails with -EBUSY while more than @p sessions sessions have the copy
+ * open for writing, or while the copy is LOST.
+ *
+ * @return 0 if the request was queued; negative errno on immediate
+ *         failure (in which case @p cb is never invoked).
+ */
+int rawstor_target_sync_accept(
+    RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
+    const struct RawstorObjectBallot* ballot,
+    const struct RawstorObjectBallot* next,
+    const struct RawstorObjectConfig* config, unsigned int flags,
+    uint32_t sessions, struct RawstorObjectSyncReply* reply,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 

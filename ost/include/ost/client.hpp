@@ -143,6 +143,11 @@ private:
     // The session's clean departure: closes the object it set cleanly.
     static rawstd::DetachedTask
     _leave(std::weak_ptr<Client> weak, RawstorFrameHead head);
+    // SYNC_PREPARE/SYNC_ACCEPT on the copy this server is (_set_config()).
+    static rawstd::DetachedTask _sync(
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameSyncProposePayload payload
+    );
     // Every configured location's own URI for `uuid`, with `offset`/
     // `version_id` folded into each one's own path as
     // "<uuid>[/<offset>[/<version_id>]]" (TargetPath's own doc comment,

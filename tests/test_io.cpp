@@ -41,13 +41,17 @@ const RawstorFrameMetaPayload clean_meta_1mb = {
     .width = 1,
     .member_role = RAWSTOR_MEMBER_DATA,
     .writers = 0,
-    .config = {
-        .epoch = 0,
-        .sync_id = 0,
-        .sync_id_history = {},
-        .nroles = 0,
-        .roles = {},
-    },
+    .config =
+        {
+            .epoch = 0,
+            .sync_id = 0,
+            .sync_id_history = {},
+            .resync_owner = 0,
+            .nroles = 0,
+            .roles = {},
+        },
+    .promised = {},
+    .accepted = {},
 };
 
 int callback(size_t result, int error, void* data) {
