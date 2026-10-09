@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.13] - Unreleased
 
 ### Fixed
+- With the `poll()` backend (`--without-liburing`, always on macOS), the next request after one that had exhausted its retries hung forever instead of reconnecting.
 - `flush()` (and `close()`) could skip flushing a write that completed just as it was waiting for it, or wait forever for a write that failed with anything other than an I/O error.
 
 ## [0.2.12] - 2026-10-01
