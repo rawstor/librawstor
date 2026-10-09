@@ -10,7 +10,7 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               -I$(top_srcdir)/include \
               -I$(top_srcdir)/src
 
-AM_LDFLAGS = $(ASAN_LDFLAGS) \
+AM_LDFLAGS = $(ASAN_LDFLAGS) -pthread \
              $(GTEST_LIBS)
 
 
@@ -32,6 +32,7 @@ test_all_SOURCES = main.cpp \
                    test_member_state.cpp \
                    test_mirror.cpp \
                    test_multichunk.cpp \
+                   test_multiqueue.cpp \
                    test_opts.cpp \
                    test_pagination_token.cpp \
                    test_target.cpp

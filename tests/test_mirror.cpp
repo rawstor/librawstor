@@ -880,10 +880,11 @@ TEST(MirrorResyncTest, first_write_during_rejoin_keeps_identities_equal) {
 
 // A write that starts while the rejoining member is getting its final
 // state is duplicated onto that member and may still fail there after the
-// final state lands. The member must not join the set before that write
-// has settled: here the write comes back short on it, which aborts the
-// resync instead of leaving a member in the set that missed the write.
-TEST(MirrorResyncTest, rejoin_waits_for_writes_in_flight) {
+// final state lands. The member joins the set without waiting for it, but
+// the write is not acknowledged before the member it missed is excluded
+// again: here the write comes back short on it, which degrades the member
+// once it has joined.
+TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
     struct ScopedOpts {
         ScopedOpts() {
             RawstorOpts opts{};
@@ -997,8 +998,10 @@ TEST(MirrorResyncTest, rejoin_waits_for_writes_in_flight) {
     }
     ASSERT_TRUE(written);
     std::string log = testing::internal::GetCapturedStderr();
-    EXPECT_NE(log.find("Mirror resync aborted"), std::string::npos) << log;
-    EXPECT_EQ(log.find("rejoined the set"), std::string::npos) << log;
+    size_t rejoined = log.find("rejoined the set");
+    ASSERT_NE(rejoined, std::string::npos) << log;
+    EXPECT_NE(log.find("Mirror member degraded", rejoined), std::string::npos)
+        << log;
 
     // The member is out of the set: the close touches only the first one.
     object_close_clean(queue, object);
