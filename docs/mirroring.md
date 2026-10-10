@@ -18,6 +18,8 @@ numbers its stages separately.
 | Degrade & continue (F1), write freeze below quorum for N ≥ 3 | 2 | ✅ | `src/chunk.cpp` |
 | Read failover and read-repair (F2) | 2 | ✅ | `src/chunk.cpp` |
 | Clean close (all copies `CLEAN`) | 2 | ✅ | `src/chunk.cpp` |
+| A `rawstor-ost` is one copy; with several locations it keeps no record of it | 2 | ✅ | `ost/src/client.cpp` |
+| A record of the copy itself for a `rawstor-ost` with several locations | — | ❌ | *One copy per server* |
 | Online resync with in-memory bitmap, region locks, zero-region `write_zeroes` | 3 | ✅ | `src/chunk.cpp` (`RESYNC_CHUNK`) |
 | Reconnect probe and automatic rejoin of STALE mirrors | 3 | ✅ | `src/chunk.cpp` (`_probe_watch()`) |
 | `rawstor show -v` per-chunk / per-mirror state | — | ✅ | `cli/show.c` |
@@ -82,7 +84,32 @@ stateDiagram-v2
     end note
 ```
 
-At the API level (`include/rawstor/target.h`) this record is split by cost and mutability: `RawstorObjectSpec` (`size`, `width`) is the cheap, always-fail-over-safe half read by `rawstor_target_spec()`; `RawstorObjectSyncState` (`state`/`epoch`/`sync_id`/`sync_id_history`) is the mirror consistency half, read via `rawstor_target_meta()` (which returns both, composed as `RawstorObjectMeta{spec, sync_state}`, one entry per URI of the one chunk named by its own explicit `offset` parameter — unlike `spec()`'s single-answer fail-over, so a caller can see every copy of that chunk's own state; a URI that doesn't answer gets a zero-filled entry, see its own doc comment). The writer, `rawstor_target_set_member_sync_state()`, addresses one real member of one chunk at a time (its own `offset` and `member_index` parameters, the same order `meta()` reports that chunk's own members in), and is part of the public API too, but is a sharp tool: it exists for `rawstor-ost` (to relay an incoming `SET_SYNC_STATE` wire command to its own locally configured locations, one call per member), this project's own tests, and future tooling that already understands this model (e.g. `rawstor resolve`'s own split-brain recovery flow) — setting mirror consistency state by hand can desynchronize a target's copies in ways the library's own quorum/reconciliation logic isn't designed to recover from automatically, so it isn't meant for routine application use. On an `mds://` object target (docs/mds.md) — which has many chunks, each with its own slots, not addressable through any flat per-URI `_uris` list at all — both calls resolve `offset` to that object's own real chunk via a live MDS round trip first (`-ENOENT` if the object has no chunk there), then operate on that chunk's own real members exactly as for a plain target: the real per-chunk DIRTY/CLEAN state lives one level down, but is fully reachable through the object-level target, not synthesized.
+### One copy per server
+
+To its clients a `rawstor-ost` is one copy of the chunk, whatever it
+stores it on: the client counts it as one member, and never sees what is beneath.
+
+- **One location** (the usual setup): the location's record is the copy's
+  record. `SET_SYNC_STATE` and `META` act on it.
+- **Several locations**: the server opens them as a mirror of its own,
+  whose records hold that inner mirror's configuration. The copy the
+  server is to its clients has no record of its own to keep, so the
+  server keeps none: it answers `SET_SYNC_STATE` with `-ENOSYS` and reports no
+  sync identity in `META` (`epoch` 0, `sync_id` 0, empty history). To a client that
+  mirrors across servers it is a copy without state tracking: next to an
+  established sync set it reads as stale, and is resynced in full at
+  every open. A client that does not mirror (one member) is unaffected.
+
+The next step is a record of the copy itself for a server with several
+locations, kept next to the data as every record is: a second record in
+each location (a second meta file for `file://`, a second LVM tag, a
+second ZFS property), written to all of them with fsync and read from the
+first that has it. The copy then has its own consistency state,
+and the inner mirror its own configuration. The record cannot live in the
+server's memory instead: `sync_id` and its history are how a copy is told
+stale across restarts, and `DIRTY` exists to outlive a crash.
+
+At the API level (`include/rawstor/target.h`) this record is split by cost and mutability: `RawstorObjectSpec` (`size`, `width`) is the cheap, always-fail-over-safe half read by `rawstor_target_spec()`; `RawstorObjectSyncState` (`state`/`epoch`/`sync_id`/`sync_id_history`) is the mirror consistency half, read via `rawstor_target_meta()` (which returns both, composed as `RawstorObjectMeta{spec, sync_state}`, one entry per URI of the one chunk named by its own explicit `offset` parameter — unlike `spec()`'s single-answer fail-over, so a caller can see every copy of that chunk's own state; a URI that doesn't answer gets a zero-filled entry, see its own doc comment). The writer, `rawstor_target_set_member_sync_state()`, addresses one real member of one chunk at a time (its own `offset` and `member_index` parameters, the same order `meta()` reports that chunk's own members in), and is part of the public API too, but is a sharp tool: it exists for `rawstor-ost` (to apply an incoming `SET_SYNC_STATE` wire command to its one location), this project's own tests, and future tooling that already understands this model (e.g. `rawstor resolve`'s own split-brain recovery flow) — setting mirror consistency state by hand can desynchronize a target's copies in ways the library's own quorum/reconciliation logic isn't designed to recover from automatically, so it isn't meant for routine application use. On an `mds://` object target (docs/mds.md) — which has many chunks, each with its own slots, not addressable through any flat per-URI `_uris` list at all — both calls resolve `offset` to that object's own real chunk via a live MDS round trip first (`-ENOENT` if the object has no chunk there), then operate on that chunk's own real members exactly as for a plain target: the real per-chunk DIRTY/CLEAN state lives one level down, but is fully reachable through the object-level target, not synthesized.
 
 ### Comparison rules (at open)
 

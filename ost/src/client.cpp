@@ -1286,6 +1286,16 @@ rawstd::DetachedTask Client::_meta(
         if (!found) {
             RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
         }
+        if (targets.size() != 1) {
+            // The locations' records belong to the server's inner mirror,
+            // not to the copy it exposes to its clients (_set_state()).
+            meta.sync_state.epoch = 0;
+            meta.sync_state.sync_id = 0;
+            memset(
+                meta.sync_state.sync_id_history, 0,
+                sizeof(meta.sync_state.sync_id_history)
+            );
+        }
     } catch (const std::system_error& e) {
         result = -e.code().value();
     }
@@ -1425,20 +1435,19 @@ rawstd::DetachedTask Client::_set_state(
     );
     sync_state.state = static_cast<RawstorObjectSyncStateValue>(payload.state);
 
-    // Every one of this server's own configured locations gets the same
-    // identity -- rawstor_target_set_member_sync_state() only ever
-    // writes to one, so every member is its own call here, `targets`'
-    // own index order (the same one rawstor_target_meta() reports their
-    // state in). Every member is still attempted even if an earlier one
-    // fails, keeping the first error -- "partial failure leaves as many
-    // copies updated as possible" rather than none.
+    // The one location's record belongs to the copy exposed to clients.
+    // Several locations hold an inner mirror's records; the server has
+    // no separate record for its outer copy (docs/mirroring.md,
+    // "One copy per server").
     int result = 0;
-    std::string target = rawstd::URI::uris(targets);
-    for (size_t i = 0; i < targets.size(); ++i) {
+    if (targets.size() != 1) {
+        result = -ENOSYS;
+    } else {
         try {
+            std::string target = rawstd::URI::uris(targets);
             rawstd::CallbackAwaitable<void> awaiter;
             int res = rawstor_target_set_member_sync_state(
-                client->_queue, target.c_str(), payload.chunk_offset, i,
+                client->_queue, target.c_str(), payload.chunk_offset, 0,
                 &sync_state, result_trampoline, &awaiter
             );
             if (res < 0) {
@@ -1446,9 +1455,7 @@ rawstd::DetachedTask Client::_set_state(
             }
             co_await awaiter;
         } catch (const std::system_error& e) {
-            if (result == 0) {
-                result = -e.code().value();
-            }
+            result = -e.code().value();
         }
     }
 

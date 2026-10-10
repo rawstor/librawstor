@@ -573,3 +573,55 @@ TEST(OstClientTest, list_reports_every_chunk_offset) {
     std::memcpy(row_id.bytes, entries[2].id, sizeof(row_id.bytes));
     EXPECT_EQ(rawstd_uuid_cmp(&row_id, &nil_id), 0);
 }
+
+// A server with several locations is still one copy to its clients, but
+// keeps no record of that copy: the locations' records belong to its own
+// mirror of them. It answers SET_SYNC_STATE with -ENOSYS and reports no sync
+// identity (docs/mirroring.md, "One copy per server").
+TEST(OstClientTest, several_locations_keep_no_record_of_the_copy) {
+    rawstor::ostserver::tests::TmpDir a;
+    rawstor::ostserver::tests::TmpDir b;
+    std::string locations = a.uri() + "," + b.uri();
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, locations.c_str());
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    auto expect_response = [&](RawstorCommandType cmd, int32_t res) {
+        ASSERT_TRUE(pump_until(queue, [&] {
+            return client.bytes_available() >= sizeof(RawstorFrameResponse);
+        }));
+        RawstorFrameResponse response = client.recv_response();
+        EXPECT_EQ(response.head.cmd, cmd);
+        EXPECT_EQ(response.body.res, res);
+    };
+
+    client.send_allocate(id, 4096, 2);
+    expect_response(RAWSTOR_CMD_ALLOCATE, 0);
+
+    RawstorFrameSyncState set{};
+    std::memcpy(set.payload.object_id, id.bytes, sizeof(id.bytes));
+    set.payload.epoch = 3;
+    set.payload.sync_id = 0x33;
+    set.payload.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
+    client.send_set_sync_state(set);
+    expect_response(RAWSTOR_CMD_SET_SYNC_STATE, -ENOSYS);
+
+    client.send_meta(id, 0);
+    RawstorFrameMetaPayload meta{};
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >=
+               sizeof(RawstorFrameResponse) + sizeof(meta);
+    }));
+    RawstorFrameResponse response = client.recv_response(&meta, sizeof(meta));
+    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_META);
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(sizeof(meta)));
+    EXPECT_EQ(meta.size, 4096u);
+    EXPECT_EQ(meta.epoch, 0u);
+    EXPECT_EQ(meta.sync_id, 0u);
+    EXPECT_NE(meta.state, RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE);
+}

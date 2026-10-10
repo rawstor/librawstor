@@ -120,6 +120,25 @@ Client::send_write(uint64_t offset, const void* buf, size_t size, bool sync) {
     return cid;
 }
 
+uint16_t Client::send_meta(const RawstdUUID& id, uint64_t chunk_offset) {
+    uint16_t cid = _next_cid++;
+    RawstorFrameBasic frame{};
+    frame.head = {.magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_META, .cid = cid};
+    std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));
+    frame.payload.offset = chunk_offset;
+    send_all(_fd, &frame, sizeof(frame));
+    return cid;
+}
+
+uint16_t Client::send_set_sync_state(RawstorFrameSyncState frame) {
+    uint16_t cid = _next_cid++;
+    frame.head.magic = RAWSTOR_MAGIC;
+    frame.head.cmd = RAWSTOR_CMD_SET_SYNC_STATE;
+    frame.head.cid = cid;
+    send_all(_fd, &frame, sizeof(frame));
+    return cid;
+}
+
 uint16_t Client::send_read(uint64_t offset, uint32_t size) {
     uint16_t cid = _next_cid++;
     RawstorFrameIO frame = {
