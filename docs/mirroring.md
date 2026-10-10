@@ -23,6 +23,8 @@ numbers its stages separately.
 | A record of the copy itself for a `rawstor-ost` with several locations | — | ❌ | *One copy per server* |
 | Online resync with in-memory bitmap, region locks, zero-region `write_zeroes` | 3 | ✅ | `src/chunk.cpp` (`RESYNC_CHUNK`) |
 | Reconnect probe and automatic rejoin of STALE mirrors | 3 | ✅ | `src/chunk.cpp` (`_probe_watch()`) |
+| Several writable opens in one process (multiqueue) | 3 | ✅ | `src/chunk.cpp` (`MirrorControl`), `tests/test_multiqueue.cpp` |
+| Several writer processes (multi-attach) | — | 🟡 | [Multi-attach](multiattach.md): stage 1 (protocol, member side) done, stage 2 (several processes) not |
 | `rawstor show -v` per-chunk / per-mirror state | — | ✅ | `cli/show.c` |
 | `rawstor resolve TARGET --winner=N [--offset]` | — | ✅ | `cli/resolve.c` |
 | Force-open below quorum (CLI / opts) | — | ❌ | — |
@@ -43,7 +45,8 @@ Error codes: open without quorum (including the case where every mirror is unrea
 
 ## Model and assumptions
 
-- **Single writer per object.** An object is a virtual disk used by one client at a time (e.g. one VM via `rawstor-vhost` or the QEMU driver). Enforcing exclusivity (leases / exclusive open) is out of scope and is assumed.
+- **One writer process per object.** An object is a virtual disk used by one client process at a time (e.g. one VM via `rawstor-vhost` or the QEMU driver); multi-attach (several writer processes) is not supported yet ([Multi-attach](multiattach.md)). Enforcing exclusivity (leases / exclusive open) is out of scope and is assumed. Inside that process the object may be open for writing several times -- every virtqueue of a multiqueue `rawstor-vhost`/`rawstor-vduse` device opens it on its own thread -- and those opens act as one writer (*Writers*).
+- **Overlapping writes in flight at once** (two writes to the same blocks, the second issued before the first completed, through one open or several) leave those blocks unspecified, and the copies may differ there: each copy applies them in its own order. A guest never relies on that (page-cache writeback never has two writes of one page in flight); it is the same contract a single disk gives racing O_DIRECT writes.
 - **Client-side replication.** The client fans out writes to all mirrors; OSTs do not know about each other and never talk to each other.
 - **Identity** means: after recovery completes, all IN-SYNC copies are byte-for-byte equal. Writes that were never acknowledged to the caller may land on any subset of copies or none (RAID1 write-hole semantics — the application must not rely on them).
 - **Write acknowledgement** to the caller requires completion on **all IN-SYNC mirrors** (latency = slowest mirror).
@@ -123,7 +126,8 @@ never learn of. Any pairing occurs:
 
 The roles are in the order the writer lists the chunk's members (a plain
 target's URIs, an `mds://` chunk's placement), so a copy's own role is the
-entry at its own position in that order. The writer fills `roles` from its
+entry at its own position in that order; `SET_CONFIG` carries that
+position for its receiver. The writer fills `roles` from its
 members' states in every configuration it sets. An unreachable copy's
 record keeps whatever it last held, which is why only a copy's own role is
 read from its record, never another member's: a copy whose own role is
@@ -175,8 +179,11 @@ stores it on: the client counts it as one member, with one position in
 - **Several locations**: the server opens them as a mirror of its own,
   whose records hold that inner mirror's configuration. The copy the
   server is to its clients has no record of its own to keep, so the
-  server keeps none: it answers `SET_CONFIG` with `-ENOSYS` and reports no
-  configuration in `META` (`sync_id` 0, no roles). To a client that
+  server keeps none: it answers `SET_CONFIG`, `SYNC_PREPARE` and
+  `SYNC_ACCEPT` with `-ENOSYS`, reports no configuration in `META`
+  (`sync_id` 0, no roles, no ballots), and refuses writes stamped with an
+  epoch or flagged `RESYNC` with `-EOPNOTSUPP`
+  ([multi-attach](multiattach.md#epoch-on-writes)). To a client that
   mirrors across servers it is a copy without state tracking: next to an
   established sync set it reads as stale, and is resynced in full at
   every open. A client that does not mirror (one member) is unaffected.
@@ -332,9 +339,9 @@ flowchart TB
 ## Write lifecycle (all mirrors healthy)
 
 1. **Open:** read metadata of all copies, verify identity. The copies stay as they are (`CLEAN` after a clean close) -- opening alone, or a read-only session, never marks them.
-2. **First write** (or read-repair): each IN-SYNC copy marks itself `DIRTY` (fsync) before the write reaches it. A membership change not yet recorded (a copy unreachable at open, or degraded while still `CLEAN`) gets a new `sync_id` from the client's dirty gate before the write is sent — stale copies already on an ancestor `sync_id` don't (*When `sync_id` changes*). Later writes skip the gate.
+2. **First write** of the process (or read-repair): each IN-SYNC copy marks itself `DIRTY` (fsync) before the write reaches it. A membership change not yet recorded (a copy unreachable at open, or degraded while still `CLEAN`) gets a new `sync_id` from the client's dirty gate before the write is sent — stale copies already on an ancestor `sync_id` don't (*When `sync_id` changes*). Later writes, through any open of the process, skip the gate.
 3. **Write:** fan out to all IN-SYNC mirrors, acknowledge when all complete.
-4. **Clean close:** flush data, then `LEAVE` on every IN-SYNC copy; each marks itself `CLEAN` (fsync) once no session open for writing is left.
+4. **Clean close:** flush data, then `LEAVE` from every open of the process on its own sessions to the IN-SYNC copies; each copy marks itself `CLEAN` (fsync) once no session open for writing is left.
 
 The same with a mirror failing mid-write (F1, N = 2):
 
@@ -367,6 +374,44 @@ sequenceDiagram
 
 ---
 
+## Writers
+
+Every writable open of a chunk gets its own `Chunk` -- its own sessions to
+the copies, on the caller's own thread and `rawio` queue -- but the opens of
+one process are one writer: they share one control state per chunk,
+`MirrorControl`, found in a process-wide registry by object id and chunk
+offset. It is the only place the chunk's state lives: the sync set
+(`epoch`/`sync_id`/history/size), `DIRTY`, the frozen flag, every member's
+state and record, the exclusions not yet recorded with a new `sync_id`,
+and the running resync. A `Chunk` keeps only its sessions and whether each
+one works. READONLY, bound-version and single-member chunks have a control
+state of their own. A process opens a chunk on one member list: an open
+naming other locations while the chunk is open fails with `-EINVAL`.
+
+- **Transitions happen once, for every open.** Open, the dirty barrier, the
+  degrade barrier, the rejoin and the `LEAVE` at close run under the
+  chunk's transition lock. The first open reconciles the copies' records
+  (*Comparison rules*); a later one takes the state as it is, since the
+  records may be mid-transition. Whichever open passes the dirty gate
+  first, the others find it passed. A member one open excludes is excluded for
+  all of them, and a member the process counts in-sync but a later open
+  cannot reach is excluded before that open returns.
+- **The transition lock never blocks a thread.** It is held across metadata
+  round trips (fsync on the copies), so a waiter only suspends the
+  operation that needs it: it parks on a wakeup of its own (a pipe polled
+  on its own queue) that the holder signals on release, and its queue
+  keeps serving everything else meanwhile.
+- **No lock on the hot path.** A read or write learns the member states,
+  `DIRTY` and the frozen flag from atomic loads. A mutex is taken only by
+  writes while a resync runs (*Online resync algorithm*, step 4).
+- **A member being excluded (`LEAVING`)** serves no I/O from the moment it
+  fails. A write that skipped it, through any open, is acknowledged only
+  once its exclusion is recorded on the survivors (F1).
+- **N = 2 keeps continuing on one survivor**: the process is one writer,
+  so *Quorum* applies as it is.
+
+---
+
 ## Failure cases
 
 | # | Case | Detection | Reaction | Identity recovery |
@@ -393,8 +438,15 @@ Requirements: no downtime, and regions already rewritten by the client onto all 
 1. A bitmap lives in client memory; resync granularity ~1 MiB (a 1 TiB chunk → 128 KiB of bitmap) -- an unrelated, smaller-grained meaning of "chunk" than the mirrored entity this whole document is about (`RESYNC_CHUNK` in code). Initially all bits are set = "needs copy" (v1 is always a full resync).
 2. Client I/O continues throughout: reads are served **only from IN-SYNC mirrors**; **writes go both to IN-SYNC mirrors and to the SYNCING copy**. A write that fully covers a chunk clears its bit (that region is already identical). A partially covered chunk keeps its bit.
 3. A sweeper walks the bitmap: for each set bit it reads the chunk from a source mirror, writes it to the SYNCING copy, clears the bit. A chunk that reads back all zeros (typically never written) goes out as `write_zeroes` with unmap instead -- no payload on the wire, and the SYNCING copy stays sparse. Rate limiting (option) protects foreground I/O.
-4. **Ordering hazard, sweeper × client write to the same chunk:** a per-chunk lock in client memory (single writer, cheap) — a client write to a chunk currently being copied waits for the chunk copy to finish (or vice versa). Otherwise the sweeper could overwrite a fresh client write with stale source data.
-5. Bitmap empty → drain in-flight I/O → the IN-SYNC copies move to a new `sync_id`/`epoch` (fsync), and the SYNCING copy's metadata is set to it (fsync) → the mirror is IN-SYNC (*When `sync_id` changes*).
+4. **Ordering hazard, sweeper × client write to the same chunk:** a per-chunk lock in the writer process's memory, shared by all its opens — a client write to a chunk currently being copied waits for the chunk copy to finish (or vice versa). Otherwise the sweeper could overwrite a fresh client write with stale source data.
+5. Bitmap empty → under the transition lock, the IN-SYNC copies move to a new `sync_id`/`epoch` (fsync), and the SYNCING copy's metadata is set to it (fsync) → the mirror is IN-SYNC (*When `sync_id` changes*). Client writes go on meanwhile, duplicated onto the copy; one that fails on it after its metadata is set excludes it again (F1) before that write is acknowledged.
+
+One resync runs per chunk at a time, for every open of the process at once.
+The open that starts it owns the sweep and the commit; every other one
+duplicates its writes onto the SYNCING copy too, opening a session to it if
+it has none (an open that cannot reach the copy aborts the resync). Writes
+an open started before it joined the resync were not duplicated: the sweep
+starts only once every open joined and those writes settled.
 
 ```mermaid
 sequenceDiagram
@@ -418,13 +470,13 @@ sequenceDiagram
         C->>Dst: WRITE
     end
     C->>C: clear its bit (already identical)
-    Note over C: bitmap empty: drain in-flight I/O
+    Note over C: bitmap empty
     C->>Src: epoch+1, new sync_id, old one to history (fsync)
     C->>Dst: metadata = that new sync_id / epoch (fsync)
     Note over Dst: IN-SYNC, serves reads
 ```
 
-If the client or the target OST crashes mid-resync, the copy's role remains syncing and the resync restarts from scratch (F8). A persistent write-intent bitmap (v2) makes it resumable and shrinks the F5 full resync to recently-touched regions.
+If the client or the target OST crashes mid-resync, the copy's role remains syncing and the resync restarts from scratch (F8). Closing the open that owns the resync aborts it the same way, unless the copy's metadata is already being set: `close()` then waits for the rejoin to finish. A persistent write-intent bitmap (v2) makes it resumable and shrinks the F5 full resync to recently-touched regions.
 
 ### Known limitation: the degrade-barrier window
 
@@ -475,7 +527,7 @@ copies, a witness (*Roadmap — MDS as witness* above).
 - **`src/file_backend.cpp`** — versioned `.spec` format; fsync of metadata.
 - **`src/lvm_backend.cpp`/`src/zfs_backend.cpp`** — a raw block device has no `.spec` file and a reserved header/footer region is incompatible with objects already created (data occupies the device from byte 0). Metadata instead uses each backend's own native, transactional storage: a ZFS user property (`rawstor:meta`, set/read via `zfs set`/`zfs get`) or an LVM tag (`rawstor.meta=...`, via `lvchange --addtag`/`--deltag` and `lvs -o lv_tags`), encoded as a compact colon-separated hex string (`meta_encode()`/`meta_decode()` in `src/blk_backend.{hpp,cpp}`). Both mechanisms share the device/dataset's own failure domain and are set in the same command as creation, so there is never a window where the volume exists without one. A volume with no recorded value (created before this existed, or by something else) is **not** trusted as legacy-CLEAN the way an old `.spec` record is — it fails `meta()`, which the caller already treats as case F10 (untrusted member, needs a resync).
 - **`ost/session.cpp`** — handlers for the new opcodes.
-- **`src/chunk.cpp`** — per-mirror state machine (IN-SYNC/STALE/SYNCING per `Slot`, recorded as every member's role), quorum checks at open, degraded open, the degradation procedure (F1: suspend acks → bump survivors' metadata → resume), read failover + read-repair, the resync engine (bitmap + sweeper + per-chunk locks), reconnect probes for STALE mirrors. Cross-mirror logic lives in `Chunk`; `Slot` keeps only per-location retry/reopen.
+- **`src/chunk.cpp`** — per-mirror state machine (IN-SYNC/LEAVING/STALE/SYNCING per member, recorded as every member's role, in the chunk's `MirrorControl` shared by the opens of one process, *Writers*), quorum checks at open, degraded open, the degradation procedure (F1: suspend acks → bump survivors' metadata → resume), read failover + read-repair, the resync engine (bitmap + sweeper + per-chunk locks), reconnect probes for STALE mirrors. Cross-mirror logic lives in `Chunk`; `Slot` keeps only per-location retry/reopen.
 - **`cli/`** — `rawstor show -v` prints one `chunk[OFFSET]` block per chunk (`rawstor_target_spec()`'s own size/chunk_size say how many), each with a `mirror[N]` per copy of that chunk and its own state; `rawstor resolve TARGET --winner=N[,N...] [--offset OFFSET]` declares one or more mirrors of the targeted chunk(s) jointly authoritative after split brain (F9) -- every chunk in the object if `--offset` is omitted -- writing them all the same new dominant `sync_id`, one member at a time via `rawstor_target_set_member_config()` with `RAWSTOR_CONFIG_CLEAR_LOST`, so every mirror of that chunk NOT listed gets a full resync on the next open. Still missing: `rawstor-cli force-open` / an opts flag (below-quorum start, explicit manual approval).
 
 ### Implementation stages

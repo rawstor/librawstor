@@ -175,7 +175,18 @@ public:
 
     rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags
+        const RawstorObjectConfig& config, unsigned int flags, uint8_t position
+    );
+
+    rawstd::Task<Backend::SyncReply> sync_prepare(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+    );
+
+    rawstd::Task<Backend::SyncReply> sync_accept(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config, unsigned int flags,
+        uint32_t sessions, uint8_t position
     );
 
     // The writer's clean departure from this member's session

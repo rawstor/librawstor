@@ -12,7 +12,8 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) \
              $(GTEST_LIBS)
 
 
-test_all_SOURCES = test_coro.cpp \
+test_all_SOURCES = test_caspaxos.cpp \
+                   test_coro.cpp \
                    test_env.cpp \
                    test_hash.cpp \
                    test_iovec.cpp \

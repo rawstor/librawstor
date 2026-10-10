@@ -75,19 +75,21 @@ keep `0x0b`/`0x0c`.
 |---|---|---|---|---|
 | `0x00` | `SET_OBJECT` | all | Basic (`val` = open flags, e.g. `RAWSTOR_READONLY`) | — |
 | `0x01` | `READ` | OST | IO | data (`res` bytes) |
-| `0x02` | `WRITE` | OST | IO, then `len` bytes of data | — |
+| `0x02` | `WRITE` | OST | IO (`flags`: `SYNC`, `RESYNC`), then `len` bytes of data | — |
 | `0x03` | `DISCARD` | OST | IO | — |
 | `0x04` | `ALLOCATE` | OST | Allocate | — |
 | `0x05` | `RELEASE` | OST | Basic (non-nil `version_id`: that version only) | — |
 | `0x06` | `LIST` | OST, MDS | List | List rows |
 | `0x08` | `LOCATION_INFO` | OST / MDS | Basic (unused) | `RawstorLocationInfo` |
-| `0x09` | `FLUSH` | OST | Basic (unused) | — |
-| `0x0a` | `WRITE_ZEROES` | OST | IO (`flags`: `SYNC`, `UNMAP`) | — |
+| `0x09` | `FLUSH` | OST | Basic (`val` = epoch) | — |
+| `0x0a` | `WRITE_ZEROES` | OST | IO (`flags`: `SYNC`, `UNMAP`, `RESYNC`) | — |
 | `0x0b` | `SET_CONFIG` | OST | SetConfig | — |
 | `0x0c` | `META` | OST | Basic (`offset` = chunk offset, `version_id`, nil = live) | Meta |
 | `0x0d` | `CREATE_VERSION` | OST | Basic (`version_id` = new version) | — |
 | `0x0e` | `LIST_VERSIONS` | OST | Basic (`offset` = chunk offset) | Version rows |
 | `0x0f` | `LEAVE` | OST | Basic (unused) | — |
+| `0x10` | `SYNC_PREPARE` | OST | SyncPropose (`ballot` only) | SyncReply |
+| `0x11` | `SYNC_ACCEPT` | OST | SyncPropose | SyncReply |
 | `0x40` | `OBJ_CREATE` | MDS | ObjCreate | ObjCreated |
 | `0x41` | `OBJ_OPEN` | MDS | Basic (`version_id`, nil = live) | ObjDescriptor + chunks |
 | `0x42` | `OBJ_RESIZE` | MDS | ObjOp (`val` = new size) | ObjResized |
@@ -145,7 +147,8 @@ Shared by every command that only names an object: `SET_OBJECT`, `RELEASE`,
 `CREATE_VERSION`, `META`, `LOCATION_INFO`, `FLUSH` and the MDS's `OBJ_OPEN`. `offset` is the chunk offset of
 the object `object_id` names (0 for a plain object); `version_id` binds
 a version for `SET_OBJECT`, `RELEASE`, `CREATE_VERSION`, `META` and `OBJ_OPEN`
-(nil = live); `val` is command-specific.
+(nil = live); `val` is command-specific: `FLUSH` carries the writer's
+epoch in it, as IO does.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -170,13 +173,27 @@ a version for `SET_OBJECT`, `RELEASE`, `CREATE_VERSION`, `META` and `OBJ_OPEN`
      +---------------------------------------------------------------------------------------+
 ```
 
-### IO — 21 bytes
+### IO — 29 bytes
 
 `READ`, `WRITE`, `DISCARD`, `WRITE_ZEROES` on the bound object. `hash`
 covers the data that follows a `WRITE` (same hash as a response's), 0
 otherwise. `flags`:
 `RAWSTOR_FLAG_SYNC` (durable before the response; `WRITE`, `WRITE_ZEROES`),
-`RAWSTOR_FLAG_UNMAP` (may deallocate; `WRITE_ZEROES`).
+`RAWSTOR_FLAG_UNMAP` (may deallocate; `WRITE_ZEROES`),
+`RAWSTOR_FLAG_RESYNC` (a resync's copy onto a `SYNCING` member: written
+only where no client write reached since the member became `SYNCING`,
+answered with the whole length; `WRITE`, `WRITE_ZEROES`). A copy that
+keeps no record of client writes -- not `SYNCING`, or `SYNCING` since
+before the server started -- refuses it with `-ESTALE`
+([multi-attach](multiattach.md#resync-across-processes)).
+
+`epoch` is the epoch of the configuration the writer uses (`WRITE`,
+`DISCARD`, `WRITE_ZEROES`; `FLUSH` carries it in Basic's `val`): the
+copy refuses the request with `-ESTALE` once its accepted configuration
+is newer ([multi-attach](multiattach.md#epoch-on-writes)). 0 is never
+refused; `READ` leaves it 0. A server with no copy of its own -- several
+locations, or one it reaches through another server -- refuses a
+stamped or `RESYNC` request with `-EOPNOTSUPP`.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -187,9 +204,12 @@ otherwise. `flags`:
   8  |                                     uint64_t hash                                     |
      |                                                                                       |
      +-------------------------------------------+----------+--------------------------------+
- 16  |               uint32_t len                |  flags   |         WRITE data...          |
+ 16  |               uint32_t len                |  flags   |                                |
      |                                           |          |                                |
-     +-------------------------------------------+----------+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~+
+     +-------------------------------------------+----------+                                |
+ 24  |                    uint64_t epoch                    |         WRITE data...          |
+     |                                                      |                                |
+     +------------------------------------------------------+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~+
 ```
 
 ### List — 20 bytes
@@ -210,10 +230,11 @@ otherwise. `flags`:
      +-------------------------------------------+
 ```
 
-### Config — 304 bytes
+### Config — 312 bytes
 
-The chunk's configuration (`RawstorObjectConfig`): its sync set and every
-member's role, `nroles` entries of `enum RawstorObjectMemberRole` (0
+The chunk's configuration (`RawstorObjectConfig`): its sync set, the
+writer running the resync of the syncing member (`resync_owner`, 0 when
+none) and every member's role, `nroles` entries of `enum RawstorObjectMemberRole` (0
 unknown, 1 in-sync, 2 syncing, 3 excluded), the rest zero. Carried in
 SetConfig and Meta; see [mirroring](mirroring.md#states-and-roles).
 
@@ -228,21 +249,45 @@ SetConfig and Meta; see [mirroring](mirroring.md#states-and-roles).
      +---------------------------------------------------------------------------------------+
  16  |                            uint64_t sync_id_history[0..3]                             |
      |                                      (32 bytes)                                       |
+     +---------------------------------------------------------------------------------------+
+ 48  |                                 uint64_t resync_owner                                 |
+     |                                                                                       |
      +----------+----------------------------------------------------------------------------+
- 48  |  nroles  |                              uint8_t roles[255]                            |
+ 56  |  nroles  |                              uint8_t roles[255]                            |
      |          |                                    ...                                     |
      +----------+----------------------------------------------------------------------------+
-304
+312
 ```
 
-### SetConfig — 329 bytes
+### Ballot — 16 bytes
+
+A ballot of the configuration register (`RawstorObjectBallot`):
+`(counter, proposer)`, ordered by counter, then by proposer
+([CASPaxos](caspaxos.md)).
+
+```text
+     +0         +1         +2         +3         +4         +5         +6         +7
+     +---------------------------------------------------------------------------------------+
+  0  |                                   uint64_t counter                                    |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+  8  |                                   uint64_t proposer                                   |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+16
+```
+
+### SetConfig — 338 bytes
 
 Records the chunk's configuration on one copy (`SET_CONFIG`). The copy's
 own state is not set: the copy keeps it ([mirroring](mirroring.md#dirty-clean-and-lost)),
 but for `flags` bit 0, `RAWSTOR_CONFIG_CLEAR_LOST`, which turns a `LOST`
 copy `CLEAN` (no session open for writing) or `DIRTY`. A server with
 several locations keeps no record of the copy it is and answers `-ENOSYS`
-([mirroring](mirroring.md#one-copy-per-server)).
+([mirroring](mirroring.md#one-copy-per-server)). The copy's ballots stay
+as they are: only the register's own requests change them. `position` is
+the copy's position among the chunk's members, which the Config's roles
+are indexed by: the copy takes its own role from it.
 
 `LEAVE` (Basic, unused) is a session's clean departure from the object it
 set: the server closes it cleanly, and a copy with no session open for
@@ -261,12 +306,46 @@ way -- disconnect, a new `SET_OBJECT` -- leaves a `DIRTY` copy `LOST`.
  16  |                                 uint64_t chunk_offset                                 |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
- 24  Config (304 bytes)
-     +----------+
-328  |  flags   |
-     |          |
-     +----------+
-329
+ 24  Config (312 bytes)
+     +----------+----------+
+336  |  flags   | position |
+     |          |          |
+     +----------+----------+
+338
+```
+
+### SyncPropose — 374 bytes
+
+The two requests of a chunk's configuration register
+([multi-attach](multiattach.md#the-register-caspaxos),
+[CASPaxos](caspaxos.md)). `SYNC_PREPARE` asks the member to promise
+`ballot` and leaves the rest zero. `SYNC_ACCEPT` asks it to accept the
+register's value -- the Config -- under `ballot`, and to promise `next` on
+success (zero for none). `flags` bit 0 is `ALONE`: the member refuses with
+`-EBUSY` while more than `sessions` sessions have the copy open for
+writing, or while the copy is `LOST`. `position` is as for SetConfig. A
+server with several locations answers `-ENOSYS`.
+
+```text
+     +0         +1         +2         +3         +4         +5         +6         +7
+     +---------------------------------------------------------------------------------------+
+  0  |                                                                                       |
+     |                                 uint8_t object_id[16]                                 |
+     |                                                                                       |
+  8  |                                                                                       |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+ 16  |                                 uint64_t chunk_offset                                 |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+ 24  Ballot ballot (16 bytes)
+ 40  Ballot next (16 bytes)
+ 56  Config (312 bytes)
+     +-------------------------------------------+----------+----------+
+368  |              uint32_t sessions            |  flags   | position |
+     |                                           |          |          |
+     +-------------------------------------------+----------+----------+
+374
 ```
 
 ### Allocate — 44 bytes
@@ -339,13 +418,15 @@ in no particular order. An empty payload means the object has no versions
      +---------------------------------------------------------------------------------------+
 ```
 
-### Meta — 320 bytes
+### Meta — 360 bytes
 
 Everything about one stored copy: its size, its placement identity, its own
 state (`CLEAN`, `DIRTY`, `LOST`), how many sessions have it open for
 writing right now (`writers`), and the chunk's configuration as last set on
-it (a [Config](#config--304-bytes), at offset 16). A server with several
-locations reports a zero Config.
+it (a [Config](#config--312-bytes), at offset 16), and the copy's
+replica of the register's ballots: the highest it promised and the one
+its Config was accepted under. A server with several locations reports a
+zero Config and zero ballots.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -356,8 +437,25 @@ locations reports a zero Config.
   8  |  state   |  chunk_  |  width   | member_  |              uint32_t writers             |
      |          |  shift   |          |   role   |                                           |
      +----------+----------+----------+----------+-------------------------------------------+
- 16  Config (304 bytes)
-320
+ 16  Config (312 bytes)
+328  Ballot promised (16 bytes)
+344  Ballot accepted (16 bytes)
+360
+```
+
+### SyncReply — 361 bytes
+
+`SYNC_PREPARE`/`SYNC_ACCEPT`'s reply, sent whether the member promised or
+accepted (`ok` = 1) or refused (`ok` = 0): its whole record, a
+[Meta](#meta--360-bytes), follows at offset 1, so a refused proposer sees
+the actual value.
+
+```text
+     +0         +1
+     +----------+--------------------------------------
+  0  |    ok    |  Meta (360 bytes)
+     +----------+--------------------------------------
+361
 ```
 
 ### RawstorLocationInfo — 16 bytes

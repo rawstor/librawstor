@@ -144,13 +144,13 @@ TEST(MemberStateTest, abandoned_writer_loses_the_copy) {
     write_one(*queue, *b);
     RawstorObjectConfig config = f.meta(*queue).config;
     config.epoch += 1;
-    run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0));
+    run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0, 0));
     run(*queue, b->close());
     EXPECT_EQ(f.meta(*queue).state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
 
     // Only an explicit clear does.
     run(*queue, f.target.set_member_config(
-                    *queue, 0, 0, config, RAWSTOR_CONFIG_CLEAR_LOST
+                    *queue, 0, 0, config, RAWSTOR_CONFIG_CLEAR_LOST, 0
                 ));
     EXPECT_EQ(f.meta(*queue).state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 }
@@ -181,7 +181,7 @@ TEST(MemberStateTest, set_config_keeps_the_state_and_records_roles) {
     config.nroles = 2;
     config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
     config.roles[1] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
-    run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0));
+    run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0, 0));
 
     RawstorObjectMeta meta = f.meta(*queue);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
@@ -243,4 +243,35 @@ TEST(MemberStateTest, mds_object_passes_departure_to_its_chunks) {
         wait_state(RAWSTOR_OBJECT_SYNC_STATE_LOST),
         RAWSTOR_OBJECT_SYNC_STATE_LOST
     );
+}
+
+// A writer that dropped its session may be deciding alone on the other
+// member of two: a LOST copy refuses to decide alone (docs/multiattach.md,
+// "N = 2").
+TEST(MemberStateTest, lost_copy_refuses_to_decide_alone) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
+    FileObject f;
+    f.create(*queue);
+
+    std::unique_ptr<rawstor::Object> a = run(*queue, f.target.open(*queue, 0));
+    write_one(*queue, *a);
+    run(*queue, a->close(false));
+    ASSERT_EQ(f.meta(*queue).state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+
+    RawstorObjectConfig config = f.meta(*queue).config;
+    config.epoch += 1;
+    try {
+        run(*queue,
+            f.target.sync_accept(
+                *queue, 0, 0, {1, 0x77}, {}, config, RAWSTOR_SYNC_ALONE, 0, 0
+            ));
+        FAIL() << "accepted alone on a LOST copy";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EBUSY);
+    }
+
+    rawstor::Backend::SyncReply reply =
+        run(*queue,
+            f.target.sync_accept(*queue, 0, 0, {1, 0x77}, {}, config, 0, 0, 0));
+    EXPECT_TRUE(reply.ok);
 }

@@ -23,6 +23,23 @@ namespace rawstor {
 
 class Slot;
 
+// IN_SYNC - the member carries every acknowledged write; serves I/O.
+// LEAVING - the member is being excluded, but its exclusion is not
+//           recorded on the survivors yet: it serves no I/O, and a write
+//           that skipped it is acknowledged only once the exclusion is
+//           recorded.
+// STALE   - the member is excluded (unreachable, degraded or behind).
+// SYNCING - an online resync onto the member is in progress: it receives
+//           client writes but serves no reads yet.
+enum class MemberState { IN_SYNC, LEAVING, STALE, SYNCING };
+
+// Control state of one chunk: the sync set, DIRTY, every member's state
+// and the online resync. Every writable Chunk this process opened on the
+// same mirrored chunk (one per virtqueue of a multiqueue device) shares
+// one; any other Chunk has one of its own.
+struct MirrorControl;
+struct MirrorResync;
+
 // Chunk mirrors a single logical chunk (1..N slots, one per replica) over
 // its own Slot pool -- the sole building block Object routes I/O to. Not a
 // RawstorObject itself: only Object is ever handed out as a top-level
@@ -30,22 +47,16 @@ class Slot;
 // Target::open()/Object, via the create() factory below.
 class Chunk final {
 private:
-    struct ResyncState;
-
-    // IN_SYNC - the member carries every acknowledged write; serves I/O.
-    // STALE   - the member is excluded (unreachable, degraded or behind).
-    // SYNCING - an online resync onto the member is in progress: it receives
-    //           client writes but serves no reads yet.
-    enum class MemberState { IN_SYNC, STALE, SYNCING };
+    struct ResyncTicket;
 
     // One slot per configured member, in target-list order, kept even while
     // unreachable (reachable == false) so the reconnect probe can bring it
-    // back -- unlike before online resync, where an unreachable member had
-    // no slot at all.
+    // back. Only this Chunk's session to the member: the member's state
+    // lives in MirrorControl.
     struct Member {
         std::unique_ptr<rawstor::Slot> slot;
         rawstd::URI location;
-        MemberState state;
+        // The member's metadata as this Chunk's open read it.
         RawstorObjectMeta meta;
         bool reachable;
         // The reconnect probe has already logged its attempt to bring this
@@ -79,32 +90,19 @@ private:
     // fails with EROFS instead.
     bool _readonly;
 
-    // Logical object size, adopted from the in-sync metadata at open --
-    // the resync chunk bitmap is sized off this.
-    uint64_t _size;
+    std::shared_ptr<MirrorControl> _control;
 
-    // DIRTY has been durably recorded on the in-sync members.
-    bool _dirty;
-
-    // Survivors dropped to <= N/2 (N >= 3): writes fail until recovery.
-    bool _writes_frozen;
-
-    // Tracks whether a metadata barrier (dirty gate or degrade) is in
-    // flight -- co_await _meta_gate.settle() parks a coroutine that
-    // depends on the recorded state (returning immediately if nothing is
-    // running) and resumes it once the barrier settles.
+    // Tracks whether a metadata barrier (dirty gate or degrade) of this
+    // Chunk is in flight -- co_await _meta_gate.settle() parks a coroutine
+    // that depends on the recorded state (returning immediately if nothing
+    // is running) and resumes it once the barrier settles. Coalesces this
+    // Chunk's own waiters, so only one of them at a time takes the
+    // transition lock (_lock()).
     rawstd::Gate _meta_gate;
 
-    // Members marked STALE whose exclusion is not yet durably recorded:
-    // degraded at runtime, or left out at open without their own record
-    // proving them stale (_reconcile_sync_set()). Nonzero means the
-    // membership changed, and the next barrier writes a new sync_id.
-    size_t _unrecorded_stale;
-
-    // Current sync-set identity adopted at open / last barrier.
-    uint64_t _epoch;
-    uint64_t _sync_id;
-    uint64_t _sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
+    // Transparent retry is off on this Chunk's sessions: the chunk is
+    // DIRTY (docs/mirroring.md, case F6).
+    bool _retry_disabled;
 
     // Expires on destruction. Detached background work (read-repair,
     // resync, the reconnect probe, the degrade barriers they may trigger)
@@ -131,26 +129,25 @@ private:
     // _abort_background(), then waits for _background to reach zero.
     rawstd::Task<void> _stop_background();
 
-    // Mirrored writes currently in flight -- resync drain bookkeeping
-    // (_write_settled() below), separate from _writes_issued/
-    // _flush_barrier's own flush-barrier accounting.
+    // Mirrored writes of this Chunk currently in flight -- resync attach
+    // bookkeeping (_resync_untracked below), separate from
+    // _writes_issued/_flush_barrier's own flush-barrier accounting.
     size_t _writes_in_flight;
-    // Bumped every time a mirrored write settles (_write_settled()): the
-    // resync finisher waits on it for the writes started meanwhile. Kept
-    // here rather than in ResyncState, which a resumed finisher may reset.
-    rawstd::Barrier _write_settle_barrier;
 
-    // Active online resync, one member at a time (nullptr when none is in
-    // progress).
-    std::unique_ptr<ResyncState> _resync;
-
-    // Bumped every time a new ResyncState is created. Chunk-copy
-    // completions capture the generation they were issued under: a
-    // completion whose generation no longer matches _resync's (the resync
-    // it belonged to was aborted and possibly replaced by a new one) must
-    // not touch the current _resync, even though _resync itself is
-    // non-null again.
-    size_t _resync_generation;
+    // The resync (MirrorResync) this Chunk duplicates its writes for, by
+    // generation, and its member; 0 when none. _resync_attach_epoch is bumped
+    // on every attach and each write remembers the epoch it started under:
+    // _resync_untracked counts the writes still in flight that started
+    // before the latest attach (not duplicated onto the member, so the
+    // sweep waits for them).
+    uint64_t _resync_attached;
+    size_t _resync_idx;
+    uint64_t _resync_attach_epoch;
+    size_t _resync_untracked;
+    // MirrorControl::resync_seq as the write path and the watcher last
+    // saw it.
+    uint64_t _resync_seen;
+    uint64_t _watch_seen;
 
     // Periodic reconnect probe for unreachable members
     // (mirror_probe_interval), driven by _queue.timeout_multishot() in
@@ -201,8 +198,9 @@ private:
     // tracks local flush-barrier state, not the persisted DIRTY/CLEAN/
     // SYNCING protocol state.
     bool _unflushed;
-    // A write through this chunk failed without its failed members being
-    // excluded (none succeeded): close() does not leave them cleanly.
+    // A write through this open failed without its failed members being
+    // excluded (none succeeded): what it left on them is unknown, so
+    // close() does not leave them cleanly.
     bool _write_failed;
 
     // Called once the pwrite()/pwritev()/write_zeroes() call that took
@@ -222,7 +220,23 @@ private:
     // _write_finished() in its destructor, however the write ends.
     class WriteTicket;
 
+    // Member `idx`'s state; read without any lock. _set_state() is called
+    // with MirrorControl::mu held.
+    MemberState _state(size_t idx) const noexcept;
+    void _set_state(size_t idx, MemberState state) noexcept;
     size_t _in_sync_count() const noexcept;
+    bool _any_leaving() const noexcept;
+
+    // The transition lock: serializes control transitions (open, the
+    // dirty/degrade/rejoin barriers, the clean mark at close) across every
+    // Chunk sharing _control, whichever thread or queue each runs on.
+    // Never blocks the queue.
+    rawstd::Task<void> _lock();
+    void _unlock() noexcept;
+
+    // Turns transparent retry off on this Chunk's sessions once the chunk
+    // is DIRTY.
+    void _disable_retry() noexcept;
 
     // `m`'s own chunk, as a target URI (location/id/offset), for logs.
     std::string _member_str(const Member& m) const;
@@ -234,12 +248,12 @@ private:
     bool _below_write_quorum(size_t survivors) const noexcept;
 
     // Metadata comparison at open (docs/mirroring.md, "Comparison rules"):
-    // excludes SYNCING/stale members from _members, picks the newest
-    // sync_id, refuses a split brain -- demoting members as needed, and
-    // deriving this object's own sync-set identity (_epoch/_size/
-    // _sync_id/_sync_id_history) from whichever end up IN_SYNC. Called
-    // by the constructor below, for every mirrors >= 2 open (mirrors ==
-    // 1 skips it -- see the constructor's own comment) -- a throw here
+    // excludes SYNCING/stale members, picks the newest sync_id, refuses a
+    // split brain -- demoting members as needed, and deriving the chunk's
+    // sync-set identity (MirrorControl's epoch/size/sync_id/
+    // sync_id_history) from whichever end up IN_SYNC. Called by the
+    // constructor below for the first open of a mirrors >= 2 chunk (mirrors
+    // == 1 skips it -- see the constructor's own comment) -- a throw here
     // (quorum lost, split brain, no trusted member left) aborts
     // construction: whichever Slots _members already holds by then are
     // simply dropped, not gracefully co_await-closed (a constructor
@@ -249,36 +263,28 @@ private:
     // instead of via close().
     void _reconcile_sync_set();
 
-    // New epoch, freshly generated sync_id, with the chunk's own current
-    // sync_id (if any) pushed onto the front of the ancestry
-    // (_sync_id_history's own comment above) -- shared by
-    // the barriers that record a membership change: _run_degrade_barrier(),
-    // _run_rejoin_barrier(), and _run_dirty_barrier() (for an exclusion
-    // still unrecorded, or a legacy set).
-    // The configuration as this chunk holds it: its sync set, and one role
-    // per member from its state (docs/mirroring.md, "States and roles").
-    RawstorObjectConfig _current_config() const;
-    // The same, moved to a new sync set (epoch + 1, a new sync_id, the
-    // current one pushed to the history).
-    RawstorObjectConfig _bump_config() const;
-    // The member's own role in the configuration its record holds.
-    RawstorObjectMemberRole _recorded_role(const Member& m) const noexcept;
-
-    // Runs cont(0) once DIRTY is durably recorded on the in-sync members; the
+    // Returns once DIRTY is durably recorded on the in-sync members; the
     // first write (or read-repair) of a mirrored object passes through
     // here before anything is acknowledged.
     rawstd::Task<void> _with_dirty();
     rawstd::Task<void> _run_dirty_barrier();
 
-    // Excludes members from the mirror set (docs/mirroring.md, case F1/F6).
+    // Excludes members from the mirror set (docs/mirroring.md, case F1/F6)
+    // and returns once every exclusion pending for the chunk is recorded.
     rawstd::Task<void> _degrade(std::vector<size_t> idxs);
-    rawstd::Task<void> _run_degrade_barrier();
 
-    // Persists `config` on every in-sync member; members that fail the
-    // update are marked STALE. Never throws -- the caller re-checks
-    // _in_sync_count()/_below_write_quorum() itself afterward.
-    rawstd::Task<void> _run_meta_fan_out(RawstorObjectConfig config);
-    rawstd::Task<void> _set_config_one(size_t idx, RawstorObjectConfig config);
+    // Called with the transition lock held: records `state` on every
+    // in-sync member, with a new epoch and sync_id when `bump` (a
+    // membership change: every LEAVING member and every exclusion still
+    // unrecorded go with it). Members that fail the update are excluded.
+    // Throws EIO with no in-sync member left, or once fewer than a write
+    // quorum survive (`joining` counts a member about to rejoin), freezing
+    // writes.
+    rawstd::Task<void> _record(bool bump, size_t joining);
+    rawstd::Task<void> _set_config_one(
+        size_t idx, RawstorObjectConfig config,
+        std::shared_ptr<std::vector<size_t>> failed
+    );
 
     // Mirrored write fan-out shared by pwrite()/pwritev()/discard()/
     // write_zeroes()/flush(): `issue` is co_await-ed against every
@@ -306,47 +312,56 @@ private:
         std::shared_ptr<FanOutWriteState> st
     );
 
-    // Called once a mirrored write's fan-out (_fan_out_write() above) has
-    // fully settled (every member's own completion, including the SYNCING
-    // one if any, has been accounted for) -- advances whichever resync
-    // phase is waiting on the in-flight count reaching zero, or the
-    // sweeper's own per-chunk block.
-    void _write_settled() noexcept;
-    // Undoes what _fan_out_write() counted for one write in flight --
-    // _writes_in_flight and the first `regions` resync regions it
-    // touches -- and settles it with the resync, then _write_settled().
-    void _write_settle(
-        uint64_t offset, size_t size, size_t regions, const FanOutWriteState& st
+    // Online resync of one member (docs/mirroring.md, online resync), run
+    // for every Chunk sharing _control at once (MirrorResync): one Chunk
+    // owns it, every other one duplicates its writes onto the SYNCING
+    // member too.
+    //
+    // _resync_enter()/_resync_leave() bracket every mirrored write while a
+    // resync runs: enter parks while the write overlaps the region being
+    // copied, then tracks it and picks the member to duplicate onto;
+    // leave untracks it and clears fully rewritten regions. A failed
+    // duplicate aborts the resync, or, once the resync is committing,
+    // makes leave return true: the member is then degraded like any
+    // in-sync member that failed the write.
+    rawstd::Task<void>
+    _resync_enter(uint64_t offset, size_t size, ResyncTicket& ticket);
+    bool _resync_leave(
+        const ResyncTicket& ticket, uint64_t offset, size_t size, bool written,
+        bool written_ok
     ) noexcept;
-    void _resync_advance_on_settle() noexcept;
-
-    // Online resync of one member (docs/mirroring.md, resync algorithm): a
-    // needs-copy bitmap over RESYNC_CHUNK-sized chunks, client writes
-    // duplicated onto the SYNCING member (_fan_out_write() above), and a
-    // sweeper copying one chunk at a time from an in-sync source, mutually
-    // exclusive with client writes to that chunk. Picks the first STALE,
-    // reachable member with no resync already running; a no-op otherwise
-    // (single target, no stale-but-reachable member, or already resyncing).
-    // Detached: driven entirely by its own continuations (the SYNCING
-    // mark's completion, _write_settled() above, each sweep step), not by
-    // a caller awaiting it.
+    // With MirrorControl::mu held: once the resync this Chunk is attached
+    // to has ended, detaches it -- marking the member unreachable if the
+    // resync was aborted, so the probe brings it back.
+    void _resync_follow_locked() noexcept;
+    // Undoes what _fan_out_write() counted for one write in flight --
+    // _writes_in_flight and its resync ticket -- however the fan-out ends.
+    // Returns _resync_leave()'s answer for a tracked write.
+    bool _write_settle(
+        const ResyncTicket& ticket, uint64_t offset, size_t size,
+        const FanOutWriteState& st
+    ) noexcept;
+    // Starts a resync of the first STALE, reachable member, owned by this
+    // Chunk, unless one is running already; a no-op otherwise (single
+    // target, no such member, empty object).
     rawstd::DetachedTask _resync_maybe_start();
-    // One sweep step: copies the next needs-copy chunk with no client
-    // write in flight on it (parking as _resync->sweep_blocked if every
-    // dirty chunk currently has one; _write_settled() resumes it), or
-    // moves on to FINISH_DRAIN once every chunk is copied.
-    rawstd::DetachedTask _resync_sweep();
-    // Every chunk copied and no client write in flight: durably adopts
-    // the current sync-set identity on the member, then lets it serve reads.
-    rawstd::DetachedTask _resync_finish();
-    // Moves the in-sync members to a new sync_id before a rejoining member
-    // adopts it (docs/mirroring.md, When sync_id changes).
-    rawstd::Task<void> _run_rejoin_barrier();
-    // Marks the resync's member STALE (unreachable, so the probe retries
-    // later) and wakes every writer parked on a chunk overlap. Synchronous
-    // -- safe to call from anywhere already holding _resync, including
-    // mid-fan-out bookkeeping.
-    void _resync_abort(const char* reason) noexcept;
+    // Attaches this Chunk to the running resync `generation`: the first
+    // with MirrorControl::mu held and a session to the member already
+    // there, the second connecting to it first.
+    void _resync_attach_locked(uint64_t generation);
+    rawstd::Task<void> _resync_attach(uint64_t generation, size_t idx);
+    // Every writable mirrored Chunk's watcher: attaches it to a resync
+    // another Chunk starts, and follows one that ends.
+    rawstd::DetachedTask _resync_watch();
+    // The owner: waits for every writer to attach, sweeps, then finishes
+    // (_resync_finish(): the rejoin barrier, the member's record, and the
+    // commit that lets it serve reads).
+    rawstd::DetachedTask _resync_run(uint64_t generation);
+    rawstd::Task<void> _resync_finish(uint64_t generation);
+    // Ends the resync `generation` if it is still running and not
+    // committing: the member turns STALE, and every waiter on it wakes up.
+    void _resync_abort(uint64_t generation, const char* reason) noexcept;
+    void _resync_abort_locked(uint64_t generation, const char* reason) noexcept;
 
     // Launches _probe_watch() as a detached loop, for as long as the
     // object is alive (a no-op for a single-target object). _probe_watch()
@@ -422,7 +437,8 @@ public:
 
     Chunk(
         Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
-        bool readonly, RawstorObjectSpec spec, std::vector<Member> members
+        bool readonly, RawstorObjectSpec spec, std::vector<Member> members,
+        std::shared_ptr<MirrorControl> control
     );
     Chunk(const Chunk&) = delete;
     Chunk(Chunk&&) = delete;
@@ -460,12 +476,12 @@ public:
     // could report success before that write's data is actually durable.
     rawstd::Task<void> flush();
 
-    // flush()es (see above); with `clean`, the sessions to the in-sync
-    // members then depart cleanly (Slot::leave()), so each member marks
-    // itself CLEAN once no writer is left, before co_awaiting every Slot's
-    // close() concurrently. `clean` false is a writer gone mid-flight
-    // (rawstor_object_abandon()). Clears _members so ~Chunk() (which still runs
-    // once the caller deletes this Chunk after the returned Task completes) has
+    // flush()es (see above); for a mirrored object that is DIRTY, also
+    // durably marks the in-sync members CLEAN with the current epoch/sync_id
+    // before co_awaiting every Slot's close() concurrently -- a
+    // clean close, so the next open() doesn't pay for a spurious dirty
+    // gate. Clears _members so ~Chunk() (which still runs once the
+    // caller deletes this Chunk after the returned Task completes) has
     // nothing left to close -- the async counterpart to ~Chunk()'s own
     // run()-pumped connection cleanup.
     rawstd::Task<void> close(bool clean = true);

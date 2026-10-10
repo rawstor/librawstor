@@ -3,6 +3,7 @@
 #include <ost/server.hpp>
 
 #include "config_wire.hpp"
+#include "local_member.hpp"
 #include "target.hpp"
 
 #include <rawio/queue.hpp>
@@ -43,6 +44,111 @@ namespace {
 // can't co_await anything (a destructor can't be a coroutine).
 int ignore_close_result(ssize_t, void*) {
     return 0;
+}
+
+// One request admitted on the session's copy by its epoch
+// (LocalMember::admit()) for as long as it runs, released on the way out
+// however it ends.
+class Admission final {
+private:
+    std::shared_ptr<rawstor::LocalMember> _member;
+    uint64_t _generation;
+
+public:
+    Admission() : _generation(0) {}
+    Admission(const Admission&) = delete;
+    Admission(Admission&&) = delete;
+    Admission& operator=(const Admission&) = delete;
+    Admission& operator=(Admission&&) = delete;
+
+    ~Admission() {
+        if (_member) {
+            _member->release(_generation);
+        }
+    }
+
+    // 0, or the errno to refuse the request with: ESTALE if the copy's
+    // configuration is newer than `epoch`, EOPNOTSUPP if a request stamped
+    // with an epoch reaches a server with no copy of its own to fence on.
+    int
+    admit(const std::shared_ptr<rawstor::LocalMember>& member, uint64_t epoch) {
+        if (epoch == 0) {
+            return 0;
+        }
+        if (!member) {
+            return EOPNOTSUPP;
+        }
+        uint64_t generation = 0;
+        if (!member->admit(epoch, generation)) {
+            return ESTALE;
+        }
+        _member = member;
+        _generation = generation;
+        return 0;
+    }
+};
+
+// A RESYNC write in flight on the session's copy, for as long as it runs:
+// `runs` are the ranges in it no client write reached.
+class Resync final {
+private:
+    std::shared_ptr<rawstor::LocalMember> _member;
+    uint64_t _offset;
+    uint64_t _size;
+
+public:
+    rawstor::LocalMember::Ranges runs;
+
+    Resync() : _offset(0), _size(0) {}
+    Resync(const Resync&) = delete;
+    Resync(Resync&&) = delete;
+    Resync& operator=(const Resync&) = delete;
+    Resync& operator=(Resync&&) = delete;
+
+    ~Resync() {
+        if (_member) {
+            _member->resync_end(_offset, _size);
+        }
+    }
+
+    // 0, or the errno to refuse the write with: EOPNOTSUPP with no copy
+    // of its own here, ESTALE if the copy keeps no record of what client
+    // writes reached (LocalMember::resync_begin()).
+    int begin(
+        const std::shared_ptr<rawstor::LocalMember>& member, uint64_t offset,
+        uint64_t size
+    ) {
+        if (!member) {
+            return EOPNOTSUPP;
+        }
+        if (!member->resync_begin(offset, size, runs)) {
+            return ESTALE;
+        }
+        _member = member;
+        _offset = offset;
+        _size = size;
+        return 0;
+    }
+};
+
+// A client write about to go out on the session's copy, if any
+// (LocalMember::client_write()).
+rawstd::Task<void> client_write(
+    RawIOQueue* queue, const std::shared_ptr<rawstor::LocalMember>& member,
+    uint64_t offset, uint64_t size
+) {
+    if (member) {
+        co_await member->client_write(
+            *static_cast<rawio::Queue*>(queue), offset, size
+        );
+    }
+}
+
+// A location this server stores a copy on itself, rather than reaches
+// through another server.
+bool holds_copy(const rawstd::URI& location) {
+    return location.scheme() == "file" || location.scheme() == "lvm" ||
+           location.scheme() == "zfs";
 }
 
 int validate_result(int fd, size_t size, size_t result) noexcept {
@@ -552,6 +658,7 @@ rawstd::Task<void> Client::close() {
     if (_object != nullptr) {
         RawstorObject* object = _object;
         _object = nullptr;
+        _member.reset();
         try {
             co_await co_object_close(object, false);
         } catch (const std::system_error& e) {
@@ -783,7 +890,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
-                _flush(weak, head);
+                _flush(weak, head, basic.val);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -798,6 +905,21 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                     co_return;
                 }
                 _leave(weak, head);
+                rawstd::DetachedTask::rethrow_if_pending();
+                break;
+            }
+            case RAWSTOR_CMD_SYNC_PREPARE:
+            case RAWSTOR_CMD_SYNC_ACCEPT: {
+                RawstorFrameSyncProposePayload propose_payload;
+                co_await recv_frame(
+                    stream, &propose_payload, sizeof(propose_payload), fd,
+                    "request payload", &stream_failed
+                );
+                client = weak.lock();
+                if (client == nullptr) {
+                    co_return;
+                }
+                _sync(weak, head, propose_payload);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -959,6 +1081,7 @@ Client::_close_current_object(std::weak_ptr<Client> weak) {
         }
         object = client->_object;
         client->_object = nullptr;
+        client->_member.reset();
     }
 
     if (object != nullptr) {
@@ -1311,6 +1434,8 @@ rawstd::DetachedTask Client::_meta(
             // mirror, not of the copy it is to its clients (_set_config()):
             // it reports none -- a copy without state tracking.
             meta.config = RawstorObjectConfig{};
+            meta.promised = RawstorObjectBallot{};
+            meta.accepted = RawstorObjectBallot{};
         }
     } catch (const std::system_error& e) {
         result = -e.code().value();
@@ -1323,14 +1448,9 @@ rawstd::DetachedTask Client::_meta(
                 RAWSTOR_CMD_META, head.cid, result, 0
             );
         } else {
-            RawstorFrameMetaPayload body_out{};
-            body_out.size = meta.spec.size;
-            body_out.state = static_cast<RawstorSyncStateType>(meta.state);
-            body_out.chunk_shift = chunk_size_to_shift(meta.spec.chunk_size);
-            body_out.width = static_cast<uint8_t>(meta.spec.width);
-            body_out.member_role = static_cast<uint8_t>(meta.member_role);
-            body_out.writers = meta.writers;
-            body_out.config = rawstor::config_to_wire(meta.config);
+            RawstorFrameMetaPayload body_out = rawstor::meta_to_wire(
+                meta, chunk_size_to_shift(meta.spec.chunk_size)
+            );
             std::vector<unsigned char> data(sizeof(body_out));
             memcpy(data.data(), &body_out, sizeof(body_out));
             co_await client->_send_response(
@@ -1447,17 +1567,14 @@ rawstd::DetachedTask Client::_set_config(
     if (targets.size() != 1) {
         result = -ENOSYS;
     } else {
+        // Through Target rather than the C API: the copy's position among
+        // the client's members goes along, not this server's own.
         try {
-            std::string target = rawstd::URI::uris(targets);
-            rawstd::CallbackAwaitable<void> awaiter;
-            int res = rawstor_target_set_member_config(
-                client->_queue, target.c_str(), payload.chunk_offset, 0,
-                &config, payload.flags, result_trampoline, &awaiter
+            rawstor::Target target(targets);
+            co_await target.set_member_config(
+                *static_cast<rawio::Queue*>(client->_queue),
+                payload.chunk_offset, 0, config, payload.flags, payload.position
             );
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
-            }
-            co_await awaiter;
         } catch (const std::system_error& e) {
             result = -e.code().value();
         }
@@ -1477,6 +1594,81 @@ rawstd::DetachedTask Client::_set_config(
     }
 }
 
+rawstd::DetachedTask Client::_sync(
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameSyncProposePayload payload
+) {
+    std::shared_ptr<Client> client = weak.lock();
+    if (client == nullptr) {
+        co_return;
+    }
+
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
+    std::vector<rawstd::URI> targets =
+        client->_targets(uuid, payload.chunk_offset);
+
+    RawstorObjectBallot ballot = rawstor::ballot_from_wire(payload.ballot);
+    RawstorObjectBallot next = rawstor::ballot_from_wire(payload.next);
+    RawstorObjectConfig config = rawstor::config_from_wire(payload.config);
+    unsigned int flags =
+        (payload.flags & RAWSTOR_SYNC_FLAG_ALONE) != 0 ? RAWSTOR_SYNC_ALONE : 0;
+
+    // One copy, as for SET_CONFIG (_set_config()).
+    int result = 0;
+    RawstorObjectSyncReply reply{};
+    if (targets.size() != 1) {
+        result = -ENOSYS;
+    } else {
+        // Through Target, as for SET_CONFIG.
+        try {
+            rawstor::Target target(targets);
+            rawio::Queue& queue = *static_cast<rawio::Queue*>(client->_queue);
+            // GCC 11 ICE: no co_await in a declaration's initializer here
+            // (launch_sync_op_coro(), src/target.cpp).
+            rawstor::Backend::SyncReply r{};
+            if (head.cmd == RAWSTOR_CMD_SYNC_PREPARE) {
+                r = co_await target.sync_prepare(
+                    queue, payload.chunk_offset, 0, ballot
+                );
+            } else {
+                r = co_await target.sync_accept(
+                    queue, payload.chunk_offset, 0, ballot, next, config, flags,
+                    payload.sessions, payload.position
+                );
+            }
+            reply.ok = r.ok ? 1 : 0;
+            reply.meta = r.meta;
+        } catch (const std::system_error& e) {
+            result = -e.code().value();
+        }
+    }
+
+    bool send_failed = false;
+    try {
+        if (result < 0) {
+            co_await client->_send_response(head.cmd, head.cid, result, 0);
+        } else {
+            RawstorFrameSyncReplyPayload body_out{};
+            body_out.ok = reply.ok != 0 ? 1 : 0;
+            body_out.meta = rawstor::meta_to_wire(
+                reply.meta, chunk_size_to_shift(reply.meta.spec.chunk_size)
+            );
+            std::vector<unsigned char> data(sizeof(body_out));
+            memcpy(data.data(), &body_out, sizeof(body_out));
+            co_await client->_send_response(
+                head.cmd, head.cid, data.size(), 0, data
+            );
+        }
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        send_failed = true;
+    }
+    if (send_failed) {
+        co_await client->_server.del_client(client->_fd);
+    }
+}
+
 rawstd::DetachedTask
 Client::_leave(std::weak_ptr<Client> weak, RawstorFrameHead head) {
     RawstorObject* object = nullptr;
@@ -1487,6 +1679,7 @@ Client::_leave(std::weak_ptr<Client> weak, RawstorFrameHead head) {
         }
         object = client->_object;
         client->_object = nullptr;
+        client->_member.reset();
     }
 
     int result = 0;
@@ -1565,6 +1758,7 @@ rawstd::DetachedTask Client::_set_object(
 ) {
     RawIOQueue* queue;
     std::string target;
+    std::shared_ptr<rawstor::LocalMember> member;
     {
         std::shared_ptr<Client> client = co_await _close_current_object(weak);
         if (client == nullptr) {
@@ -1580,9 +1774,15 @@ rawstd::DetachedTask Client::_set_object(
         memcpy(
             version_id.bytes, payload.version_id, sizeof(payload.version_id)
         );
-        target = rawstd::URI::uris(
-            client->_targets(uuid, payload.offset, version_id)
-        );
+        std::vector<rawstd::URI> targets =
+            client->_targets(uuid, payload.offset, version_id);
+        target = rawstd::URI::uris(targets);
+        const std::vector<rawstd::URI>& locations = client->_server.locations();
+        if (rawstd_uuid_is_nil(&version_id) && locations.size() == 1 &&
+            holds_copy(locations.front())) {
+            member =
+                rawstor::local_member(locations.front(), uuid, payload.offset);
+        }
     }
 
     RawstorObject* object = nullptr;
@@ -1606,6 +1806,7 @@ rawstd::DetachedTask Client::_set_object(
     }
     if (!error) {
         client->_object = object;
+        client->_member = std::move(member);
     }
     bool send_failed = false;
     try {
@@ -1760,33 +1961,59 @@ rawstd::DetachedTask Client::_write(
     }
 
     _dispatch_write(
-        weak, head, payload.offset, (payload.flags & RAWSTOR_FLAG_SYNC) != 0,
-        data
+        weak, head, payload.offset, payload.flags, payload.epoch, data
     );
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
 rawstd::DetachedTask Client::_dispatch_write(
     std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t offset,
-    bool sync, std::shared_ptr<std::vector<unsigned char>> data
+    uint8_t flags, uint64_t epoch,
+    std::shared_ptr<std::vector<unsigned char>> data
 ) {
     RawstorObject* object;
+    RawIOQueue* queue;
+    std::shared_ptr<rawstor::LocalMember> member;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
             co_return;
         }
         object = client->_object;
+        queue = client->_queue;
+        member = client->_member;
     }
 
+    bool sync = (flags & RAWSTOR_FLAG_SYNC) != 0;
+
     size_t result = 0;
-    int error = 0;
-    try {
-        result = co_await co_object_pwrite(
-            object, data->data(), data->size(), offset, sync
-        );
-    } catch (const std::system_error& e) {
-        error = e.code().value();
+    Admission admission;
+    int error = admission.admit(member, epoch);
+    if (error == 0 && (flags & RAWSTOR_FLAG_RESYNC) != 0) {
+        // Only the runs no client write reached; answered with the whole
+        // length all the same.
+        try {
+            Resync copy;
+            error = copy.begin(member, offset, data->size());
+            for (const auto& [begin, end] : copy.runs) {
+                co_await co_object_pwrite(
+                    object, data->data() + (begin - offset), end - begin, begin,
+                    sync
+                );
+            }
+            result = data->size();
+        } catch (const std::system_error& e) {
+            error = e.code().value();
+        }
+    } else if (error == 0) {
+        try {
+            co_await client_write(queue, member, offset, data->size());
+            result = co_await co_object_pwrite(
+                object, data->data(), data->size(), offset, sync
+            );
+        } catch (const std::system_error& e) {
+            error = e.code().value();
+        }
     }
     if (error) {
         rawstd_warning("%s\n", strerror(error));
@@ -1812,9 +2039,11 @@ rawstd::DetachedTask Client::_dispatch_write(
     }
 }
 
-rawstd::DetachedTask
-Client::_flush(std::weak_ptr<Client> weak, RawstorFrameHead head) {
+rawstd::DetachedTask Client::_flush(
+    std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t epoch
+) {
     RawstorObject* object;
+    std::shared_ptr<rawstor::LocalMember> member;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
@@ -1836,13 +2065,17 @@ Client::_flush(std::weak_ptr<Client> weak, RawstorFrameHead head) {
             co_return;
         }
         object = client->_object;
+        member = client->_member;
     }
 
-    int error = 0;
-    try {
-        co_await co_object_flush(object);
-    } catch (const std::system_error& e) {
-        error = e.code().value();
+    Admission admission;
+    int error = admission.admit(member, epoch);
+    if (error == 0) {
+        try {
+            co_await co_object_flush(object);
+        } catch (const std::system_error& e) {
+            error = e.code().value();
+        }
     }
     if (error) {
         rawstd_warning("%s\n", strerror(error));
@@ -1871,6 +2104,8 @@ rawstd::DetachedTask Client::_discard(
     RawstorFrameIOPayload payload
 ) {
     RawstorObject* object;
+    RawIOQueue* queue;
+    std::shared_ptr<rawstor::LocalMember> member;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
@@ -1892,15 +2127,21 @@ rawstd::DetachedTask Client::_discard(
             co_return;
         }
         object = client->_object;
+        queue = client->_queue;
+        member = client->_member;
     }
 
     size_t result = 0;
-    int error = 0;
-    try {
-        result =
-            co_await co_object_discard(object, payload.len, payload.offset);
-    } catch (const std::system_error& e) {
-        error = e.code().value();
+    Admission admission;
+    int error = admission.admit(member, payload.epoch);
+    if (error == 0) {
+        try {
+            co_await client_write(queue, member, payload.offset, payload.len);
+            result =
+                co_await co_object_discard(object, payload.len, payload.offset);
+        } catch (const std::system_error& e) {
+            error = e.code().value();
+        }
     }
     if (error) {
         rawstd_warning("%s\n", strerror(error));
@@ -1930,6 +2171,8 @@ rawstd::DetachedTask Client::_write_zeroes(
     RawstorFrameIOPayload payload
 ) {
     RawstorObject* object;
+    RawIOQueue* queue;
+    std::shared_ptr<rawstor::LocalMember> member;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
@@ -1951,19 +2194,38 @@ rawstd::DetachedTask Client::_write_zeroes(
             co_return;
         }
         object = client->_object;
+        queue = client->_queue;
+        member = client->_member;
     }
 
     bool unmap = (payload.flags & RAWSTOR_FLAG_UNMAP) != 0;
     bool sync = (payload.flags & RAWSTOR_FLAG_SYNC) != 0;
 
     size_t result = 0;
-    int error = 0;
-    try {
-        result = co_await co_object_write_zeroes(
-            object, payload.len, payload.offset, unmap, sync
-        );
-    } catch (const std::system_error& e) {
-        error = e.code().value();
+    Admission admission;
+    int error = admission.admit(member, payload.epoch);
+    if (error == 0 && (payload.flags & RAWSTOR_FLAG_RESYNC) != 0) {
+        try {
+            Resync copy;
+            error = copy.begin(member, payload.offset, payload.len);
+            for (const auto& [begin, end] : copy.runs) {
+                co_await co_object_write_zeroes(
+                    object, end - begin, begin, unmap, sync
+                );
+            }
+            result = payload.len;
+        } catch (const std::system_error& e) {
+            error = e.code().value();
+        }
+    } else if (error == 0) {
+        try {
+            co_await client_write(queue, member, payload.offset, payload.len);
+            result = co_await co_object_write_zeroes(
+                object, payload.len, payload.offset, unmap, sync
+            );
+        } catch (const std::system_error& e) {
+            error = e.code().value();
+        }
     }
     if (error) {
         rawstd_warning("%s\n", strerror(error));

@@ -620,13 +620,17 @@ TEST(OstLifecycleTest, create_spec_remove) {
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
-        .config = {
-            .epoch = 7,
-            .sync_id = 0x1122334455667788ull,
-            .sync_id_history = {0xaabbccddeeff0011ull, 0, 0, 0},
-            .nroles = 0,
-            .roles = {},
-        },
+        .config =
+            {
+                .epoch = 7,
+                .sync_id = 0x1122334455667788ull,
+                .sync_id_history = {0xaabbccddeeff0011ull, 0, 0, 0},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
     };
 
     {
@@ -720,13 +724,17 @@ TEST(OstLifecycleTest, meta_of_bound_version_carries_version_id) {
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
-        .config = {
-            .epoch = 7,
-            .sync_id = 0x11ull,
-            .sync_id_history = {},
-            .nroles = 0,
-            .roles = {},
-        },
+        .config =
+            {
+                .epoch = 7,
+                .sync_id = 0x11ull,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
     };
 
     auto requested = std::make_shared<RawstdUUID>();
@@ -857,13 +865,17 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
-        .config = {
-            .epoch = 0,
-            .sync_id = 0,
-            .sync_id_history = {},
-            .nroles = 0,
-            .roles = {},
-        },
+        .config =
+            {
+                .epoch = 0,
+                .sync_id = 0,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
     };
 
     {
@@ -928,13 +940,17 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
-        .config = {
-            .epoch = 0,
-            .sync_id = 0,
-            .sync_id_history = {},
-            .nroles = 0,
-            .roles = {},
-        },
+        .config =
+            {
+                .epoch = 0,
+                .sync_id = 0,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
     };
 
     {

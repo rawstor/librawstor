@@ -725,6 +725,27 @@ TEST(OstClientTest, several_locations_keep_no_record_of_the_copy) {
     client.send_set_config(set);
     expect_response(RAWSTOR_CMD_SET_CONFIG, -ENOSYS);
 
+    RawstorFrameSyncPropose prepare{};
+    prepare.head.cmd = RAWSTOR_CMD_SYNC_PREPARE;
+    std::memcpy(prepare.payload.object_id, id.bytes, sizeof(id.bytes));
+    prepare.payload.ballot = {1, 1};
+    client.send_sync(prepare);
+    expect_response(RAWSTOR_CMD_SYNC_PREPARE, -ENOSYS);
+
+    // No copy of its own to fence a stamped write on, or to tell a RESYNC
+    // write which sectors to skip.
+    client.send_set_object(id);
+    expect_response(RAWSTOR_CMD_SET_OBJECT, 0);
+    std::string ping = "ping";
+    client.send_write_at_epoch(0, ping.data(), ping.size(), 1);
+    expect_response(RAWSTOR_CMD_WRITE, -EOPNOTSUPP);
+    client.send_write_at_epoch(
+        0, ping.data(), ping.size(), 0, RAWSTOR_FLAG_RESYNC
+    );
+    expect_response(RAWSTOR_CMD_WRITE, -EOPNOTSUPP);
+    client.send_write_at_epoch(0, ping.data(), ping.size(), 0);
+    expect_response(RAWSTOR_CMD_WRITE, static_cast<int32_t>(ping.size()));
+
     client.send_meta(id, 0);
     RawstorFrameMetaPayload meta{};
     ASSERT_TRUE(pump_until(queue, [&] {
@@ -738,4 +759,241 @@ TEST(OstClientTest, several_locations_keep_no_record_of_the_copy) {
     EXPECT_EQ(meta.config.epoch, 0u);
     EXPECT_EQ(meta.config.sync_id, 0u);
     EXPECT_EQ(meta.config.nroles, 0);
+}
+
+namespace {
+
+RawstorFrameSyncPropose sync_frame(
+    RawstorCommandType cmd, const RawstdUUID& id, uint64_t counter,
+    uint64_t proposer
+) {
+    RawstorFrameSyncPropose frame{};
+    frame.head.cmd = cmd;
+    std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));
+    frame.payload.ballot = {counter, proposer};
+    return frame;
+}
+
+RawstorFrameSyncReplyPayload sync_round_trip(
+    rawstor::ostserver::tests::Client& client, RawIOQueue* queue,
+    const RawstorFrameSyncPropose& frame
+) {
+    client.send_sync(frame);
+    RawstorFrameSyncReplyPayload reply{};
+    EXPECT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >=
+               sizeof(RawstorFrameResponse) + sizeof(reply);
+    }));
+    RawstorFrameResponse response = client.recv_response(&reply, sizeof(reply));
+    EXPECT_EQ(response.head.cmd, frame.head.cmd);
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(sizeof(reply)));
+    return reply;
+}
+
+} // namespace
+
+// The copy's record as a register acceptor (docs/multiattach.md, "The
+// register"): rawstor-ost applies the rawstd::caspaxos rules to its copy's
+// record and replies with that record whether the request succeeded or
+// not.
+TEST(OstClientTest, sync_register_promises_and_accepts) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    client.send_allocate(id, 4096, 1);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    ASSERT_EQ(client.recv_response().body.res, 0);
+
+    RawstorFrameSyncReplyPayload reply = sync_round_trip(
+        client, queue, sync_frame(RAWSTOR_CMD_SYNC_PREPARE, id, 2, 7)
+    );
+    EXPECT_EQ(reply.ok, 1);
+    EXPECT_EQ(reply.meta.promised.counter, 2u);
+    EXPECT_EQ(reply.meta.promised.proposer, 7u);
+    EXPECT_EQ(reply.meta.accepted.counter, 0u);
+
+    // A lower ballot is refused, and the reply shows the promise that
+    // beat it.
+    reply = sync_round_trip(
+        client, queue, sync_frame(RAWSTOR_CMD_SYNC_PREPARE, id, 1, 9)
+    );
+    EXPECT_EQ(reply.ok, 0);
+    EXPECT_EQ(reply.meta.promised.counter, 2u);
+    EXPECT_EQ(reply.meta.promised.proposer, 7u);
+
+    RawstorFrameSyncPropose accept =
+        sync_frame(RAWSTOR_CMD_SYNC_ACCEPT, id, 2, 7);
+    accept.payload.next = {3, 7};
+    accept.payload.config.epoch = 5;
+    accept.payload.config.sync_id = 0xabc;
+    accept.payload.config.nroles = 1;
+    accept.payload.config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    reply = sync_round_trip(client, queue, accept);
+    EXPECT_EQ(reply.ok, 1);
+    EXPECT_EQ(reply.meta.config.epoch, 5u);
+    EXPECT_EQ(reply.meta.config.sync_id, 0xabcu);
+    EXPECT_EQ(reply.meta.accepted.counter, 2u);
+    EXPECT_EQ(reply.meta.promised.counter, 3u);
+    ASSERT_EQ(reply.meta.config.nroles, 1);
+    EXPECT_EQ(reply.meta.config.roles[0], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
+
+    // The same ballot again: already accepted under it, refused, and the
+    // reply carries the value it holds.
+    accept.payload.config.epoch = 6;
+    reply = sync_round_trip(client, queue, accept);
+    EXPECT_EQ(reply.ok, 0);
+    EXPECT_EQ(reply.meta.config.epoch, 5u);
+
+    // The promised next ballot goes through without a prepare.
+    accept.payload.ballot = {3, 7};
+    accept.payload.next = {0, 0};
+    reply = sync_round_trip(client, queue, accept);
+    EXPECT_EQ(reply.ok, 1);
+    EXPECT_EQ(reply.meta.config.epoch, 6u);
+    EXPECT_EQ(reply.meta.accepted.counter, 3u);
+}
+
+// A write stamped with an epoch below the copy's accepted configuration is
+// refused with -ESTALE; one at the current epoch, or unstamped (0), goes
+// through (docs/multiattach.md, "Epoch on writes").
+TEST(OstClientTest, write_below_the_accepted_epoch_is_stale) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    auto expect_response = [&](RawstorCommandType cmd, int32_t res) {
+        ASSERT_TRUE(pump_until(queue, [&] {
+            return client.bytes_available() >= sizeof(RawstorFrameResponse);
+        }));
+        RawstorFrameResponse response = client.recv_response();
+        EXPECT_EQ(response.head.cmd, cmd);
+        EXPECT_EQ(response.body.res, res);
+    };
+
+    client.send_allocate(id, 4096, 1);
+    expect_response(RAWSTOR_CMD_ALLOCATE, 0);
+    client.send_set_object(id);
+    expect_response(RAWSTOR_CMD_SET_OBJECT, 0);
+
+    RawstorFrameSyncPropose accept =
+        sync_frame(RAWSTOR_CMD_SYNC_ACCEPT, id, 1, 1);
+    accept.payload.config.epoch = 5;
+    ASSERT_EQ(sync_round_trip(client, queue, accept).ok, 1);
+
+    std::string payload = "ping";
+    client.send_write_at_epoch(0, payload.data(), payload.size(), 3);
+    expect_response(RAWSTOR_CMD_WRITE, -ESTALE);
+    client.send_flush_at_epoch(3);
+    expect_response(RAWSTOR_CMD_FLUSH, -ESTALE);
+
+    client.send_write_at_epoch(0, payload.data(), payload.size(), 5);
+    expect_response(RAWSTOR_CMD_WRITE, static_cast<int32_t>(payload.size()));
+    client.send_write_at_epoch(0, payload.data(), payload.size(), 0);
+    expect_response(RAWSTOR_CMD_WRITE, static_cast<int32_t>(payload.size()));
+    client.send_flush_at_epoch(5);
+    expect_response(RAWSTOR_CMD_FLUSH, 0);
+}
+
+// A resync's copy onto a SYNCING member (docs/multiattach.md, "Resync
+// across processes"): the copy takes its role from the configuration at
+// the position the request names; a RESYNC write then lands only on the
+// sectors no client write covered whole since it became SYNCING, and once
+// its role is anything else a RESYNC write is refused.
+TEST(OstClientTest, resync_write_skips_sectors_clients_wrote) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    auto expect_response = [&](RawstorCommandType cmd, int32_t res) {
+        ASSERT_TRUE(pump_until(queue, [&] {
+            return client.bytes_available() >= sizeof(RawstorFrameResponse);
+        }));
+        RawstorFrameResponse response = client.recv_response();
+        EXPECT_EQ(response.head.cmd, cmd);
+        EXPECT_EQ(response.body.res, res);
+    };
+    // This copy is member 1 of 2; member 0 is the source of the resync.
+    auto set_role = [&](RawstorObjectMemberRole role) {
+        RawstorFrameSetConfig frame{};
+        std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));
+        frame.payload.config.nroles = 2;
+        frame.payload.config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+        frame.payload.config.roles[1] = role;
+        frame.payload.position = 1;
+        client.send_set_config(frame);
+        expect_response(RAWSTOR_CMD_SET_CONFIG, 0);
+    };
+    auto read_all = [&](size_t size) {
+        client.send_read(0, static_cast<uint32_t>(size));
+        std::string ret(size, '\0');
+        EXPECT_TRUE(pump_until(queue, [&] {
+            return client.bytes_available() >=
+                   sizeof(RawstorFrameResponse) + size;
+        }));
+        client.recv_response(ret.data(), ret.size());
+        return ret;
+    };
+
+    client.send_allocate(id, 4096, 1);
+    expect_response(RAWSTOR_CMD_ALLOCATE, 0);
+    client.send_set_object(id);
+    expect_response(RAWSTOR_CMD_SET_OBJECT, 0);
+
+    // Not SYNCING yet: nothing to tell a RESYNC write what to skip.
+    std::string copy(2048, 'R');
+    client.send_write_at_epoch(
+        0, copy.data(), copy.size(), 0, RAWSTOR_FLAG_RESYNC
+    );
+    expect_response(RAWSTOR_CMD_WRITE, -ESTALE);
+
+    set_role(RAWSTOR_OBJECT_MEMBER_SYNCING);
+
+    // Sector 1 whole, sector 2 in part.
+    std::string whole(512, 'A');
+    client.send_write_at_epoch(512, whole.data(), whole.size(), 0);
+    expect_response(RAWSTOR_CMD_WRITE, 512);
+    std::string part(2, 'B');
+    client.send_write_at_epoch(1024, part.data(), part.size(), 0);
+    expect_response(RAWSTOR_CMD_WRITE, 2);
+
+    // Still SYNCING: the record of what clients wrote stays.
+    set_role(RAWSTOR_OBJECT_MEMBER_SYNCING);
+
+    client.send_write_at_epoch(
+        0, copy.data(), copy.size(), 0, RAWSTOR_FLAG_RESYNC
+    );
+    expect_response(RAWSTOR_CMD_WRITE, 2048);
+
+    std::string expected =
+        std::string(512, 'R') + whole + std::string(1024, 'R');
+    EXPECT_EQ(read_all(2048), expected);
+
+    set_role(RAWSTOR_OBJECT_MEMBER_IN_SYNC);
+    client.send_write_at_epoch(
+        0, copy.data(), copy.size(), 0, RAWSTOR_FLAG_RESYNC
+    );
+    expect_response(RAWSTOR_CMD_WRITE, -ESTALE);
+    EXPECT_EQ(read_all(2048), expected);
 }

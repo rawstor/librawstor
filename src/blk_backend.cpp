@@ -1,9 +1,11 @@
 #include "blk_backend.hpp"
 
+#include "config_wire.hpp"
 #include "opts.h"
 
 #include <rawio/awaitable.hpp>
 
+#include <rawstd/caspaxos.hpp>
 #include <rawstd/gcc.h>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
@@ -31,6 +33,22 @@
 #endif
 
 namespace {
+
+// The record `meta` holds, with `state` in place of its own.
+rawstor::blk::Backend::Record
+record_of(const RawstorObjectMeta& meta, RawstorObjectSyncStateValue state) {
+    return rawstor::blk::Backend::Record{
+        state, meta.config, meta.promised, meta.accepted
+    };
+}
+
+rawstd::caspaxos::Ballot ballot_from(const RawstorObjectBallot& b) noexcept {
+    return rawstd::caspaxos::Ballot{b.counter, b.proposer};
+}
+
+RawstorObjectBallot ballot_to(const rawstd::caspaxos::Ballot& b) noexcept {
+    return RawstorObjectBallot{b.counter, b.proposer};
+}
 
 // Releases a member's record lock on every way out of a coroutine.
 struct RecordLockGuard {
@@ -108,7 +126,7 @@ rawstd::Task<void> Backend::_mark_dirty() {
     if (meta.state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN) {
         co_await _write_record(
             _member_id, _member_offset,
-            Record{RAWSTOR_OBJECT_SYNC_STATE_DIRTY, meta.config}
+            record_of(meta, RAWSTOR_OBJECT_SYNC_STATE_DIRTY)
         );
     }
     _member->dirty.store(true, std::memory_order_release);
@@ -131,7 +149,7 @@ rawstd::Task<void> Backend::_depart() {
     if (_left) {
         co_await _write_record(
             _member_id, _member_offset,
-            Record{RAWSTOR_OBJECT_SYNC_STATE_CLEAN, meta.config}
+            record_of(meta, RAWSTOR_OBJECT_SYNC_STATE_CLEAN)
         );
         member->dirty.store(false, std::memory_order_release);
     } else {
@@ -141,7 +159,7 @@ rawstd::Task<void> Backend::_depart() {
         );
         co_await _write_record(
             _member_id, _member_offset,
-            Record{RAWSTOR_OBJECT_SYNC_STATE_LOST, meta.config}
+            record_of(meta, RAWSTOR_OBJECT_SYNC_STATE_LOST)
         );
     }
 }
@@ -282,6 +300,13 @@ Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
         co_await member->record.lock(_queue);
         RecordLockGuard guard{*member};
         ++member->writers;
+        // A volume without a record yet has no configuration to fence by.
+        try {
+            member->learn_epoch(
+                (co_await _meta(id, offset, RawstdUUID{})).front().config.epoch
+            );
+        } catch (const std::system_error&) {
+        }
         _member = std::move(member);
         _member_id = id;
         _member_offset = offset;
@@ -290,17 +315,21 @@ Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
 
 rawstd::Task<void> Backend::set_config(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int flags
+    unsigned int flags, uint8_t position
 ) {
     std::shared_ptr<LocalMember> member = local_member(location(), id, offset);
     co_await member->record.lock(_queue);
     RecordLockGuard guard{*member};
+    co_await member->raise_epoch(_queue, config.epoch);
 
     // The copy keeps its own state. A volume without a record yet (F10)
     // starts CLEAN: nothing was written to it under one.
-    Record record{RAWSTOR_OBJECT_SYNC_STATE_CLEAN, config};
+    Record record{RAWSTOR_OBJECT_SYNC_STATE_CLEAN, config, {}, {}};
     try {
-        record.state = (co_await _meta(id, offset, RawstdUUID{})).front().state;
+        RawstorObjectMeta current =
+            (co_await _meta(id, offset, RawstdUUID{})).front();
+        record = record_of(current, current.state);
+        record.config = config;
     } catch (const std::system_error&) {
     }
     if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 &&
@@ -310,10 +339,75 @@ rawstd::Task<void> Backend::set_config(
                            : RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
     }
     co_await _write_record(id, offset, record);
+    member->follow_role(role_of(config, position));
     member->dirty.store(
         record.state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         std::memory_order_release
     );
+}
+
+rawstd::Task<Backend::SyncReply> Backend::sync_prepare(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+) {
+    std::shared_ptr<LocalMember> member = local_member(location(), id, offset);
+    co_await member->record.lock(_queue);
+    RecordLockGuard guard{*member};
+
+    RawstorObjectMeta meta = (co_await _meta(id, offset, RawstdUUID{})).front();
+    rawstd::caspaxos::AcceptorState<RawstorObjectConfig> state{
+        ballot_from(meta.promised), ballot_from(meta.accepted), meta.config
+    };
+    bool ok = rawstd::caspaxos::prepare(state, ballot_from(ballot));
+    if (ok) {
+        meta.promised = ballot_to(state.promised);
+        co_await _write_record(id, offset, record_of(meta, meta.state));
+    }
+    meta.writers = member->writers.load();
+    co_return SyncReply{ok, meta};
+}
+
+rawstd::Task<Backend::SyncReply> Backend::sync_accept(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
+    const RawstorObjectBallot& next, const RawstorObjectConfig& config,
+    unsigned int flags, uint32_t sessions, uint8_t position
+) {
+    std::shared_ptr<LocalMember> member = local_member(location(), id, offset);
+    co_await member->record.lock(_queue);
+    RecordLockGuard guard{*member};
+
+    RawstorObjectMeta meta{};
+    rawstd::caspaxos::AcceptorState<RawstorObjectConfig> state{};
+    bool ok = false;
+    // Decided on the record as it is once the epoch is raised: raising may
+    // let go of the record meanwhile (LocalMember::raise_epoch()).
+    for (bool again = true; again;) {
+        meta = (co_await _meta(id, offset, RawstdUUID{})).front();
+        // Deciding alone on two members is safe only while no other writer
+        // is known to the copy: one with a session open, or one that
+        // dropped its session and may be deciding alone on the other
+        // member right now.
+        if ((flags & RAWSTOR_SYNC_ALONE) != 0 &&
+            (member->writers.load() > sessions ||
+             meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST)) {
+            RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
+        }
+        state = {
+            ballot_from(meta.promised), ballot_from(meta.accepted), meta.config
+        };
+        ok = rawstd::caspaxos::accept(
+            state, ballot_from(ballot), config, ballot_from(next)
+        );
+        again = ok && co_await member->raise_epoch(_queue, config.epoch);
+    }
+    if (ok) {
+        meta.promised = ballot_to(state.promised);
+        meta.accepted = ballot_to(state.accepted);
+        meta.config = state.value;
+        co_await _write_record(id, offset, record_of(meta, meta.state));
+        member->follow_role(role_of(meta.config, position));
+    }
+    meta.writers = member->writers.load();
+    co_return SyncReply{ok, meta};
 }
 
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
@@ -382,12 +476,16 @@ Backend::meta_encode(const Record& record, const ChunkIdentity& identity) {
     int n = snprintf(
         buf, sizeof(buf),
         "version=%u:state=%u:epoch=%" PRIx64 ":sync_id=%" PRIx64 ":h0=%" PRIx64
-        ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64
+        ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64 ":resync_owner=%" PRIx64
+        ":promised=%" PRIx64 ".%" PRIx64 ":accepted=%" PRIx64 ".%" PRIx64
         ":roles=%s:member_role=%u:width=%u:chunk_size=%" PRIx64,
         META_FORMAT_VERSION, (unsigned int)record.state, c.epoch, c.sync_id,
         c.sync_id_history[0], c.sync_id_history[1], c.sync_id_history[2],
-        c.sync_id_history[3], roles.c_str(), (unsigned int)identity.member_role,
-        (unsigned int)identity.width, identity.chunk_size
+        c.sync_id_history[3], c.resync_owner, record.promised.counter,
+        record.promised.proposer, record.accepted.counter,
+        record.accepted.proposer, roles.c_str(),
+        (unsigned int)identity.member_role, (unsigned int)identity.width,
+        identity.chunk_size
     );
     if (n < 0 || static_cast<size_t>(n) >= sizeof(buf)) {
         RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
@@ -412,13 +510,16 @@ void Backend::meta_decode(
     int n = sscanf(
         v.c_str(),
         "version=%u:state=%u:epoch=%" SCNx64 ":sync_id=%" SCNx64 ":h0=%" SCNx64
-        ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64
+        ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64 ":resync_owner=%" SCNx64
+        ":promised=%" SCNx64 ".%" SCNx64 ":accepted=%" SCNx64 ".%" SCNx64
         ":roles=%256[0-9-]:member_role=%u:width=%u:chunk_size=%" SCNx64 "%n",
         &version, &state, &c.epoch, &c.sync_id, &c.sync_id_history[0],
         &c.sync_id_history[1], &c.sync_id_history[2], &c.sync_id_history[3],
-        roles, &member_role, &width, &identity->chunk_size, &consumed
+        &c.resync_owner, &record->promised.counter, &record->promised.proposer,
+        &record->accepted.counter, &record->accepted.proposer, roles,
+        &member_role, &width, &identity->chunk_size, &consumed
     );
-    if (n != 12 || static_cast<size_t>(consumed) != v.size() ||
+    if (n != 17 || static_cast<size_t>(consumed) != v.size() ||
         version != META_FORMAT_VERSION) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }

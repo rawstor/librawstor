@@ -80,6 +80,13 @@ extern "C" {
  * A session that wrote and ends any other way leaves a DIRTY copy LOST.
  */
 #define RAWSTOR_CMD_LEAVE 0x0f
+/*
+ * The two requests of a chunk's configuration register (docs/multiattach.md,
+ * "The register"): RawstorFrameSyncPropose in, RawstorFrameSyncReplyPayload
+ * out.
+ */
+#define RAWSTOR_CMD_SYNC_PREPARE 0x10
+#define RAWSTOR_CMD_SYNC_ACCEPT 0x11
 
 /*
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/open/
@@ -145,8 +152,9 @@ struct RawstorFrameHead {
  * carries a real, non-nil version); left nil (unused) by every other
  * command. `val` is command-specific (e.g. the open flags --
  * RAWSTOR_READONLY, <rawstor/target.h>, or 0 -- for SET_OBJECT, which a
- * bound version always carries); unused (0) for RELEASE/CREATE_VERSION/META/
- * OBJ_OPEN. `version_id` and
+ * bound version always carries; the writer's configuration epoch for
+ * FLUSH, as RawstorFrameIOPayload::epoch); unused (0) for RELEASE/
+ * CREATE_VERSION/META/OBJ_OPEN. `version_id` and
  * `val` are otherwise never both meaningful on the same command (SET_OBJECT is
  * the one exception), but living in one struct means every command that carries
  * object_id/offset shares one wire shape and one C++-side request path
@@ -219,14 +227,20 @@ struct RawstorFrameVersionEntry {
 // WRITE (payload integrity check) and READ (of its response body) --
 // DISCARD/WRITE_ZEROES carry no payload, so it's unused there (send as 0,
 // ignore on receipt). `flags` is a RAWSTOR_FLAG_* bitmask, shared across
-// every command that uses it: WRITE sets only RAWSTOR_FLAG_SYNC,
-// WRITE_ZEROES sets RAWSTOR_FLAG_SYNC and/or RAWSTOR_FLAG_UNMAP, and
-// DISCARD leaves the byte unused (0).
+// every command that uses it: WRITE sets RAWSTOR_FLAG_SYNC and/or
+// RAWSTOR_FLAG_RESYNC, WRITE_ZEROES also RAWSTOR_FLAG_UNMAP, and DISCARD
+// leaves the byte unused (0). `epoch` (WRITE/DISCARD/WRITE_ZEROES; FLUSH
+// carries it in RawstorFrameBasicPayload::val) is the epoch of the
+// configuration the writer uses: the server refuses the request with
+// -ESTALE when the copy's accepted configuration is newer
+// (docs/multiattach.md, "Epoch on writes"). 0 is never refused; READ
+// leaves it 0.
 struct RawstorFrameIOPayload {
     uint64_t offset;
     uint64_t hash;
     uint32_t len;
     uint8_t flags;
+    uint64_t epoch;
 } RAWSTOR_PACKED;
 
 // RawstorFrameIOPayload::flags bits above: whether the affected range
@@ -237,22 +251,35 @@ struct RawstorFrameIOPayload {
 // VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP).
 #define RAWSTOR_FLAG_SYNC (1u << 0)
 #define RAWSTOR_FLAG_UNMAP (1u << 1)
+// A resync's copy onto a member whose role is SYNCING (WRITE/
+// WRITE_ZEROES): applied only to the sectors no client write reached
+// since the copy became SYNCING; refused with -ESTALE by a copy that
+// keeps no record of them (docs/multiattach.md, "Resync across
+// processes").
+#define RAWSTOR_FLAG_RESYNC (1u << 2)
 
 struct RawstorFrameIO {
     struct RawstorFrameHead head;
     struct RawstorFrameIOPayload payload;
 } RAWSTOR_PACKED;
 
+/* A ballot of the configuration register: ordered by counter, then proposer. */
+struct RawstorFrameBallot {
+    uint64_t counter;
+    uint64_t proposer;
+} RAWSTOR_PACKED;
+
 /*
  * The chunk's configuration (struct RawstorObjectConfig, <rawstor/
- * target.h>): its sync set and every member's role, `nroles` entries of
- * enum RawstorObjectMemberRole, the rest zero. sync_id_history length
- * must match RAWSTOR_OBJECT_SYNC_ID_HISTORY.
+ * target.h>): its sync set, the resync owner and every member's role,
+ * `nroles` entries of enum RawstorObjectMemberRole, the rest zero.
+ * sync_id_history length must match RAWSTOR_OBJECT_SYNC_ID_HISTORY.
  */
 struct RawstorFrameConfig {
     uint64_t epoch;
     uint64_t sync_id;
     uint64_t sync_id_history[4];
+    uint64_t resync_owner;
     uint8_t nroles;
     uint8_t roles[255];
 } RAWSTOR_PACKED;
@@ -260,7 +287,9 @@ struct RawstorFrameConfig {
 /*
  * SET_CONFIG's request: the configuration to record on one copy and
  * RAWSTOR_CONFIG_* `flags` (<rawstor/target.h>). The copy's own state is
- * not set: the copy keeps it. Unlike META, it isn't wrapped in a
+ * not set: the copy keeps it. `position` is the copy's position among the
+ * chunk's members, which `config.roles` is indexed by: the copy takes its
+ * own role from it. Unlike META, it isn't wrapped in a
  * RawstorFrameBasicPayload of its own, so object_id/chunk_offset here are the
  * only way the server learns which object (and which of its chunks --
  * docs/mds.md, "Chunk identity") this applies to.
@@ -270,6 +299,7 @@ struct RawstorFrameSetConfigPayload {
     uint64_t chunk_offset;
     struct RawstorFrameConfig config;
     uint8_t flags;
+    uint8_t position;
 } RAWSTOR_PACKED;
 
 /* SET_CONFIG request */
@@ -355,6 +385,48 @@ struct RawstorFrameMetaPayload {
     /* Sessions open for writing on this copy right now. */
     uint32_t writers;
     struct RawstorFrameConfig config;
+    /* The copy's replica of the register: its ballots. */
+    struct RawstorFrameBallot promised;
+    struct RawstorFrameBallot accepted;
+} RAWSTOR_PACKED;
+
+/*
+ * SYNC_PREPARE/SYNC_ACCEPT's request. SYNC_PREPARE uses object_id,
+ * chunk_offset and ballot only, the rest zero. SYNC_ACCEPT also carries
+ * the ballot to promise on success (`next`, zero for none), the register's
+ * value (`config`) and `flags` (RAWSTOR_SYNC_FLAG_*): with
+ * RAWSTOR_SYNC_FLAG_ALONE the member refuses (-EBUSY) while more than
+ * `sessions` sessions have the copy open for writing, or once a writer
+ * left it LOST. `position` is the copy's position among the chunk's
+ * members, as for SET_CONFIG.
+ */
+struct RawstorFrameSyncProposePayload {
+    uint8_t object_id[16];
+    uint64_t chunk_offset;
+    struct RawstorFrameBallot ballot;
+    struct RawstorFrameBallot next;
+    struct RawstorFrameConfig config;
+    uint32_t sessions;
+    uint8_t flags;
+    uint8_t position;
+} RAWSTOR_PACKED;
+
+#define RAWSTOR_SYNC_FLAG_ALONE (1u << 0)
+
+/* SYNC_PREPARE / SYNC_ACCEPT request */
+struct RawstorFrameSyncPropose {
+    struct RawstorFrameHead head;
+    struct RawstorFrameSyncProposePayload payload;
+} RAWSTOR_PACKED;
+
+/*
+ * SYNC_PREPARE/SYNC_ACCEPT's response payload: whether the member promised
+ * or accepted, and its whole record either way -- a refused request still
+ * shows the proposer the actual value.
+ */
+struct RawstorFrameSyncReplyPayload {
+    uint8_t ok;
+    struct RawstorFrameMetaPayload meta;
 } RAWSTOR_PACKED;
 
 /*
@@ -527,12 +599,15 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBasicPayload, 48);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 20);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 24);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameVersionEntry, 16);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 21);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameConfig, 304);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetConfigPayload, 329);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 29);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBallot, 16);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameConfig, 312);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetConfigPayload, 338);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncProposePayload, 374);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAllocatePayload, 44);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameResponseBody, 12);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 320);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 360);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncReplyPayload, 361);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjPolicy, 19);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjCreatePayload, 60);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjOpPayload, 56);

@@ -338,6 +338,7 @@ public:
                     .hash = 0,
                     .len = (uint32_t)_size,
                     .flags = 0,
+                    .epoch = 0,
                 },
         }),
         _hash(0) {}
@@ -420,6 +421,7 @@ public:
                     .hash = 0,
                     .len = (uint32_t)_size,
                     .flags = 0,
+                    .epoch = 0,
                 },
         }),
         _hash(0) {}
@@ -495,6 +497,7 @@ public:
                 .hash = hash(buf, size),
                 .len = (uint32_t)size,
                 .flags = static_cast<uint8_t>(sync ? RAWSTOR_FLAG_SYNC : 0),
+                .epoch = 0,
             },
         }) {
         _iov.reserve(2);
@@ -569,6 +572,7 @@ public:
                 .hash = hash(iov, niov),
                 .len = (uint32_t)size,
                 .flags = static_cast<uint8_t>(sync ? RAWSTOR_FLAG_SYNC : 0),
+                .epoch = 0,
             },
         }) {
         _iov.reserve(1 + niov);
@@ -646,6 +650,7 @@ public:
                 .hash = 0,
                 .len = (uint32_t)size,
                 .flags = flags,
+                .epoch = 0,
             },
         }) {}
 
@@ -762,7 +767,7 @@ public:
     BackendOpSetConfig(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const RawstdUUID& id, uint64_t chunk_offset,
-        const RawstorObjectConfig& config, unsigned int flags,
+        const RawstorObjectConfig& config, unsigned int flags, uint8_t position,
         const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "set_config", 0, 0),
@@ -779,6 +784,7 @@ public:
         _request.payload.chunk_offset = chunk_offset;
         _request.payload.config = rawstor::config_to_wire(config);
         _request.payload.flags = static_cast<uint8_t>(flags);
+        _request.payload.position = position;
     }
 
     const void* request_data() const noexcept { return &_request; }
@@ -802,6 +808,67 @@ public:
         // A set_config response never carries a body, regardless of
         // error.
         return 0;
+    }
+};
+
+// SYNC_PREPARE/SYNC_ACCEPT: the request as built by the caller, the reply
+// a fixed-size RawstorFrameSyncReplyPayload whether the member agreed or
+// not.
+class BackendOpSync final : public BackendOp {
+private:
+    RawstorFrameSyncPropose _request;
+    RawstorFrameSyncReplyPayload _reply;
+
+public:
+    BackendOpSync(
+        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const RawstorFrameSyncPropose& request, const char* op_name,
+        const rawstd::TraceEvent& trace_event
+    ) :
+        BackendOp(backend, cid, trace_event, op_name, 0, 0),
+        _request(request),
+        _reply{} {
+        _request.head.cid = cid;
+    }
+
+    const void* request_data() const noexcept { return &_request; }
+
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    size_t
+    response_head_cb(const RawstorFrameResponse* response, int error) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        if (!error) {
+            error = validate_response(response);
+        }
+        if (!error) {
+            error = validate_cmd(response->head.cmd, _request.head.cmd);
+        }
+        if (!error && response->body.res > 0) {
+            // A body of any other size leaves the stream's next frame
+            // boundary unknown: fail every op on this backend instead.
+            if (static_cast<size_t>(response->body.res) != sizeof(_reply)) {
+                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            }
+            return sizeof(_reply);
+        }
+        if (!error) {
+            error = EPROTO;
+        }
+        _dispatch(0, error);
+        return 0;
+    }
+
+    void response_body_cb(
+        const iovec* iov, unsigned int niov, size_t result
+    ) override {
+        rawstd_iovec_to_buf(iov, niov, 0, &_reply, result);
+        _dispatch(result, 0);
+    }
+
+    const RawstorFrameSyncReplyPayload& reply() const noexcept {
+        return _reply;
     }
 };
 
@@ -1566,6 +1633,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
         ret.state = static_cast<RawstorObjectSyncStateValue>(payload.state);
         ret.writers = payload.writers;
         ret.config = rawstor::config_from_wire(payload.config);
+        ret.promised = rawstor::ballot_from_wire(payload.promised);
+        ret.accepted = rawstor::ballot_from_wire(payload.accepted);
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -1602,6 +1671,68 @@ Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     co_return std::vector<rawstd::URI>{location()};
 }
 
+rawstd::Task<rawstor::Backend::SyncReply> Backend::_sync_request(
+    const RawstorFrameSyncPropose& request, const char* op_name
+) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", op_name);
+
+    std::shared_ptr<BackendOpSync> op = std::make_shared<BackendOpSync>(
+        std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
+        request, op_name, trace_event
+    );
+    _add_op(op);
+
+    try {
+        size_t result = co_await _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", result, op->request_size()
+        );
+        op->request_cb(validate_result(op->request_size(), result));
+    } catch (const std::system_error& e) {
+        op->request_cb(e.code().value());
+    }
+
+    co_await *op;
+    const RawstorFrameSyncReplyPayload& reply = op->reply();
+    RawstorObjectMeta meta = rawstor::meta_from_wire(reply.meta);
+    meta.spec.chunk_size = chunk_shift_to_size(reply.meta.chunk_shift);
+    co_return SyncReply{reply.ok != 0, meta};
+}
+
+rawstd::Task<rawstor::Backend::SyncReply> Backend::sync_prepare(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+) {
+    RawstorFrameSyncPropose request{};
+    request.head.magic = RAWSTOR_MAGIC;
+    request.head.cmd = RAWSTOR_CMD_SYNC_PREPARE;
+    memcpy(request.payload.object_id, id.bytes, sizeof(id.bytes));
+    request.payload.chunk_offset = offset;
+    request.payload.ballot = rawstor::ballot_to_wire(ballot);
+    co_return co_await _sync_request(request, "sync_prepare");
+}
+
+rawstd::Task<rawstor::Backend::SyncReply> Backend::sync_accept(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
+    const RawstorObjectBallot& next, const RawstorObjectConfig& config,
+    unsigned int flags, uint32_t sessions, uint8_t position
+) {
+    RawstorFrameSyncPropose request{};
+    request.head.magic = RAWSTOR_MAGIC;
+    request.head.cmd = RAWSTOR_CMD_SYNC_ACCEPT;
+    memcpy(request.payload.object_id, id.bytes, sizeof(id.bytes));
+    request.payload.chunk_offset = offset;
+    request.payload.ballot = rawstor::ballot_to_wire(ballot);
+    request.payload.next = rawstor::ballot_to_wire(next);
+    request.payload.config = rawstor::config_to_wire(config);
+    request.payload.sessions = sessions;
+    request.payload.flags =
+        (flags & RAWSTOR_SYNC_ALONE) != 0 ? RAWSTOR_SYNC_FLAG_ALONE : 0;
+    request.payload.position = position;
+    co_return co_await _sync_request(request, "sync_accept");
+}
+
 rawstd::Task<void> Backend::leave() {
     RawstdUUID unused_id = {};
     co_await _basic_request(RAWSTOR_CMD_LEAVE, "leave", unused_id, 0);
@@ -1609,14 +1740,14 @@ rawstd::Task<void> Backend::leave() {
 
 rawstd::Task<void> Backend::set_config(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int flags
+    unsigned int flags, uint8_t position
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpSetConfig> op =
         std::make_shared<BackendOpSetConfig>(
             std::static_pointer_cast<Backend>(shared_from_this()),
-            _cid_counter++, id, offset, config, flags, trace_event
+            _cid_counter++, id, offset, config, flags, position, trace_event
         );
     _add_op(op);
 

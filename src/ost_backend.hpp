@@ -66,6 +66,10 @@ private:
         RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
         uint64_t offset, uint64_t val = 0, const RawstdUUID& version_id = {}
     );
+    // SYNC_PREPARE/SYNC_ACCEPT: sends `request` and returns the member's
+    // reply.
+    rawstd::Task<SyncReply>
+    _sync_request(const RawstorFrameSyncPropose& request, const char* op_name);
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
     // response can legitimately race with Slot::_op() already having
@@ -143,10 +147,21 @@ public:
 
     rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags
+        const RawstorObjectConfig& config, unsigned int flags, uint8_t position
     ) override;
 
     rawstd::Task<void> leave() override;
+
+    rawstd::Task<SyncReply> sync_prepare(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+    ) override;
+
+    rawstd::Task<SyncReply> sync_accept(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config, unsigned int flags,
+        uint32_t sessions, uint8_t position
+    ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
