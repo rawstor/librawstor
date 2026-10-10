@@ -321,7 +321,8 @@ in no particular order. An empty payload means the object has no versions
 ### Meta — 60 bytes
 
 Everything about one stored copy: its size, its placement identity and its
-mirror consistency state.
+mirror consistency state. A server with several locations reports no
+sync identity (`epoch` 0, `sync_id` 0, empty history).
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
