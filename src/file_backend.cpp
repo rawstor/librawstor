@@ -404,7 +404,7 @@ rawstd::Task<void> Backend::create(
     // A fresh copy starts with sync_id 0: it has never been part of an
     // established sync set (see docs/mirroring.md). Written after the data
     // file so a crash between the two never leaves a meta file without
-    // its data file; set_sync_state()/meta() failing ENOENT on the reverse
+    // its data file; _write_record()/meta() failing ENOENT on the reverse
     // (data file present, no meta yet) is exactly case F10.
     std::exception_ptr meta_error;
     try {
@@ -418,12 +418,12 @@ rawstd::Task<void> Backend::create(
 
         std::exception_ptr eptr;
         try {
-            RawstorObjectSyncState sync_state{};
-            sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+            Record record{};
+            record.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
 
             // The placement identity (docs/mds.md, chunk_meta) is
             // stamped now, from the caller's own spec, and never touched
-            // again -- set_sync_state() below preserves it unchanged.
+            // again -- _write_record() below preserves it unchanged.
             ChunkIdentity identity;
             identity.member_role = member_role;
             identity.width = static_cast<uint8_t>(sp.width);
@@ -433,8 +433,8 @@ rawstd::Task<void> Backend::create(
             // is NUL-padded out to a fixed META_MAX_SIZE bytes here,
             // rather than written at its own length, so this file's own
             // byte length stays fixed across every rewrite -- see
-            // set_sync_state() below for why that matters.
-            std::string encoded = meta_encode(sync_state, identity);
+            // _write_record() below for why that matters.
+            std::string encoded = meta_encode(record, identity);
             std::array<char, META_MAX_SIZE> disk{};
             memcpy(disk.data(), encoded.data(), encoded.size());
 
@@ -522,7 +522,7 @@ Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
     }
 }
 
-rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
+rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_meta(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
     if (!rawstd_uuid_is_nil(&version_id)) {
@@ -545,7 +545,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
 
     int fd = co_await _queue.open(meta_path.c_str(), O_RDONLY | O_CLOEXEC, 0);
 
-    RawstorObjectSyncState sync_state{};
+    Record record{};
     ChunkIdentity identity;
     std::exception_ptr eptr;
     try {
@@ -556,7 +556,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
         try {
-            meta_decode(std::string(disk.data()), &sync_state, &identity);
+            meta_decode(std::string(disk.data()), &record, &identity);
         } catch (const std::system_error&) {
             rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
             throw;
@@ -574,7 +574,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
-    ret.sync_state = sync_state;
+    ret.state = record.state;
+    ret.config = record.config;
 
     co_return std::vector<RawstorObjectMeta>{ret};
 }
@@ -584,9 +585,8 @@ Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     co_return std::vector<rawstd::URI>{location()};
 }
 
-rawstd::Task<void> Backend::set_sync_state(
-    const RawstdUUID& id, uint64_t offset,
-    const RawstorObjectSyncState& sync_state
+rawstd::Task<void> Backend::_write_record(
+    const RawstdUUID& id, uint64_t offset, const Record& record
 ) {
     std::string location_path = get_location_path(location());
 
@@ -596,7 +596,7 @@ rawstd::Task<void> Backend::set_sync_state(
     std::string meta_path =
         get_target_meta_path(location_path, uuid_string, offset);
 
-    // O_TRUNC would be wrong here regardless of sync_state carrying no
+    // O_TRUNC would be wrong here regardless of the record carrying no
     // size of its own: this file is fixed-size, and a short write must
     // not leave a truncated, unparseable record behind.
     int fd = co_await _queue.open(meta_path.c_str(), O_RDWR | O_CLOEXEC, 0);
@@ -616,11 +616,11 @@ rawstd::Task<void> Backend::set_sync_state(
         // preserve it across this rewrite. A record meta_decode() can't
         // parse (an earlier format version) has no identity to preserve;
         // it degenerates to the all-zero default, same as
-        // lvm::Backend::set_sync_state()'s own equivalent fallback.
-        RawstorObjectSyncState old_sync_state{};
+        // lvm::Backend::_write_record()'s own equivalent fallback.
+        Record old_record{};
         ChunkIdentity identity{};
         try {
-            meta_decode(std::string(disk.data()), &old_sync_state, &identity);
+            meta_decode(std::string(disk.data()), &old_record, &identity);
         } catch (const std::system_error&) {
             identity = ChunkIdentity{};
         }
@@ -629,7 +629,7 @@ rawstd::Task<void> Backend::set_sync_state(
         // META_MAX_SIZE bytes so this file's own byte length stays fixed
         // across every rewrite -- required here specifically, since this
         // is an in-place overwrite without O_TRUNC (see above).
-        std::string encoded = meta_encode(sync_state, identity);
+        std::string encoded = meta_encode(record, identity);
         disk.fill('\0');
         memcpy(disk.data(), encoded.data(), encoded.size());
 

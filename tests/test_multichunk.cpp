@@ -305,22 +305,20 @@ TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_offset) {
     EXPECT_EQ(metas[0].spec.size, chunk_size);
     EXPECT_EQ(metas[0].spec.chunk_size, chunk_size);
 
-    RawstorObjectSyncState sync_state = metas[0].sync_state;
-    sync_state.epoch += 1;
-    sync_state.sync_id = 0x1234;
-    sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    run(*queue,
-        target.set_member_sync_state(*queue, chunk_size, 0, sync_state));
+    RawstorObjectConfig config = metas[0].config;
+    config.epoch += 1;
+    config.sync_id = 0x1234;
+    run(*queue, target.set_member_config(*queue, chunk_size, 0, config, 0));
 
     metas = run(*queue, target.meta(*queue, chunk_size));
     ASSERT_EQ(metas.size(), 1u);
-    EXPECT_EQ(metas[0].sync_state.sync_id, 0x1234u);
-    EXPECT_EQ(metas[0].sync_state.epoch, sync_state.epoch);
+    EXPECT_EQ(metas[0].config.sync_id, 0x1234u);
+    EXPECT_EQ(metas[0].config.epoch, config.epoch);
 
     // Chunk 0 keeps its own state.
     metas = run(*queue, target.meta(*queue, 0));
     ASSERT_EQ(metas.size(), 1u);
-    EXPECT_NE(metas[0].sync_state.sync_id, 0x1234u);
+    EXPECT_NE(metas[0].config.sync_id, 0x1234u);
 
     try {
         run(*queue, target.meta(*queue, 3 * chunk_size));
@@ -329,11 +327,10 @@ TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_offset) {
         EXPECT_EQ(e.code().value(), ENOENT);
     }
     try {
-        run(*queue, target.set_member_sync_state(
-                        *queue, 3 * chunk_size, 0, sync_state
-                    ));
+        run(*queue,
+            target.set_member_config(*queue, 3 * chunk_size, 0, config, 0));
         ADD_FAILURE()
-            << "set_member_sync_state() at an offset with no chunk succeeded";
+            << "set_member_config() at an offset with no chunk succeeded";
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), ENOENT);
     }

@@ -412,55 +412,79 @@ TEST(BlkBackendTest, discard_reports_requested_size) {
 // zfs://, or file:// backend of their own (see blk_backend.hpp's own doc
 // comment).
 TEST(BlkBackendTest, meta_encode_decode_round_trip) {
-    RawstorObjectSyncState sync_state{};
-    sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
-    sync_state.epoch = 7;
-    sync_state.sync_id = 0x1122334455667788ull;
-    sync_state.sync_id_history[0] = 0xaabbccddeeff0011ull;
-    sync_state.sync_id_history[1] = 1;
-    sync_state.sync_id_history[2] = 2;
-    sync_state.sync_id_history[3] = 3;
+    rawstor::blk::Backend::Record record{};
+    record.state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
+    RawstorObjectConfig& c = record.config;
+    c.epoch = 7;
+    c.sync_id = 0x1122334455667788ull;
+    c.sync_id_history[0] = 0xaabbccddeeff0011ull;
+    c.sync_id_history[1] = 1;
+    c.sync_id_history[2] = 2;
+    c.sync_id_history[3] = 3;
+    c.nroles = 3;
+    c.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    c.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+    c.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
 
     rawstor::blk::Backend::ChunkIdentity identity{};
     identity.member_role = RAWSTOR_MEMBER_WITNESS;
     identity.width = 3;
     identity.chunk_size = 0x1000;
 
-    std::string encoded =
-        rawstor::blk::Backend::meta_encode(sync_state, identity);
+    std::string encoded = rawstor::blk::Backend::meta_encode(record, identity);
 
-    RawstorObjectSyncState decoded_sync_state;
+    rawstor::blk::Backend::Record decoded;
     rawstor::blk::Backend::ChunkIdentity decoded_identity;
-    rawstor::blk::Backend::meta_decode(
-        encoded, &decoded_sync_state, &decoded_identity
-    );
-    EXPECT_EQ(decoded_sync_state.state, sync_state.state);
-    EXPECT_EQ(decoded_sync_state.epoch, sync_state.epoch);
-    EXPECT_EQ(decoded_sync_state.sync_id, sync_state.sync_id);
-    EXPECT_EQ(
-        decoded_sync_state.sync_id_history[0], sync_state.sync_id_history[0]
-    );
-    EXPECT_EQ(
-        decoded_sync_state.sync_id_history[1], sync_state.sync_id_history[1]
-    );
-    EXPECT_EQ(
-        decoded_sync_state.sync_id_history[2], sync_state.sync_id_history[2]
-    );
-    EXPECT_EQ(
-        decoded_sync_state.sync_id_history[3], sync_state.sync_id_history[3]
-    );
+    rawstor::blk::Backend::meta_decode(encoded, &decoded, &decoded_identity);
+    const RawstorObjectConfig& d = decoded.config;
+    EXPECT_EQ(decoded.state, record.state);
+    EXPECT_EQ(d.epoch, c.epoch);
+    EXPECT_EQ(d.sync_id, c.sync_id);
+    for (size_t i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; ++i) {
+        EXPECT_EQ(d.sync_id_history[i], c.sync_id_history[i]);
+    }
+    ASSERT_EQ(d.nroles, 3);
+    EXPECT_EQ(d.roles[0], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
+    EXPECT_EQ(d.roles[1], RAWSTOR_OBJECT_MEMBER_SYNCING);
+    EXPECT_EQ(d.roles[2], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
     EXPECT_EQ(decoded_identity.member_role, identity.member_role);
     EXPECT_EQ(decoded_identity.width, identity.width);
     EXPECT_EQ(decoded_identity.chunk_size, identity.chunk_size);
 }
 
+// The widest record -- every field at its widest, every member's role --
+// still fits a file:// copy's fixed-size record (META_MAX_SIZE).
+TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
+    rawstor::blk::Backend::Record record{};
+    record.state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
+    RawstorObjectConfig& c = record.config;
+    c.epoch = ~0ull;
+    c.sync_id = ~0ull;
+    for (uint64_t& h : c.sync_id_history) {
+        h = ~0ull;
+    }
+    c.nroles = RAWSTOR_OBJECT_MAX_WIDTH;
+    for (uint8_t& r : c.roles) {
+        r = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    }
+    rawstor::blk::Backend::ChunkIdentity identity{
+        RAWSTOR_MEMBER_WITNESS, 255, ~0ull
+    };
+
+    std::string encoded = rawstor::blk::Backend::meta_encode(record, identity);
+    rawstor::blk::Backend::Record decoded;
+    rawstor::blk::Backend::ChunkIdentity decoded_identity;
+    rawstor::blk::Backend::meta_decode(encoded, &decoded, &decoded_identity);
+    EXPECT_EQ(decoded.config.nroles, RAWSTOR_OBJECT_MAX_WIDTH);
+}
+
 TEST(BlkBackendTest, meta_decode_rejects_empty_string) {
     /* A missing property/tag/record must never be mistaken for a valid
      * one. */
-    RawstorObjectSyncState sync_state;
+    rawstor::blk::Backend::Record record;
     rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
-        rawstor::blk::Backend::meta_decode("", &sync_state, &identity),
+        rawstor::blk::Backend::meta_decode("", &record, &identity),
         std::system_error
     );
 }
@@ -468,20 +492,20 @@ TEST(BlkBackendTest, meta_decode_rejects_empty_string) {
 TEST(BlkBackendTest, meta_decode_rejects_dash) {
     /* ZFS's own "property never set" marker -- must not be mistaken for a
      * valid record either. */
-    RawstorObjectSyncState sync_state;
+    rawstor::blk::Backend::Record record;
     rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
-        rawstor::blk::Backend::meta_decode("-", &sync_state, &identity),
+        rawstor::blk::Backend::meta_decode("-", &record, &identity),
         std::system_error
     );
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_malformed_string) {
-    RawstorObjectSyncState sync_state;
+    rawstor::blk::Backend::Record record;
     rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
         rawstor::blk::Backend::meta_decode(
-            "not the right format", &sync_state, &identity
+            "not the right format", &record, &identity
         ),
         std::system_error
     );
@@ -490,13 +514,13 @@ TEST(BlkBackendTest, meta_decode_rejects_malformed_string) {
 TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
     /* A record from a format version this build no longer understands (or
      * ever wrote) must not be mistaken for a valid one. */
-    RawstorObjectSyncState sync_state;
+    rawstor::blk::Backend::Record record;
     rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
         rawstor::blk::Backend::meta_decode(
             "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
-            "member_role=0:width=0:chunk_size=0",
-            &sync_state, &identity
+            "roles=-:member_role=0:width=0:chunk_size=0",
+            &record, &identity
         ),
         std::system_error
     );

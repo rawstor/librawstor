@@ -104,8 +104,8 @@ public:
     rawstd::Task<std::vector<RawstdUUID>>
     list_versions(const RawstdUUID& id, uint64_t offset) override;
 
-    rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+    rawstd::Task<std::vector<RawstorObjectMeta>> _meta(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
     ) override;
 
     // Trivial (Backend::resolve_locations()'s own doc comment): this is a
@@ -115,9 +115,8 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) override;
 
-    rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectSyncState& sync_state
+    rawstd::Task<void> _write_record(
+        const RawstdUUID& id, uint64_t offset, const Record& record
     ) override;
 
     // The v1 CoW backend (docs/mds.md, "Versions"): a native

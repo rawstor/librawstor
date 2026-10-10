@@ -126,7 +126,7 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
 // Target::Target()'s own constructor already validated at parse time.
 // Only create()/open() need every chunk's own uris at once; spec() only
 // ever touches the first chunk (`.front()` of this method's own
-// result), and meta()/set_member_sync_state() each touch exactly one
+// result), and meta()/set_member_config() each touch exactly one
 // chunk, named by their own `offset` parameter (chunk_uris_at_offset()
 // below).
 std::vector<std::vector<rawstd::URI>>
@@ -145,7 +145,7 @@ chunk_uris_by_offset(const std::vector<rawstd::URI>& uris) {
 // The uris of one specific chunk -- the one whose own offset segment
 // equals `offset` (0 names an ordinary plain target's only chunk).
 // Unlike chunk_uris_by_offset() above, this doesn't build every chunk's
-// own list at once: meta()/set_member_sync_state() below take `offset`
+// own list at once: meta()/set_member_config() below take `offset`
 // explicitly so a caller managing a real multi-chunk object can address
 // any one of its chunks directly, not just the first. Throws ENOENT if
 // no chunk in `uris` sits at `offset`.
@@ -460,8 +460,7 @@ rawstd::Task<RawstorObjectSpec> resolve_spec(
             // failure.
             auto answered = std::find_if(
                 ms.begin(), ms.end(), [](const RawstorObjectMeta& m) {
-                    return m.sync_state.state !=
-                           RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE;
+                    return m.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE;
                 }
             );
             if (answered == ms.end()) {
@@ -564,7 +563,7 @@ rawstd::Task<std::vector<uint64_t>> resolve_chunks(
 
 // Every real member's own bare location of the chunk at `offset` -- same
 // one-off shape and first-reachable-wins fail-over as resolve_chunks()
-// above, for rawstor_target_set_member_sync_state()'s own write
+// above, for rawstor_target_set_member_config()'s own write
 // (Backend::resolve_locations()'s own doc comment): every location of
 // one chunk answers the same either way, since this is a property of the
 // chunk as a whole, not of one particular copy.
@@ -934,16 +933,16 @@ rawstd::DetachedTask launch_versions_op_coro(
 }
 
 // Same shape as launch_remove_op_coro() above, for
-// Target::set_member_sync_state(): no out-parameter, just a result.
-rawstd::DetachedTask launch_set_member_sync_state_op_coro(
+// Target::set_member_config(): no out-parameter, just a result.
+rawstd::DetachedTask launch_set_member_config_op_coro(
     rawstor::Target t, rawio::Queue* queue, uint64_t offset,
-    size_t member_index, RawstorObjectSyncState sync_state,
+    size_t member_index, RawstorObjectConfig config, unsigned int flags,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     try {
-        co_await t.set_member_sync_state(
-            *queue, offset, member_index, sync_state
+        co_await t.set_member_config(
+            *queue, offset, member_index, config, flags
         );
     } catch (const std::system_error& e) {
         result = -e.code().value();
@@ -1351,7 +1350,7 @@ rawstd::Task<void> Target::create_version(rawio::Queue& queue) const {
 // Only ever touches the target's own first real chunk -- a multi-chunk
 // target's later chunks may have a different width, but spec() has room
 // for exactly one answer, so it can't generalize across every chunk the
-// way a caller looping meta()/set_member_sync_state() over each one's
+// way a caller looping meta()/set_member_config() over each one's
 // own offset can. The actual lookup (first reachable location wins, width
 // fallback) is resolve_spec()'s own job; locations_for() above resolves
 // which locations to ask, real offsets come from chunks() below (a
@@ -1501,9 +1500,9 @@ Target::versions(rawio::Queue& queue) const {
 // same position in both. A caller wanting every member of the chunk
 // written calls this once per member instead of relying on any fan-out
 // here.
-rawstd::Task<void> Target::set_member_sync_state(
+rawstd::Task<void> Target::set_member_config(
     rawio::Queue& queue, uint64_t offset, size_t member_index,
-    const RawstorObjectSyncState& sync_state
+    RawstorObjectConfig config, unsigned int flags
 ) const {
     if (!rawstd_uuid_is_nil(&_version_id)) {
         // Would otherwise rewrite the live chunk's state.
@@ -1527,7 +1526,7 @@ rawstd::Task<void> Target::set_member_sync_state(
         co_await rawstor::Slot::create(queue, members[member_index]);
     std::exception_ptr error;
     try {
-        co_await slot->set_sync_state(id, offset, sync_state);
+        co_await slot->set_config(id, offset, config, flags);
     } catch (...) {
         error = std::current_exception();
     }
@@ -1658,7 +1657,7 @@ Target::open(rawio::Queue& queue, int flags) const {
     // to mean anything (create()'s own check, this call's own comment
     // there), re-checked here since open() can address a target string
     // create() never validated (e.g. one hand-assembled from raw URIs,
-    // or a record a backend's own set_sync_state() fell back to a zero
+    // or a record a backend's own set_config() fell back to a zero
     // identity for after failing to decode it).
     if (chunks.size() > 1 &&
         (chunk_size == 0 || (chunk_size & (chunk_size - 1)) != 0)) {
@@ -1835,16 +1834,16 @@ int rawstor_target_meta(
     }
 }
 
-int rawstor_target_set_member_sync_state(
+int rawstor_target_set_member_config(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
-    const RawstorObjectSyncState* sync_state,
+    const RawstorObjectConfig* config, unsigned int flags,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        launch_set_member_sync_state_op_coro(
+        launch_set_member_config_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), offset,
-            member_index, *sync_state, cb, data
+            member_index, *config, flags, cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;

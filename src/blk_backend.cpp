@@ -32,6 +32,12 @@
 
 namespace {
 
+// Releases a member's record lock on every way out of a coroutine.
+struct RecordLockGuard {
+    rawstor::LocalMember& member;
+    ~RecordLockGuard() { member.record.unlock(); }
+};
+
 std::string trim(const std::string& s) {
     size_t begin = s.find_first_not_of(" \t\r\n");
     if (begin == std::string::npos) {
@@ -63,7 +69,86 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::Backend(p, queue, location),
     _writes_in_flight(0),
     _next_ticket(0),
-    _pending_writes_bytes(0) {
+    _pending_writes_bytes(0),
+    _member_id{},
+    _member_offset(0),
+    _wrote(false),
+    _left(false) {
+}
+
+Backend::~Backend() {
+    // Torn down without close(): the session still leaves the count, but
+    // nothing can be written to the record from here.
+    if (_member) {
+        --_member->writers;
+    }
+}
+
+rawstd::Task<void> Backend::_mark_dirty() {
+    while (_dirty_gate.running()) {
+        co_await _dirty_gate.settle();
+        if (_member->dirty.load(std::memory_order_acquire)) {
+            co_return;
+        }
+    }
+    _dirty_gate.begin();
+    struct GateEnd {
+        rawstd::Gate& gate;
+        ~GateEnd() { gate.end(); }
+    } gate_end{_dirty_gate};
+
+    co_await _member->record.lock(_queue);
+    RecordLockGuard guard{*_member};
+
+    if (_member->dirty.load(std::memory_order_acquire)) {
+        co_return;
+    }
+    RawstorObjectMeta meta =
+        (co_await _meta(_member_id, _member_offset, RawstdUUID{})).front();
+    if (meta.state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN) {
+        co_await _write_record(
+            _member_id, _member_offset,
+            Record{RAWSTOR_OBJECT_SYNC_STATE_DIRTY, meta.config}
+        );
+    }
+    _member->dirty.store(true, std::memory_order_release);
+}
+
+rawstd::Task<void> Backend::_depart() {
+    std::shared_ptr<LocalMember> member = std::move(_member);
+    co_await member->record.lock(_queue);
+    RecordLockGuard guard{*member};
+
+    uint32_t remaining = --member->writers;
+    if (!(_left ? remaining == 0 : _wrote)) {
+        co_return;
+    }
+    RawstorObjectMeta meta =
+        (co_await _meta(_member_id, _member_offset, RawstdUUID{})).front();
+    if (meta.state != RAWSTOR_OBJECT_SYNC_STATE_DIRTY) {
+        co_return;
+    }
+    if (_left) {
+        co_await _write_record(
+            _member_id, _member_offset,
+            Record{RAWSTOR_OBJECT_SYNC_STATE_CLEAN, meta.config}
+        );
+        member->dirty.store(false, std::memory_order_release);
+    } else {
+        rawstd_warning(
+            "%s: a writer left without closing; the copy is LOST\n",
+            str().c_str()
+        );
+        co_await _write_record(
+            _member_id, _member_offset,
+            Record{RAWSTOR_OBJECT_SYNC_STATE_LOST, meta.config}
+        );
+    }
+}
+
+rawstd::Task<void> Backend::leave() {
+    _left = true;
+    co_return;
 }
 
 rawstd::Task<void> Backend::_throttle_acquire(size_t size) {
@@ -165,6 +250,14 @@ rawstd::Task<bool> Backend::_exists(const std::string& path) {
 }
 
 rawstd::Task<void> Backend::close() {
+    if (_member) {
+        try {
+            co_await _depart();
+        } catch (const std::exception& e) {
+            rawstd_error("%s: %s\n", str().c_str(), e.what());
+        }
+    }
+
     int f = fd();
     if (f == -1) {
         co_return;
@@ -182,6 +275,59 @@ Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
 
     int fd = co_await _open_object(id, offset, flags);
     set_fd(fd);
+
+    if ((flags & RAWSTOR_READONLY) == 0) {
+        std::shared_ptr<LocalMember> member =
+            local_member(location(), id, offset);
+        co_await member->record.lock(_queue);
+        RecordLockGuard guard{*member};
+        ++member->writers;
+        _member = std::move(member);
+        _member_id = id;
+        _member_offset = offset;
+    }
+}
+
+rawstd::Task<void> Backend::set_config(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
+    unsigned int flags
+) {
+    std::shared_ptr<LocalMember> member = local_member(location(), id, offset);
+    co_await member->record.lock(_queue);
+    RecordLockGuard guard{*member};
+
+    // The copy keeps its own state. A volume without a record yet (F10)
+    // starts CLEAN: nothing was written to it under one.
+    Record record{RAWSTOR_OBJECT_SYNC_STATE_CLEAN, config};
+    try {
+        record.state = (co_await _meta(id, offset, RawstdUUID{})).front().state;
+    } catch (const std::system_error&) {
+    }
+    if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 &&
+        record.state == RAWSTOR_OBJECT_SYNC_STATE_LOST) {
+        record.state = member->writers.load() == 0
+                           ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
+                           : RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
+    }
+    co_await _write_record(id, offset, record);
+    member->dirty.store(
+        record.state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        std::memory_order_release
+    );
+}
+
+rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+) {
+    std::vector<RawstorObjectMeta> metas =
+        co_await _meta(id, offset, version_id);
+    if (rawstd_uuid_is_nil(&version_id)) {
+        uint32_t writers = local_member(location(), id, offset)->writers.load();
+        for (RawstorObjectMeta& m : metas) {
+            m.writers = writers;
+        }
+    }
+    co_return metas;
 }
 
 rawstd::Task<void> Backend::set_version(
@@ -221,50 +367,77 @@ rawstd::Task<uint64_t> Backend::_blk_size(
 #endif
 }
 
-std::string Backend::meta_encode(
-    const RawstorObjectSyncState& sync_state, const ChunkIdentity& identity
-) {
+std::string
+Backend::meta_encode(const Record& record, const ChunkIdentity& identity) {
+    const RawstorObjectConfig& c = record.config;
+    std::string roles;
+    if (c.nroles == 0) {
+        roles = "-";
+    }
+    for (uint8_t i = 0; i < c.nroles; ++i) {
+        roles += static_cast<char>('0' + (c.roles[i] & 0x7));
+    }
+
     char buf[META_MAX_SIZE];
-    snprintf(
+    int n = snprintf(
         buf, sizeof(buf),
         "version=%u:state=%u:epoch=%" PRIx64 ":sync_id=%" PRIx64 ":h0=%" PRIx64
         ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64
-        ":member_role=%u:width=%u:chunk_size=%" PRIx64,
-        META_FORMAT_VERSION, (unsigned int)sync_state.state, sync_state.epoch,
-        sync_state.sync_id, sync_state.sync_id_history[0],
-        sync_state.sync_id_history[1], sync_state.sync_id_history[2],
-        sync_state.sync_id_history[3], (unsigned int)identity.member_role,
+        ":roles=%s:member_role=%u:width=%u:chunk_size=%" PRIx64,
+        META_FORMAT_VERSION, (unsigned int)record.state, c.epoch, c.sync_id,
+        c.sync_id_history[0], c.sync_id_history[1], c.sync_id_history[2],
+        c.sync_id_history[3], roles.c_str(), (unsigned int)identity.member_role,
         (unsigned int)identity.width, identity.chunk_size
     );
-    return std::string(buf);
+    if (n < 0 || static_cast<size_t>(n) >= sizeof(buf)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
+    }
+    return std::string(buf, static_cast<size_t>(n));
 }
 
 void Backend::meta_decode(
-    const std::string& value, RawstorObjectSyncState* sync_state,
-    ChunkIdentity* identity
+    const std::string& value, Record* record, ChunkIdentity* identity
 ) {
-    *sync_state = RawstorObjectSyncState{};
+    *record = Record{};
     *identity = ChunkIdentity{};
+    RawstorObjectConfig& c = record->config;
     unsigned int version = 0;
     unsigned int state = 0;
     unsigned int member_role = 0;
     unsigned int width = 0;
+    char roles[RAWSTOR_OBJECT_MAX_WIDTH + 2] = {};
+    int consumed = 0;
 
+    std::string v = trim(value);
     int n = sscanf(
-        trim(value).c_str(),
+        v.c_str(),
         "version=%u:state=%u:epoch=%" SCNx64 ":sync_id=%" SCNx64 ":h0=%" SCNx64
         ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64
-        ":member_role=%u:width=%u:chunk_size=%" SCNx64,
-        &version, &state, &sync_state->epoch, &sync_state->sync_id,
-        &sync_state->sync_id_history[0], &sync_state->sync_id_history[1],
-        &sync_state->sync_id_history[2], &sync_state->sync_id_history[3],
-        &member_role, &width, &identity->chunk_size
+        ":roles=%256[0-9-]:member_role=%u:width=%u:chunk_size=%" SCNx64 "%n",
+        &version, &state, &c.epoch, &c.sync_id, &c.sync_id_history[0],
+        &c.sync_id_history[1], &c.sync_id_history[2], &c.sync_id_history[3],
+        roles, &member_role, &width, &identity->chunk_size, &consumed
     );
-    if (n != 11 || version != META_FORMAT_VERSION) {
+    if (n != 12 || static_cast<size_t>(consumed) != v.size() ||
+        version != META_FORMAT_VERSION) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
 
-    sync_state->state = static_cast<RawstorObjectSyncStateValue>(state);
+    size_t nroles = 0;
+    if (strcmp(roles, "-") != 0) {
+        nroles = strlen(roles);
+        if (nroles > RAWSTOR_OBJECT_MAX_WIDTH) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        for (size_t i = 0; i < nroles; ++i) {
+            if (roles[i] < '0' || roles[i] > '9') {
+                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            }
+            c.roles[i] = static_cast<uint8_t>(roles[i] - '0');
+        }
+    }
+    c.nroles = static_cast<uint8_t>(nroles);
+    record->state = static_cast<RawstorObjectSyncStateValue>(state);
     identity->member_role = static_cast<RawstorMemberRole>(member_role);
     identity->width = static_cast<uint8_t>(width);
 }
@@ -299,9 +472,15 @@ Backend::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
         __FUNCTION__, fd(), size, offset, sync
     );
 
+    _wrote = true;
     co_await _throttle_acquire(size);
     size_t result;
     try {
+        // Marked in throttle order: the first write through marks the
+        // copy, the rest find it marked.
+        if (_member && !_member->dirty.load(std::memory_order_acquire)) {
+            co_await _mark_dirty();
+        }
         result = co_await _queue.pwrite(
             fd(), buf, size, static_cast<off_t>(offset), sync
         );
@@ -322,9 +501,15 @@ rawstd::Task<size_t> Backend::pwritev(
         __FUNCTION__, fd(), size, offset, sync
     );
 
+    _wrote = true;
     co_await _throttle_acquire(size);
     size_t result;
     try {
+        // Marked in throttle order: the first write through marks the
+        // copy, the rest find it marked.
+        if (_member && !_member->dirty.load(std::memory_order_acquire)) {
+            co_await _mark_dirty();
+        }
         result = co_await _queue.pwritev(
             fd(), iov, niov, static_cast<off_t>(offset), sync
         );
@@ -371,8 +556,14 @@ Backend::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
         __FUNCTION__, fd(), size, offset, unmap, sync
     );
 
+    _wrote = true;
     co_await _throttle_acquire(size);
     try {
+        // Marked in throttle order: the first write through marks the
+        // copy, the rest find it marked.
+        if (_member && !_member->dirty.load(std::memory_order_acquire)) {
+            co_await _mark_dirty();
+        }
         co_await _zero_fill(fd(), offset, size, unmap);
 
         // Neither fallocate() (metadata + any data it touches) nor the

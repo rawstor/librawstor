@@ -56,7 +56,7 @@ private:
     // plus reconnects).
     rawstd::Task<void> _cleanup_staging_lvs();
 
-    // Shared by meta()/set_sync_state(): the current comma-separated tag
+    // Shared by meta()/_write_record(): the current comma-separated tag
     // list on the LV at `path`, as reported by `lvs -o lv_tags`.
     rawstd::Task<std::string> _lv_tags(const std::string& path);
 
@@ -82,8 +82,8 @@ public:
 
     // Native per-copy mirror metadata, stored in the LV's own
     // "rawstor.meta=..." tag -- see blk::Backend::meta_encode().
-    rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+    rawstd::Task<std::vector<RawstorObjectMeta>> _meta(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
     ) override;
 
     // Trivial (Backend::resolve_locations()'s own doc comment): this is a
@@ -93,9 +93,8 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) override;
 
-    rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectSyncState& sync_state
+    rawstd::Task<void> _write_record(
+        const RawstdUUID& id, uint64_t offset, const Record& record
     ) override;
 };
 

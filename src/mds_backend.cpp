@@ -526,7 +526,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
         _queue, chunk_locations(map, index), id, offset, version_id
     );
     for (RawstorObjectMeta& m : ret) {
-        if (m.sync_state.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+        if (m.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             m.spec.failure_domain = map.policy.failure_domain;
             m.spec.stripe_width = map.policy.stripe_width;
         }
@@ -549,11 +549,11 @@ rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
     co_return chunk_locations(map, index);
 }
 
-rawstd::Task<void> Backend::set_sync_state(
-    const RawstdUUID&, uint64_t, const RawstorObjectSyncState&
+rawstd::Task<void> Backend::set_config(
+    const RawstdUUID&, uint64_t, const RawstorObjectConfig&, unsigned int
 ) {
-    // No-op: every real per-chunk sync state is persisted by the member's
-    // own backend (mds_backend.hpp's own comment).
+    // No-op: every real per-chunk configuration is persisted by the
+    // member's own backend (mds_backend.hpp's own comment).
     co_return;
 }
 

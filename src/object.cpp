@@ -71,8 +71,8 @@ rawstd::Task<void> SingleChunkObject::flush() {
     co_await _chunk->flush();
 }
 
-rawstd::Task<void> SingleChunkObject::close() {
-    co_await _chunk->close();
+rawstd::Task<void> SingleChunkObject::close(bool clean) {
+    co_await _chunk->close(clean);
     _chunk.reset();
 }
 
@@ -401,10 +401,10 @@ rawstd::Task<void> MultiChunkObject::flush() {
     });
 }
 
-rawstd::Task<void> MultiChunkObject::close() {
+rawstd::Task<void> MultiChunkObject::close(bool clean) {
     std::vector<Chunk*> chunks = _open_chunks();
     co_await rawstd::gather(chunks.size(), [&](size_t i) {
-        return chunks[i]->close();
+        return chunks[i]->close(clean);
     });
     for (ChunkEntry& entry : _chunks) {
         entry.chunk.reset();
@@ -516,6 +516,28 @@ int rawstor_object_close(
     try {
         launch_close_op(
             object, static_cast<rawstor::Object*>(object)->close(), cb, data
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_abandon(
+    RawstorObject* object, int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        launch_close_op(
+            object, static_cast<rawstor::Object*>(object)->close(false), cb,
+            data
         );
         return 0;
     } catch (const std::system_error& e) {

@@ -201,6 +201,9 @@ private:
     // tracks local flush-barrier state, not the persisted DIRTY/CLEAN/
     // SYNCING protocol state.
     bool _unflushed;
+    // A write through this chunk failed without its failed members being
+    // excluded (none succeeded): close() does not leave them cleanly.
+    bool _write_failed;
 
     // Called once the pwrite()/pwritev()/write_zeroes() call that took
     // `ticket` (see _writes_issued above) finishes, success or failure.
@@ -252,7 +255,14 @@ private:
     // the barriers that record a membership change: _run_degrade_barrier(),
     // _run_rejoin_barrier(), and _run_dirty_barrier() (for an exclusion
     // still unrecorded, or a legacy set).
-    RawstorObjectSyncState _bump_sync_state() const;
+    // The configuration as this chunk holds it: its sync set, and one role
+    // per member from its state (docs/mirroring.md, "States and roles").
+    RawstorObjectConfig _current_config() const;
+    // The same, moved to a new sync set (epoch + 1, a new sync_id, the
+    // current one pushed to the history).
+    RawstorObjectConfig _bump_config() const;
+    // The member's own role in the configuration its record holds.
+    RawstorObjectMemberRole _recorded_role(const Member& m) const noexcept;
 
     // Runs cont(0) once DIRTY is durably recorded on the in-sync members; the
     // first write (or read-repair) of a mirrored object passes through
@@ -264,12 +274,11 @@ private:
     rawstd::Task<void> _degrade(std::vector<size_t> idxs);
     rawstd::Task<void> _run_degrade_barrier();
 
-    // Persists `sync_state` on every in-sync member; members that fail the
+    // Persists `config` on every in-sync member; members that fail the
     // update are marked STALE. Never throws -- the caller re-checks
     // _in_sync_count()/_below_write_quorum() itself afterward.
-    rawstd::Task<void> _run_meta_fan_out(RawstorObjectSyncState sync_state);
-    rawstd::Task<void>
-    _set_sync_state_one(size_t idx, RawstorObjectSyncState sync_state);
+    rawstd::Task<void> _run_meta_fan_out(RawstorObjectConfig config);
+    rawstd::Task<void> _set_config_one(size_t idx, RawstorObjectConfig config);
 
     // Mirrored write fan-out shared by pwrite()/pwritev()/discard()/
     // write_zeroes()/flush(): `issue` is co_await-ed against every
@@ -451,15 +460,15 @@ public:
     // could report success before that write's data is actually durable.
     rawstd::Task<void> flush();
 
-    // flush()es (see above); for a mirrored object that is DIRTY, also
-    // durably marks the in-sync members CLEAN with the current epoch/sync_id
-    // before co_awaiting every Slot's close() concurrently -- a
-    // clean close, so the next open() doesn't pay for a spurious dirty
-    // gate. Clears _members so ~Chunk() (which still runs once the
-    // caller deletes this Chunk after the returned Task completes) has
+    // flush()es (see above); with `clean`, the sessions to the in-sync
+    // members then depart cleanly (Slot::leave()), so each member marks
+    // itself CLEAN once no writer is left, before co_awaiting every Slot's
+    // close() concurrently. `clean` false is a writer gone mid-flight
+    // (rawstor_object_abandon()). Clears _members so ~Chunk() (which still runs
+    // once the caller deletes this Chunk after the returned Task completes) has
     // nothing left to close -- the async counterpart to ~Chunk()'s own
     // run()-pumped connection cleanup.
-    rawstd::Task<void> close();
+    rawstd::Task<void> close(bool clean = true);
 
     // For tests/ to verify flush()'s wait for in-flight writes (see
     // _writes_issued/_flush_barrier above) without depending on real

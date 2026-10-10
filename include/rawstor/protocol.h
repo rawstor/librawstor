@@ -55,7 +55,7 @@ extern "C" {
 #define RAWSTOR_CMD_LOCATION_INFO 0x08
 #define RAWSTOR_CMD_FLUSH 0x09
 #define RAWSTOR_CMD_WRITE_ZEROES 0x0a
-#define RAWSTOR_CMD_SET_SYNC_STATE 0x0b
+#define RAWSTOR_CMD_SET_CONFIG 0x0b
 #define RAWSTOR_CMD_META 0x0c
 /*
  * Native CoW version of one stored object (docs/mds.md,
@@ -73,6 +73,13 @@ extern "C" {
  * empty array on backends without versions (file://, classic LVM).
  */
 #define RAWSTOR_CMD_LIST_VERSIONS 0x0e
+/*
+ * A session's clean departure from the object it set (Basic, unused): the
+ * server closes it cleanly, and a copy with no session open for writing
+ * left marks itself CLEAN (docs/mirroring.md, "DIRTY, CLEAN and LOST").
+ * A session that wrote and ends any other way leaves a DIRTY copy LOST.
+ */
+#define RAWSTOR_CMD_LEAVE 0x0f
 
 /*
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/open/
@@ -237,25 +244,38 @@ struct RawstorFrameIO {
 } RAWSTOR_PACKED;
 
 /*
- * Settable mirror consistency state only -- no size, nothing here changes
- * it. SET_SYNC_STATE's request: unlike META, it isn't wrapped in a
- * RawstorFrameBasicPayload of its own, so object_id/chunk_offset here
- * are the only way the server learns which object (and which of its
- * chunks -- docs/mds.md, "Chunk identity") this applies to.
+ * The chunk's configuration (struct RawstorObjectConfig, <rawstor/
+ * target.h>): its sync set and every member's role, `nroles` entries of
+ * enum RawstorObjectMemberRole, the rest zero. sync_id_history length
+ * must match RAWSTOR_OBJECT_SYNC_ID_HISTORY.
  */
-struct RawstorFrameSyncStatePayload {
-    uint8_t object_id[16];
-    uint64_t chunk_offset;
+struct RawstorFrameConfig {
     uint64_t epoch;
     uint64_t sync_id;
     uint64_t sync_id_history[4];
-    RawstorSyncStateType state;
+    uint8_t nroles;
+    uint8_t roles[255];
 } RAWSTOR_PACKED;
 
-/* SET_SYNC_STATE request */
-struct RawstorFrameSyncState {
+/*
+ * SET_CONFIG's request: the configuration to record on one copy and
+ * RAWSTOR_CONFIG_* `flags` (<rawstor/target.h>). The copy's own state is
+ * not set: the copy keeps it. Unlike META, it isn't wrapped in a
+ * RawstorFrameBasicPayload of its own, so object_id/chunk_offset here are the
+ * only way the server learns which object (and which of its chunks --
+ * docs/mds.md, "Chunk identity") this applies to.
+ */
+struct RawstorFrameSetConfigPayload {
+    uint8_t object_id[16];
+    uint64_t chunk_offset;
+    struct RawstorFrameConfig config;
+    uint8_t flags;
+} RAWSTOR_PACKED;
+
+/* SET_CONFIG request */
+struct RawstorFrameSetConfig {
     struct RawstorFrameHead head;
-    struct RawstorFrameSyncStatePayload payload;
+    struct RawstorFrameSetConfigPayload payload;
 } RAWSTOR_PACKED;
 
 /*
@@ -310,15 +330,14 @@ struct RawstorFrameResponse {
 } RAWSTOR_PACKED;
 
 /*
- * Full per-copy metadata: size, chunk_shift (RawstorFrameAllocate-
- * Payload's own doc comment on why a shift, not the full chunk_size) and
- * the mirror consistency state (see docs/mirroring.md) -- RawstorObjectMeta
- * (target.h) is spec plus sync_state, so this is the one wire round trip
- * that reports everything a caller could want about one copy. sync_id_history
- * length must match RAWSTOR_OBJECT_SYNC_ID_HISTORY. The only per-copy
- * response payload -- SET_SYNC_STATE's request is RawstorFrameSyncState-
- * Payload (settable fields only, no size). No object_id: this is only
- * ever a response, correlated to its request via RawstorFrameHead::cid
+ * Full per-copy metadata (RawstorObjectMeta, target.h): size, chunk_shift
+ * (RawstorFrameAllocatePayload's own doc comment on why a shift, not the
+ * full chunk_size), the copy's own state and live writer count, and the
+ * chunk's configuration as last set on it (see docs/mirroring.md) -- the
+ * one wire round trip that reports everything a caller could want about
+ * one copy. The only per-copy response payload -- SET_CONFIG's request
+ * is RawstorFrameSetConfigPayload (the configuration only). No object_id: this
+ * is only ever a response, correlated to its request via RawstorFrameHead::cid
  * -- the caller already knows which object it asked about. Sent as a
  * RawstorFrameResponse (body.res = sizeof(this), body.hash covering
  * it) immediately followed by this payload -- no combined frame struct,
@@ -328,17 +347,14 @@ struct RawstorFrameResponse {
  */
 struct RawstorFrameMetaPayload {
     uint64_t size;
-    uint64_t epoch;
-    uint64_t sync_id;
-    uint64_t sync_id_history[4];
     RawstorSyncStateType state;
     uint8_t chunk_shift;
-    /*
-     * Rest of the placement identity (docs/mds.md, chunk_meta): reported
-     * by META, ignored by SET_SYNC_STATE (the stored values always win).
-     */
+    /* Rest of the placement identity (docs/mds.md, chunk_meta). */
     uint8_t width;       /* redundancy: copies per chunk */
     uint8_t member_role; /* enum RawstorMemberRole, <rawstor/target.h> */
+    /* Sessions open for writing on this copy right now. */
+    uint32_t writers;
+    struct RawstorFrameConfig config;
 } RAWSTOR_PACKED;
 
 /*
@@ -512,10 +528,11 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 20);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 24);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameVersionEntry, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 21);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncStatePayload, 73);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameConfig, 304);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetConfigPayload, 329);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAllocatePayload, 44);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameResponseBody, 12);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 60);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 320);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjPolicy, 19);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjCreatePayload, 60);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjOpPayload, 56);

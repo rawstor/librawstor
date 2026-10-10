@@ -743,7 +743,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
         co_await meta(id, offset, version_id);
     const RawstorObjectMeta* answer = &metas.front();
     for (const RawstorObjectMeta& m : metas) {
-        if (m.sync_state.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+        if (m.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             answer = &m;
             break;
         }
@@ -955,9 +955,13 @@ rawstd::Task<std::vector<rawstd::URI>> Slot::resolve_locations(
     }
 }
 
-rawstd::Task<void> Slot::set_sync_state(
-    const RawstdUUID& id, uint64_t offset,
-    const RawstorObjectSyncState& sync_state
+rawstd::Task<void> Slot::leave() {
+    co_await _backend->leave();
+}
+
+rawstd::Task<void> Slot::set_config(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
+    unsigned int flags
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -966,8 +970,8 @@ rawstd::Task<void> Slot::set_sync_state(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::set_sync_state, id, offset,
-            sync_state
+            func_name, trace_event, &Backend::set_config, id, offset, config,
+            flags
         );
         _finish(t_call);
     } catch (...) {
