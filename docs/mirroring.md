@@ -10,14 +10,17 @@ numbers its stages separately.
 |---|---|---|---|
 | Per-copy metadata (`state`, `epoch`, `sync_id`, history) on `file://` | 1 | ✅ | `src/file_backend.cpp` |
 | Per-copy metadata on `lvm://` / `zfs://` (LVM tags, ZFS user properties) | 1 | ✅ | `src/lvm_backend.cpp`, `src/zfs_backend.cpp` |
-| `META`, `SET_SYNC_STATE`, `FLUSH` opcodes | 1 | ✅ | `include/rawstor/protocol.h`, `ost/src/client.cpp` |
+| `META`, `SET_CONFIG`, `LEAVE`, `FLUSH` opcodes | 1 | ✅ | `include/rawstor/protocol.h`, `ost/src/client.cpp` |
 | Metadata transitions fsynced before the ack | 1 | ✅ | `src/chunk.cpp` |
-| `rawstor_target_meta()` / `rawstor_target_set_member_sync_state()` | 1 | ✅ | `include/rawstor/target.h` |
+| `rawstor_target_meta()` / `rawstor_target_set_member_config()` | 1 | ✅ | `include/rawstor/target.h` |
 | Quorum at open (> N/2), split-brain detection | 2 | ✅ | `src/chunk.cpp` |
 | Degraded open, F10 recreate of a missing copy | 2 | ✅ | `src/chunk.cpp` |
 | Degrade & continue (F1), write freeze below quorum for N ≥ 3 | 2 | ✅ | `src/chunk.cpp` |
 | Read failover and read-repair (F2) | 2 | ✅ | `src/chunk.cpp` |
-| Clean close (all copies `CLEAN`) | 2 | ✅ | `src/chunk.cpp` |
+| Copies keep their own `DIRTY`/`CLEAN`/`LOST`; clean close with `LEAVE`; `rawstor_object_abandon()` | 2 | ✅ | `src/blk_backend.cpp`, `src/local_member.hpp`, `src/chunk.cpp` |
+| Every member's role in each record; syncing is a role, not a state | 2 | ✅ | `src/chunk.cpp`, `src/config_wire.hpp` |
+| A `rawstor-ost` is one copy; with several locations it keeps no record of it | 2 | ✅ | `ost/src/client.cpp` |
+| A record of the copy itself for a `rawstor-ost` with several locations | — | ❌ | *One copy per server* |
 | Online resync with in-memory bitmap, region locks, zero-region `write_zeroes` | 3 | ✅ | `src/chunk.cpp` (`RESYNC_CHUNK`) |
 | Reconnect probe and automatic rejoin of STALE mirrors | 3 | ✅ | `src/chunk.cpp` (`_probe_watch()`) |
 | `rawstor show -v` per-chunk / per-mirror state | — | ✅ | `cli/show.c` |
@@ -54,27 +57,40 @@ Each backend stores, next to the chunk's data, a metadata record (an extension o
 | Field | Type | Meaning |
 |-------|------|---------|
 | `size` | uint64 | Logical chunk size (as today) |
-| `state` | enum | `CLEAN` \| `DIRTY` \| `SYNCING` |
+| `state` | enum | `CLEAN` \| `DIRTY` \| `LOST`: the copy's own, kept by the copy (*DIRTY, CLEAN and LOST*) |
 | `epoch` | uint64 | Monotonic counter; bumped on every change of mirror-set health/membership |
 | `sync_id` | uint64 | Random id of the current sync set; regenerated only when the set's membership changes (see *When `sync_id` changes*) |
 | `sync_id_history[4]` | uint64[] | Previous `sync_id`s (ancestry), DRBD-generation-UUID style |
+| `roles` | uint8[] | Every member's role in the chunk's configuration, in member order: in-sync \| syncing \| excluded (*States and roles*) |
 
-`STALE` is not stored — it is derived by comparing copies.
+`STALE` is not stored — it is derived by comparing copies. The epoch,
+`sync_id` and its history and the roles are the chunk's configuration as
+a writer last set it on the copy (`RawstorObjectConfig`); `state` is the
+copy's own.
 
-A copy's life cycle (`STALE` included for clarity, though it is only ever
-derived):
+A copy's `state`, kept by the copy itself:
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> CLEAN : created
+    CLEAN --> DIRTY : first write (copy, fsync before the write)
+    DIRTY --> CLEAN : last writer's LEAVE (copy, fsync)
+    DIRTY --> LOST : a writer that wrote left without LEAVE
+    LOST --> CLEAN : cleared explicitly (rawstor resolve)
+```
+
+Its place in the sync set, as the writer sees it (`STALE` included for
+clarity, though it is only ever derived; the rest is the copy's role):
 
 ```mermaid
 stateDiagram-v2
     direction TB
-    [*] --> CLEAN : created
-    CLEAN --> DIRTY : first write (fsync before its ack)
-    DIRTY --> CLEAN : clean close (flush, fsync)
-    DIRTY --> STALE : write/session failure (F1, F6)
-    CLEAN --> STALE : missed writes while offline
-    STALE --> SYNCING : rejoin, resync starts (F7)
+    [*] --> IN_SYNC : created
+    IN_SYNC --> STALE : write/session failure (F1, F6), missed writes while offline
+    STALE --> SYNCING : rejoin, resync starts (F7): role syncing (fsync)
     SYNCING --> SYNCING : crash mid-resync, restart (F8)
-    SYNCING --> DIRTY : resync done, set's new sync_id (IN-SYNC)
+    SYNCING --> IN_SYNC : resync done, set's new sync_id, role in-sync
     note right of STALE
         derived, never stored:
         an ancestor sync_id,
@@ -82,7 +98,99 @@ stateDiagram-v2
     end note
 ```
 
-At the API level (`include/rawstor/target.h`) this record is split by cost and mutability: `RawstorObjectSpec` (`size`, `width`) is the cheap, always-fail-over-safe half read by `rawstor_target_spec()`; `RawstorObjectSyncState` (`state`/`epoch`/`sync_id`/`sync_id_history`) is the mirror consistency half, read via `rawstor_target_meta()` (which returns both, composed as `RawstorObjectMeta{spec, sync_state}`, one entry per URI of the one chunk named by its own explicit `offset` parameter — unlike `spec()`'s single-answer fail-over, so a caller can see every copy of that chunk's own state; a URI that doesn't answer gets a zero-filled entry, see its own doc comment). The writer, `rawstor_target_set_member_sync_state()`, addresses one real member of one chunk at a time (its own `offset` and `member_index` parameters, the same order `meta()` reports that chunk's own members in), and is part of the public API too, but is a sharp tool: it exists for `rawstor-ost` (to relay an incoming `SET_SYNC_STATE` wire command to its own locally configured locations, one call per member), this project's own tests, and future tooling that already understands this model (e.g. `rawstor resolve`'s own split-brain recovery flow) — setting mirror consistency state by hand can desynchronize a target's copies in ways the library's own quorum/reconciliation logic isn't designed to recover from automatically, so it isn't meant for routine application use. On an `mds://` object target (docs/mds.md) — which has many chunks, each with its own slots, not addressable through any flat per-URI `_uris` list at all — both calls resolve `offset` to that object's own real chunk via a live MDS round trip first (`-ENOENT` if the object has no chunk there), then operate on that chunk's own real members exactly as for a plain target: the real per-chunk DIRTY/CLEAN state lives one level down, but is fully reachable through the object-level target, not synthesized.
+### States and roles
+
+A copy's record says two independent things about it:
+
+| | `state` | role |
+|---|---|---|
+| About | The copy's own data, as its writers left it | The writer's decision about the copy |
+| Values | `CLEAN`, `DIRTY`, `LOST` | in-sync, syncing, excluded (unknown: none recorded) |
+| Written by | The copy itself, from the sessions it serves | The writer, `SET_CONFIG` |
+| Where | This copy's record only | Every member's record: `roles`, one per member |
+
+They cannot be one field because they are written by different parties at
+different places. A copy is excluded precisely when it cannot be reached,
+so its exclusion is recorded on the others and its own `state` stays as it
+was. `LOST` is set by the copy when a session drops, which the writer may
+never learn of. Any pairing occurs:
+
+| | in-sync | syncing | excluded |
+|---|---|---|---|
+| `CLEAN` | closed cleanly | resync onto an idle copy | went offline while idle |
+| `DIRTY` | open, being written | resync with writes duplicated onto it | failed mid-write |
+| `LOST` | a writer vanished: copies may differ in its unacknowledged writes | resync onto a copy a writer left `LOST` | a writer vanished, then the copy was excluded |
+
+The roles are in the order the writer lists the chunk's members (a plain
+target's URIs, an `mds://` chunk's placement), so a copy's own role is the
+entry at its own position in that order. The writer fills `roles` from its
+members' states in every configuration it sets. An unreachable copy's
+record keeps whatever it last held, which is why only a copy's own role is
+read from its record, never another member's: a copy whose own role is
+syncing is mid-resync, and an open treats it as stale (F8).
+
+### DIRTY, CLEAN and LOST
+
+The copy keeps its `state` by itself, from the sessions it serves; the
+writer never sets it.
+
+- **`DIRTY`**: before the first write into a `CLEAN` copy the copy marks
+  itself `DIRTY` (fsync), under its record lock. Later writes see a cached
+  flag and skip it.
+- **`LEAVE`** is a session's clean departure: the writer has flushed and
+  wants the copy to count it gone. `rawstor-ost` closes the session's
+  object cleanly on `LEAVE`; a client's own direct open does the same at
+  `rawstor_object_close()`.
+- **`CLEAN`**: when the last session open for writing leaves cleanly, the
+  copy marks itself `CLEAN` (fsync). Sessions are counted under the record
+  lock, and a session joins before its first write, so the mark never
+  races a write. `META` reports the count (`writers`).
+- **`LOST`**: a session that wrote and goes without `LEAVE` -- its
+  connection dropped, the client called `rawstor_object_abandon()`, or the
+  chunk's close found its writes might not all have landed -- leaves a
+  `DIRTY` copy `LOST`: the copies may differ in that writer's
+  unacknowledged regions. `LOST` sticks: a later clean departure does not
+  clear it, and neither does a new configuration. Only
+  `RAWSTOR_CONFIG_CLEAR_LOST` does (`rawstor resolve`, for copies made
+  consistent by hand).
+- A session that never wrote leaves the state as it is, cleanly or not.
+
+The chunk's `close()` sends `LEAVE` to every in-sync member only when its
+flush succeeded, none of its writes failed outright and every exclusion is
+recorded; otherwise it closes without one, and the members it wrote go
+`LOST`. An open reads `LOST` as `DIRTY` (F5).
+
+The state, the session count and the record lock live in the process that
+opens the copy (`LocalMember`, shared by all its sessions to that copy):
+a copy is a member of whichever process stores it.
+
+### One copy per server
+
+To its clients a `rawstor-ost` is one copy of the chunk, whatever it
+stores it on: the client counts it as one member, with one position in
+`roles`, and never sees what is beneath.
+
+- **One location** (the usual setup): the location's record is the copy's
+  record. `SET_CONFIG`, `LEAVE` and `META` act on it.
+- **Several locations**: the server opens them as a mirror of its own,
+  whose records hold that inner mirror's configuration. The copy the
+  server is to its clients has no record of its own to keep, so the
+  server keeps none: it answers `SET_CONFIG` with `-ENOSYS` and reports no
+  configuration in `META` (`sync_id` 0, no roles). To a client that
+  mirrors across servers it is a copy without state tracking: next to an
+  established sync set it reads as stale, and is resynced in full at
+  every open. A client that does not mirror (one member) is unaffected.
+
+The next step is a record of the copy itself for a server with several
+locations, kept next to the data as every record is: a second record in
+each location (a second meta file for `file://`, a second LVM tag, a
+second ZFS property), written to all of them with fsync and read from the
+first that has it. The copy then has its own `state`, writers and role,
+and the inner mirror its own configuration. The record cannot live in the
+server's memory instead: `sync_id` and its history are how a copy is told
+stale across restarts, and `DIRTY`/`LOST` exist to outlive a crash.
+
+At the API level (`include/rawstor/target.h`) this record is split by cost and mutability: `RawstorObjectSpec` (`size`, `width`) is the cheap, always-fail-over-safe half read by `rawstor_target_spec()`; the copy's own `state` and session count plus `RawstorObjectConfig` (`epoch`/`sync_id`/`sync_id_history`/`roles`) are the mirror consistency half, read via `rawstor_target_meta()` (which returns them all, composed as `RawstorObjectMeta{spec, member_role, state, writers, config}`, one entry per URI of the one chunk named by its own explicit `offset` parameter — unlike `spec()`'s single-answer fail-over, so a caller can see every copy of that chunk's own state; a URI that doesn't answer gets a zero-filled entry, see its own doc comment). The writer, `rawstor_target_set_member_config()`, sets the configuration -- never the copy's own state -- on one real member of one chunk at a time (its own `offset` and `member_index` parameters, the same order `meta()` reports that chunk's own members in), and is part of the public API too, but is a sharp tool: it exists for `rawstor-ost` (to apply an incoming `SET_CONFIG` wire command to its location), this project's own tests, and future tooling that already understands this model (e.g. `rawstor resolve`'s own split-brain recovery flow) — setting mirror consistency state by hand can desynchronize a target's copies in ways the library's own quorum/reconciliation logic isn't designed to recover from automatically, so it isn't meant for routine application use. On an `mds://` object target (docs/mds.md) — which has many chunks, each with its own slots, not addressable through any flat per-URI `_uris` list at all — both calls resolve `offset` to that object's own real chunk via a live MDS round trip first (`-ENOENT` if the object has no chunk there), then operate on that chunk's own real members exactly as for a plain target: the real per-chunk DIRTY/CLEAN state lives one level down, but is fully reachable through the object-level target, not synthesized.
 
 ### Comparison rules (at open)
 
@@ -91,7 +199,7 @@ At the API level (`include/rawstor/target.h`) this record is split by cost and m
 | Same `sync_id`, all `CLEAN` | Copies are identical |
 | `sync_id` of copy A appears in history of copy B | A is an ancestor → A is stale, resync A ← B |
 | Different `sync_id`s, neither is an ancestor of the other | **Split brain** — automatic resync forbidden. Unreachable through automatic paths thanks to quorum rules (below); kept as defense in depth |
-| `state == SYNCING` | Copy is untrusted (interrupted resync) — always stale |
+| Own role syncing | Copy is untrusted (interrupted resync) — always stale |
 
 How the lineage decides it: copy B's `sync_id` is in copy A's history, so
 B is an ancestor (stale, resynced from A); copies A and C forked after
@@ -124,14 +232,14 @@ while offline) — so staleness is always a verdict about a copy relative
 to the others, reached one of two ways:
 
 - **At open**, by the comparison rules above: an ancestor `sync_id`, a
-  `SYNCING` state, or a blank `sync_id` 0 next to an established sync set.
+  syncing role, or a blank `sync_id` 0 next to an established sync set.
 - **At runtime**, when a write or the session to a member fails (F1, F6):
   the survivors move to a new `sync_id` behind a barrier, and the failed
   member — still on the old one — is marked STALE in memory.
 
 A STALE copy is excluded from reads and writes. Once it is reachable again
 (the reconnect probe, or the next open), an online resync copies the
-authoritative data onto it (`SYNCING`), and on completion it joins the
+authoritative data onto it (role syncing), and on completion it joins the
 sync set as IN-SYNC, under the new `sync_id` its joining gives the set.
 
 ### When `sync_id` changes
@@ -151,7 +259,7 @@ to history) exactly when that membership changes, in either direction:
   gate, before the first write is acknowledged.
 - **A copy rejoins** (F7): once its resync is done, the IN-SYNC copies move
   to a new `sync_id` first, then the rejoining copy adopts it. Interrupted
-  in between, the copy is still `SYNCING` on its old record — stale either
+  in between, the copy is still syncing on its old record — stale either
   way. Data-only quorum would be safe without this bump (the copies are
   identical), but a record naming the old membership — such as a witness
   record whose update failed (see [MDS design](mds.md#witness-stage-3)) —
@@ -161,7 +269,7 @@ Everything else keeps the identity:
 
 - **Reopening with the same membership**, stale copies included: a copy
   on an ancestor `sync_id`, a blank one (`sync_id` 0), or one marked
-  `SYNCING` is already excluded by its own record, so a session that
+  syncing is already excluded by its own record, so a session that
   starts and ends without it — e.g. it stays unreachable to the probe, or
   its resync is interrupted again — writes the same `sync_id`/`epoch`.
 - **Mark `DIRTY`, clean close**: only `state` changes.
@@ -224,9 +332,9 @@ flowchart TB
 ## Write lifecycle (all mirrors healthy)
 
 1. **Open:** read metadata of all copies, verify identity. The copies stay as they are (`CLEAN` after a clean close) -- opening alone, or a read-only session, never marks them.
-2. **First write** (or read-repair): mark all IN-SYNC copies `DIRTY` (fsync) before it is acknowledged; a membership change not yet recorded (a copy unreachable at open, or degraded while still `CLEAN`) also gets a new `sync_id` here — stale copies already on an ancestor `sync_id` don't (*When `sync_id` changes*). Later writes skip this step.
+2. **First write** (or read-repair): each IN-SYNC copy marks itself `DIRTY` (fsync) before the write reaches it. A membership change not yet recorded (a copy unreachable at open, or degraded while still `CLEAN`) gets a new `sync_id` from the client's dirty gate before the write is sent — stale copies already on an ancestor `sync_id` don't (*When `sync_id` changes*). Later writes skip the gate.
 3. **Write:** fan out to all IN-SYNC mirrors, acknowledge when all complete.
-4. **Clean close:** flush data, set all copies `CLEAN` with the same `epoch`/`sync_id` (fsync).
+4. **Clean close:** flush data, then `LEAVE` on every IN-SYNC copy; each marks itself `CLEAN` (fsync) once no session open for writing is left.
 
 The same with a mirror failing mid-write (F1, N = 2):
 
@@ -240,13 +348,13 @@ sequenceDiagram
     C->>A: META
     C->>B: META
     Note over C: same sync_id: identical
-    C->>A: mark DIRTY (fsync)
-    C->>B: mark DIRTY (fsync)
     App->>C: write
     par fan out
         C->>A: WRITE
+        Note over A: first write: DIRTY (fsync)
     and
         C->>B: WRITE
+        Note over B: first write: DIRTY (fsync)
     end
     A-->>C: ok
     B--xC: error (F1)
@@ -267,10 +375,10 @@ sequenceDiagram
 | F2 | Read failure / transport hash mismatch on a mirror | error / EPROTO in the read path | Retry the read from another IN-SYNC mirror, return the data. **Read-repair**: rewrite the region on the failing mirror; if the repair write fails → degrade as in F1 | Pointwise via read-repair; on degradation — F7 |
 | F3 | All mirrors failed | all connections dead | At open: refused with `ENOTCONN` (degenerate case of F4's below-quorum refusal). On an already-open chunk: `EIO` to the caller on the next write, chunk unavailable. Periodic reconnect attempts | — (no copy available) |
 | F4 | OST unreachable at open | connect failure | Reachable > N/2 → degraded open on the majority (it is guaranteed to contain the newest `sync_id`); on survivors `epoch`+1 / new `sync_id` **before the first write ack**. Reachable ≤ N/2 (N=2 with one down falls here) → **auto-start refused**, manual force-open only (not yet implemented) | F7 when it returns |
-| F5 | Client crash with writes in flight | at next open: all copies `DIRTY` with the same `sync_id` | All copies are "valid" (they diverge only in unacknowledged regions). Deterministic winner: the first copy in the target list | v1: full online resync of the losers from the winner (expensive — the main argument for a persistent bitmap in v2). I/O is served from the winner immediately |
+| F5 | Client crash with writes in flight | at next open: all copies `DIRTY` or `LOST` with the same `sync_id` (`LOST` when the client reached them through `rawstor-ost`, which saw its sessions drop without `LEAVE`) | All copies are "valid" (they diverge only in unacknowledged regions). Deterministic winner: the first copy in the target list | v1: full online resync of the losers from the winner (expensive — the main argument for a persistent bitmap in v2). I/O is served from the winner immediately |
 | F6 | OST crash/restart → acknowledged writes lost from page cache (data is not fsynced) | **not detectable from metadata** (the copy looks up to date) | **Conservative rule: any session loss to a mirror while the chunk is open `DIRTY` ⇒ that mirror is STALE (run the F1 procedure), even if it reconnects immediately.** We cannot know what it lost, so we do not trust it | Full resync (F7) overwrites whatever was lost |
-| F7 | A stale mirror returns (rejoin) | reconnect probe + `sync_id`/`epoch` comparison: ancestor → stale | Mark the copy `SYNCING` (fsync), start an **online resync** (algorithm below) without stopping client I/O | On completion: the IN-SYNC copies move to a new `sync_id`/`epoch` (fsync), then the copy adopts it, state `DIRTY` if the chunk is (fsync) → mirror is IN-SYNC, reads allowed |
-| F8 | Client/OST crash during resync | the copy is left `SYNCING` / with an old `sync_id` | Copy is untrusted | Resync from scratch (v1; resumable with the persistent bitmap in v2) |
+| F7 | A stale mirror returns (rejoin) | reconnect probe + `sync_id`/`epoch` comparison: ancestor → stale | Record the copy's role as syncing (fsync), start an **online resync** (algorithm below) without stopping client I/O | On completion: the IN-SYNC copies move to a new `sync_id`/`epoch` (fsync), then the copy adopts it, state `DIRTY` if the chunk is (fsync) → mirror is IN-SYNC, reads allowed |
+| F8 | Client/OST crash during resync | the copy is left with role syncing / an old `sync_id` | Copy is untrusted | Resync from scratch (v1; resumable with the persistent bitmap in v2) |
 | F9 | Split brain (disjoint write histories) | different `sync_id`s, neither in the other's history | **Excluded in automatic paths by the quorum rules.** Can only arise from a wrong manual force-open, an OST restored from backup, or a bug → then: open refused with a clear error, no automatic winner | Operator: `rawstor resolve TARGET --winner=N` (`rawstor show -v`'s own `slot[N]` index) → winner gets a new `sync_id`, the loser gets a full resync |
 | F10 | Chunk copy missing on one OST (disk lost, OST reprovisioned) | ENOENT when opening the copy (a `file://` location whose directory is gone altogether is unreachable instead, ENOTCONN -- e.g. an unmounted disk) | At open, recreate that copy blank (ALLOCATE, sized off a surviving copy's own META) and treat it as stale. Only when the surviving copies alone are a majority (> N/2): a blank copy never counts toward the quorum, or a survivor that fell behind could be opened as authoritative. So N=2 with one copy missing is not healed automatically: the open fails the quorum check, and the copy is recreated by hand (`rawstor create` on its location) once the survivor is known to be current. Every copy missing is never recreated (nothing vouches the chunk held no data) and the open fails ENOENT. Not on a read-only open or a version | Full online resync (F7) |
 | F11 | Copy size mismatch (mixed file/blkdev backends round up to extent/volblocksize — see `src/blk_backend.hpp`) | spec comparison at open | The logical chunk size lives in metadata and is the same everywhere; physical ≥ logical is fine. Physical < logical → the copy is invalid (treat as F10) | — |
@@ -316,7 +424,7 @@ sequenceDiagram
     Note over Dst: IN-SYNC, serves reads
 ```
 
-If the client or the target OST crashes mid-resync, the copy remains `SYNCING` and the resync restarts from scratch (F8). A persistent write-intent bitmap (v2) makes it resumable and shrinks the F5 full resync to recently-touched regions.
+If the client or the target OST crashes mid-resync, the copy's role remains syncing and the resync restarts from scratch (F8). A persistent write-intent bitmap (v2) makes it resumable and shrinks the F5 full resync to recently-touched regions.
 
 ### Known limitation: the degrade-barrier window
 
@@ -360,14 +468,15 @@ copies, a witness (*Roadmap — MDS as witness* above).
 
 - **`include/rawstor/protocol.h`** — new opcodes:
   - `META` — read full per-copy metadata (size + width/chunk_size/member_role + state/epoch/sync_id/history); the one metadata round trip every backend answers, `rawstor_target_spec()` included (replaces the separate, cheaper `SPEC` opcode -- size only, no mirror-consistency-state lookup -- added in 0.2.3 and retired here: no backend ever answered it with more than a partial `RawstorObjectSpec` anyway);
-  - `SET_SYNC_STATE` — write mirror consistency state only (no `size` — nothing on this path ever changes it), fsynced on the server;
+  - `SET_CONFIG` — write the chunk's configuration to a copy (no `size`, and never the copy's own state), fsynced on the server;
+  - `LEAVE` — a session's clean departure; the copy marks itself `CLEAN` once no session open for writing is left;
   - `FLUSH` — fdatasync of object data; needed for clean close and so that `rawstor-vhost`/QEMU can forward guest flushes.
   - An old server receiving an unknown opcode must answer `-ENOSYS`. There is no wire version field — acceptable before 1.0.
 - **`src/file_backend.cpp`** — versioned `.spec` format; fsync of metadata.
 - **`src/lvm_backend.cpp`/`src/zfs_backend.cpp`** — a raw block device has no `.spec` file and a reserved header/footer region is incompatible with objects already created (data occupies the device from byte 0). Metadata instead uses each backend's own native, transactional storage: a ZFS user property (`rawstor:meta`, set/read via `zfs set`/`zfs get`) or an LVM tag (`rawstor.meta=...`, via `lvchange --addtag`/`--deltag` and `lvs -o lv_tags`), encoded as a compact colon-separated hex string (`meta_encode()`/`meta_decode()` in `src/blk_backend.{hpp,cpp}`). Both mechanisms share the device/dataset's own failure domain and are set in the same command as creation, so there is never a window where the volume exists without one. A volume with no recorded value (created before this existed, or by something else) is **not** trusted as legacy-CLEAN the way an old `.spec` record is — it fails `meta()`, which the caller already treats as case F10 (untrusted member, needs a resync).
 - **`ost/session.cpp`** — handlers for the new opcodes.
-- **`src/chunk.cpp`** — per-mirror state machine (IN-SYNC/STALE/SYNCING per `Slot`), quorum checks at open, degraded open, the degradation procedure (F1: suspend acks → bump survivors' metadata → resume), read failover + read-repair, the resync engine (bitmap + sweeper + per-chunk locks), reconnect probes for STALE mirrors. Cross-mirror logic lives in `Chunk`; `Slot` keeps only per-location retry/reopen.
-- **`cli/`** — `rawstor show -v` prints one `chunk[OFFSET]` block per chunk (`rawstor_target_spec()`'s own size/chunk_size say how many), each with a `mirror[N]` per copy of that chunk and its own state; `rawstor resolve TARGET --winner=N[,N...] [--offset OFFSET]` declares one or more mirrors of the targeted chunk(s) jointly authoritative after split brain (F9) -- every chunk in the object if `--offset` is omitted -- writing them all the same new dominant `sync_id`, one member at a time via `rawstor_target_set_member_sync_state()`, so every mirror of that chunk NOT listed gets a full resync on the next open. Still missing: `rawstor-cli force-open` / an opts flag (below-quorum start, explicit manual approval).
+- **`src/chunk.cpp`** — per-mirror state machine (IN-SYNC/STALE/SYNCING per `Slot`, recorded as every member's role), quorum checks at open, degraded open, the degradation procedure (F1: suspend acks → bump survivors' metadata → resume), read failover + read-repair, the resync engine (bitmap + sweeper + per-chunk locks), reconnect probes for STALE mirrors. Cross-mirror logic lives in `Chunk`; `Slot` keeps only per-location retry/reopen.
+- **`cli/`** — `rawstor show -v` prints one `chunk[OFFSET]` block per chunk (`rawstor_target_spec()`'s own size/chunk_size say how many), each with a `mirror[N]` per copy of that chunk and its own state; `rawstor resolve TARGET --winner=N[,N...] [--offset OFFSET]` declares one or more mirrors of the targeted chunk(s) jointly authoritative after split brain (F9) -- every chunk in the object if `--offset` is omitted -- writing them all the same new dominant `sync_id`, one member at a time via `rawstor_target_set_member_config()` with `RAWSTOR_CONFIG_CLEAR_LOST`, so every mirror of that chunk NOT listed gets a full resync on the next open. Still missing: `rawstor-cli force-open` / an opts flag (below-quorum start, explicit manual approval).
 
 ### Implementation stages
 

@@ -93,53 +93,94 @@ struct RawstorObjectSpec {
  *               a genuine (if unusual) CLEAN/epoch-0/sync_id-0 legacy
  *               copy by this field alone, without also having to check
  *               `size`.
- * CLEAN       - the copy was closed correctly; all acknowledged writes are
- *               on it.
+ * CLEAN       - every session that wrote the copy left it cleanly; all
+ *               acknowledged writes are on it.
  * DIRTY       - the copy is open for writing; it may diverge from its
  *               mirrors in regions covered by unacknowledged writes.
- * SYNCING     - a resync onto this copy was started and has not completed;
- *               the copy content must not be trusted.
+ * LOST        - DIRTY, and a session that wrote the copy went without a
+ *               clean departure: the copy may differ from its mirrors in
+ *               that writer's unacknowledged writes. It stays LOST until
+ *               cleared explicitly (RAWSTOR_CONFIG_CLEAR_LOST).
+ *
+ * The copy keeps its state itself, from the sessions it serves
+ * (docs/mirroring.md, "DIRTY, CLEAN and LOST"): it is read in
+ * RawstorObjectMeta, never written by a caller.
  */
 enum RawstorObjectSyncStateValue {
     RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE = 0,
     RAWSTOR_OBJECT_SYNC_STATE_CLEAN = 1,
     RAWSTOR_OBJECT_SYNC_STATE_DIRTY = 2,
-    RAWSTOR_OBJECT_SYNC_STATE_SYNCING = 3,
+    RAWSTOR_OBJECT_SYNC_STATE_LOST = 3,
 };
 
-/** Number of ancestor sync ids kept in RawstorObjectMeta. */
+/** Number of ancestor sync ids kept in RawstorObjectConfig. */
 #define RAWSTOR_OBJECT_SYNC_ID_HISTORY 4
 
+/** Most members a chunk can have: RawstorObjectSpec.width fits a byte. */
+#define RAWSTOR_OBJECT_MAX_WIDTH 255
+
 /**
- * @brief Settable mirror consistency identity of a single object copy.
+ * @brief A member's role in the chunk's configuration (docs/mirroring.md,
+ *        "States and roles").
  *
- * Everything about a copy's consistency state that can actually be changed
- * (see docs/mirroring.md) -- the fields rawstor_target_set_member_sync_state()
- * persists. A sync_id of 0 marks a legacy copy that has never been part of
- * an established sync set; such copies are treated as CLEAN and identical
+ * UNKNOWN   - no configuration recorded for this member.
+ * IN_SYNC   - the member carries every acknowledged write.
+ * SYNCING   - an online resync onto the member was started and has not
+ *             completed: its content must not be trusted.
+ * EXCLUDED  - the member is out of the set.
+ *
+ * A role is the writer's decision about a member; a copy's own state
+ * (RawstorObjectSyncStateValue) is what the copy knows of its writers.
+ */
+enum RawstorObjectMemberRole {
+    RAWSTOR_OBJECT_MEMBER_UNKNOWN = 0,
+    RAWSTOR_OBJECT_MEMBER_IN_SYNC = 1,
+    RAWSTOR_OBJECT_MEMBER_SYNCING = 2,
+    RAWSTOR_OBJECT_MEMBER_EXCLUDED = 3,
+};
+
+/**
+ * @brief The chunk's configuration, as a writer sets it on a copy.
+ *
+ * Its sync set (`epoch`, `sync_id` and its history) and every member's
+ * role, in the order the chunk's members are listed (a plain target's
+ * URIs, an mds:// chunk's placement). Written with
+ * rawstor_target_set_member_config(), read back in RawstorObjectMeta. A
+ * sync_id of 0 marks a legacy copy that has never been part of an
+ * established sync set; such copies are treated as CLEAN and identical
  * right after creation.
  *
  * @see RawstorObjectMeta
- * @see rawstor_target_meta
  */
-struct RawstorObjectSyncState {
+struct RawstorObjectConfig {
     uint64_t epoch;   /**< Bumped on every mirror-set health change. */
     uint64_t sync_id; /**< Id of the sync set this copy belongs to. */
     /** Ancestor sync ids, newest first; 0 marks unused entries. */
     uint64_t sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
-    enum RawstorObjectSyncStateValue state;
+    /** Number of entries in `roles`; 0 when no roles are recorded. */
+    uint8_t nroles;
+    /** enum RawstorObjectMemberRole per member, in member order. */
+    uint8_t roles[RAWSTOR_OBJECT_MAX_WIDTH];
 };
+
+/**
+ * rawstor_target_set_member_config() flag: a LOST copy becomes CLEAN (no
+ * session open for writing) or DIRTY. For tooling that has made the
+ * copies consistent by hand, e.g. `rawstor resolve`.
+ */
+#define RAWSTOR_CONFIG_CLEAR_LOST (1u << 0)
 
 /**
  * @brief Object copy metadata.
  *
- * The full per-copy record: `spec` (read-only here, not settable through
- * this record -- unlike a RawstorObjectSpec obtained through
- * rawstor_target_spec()/_create(), which is used both ways) plus this
- * copy's mirror consistency identity (sync_state, the part
- * rawstor_target_set_member_sync_state() can actually change) and its own
- * member_role. `spec.width` is that copy's own persisted width -- the
- * width rawstor_target_create() was given -- reported verbatim; unlike
+ * The full per-copy record, read-only: `spec` (unlike a RawstorObjectSpec
+ * obtained through rawstor_target_spec()/_create(), which is used both
+ * ways), the copy's own member_role, its own `state` and the number of
+ * sessions open for writing on it right now (`writers`), both kept by the
+ * copy itself, and the chunk's configuration as last written to it
+ * (`config`, the part rawstor_target_set_member_config() sets).
+ * `spec.width` is that copy's own persisted width -- the width
+ * rawstor_target_create() was given -- reported verbatim; unlike
  * rawstor_target_spec(), nothing is recomputed locally.
  *
  * member_role lives here rather than on RawstorObjectSpec: unlike every
@@ -147,16 +188,18 @@ struct RawstorObjectSyncState {
  * copy of a chunk agrees on by construction -- a witness (docs/mds.md,
  * "Witness", stage 3) is a metadata-only member of the same chunk a
  * RAWSTOR_MEMBER_DATA copy also belongs to, so it's a property of one
- * particular copy, exactly like sync_state, not of the chunk's own
- * shape.
+ * particular copy, exactly like `state`, not of the chunk's own shape.
  *
  * @see rawstor_target_meta
- * @see rawstor_target_set_member_sync_state
+ * @see rawstor_target_set_member_config
  */
 struct RawstorObjectMeta {
     struct RawstorObjectSpec spec;
-    struct RawstorObjectSyncState sync_state;
     enum RawstorMemberRole member_role;
+    enum RawstorObjectSyncStateValue state;
+    /** Sessions open for writing on the copy right now. */
+    uint32_t writers;
+    struct RawstorObjectConfig config;
 };
 
 /**
@@ -220,7 +263,7 @@ int rawstor_target_spec(
  * that chunk's own order -- unlike rawstor_target_spec()'s single-answer
  * fail-over tolerance, this reports every copy's own state, not just one
  * answer standing in for the whole set. A URI that doesn't answer
- * (unreachable, ENOENT, ...) gets an entry with `sync_state.state ==
+ * (unreachable, ENOENT, ...) gets an entry with `state ==
  * RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE` rather than failing the whole
  * call or being left out -- the entry's own position in @p metas is what
  * ties it back to that URI, so skipping it would lose that. `spec.width`
@@ -237,7 +280,7 @@ int rawstor_target_spec(
  * synthetic entry at @p offset 0 only (any other offset is @c -ENOENT,
  * even though `spec`'s own `size`/`chunk_size` describe a real,
  * multi-chunk object): `spec` reflects the object's own logical
- * size/chunk_size/policy, `sync_state` a "legacy copy" CLEAN/epoch-0/
+ * size/chunk_size/policy, `state`/`config` a "legacy copy" CLEAN/epoch-0/
  * sync_id-0 answer. The real per-chunk DIRTY/CLEAN state (many chunks,
  * each with its own slots) is tracked one level down and not exposed
  * through the object-level target at all.
@@ -288,11 +331,11 @@ int rawstor_target_meta(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously write the mirror consistency identity of exactly
- *        one real member of one chunk of a target.
+ * @brief Asynchronously write the chunk's configuration to exactly one
+ *        real member of one chunk of a target.
  *
  * Unlike rawstor_target_spec()/rawstor_target_meta(), this writes rather
- * than reads: it sets @p sync_state on the chunk at @p offset's own
+ * than reads: it sets @p config on the chunk at @p offset's own
  * real member @p member_index (fsynced on the backend before it is
  * acknowledged, per docs/mirroring.md's durability rule) -- the same
  * order rawstor_target_meta()'s own per-chunk result reports their state
@@ -303,12 +346,15 @@ int rawstor_target_meta(
  * attempting every member even if an earlier one failed, leaves that
  * choice to the caller instead of baking one fixed policy in here).
  *
+ * The member keeps its own state (RawstorObjectSyncStateValue) as it is,
+ * but for @p flags.
+ *
  * @warning Setting mirror consistency state by hand can desynchronize a
  * target's copies in ways the library's own quorum/reconciliation logic
  * (docs/mirroring.md) is not designed to recover from automatically --
  * this exists for tooling that already understands that model (e.g. a
  * `rawstor-cli resolve`-style split-brain recovery flow, or
- * `rawstor-ost` relaying an incoming wire `SET_SYNC_STATE` command), not
+ * `rawstor-ost` relaying an incoming wire `SET_CONFIG` command), not
  * for routine application use.
  *
  * An mds://host:port/<id> @p target's own real per-chunk members aren't
@@ -324,9 +370,10 @@ int rawstor_target_meta(
  * @param offset        The chunk's own byte offset within @p target, see
  *                      rawstor_target_meta().
  * @param member_index  Which real member of that chunk to write to, 0-based.
- * @param sync_state    The mirror consistency identity to write. Only
- *                      read while this call is being queued -- need not
- *                      stay valid until @p cb runs.
+ * @param config        The configuration to write. Only read while this
+ *                      call is being queued -- need not stay valid until
+ *                      @p cb runs.
+ * @param flags         RAWSTOR_CONFIG_* flags, 0 for none.
  * @param cb            Callback invoked on completion.
  *                      - @p result is zero on success, or a negative
  *                        errno on failure (@c -EINVAL for invalid target
@@ -344,12 +391,12 @@ int rawstor_target_meta(
  * @return 0 if the write was successfully queued; negative errno on
  *         immediate failure (in which case @p cb is never invoked).
  *
- * @see RawstorObjectSyncState
+ * @see RawstorObjectConfig
  * @see rawstor_target_meta
  */
-int rawstor_target_set_member_sync_state(
+int rawstor_target_set_member_config(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
-    const struct RawstorObjectSyncState* sync_state,
+    const struct RawstorObjectConfig* config, unsigned int flags,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 

@@ -2,6 +2,7 @@
 #define RAWSTOR_BLK_BACKEND_HPP
 
 #include "backend.hpp"
+#include "local_member.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -61,6 +62,28 @@ private:
     // rawstor_opts_write_backlog_capacity() to reject a write outright
     // rather than let it suspend without bound.
     size_t _pending_writes_bytes;
+
+    // The copy this session has open for writing (set_object() without
+    // RAWSTOR_READONLY), counted in its LocalMember::writers; null
+    // otherwise. _wrote: a write went out through this session. _left:
+    // leave() was called, so close() is a clean departure.
+    std::shared_ptr<LocalMember> _member;
+    RawstdUUID _member_id;
+    uint64_t _member_offset;
+    bool _wrote;
+    bool _left;
+    // The DIRTY mark of this session in flight: its other writes wait
+    // here, on its own thread, rather than each on the copy's record
+    // lock (a wakeup pipe apiece).
+    rawstd::Gate _dirty_gate;
+
+    // Before a write, with its throttle unit held: marks the copy DIRTY,
+    // durably, if its record is still CLEAN.
+    rawstd::Task<void> _mark_dirty();
+    // At close(): leaves the copy's writer count, and marks the copy
+    // CLEAN (the last clean departure) or LOST (a session that wrote
+    // leaving uncleanly while it is DIRTY).
+    rawstd::Task<void> _depart();
 
     // Suspends the calling coroutine until a write-dispatch slot is free
     // (see rawstor_opts_write_throttle_limit()), or throws EBUSY
@@ -138,14 +161,35 @@ protected:
     // record to this constant instead of guessing; nothing outside the
     // class hierarchy needs it, unlike meta_encode()/meta_decode()
     // themselves (public further down, for tests/).
-    static constexpr size_t META_MAX_SIZE = 400;
+    static constexpr size_t META_MAX_SIZE = 512;
+
+public:
+    // What a copy's record holds besides its ChunkIdentity: its own state
+    // and the chunk's configuration as last set on it.
+    struct Record {
+        RawstorObjectSyncStateValue state;
+        RawstorObjectConfig config;
+    };
+
+protected:
+    // The copy's record as stored (Backend::meta()); meta() below adds the
+    // live count of sessions open for writing.
+    virtual rawstd::Task<std::vector<RawstorObjectMeta>> _meta(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    ) = 0;
+
+    // Writes `record` as the copy's record, keeping its ChunkIdentity,
+    // durably. Called with the copy's record lock (LocalMember::record)
+    // held.
+    virtual rawstd::Task<void> _write_record(
+        const RawstdUUID& id, uint64_t offset, const Record& record
+    ) = 0;
 
 public:
     // A chunk's own placement identity (docs/mds.md, chunk_meta), minus
-    // size/consistency state (RawstorObjectSyncState already covers
-    // those): stamped at create, immutable afterwards, persisted
-    // alongside sync state by meta_encode()/meta_decode() below --
-    // set_sync_state() must read the existing record and carry this
+    // size and the Record: stamped at create, immutable afterwards,
+    // persisted alongside the Record by meta_encode()/meta_decode() below
+    // -- _write_record() must read the existing record and carry this
     // part through unchanged rather than reset it, since it never
     // receives this identity itself. chunk_size here is always the full
     // byte value -- RawstorFrameAllocatePayload's own chunk_shift is
@@ -158,8 +202,11 @@ public:
     };
 
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
+    ~Backend() override;
 
     rawstd::Task<void> close() override final;
+
+    rawstd::Task<void> leave() override final;
 
     rawstd::Task<void>
     set_object(const RawstdUUID& id, uint64_t offset, int flags) override final;
@@ -169,10 +216,11 @@ public:
         const RawstdUUID& version_id
     ) override final;
 
-    // Encodes/decodes a RawstorObjectSyncState plus a ChunkIdentity (the
-    // latter stamped at create and never changed again) as a compact
-    // colon-separated string of hex fields, e.g.
-    // "version=1:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:
+    // Encodes/decodes a Record plus a ChunkIdentity (the latter stamped at
+    // create and never changed again) as a compact colon-separated string
+    // of hex fields, the roles one digit per member (enum
+    // RawstorObjectMemberRole), "-" when none are recorded, e.g.
+    // "version=1:state=1:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:roles=-:
     // member_role=0:width=0:chunk_size=0" -- shared by every blk-backed
     // subclass's own native per-copy metadata storage: lvm::Backend's LVM
     // tag, zfs::Backend's ZFS user property, and file::Backend's own
@@ -188,13 +236,23 @@ public:
     // was ever recorded" for a valid record, and a record from a
     // different format version, which this repo will never write again
     // once it's bumped).
-    static std::string meta_encode(
-        const RawstorObjectSyncState& sync_state, const ChunkIdentity& identity
-    );
+    static std::string
+    meta_encode(const Record& record, const ChunkIdentity& identity);
     static void meta_decode(
-        const std::string& value, RawstorObjectSyncState* sync_state,
-        ChunkIdentity* identity
+        const std::string& value, Record* record, ChunkIdentity* identity
     );
+
+    // Each takes the copy's record lock (LocalMember::record), so
+    // concurrent changes to the record from any session of this process
+    // apply one at a time.
+    rawstd::Task<void> set_config(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectConfig& config, unsigned int flags
+    ) override final;
+
+    rawstd::Task<std::vector<RawstorObjectMeta>> meta(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+    ) override final;
 
     // No universal answer for a raw block device -- left pure virtual
     // (inherited from rawstor::Backend) rather than given a default here,

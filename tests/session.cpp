@@ -256,7 +256,7 @@ void Session::cmd_meta_response(
     uint32_t magic, uint16_t cid, int32_t res,
     const RawstorFrameMetaPayload& meta
 ) {
-    // Unlike the no-payload commands (WRITE/DISCARD/FLUSH/SET_SYNC_STATE),
+    // Unlike the no-payload commands (WRITE/DISCARD/FLUSH/SET_CONFIG),
     // where body.res is a plain 0-on-success/-errno-on-failure result,
     // META's response carries a payload: body.res is instead the payload
     // byte count on success (what the client's generic _basic_request()
@@ -314,7 +314,7 @@ void Session::cmd_meta(
 
 void Session::cmd_set_state_request() {
     _server.read(
-        "RAWSTOR_CMD_SET_SYNC_STATE <<<", sizeof(RawstorFrameSyncState),
+        "RAWSTOR_CMD_SET_CONFIG <<<", sizeof(RawstorFrameSetConfig),
         [](const void*) {}
     );
 }
@@ -325,7 +325,7 @@ void Session::cmd_set_state_response(
     RawstorFrameResponse response = {
         .head{
             .magic = magic,
-            .cmd = RAWSTOR_CMD_SET_SYNC_STATE,
+            .cmd = RAWSTOR_CMD_SET_CONFIG,
             .cid = cid,
         },
         .body = {
@@ -333,14 +333,30 @@ void Session::cmd_set_state_response(
             .res = res,
         },
     };
-    _server.write(
-        "RAWSTOR_CMD_SET_SYNC_STATE >>>", &response, sizeof(response)
-    );
+    _server.write("RAWSTOR_CMD_SET_CONFIG >>>", &response, sizeof(response));
 }
 
 void Session::cmd_set_state(uint32_t magic, uint16_t cid, int32_t res) {
     cmd_set_state_request();
     cmd_set_state_response(magic, cid, res);
+}
+
+void Session::cmd_leave(uint32_t magic, uint16_t cid, int32_t res) {
+    _server.read(
+        "RAWSTOR_CMD_LEAVE <<<", sizeof(RawstorFrameBasic), [](const void*) {}
+    );
+    RawstorFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = RAWSTOR_CMD_LEAVE,
+            .cid = cid,
+        },
+        .body = {
+            .hash = 0,
+            .res = res,
+        },
+    };
+    _server.write("RAWSTOR_CMD_LEAVE >>>", &response, sizeof(response));
 }
 
 void Session::cmd_discard_request() {

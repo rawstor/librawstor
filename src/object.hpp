@@ -36,7 +36,7 @@ class Target;
 // names Chunk by pointer here (ChunkEntry::chunk, _chunk()'s return
 // type), never needs its complete definition in this header, and
 // chunk.hpp itself #includes <rawstor/object.h> for RawstorObjectMeta/
-// RawstorObjectSyncState. object.cpp includes "chunk.hpp" directly for
+// RawstorObjectConfig. object.cpp includes "chunk.hpp" directly for
 // the complete type its own method bodies need.
 class Chunk;
 
@@ -127,7 +127,9 @@ public:
 
     virtual rawstd::Task<void> flush() = 0;
 
-    virtual rawstd::Task<void> close() = 0;
+    // `clean`: the writer is done cleanly (Chunk::close()); false for a
+    // writer gone mid-flight -- rawstor_object_abandon().
+    virtual rawstd::Task<void> close(bool clean = true) = 0;
 };
 
 // A plain, single-chunk target (e.g. ost://a,ost://b/<uuid>).
@@ -176,7 +178,7 @@ public:
 
     rawstd::Task<void> flush() override;
 
-    rawstd::Task<void> close() override;
+    rawstd::Task<void> close(bool clean = true) override;
 };
 
 // A target string naming more than one chunk's own uris
@@ -316,7 +318,7 @@ public:
 
     rawstd::Task<void> flush() override;
 
-    rawstd::Task<void> close() override;
+    rawstd::Task<void> close(bool clean = true) override;
 };
 
 } // namespace rawstor

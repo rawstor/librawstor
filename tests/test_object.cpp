@@ -156,11 +156,12 @@ ssize_t target_meta(
 
 ssize_t target_set_member_sync_state(
     rawio::Queue& queue, const std::string& target, uint64_t offset,
-    size_t member_index, const RawstorObjectSyncState& sync_state
+    size_t member_index, const RawstorObjectConfig& sync_state
 ) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_target_set_member_sync_state(
-            &queue, target.c_str(), offset, member_index, &sync_state, cb, data
+        return rawstor_target_set_member_config(
+            &queue, target.c_str(), offset, member_index, &sync_state, 0, cb,
+            data
         );
     });
 }
@@ -539,8 +540,8 @@ TEST(ObjectMetaTest, meta_on_object_target_is_real) {
     RawstorObjectMeta meta{};
     ASSERT_EQ(target_meta(*queue, target, 0, &meta, 1), 1);
     EXPECT_EQ(meta.spec.size, spec.size);
-    EXPECT_EQ(meta.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
-    EXPECT_EQ(meta.sync_state.sync_id, 0u);
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(meta.config.sync_id, 0u);
 
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
@@ -582,19 +583,18 @@ TEST(ObjectMetaTest, set_member_sync_state_on_object_target_is_real) {
     RawstorObjectSpec spec = one_chunk_spec();
     ASSERT_EQ(target_create(*queue, target, spec), 0);
 
-    RawstorObjectSyncState sync_state{};
+    RawstorObjectConfig sync_state{};
     sync_state.epoch = 5;
     sync_state.sync_id = 0x1122334455667788ull;
-    sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     EXPECT_EQ(
         target_set_member_sync_state(*queue, target, 0, 0, sync_state), 0
     );
 
     RawstorObjectMeta meta{};
     ASSERT_EQ(target_meta(*queue, target, 0, &meta, 1), 1);
-    EXPECT_EQ(meta.sync_state.epoch, 5u);
-    EXPECT_EQ(meta.sync_state.sync_id, 0x1122334455667788ull);
-    EXPECT_EQ(meta.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(meta.config.epoch, 5u);
+    EXPECT_EQ(meta.config.sync_id, 0x1122334455667788ull);
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 
     EXPECT_EQ(target_remove(*queue, target), 0);
 }

@@ -19,8 +19,26 @@ sync_state_to_string(enum RawstorObjectSyncStateValue state) {
         return "CLEAN";
     case RAWSTOR_OBJECT_SYNC_STATE_DIRTY:
         return "DIRTY";
-    case RAWSTOR_OBJECT_SYNC_STATE_SYNCING:
+    case RAWSTOR_OBJECT_SYNC_STATE_LOST:
+        return "LOST";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+/* The mirror's own role in the configuration its record holds. */
+static const char*
+role_to_string(const struct RawstorObjectConfig* config, ssize_t index) {
+    if (index >= (ssize_t)config->nroles) {
+        return "UNKNOWN";
+    }
+    switch (config->roles[index]) {
+    case RAWSTOR_OBJECT_MEMBER_IN_SYNC:
+        return "IN_SYNC";
+    case RAWSTOR_OBJECT_MEMBER_SYNCING:
         return "SYNCING";
+    case RAWSTOR_OBJECT_MEMBER_EXCLUDED:
+        return "EXCLUDED";
     default:
         return "UNKNOWN";
     }
@@ -91,24 +109,20 @@ show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
     for (ssize_t i = 0; i < result; i++) {
         const struct RawstorObjectMeta* meta = &metas[i];
         printf("  mirror[%zd]:\n", i);
-        if (meta->sync_state.state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+        if (meta->state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             printf("    unreachable\n");
         } else {
             char buf[256];
             rawstd_bytes_to_size(meta->spec.size, buf, sizeof(buf));
             printf("    size: %s\n", buf);
+            printf("    state: %s\n", sync_state_to_string(meta->state));
+            printf("    role: %s\n", role_to_string(&meta->config, i));
+            printf("    epoch: %llu\n", (unsigned long long)meta->config.epoch);
             printf(
-                "    state: %s\n", sync_state_to_string(meta->sync_state.state)
-            );
-            printf(
-                "    epoch: %llu\n", (unsigned long long)meta->sync_state.epoch
-            );
-            printf(
-                "    sync_id: %llx\n",
-                (unsigned long long)meta->sync_state.sync_id
+                "    sync_id: %llx\n", (unsigned long long)meta->config.sync_id
             );
             print_sync_id_history(
-                "    ", meta->sync_state.sync_id_history,
+                "    ", meta->config.sync_id_history,
                 RAWSTOR_OBJECT_SYNC_ID_HISTORY
             );
         }

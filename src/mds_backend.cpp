@@ -181,7 +181,8 @@ namespace mds {
 
 Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::Backend(p, queue, location),
-    _client(queue, location) {
+    _client(queue, location),
+    _left(false) {
 }
 
 rawstd::Task<void> Backend::_connect() {
@@ -526,7 +527,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
         _queue, chunk_locations(map, index), id, offset, version_id
     );
     for (RawstorObjectMeta& m : ret) {
-        if (m.sync_state.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+        if (m.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             m.spec.failure_domain = map.policy.failure_domain;
             m.spec.stripe_width = map.policy.stripe_width;
         }
@@ -549,11 +550,11 @@ rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
     co_return chunk_locations(map, index);
 }
 
-rawstd::Task<void> Backend::set_sync_state(
-    const RawstdUUID&, uint64_t, const RawstorObjectSyncState&
+rawstd::Task<void> Backend::set_config(
+    const RawstdUUID&, uint64_t, const RawstorObjectConfig&, unsigned int
 ) {
-    // No-op: every real per-chunk sync state is persisted by the member's
-    // own backend (mds_backend.hpp's own comment).
+    // No-op: every real per-chunk configuration is persisted by the
+    // member's own backend (mds_backend.hpp's own comment).
     co_return;
 }
 
@@ -567,10 +568,12 @@ rawstd::Task<void> Backend::_set_object(
     WireMap map = co_await _client.open(id, version_id);
     std::vector<rawstd::URI> target_uris = build_target_uris(map, version_id);
 
+    // Replacing the object ends its session without a clean departure.
     if (_object) {
-        co_await _object->close();
+        co_await _object->close(false);
         _object.reset();
     }
+    _left = false;
 
     // `flags` (RAWSTOR_READONLY or 0) rides straight down into the nested
     // per-chunk open, where a version's chunks require READONLY.
@@ -598,9 +601,14 @@ Object& Backend::_opened() {
 
 rawstd::Task<void> Backend::close() {
     if (_object) {
-        co_await _object->close();
+        co_await _object->close(_left);
         _object.reset();
     }
+}
+
+rawstd::Task<void> Backend::leave() {
+    _left = true;
+    co_return;
 }
 
 rawstd::Task<size_t> Backend::pread(void* buf, size_t size, uint64_t offset) {

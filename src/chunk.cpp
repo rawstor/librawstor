@@ -1,4 +1,6 @@
 #include "chunk.hpp"
+
+#include "config_wire.hpp"
 #include <rawstor/object.h>
 
 #include "config.h"
@@ -64,6 +66,21 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
     }
 }
 
+// A chunk's members each have a role in its configuration, one byte per
+// member (RawstorObjectConfig::roles) and a one-byte position: at most
+// RAWSTOR_OBJECT_MAX_WIDTH of them.
+void validate_width(const std::vector<rawstd::URI>& uris) {
+    if (uris.size() <= RAWSTOR_OBJECT_MAX_WIDTH) {
+        return;
+    }
+
+    rawstd_error(
+        "Too many uris: %zu, at most %d\n", uris.size(),
+        RAWSTOR_OBJECT_MAX_WIDTH
+    );
+    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+}
+
 // A nonzero random sync-set id; zero is reserved for legacy copies.
 uint64_t random_sync_id() {
     static thread_local std::mt19937_64 rng{std::random_device{}()};
@@ -77,9 +94,9 @@ uint64_t random_sync_id() {
     return dist(rng);
 }
 
-bool in_history(const RawstorObjectSyncState& sync_state, uint64_t sync_id) {
+bool in_history(const RawstorObjectConfig& config, uint64_t sync_id) {
     for (size_t i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; ++i) {
-        if (sync_state.sync_id_history[i] == sync_id) {
+        if (config.sync_id_history[i] == sync_id) {
             return true;
         }
     }
@@ -140,7 +157,8 @@ Chunk::Chunk(
     _resync_generation(0),
     _probe_pending(false),
     _writes_issued(0),
-    _unflushed(false) {
+    _unflushed(false),
+    _write_failed(false) {
     if (_members.size() == 1) {
         _members.front().state = MemberState::IN_SYNC;
     } else {
@@ -361,6 +379,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // the location list is validated here. Identity needs no check: it
     // arrives as the explicit `id`/`offset`/`version_id` parameters.
     validate_not_empty(locations);
+    validate_width(locations);
     validate_different_uris(locations);
 
     // Every location's Slot goes out concurrently instead of one at a
@@ -680,8 +699,7 @@ void Chunk::_reconcile_sync_set() {
     }
 
     for (Member& m : _members) {
-        if (m.reachable &&
-            m.meta.sync_state.state == RAWSTOR_OBJECT_SYNC_STATE_SYNCING) {
+        if (m.reachable && _recorded_role(m) == RAWSTOR_OBJECT_MEMBER_SYNCING) {
             rawstd_warning(
                 "Mirror member with interrupted resync is stale: %s\n",
                 _member_str(m).c_str()
@@ -692,12 +710,12 @@ void Chunk::_reconcile_sync_set() {
 
     std::vector<uint64_t> ids;
     for (const Member& m : _members) {
-        if (m.state != MemberState::IN_SYNC || m.meta.sync_state.sync_id == 0) {
+        if (m.state != MemberState::IN_SYNC || m.meta.config.sync_id == 0) {
             continue;
         }
-        if (std::find(ids.begin(), ids.end(), m.meta.sync_state.sync_id) ==
+        if (std::find(ids.begin(), ids.end(), m.meta.config.sync_id) ==
             ids.end()) {
-            ids.push_back(m.meta.sync_state.sync_id);
+            ids.push_back(m.meta.config.sync_id);
         }
     }
 
@@ -713,8 +731,8 @@ void Chunk::_reconcile_sync_set() {
                 }
                 bool found = false;
                 for (const Member& m : _members) {
-                    if (m.meta.sync_state.sync_id == x &&
-                        in_history(m.meta.sync_state, y)) {
+                    if (m.meta.config.sync_id == x &&
+                        in_history(m.meta.config, y)) {
                         found = true;
                         break;
                     }
@@ -740,7 +758,7 @@ void Chunk::_reconcile_sync_set() {
 
         for (Member& m : _members) {
             if (m.state == MemberState::IN_SYNC &&
-                m.meta.sync_state.sync_id != newest) {
+                m.meta.config.sync_id != newest) {
                 rawstd_warning(
                     "Stale mirror member excluded from the set: %s\n",
                     _member_str(m).c_str()
@@ -756,8 +774,8 @@ void Chunk::_reconcile_sync_set() {
             continue;
         }
         ++in_sync;
-        if (m.meta.sync_state.epoch > _epoch) {
-            _epoch = m.meta.sync_state.epoch;
+        if (m.meta.config.epoch > _epoch) {
+            _epoch = m.meta.config.epoch;
         }
         /*
          * All surviving IN_SYNC members report the same logical size by
@@ -768,9 +786,9 @@ void Chunk::_reconcile_sync_set() {
             _size = m.meta.spec.size;
         }
         if (_sync_id == 0) {
-            _sync_id = m.meta.sync_state.sync_id;
+            _sync_id = m.meta.config.sync_id;
             memcpy(
-                _sync_id_history, m.meta.sync_state.sync_id_history,
+                _sync_id_history, m.meta.config.sync_id_history,
                 sizeof(_sync_id_history)
             );
         }
@@ -796,16 +814,42 @@ void Chunk::_reconcile_sync_set() {
             continue;
         }
         if (!m.reachable ||
-            (m.meta.sync_state.sync_id == _sync_id &&
-             m.meta.sync_state.state != RAWSTOR_OBJECT_SYNC_STATE_SYNCING)) {
+            (m.meta.config.sync_id == _sync_id &&
+             _recorded_role(m) != RAWSTOR_OBJECT_MEMBER_SYNCING)) {
             ++_unrecorded_stale;
         }
     }
 }
 
-RawstorObjectSyncState Chunk::_bump_sync_state() const {
-    RawstorObjectSyncState m{};
-    m.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
+RawstorObjectMemberRole Chunk::_recorded_role(const Member& m) const noexcept {
+    return role_of(m.meta.config, static_cast<size_t>(&m - _members.data()));
+}
+
+RawstorObjectConfig Chunk::_current_config() const {
+    RawstorObjectConfig m{};
+    m.epoch = _epoch;
+    m.sync_id = _sync_id;
+    memcpy(m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history));
+    // At most RAWSTOR_OBJECT_MAX_WIDTH members (validate_width()).
+    m.nroles = static_cast<uint8_t>(_members.size());
+    for (size_t i = 0; i < _members.size(); ++i) {
+        switch (_members[i].state) {
+        case MemberState::IN_SYNC:
+            m.roles[i] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+            break;
+        case MemberState::SYNCING:
+            m.roles[i] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+            break;
+        case MemberState::STALE:
+            m.roles[i] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+            break;
+        }
+    }
+    return m;
+}
+
+RawstorObjectConfig Chunk::_bump_config() const {
+    RawstorObjectConfig m = _current_config();
     m.epoch = _epoch + 1;
     m.sync_id = random_sync_id();
     if (_sync_id != 0) {
@@ -843,12 +887,13 @@ rawstd::Task<void> Chunk::_with_dirty() {
 }
 
 /*
- * Runs cont(0) once DIRTY is durably recorded on the in-sync members; the
- * first write (or read-repair) of a mirrored object passes through here
- * before anything is acknowledged. Only a membership change not yet
- * recorded (_unrecorded_stale: a degraded open, a member degraded while
- * CLEAN) and a legacy set get a fresh sync_id; a set reopened with the
- * same members -- stale ones included -- keeps its identity.
+ * The first write (or read-repair) of a mirrored object passes through
+ * here before anything is acknowledged; the members mark themselves DIRTY
+ * on the write itself. Only a membership change not yet recorded
+ * (_unrecorded_stale: a degraded open, a member degraded while CLEAN) and
+ * a legacy set get a fresh sync_id, recorded on the in-sync members here;
+ * a set reopened with the same members -- stale ones included -- keeps
+ * its identity.
  */
 rawstd::Task<void> Chunk::_run_dirty_barrier() {
     _meta_gate.begin();
@@ -865,19 +910,13 @@ rawstd::Task<void> Chunk::_run_dirty_barrier() {
 
         bool bump = _sync_id == 0 || _unrecorded_stale > 0;
 
-        RawstorObjectSyncState m{};
-        if (bump) {
-            m = _bump_sync_state();
-        } else {
-            m.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
-            m.epoch = _epoch;
-            m.sync_id = _sync_id;
-            memcpy(
-                m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history)
-            );
-        }
+        RawstorObjectConfig m = bump ? _bump_config() : _current_config();
 
-        co_await _run_meta_fan_out(m);
+        // The members mark themselves DIRTY on the write itself: only a
+        // new sync set needs recording here.
+        if (bump) {
+            co_await _run_meta_fan_out(m);
+        }
 
         size_t survivors = _in_sync_count();
 
@@ -900,13 +939,7 @@ rawstd::Task<void> Chunk::_run_dirty_barrier() {
         _unrecorded_stale -= recorded_stale;
         for (Member& mirror : _members) {
             if (mirror.state == MemberState::IN_SYNC) {
-                mirror.meta.sync_state.state = m.state;
-                mirror.meta.sync_state.epoch = m.epoch;
-                mirror.meta.sync_state.sync_id = m.sync_id;
-                memcpy(
-                    mirror.meta.sync_state.sync_id_history, m.sync_id_history,
-                    sizeof(mirror.meta.sync_state.sync_id_history)
-                );
+                mirror.meta.config = m;
             }
             // A reopened session may talk to a restarted backend that lost
             // acknowledged writes: once DIRTY, failures must surface here
@@ -1000,7 +1033,7 @@ rawstd::Task<void> Chunk::_run_degrade_barrier() {
     _meta_gate.begin();
 
     try {
-        RawstorObjectSyncState m = _bump_sync_state();
+        RawstorObjectConfig m = _bump_config();
 
         co_await _run_meta_fan_out(m);
 
@@ -1024,12 +1057,7 @@ rawstd::Task<void> Chunk::_run_degrade_barrier() {
         _unrecorded_stale -= recorded_stale;
         for (Member& mirror : _members) {
             if (mirror.state == MemberState::IN_SYNC) {
-                mirror.meta.sync_state.epoch = m.epoch;
-                mirror.meta.sync_state.sync_id = m.sync_id;
-                memcpy(
-                    mirror.meta.sync_state.sync_id_history, m.sync_id_history,
-                    sizeof(mirror.meta.sync_state.sync_id_history)
-                );
+                mirror.meta.config = m;
             }
         }
     } catch (...) {
@@ -1041,13 +1069,13 @@ rawstd::Task<void> Chunk::_run_degrade_barrier() {
 }
 
 /*
- * Persists sync_state on every in-sync member. Members that fail the update
+ * Persists `config` on every in-sync member. Members that fail the update
  * are marked STALE (their exclusion is recorded by the very sync_id they
  * now lack); ENOSYS is tolerated for a hypothetical backend that chooses
  * not to support this. Never throws itself -- the caller re-checks
  * _in_sync_count()/_below_write_quorum() afterward.
  */
-rawstd::Task<void> Chunk::_run_meta_fan_out(RawstorObjectSyncState sync_state) {
+rawstd::Task<void> Chunk::_run_meta_fan_out(RawstorObjectConfig config) {
     std::vector<size_t> idxs;
     idxs.reserve(_members.size());
     for (size_t i = 0; i < _members.size(); ++i) {
@@ -1061,14 +1089,14 @@ rawstd::Task<void> Chunk::_run_meta_fan_out(RawstorObjectSyncState sync_state) {
     }
 
     co_await rawstd::gather(idxs.size(), [&](size_t i) {
-        return _set_sync_state_one(idxs[i], sync_state);
+        return _set_config_one(idxs[i], config);
     });
 }
 
 rawstd::Task<void>
-Chunk::_set_sync_state_one(size_t idx, RawstorObjectSyncState sync_state) {
+Chunk::_set_config_one(size_t idx, RawstorObjectConfig config) {
     try {
-        co_await _members[idx].slot->set_sync_state(_id, _offset, sync_state);
+        co_await _members[idx].slot->set_config(_id, _offset, config, 0);
     } catch (const std::system_error& e) {
         int error = e.code().value();
         if (error == ENOSYS) {
@@ -1251,6 +1279,9 @@ rawstd::Task<size_t> Chunk::_fan_out_write(
     }
 
     if (!st->any_success) {
+        // Failed everywhere, its members not excluded: what it left on
+        // them is unknown, so close() does not leave them cleanly.
+        _write_failed = true;
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
 
@@ -1386,17 +1417,21 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
             _member_str(_members[idx]).c_str()
         );
 
-        // The SYNCING mark must be durable before the copy starts: a crash
-        // mid-resync must leave the member recognizably untrusted
-        // (docs/mirroring.md, case F8).
-        RawstorObjectSyncState m = _members[idx].meta.sync_state;
-        m.state = RAWSTOR_OBJECT_SYNC_STATE_SYNCING;
-
+        // The member's syncing role must be durable before the copy
+        // starts: a crash mid-resync must leave it recognizably untrusted
+        // (docs/mirroring.md, case F8). Its sync set stays its own.
         _members[idx].state = MemberState::SYNCING;
+        RawstorObjectConfig m = _current_config();
+        m.epoch = _members[idx].meta.config.epoch;
+        m.sync_id = _members[idx].meta.config.sync_id;
+        memcpy(
+            m.sync_id_history, _members[idx].meta.config.sync_id_history,
+            sizeof(m.sync_id_history)
+        );
 
         int error = 0;
         try {
-            co_await _members[idx].slot->set_sync_state(_id, _offset, m);
+            co_await _members[idx].slot->set_config(_id, _offset, m, 0);
         } catch (const std::system_error& e) {
             error = e.code().value();
         }
@@ -1405,7 +1440,7 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
             co_return;
         }
 
-        // Left SYNCING on the member: untrusted until a later open.
+        // Left syncing on the member: untrusted until a later open.
         if (_closing) {
             _members[idx].state = MemberState::STALE;
             co_return;
@@ -1421,7 +1456,7 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
 
         if (error) {
             rawstd_error(
-                "Mirror resync: SYNCING mark failed: %s\n", strerror(error)
+                "Mirror resync: syncing role failed: %s\n", strerror(error)
             );
             _members[idx].state = MemberState::STALE;
             _members[idx].reachable = false;
@@ -1607,19 +1642,19 @@ rawstd::DetachedTask Chunk::_resync_finish() {
     // start another one.
     _resync->phase = ResyncState::Phase::FINISHING;
 
-    auto identity = [this]() {
-        RawstorObjectSyncState m{};
-        m.state = _dirty ? RAWSTOR_OBJECT_SYNC_STATE_DIRTY
-                         : RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-        m.epoch = _epoch;
-        m.sync_id = _sync_id;
-        memcpy(m.sync_id_history, _sync_id_history, sizeof(m.sync_id_history));
+    // The configuration the member joins: the current one, with the
+    // member itself in-sync.
+    auto identity = [this, idx]() {
+        RawstorObjectConfig m = _current_config();
+        if (idx < m.nroles) {
+            m.roles[idx] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+        }
         return m;
     };
-    auto same = [](const RawstorObjectSyncState& a,
-                   const RawstorObjectSyncState& b) {
-        return a.state == b.state && a.epoch == b.epoch &&
-               a.sync_id == b.sync_id &&
+    auto same = [](const RawstorObjectConfig& a, const RawstorObjectConfig& b) {
+        return a.epoch == b.epoch && a.sync_id == b.sync_id &&
+               a.nroles == b.nroles &&
+               memcmp(a.roles, b.roles, sizeof(a.roles)) == 0 &&
                memcmp(
                    a.sync_id_history, b.sync_id_history,
                    sizeof(a.sync_id_history)
@@ -1660,11 +1695,11 @@ rawstd::DetachedTask Chunk::_resync_finish() {
     // aborts the resync itself if it failed there), and the identity it
     // holds is still current. Gate has no queue of its own, so re-check
     // after every wake-up.
-    RawstorObjectSyncState m = identity();
+    RawstorObjectConfig m = identity();
     while (true) {
         int error = 0;
         try {
-            co_await _members[idx].slot->set_sync_state(_id, _offset, m);
+            co_await _members[idx].slot->set_config(_id, _offset, m, 0);
         } catch (const std::system_error& e) {
             error = e.code().value();
         }
@@ -1697,7 +1732,7 @@ rawstd::DetachedTask Chunk::_resync_finish() {
             }
         }
 
-        RawstorObjectSyncState current = identity();
+        RawstorObjectConfig current = identity();
         if (same(current, m)) {
             break;
         }
@@ -1705,7 +1740,7 @@ rawstd::DetachedTask Chunk::_resync_finish() {
     }
 
     _members[idx].state = MemberState::IN_SYNC;
-    _members[idx].meta.sync_state = m;
+    _members[idx].meta.config = m;
     _members[idx].meta.spec.size = _size;
     _resync.reset();
 
@@ -1737,9 +1772,10 @@ rawstd::Task<void> Chunk::_run_rejoin_barrier() {
         // member degraded while CLEAN), as the dirty gate would.
         size_t recorded_stale = _unrecorded_stale;
 
-        RawstorObjectSyncState m = _bump_sync_state();
-        if (!_dirty) {
-            m.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+        // The member the barrier lets join counts in-sync in it.
+        RawstorObjectConfig m = _bump_config();
+        if (_resync && _resync->idx < m.nroles) {
+            m.roles[_resync->idx] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
         }
 
         co_await _run_meta_fan_out(m);
@@ -1764,7 +1800,7 @@ rawstd::Task<void> Chunk::_run_rejoin_barrier() {
         _unrecorded_stale -= recorded_stale;
         for (Member& mirror : _members) {
             if (mirror.state == MemberState::IN_SYNC) {
-                mirror.meta.sync_state = m;
+                mirror.meta.config = m;
             }
         }
     } catch (...) {
@@ -2298,7 +2334,7 @@ rawstd::Task<void> Chunk::flush() {
     }
 }
 
-rawstd::Task<void> Chunk::close() {
+rawstd::Task<void> Chunk::close(bool clean) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "close()");
 
     // Every write issued before this call is guaranteed durable before
@@ -2330,34 +2366,25 @@ rawstd::Task<void> Chunk::close() {
     // the connections down below would race it out from under itself.
     co_await _meta_gate.settle();
 
-    // A mirrored, DIRTY object gets a durable CLEAN mark before teardown --
-    // a clean close, so the next open() doesn't pay for a spurious dirty
-    // gate (docs/mirroring.md). Left DIRTY (the safe direction) on any
-    // error here; the object is destroyed anyway.
-    if (_members.size() > 1 && _dirty && !flush_failed) {
-        if (_in_sync_count() > 0) {
-            _meta_gate.begin();
-            try {
-                RawstorObjectSyncState m{};
-                m.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-                m.epoch = _epoch;
-                m.sync_id = _sync_id;
-                memcpy(
-                    m.sync_id_history, _sync_id_history,
-                    sizeof(m.sync_id_history)
-                );
-
-                co_await _run_meta_fan_out(m);
-
-                if (_in_sync_count() > 0) {
-                    _dirty = false;
-                }
-            } catch (const std::exception& e) {
-                rawstd_error(
-                    "Chunk::close(): clean mark failed: %s\n", e.what()
-                );
+    // The writer's sessions to the in-sync members depart cleanly, and a
+    // member marks itself CLEAN once no session open for writing is left
+    // (docs/mirroring.md, "DIRTY, CLEAN and LOST"). Not on an unclean
+    // close, after a failed write or flush, or with an exclusion still
+    // unrecorded: then the members this open wrote go LOST, the safe
+    // direction.
+    if (clean && !flush_failed && !_write_failed && _unrecorded_stale == 0) {
+        std::vector<Slot*> leaving;
+        for (Member& m : _members) {
+            if (m.slot && m.state == MemberState::IN_SYNC) {
+                leaving.push_back(m.slot.get());
             }
-            _meta_gate.end();
+        }
+        try {
+            co_await rawstd::gather(leaving.size(), [&](size_t i) {
+                return leaving[i]->leave();
+            });
+        } catch (const std::exception& e) {
+            rawstd_warning("Chunk::close(): leave failed: %s\n", e.what());
         }
     }
 

@@ -44,6 +44,9 @@ class Backend final : public rawstor::Backend {
 private:
     mds::Client _client;
     std::unique_ptr<Object> _object;
+    // leave() was called: close() closes the nested Object cleanly, so its
+    // chunks leave their members in turn.
+    bool _left;
 
     rawstd::Task<void> _connect() override;
 
@@ -157,11 +160,11 @@ public:
     // No-op, for the same reason meta() above never persists anything of
     // its own: this Backend's own outer "am I healthy" answer at offset 0
     // is decorative (docs/mirroring.md, "legacy copy"), and every real
-    // per-chunk sync state meta() reports is each real member's own
+    // per-chunk configuration meta() reports is each real member's own
     // backend's job to persist, not this one's.
-    rawstd::Task<void> set_sync_state(
+    rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectSyncState& sync_state
+        const RawstorObjectConfig& config, unsigned int flags
     ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
@@ -183,6 +186,10 @@ public:
     ) override;
 
     rawstd::Task<void> close() override;
+
+    // The session's clean departure, passed on to the nested Object's
+    // chunks by close().
+    rawstd::Task<void> leave() override;
 
     rawstd::Task<size_t>
     pread(void* buf, size_t size, uint64_t offset) override;

@@ -310,13 +310,18 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
 
     RawstorFrameMetaPayload clean_meta = {
         .size = 1ull << 20,
-        .epoch = 0,
-        .sync_id = 0,
-        .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
+        .writers = 0,
+        .config = {
+            .epoch = 0,
+            .sync_id = 0,
+            .sync_id_history = {},
+            .nroles = 0,
+            .roles = {},
+        },
     };
 
     // Left open for the whole test -- see server.hpp's Session::~Session()
@@ -460,13 +465,18 @@ TEST(ChunkTest, flush_flushes_the_write_it_waited_for) {
 
     RawstorFrameMetaPayload clean_meta = {
         .size = 1ull << 20,
-        .epoch = 0,
-        .sync_id = 0,
-        .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
+        .writers = 0,
+        .config = {
+            .epoch = 0,
+            .sync_id = 0,
+            .sync_id_history = {},
+            .nroles = 0,
+            .roles = {},
+        },
     };
 
     // Left open for the whole test, see
@@ -548,4 +558,56 @@ TEST(ChunkTest, flush_flushes_the_write_it_waited_for) {
         queue->wait_timeout(rawstor_opts_tcp_user_timeout());
     }
     flush_task.get();
+}
+
+// A chunk has at most RAWSTOR_OBJECT_MAX_WIDTH members: one more is
+// refused before any I/O, rather than leaving the extra ones without a
+// role in the chunk's configuration.
+TEST(ChunkTest, too_many_members_is_einval) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
+    rawstor::tests::TmpDir dir;
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+
+    std::vector<rawstd::URI> locations;
+    for (int i = 0; i <= RAWSTOR_OBJECT_MAX_WIDTH; ++i) {
+        locations.emplace_back(dir.uri() + "/" + std::to_string(i));
+    }
+    try {
+        run(*queue,
+            rawstor::Chunk::create(*queue, locations, id, 0, 0, RawstdUUID{}));
+        FAIL() << "opened a chunk of " << locations.size() << " members";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EINVAL);
+    }
+}
+
+// Nor is an object created with that many copies of a chunk.
+TEST(ChunkTest, too_many_copies_is_not_created) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
+    rawstor::tests::TmpDir dir;
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    RawstdUUIDString id_string;
+    rawstd_uuid_to_string(&id, &id_string);
+
+    std::vector<rawstd::URI> uris;
+    for (int i = 0; i <= RAWSTOR_OBJECT_MAX_WIDTH; ++i) {
+        uris.emplace_back(
+            dir.uri() + "/" + std::to_string(i) + "/" + std::string(id_string)
+        );
+    }
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .width = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    try {
+        run(*queue, rawstor::Target(uris).create(*queue, spec));
+        FAIL() << "created " << uris.size() << " copies";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EINVAL);
+    }
 }

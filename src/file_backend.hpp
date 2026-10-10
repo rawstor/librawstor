@@ -50,8 +50,8 @@ public:
     // without touching object data. A copy with no "meta" file (created
     // before this existed) is not trusted as legacy-CLEAN: meta() fails
     // ENOENT rather than fabricating a state.
-    rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+    rawstd::Task<std::vector<RawstorObjectMeta>> _meta(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
     ) override;
 
     // Trivial (Backend::resolve_locations()'s own doc comment): this is a
@@ -61,9 +61,8 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) override;
 
-    rawstd::Task<void> set_sync_state(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectSyncState& sync_state
+    rawstd::Task<void> _write_record(
+        const RawstdUUID& id, uint64_t offset, const Record& record
     ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;

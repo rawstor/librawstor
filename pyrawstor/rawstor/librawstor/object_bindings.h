@@ -13,7 +13,7 @@ extern "C" {
 extern PyTypeObject* PyObjectSpecType;
 extern PyTypeObject* PyLocationInfoType;
 extern PyTypeObject* PyObjectMetaType;
-extern PyTypeObject* PyObjectSyncStateType;
+extern PyTypeObject* PyObjectConfigType;
 
 int py_rawstor_types_init(PyObject* module);
 
@@ -29,8 +29,7 @@ PyObject* py_rawstor_object_spec(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_meta(PyObject* self, PyObject* args);
 
-PyObject*
-py_rawstor_object_set_member_sync_state(PyObject* self, PyObject* args);
+PyObject* py_rawstor_object_set_member_config(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_remove(PyObject* self, PyObject* args);
 
