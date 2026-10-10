@@ -75,8 +75,8 @@ the ones used last).
 make test
 ```
 
-runs every suite: `librawstd`, `librawio`, `vhost`, the top-level `tests/`,
-`ost`, and, when built, `vduse`, `mds` and `pyrawstor`. Each suite is a GoogleTest binary
+runs every suite: `librawstd`, `librawio`, `librawthread`, `vhost`, the top-level
+`tests/`, `ost`, and, when built, `vduse`, `mds` and `pyrawstor`. Each suite is a GoogleTest binary
 named `test_all` in its `tests/` directory; to run a single test:
 
 ```bash

@@ -1,5 +1,6 @@
 SUBDIRS = librawstd \
           librawio \
+          librawthread \
           src \
           cli \
           vhost \
@@ -102,6 +103,7 @@ endif
 test: all
 	make -C librawstd test
 	make -C librawio test
+	make -C librawthread test
 	make -C vhost test
 	@if [ "x$(ENABLE_VDUSE_BACKEND)" = "xyes" ]; then \
 	  make -C vduse test; \
