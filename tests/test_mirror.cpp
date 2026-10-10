@@ -1,4 +1,6 @@
+#include "chunk.hpp"
 #include "disk_record.hpp"
+#include "object.hpp"
 #include "opts.h"
 #include "rawio_sync.hpp"
 #include "server.hpp"
@@ -282,11 +284,15 @@ void object_write_single(
 
 /*
  * Drives the queue until the member at `behind` reports the same established
- * sync set as the member at `fresh` (and is not mid-resync anymore).
+ * sync set as the member at `fresh` and the object has finished its resync.
+ * The record can be read before its fsync completion resumes the finisher.
  */
 bool wait_member_synced(
-    Queue& queue, const std::string& fresh, const std::string& behind
+    Queue& queue, RawstorObject* object, const std::string& fresh,
+    const std::string& behind
 ) {
+    const rawstor::Chunk& chunk =
+        static_cast<rawstor::SingleChunkObject*>(object)->chunk();
     for (int i = 0; i < 3000; ++i) {
         rawio_wait_timeout(queue, 10);
 
@@ -299,7 +305,8 @@ bool wait_member_synced(
             continue;
         }
         if (!any_syncing(b.config) && a.config.sync_id != 0 &&
-            b.config.sync_id == a.config.sync_id) {
+            b.config.sync_id == a.config.sync_id &&
+            !chunk.resync_in_progress()) {
             return true;
         }
     }
@@ -473,7 +480,7 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
 
     /* The stale member is resynced online while the object is open. */
     EXPECT_TRUE(
-        wait_member_synced(queue, members.target(0), members.target(1))
+        wait_member_synced(queue, object, members.target(0), members.target(1))
     );
 
     object_close_clean(queue, object);
@@ -548,7 +555,7 @@ TEST(MirrorResyncTest, close_during_resync) {
     RawstorObject* object = nullptr;
     ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
     EXPECT_TRUE(
-        wait_member_synced(queue, members.target(0), members.target(1))
+        wait_member_synced(queue, object, members.target(0), members.target(1))
     );
     object_close_clean(queue, object);
 
@@ -600,7 +607,7 @@ TEST(MirrorQuorumTest, stale_arm_resynced_zero_blocks) {
     RawstorObject* object = nullptr;
     ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
     EXPECT_TRUE(
-        wait_member_synced(queue, members.target(0), members.target(1))
+        wait_member_synced(queue, object, members.target(0), members.target(1))
     );
     object_close_clean(queue, object);
 
@@ -719,7 +726,7 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
 
     /* The untrusted member is resynced from scratch. */
     EXPECT_TRUE(
-        wait_member_synced(queue, members.target(0), members.target(1))
+        wait_member_synced(queue, object, members.target(0), members.target(1))
     );
 
     object_close_clean(queue, object);
@@ -789,7 +796,7 @@ TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
     }
     EXPECT_TRUE(rejoined);
     EXPECT_TRUE(
-        wait_member_synced(queue, members.target(0), members.target(1))
+        wait_member_synced(queue, object, members.target(0), members.target(1))
     );
 
     object_close_clean(queue, object);
@@ -863,7 +870,7 @@ TEST(MirrorResyncTest, first_write_during_rejoin_keeps_identities_equal) {
     // The rejoin ends with the member on the identity that write gave the
     // set, not the one it was being given when the write arrived.
     ASSERT_TRUE(
-        wait_member_synced(queue, members.target(0), members.target(1))
+        wait_member_synced(queue, object, members.target(0), members.target(1))
     );
 
     rawstor::blk::Backend::Record a =
@@ -1050,7 +1057,7 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     }
 
     EXPECT_TRUE(
-        wait_member_synced(queue, members.target(0), members.target(1))
+        wait_member_synced(queue, object, members.target(0), members.target(1))
     );
 
     object_close_clean(queue, object);
@@ -1100,7 +1107,7 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     ASSERT_EQ(target_create(queue, members.target(2), member_spec), 0);
 
     EXPECT_TRUE(
-        wait_member_synced(queue, members.target(0), members.target(2))
+        wait_member_synced(queue, object, members.target(0), members.target(2))
     );
 
     object_close_clean(queue, object);
@@ -1148,7 +1155,7 @@ TEST(MirrorQuorumTest, missing_copy_recreated_and_resynced) {
     RawstorObject* object = nullptr;
     ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
     EXPECT_TRUE(
-        wait_member_synced(queue, members.target(0), members.target(2))
+        wait_member_synced(queue, object, members.target(0), members.target(2))
     );
     object_close_clean(queue, object);
 
@@ -1229,7 +1236,7 @@ TEST(MirrorQuorumTest, two_way_missing_copy_recreated_by_hand) {
 
     ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
     EXPECT_TRUE(
-        wait_member_synced(queue, members.target(0), members.target(1))
+        wait_member_synced(queue, object, members.target(0), members.target(1))
     );
     object_close_clean(queue, object);
 
@@ -1366,7 +1373,7 @@ TEST(MirrorQuorumTest, stale_member_bumps_identity_on_rejoin_only) {
     object_write(queue, object, ping.data(), ping.size(), 0, 0);
 
     EXPECT_TRUE(
-        wait_member_synced(queue, members.target(0), members.target(1))
+        wait_member_synced(queue, object, members.target(0), members.target(1))
     );
     object_close_clean(queue, object);
 

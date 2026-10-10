@@ -156,6 +156,9 @@ private:
 public:
     ~SingleChunkObject() override;
 
+    // The single chunk, for tests inspecting background resync completion.
+    const Chunk& chunk() const noexcept { return *_chunk; }
+
     rawstd::Task<size_t>
     pread(void* buf, size_t size, uint64_t offset) override;
 

@@ -470,6 +470,10 @@ public:
     // run()-pumped connection cleanup.
     rawstd::Task<void> close(bool clean = true);
 
+    // For tests to distinguish a persisted rejoin record from the
+    // completion of the resync coroutine that makes the member usable.
+    bool resync_in_progress() const noexcept;
+
     // For tests/ to verify flush()'s wait for in-flight writes (see
     // _writes_issued/_flush_barrier above) without depending on real
     // storage-completion timing.

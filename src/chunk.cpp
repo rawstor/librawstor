@@ -2338,6 +2338,10 @@ rawstd::Task<void> Chunk::flush() {
     }
 }
 
+bool Chunk::resync_in_progress() const noexcept {
+    return _resync != nullptr;
+}
+
 rawstd::Task<void> Chunk::close(bool clean) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "close()");
 
