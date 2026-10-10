@@ -2,19 +2,32 @@
 
 #include <rawio/awaitable.hpp>
 
+#include <rawstd/gpp.hpp>
+
 #include <poll.h>
 #include <unistd.h>
+
+#include <cerrno>
 
 namespace rawthread {
 
 Wake::Wake() : _pipe(rawstd::Pipe::Mode::NonBlocking) {
 }
 
-void Wake::signal() noexcept {
-    // A full pipe is already readable: nothing is lost if the write fails.
+void Wake::signal() {
     char c = 0;
-    ssize_t res = ::write(_pipe.write_fd(), &c, 1);
-    (void)res;
+    while (::write(_pipe.write_fd(), &c, 1) == -1) {
+        if (errno == EAGAIN) {
+            // A full pipe is already readable: nothing is lost.
+            errno = 0;
+            return;
+        }
+        if (errno != EINTR) {
+            RAWSTD_THROW_ERRNO();
+        }
+        // Interrupted before anything was transferred: retry.
+        errno = 0;
+    }
 }
 
 rawstd::Task<void> Wake::wait(rawio::Queue& queue) {

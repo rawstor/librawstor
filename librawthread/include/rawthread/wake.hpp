@@ -24,7 +24,8 @@ private:
 public:
     Wake();
 
-    void signal() noexcept;
+    // Throws std::system_error if the byte cannot be written.
+    void signal();
 
     rawstd::Task<void> wait(rawio::Queue& queue);
 };

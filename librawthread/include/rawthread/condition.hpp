@@ -38,7 +38,8 @@ public:
     rawstd::Task<void>
     wait(rawio::Queue& queue, std::mutex& mu, std::function<bool()> ready);
 
-    // Wakes every waiter. Called with the waiters' mutex held.
+    // Wakes every waiter. Called with the waiters' mutex held. A Wake that
+    // fails to signal its own pipe is a bug: this terminates then.
     void notify_all() noexcept;
 };
 
