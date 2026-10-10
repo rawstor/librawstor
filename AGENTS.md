@@ -62,6 +62,7 @@ The two headline consumers are:
 librawstor/
 ├── librawstd/       internal C++ utility library (logging, endian, iovec, gpp helpers)
 ├── librawio/         async I/O abstraction (see RawIO above); src/ (impl) + include/rawio/ (public) + tests/
+├── librawthread/     coroutine sync across threads, each waiter on its own rawio::Queue: Wake, Condition, Lock
 ├── src/              core librawstor C++ library (librawstor.la, rawstor.pc); public C API in include/rawstor/
 ├── include/rawstor/  public C API headers: rawstor.h, object.h, list.h, rawio.h, protocol.h, version.h
 ├── include/stdheaders/ vendored/trimmed Linux kernel uAPI headers used by vhost/ and vduse/ —
@@ -89,7 +90,7 @@ librawstor/
 ```
 
 Most component directories follow the same `src/` + `include/` + `tests/`
-split (`librawio`, `vhost`): `src/` holds the implementation and private
+split (`librawio`, `librawthread`, `vhost`): `src/` holds the implementation and private
 headers and builds a `noinst` `.la` (and a binary, where applicable);
 `include/` holds only the headers the component's own `tests/` (or other
 components) actually need; `tests/` is a self-contained GoogleTest binary
@@ -133,7 +134,7 @@ After editing `configure.ac` or any `Makefile.am`, regenerate with
 make test
 ```
 
-runs `librawstd`, `librawio`, `vhost`, and the top-level `tests/` suites
+runs `librawstd`, `librawio`, `librawthread`, `vhost`, and the top-level `tests/` suites
 (and `pyrawstor` if built with Python 3 support), via each subdirectory's
 own `make test` target. Test binaries use GoogleTest and are built as
 `test_all` in each `tests/` directory; run a single test with
