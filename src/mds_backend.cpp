@@ -550,6 +550,13 @@ rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
     co_return chunk_locations(map, index);
 }
 
+rawstd::Task<void> Backend::set_state(
+    const RawstdUUID&, uint64_t, RawstorObjectSyncStateValue,
+    RawstorObjectSyncStateValue
+) {
+    co_return;
+}
+
 rawstd::Task<void> Backend::set_config(
     const RawstdUUID&, uint64_t, const RawstorObjectConfig&, unsigned int
 ) {

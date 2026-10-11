@@ -157,6 +157,12 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) override;
 
+    // The destination's Slot owns the copy state.
+    rawstd::Task<void> set_state(
+        const RawstdUUID& id, uint64_t offset,
+        RawstorObjectSyncStateValue expected, RawstorObjectSyncStateValue state
+    ) override;
+
     // No-op, for the same reason meta() above never persists anything of
     // its own: this Backend's own outer "am I healthy" answer at offset 0
     // is decorative (docs/mirroring.md, "legacy copy"), and every real

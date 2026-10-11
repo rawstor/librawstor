@@ -72,19 +72,6 @@ Backend::create(rawio::Queue& queue, const rawstd::URI& location) {
     co_return backend;
 }
 
-rawstd::Task<void> Backend::set_state(
-    const RawstdUUID&, uint64_t, RawstorObjectSyncStateValue,
-    RawstorObjectSyncStateValue
-) {
-    co_return;
-}
-
-rawstd::Task<void> Backend::set_config(
-    const RawstdUUID&, uint64_t, const RawstorObjectConfig&, unsigned int
-) {
-    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
-}
-
 rawstd::Task<void>
 Backend::set_version(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);

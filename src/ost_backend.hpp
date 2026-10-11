@@ -141,6 +141,12 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) override;
 
+    // The destination's Slot owns the copy state.
+    rawstd::Task<void> set_state(
+        const RawstdUUID& id, uint64_t offset,
+        RawstorObjectSyncStateValue expected, RawstorObjectSyncStateValue state
+    ) override;
+
     rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectConfig& config, unsigned int flags

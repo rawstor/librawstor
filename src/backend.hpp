@@ -79,11 +79,11 @@ public:
 
     // Changes the copy's own state only if it still equals expected.
     // Storage backends persist this transition; forwarding backends leave
-    // it to the destination's writer sessions and use the default no-op.
+    // it to the destination's writer sessions.
     virtual rawstd::Task<void> set_state(
         const RawstdUUID& id, uint64_t offset,
         RawstorObjectSyncStateValue expected, RawstorObjectSyncStateValue state
-    );
+    ) = 0;
 
     // `chunks`: overwritten with this page's own ChunkGroups, one per id,
     // each carrying every offset this backend holds for that id
@@ -212,7 +212,7 @@ public:
     virtual rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectConfig& config, unsigned int flags
-    );
+    ) = 0;
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 

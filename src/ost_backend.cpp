@@ -1620,6 +1620,13 @@ rawstd::Task<void> Backend::leave() {
     co_await _basic_request(RAWSTOR_CMD_LEAVE, "leave", unused_id, 0);
 }
 
+rawstd::Task<void> Backend::set_state(
+    const RawstdUUID&, uint64_t, RawstorObjectSyncStateValue,
+    RawstorObjectSyncStateValue
+) {
+    co_return;
+}
+
 rawstd::Task<void> Backend::set_config(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
     unsigned int flags
