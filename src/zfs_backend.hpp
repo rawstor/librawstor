@@ -104,7 +104,7 @@ public:
     rawstd::Task<std::vector<RawstdUUID>>
     list_versions(const RawstdUUID& id, uint64_t offset) override;
 
-    rawstd::Task<std::vector<RawstorObjectMeta>> _meta(
+    rawstd::Task<std::vector<RawstorObjectMeta>> meta(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
     ) override;
 

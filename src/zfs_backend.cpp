@@ -438,7 +438,7 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_meta(
+rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
     // A version's own dataset (`<zvol>@s<version_id>`) answers the same

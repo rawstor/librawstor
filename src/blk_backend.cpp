@@ -190,7 +190,8 @@ rawstd::Task<void> Backend::set_state(
     const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue expected,
     RawstorObjectSyncStateValue state
 ) {
-    RawstorObjectMeta meta = (co_await _meta(id, offset, RawstdUUID{})).front();
+    RawstorObjectMeta meta =
+        (co_await this->meta(id, offset, RawstdUUID{})).front();
     if (meta.state == expected) {
         meta.state = state;
         co_await _write_meta(id, offset, meta.state, meta.config);
@@ -204,7 +205,7 @@ rawstd::Task<void> Backend::set_config(
     RawstorObjectMeta meta{};
     meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     try {
-        meta = (co_await _meta(id, offset, RawstdUUID{})).front();
+        meta = (co_await this->meta(id, offset, RawstdUUID{})).front();
     } catch (const std::system_error& e) {
         if (e.code().value() != ENOENT) {
             throw;
@@ -212,12 +213,6 @@ rawstd::Task<void> Backend::set_config(
     }
     meta.config = config;
     co_await _write_meta(id, offset, meta.state, meta.config);
-}
-
-rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
-) {
-    co_return co_await _meta(id, offset, version_id);
 }
 
 rawstd::Task<void> Backend::set_version(

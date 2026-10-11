@@ -82,7 +82,7 @@ public:
 
     // Native per-copy mirror metadata, stored in the LV's own
     // "rawstor.meta=..." tag -- see blk::Backend::meta_encode().
-    rawstd::Task<std::vector<RawstorObjectMeta>> _meta(
+    rawstd::Task<std::vector<RawstorObjectMeta>> meta(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
     ) override;
 

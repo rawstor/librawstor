@@ -50,7 +50,7 @@ public:
     // without touching object data. A copy with no "meta" file (created
     // before this existed) is not trusted as legacy-CLEAN: meta() fails
     // ENOENT rather than fabricating a state.
-    rawstd::Task<std::vector<RawstorObjectMeta>> _meta(
+    rawstd::Task<std::vector<RawstorObjectMeta>> meta(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
     ) override;
 

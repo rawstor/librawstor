@@ -523,7 +523,7 @@ Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
     }
 }
 
-rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_meta(
+rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
     if (!rawstd_uuid_is_nil(&version_id)) {

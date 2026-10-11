@@ -20,7 +20,7 @@ namespace blk {
 
 // Base for backends whose data I/O uses a plain fd and rawio::Queue.
 // Subclasses open objects through _open_object(), implement backend-specific
-// list/create/remove/info operations, and store metadata through _meta() and
+// list/create/remove/info operations, and store metadata through meta() and
 // _write_meta(). Slot coordinates the copy's state and writer sessions;
 // _blk_size() provides the size of objects backed by real block devices.
 class Backend : public rawstor::Backend {
@@ -154,12 +154,6 @@ protected:
     // class hierarchy needs it.
     static constexpr size_t META_MAX_SIZE = 512;
 
-    // The copy's record as stored (Backend::meta()); meta() below adds the
-    // live count of sessions open for writing.
-    virtual rawstd::Task<std::vector<RawstorObjectMeta>> _meta(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
-    ) = 0;
-
     // Durably writes the copy metadata, preserving its ChunkIdentity.
     // Slot holds the copy's record lock while applying metadata requests.
     virtual rawstd::Task<void> _write_meta(
@@ -221,7 +215,7 @@ public:
 
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
-    ) override final;
+    ) override = 0;
 
     // No universal answer for a raw block device -- left pure virtual
     // (inherited from rawstor::Backend) rather than given a default here,
