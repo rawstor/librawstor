@@ -25,11 +25,6 @@ namespace blk {
 // _blk_size() provides the size of objects backed by real block devices.
 class Backend : public rawstor::Backend {
 private:
-    // Persists mutable metadata, preserving the stored ChunkIdentity.
-    rawstd::Task<void> write_meta(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectMeta& meta
-    );
-
     // Bumped whenever meta_encode()'s own field set changes -- carried as
     // this format's own leading field (see meta_encode()'s own doc
     // comment below) rather than left for a caller to track separately,
