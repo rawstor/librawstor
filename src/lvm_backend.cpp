@@ -453,14 +453,15 @@ rawstd::Task<void> Backend::create(
     // established sync set (docs/mirroring.md). Set on the staging LV
     // itself, carried across by lvrename() below, so there is never a
     // window -- staged or revealed -- where the LV exists without one.
-    Record record{};
-    record.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    RawstorObjectSyncStateValue record_state{};
+    RawstorObjectConfig record_config{};
+    record_state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     Backend::ChunkIdentity identity;
     identity.member_role = member_role;
     identity.width = static_cast<uint8_t>(sp.width);
     identity.chunk_size = sp.chunk_size;
-    std::string tag =
-        std::string(rawstor_tag_prefix) + meta_encode(record, identity);
+    std::string tag = std::string(rawstor_tag_prefix) +
+                      meta_encode(record_state, record_config, identity);
 
     rawstd_info(
         "lvm: creating LV %s in VG %s, size %s\n", uuid_str, _vg_name.c_str(),
@@ -687,10 +688,11 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_meta(
     // before this feature, or by something else. Must not be trusted as
     // CLEAN -- the caller treats any error here as "member stale, needs a
     // resync" (docs/mirroring.md, case F10).
-    Record record{};
+    RawstorObjectSyncStateValue record_state{};
+    RawstorObjectConfig record_config{};
     Backend::ChunkIdentity identity;
     try {
-        meta_decode(tag, &record, &identity);
+        meta_decode(tag, &record_state, &record_config, &identity);
     } catch (const std::system_error&) {
         rawstd_error("lvm: no recorded mirror state on %s\n", path.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
@@ -705,8 +707,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_meta(
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
-    ret.state = record.state;
-    ret.config = record.config;
+    ret.state = record_state;
+    ret.config = record_config;
 
     co_return std::vector<RawstorObjectMeta>{ret};
 }
@@ -717,7 +719,9 @@ Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
 }
 
 rawstd::Task<void> Backend::_write_record(
-    const RawstdUUID& id, uint64_t offset, const Record& record
+    const RawstdUUID& id, uint64_t offset,
+    RawstorObjectSyncStateValue record_state,
+    const RawstorObjectConfig& record_config
 ) {
     std::string path = _device_path(id, offset);
 
@@ -730,15 +734,16 @@ rawstd::Task<void> Backend::_write_record(
     // before this feature, or by something else) has no identity to
     // preserve; it degenerates to the all-zero default.
     Backend::ChunkIdentity identity;
-    Record old_record{};
+    RawstorObjectSyncStateValue old_record_state{};
+    RawstorObjectConfig old_record_config{};
     try {
-        meta_decode(old_tag, &old_record, &identity);
+        meta_decode(old_tag, &old_record_state, &old_record_config, &identity);
     } catch (const std::system_error&) {
         identity = Backend::ChunkIdentity{};
     }
 
-    std::string new_tag =
-        std::string(rawstor_tag_prefix) + meta_encode(record, identity);
+    std::string new_tag = std::string(rawstor_tag_prefix) +
+                          meta_encode(record_state, record_config, identity);
 
     std::vector<std::string> argv = {"lvchange", "--config", lvm_config};
     if (!old_tag.empty()) {

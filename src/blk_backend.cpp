@@ -107,8 +107,8 @@ rawstd::Task<void> Backend::_mark_dirty() {
         (co_await _meta(_member_id, _member_offset, RawstdUUID{})).front();
     if (meta.state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN) {
         co_await _write_record(
-            _member_id, _member_offset,
-            Record{RAWSTOR_OBJECT_SYNC_STATE_DIRTY, meta.config}
+            _member_id, _member_offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
+            meta.config
         );
     }
     _member->dirty.store(true, std::memory_order_release);
@@ -130,8 +130,8 @@ rawstd::Task<void> Backend::_depart() {
     }
     if (_left) {
         co_await _write_record(
-            _member_id, _member_offset,
-            Record{RAWSTOR_OBJECT_SYNC_STATE_CLEAN, meta.config}
+            _member_id, _member_offset, RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+            meta.config
         );
         member->dirty.store(false, std::memory_order_release);
     } else {
@@ -140,8 +140,8 @@ rawstd::Task<void> Backend::_depart() {
             str().c_str()
         );
         co_await _write_record(
-            _member_id, _member_offset,
-            Record{RAWSTOR_OBJECT_SYNC_STATE_LOST, meta.config}
+            _member_id, _member_offset, RAWSTOR_OBJECT_SYNC_STATE_LOST,
+            meta.config
         );
     }
 }
@@ -298,20 +298,21 @@ rawstd::Task<void> Backend::set_config(
 
     // The copy keeps its own state. A volume without a record yet (F10)
     // starts CLEAN: nothing was written to it under one.
-    Record record{RAWSTOR_OBJECT_SYNC_STATE_CLEAN, config};
+    RawstorObjectSyncStateValue record_state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    RawstorObjectConfig record_config = config;
     try {
-        record.state = (co_await _meta(id, offset, RawstdUUID{})).front().state;
+        record_state = (co_await _meta(id, offset, RawstdUUID{})).front().state;
     } catch (const std::system_error&) {
     }
     if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 &&
-        record.state == RAWSTOR_OBJECT_SYNC_STATE_LOST) {
-        record.state = member->writers.load() == 0
+        record_state == RAWSTOR_OBJECT_SYNC_STATE_LOST) {
+        record_state = member->writers.load() == 0
                            ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
                            : RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
     }
-    co_await _write_record(id, offset, record);
+    co_await _write_record(id, offset, record_state, record_config);
     member->dirty.store(
-        record.state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        record_state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         std::memory_order_release
     );
 }
@@ -367,9 +368,11 @@ rawstd::Task<uint64_t> Backend::_blk_size(
 #endif
 }
 
-std::string
-Backend::meta_encode(const Record& record, const ChunkIdentity& identity) {
-    const RawstorObjectConfig& c = record.config;
+std::string Backend::meta_encode(
+    RawstorObjectSyncStateValue record_state,
+    const RawstorObjectConfig& record_config, const ChunkIdentity& identity
+) {
+    const RawstorObjectConfig& c = record_config;
     std::string roles;
     if (c.nroles == 0) {
         roles = "-";
@@ -384,7 +387,7 @@ Backend::meta_encode(const Record& record, const ChunkIdentity& identity) {
         "version=%u:state=%u:epoch=%" PRIx64 ":sync_id=%" PRIx64 ":h0=%" PRIx64
         ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64
         ":roles=%s:member_role=%u:width=%u:chunk_size=%" PRIx64,
-        META_FORMAT_VERSION, (unsigned int)record.state, c.epoch, c.sync_id,
+        META_FORMAT_VERSION, (unsigned int)record_state, c.epoch, c.sync_id,
         c.sync_id_history[0], c.sync_id_history[1], c.sync_id_history[2],
         c.sync_id_history[3], roles.c_str(), (unsigned int)identity.member_role,
         (unsigned int)identity.width, identity.chunk_size
@@ -396,13 +399,15 @@ Backend::meta_encode(const Record& record, const ChunkIdentity& identity) {
 }
 
 void Backend::meta_decode(
-    const std::string& value, Record* record, ChunkIdentity* identity
+    const std::string& value, RawstorObjectSyncStateValue* record_state,
+    RawstorObjectConfig* record_config, ChunkIdentity* identity
 ) {
-    *record = Record{};
+    *record_state = RawstorObjectSyncStateValue{};
+    *record_config = RawstorObjectConfig{};
     *identity = ChunkIdentity{};
-    RawstorObjectConfig& c = record->config;
+    RawstorObjectConfig& c = *record_config;
     unsigned int version = 0;
-    unsigned int state = 0;
+    unsigned int parsed_state = 0;
     unsigned int member_role = 0;
     unsigned int width = 0;
     char roles[RAWSTOR_OBJECT_MAX_WIDTH + 2] = {};
@@ -414,7 +419,7 @@ void Backend::meta_decode(
         "version=%u:state=%u:epoch=%" SCNx64 ":sync_id=%" SCNx64 ":h0=%" SCNx64
         ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64
         ":roles=%256[0-9-]:member_role=%u:width=%u:chunk_size=%" SCNx64 "%n",
-        &version, &state, &c.epoch, &c.sync_id, &c.sync_id_history[0],
+        &version, &parsed_state, &c.epoch, &c.sync_id, &c.sync_id_history[0],
         &c.sync_id_history[1], &c.sync_id_history[2], &c.sync_id_history[3],
         roles, &member_role, &width, &identity->chunk_size, &consumed
     );
@@ -437,7 +442,7 @@ void Backend::meta_decode(
         }
     }
     c.nroles = static_cast<uint8_t>(nroles);
-    record->state = static_cast<RawstorObjectSyncStateValue>(state);
+    *record_state = static_cast<RawstorObjectSyncStateValue>(parsed_state);
     identity->member_role = static_cast<RawstorMemberRole>(member_role);
     identity->width = static_cast<uint8_t>(width);
 }

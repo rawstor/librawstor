@@ -161,14 +161,6 @@ protected:
     // class hierarchy needs it.
     static constexpr size_t META_MAX_SIZE = 512;
 
-public:
-    // What a copy's record holds besides its ChunkIdentity: its own state
-    // and the chunk's configuration as last set on it.
-    struct Record {
-        RawstorObjectSyncStateValue state;
-        RawstorObjectConfig config;
-    };
-
 protected:
     // The copy's record as stored (Backend::meta()); meta() below adds the
     // live count of sessions open for writing.
@@ -176,18 +168,19 @@ protected:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
     ) = 0;
 
-    // Writes `record` as the copy's record, keeping its ChunkIdentity,
-    // durably. Called with the copy's record lock (LocalMember::record)
-    // held.
+    // Durably writes the copy metadata, preserving its ChunkIdentity.
+    // Called with the copy's record lock (LocalMember::record) held.
     virtual rawstd::Task<void> _write_record(
-        const RawstdUUID& id, uint64_t offset, const Record& record
+        const RawstdUUID& id, uint64_t offset,
+        RawstorObjectSyncStateValue record_state,
+        const RawstorObjectConfig& record_config
     ) = 0;
 
 public:
     // A chunk's own placement identity (docs/mds.md, chunk_meta), minus
-    // size and the Record: stamped at create, immutable afterwards,
-    // persisted alongside the Record by meta_encode()/meta_decode() below
-    // -- _write_record() must read the existing record and carry this
+    // size and mutable copy metadata: stamped at create, immutable afterwards,
+    // persisted alongside the copy metadata by meta_encode()/meta_decode()
+    // below. _write_record() must read the existing record and carry this
     // part through unchanged rather than reset it, since it never
     // receives this identity itself. chunk_size here is always the full
     // byte value -- RawstorFrameAllocatePayload's own chunk_shift is
@@ -215,10 +208,10 @@ public:
     ) override final;
 
 protected:
-    // Encodes/decodes a Record plus a ChunkIdentity (the latter stamped at
-    // create and never changed again) as a compact colon-separated string
-    // of hex fields, the roles one digit per member (enum
-    // RawstorObjectMemberRole), "-" when none are recorded, e.g.
+    // Encodes/decodes the copy state and configuration plus a ChunkIdentity
+    // (the latter stamped at create and never changed again) as a compact
+    // colon-separated string of hex fields, the roles one digit per member
+    // (enum RawstorObjectMemberRole), "-" when none are recorded, e.g.
     // "version=1:state=1:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:roles=-:
     // member_role=0:width=0:chunk_size=0" -- shared by every blk-backed
     // subclass's own native per-copy metadata storage: lvm::Backend's LVM
@@ -233,10 +226,13 @@ protected:
     // was ever recorded" for a valid record, and a record from a
     // different format version, which this repo will never write again
     // once it's bumped).
-    static std::string
-    meta_encode(const Record& record, const ChunkIdentity& identity);
+    static std::string meta_encode(
+        RawstorObjectSyncStateValue record_state,
+        const RawstorObjectConfig& record_config, const ChunkIdentity& identity
+    );
     static void meta_decode(
-        const std::string& value, Record* record, ChunkIdentity* identity
+        const std::string& value, RawstorObjectSyncStateValue* record_state,
+        RawstorObjectConfig* record_config, ChunkIdentity* identity
     );
 
 public:
