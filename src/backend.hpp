@@ -206,13 +206,12 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) = 0;
 
-    // Applies a configuration request. Slot supplies the metadata prepared
-    // under its record lock; storage backends persist it, transports send
-    // the request for the destination to apply under its own lock.
+    // Persists the configuration or forwards the request to the destination.
+    // Slot serializes it with state transitions and applies CLEAR_LOST via
+    // set_state(); transports forward flags to the destination's Slot.
     virtual rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags,
-        const RawstorObjectMeta& meta
+        const RawstorObjectConfig& config, unsigned int flags
     );
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;

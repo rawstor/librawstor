@@ -863,7 +863,6 @@ TEST(MirrorResyncTest, rejoin_waits_for_writes_in_flight) {
     auto s = std::make_unique<rawstor::tests::Session>(server);
     s->cmd_set_object(RAWSTOR_MAGIC, 0, 0);
     s->cmd_meta(RAWSTOR_MAGIC, 1, 0, stale);
-    s->cmd_meta(RAWSTOR_MAGIC, 2, 0, stale);
     // The SYNCING mark, answered once the object is dirty (below).
     server.read(
         "SYNCING SET_CONFIG <<<", sizeof(RawstorFrameSetConfig),
@@ -886,16 +885,15 @@ TEST(MirrorResyncTest, rejoin_waits_for_writes_in_flight) {
     std::string first(4096, 'F');
     object_write(queue, object, first.data(), first.size(), 0, 0);
 
-    s->cmd_set_state_response(RAWSTOR_MAGIC, 3, 0);
-    s->cmd_write(RAWSTOR_MAGIC, 4, spec.size); // the copy
-    s->cmd_meta(RAWSTOR_MAGIC, 5, 0, stale);
+    s->cmd_set_state_response(RAWSTOR_MAGIC, 2, 0);
+    s->cmd_write(RAWSTOR_MAGIC, 3, spec.size); // the copy
     // The final state, answered only once the client's write is in.
     server.read(
         "final SET_CONFIG <<<", sizeof(RawstorFrameSetConfig),
         [&final_state_sent](const void*) { final_state_sent = true; }
     );
     s->cmd_write_request(4096);
-    s->cmd_set_state_response(RAWSTOR_MAGIC, 6, 0);
+    s->cmd_set_state_response(RAWSTOR_MAGIC, 4, 0);
     for (int i = 0; i < 1000 && !final_state_sent; ++i) {
         rawio_wait_timeout(queue, 10);
     }
@@ -923,7 +921,7 @@ TEST(MirrorResyncTest, rejoin_waits_for_writes_in_flight) {
         rawio_wait_timeout(queue, 10);
     }
     EXPECT_FALSE(written);
-    s->cmd_write_response(RAWSTOR_MAGIC, 7, 2048);
+    s->cmd_write_response(RAWSTOR_MAGIC, 5, 2048);
     for (int i = 0; i < 1000 && !written; ++i) {
         rawio_wait_timeout(queue, 10);
     }
@@ -1467,31 +1465,28 @@ TEST(MirrorOstTest, degrade_and_continue) {
         rawstor::tests::Session s(server1);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
         s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 4, -EIO);
+        s.cmd_write_response(RAWSTOR_MAGIC, 3, -EIO);
     }
 
     {
         rawstor::tests::Session s(server2);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 4, 4);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
         /* Degrade barrier: the exclusion is recorded on the survivor. */
-        s.cmd_meta(RAWSTOR_MAGIC, 5, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 6, 0);
+        s.cmd_set_state(RAWSTOR_MAGIC, 4, 0);
         /* Subsequent writes go to the survivor only. */
-        s.cmd_write(RAWSTOR_MAGIC, 7, 4);
+        s.cmd_write(RAWSTOR_MAGIC, 5, 4);
         /*
          * object_close() below is a clean close (see Chunk::close()'s own
          * doc comment): flush, then a LEAVE on the sole survivor, which
          * marks itself CLEAN.
          */
-        s.cmd_flush(RAWSTOR_MAGIC, 8, 0);
-        s.cmd_leave(RAWSTOR_MAGIC, 9, 0);
+        s.cmd_flush(RAWSTOR_MAGIC, 6, 0);
+        s.cmd_leave(RAWSTOR_MAGIC, 7, 0);
     }
 
     RawstorObject* object = nullptr;
@@ -1555,15 +1550,13 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
         /* Both members reject the first write's dirty-barrier update. */
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, -EINVAL);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, -EINVAL);
     }
     {
         rawstor::tests::Session s(server2);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, -EINVAL);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, -EINVAL);
     }
 
     RawstorObject* object = nullptr;
@@ -1627,30 +1620,27 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         rawstor::tests::Session s(server1);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 4, 4);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
         /* member0's session is "lost" (a transport-class error, not a
          * payload one) right while the object is DIRTY; transparent retry
          * is already off by this point, so _read() moves on to member1
          * after this one failure. */
-        s.cmd_read_error(RAWSTOR_MAGIC, 5, -EIO);
+        s.cmd_read_error(RAWSTOR_MAGIC, 4, -EIO);
     }
     {
         rawstor::tests::Session s(server2);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
-        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 3, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 4, 4);
-        s.cmd_read(RAWSTOR_MAGIC, 5, "ping", 4);
+        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
+        s.cmd_read(RAWSTOR_MAGIC, 4, "ping", 4);
         /* The degrade barrier bumps epoch/sync_id on the survivor -- member0
          * is excluded durably even though it never lost this read. */
-        s.cmd_meta(RAWSTOR_MAGIC, 6, 0, legacy);
-        // Close can flush while the metadata transition is still pending.
-        s.cmd_flush(RAWSTOR_MAGIC, 7, 0);
-        s.cmd_set_state(RAWSTOR_MAGIC, 8, 0);
-        s.cmd_leave(RAWSTOR_MAGIC, 9, 0);
+        s.cmd_set_state(RAWSTOR_MAGIC, 5, 0);
+        /* Chunk::close(): flush, then a LEAVE on the sole survivor. */
+        s.cmd_flush(RAWSTOR_MAGIC, 6, 0);
+        s.cmd_leave(RAWSTOR_MAGIC, 7, 0);
     }
 
     RawstorObject* object = nullptr;

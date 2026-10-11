@@ -80,8 +80,7 @@ rawstd::Task<void> Backend::set_state(
 }
 
 rawstd::Task<void> Backend::set_config(
-    const RawstdUUID&, uint64_t, const RawstorObjectConfig&, unsigned int,
-    const RawstorObjectMeta&
+    const RawstdUUID&, uint64_t, const RawstorObjectConfig&, unsigned int
 ) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }

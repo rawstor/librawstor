@@ -221,8 +221,7 @@ public:
 
     rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags,
-        const RawstorObjectMeta& meta
+        const RawstorObjectConfig& config, unsigned int flags
     ) override final;
 
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(

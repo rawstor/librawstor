@@ -256,6 +256,35 @@ TEST(MemberStateTest, mds_object_passes_departure_to_its_chunks) {
 // Phase barriers let us inspect completed operations without timing probes.
 namespace {
 
+void expect_clear_lost_with_writer(MemberObject& f) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
+    f.create(*queue);
+    auto first = run(*queue, f.target.open(*queue, 0));
+    auto second = run(*queue, f.target.open(*queue, 0));
+    write_one(*queue, *first);
+    run(*queue, first->close(false));
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    RawstorObjectMeta meta = f.meta(*queue);
+    while (meta.state != RAWSTOR_OBJECT_SYNC_STATE_LOST &&
+           std::chrono::steady_clock::now() < deadline) {
+        meta = f.meta(*queue);
+    }
+    ASSERT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+    ASSERT_EQ(meta.writers, 1u);
+    RawstorObjectConfig config = meta.config;
+    ++config.epoch;
+    run(*queue, f.target.set_member_config(
+                    *queue, 0, 0, config, RAWSTOR_CONFIG_CLEAR_LOST
+                ));
+    meta = f.meta(*queue);
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+    EXPECT_EQ(meta.writers, 1u);
+    EXPECT_EQ(meta.config.epoch, config.epoch);
+    write_one(*queue, *second);
+    run(*queue, second->close());
+}
+
 void expect_thread_shared_copy_state(MemberObject& f) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
     f.create(*queue);
@@ -359,4 +388,15 @@ TEST(MemberStateTest, ost_threads_share_copy_state_and_metadata_transitions) {
     rawstor::tests::ObjectEnv env(8788, 8789);
     MemberObject f(rawstd::URI("ost://127.0.0.1:8789"));
     expect_thread_shared_copy_state(f);
+}
+
+TEST(MemberStateTest, clear_lost_keeps_an_open_writer_dirty) {
+    MemberObject f;
+    expect_clear_lost_with_writer(f);
+}
+
+TEST(MemberStateTest, ost_clear_lost_keeps_an_open_writer_dirty) {
+    rawstor::tests::ObjectEnv env(8786, 8787);
+    MemberObject f(rawstd::URI("ost://127.0.0.1:8787"));
+    expect_clear_lost_with_writer(f);
 }

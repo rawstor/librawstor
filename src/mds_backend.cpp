@@ -551,8 +551,7 @@ rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
 }
 
 rawstd::Task<void> Backend::set_config(
-    const RawstdUUID&, uint64_t, const RawstorObjectConfig&, unsigned int,
-    const RawstorObjectMeta&
+    const RawstdUUID&, uint64_t, const RawstorObjectConfig&, unsigned int
 ) {
     // No-op: every real per-chunk configuration is persisted by the
     // member's own backend (mds_backend.hpp's own comment).

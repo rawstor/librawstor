@@ -198,9 +198,19 @@ rawstd::Task<void> Backend::set_state(
 }
 
 rawstd::Task<void> Backend::set_config(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig&,
-    unsigned int, const RawstorObjectMeta& meta
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
+    unsigned int
 ) {
+    RawstorObjectMeta meta{};
+    meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    try {
+        meta = (co_await _meta(id, offset, RawstdUUID{})).front();
+    } catch (const std::system_error& e) {
+        if (e.code().value() != ENOENT) {
+            throw;
+        }
+    }
+    meta.config = config;
     co_await write_meta(id, offset, meta);
 }
 

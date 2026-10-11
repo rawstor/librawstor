@@ -1148,23 +1148,16 @@ rawstd::Task<void> Slot::_set_config(
     co_await member->record.lock(_queue);
     RecordLockGuard guard{member->record};
     std::shared_ptr<Backend> be = _get_backend();
-    RawstorObjectMeta meta{};
-    meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    try {
-        meta = (co_await be->meta(id, offset, RawstdUUID{})).front();
-    } catch (const std::system_error&) {
+    co_await be->set_config(id, offset, config, flags);
+    if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) {
+        co_await be->set_state(
+            id, offset, RAWSTOR_OBJECT_SYNC_STATE_LOST,
+            member->writers.load() == 0 ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
+                                        : RAWSTOR_OBJECT_SYNC_STATE_DIRTY
+        );
+        // Recheck the persisted state before the next first write.
+        member->dirty.store(false, std::memory_order_release);
     }
-    meta.writers = std::max(meta.writers, member->writers.load());
-    if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 &&
-        meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST) {
-        meta.state = meta.writers == 0 ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
-                                       : RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
-    }
-    meta.config = config;
-    co_await be->set_config(id, offset, config, flags, meta);
-    member->dirty.store(
-        meta.state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN, std::memory_order_release
-    );
 }
 
 rawstd::Task<void> Slot::set_config(
