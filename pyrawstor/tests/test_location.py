@@ -1,6 +1,7 @@
 import rawstor
 
 import errno
+from pathlib import Path
 import unittest
 import tempfile
 
@@ -45,11 +46,6 @@ class TestLocation(unittest.TestCase):
             self.assertRaises(FileNotFoundError, lambda: list(location))
 
     def test_info(self):
-        # file:// pairs each object's data file with a fixed-size .meta
-        # file (blk_backend.hpp's META_MAX_SIZE) that "used" accounts for
-        # too.
-        META_FILE_SIZE = 400
-
         with tempfile.TemporaryDirectory() as temp_dir:
             location = rawstor.Location(f"file://{temp_dir}")
 
@@ -60,9 +56,16 @@ class TestLocation(unittest.TestCase):
             target = location.create(size=1 << 20, width=1)
 
             info = location.info()
-            self.assertEqual(info.used, (1 << 20) + META_FILE_SIZE)
+            stored_size = sum(
+                path.stat().st_size
+                for path in Path(temp_dir).rglob("*")
+                if path.is_file()
+            )
+            self.assertGreater(stored_size, 1 << 20)
+            self.assertEqual(info.used, stored_size)
 
             target.remove()
+            self.assertEqual(location.info().used, 0)
 
     # file:// keeps no placement policy of its own; see
     # TestTarget.test_create_failure_domain_reaches_library.
