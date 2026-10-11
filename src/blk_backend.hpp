@@ -2,7 +2,6 @@
 #define RAWSTOR_BLK_BACKEND_HPP
 
 #include "backend.hpp"
-#include "local_member.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -12,6 +11,8 @@
 
 #include <rawstor/object.h>
 #include <rawstor/target.h>
+
+#include <memory>
 
 #include <cstddef>
 #include <string>
@@ -26,6 +27,11 @@ namespace blk {
 // _blk_size() provides the size of objects backed by real block devices.
 class Backend : public rawstor::Backend {
 private:
+    struct CopyState;
+    static std::shared_ptr<CopyState> _copy_state(
+        const rawstd::URI& location, const RawstdUUID& id, uint64_t offset
+    );
+
     // Bumped whenever meta_encode()'s own field set changes -- carried as
     // this format's own leading field (see meta_encode()'s own doc
     // comment below) rather than left for a caller to track separately,
@@ -63,10 +69,10 @@ private:
     size_t _pending_writes_bytes;
 
     // The copy this session has open for writing (set_object() without
-    // RAWSTOR_READONLY), counted in its LocalMember::writers; null
+    // RAWSTOR_READONLY), counted in its CopyState::writers; null
     // otherwise. _wrote: a write went out through this session. _left:
     // leave() was called, so close() is a clean departure.
-    std::shared_ptr<LocalMember> _member;
+    std::shared_ptr<CopyState> _member;
     RawstdUUID _member_id;
     uint64_t _member_offset;
     bool _wrote;
@@ -184,7 +190,7 @@ protected:
     ) = 0;
 
     // Durably writes the copy metadata, preserving its ChunkIdentity.
-    // Called with the copy's record lock (LocalMember::record) held.
+    // Called with the copy's record lock (CopyState::record) held.
     virtual rawstd::Task<void> _write_record(
         const RawstdUUID& id, uint64_t offset,
         RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
@@ -233,7 +239,7 @@ public:
         const RawstdUUID& version_id
     ) override final;
 
-    // Each takes the copy's record lock (LocalMember::record), so
+    // Each takes the copy's record lock (CopyState::record), so
     // concurrent changes to the record from any session of this process
     // apply one at a time.
     rawstd::Task<void> set_config(

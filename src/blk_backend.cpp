@@ -15,7 +15,13 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
+#include <exception>
+#include <map>
+#include <mutex>
+#include <rawthread/lock.hpp>
 #include <stdexcept>
+#include <tuple>
 #include <vector>
 
 #include <cerrno>
@@ -34,8 +40,8 @@ namespace {
 
 // Releases a member's record lock on every way out of a coroutine.
 struct RecordLockGuard {
-    rawstor::LocalMember& member;
-    ~RecordLockGuard() { member.record.unlock(); }
+    rawthread::Lock& lock;
+    ~RecordLockGuard() { lock.unlock(); }
 };
 
 std::string trim(const std::string& s) {
@@ -64,6 +70,47 @@ bool fallocate_not_supported(int error) noexcept {
 
 namespace rawstor {
 namespace blk {
+
+struct Backend::CopyState {
+    // Serializes every change to the copy's record (SET_CONFIG, the copy's
+    // own DIRTY/CLEAN/LOST): each reads the record, decides, and writes it
+    // back with fsync as one step.
+    rawthread::Lock record;
+    // Sessions open for writing on the copy right now. Changed only with
+    // `record` held: a session joins before its first write, so a
+    // departure that finds none left can mark the copy CLEAN without
+    // racing a write.
+    std::atomic<uint32_t> writers{0};
+    // The record is known not to be CLEAN: a write needs no DIRTY mark of
+    // its own. Read without the lock, set and cleared with it held.
+    std::atomic<bool> dirty{false};
+};
+
+std::shared_ptr<Backend::CopyState> Backend::_copy_state(
+    const rawstd::URI& location, const RawstdUUID& id, uint64_t offset
+) {
+    using Key = std::tuple<std::string, std::string, uint64_t>;
+    static std::mutex registry_mu;
+    static std::map<Key, std::weak_ptr<CopyState>> registry;
+
+    Key key{
+        location.str(),
+        std::string(reinterpret_cast<const char*>(id.bytes), sizeof(id.bytes)),
+        offset
+    };
+
+    std::lock_guard<std::mutex> guard(registry_mu);
+    for (auto it = registry.begin(); it != registry.end();) {
+        it = it->second.expired() ? registry.erase(it) : std::next(it);
+    }
+    std::weak_ptr<CopyState> slot = registry[key];
+    std::shared_ptr<CopyState> ret = slot.lock();
+    if (!ret) {
+        ret = std::make_shared<CopyState>();
+        registry[key] = ret;
+    }
+    return ret;
+}
 
 Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::Backend(p, queue, location),
@@ -98,7 +145,7 @@ rawstd::Task<void> Backend::_mark_dirty() {
     } gate_end{_dirty_gate};
 
     co_await _member->record.lock(_queue);
-    RecordLockGuard guard{*_member};
+    RecordLockGuard guard{_member->record};
 
     if (_member->dirty.load(std::memory_order_acquire)) {
         co_return;
@@ -115,9 +162,9 @@ rawstd::Task<void> Backend::_mark_dirty() {
 }
 
 rawstd::Task<void> Backend::_depart() {
-    std::shared_ptr<LocalMember> member = std::move(_member);
+    std::shared_ptr<CopyState> member = std::move(_member);
     co_await member->record.lock(_queue);
-    RecordLockGuard guard{*member};
+    RecordLockGuard guard{member->record};
 
     uint32_t remaining = --member->writers;
     if (!(_left ? remaining == 0 : _wrote)) {
@@ -277,10 +324,9 @@ Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
     set_fd(fd);
 
     if ((flags & RAWSTOR_READONLY) == 0) {
-        std::shared_ptr<LocalMember> member =
-            local_member(location(), id, offset);
+        std::shared_ptr<CopyState> member = _copy_state(location(), id, offset);
         co_await member->record.lock(_queue);
-        RecordLockGuard guard{*member};
+        RecordLockGuard guard{member->record};
         ++member->writers;
         _member = std::move(member);
         _member_id = id;
@@ -292,9 +338,9 @@ rawstd::Task<void> Backend::set_config(
     const RawstdUUID& id, uint64_t offset,
     const RawstorObjectConfig& new_config, unsigned int flags
 ) {
-    std::shared_ptr<LocalMember> member = local_member(location(), id, offset);
+    std::shared_ptr<CopyState> member = _copy_state(location(), id, offset);
     co_await member->record.lock(_queue);
-    RecordLockGuard guard{*member};
+    RecordLockGuard guard{member->record};
 
     // The copy keeps its own state. A volume without a record yet (F10)
     // starts CLEAN: nothing was written to it under one.
@@ -321,7 +367,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     std::vector<RawstorObjectMeta> metas =
         co_await _meta(id, offset, version_id);
     if (rawstd_uuid_is_nil(&version_id)) {
-        uint32_t writers = local_member(location(), id, offset)->writers.load();
+        uint32_t writers = _copy_state(location(), id, offset)->writers.load();
         for (RawstorObjectMeta& m : metas) {
             m.writers = writers;
         }
