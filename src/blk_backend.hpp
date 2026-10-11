@@ -159,8 +159,7 @@ protected:
     // uint64_t one). Protected (not private): file::Backend, the only
     // subclass that needs it, sizes its own fixed-length on-disk .meta
     // record to this constant instead of guessing; nothing outside the
-    // class hierarchy needs it, unlike meta_encode()/meta_decode()
-    // themselves (public further down, for tests/).
+    // class hierarchy needs it.
     static constexpr size_t META_MAX_SIZE = 512;
 
 public:
@@ -216,6 +215,7 @@ public:
         const RawstdUUID& version_id
     ) override final;
 
+protected:
     // Encodes/decodes a Record plus a ChunkIdentity (the latter stamped at
     // create and never changed again) as a compact colon-separated string
     // of hex fields, the roles one digit per member (enum
@@ -226,9 +226,7 @@ public:
     // tag, zfs::Backend's ZFS user property, and file::Backend's own
     // on-disk .meta file (NUL-padded out to META_MAX_SIZE bytes -- see
     // its own doc comment for why). Only characters valid in all three
-    // are used (no comma, no whitespace). Public (not protected) so
-    // tests/ can exercise them directly without a real lvm/zfs/file
-    // backend of their own.
+    // are used (no comma, no whitespace).
     //
     // meta_decode() reverses meta_encode(), throwing EPROTO if value is
     // not a well-formed encoding of the current META_FORMAT_VERSION
@@ -242,6 +240,7 @@ public:
         const std::string& value, Record* record, ChunkIdentity* identity
     );
 
+public:
     // Each takes the copy's record lock (LocalMember::record), so
     // concurrent changes to the record from any session of this process
     // apply one at a time.

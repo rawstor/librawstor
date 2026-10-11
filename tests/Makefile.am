@@ -15,7 +15,6 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) \
 
 
 test_all_SOURCES = main.cpp \
-                   disk_record.hpp \
                    rawio_sync.hpp \
                    server.cpp \
                    server.hpp \

@@ -407,10 +407,12 @@ TEST(BlkBackendTest, discard_reports_requested_size) {
     EXPECT_EQ(run(*queue, backend->discard(payload.size(), 0)), payload.size());
 }
 
-// blk::Backend::meta_encode()/meta_decode() are static and public
-// specifically so this can exercise them directly, without a real lvm://,
-// zfs://, or file:// backend of their own (see blk_backend.hpp's own doc
-// comment).
+class MetadataBackend : public rawstor::blk::Backend {
+public:
+    using rawstor::blk::Backend::meta_decode;
+    using rawstor::blk::Backend::meta_encode;
+};
+
 TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     rawstor::blk::Backend::Record record{};
     record.state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
@@ -431,11 +433,11 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     identity.width = 3;
     identity.chunk_size = 0x1000;
 
-    std::string encoded = rawstor::blk::Backend::meta_encode(record, identity);
+    std::string encoded = MetadataBackend::meta_encode(record, identity);
 
     rawstor::blk::Backend::Record decoded;
     rawstor::blk::Backend::ChunkIdentity decoded_identity;
-    rawstor::blk::Backend::meta_decode(encoded, &decoded, &decoded_identity);
+    MetadataBackend::meta_decode(encoded, &decoded, &decoded_identity);
     const RawstorObjectConfig& d = decoded.config;
     EXPECT_EQ(decoded.state, record.state);
     EXPECT_EQ(d.epoch, c.epoch);
@@ -471,10 +473,10 @@ TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
         RAWSTOR_MEMBER_WITNESS, 255, ~0ull
     };
 
-    std::string encoded = rawstor::blk::Backend::meta_encode(record, identity);
+    std::string encoded = MetadataBackend::meta_encode(record, identity);
     rawstor::blk::Backend::Record decoded;
     rawstor::blk::Backend::ChunkIdentity decoded_identity;
-    rawstor::blk::Backend::meta_decode(encoded, &decoded, &decoded_identity);
+    MetadataBackend::meta_decode(encoded, &decoded, &decoded_identity);
     EXPECT_EQ(decoded.config.nroles, RAWSTOR_OBJECT_MAX_WIDTH);
 }
 
@@ -484,8 +486,7 @@ TEST(BlkBackendTest, meta_decode_rejects_empty_string) {
     rawstor::blk::Backend::Record record;
     rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
-        rawstor::blk::Backend::meta_decode("", &record, &identity),
-        std::system_error
+        MetadataBackend::meta_decode("", &record, &identity), std::system_error
     );
 }
 
@@ -495,8 +496,7 @@ TEST(BlkBackendTest, meta_decode_rejects_dash) {
     rawstor::blk::Backend::Record record;
     rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
-        rawstor::blk::Backend::meta_decode("-", &record, &identity),
-        std::system_error
+        MetadataBackend::meta_decode("-", &record, &identity), std::system_error
     );
 }
 
@@ -504,7 +504,7 @@ TEST(BlkBackendTest, meta_decode_rejects_malformed_string) {
     rawstor::blk::Backend::Record record;
     rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
-        rawstor::blk::Backend::meta_decode(
+        MetadataBackend::meta_decode(
             "not the right format", &record, &identity
         ),
         std::system_error
@@ -517,7 +517,7 @@ TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
     rawstor::blk::Backend::Record record;
     rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
-        rawstor::blk::Backend::meta_decode(
+        MetadataBackend::meta_decode(
             "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
             "roles=-:member_role=0:width=0:chunk_size=0",
             &record, &identity

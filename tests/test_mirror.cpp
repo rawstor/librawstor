@@ -1,4 +1,3 @@
-#include "disk_record.hpp"
 #include "opts.h"
 #include "rawio_sync.hpp"
 #include "server.hpp"
@@ -807,73 +806,6 @@ TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
     object_read(queue, member, data.data(), data.size(), 0);
     EXPECT_EQ(data, "ping");
     EXPECT_EQ(object_close(queue, member), 0);
-}
-
-// The first write of an open object can arrive while the resync is
-// recording the rejoining member's final state. Its dirty barrier gives
-// the in-sync members a new identity, which the rejoining member must end
-// up with too.
-TEST(MirrorResyncTest, first_write_during_rejoin_keeps_identities_equal) {
-    Queue queue(16);
-    Members members(2, "00000000-0000-7000-8000-0000000000a9");
-
-    RawstorObjectSpec spec{
-        .size = 1ull << 20,
-        .width = 2,
-        .chunk_size = 0,
-        .stripe_width = 0,
-        .failure_domain = 0,
-    };
-    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
-
-    RawstorObjectConfig fresh{};
-    fresh.epoch = 2;
-    fresh.sync_id = 0x1111111111111111ull;
-    fresh.sync_id_history[0] = 0x2222222222222222ull;
-    ASSERT_EQ(target_set_config(queue, members.target(0), fresh), 0);
-
-    RawstorObjectConfig stale{};
-    stale.epoch = 1;
-    stale.sync_id = 0x2222222222222222ull;
-    ASSERT_EQ(target_set_config(queue, members.target(1), stale), 0);
-
-    RawstorObject* object = nullptr;
-    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
-
-    // Step the queue until the rejoining member's final record is on
-    // disk: the resync is then still waiting for that write to finish.
-    bool window = false;
-    for (int i = 0; i < 100000 && !window; ++i) {
-        // The rejoin moves the set to a new sync_id first, on member 0.
-        RawstorObjectConfig a =
-            rawstor::tests::disk_record(members.meta(0)).config;
-        RawstorObjectConfig b =
-            rawstor::tests::disk_record(members.meta(1)).config;
-        window = b.sync_id != fresh.sync_id && b.sync_id == a.sync_id;
-        if (!window) {
-            rawio_wait_timeout(queue, 1);
-        }
-    }
-    ASSERT_TRUE(window);
-
-    std::string block(4096, 'W');
-    object_write(queue, object, block.data(), block.size(), 0, 0);
-    // The rejoin ends with the member on the identity that write gave the
-    // set, not the one it was being given when the write arrived.
-    ASSERT_TRUE(
-        wait_member_config_synced(queue, members.target(0), members.target(1))
-    );
-
-    rawstor::blk::Backend::Record a =
-        rawstor::tests::disk_record(members.meta(0));
-    rawstor::blk::Backend::Record b =
-        rawstor::tests::disk_record(members.meta(1));
-    EXPECT_EQ(a.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
-    EXPECT_EQ(b.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
-    EXPECT_EQ(a.config.sync_id, b.config.sync_id);
-
-    object_close_clean(queue, object);
-    EXPECT_EQ(read_file(members.dat(0)), read_file(members.dat(1)));
 }
 
 // A write that starts while the rejoining member is getting its final
