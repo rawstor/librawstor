@@ -19,12 +19,11 @@
 namespace rawstor {
 namespace blk {
 
-// Base for any Backend backed by a plain fd read/written via the io queue
-// (rawio::Queue::pread()/pwrite()/...). Concrete backends only need to
-// implement how to get from an object id to an open fd (_open()) plus
-// the metadata operations (list()/create()/remove()/meta()/info()) that
-// stay backend-specific; _blk_size() below shares the one thing that
-// doesn't, for the two subclasses whose objects are real block devices.
+// Base for backends whose data I/O uses a plain fd and rawio::Queue.
+// Subclasses open objects through _open_object(), implement backend-specific
+// list/create/remove/info operations, and store metadata through _meta() and
+// _write_record(). The base manages the copy's state and writer sessions;
+// _blk_size() provides the size of objects backed by real block devices.
 class Backend : public rawstor::Backend {
 private:
     // Bumped whenever meta_encode()'s own field set changes -- carried as
