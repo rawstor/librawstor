@@ -12,8 +12,6 @@
 #include <rawstor/object.h>
 #include <rawstor/target.h>
 
-#include <memory>
-
 #include <cstddef>
 #include <string>
 
@@ -23,15 +21,10 @@ namespace blk {
 // Base for backends whose data I/O uses a plain fd and rawio::Queue.
 // Subclasses open objects through _open_object(), implement backend-specific
 // list/create/remove/info operations, and store metadata through _meta() and
-// _write_record(). The base manages the copy's state and writer sessions;
+// _write_record(). Slot coordinates the copy's state and writer sessions;
 // _blk_size() provides the size of objects backed by real block devices.
 class Backend : public rawstor::Backend {
 private:
-    struct CopyState;
-    static std::shared_ptr<CopyState> _copy_state(
-        const rawstd::URI& location, const RawstdUUID& id, uint64_t offset
-    );
-
     // Bumped whenever meta_encode()'s own field set changes -- carried as
     // this format's own leading field (see meta_encode()'s own doc
     // comment below) rather than left for a caller to track separately,
@@ -67,28 +60,6 @@ private:
     // rawstor_opts_write_backlog_capacity() to reject a write outright
     // rather than let it suspend without bound.
     size_t _pending_writes_bytes;
-
-    // The copy this session has open for writing (set_object() without
-    // RAWSTOR_READONLY), counted in its CopyState::writers; null
-    // otherwise. _wrote: a write went out through this session. _left:
-    // leave() was called, so close() is a clean departure.
-    std::shared_ptr<CopyState> _member;
-    RawstdUUID _member_id;
-    uint64_t _member_offset;
-    bool _wrote;
-    bool _left;
-    // The DIRTY mark of this session in flight: its other writes wait
-    // here, on its own thread, rather than each on the copy's record
-    // lock (a wakeup pipe apiece).
-    rawstd::Gate _dirty_gate;
-
-    // Before a write, with its throttle unit held: marks the copy DIRTY,
-    // durably, if its record is still CLEAN.
-    rawstd::Task<void> _mark_dirty();
-    // At close(): leaves the copy's writer count, and marks the copy
-    // CLEAN (the last clean departure) or LOST (a session that wrote
-    // leaving uncleanly while it is DIRTY).
-    rawstd::Task<void> _depart();
 
     // Suspends the calling coroutine until a write-dispatch slot is free
     // (see rawstor_opts_write_throttle_limit()), or throws EBUSY
@@ -190,7 +161,7 @@ protected:
     ) = 0;
 
     // Durably writes the copy metadata, preserving its ChunkIdentity.
-    // Called with the copy's record lock (CopyState::record) held.
+    // Slot holds the copy's record lock while calling write_meta().
     virtual rawstd::Task<void> _write_record(
         const RawstdUUID& id, uint64_t offset,
         RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
@@ -225,7 +196,6 @@ protected:
 
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
-    ~Backend() override;
 
     rawstd::Task<void> close() override final;
 
@@ -239,12 +209,10 @@ public:
         const RawstdUUID& version_id
     ) override final;
 
-    // Each takes the copy's record lock (CopyState::record), so
-    // concurrent changes to the record from any session of this process
-    // apply one at a time.
-    rawstd::Task<void> set_config(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags
+    bool stores_copy() const noexcept override final { return true; }
+
+    rawstd::Task<void> write_meta(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectMeta& meta
     ) override final;
 
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(

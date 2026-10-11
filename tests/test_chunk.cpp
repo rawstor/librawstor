@@ -37,27 +37,6 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
     return t.get();
 }
 
-// Duplicate of test_blk_backend.cpp's own ThrottleOptsOverride -- see that
-// one's doc comment for why it isn't shared.
-class ThrottleOptsOverride final {
-public:
-    ThrottleOptsOverride(
-        unsigned int write_throttle_limit, unsigned int write_backlog_capacity
-    ) {
-        RawstorOpts opts{};
-        opts.write_throttle_limit = write_throttle_limit;
-        opts.write_backlog_capacity = write_backlog_capacity;
-        rawstor_opts_initialize(&opts);
-    }
-    ThrottleOptsOverride(const ThrottleOptsOverride&) = delete;
-    ThrottleOptsOverride(ThrottleOptsOverride&&) = delete;
-
-    ~ThrottleOptsOverride() { rawstor_opts_initialize(nullptr); }
-
-    ThrottleOptsOverride& operator=(const ThrottleOptsOverride&) = delete;
-    ThrottleOptsOverride& operator=(ThrottleOptsOverride&&) = delete;
-};
-
 // Waits for a value set on rawstor::tests::Server's own background thread
 // (server.hpp) -- unlike write_task.done()/flush_task.done(), nothing
 // about that thread's progress is itself a completion on `queue`. But
@@ -147,77 +126,6 @@ TEST(ChunkTest, flush_waits_for_writes_issued_before_it) {
     flush_task.get();
 }
 
-// flush() must not wait for writes issued *after* it either -- otherwise,
-// under a continuous write stream (a new write always dispatched before an
-// older one completes), the "everything outstanding has drained" condition
-// could never actually occur and flush() would starve forever. Issuing a
-// large batch of writes strictly after flush() and confirming most of them
-// are still outstanding once flush() resolves demonstrates flush() is
-// waiting for its own fixed captured target (see chunk.hpp), not for the
-// backlog to empty out.
-//
-// A throttle limit of 1 is what keeps this deterministic rather than a
-// timing race: with it, write #2 onward cannot even be *dispatched* until
-// its predecessor completes (see blk_backend.hpp's _throttle_acquire()),
-// so draining all of them takes extra_writes strictly sequential round
-// trips -- while flush() only ever needs write_task's single completion
-// plus its own durability op, a handful at most. Without the throttle, a
-// backend fast enough (observed on CI, against a tmpfs-backed file) can
-// race every extra write to completion before flush() is even checked
-// again, making the assertion below flaky.
-TEST(ChunkTest, flush_does_not_wait_for_writes_issued_after_it) {
-    constexpr unsigned int throttle_limit = 1;
-    constexpr unsigned int extra_writes = 500;
-    std::string payload = "durable-me";
-    ThrottleOptsOverride opts_override(
-        throttle_limit,
-        static_cast<unsigned int>(payload.size() * (extra_writes + 1))
-    );
-
-    rawstor::tests::TmpDir dir;
-    rawstd::URI location(dir.uri());
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
-
-    std::unique_ptr<rawstor::Chunk> object = open_object(*queue, location);
-
-    rawstd::Task<size_t> write_task =
-        object->pwrite(payload.data(), payload.size(), 0, false);
-
-    rawstd::Task<void> flush_task = object->flush();
-
-    std::vector<rawstd::Task<size_t>> extra;
-    extra.reserve(extra_writes);
-    for (unsigned int i = 0; i < extra_writes; ++i) {
-        extra.push_back(object->pwrite(
-            payload.data(), payload.size(), (i + 1) * payload.size(), false
-        ));
-    }
-
-    while (!flush_task.done()) {
-        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
-    }
-    flush_task.get();
-    EXPECT_EQ(write_task.get(), payload.size());
-
-    unsigned int extra_done = 0;
-    for (const auto& t : extra) {
-        if (t.done()) {
-            ++extra_done;
-        }
-    }
-    // If flush() had (incorrectly) waited for the backlog to empty out
-    // instead of just the write issued before it, every one of these would
-    // already be done by the time flush() resolved.
-    EXPECT_LT(extra_done, extra_writes);
-
-    for (auto& t : extra) {
-        while (!t.done()) {
-            queue->wait_timeout(rawstor_opts_tcp_user_timeout());
-        }
-        EXPECT_EQ(t.get(), payload.size());
-    }
-}
-
 // Multiple flush() calls in flight at once (e.g. two independent callers,
 // or a caller that didn't wait for its own previous flush() before issuing
 // another) must each resolve correctly, independent of one another --
@@ -290,17 +198,12 @@ TEST(ChunkTest, close_waits_for_writes_issued_before_it) {
     close_task.get();
 }
 
-// Regression for the bug _write_finished()'s own doc comment describes:
-// flush() must keep waiting for the specific write it was promised
-// (write A, issued before it), not resolve just because *some* write
-// completed. A plain completion count can't tell those apart; only a
-// real network connection can produce genuine out-of-order completion
-// deterministically enough to test it (real file:// I/O timing can't be
-// controlled this precisely) -- so this drives an ost:// object over a
-// scripted rawstor::tests::Server connection and answers write B's
-// (issued after flush()) wire request before write A's, exactly as a
-// real OST server answering out of cid order could.
-TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
+// The scripted server controls both write acknowledgements. Answering the
+// later write first must not release flush; leaving it unanswered must not
+// prevent flush from completing after the earlier write is acknowledged.
+namespace {
+
+void expect_flush_write_order(bool later_first) {
     rawstor::tests::Server server(8753, 256);
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(256);
 
@@ -382,26 +285,23 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
 
     wait_for_nonzero(*queue, cid_b);
 
-    // Answer write B -- the one flush() was never promised to wait for --
-    // before write A, forcing the exact out-of-order completion a real
-    // cid-matched OST response could produce on the wire.
     RawstorFrameResponse write_b_response = {
         .head{.magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_WRITE, .cid = cid_b},
         .body = {.hash = 0, .res = static_cast<int32_t>(payload_b.size())},
     };
-    server.write(
-        "RAWSTOR_CMD_WRITE (B) >>>", &write_b_response, sizeof(write_b_response)
-    );
+    if (later_first) {
+        server.write(
+            "RAWSTOR_CMD_WRITE (B) >>>", &write_b_response,
+            sizeof(write_b_response)
+        );
 
-    while (!write_b.done()) {
-        queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+        while (!write_b.done()) {
+            queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+        }
+        EXPECT_EQ(write_b.get(), payload_b.size());
+
+        EXPECT_FALSE(flush_task.done());
     }
-    EXPECT_EQ(write_b.get(), payload_b.size());
-
-    // B completing early must not be mistaken for A's completion: with
-    // the old plain-count tracking, this is exactly where flush() would
-    // have (incorrectly) already resolved.
-    EXPECT_FALSE(flush_task.done());
 
     wait_for_nonzero(*queue, cid_a);
     RawstorFrameResponse write_a_response = {
@@ -447,6 +347,28 @@ TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
         queue->wait_timeout(rawstor_opts_tcp_user_timeout());
     }
     flush_task.get();
+    if (!later_first) {
+        EXPECT_FALSE(write_b.done());
+        server.write(
+            "RAWSTOR_CMD_WRITE (B) >>>", &write_b_response,
+            sizeof(write_b_response)
+        );
+
+        while (!write_b.done()) {
+            queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+        }
+        EXPECT_EQ(write_b.get(), payload_b.size());
+    }
+}
+
+} // namespace
+
+TEST(ChunkTest, flush_does_not_wait_for_writes_issued_after_it) {
+    expect_flush_write_order(false);
+}
+
+TEST(ChunkTest, flush_does_not_resolve_on_write_completing_out_of_order) {
+    expect_flush_write_order(true);
 }
 
 // flush() waiting for a write must still flush it once that write

@@ -73,13 +73,20 @@ public:
     // want a graceful async teardown must co_await this themselves.
     virtual rawstd::Task<void> close() = 0;
 
-    // Declares that the writer behind this session is done with the copy
-    // cleanly: everything it wrote is flushed. Called right before
-    // close(); a session closed without it left uncleanly
-    // (docs/mirroring.md, "DIRTY, CLEAN and LOST"): the copy, if DIRTY and
-    // written through this session, becomes LOST. A clean departure of the
-    // last session open for writing marks the copy CLEAN instead.
+    // Forwards a clean departure to a remote copy or nested object.
+    // For a locally stored copy this is a no-op: Slot owns writer sessions.
     virtual rawstd::Task<void> leave() = 0;
+
+    // True when this backend stores a copy here. Slot coordinates its
+    // writers and metadata; remote backends forward those requests.
+    virtual bool stores_copy() const noexcept { return false; }
+
+    // Durably replaces mutable copy metadata, preserving placement identity.
+    // Slot serializes read-modify-write transitions around this operation.
+    // Default: ENOTSUP for backends that forward requests elsewhere.
+    virtual rawstd::Task<void> write_meta(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectMeta& meta
+    );
 
     // `chunks`: overwritten with this page's own ChunkGroups, one per id,
     // each carrying every offset this backend holds for that id
@@ -202,12 +209,13 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) = 0;
 
-    // Records the chunk's configuration on this copy. The copy keeps its
-    // own state, but for RAWSTOR_CONFIG_CLEAR_LOST in `flags`.
+    // Forwards the chunk's configuration to the copy. Slot applies local
+    // transitions through write_meta(); the default here is ENOTSUP. The copy
+    // keeps its own state, but for RAWSTOR_CONFIG_CLEAR_LOST in `flags`.
     virtual rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectConfig& config, unsigned int flags
-    ) = 0;
+    );
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 

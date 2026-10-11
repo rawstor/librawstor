@@ -13,7 +13,10 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+#include <barrier>
 #include <chrono>
+#include <exception>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -243,4 +246,90 @@ TEST(MemberStateTest, mds_object_passes_departure_to_its_chunks) {
         wait_state(RAWSTOR_OBJECT_SYNC_STATE_LOST),
         RAWSTOR_OBJECT_SYNC_STATE_LOST
     );
+}
+
+// Each writer has its own thread and Queue; metadata uses a third Slot.
+// Phase barriers let us inspect completed operations without timing probes.
+TEST(MemberStateTest, threads_share_copy_state_and_metadata_transitions) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
+    FileObject f;
+    f.create(*queue);
+    std::barrier phase(3);
+    std::array<std::exception_ptr, 2> errors{};
+    std::array<std::thread, 2> writers;
+    for (size_t i = 0; i < writers.size(); ++i) {
+        writers[i] = std::thread([&, i]() {
+            std::unique_ptr<rawio::Queue> worker_queue;
+            std::unique_ptr<rawstor::Object> object;
+            for (unsigned int step = 0; step < 4; ++step) {
+                phase.arrive_and_wait();
+                if (!errors[i]) {
+                    try {
+                        if (step == 0) {
+                            worker_queue = rawio::Queue::create(64);
+                            object =
+                                run(*worker_queue,
+                                    f.target.open(*worker_queue, 0));
+                        } else if (step == 1) {
+                            std::string data(4096, static_cast<char>('A' + i));
+                            run(*worker_queue, object->pwrite(
+                                                   data.data(), data.size(),
+                                                   i * data.size(), false
+                                               ));
+                        } else if (step == i + 2) {
+                            run(*worker_queue, object->close());
+                        }
+                    } catch (...) {
+                        errors[i] = std::current_exception();
+                    }
+                }
+                phase.arrive_and_wait();
+            }
+        });
+    }
+    for (unsigned int step = 0; step < 4; ++step) {
+        phase.arrive_and_wait();
+        if (step == 1) {
+            // Metadata-only access competes with both first DIRTY marks.
+            RawstorObjectConfig config{};
+            config.epoch = 4;
+            config.sync_id = 0x44;
+            config.nroles = 1;
+            config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+            EXPECT_NO_THROW(
+                run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0))
+            );
+        }
+        phase.arrive_and_wait();
+        EXPECT_NO_THROW({
+            RawstorObjectMeta meta = f.meta(*queue);
+            EXPECT_EQ(meta.writers, step < 2 ? 2u : (step == 2 ? 1u : 0u));
+            EXPECT_EQ(
+                meta.state, step == 0 || step == 3
+                                ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
+                                : RAWSTOR_OBJECT_SYNC_STATE_DIRTY
+            );
+            if (step > 0) {
+                EXPECT_EQ(meta.config.epoch, 4u);
+                EXPECT_EQ(meta.config.sync_id, 0x44u);
+            }
+        });
+    }
+    for (std::thread& writer : writers) {
+        writer.join();
+    }
+    for (const auto& error : errors) {
+        if (error) {
+            EXPECT_NO_THROW(std::rethrow_exception(error));
+        }
+    }
+    std::unique_ptr<rawstor::Object> reader =
+        run(*queue, f.target.open(*queue, RAWSTOR_READONLY));
+    std::string actual(8192, '\0');
+    EXPECT_EQ(
+        run(*queue, reader->pread(actual.data(), actual.size(), 0)),
+        actual.size()
+    );
+    EXPECT_EQ(actual, std::string(4096, 'A') + std::string(4096, 'B'));
+    run(*queue, reader->close());
 }

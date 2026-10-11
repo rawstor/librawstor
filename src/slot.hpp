@@ -27,6 +27,20 @@ class Slot final {
 private:
     rawio::Queue& _queue;
 
+    // Shared by all Slots serving the same local copy, including Slots
+    // used only for metadata. Remote copies are coordinated by their server.
+    struct CopyState;
+    std::shared_ptr<CopyState>
+    _copy_state(const RawstdUUID& id, uint64_t offset) const;
+    std::shared_ptr<CopyState> _member;
+    bool _wrote;
+    bool _left;
+    rawstd::Gate _dirty_gate;
+
+    rawstd::Task<void> _mark_dirty();
+    rawstd::Task<void> _depart(std::shared_ptr<Backend> be);
+    rawstd::Task<void> _lose_backend(std::shared_ptr<Backend> be);
+
     // Set by open() (see its own doc comment) -- unset means this
     // Slot is only ever used for metadata (list/create/remove/
     // meta/info), which needs no SET_OBJECT step of its own.
@@ -126,6 +140,7 @@ public:
     create(rawio::Queue& queue, const rawstd::URI& location);
 
     Slot(Private, rawio::Queue& queue, std::shared_ptr<Backend> backend);
+    ~Slot();
     Slot(const Slot&) = delete;
 
     Slot& operator=(const Slot&) = delete;

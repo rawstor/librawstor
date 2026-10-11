@@ -17,7 +17,7 @@ numbers its stages separately.
 | Degraded open, F10 recreate of a missing copy | 2 | ✅ | `src/chunk.cpp` |
 | Degrade & continue (F1), write freeze below quorum for N ≥ 3 | 2 | ✅ | `src/chunk.cpp` |
 | Read failover and read-repair (F2) | 2 | ✅ | `src/chunk.cpp` |
-| Copies keep their own `DIRTY`/`CLEAN`/`LOST`; clean close with `LEAVE`; `rawstor_object_abandon()` | 2 | ✅ | `src/blk_backend.cpp`, `src/local_member.hpp`, `src/chunk.cpp` |
+| Copies keep their own `DIRTY`/`CLEAN`/`LOST`; clean close with `LEAVE`; `rawstor_object_abandon()` | 2 | ✅ | `src/slot.cpp`, `src/blk_backend.cpp`, `src/chunk.cpp` |
 | Every member's role in each record; syncing is a role, not a state | 2 | ✅ | `src/chunk.cpp` |
 | A `rawstor-ost` is one copy; with several locations it keeps no record of it | 2 | ✅ | `ost/src/client.cpp` |
 | A record of the copy itself for a `rawstor-ost` with several locations | — | ❌ | *One copy per server* |
