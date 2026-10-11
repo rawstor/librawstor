@@ -193,7 +193,7 @@ rawstd::Task<void> Backend::set_state(
     RawstorObjectMeta meta = (co_await _meta(id, offset, RawstdUUID{})).front();
     if (meta.state == expected) {
         meta.state = state;
-        co_await _write_record(id, offset, meta.state, meta.config);
+        co_await _write_meta(id, offset, meta.state, meta.config);
     }
 }
 
@@ -211,7 +211,7 @@ rawstd::Task<void> Backend::set_config(
         }
     }
     meta.config = config;
-    co_await _write_record(id, offset, meta.state, meta.config);
+    co_await _write_meta(id, offset, meta.state, meta.config);
 }
 
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(

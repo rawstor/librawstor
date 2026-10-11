@@ -404,7 +404,7 @@ rawstd::Task<void> Backend::create(
     // A fresh copy starts with sync_id 0: it has never been part of an
     // established sync set (see docs/mirroring.md). Written after the data
     // file so a crash between the two never leaves a meta file without
-    // its data file; _write_record()/meta() failing ENOENT on the reverse
+    // its data file; _write_meta()/meta() failing ENOENT on the reverse
     // (data file present, no meta yet) is exactly case F10.
     std::exception_ptr meta_error;
     try {
@@ -424,7 +424,7 @@ rawstd::Task<void> Backend::create(
 
             // The placement identity (docs/mds.md, chunk_meta) is
             // stamped now, from the caller's own spec, and never touched
-            // again -- _write_record() below preserves it unchanged.
+            // again -- _write_meta() below preserves it unchanged.
             ChunkIdentity identity;
             identity.member_role = member_role;
             identity.width = static_cast<uint8_t>(sp.width);
@@ -434,7 +434,7 @@ rawstd::Task<void> Backend::create(
             // is NUL-padded out to a fixed META_MAX_SIZE bytes here,
             // rather than written at its own length, so this file's own
             // byte length stays fixed across every rewrite -- see
-            // _write_record() below for why that matters.
+            // _write_meta() below for why that matters.
             std::string encoded = meta_encode(state, config, identity);
             std::array<char, META_MAX_SIZE> disk{};
             memcpy(disk.data(), encoded.data(), encoded.size());
@@ -587,7 +587,7 @@ Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     co_return std::vector<rawstd::URI>{location()};
 }
 
-rawstd::Task<void> Backend::_write_record(
+rawstd::Task<void> Backend::_write_meta(
     const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
     const RawstorObjectConfig& config
 ) {
@@ -619,7 +619,7 @@ rawstd::Task<void> Backend::_write_record(
         // preserve it across this rewrite. A record meta_decode() can't
         // parse (an earlier format version) has no identity to preserve;
         // it degenerates to the all-zero default, same as
-        // lvm::Backend::_write_record()'s own equivalent fallback.
+        // lvm::Backend::_write_meta()'s own equivalent fallback.
         RawstorObjectSyncStateValue old_record_state{};
         RawstorObjectConfig old_record_config{};
         ChunkIdentity identity{};

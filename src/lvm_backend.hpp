@@ -56,7 +56,7 @@ private:
     // plus reconnects).
     rawstd::Task<void> _cleanup_staging_lvs();
 
-    // Shared by meta()/_write_record(): the current comma-separated tag
+    // Shared by meta()/_write_meta(): the current comma-separated tag
     // list on the LV at `path`, as reported by `lvs -o lv_tags`.
     rawstd::Task<std::string> _lv_tags(const std::string& path);
 
@@ -93,7 +93,7 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) override;
 
-    rawstd::Task<void> _write_record(
+    rawstd::Task<void> _write_meta(
         const RawstdUUID& id, uint64_t offset,
         RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
     ) override;

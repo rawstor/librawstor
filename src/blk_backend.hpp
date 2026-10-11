@@ -21,7 +21,7 @@ namespace blk {
 // Base for backends whose data I/O uses a plain fd and rawio::Queue.
 // Subclasses open objects through _open_object(), implement backend-specific
 // list/create/remove/info operations, and store metadata through _meta() and
-// _write_record(). Slot coordinates the copy's state and writer sessions;
+// _write_meta(). Slot coordinates the copy's state and writer sessions;
 // _blk_size() provides the size of objects backed by real block devices.
 class Backend : public rawstor::Backend {
 private:
@@ -78,7 +78,7 @@ public:
     // A chunk's own placement identity (docs/mds.md, chunk_meta), minus
     // size and mutable copy metadata: stamped at create, immutable afterwards,
     // persisted alongside the copy metadata by meta_encode()/meta_decode()
-    // below. _write_record() must read the existing record and carry this
+    // below. _write_meta() must read the existing record and carry this
     // part through unchanged rather than reset it, since it never
     // receives this identity itself. chunk_size here is always the full
     // byte value -- RawstorFrameAllocatePayload's own chunk_shift is
@@ -162,7 +162,7 @@ protected:
 
     // Durably writes the copy metadata, preserving its ChunkIdentity.
     // Slot holds the copy's record lock while applying metadata requests.
-    virtual rawstd::Task<void> _write_record(
+    virtual rawstd::Task<void> _write_meta(
         const RawstdUUID& id, uint64_t offset,
         RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
     ) = 0;
