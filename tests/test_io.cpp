@@ -36,13 +36,18 @@ namespace {
 // that same answer, no separate round trip.
 const RawstorFrameMetaPayload clean_meta_1mb = {
     .size = 1ull << 20,
-    .epoch = 0,
-    .sync_id = 0,
-    .sync_id_history = {0, 0, 0, 0},
     .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
     .chunk_shift = 0,
     .width = 1,
     .member_role = RAWSTOR_MEMBER_DATA,
+    .writers = 0,
+    .config = {
+        .epoch = 0,
+        .sync_id = 0,
+        .sync_id_history = {},
+        .nroles = 0,
+        .roles = {},
+    },
 };
 
 int callback(size_t result, int error, void* data) {

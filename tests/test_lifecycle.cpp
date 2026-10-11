@@ -72,20 +72,18 @@ ssize_t target_meta(
     if (res < 0) {
         return res;
     }
-    return meta->sync_state.state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE
-               ? -ENOTCONN
-               : 0;
+    return meta->state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE ? -ENOTCONN : 0;
 }
 
 // Every call site here targets a single-URI, single-chunk target at
 // offset 0, so its one member is index 0.
-ssize_t target_set_sync_state(
+ssize_t target_set_config(
     rawio::Queue& queue, const std::string& target,
-    const RawstorObjectSyncState& sync_state
+    const RawstorObjectConfig& sync_state
 ) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_target_set_member_sync_state(
-            &queue, target.c_str(), 0, 0, &sync_state, cb, data
+        return rawstor_target_set_member_config(
+            &queue, target.c_str(), 0, 0, &sync_state, 0, cb, data
         );
     });
 }
@@ -558,7 +556,7 @@ TEST(FileLifecycleTest, create_at_spec_list_remove) {
     EXPECT_EQ(res, 0);
 }
 
-TEST(FileLifecycleTest, meta_set_state) {
+TEST(FileLifecycleTest, meta_set_config) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location_uri(dir.uri());
     std::string uuid = "00000000-0000-7000-8000-000000000001";
@@ -580,29 +578,29 @@ TEST(FileLifecycleTest, meta_set_state) {
     res = target_meta(*queue, target, &meta);
     EXPECT_EQ(res, 0);
     EXPECT_EQ(meta.spec.size, 1ull << 20);
-    EXPECT_EQ(meta.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
-    EXPECT_EQ(meta.sync_state.epoch, 0u);
-    EXPECT_EQ(meta.sync_state.sync_id, 0u);
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(meta.config.epoch, 0u);
+    EXPECT_EQ(meta.config.sync_id, 0u);
     for (size_t i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; ++i) {
-        EXPECT_EQ(meta.sync_state.sync_id_history[i], 0u);
+        EXPECT_EQ(meta.config.sync_id_history[i], 0u);
     }
 
-    RawstorObjectSyncState next{};
+    RawstorObjectConfig next{};
     next.epoch = 3;
     next.sync_id = 0x1122334455667788ull;
     next.sync_id_history[0] = 0xaabbccddeeff0011ull;
-    next.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
-    res = target_set_sync_state(*queue, target, next);
+    res = target_set_config(*queue, target, next);
     EXPECT_EQ(res, 0);
 
     res = target_meta(*queue, target, &meta);
     EXPECT_EQ(res, 0);
     EXPECT_EQ(meta.spec.size, 1ull << 20);
-    EXPECT_EQ(meta.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
-    EXPECT_EQ(meta.sync_state.epoch, 3u);
-    EXPECT_EQ(meta.sync_state.sync_id, 0x1122334455667788ull);
-    EXPECT_EQ(meta.sync_state.sync_id_history[0], 0xaabbccddeeff0011ull);
-    EXPECT_EQ(meta.sync_state.sync_id_history[1], 0u);
+    // The copy keeps its own state: setting the configuration leaves it.
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(meta.config.epoch, 3u);
+    EXPECT_EQ(meta.config.sync_id, 0x1122334455667788ull);
+    EXPECT_EQ(meta.config.sync_id_history[0], 0xaabbccddeeff0011ull);
+    EXPECT_EQ(meta.config.sync_id_history[1], 0u);
 
     res = target_remove(*queue, target);
     EXPECT_EQ(res, 0);
@@ -617,13 +615,18 @@ TEST(OstLifecycleTest, create_spec_remove) {
 
     RawstorFrameMetaPayload meta_body = {
         .size = 1ull << 20,
-        .epoch = 7,
-        .sync_id = 0x1122334455667788ull,
-        .sync_id_history = {0xaabbccddeeff0011ull, 0, 0, 0},
         .state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
         .chunk_shift = 20,
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
+        .writers = 0,
+        .config = {
+            .epoch = 7,
+            .sync_id = 0x1122334455667788ull,
+            .sync_id_history = {0xaabbccddeeff0011ull, 0, 0, 0},
+            .nroles = 0,
+            .roles = {},
+        },
     };
 
     {
@@ -679,18 +682,17 @@ TEST(OstLifecycleTest, create_spec_remove) {
         EXPECT_EQ(res, 0);
         EXPECT_EQ(meta.spec.size, 1ull << 20);
         EXPECT_EQ(meta.spec.chunk_size, 1ull << 20);
-        EXPECT_EQ(meta.sync_state.epoch, 7u);
-        EXPECT_EQ(meta.sync_state.sync_id, 0x1122334455667788ull);
-        EXPECT_EQ(meta.sync_state.sync_id_history[0], 0xaabbccddeeff0011ull);
-        EXPECT_EQ(meta.sync_state.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+        EXPECT_EQ(meta.config.epoch, 7u);
+        EXPECT_EQ(meta.config.sync_id, 0x1122334455667788ull);
+        EXPECT_EQ(meta.config.sync_id_history[0], 0xaabbccddeeff0011ull);
+        EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     }
 
     {
-        RawstorObjectSyncState sync_state{};
+        RawstorObjectConfig sync_state{};
         sync_state.epoch = 8;
         sync_state.sync_id = 0x99ull;
-        sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-        ssize_t res = target_set_sync_state(*queue, target, sync_state);
+        ssize_t res = target_set_config(*queue, target, sync_state);
         EXPECT_EQ(res, 0);
     }
 
@@ -713,13 +715,18 @@ TEST(OstLifecycleTest, meta_of_bound_version_carries_version_id) {
 
     RawstorFrameMetaPayload meta_body = {
         .size = 1ull << 20,
-        .epoch = 7,
-        .sync_id = 0x11ull,
-        .sync_id_history = {0, 0, 0, 0},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
+        .writers = 0,
+        .config = {
+            .epoch = 7,
+            .sync_id = 0x11ull,
+            .sync_id_history = {},
+            .nroles = 0,
+            .roles = {},
+        },
     };
 
     auto requested = std::make_shared<RawstdUUID>();
@@ -845,13 +852,18 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
 
     RawstorFrameMetaPayload meta_body = {
         .size = 1ull << 20,
-        .epoch = 0,
-        .sync_id = 0,
-        .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
+        .writers = 0,
+        .config = {
+            .epoch = 0,
+            .sync_id = 0,
+            .sync_id_history = {},
+            .nroles = 0,
+            .roles = {},
+        },
     };
 
     {
@@ -911,13 +923,18 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
 
     RawstorFrameMetaPayload meta_body = {
         .size = 1ull << 20,
-        .epoch = 0,
-        .sync_id = 0,
-        .sync_id_history = {},
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
+        .writers = 0,
+        .config = {
+            .epoch = 0,
+            .sync_id = 0,
+            .sync_id_history = {},
+            .nroles = 0,
+            .roles = {},
+        },
     };
 
     {

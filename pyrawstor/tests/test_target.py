@@ -107,6 +107,8 @@ class TestTarget(unittest.TestCase):
             self.assertEqual(meta.failure_domain, rawstor.OBJ_DOMAIN_DEFAULT)
             self.assertEqual(meta.member_role, rawstor.MEMBER_DATA)
             self.assertEqual(meta.state, rawstor.OBJECT_SYNC_STATE_CLEAN)
+            self.assertEqual(meta.role, rawstor.OBJECT_MEMBER_UNKNOWN)
+            self.assertEqual(meta.writers, 0)
 
             target.remove()
 

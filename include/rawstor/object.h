@@ -59,6 +59,23 @@ int rawstor_object_close(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Asynchronously close an object whose writer did not finish
+ *        cleanly.
+ *
+ * Same as rawstor_object_close(), except that the object's writer is not
+ * declared done: a stored copy written through @p object that is DIRTY
+ * becomes LOST instead of CLEAN (docs/mirroring.md, "DIRTY, CLEAN and
+ * LOST"). For a server relaying a remote writer's session -- e.g.
+ * rawstor-ost when the connection drops without the writer's LEAVE.
+ *
+ * @return 0 if the close was queued; negative errno on immediate failure
+ *         (in which case @p cb is never invoked).
+ */
+int rawstor_object_abandon(
+    RawstorObject* object, int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Shared completion callback shape for rawstor_object_pread()
  *        below and _preadv()/_pwrite()/_pwritev() further down (see
  *        rawstor_object_flush() for its own, distinct callback shape).

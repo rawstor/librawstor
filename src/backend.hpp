@@ -73,6 +73,18 @@ public:
     // want a graceful async teardown must co_await this themselves.
     virtual rawstd::Task<void> close() = 0;
 
+    // Forwards a clean departure to a remote copy or nested object.
+    // For a locally stored copy this is a no-op: Slot owns writer sessions.
+    virtual rawstd::Task<void> leave() = 0;
+
+    // Changes the copy's own state only if it still equals expected.
+    // Storage backends persist this transition; forwarding backends leave
+    // it to the destination's writer sessions.
+    virtual rawstd::Task<void> set_state(
+        const RawstdUUID& id, uint64_t offset,
+        RawstorObjectSyncStateValue expected, RawstorObjectSyncStateValue state
+    ) = 0;
+
     // `chunks`: overwritten with this page's own ChunkGroups, one per id,
     // each carrying every offset this backend holds for that id
     // (ascending, including every chunk of an mds:// volume, now that
@@ -143,13 +155,13 @@ public:
     );
 
     // The full creation-time shape (size/width/chunk_size) plus this
-    // copy's own mirror consistency identity (state/epoch/sync_id and
-    // its ancestry, see docs/mirroring.md) and its own member_role -- the
-    // one metadata round trip every concrete Backend implements, no
-    // separate cheaper variant that only reports a subset (a caller that
-    // only wants the spec half, e.g. Target's own spec lookup, just
-    // discards RawstorObjectMeta::sync_state/member_role). set_sync_state()
-    // persists a caller-supplied sync identity durably before returning.
+    // copy's own state and writer count, the chunk's configuration as last
+    // set on it (see docs/mirroring.md) and its own member_role -- the one
+    // metadata round trip every concrete Backend implements, no separate
+    // cheaper variant that only reports a subset (a caller that only wants
+    // the spec half, e.g. Target's own spec lookup, just discards the
+    // rest). set_config() persists a caller-supplied configuration durably
+    // before returning.
     //
     // Returns one entry per real member of the chunk at `offset` -- every
     // backend but mds::Backend represents exactly one physical copy of
@@ -177,7 +189,7 @@ public:
 
     // Every real member's own bare location of the chunk at `offset` --
     // for addressing one specific member directly (rawstor resolve's own
-    // --winner, rawstor_target_set_member_sync_state()'s own write),
+    // --winner, rawstor_target_set_member_config()'s own write),
     // without needing a target string that already names it (unlike a
     // plain target's own flat URI list, an mds:// target's real members
     // aren't nameable that way at all). Every backend but mds::Backend
@@ -194,9 +206,12 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) = 0;
 
-    virtual rawstd::Task<void> set_sync_state(
+    // Persists the configuration or forwards the request to the destination.
+    // Slot serializes it with state transitions and applies CLEAR_LOST via
+    // set_state(); transports forward flags to the destination's Slot.
+    virtual rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectSyncState& sync_state
+        const RawstorObjectConfig& config, unsigned int flags
     ) = 0;
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;

@@ -209,8 +209,7 @@ void scan_ost(
                 }
                 // rawstor_target_meta() reports a copy that didn't answer
                 // as a zero-filled UNREACHABLE entry, not an error.
-                if (meta.sync_state.state ==
-                    RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+                if (meta.state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
                     rawstd_error(
                         "reconstruct: skipping %s at offset %llx: unreadable "
                         "metadata\n",

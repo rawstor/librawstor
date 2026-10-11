@@ -69,7 +69,7 @@ static int is_winner(const size_t* winners, size_t num_winners, size_t idx) {
 
 /* Resolves exactly one chunk: `winners` are positions within that
  * chunk's own real member list -- rawstor_target_meta()'s own per-chunk
- * `result` order, the same one rawstor_target_set_member_sync_state()'s
+ * `result` order, the same one rawstor_target_set_member_config()'s
  * own `member_index` addresses (its own doc comment) -- so an index read
  * off one call names the same member in the other, for an ordinary
  * target and an mds:// one alike. */
@@ -116,8 +116,7 @@ static int resolve_chunk(
             );
             return EX_USAGE;
         }
-        if (metas[winners[i]].sync_state.state ==
-            RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+        if (metas[winners[i]].state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             fprintf(
                 stderr,
                 "chunk[%llx]: mirror[%zu] is unreachable; cannot resolve "
@@ -143,21 +142,21 @@ static int resolve_chunk(
     int dropped = 0;
     for (ssize_t i = 0; i < result; i++) {
         const struct RawstorObjectMeta* m = &metas[i];
-        if (m->sync_state.state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+        if (m->state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             continue;
         }
-        if (m->sync_state.epoch > max_epoch) {
-            max_epoch = m->sync_state.epoch;
+        if (m->config.epoch > max_epoch) {
+            max_epoch = m->config.epoch;
         }
         if (is_winner(winners, num_winners, (size_t)i)) {
             continue;
         }
-        if (m->sync_state.sync_id == 0 ||
-            history_contains(history, history_len, m->sync_state.sync_id)) {
+        if (m->config.sync_id == 0 ||
+            history_contains(history, history_len, m->config.sync_id)) {
             continue;
         }
         if (history_len < RAWSTOR_OBJECT_SYNC_ID_HISTORY) {
-            history[history_len++] = m->sync_state.sync_id;
+            history[history_len++] = m->config.sync_id;
         } else {
             dropped++;
         }
@@ -172,16 +171,23 @@ static int resolve_chunk(
         );
     }
 
-    struct RawstorObjectSyncState new_state = {
-        .epoch = max_epoch + 1,
-        .sync_id = random_sync_id(),
-        .sync_id_history = {0},
-        .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
-    };
-    memcpy(new_state.sync_id_history, history, sizeof(history));
+    /* The winners in-sync, every other mirror excluded until its resync.
+     * The winners are declared consistent by hand: a LOST one is cleared
+     * (RAWSTOR_CONFIG_CLEAR_LOST). */
+    struct RawstorObjectConfig new_config;
+    memset(&new_config, 0, sizeof(new_config));
+    new_config.epoch = max_epoch + 1;
+    new_config.sync_id = random_sync_id();
+    memcpy(new_config.sync_id_history, history, sizeof(history));
+    new_config.nroles = (uint8_t)result;
+    for (ssize_t i = 0; i < result; i++) {
+        new_config.roles[i] = is_winner(winners, num_winners, (size_t)i)
+                                  ? RAWSTOR_OBJECT_MEMBER_IN_SYNC
+                                  : RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    }
 
     /* Every winner gets the exact same new identity, written one at a
-     * time (rawstor_target_set_member_sync_state() only ever points at a
+     * time (rawstor_target_set_member_config() only ever points at a
      * single member) -- as many as already succeeded stay written even
      * if a later one fails, the same "partial failure leaves as many
      * copies updated as possible" spirit as the rest of this codebase's
@@ -193,9 +199,9 @@ static int resolve_chunk(
             fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
             return rawstd_exitcode_for_errno(-res);
         }
-        int sres = rawstor_target_set_member_sync_state(
-            set_op.queue, target, offset, winners[i], &new_state,
-            rawstor_cli_op_cb, &set_op
+        int sres = rawstor_target_set_member_config(
+            set_op.queue, target, offset, winners[i], &new_config,
+            RAWSTOR_CONFIG_CLEAR_LOST, rawstor_cli_op_cb, &set_op
         );
         ssize_t sresult = rawstor_cli_op_wait(&set_op, sres);
         rawstor_cli_op_destroy(&set_op);
@@ -203,7 +209,7 @@ static int resolve_chunk(
             fprintf(
                 stderr,
                 "chunk[%llx]: mirror[%zu]: "
-                "rawstor_target_set_member_sync_state() failed: %s\n",
+                "rawstor_target_set_member_config() failed: %s\n",
                 (unsigned long long)offset, winners[i], strerror((int)-sresult)
             );
             return rawstd_exitcode_for_errno((int)-sresult);
@@ -216,10 +222,10 @@ static int resolve_chunk(
             "chunk[%llx]: mirror[%zu] is now authoritative: sync_id %llx "
             "-> %llx, epoch %llu -> %llu\n",
             (unsigned long long)offset, winners[i],
-            (unsigned long long)metas[winners[i]].sync_state.sync_id,
-            (unsigned long long)new_state.sync_id,
-            (unsigned long long)metas[winners[i]].sync_state.epoch,
-            (unsigned long long)new_state.epoch
+            (unsigned long long)metas[winners[i]].config.sync_id,
+            (unsigned long long)new_config.sync_id,
+            (unsigned long long)metas[winners[i]].config.epoch,
+            (unsigned long long)new_config.epoch
         );
     }
     printf(

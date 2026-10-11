@@ -27,6 +27,25 @@ class Slot final {
 private:
     rawio::Queue& _queue;
 
+    // Shared by all Slots serving the same location/id/offset, including
+    // Slots used only for metadata, regardless of the backend implementation.
+    struct CopyState;
+    std::shared_ptr<CopyState>
+    _copy_state(const RawstdUUID& id, uint64_t offset) const;
+    std::shared_ptr<CopyState> _member;
+    bool _wrote;
+    bool _left;
+    rawstd::Gate _dirty_gate;
+
+    rawstd::Task<void> _mark_dirty();
+    rawstd::Task<void> _depart(std::shared_ptr<Backend> be);
+    rawstd::Task<void> _lose_backend(std::shared_ptr<Backend> be);
+
+    rawstd::Task<void> _set_config(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectConfig& config, unsigned int flags
+    );
+
     // Set by open() (see its own doc comment) -- unset means this
     // Slot is only ever used for metadata (list/create/remove/
     // meta/info), which needs no SET_OBJECT step of its own.
@@ -102,10 +121,10 @@ private:
     // references, and without this, deducing Args a second time from
     // the call arguments themselves (plain by-value here) would conflict
     // with what `method`'s own type already fixed them to.
-    template <typename T, typename... Args>
+    template <typename Owner, typename T, typename... Args>
     rawstd::Task<T> _with_retry(
         const char* func_name, rawstd::TraceEvent& trace_event,
-        rawstd::Task<T> (Backend::*method)(Args...),
+        rawstd::Task<T> (Owner::*method)(Args...),
         std::type_identity_t<Args>... args
     );
 
@@ -126,6 +145,7 @@ public:
     create(rawio::Queue& queue, const rawstd::URI& location);
 
     Slot(Private, rawio::Queue& queue, std::shared_ptr<Backend> backend);
+    ~Slot();
     Slot(const Slot&) = delete;
 
     Slot& operator=(const Slot&) = delete;
@@ -173,10 +193,15 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     );
 
-    rawstd::Task<void> set_sync_state(
+    rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectSyncState& sync_state
+        const RawstorObjectConfig& config, unsigned int flags
     );
+
+    // The writer's clean departure from this member's session
+    // (Backend::leave()), on the session as it is: a session already
+    // gone has left uncleanly anyway.
+    rawstd::Task<void> leave();
 
     rawstd::Task<RawstorLocationInfo> info();
 

@@ -130,6 +130,17 @@ After editing `configure.ac` or any `Makefile.am`, regenerate with
 
 ## Testing
 
+- Tests follow the production architecture; they must not dictate it. Do not
+  weaken encapsulation, make internal methods or types public, or add accessors,
+  state probes, friends, or other production interfaces solely for tests. Test
+  behavior through existing interfaces at the appropriate layer. Protected
+  functionality may be exercised by a test-only subclass confined to the
+  relevant test file. Keep backend implementation and metadata-format checks
+  in that backend's test file, rather than exporting helpers to unrelated
+  tests. If an internal detail cannot be checked without changing the
+  production design for tests, omit that check or test the responsible
+  component directly. Avoid timing-dependent probes of implementation details.
+
 ```
 make test
 ```

@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <exception>
 #include <stdexcept>
 #include <vector>
 
@@ -64,6 +65,10 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     _writes_in_flight(0),
     _next_ticket(0),
     _pending_writes_bytes(0) {
+}
+
+rawstd::Task<void> Backend::leave() {
+    co_return;
 }
 
 rawstd::Task<void> Backend::_throttle_acquire(size_t size) {
@@ -169,7 +174,6 @@ rawstd::Task<void> Backend::close() {
     if (f == -1) {
         co_return;
     }
-
     set_fd(-1);
     co_await _queue.close(f);
 }
@@ -179,9 +183,36 @@ Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
+    set_fd(co_await _open_object(id, offset, flags));
+}
 
-    int fd = co_await _open_object(id, offset, flags);
-    set_fd(fd);
+rawstd::Task<void> Backend::set_state(
+    const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue expected,
+    RawstorObjectSyncStateValue state
+) {
+    RawstorObjectMeta meta =
+        (co_await this->meta(id, offset, RawstdUUID{})).front();
+    if (meta.state == expected) {
+        meta.state = state;
+        co_await _write_meta(id, offset, meta.state, meta.config);
+    }
+}
+
+rawstd::Task<void> Backend::set_config(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
+    unsigned int
+) {
+    RawstorObjectMeta meta{};
+    meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    try {
+        meta = (co_await this->meta(id, offset, RawstdUUID{})).front();
+    } catch (const std::system_error& e) {
+        if (e.code().value() != ENOENT) {
+            throw;
+        }
+    }
+    meta.config = config;
+    co_await _write_meta(id, offset, meta.state, meta.config);
 }
 
 rawstd::Task<void> Backend::set_version(
@@ -222,49 +253,80 @@ rawstd::Task<uint64_t> Backend::_blk_size(
 }
 
 std::string Backend::meta_encode(
-    const RawstorObjectSyncState& sync_state, const ChunkIdentity& identity
+    RawstorObjectSyncStateValue state, const RawstorObjectConfig& config,
+    const ChunkIdentity& identity
 ) {
+    const RawstorObjectConfig& c = config;
+    std::string roles;
+    if (c.nroles == 0) {
+        roles = "-";
+    }
+    for (uint8_t i = 0; i < c.nroles; ++i) {
+        roles += static_cast<char>('0' + (c.roles[i] & 0x7));
+    }
+
     char buf[META_MAX_SIZE];
-    snprintf(
+    int n = snprintf(
         buf, sizeof(buf),
         "version=%u:state=%u:epoch=%" PRIx64 ":sync_id=%" PRIx64 ":h0=%" PRIx64
         ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64
-        ":member_role=%u:width=%u:chunk_size=%" PRIx64,
-        META_FORMAT_VERSION, (unsigned int)sync_state.state, sync_state.epoch,
-        sync_state.sync_id, sync_state.sync_id_history[0],
-        sync_state.sync_id_history[1], sync_state.sync_id_history[2],
-        sync_state.sync_id_history[3], (unsigned int)identity.member_role,
+        ":roles=%s:member_role=%u:width=%u:chunk_size=%" PRIx64,
+        META_FORMAT_VERSION, (unsigned int)state, c.epoch, c.sync_id,
+        c.sync_id_history[0], c.sync_id_history[1], c.sync_id_history[2],
+        c.sync_id_history[3], roles.c_str(), (unsigned int)identity.member_role,
         (unsigned int)identity.width, identity.chunk_size
     );
-    return std::string(buf);
+    if (n < 0 || static_cast<size_t>(n) >= sizeof(buf)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
+    }
+    return std::string(buf, static_cast<size_t>(n));
 }
 
 void Backend::meta_decode(
-    const std::string& value, RawstorObjectSyncState* sync_state,
-    ChunkIdentity* identity
+    const std::string& value, RawstorObjectSyncStateValue* state,
+    RawstorObjectConfig* config, ChunkIdentity* identity
 ) {
-    *sync_state = RawstorObjectSyncState{};
+    *state = RawstorObjectSyncStateValue{};
+    *config = RawstorObjectConfig{};
     *identity = ChunkIdentity{};
+    RawstorObjectConfig& c = *config;
     unsigned int version = 0;
-    unsigned int state = 0;
+    unsigned int parsed_state = 0;
     unsigned int member_role = 0;
     unsigned int width = 0;
+    char roles[RAWSTOR_OBJECT_MAX_WIDTH + 2] = {};
+    int consumed = 0;
 
+    std::string v = trim(value);
     int n = sscanf(
-        trim(value).c_str(),
+        v.c_str(),
         "version=%u:state=%u:epoch=%" SCNx64 ":sync_id=%" SCNx64 ":h0=%" SCNx64
         ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64
-        ":member_role=%u:width=%u:chunk_size=%" SCNx64,
-        &version, &state, &sync_state->epoch, &sync_state->sync_id,
-        &sync_state->sync_id_history[0], &sync_state->sync_id_history[1],
-        &sync_state->sync_id_history[2], &sync_state->sync_id_history[3],
-        &member_role, &width, &identity->chunk_size
+        ":roles=%256[0-9-]:member_role=%u:width=%u:chunk_size=%" SCNx64 "%n",
+        &version, &parsed_state, &c.epoch, &c.sync_id, &c.sync_id_history[0],
+        &c.sync_id_history[1], &c.sync_id_history[2], &c.sync_id_history[3],
+        roles, &member_role, &width, &identity->chunk_size, &consumed
     );
-    if (n != 11 || version != META_FORMAT_VERSION) {
+    if (n != 12 || static_cast<size_t>(consumed) != v.size() ||
+        version != META_FORMAT_VERSION) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
 
-    sync_state->state = static_cast<RawstorObjectSyncStateValue>(state);
+    size_t nroles = 0;
+    if (strcmp(roles, "-") != 0) {
+        nroles = strlen(roles);
+        if (nroles > RAWSTOR_OBJECT_MAX_WIDTH) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        for (size_t i = 0; i < nroles; ++i) {
+            if (roles[i] < '0' || roles[i] > '9') {
+                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            }
+            c.roles[i] = static_cast<uint8_t>(roles[i] - '0');
+        }
+    }
+    c.nroles = static_cast<uint8_t>(nroles);
+    *state = static_cast<RawstorObjectSyncStateValue>(parsed_state);
     identity->member_role = static_cast<RawstorMemberRole>(member_role);
     identity->width = static_cast<uint8_t>(width);
 }

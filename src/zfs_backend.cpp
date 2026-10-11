@@ -333,14 +333,15 @@ rawstd::Task<void> Backend::create(
     // established sync set (docs/mirroring.md). Setting the property in
     // the same command as creation means there is never a window where
     // the zvol exists without one.
-    RawstorObjectSyncState sync_state{};
-    sync_state.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    RawstorObjectSyncStateValue state{};
+    RawstorObjectConfig config{};
+    state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     Backend::ChunkIdentity identity;
     identity.member_role = member_role;
     identity.width = static_cast<uint8_t>(sp.width);
     identity.chunk_size = sp.chunk_size;
-    std::string prop =
-        std::string(rawstor_property) + "=" + meta_encode(sync_state, identity);
+    std::string prop = std::string(rawstor_property) + "=" +
+                       meta_encode(state, config, identity);
 
     rawstd_info(
         "zfs: creating zvol %s, size %s bytes\n", dataset.c_str(), size_buf
@@ -468,10 +469,11 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     // created before this feature, or by something else. Must not be
     // trusted as CLEAN -- the caller treats any error here as "member
     // stale, needs a resync" (docs/mirroring.md, case F10).
-    RawstorObjectSyncState sync_state;
+    RawstorObjectSyncStateValue state{};
+    RawstorObjectConfig config{};
     Backend::ChunkIdentity identity;
     try {
-        meta_decode(output, &sync_state, &identity);
+        meta_decode(output, &state, &config, &identity);
     } catch (const std::system_error&) {
         rawstd_error("zfs: no recorded mirror state on %s\n", dataset.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
@@ -486,7 +488,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
-    ret.sync_state = sync_state;
+    ret.state = state;
+    ret.config = config;
 
     co_return std::vector<RawstorObjectMeta>{ret};
 }
@@ -546,9 +549,9 @@ Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     co_return std::vector<rawstd::URI>{location()};
 }
 
-rawstd::Task<void> Backend::set_sync_state(
-    const RawstdUUID& id, uint64_t offset,
-    const RawstorObjectSyncState& sync_state
+rawstd::Task<void> Backend::_write_meta(
+    const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
+    const RawstorObjectConfig& config
 ) {
     std::string dataset = _dataset(id, offset);
 
@@ -569,14 +572,17 @@ rawstd::Task<void> Backend::set_sync_state(
                (old_output.back() == '\n' || old_output.back() == '\r')) {
             old_output.pop_back();
         }
-        RawstorObjectSyncState old_sync_state;
-        meta_decode(old_output, &old_sync_state, &identity);
+        RawstorObjectSyncStateValue old_record_state{};
+        RawstorObjectConfig old_record_config{};
+        meta_decode(
+            old_output, &old_record_state, &old_record_config, &identity
+        );
     } catch (const std::system_error&) {
         identity = Backend::ChunkIdentity{};
     }
 
-    std::string prop =
-        std::string(rawstor_property) + "=" + meta_encode(sync_state, identity);
+    std::string prop = std::string(rawstor_property) + "=" +
+                       meta_encode(state, config, identity);
 
     std::vector<std::string> argv = {"zfs", "set", prop, dataset};
     try {
