@@ -97,6 +97,22 @@ private:
     // ticket order), if any.
     void _throttle_release() noexcept;
 
+public:
+    // A chunk's own placement identity (docs/mds.md, chunk_meta), minus
+    // size and mutable copy metadata: stamped at create, immutable afterwards,
+    // persisted alongside the copy metadata by meta_encode()/meta_decode()
+    // below. _write_record() must read the existing record and carry this
+    // part through unchanged rather than reset it, since it never
+    // receives this identity itself. chunk_size here is always the full
+    // byte value -- RawstorFrameAllocatePayload's own chunk_shift is
+    // only a wire-transfer encoding (its own doc comment on why), already
+    // converted back to bytes before reaching this local record.
+    struct ChunkIdentity {
+        RawstorMemberRole member_role;
+        uint8_t width;
+        uint64_t chunk_size;
+    };
+
 protected:
     // Opens the live version of `id`/`offset` -- every concrete subclass
     // implements this. `flags` is RAWSTOR_READONLY or 0: READONLY opens
@@ -161,7 +177,6 @@ protected:
     // class hierarchy needs it.
     static constexpr size_t META_MAX_SIZE = 512;
 
-protected:
     // The copy's record as stored (Backend::meta()); meta() below adds the
     // live count of sessions open for writing.
     virtual rawstd::Task<std::vector<RawstorObjectMeta>> _meta(
@@ -176,38 +191,6 @@ protected:
         const RawstorObjectConfig& record_config
     ) = 0;
 
-public:
-    // A chunk's own placement identity (docs/mds.md, chunk_meta), minus
-    // size and mutable copy metadata: stamped at create, immutable afterwards,
-    // persisted alongside the copy metadata by meta_encode()/meta_decode()
-    // below. _write_record() must read the existing record and carry this
-    // part through unchanged rather than reset it, since it never
-    // receives this identity itself. chunk_size here is always the full
-    // byte value -- RawstorFrameAllocatePayload's own chunk_shift is
-    // only a wire-transfer encoding (its own doc comment on why), already
-    // converted back to bytes before reaching this local record.
-    struct ChunkIdentity {
-        RawstorMemberRole member_role;
-        uint8_t width;
-        uint64_t chunk_size;
-    };
-
-    Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
-    ~Backend() override;
-
-    rawstd::Task<void> close() override final;
-
-    rawstd::Task<void> leave() override final;
-
-    rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t offset, int flags) override final;
-
-    rawstd::Task<void> set_version(
-        const RawstdUUID& object_id, uint64_t offset,
-        const RawstdUUID& version_id
-    ) override final;
-
-protected:
     // Encodes/decodes the copy state and configuration plus a ChunkIdentity
     // (the latter stamped at create and never changed again) as a compact
     // colon-separated string of hex fields, the roles one digit per member
@@ -236,6 +219,21 @@ protected:
     );
 
 public:
+    Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
+    ~Backend() override;
+
+    rawstd::Task<void> close() override final;
+
+    rawstd::Task<void> leave() override final;
+
+    rawstd::Task<void>
+    set_object(const RawstdUUID& id, uint64_t offset, int flags) override final;
+
+    rawstd::Task<void> set_version(
+        const RawstdUUID& object_id, uint64_t offset,
+        const RawstdUUID& version_id
+    ) override final;
+
     // Each takes the copy's record lock (LocalMember::record), so
     // concurrent changes to the record from any session of this process
     // apply one at a time.
