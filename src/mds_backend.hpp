@@ -163,11 +163,7 @@ public:
         RawstorObjectSyncStateValue expected, RawstorObjectSyncStateValue state
     ) override;
 
-    // No-op, for the same reason meta() above never persists anything of
-    // its own: this Backend's own outer "am I healthy" answer at offset 0
-    // is decorative (docs/mirroring.md, "legacy copy"), and every real
-    // per-chunk configuration meta() reports is each real member's own
-    // backend's job to persist, not this one's.
+    // Unsupported: configuration requests must address a specific real copy.
     rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectConfig& config, unsigned int flags
