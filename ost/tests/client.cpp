@@ -171,9 +171,9 @@ Client::send_write(uint64_t offset, const void* buf, size_t size, bool sync) {
         .payload = {
             .offset = offset,
             .hash = rawstd_hash_scalar(buf, size),
+            .epoch = 0,
             .len = static_cast<uint32_t>(size),
             .flags = static_cast<uint8_t>(sync ? RAWSTOR_FLAG_SYNC : 0),
-            .epoch = 0,
         },
     };
     send_all(_fd, &frame, sizeof(frame));
@@ -191,7 +191,7 @@ uint16_t Client::send_read(uint64_t offset, uint32_t size) {
                 .cid = cid,
             },
         .payload = {
-            .offset = offset, .hash = 0, .len = size, .flags = 0, .epoch = 0
+            .offset = offset, .hash = 0, .epoch = 0, .len = size, .flags = 0
         },
     };
     send_all(_fd, &frame, sizeof(frame));
@@ -208,7 +208,7 @@ uint16_t Client::send_discard(uint64_t offset, uint32_t size) {
                 .cid = cid,
             },
         .payload = {
-            .offset = offset, .hash = 0, .len = size, .flags = 0, .epoch = 0
+            .offset = offset, .hash = 0, .epoch = 0, .len = size, .flags = 0
         },
     };
     send_all(_fd, &frame, sizeof(frame));
@@ -232,9 +232,9 @@ uint16_t Client::send_write_zeroes(
         .payload = {
             .offset = offset,
             .hash = 0,
+            .epoch = 0,
             .len = size,
             .flags = flags,
-            .epoch = 0,
         },
     };
     send_all(_fd, &frame, sizeof(frame));

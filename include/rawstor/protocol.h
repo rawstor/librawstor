@@ -238,9 +238,9 @@ struct RawstorFrameVersionEntry {
 struct RawstorFrameIOPayload {
     uint64_t offset;
     uint64_t hash;
+    uint64_t epoch;
     uint32_t len;
     uint8_t flags;
-    uint64_t epoch;
 } RAWSTOR_PACKED;
 
 // RawstorFrameIOPayload::flags bits above: whether the affected range

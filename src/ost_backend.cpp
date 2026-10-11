@@ -335,9 +335,9 @@ public:
                 {
                     .offset = (uint64_t)offset,
                     .hash = 0,
+                    .epoch = 0,
                     .len = (uint32_t)_size,
                     .flags = 0,
-                    .epoch = 0,
                 },
         }),
         _hash(0) {}
@@ -418,9 +418,9 @@ public:
                 {
                     .offset = (uint64_t)offset,
                     .hash = 0,
+                    .epoch = 0,
                     .len = (uint32_t)_size,
                     .flags = 0,
-                    .epoch = 0,
                 },
         }),
         _hash(0) {}
@@ -494,12 +494,12 @@ public:
             .payload = {
                 .offset = (uint64_t)offset,
                 .hash = hash(buf, size),
+                .epoch = epoch,
                 .len = (uint32_t)size,
                 .flags = static_cast<uint8_t>(
                     (sync ? RAWSTOR_FLAG_SYNC : 0) |
                     (resync ? RAWSTOR_FLAG_RESYNC : 0)
                 ),
-                .epoch = epoch,
             },
         }) {
         _iov.reserve(2);
@@ -572,9 +572,9 @@ public:
             .payload = {
                 .offset = (uint64_t)offset,
                 .hash = hash(iov, niov),
+                .epoch = 0,
                 .len = (uint32_t)size,
                 .flags = static_cast<uint8_t>(sync ? RAWSTOR_FLAG_SYNC : 0),
-                .epoch = 0,
             },
         }) {
         _iov.reserve(1 + niov);
@@ -651,9 +651,9 @@ public:
             .payload = {
                 .offset = (uint64_t)offset,
                 .hash = 0,
+                .epoch = epoch,
                 .len = (uint32_t)size,
                 .flags = flags,
-                .epoch = epoch,
             },
         }) {}
 
