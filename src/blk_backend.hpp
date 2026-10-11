@@ -187,8 +187,7 @@ protected:
     // Called with the copy's record lock (LocalMember::record) held.
     virtual rawstd::Task<void> _write_record(
         const RawstdUUID& id, uint64_t offset,
-        RawstorObjectSyncStateValue record_state,
-        const RawstorObjectConfig& record_config
+        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
     ) = 0;
 
     // Encodes/decodes the copy state and configuration plus a ChunkIdentity
@@ -210,12 +209,12 @@ protected:
     // different format version, which this repo will never write again
     // once it's bumped).
     static std::string meta_encode(
-        RawstorObjectSyncStateValue record_state,
-        const RawstorObjectConfig& record_config, const ChunkIdentity& identity
+        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config,
+        const ChunkIdentity& identity
     );
     static void meta_decode(
-        const std::string& value, RawstorObjectSyncStateValue* record_state,
-        RawstorObjectConfig* record_config, ChunkIdentity* identity
+        const std::string& value, RawstorObjectSyncStateValue* state,
+        RawstorObjectConfig* config, ChunkIdentity* identity
     );
 
 public:

@@ -418,9 +418,9 @@ rawstd::Task<void> Backend::create(
 
         std::exception_ptr eptr;
         try {
-            RawstorObjectSyncStateValue record_state{};
-            RawstorObjectConfig record_config{};
-            record_state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+            RawstorObjectSyncStateValue state{};
+            RawstorObjectConfig config{};
+            state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
 
             // The placement identity (docs/mds.md, chunk_meta) is
             // stamped now, from the caller's own spec, and never touched
@@ -435,8 +435,7 @@ rawstd::Task<void> Backend::create(
             // rather than written at its own length, so this file's own
             // byte length stays fixed across every rewrite -- see
             // _write_record() below for why that matters.
-            std::string encoded =
-                meta_encode(record_state, record_config, identity);
+            std::string encoded = meta_encode(state, config, identity);
             std::array<char, META_MAX_SIZE> disk{};
             memcpy(disk.data(), encoded.data(), encoded.size());
 
@@ -547,8 +546,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_meta(
 
     int fd = co_await _queue.open(meta_path.c_str(), O_RDONLY | O_CLOEXEC, 0);
 
-    RawstorObjectSyncStateValue record_state{};
-    RawstorObjectConfig record_config{};
+    RawstorObjectSyncStateValue state{};
+    RawstorObjectConfig config{};
     ChunkIdentity identity;
     std::exception_ptr eptr;
     try {
@@ -559,10 +558,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_meta(
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
         try {
-            meta_decode(
-                std::string(disk.data()), &record_state, &record_config,
-                &identity
-            );
+            meta_decode(std::string(disk.data()), &state, &config, &identity);
         } catch (const std::system_error&) {
             rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
             throw;
@@ -580,8 +576,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_meta(
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
-    ret.state = record_state;
-    ret.config = record_config;
+    ret.state = state;
+    ret.config = config;
 
     co_return std::vector<RawstorObjectMeta>{ret};
 }
@@ -592,9 +588,8 @@ Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
 }
 
 rawstd::Task<void> Backend::_write_record(
-    const RawstdUUID& id, uint64_t offset,
-    RawstorObjectSyncStateValue record_state,
-    const RawstorObjectConfig& record_config
+    const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
+    const RawstorObjectConfig& config
 ) {
     std::string location_path = get_location_path(location());
 
@@ -641,8 +636,7 @@ rawstd::Task<void> Backend::_write_record(
         // META_MAX_SIZE bytes so this file's own byte length stays fixed
         // across every rewrite -- required here specifically, since this
         // is an in-place overwrite without O_TRUNC (see above).
-        std::string encoded =
-            meta_encode(record_state, record_config, identity);
+        std::string encoded = meta_encode(state, config, identity);
         disk.fill('\0');
         memcpy(disk.data(), encoded.data(), encoded.size());
 

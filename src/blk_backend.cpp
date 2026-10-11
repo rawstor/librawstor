@@ -289,8 +289,8 @@ Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
 }
 
 rawstd::Task<void> Backend::set_config(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int flags
+    const RawstdUUID& id, uint64_t offset,
+    const RawstorObjectConfig& new_config, unsigned int flags
 ) {
     std::shared_ptr<LocalMember> member = local_member(location(), id, offset);
     co_await member->record.lock(_queue);
@@ -298,22 +298,20 @@ rawstd::Task<void> Backend::set_config(
 
     // The copy keeps its own state. A volume without a record yet (F10)
     // starts CLEAN: nothing was written to it under one.
-    RawstorObjectSyncStateValue record_state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    RawstorObjectConfig record_config = config;
+    RawstorObjectSyncStateValue state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    RawstorObjectConfig config = new_config;
     try {
-        record_state = (co_await _meta(id, offset, RawstdUUID{})).front().state;
+        state = (co_await _meta(id, offset, RawstdUUID{})).front().state;
     } catch (const std::system_error&) {
     }
     if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 &&
-        record_state == RAWSTOR_OBJECT_SYNC_STATE_LOST) {
-        record_state = member->writers.load() == 0
-                           ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
-                           : RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
+        state == RAWSTOR_OBJECT_SYNC_STATE_LOST) {
+        state = member->writers.load() == 0 ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
+                                            : RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
     }
-    co_await _write_record(id, offset, record_state, record_config);
+    co_await _write_record(id, offset, state, config);
     member->dirty.store(
-        record_state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
-        std::memory_order_release
+        state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN, std::memory_order_release
     );
 }
 
@@ -369,10 +367,10 @@ rawstd::Task<uint64_t> Backend::_blk_size(
 }
 
 std::string Backend::meta_encode(
-    RawstorObjectSyncStateValue record_state,
-    const RawstorObjectConfig& record_config, const ChunkIdentity& identity
+    RawstorObjectSyncStateValue state, const RawstorObjectConfig& config,
+    const ChunkIdentity& identity
 ) {
-    const RawstorObjectConfig& c = record_config;
+    const RawstorObjectConfig& c = config;
     std::string roles;
     if (c.nroles == 0) {
         roles = "-";
@@ -387,7 +385,7 @@ std::string Backend::meta_encode(
         "version=%u:state=%u:epoch=%" PRIx64 ":sync_id=%" PRIx64 ":h0=%" PRIx64
         ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64
         ":roles=%s:member_role=%u:width=%u:chunk_size=%" PRIx64,
-        META_FORMAT_VERSION, (unsigned int)record_state, c.epoch, c.sync_id,
+        META_FORMAT_VERSION, (unsigned int)state, c.epoch, c.sync_id,
         c.sync_id_history[0], c.sync_id_history[1], c.sync_id_history[2],
         c.sync_id_history[3], roles.c_str(), (unsigned int)identity.member_role,
         (unsigned int)identity.width, identity.chunk_size
@@ -399,13 +397,13 @@ std::string Backend::meta_encode(
 }
 
 void Backend::meta_decode(
-    const std::string& value, RawstorObjectSyncStateValue* record_state,
-    RawstorObjectConfig* record_config, ChunkIdentity* identity
+    const std::string& value, RawstorObjectSyncStateValue* state,
+    RawstorObjectConfig* config, ChunkIdentity* identity
 ) {
-    *record_state = RawstorObjectSyncStateValue{};
-    *record_config = RawstorObjectConfig{};
+    *state = RawstorObjectSyncStateValue{};
+    *config = RawstorObjectConfig{};
     *identity = ChunkIdentity{};
-    RawstorObjectConfig& c = *record_config;
+    RawstorObjectConfig& c = *config;
     unsigned int version = 0;
     unsigned int parsed_state = 0;
     unsigned int member_role = 0;
@@ -442,7 +440,7 @@ void Backend::meta_decode(
         }
     }
     c.nroles = static_cast<uint8_t>(nroles);
-    *record_state = static_cast<RawstorObjectSyncStateValue>(parsed_state);
+    *state = static_cast<RawstorObjectSyncStateValue>(parsed_state);
     identity->member_role = static_cast<RawstorMemberRole>(member_role);
     identity->width = static_cast<uint8_t>(width);
 }

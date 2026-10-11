@@ -414,10 +414,10 @@ public:
 };
 
 TEST(BlkBackendTest, meta_encode_decode_round_trip) {
-    RawstorObjectSyncStateValue record_state{};
-    RawstorObjectConfig record_config{};
-    record_state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
-    RawstorObjectConfig& c = record_config;
+    RawstorObjectSyncStateValue state{};
+    RawstorObjectConfig config{};
+    state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
+    RawstorObjectConfig& c = config;
     c.epoch = 7;
     c.sync_id = 0x1122334455667788ull;
     c.sync_id_history[0] = 0xaabbccddeeff0011ull;
@@ -434,8 +434,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     identity.width = 3;
     identity.chunk_size = 0x1000;
 
-    std::string encoded =
-        MetadataBackend::meta_encode(record_state, record_config, identity);
+    std::string encoded = MetadataBackend::meta_encode(state, config, identity);
 
     RawstorObjectSyncStateValue decoded_state{};
     RawstorObjectConfig decoded_config{};
@@ -444,7 +443,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
         encoded, &decoded_state, &decoded_config, &decoded_identity
     );
     const RawstorObjectConfig& d = decoded_config;
-    EXPECT_EQ(decoded_state, record_state);
+    EXPECT_EQ(decoded_state, state);
     EXPECT_EQ(d.epoch, c.epoch);
     EXPECT_EQ(d.sync_id, c.sync_id);
     for (size_t i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; ++i) {
@@ -462,10 +461,10 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
 // The widest record -- every field at its widest, every member's role --
 // still fits a file:// copy's fixed-size record (META_MAX_SIZE).
 TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
-    RawstorObjectSyncStateValue record_state{};
-    RawstorObjectConfig record_config{};
-    record_state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
-    RawstorObjectConfig& c = record_config;
+    RawstorObjectSyncStateValue state{};
+    RawstorObjectConfig config{};
+    state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
+    RawstorObjectConfig& c = config;
     c.epoch = ~0ull;
     c.sync_id = ~0ull;
     for (uint64_t& h : c.sync_id_history) {
@@ -479,8 +478,7 @@ TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
         RAWSTOR_MEMBER_WITNESS, 255, ~0ull
     };
 
-    std::string encoded =
-        MetadataBackend::meta_encode(record_state, record_config, identity);
+    std::string encoded = MetadataBackend::meta_encode(state, config, identity);
     RawstorObjectSyncStateValue decoded_state{};
     RawstorObjectConfig decoded_config{};
     rawstor::blk::Backend::ChunkIdentity decoded_identity;
@@ -493,13 +491,11 @@ TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
 TEST(BlkBackendTest, meta_decode_rejects_empty_string) {
     /* A missing property/tag/record must never be mistaken for a valid
      * one. */
-    RawstorObjectSyncStateValue record_state{};
-    RawstorObjectConfig record_config{};
+    RawstorObjectSyncStateValue state{};
+    RawstorObjectConfig config{};
     rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
-        MetadataBackend::meta_decode(
-            "", &record_state, &record_config, &identity
-        ),
+        MetadataBackend::meta_decode("", &state, &config, &identity),
         std::system_error
     );
 }
@@ -507,24 +503,22 @@ TEST(BlkBackendTest, meta_decode_rejects_empty_string) {
 TEST(BlkBackendTest, meta_decode_rejects_dash) {
     /* ZFS's own "property never set" marker -- must not be mistaken for a
      * valid record either. */
-    RawstorObjectSyncStateValue record_state{};
-    RawstorObjectConfig record_config{};
+    RawstorObjectSyncStateValue state{};
+    RawstorObjectConfig config{};
     rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
-        MetadataBackend::meta_decode(
-            "-", &record_state, &record_config, &identity
-        ),
+        MetadataBackend::meta_decode("-", &state, &config, &identity),
         std::system_error
     );
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_malformed_string) {
-    RawstorObjectSyncStateValue record_state{};
-    RawstorObjectConfig record_config{};
+    RawstorObjectSyncStateValue state{};
+    RawstorObjectConfig config{};
     rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
         MetadataBackend::meta_decode(
-            "not the right format", &record_state, &record_config, &identity
+            "not the right format", &state, &config, &identity
         ),
         std::system_error
     );
@@ -533,14 +527,14 @@ TEST(BlkBackendTest, meta_decode_rejects_malformed_string) {
 TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
     /* A record from a format version this build no longer understands (or
      * ever wrote) must not be mistaken for a valid one. */
-    RawstorObjectSyncStateValue record_state{};
-    RawstorObjectConfig record_config{};
+    RawstorObjectSyncStateValue state{};
+    RawstorObjectConfig config{};
     rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
         MetadataBackend::meta_decode(
             "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
             "roles=-:member_role=0:width=0:chunk_size=0",
-            &record_state, &record_config, &identity
+            &state, &config, &identity
         ),
         std::system_error
     );

@@ -63,8 +63,7 @@ public:
 
     rawstd::Task<void> _write_record(
         const RawstdUUID& id, uint64_t offset,
-        RawstorObjectSyncStateValue record_state,
-        const RawstorObjectConfig& record_config
+        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
     ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
