@@ -213,18 +213,6 @@ public:
         const RawstorObjectConfig& config, unsigned int flags
     ) override final;
 
-    rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
-    ) override = 0;
-
-    // No universal answer for a raw block device -- left pure virtual
-    // (inherited from rawstor::Backend) rather than given a default here,
-    // so a new blk::Backend subclass that forgets to implement native
-    // per-copy metadata (docs/mirroring.md's "native per-copy mirror
-    // metadata" stage) fails to compile instead of silently bypassing the
-    // mirror's split-brain-exclusion mechanism at runtime. file::Backend/
-    // lvm::Backend/zfs::Backend each provide their own real implementation.
-
     rawstd::Task<size_t>
     pread(void* buf, size_t size, uint64_t offset) override final;
 
