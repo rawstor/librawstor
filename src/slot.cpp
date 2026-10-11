@@ -214,13 +214,12 @@ struct Slot::CopyState {
     // The record is known not to be CLEAN: a write needs no DIRTY mark of
     // its own. Read without the lock, set and cleared with it held.
     std::atomic<bool> dirty{false};
+    std::atomic<uint64_t> writes_issued{0};
+    std::atomic<uint64_t> writes_flushed{0};
 };
 
 std::shared_ptr<Slot::CopyState>
 Slot::_copy_state(const RawstdUUID& id, uint64_t offset) const {
-    if (!_get_backend()->stores_copy()) {
-        return nullptr;
-    }
     using Key = std::tuple<std::string, std::string, uint64_t>;
     static std::mutex registry_mu;
     static std::map<Key, std::weak_ptr<CopyState>> registry;
@@ -269,6 +268,7 @@ rawstd::Task<void> Slot::_mark_dirty() {
     }
     _wrote = true;
     std::shared_ptr<CopyState> member = _member;
+    ++member->writes_issued;
     if (member->dirty.load(std::memory_order_acquire)) {
         co_return;
     }
@@ -291,12 +291,10 @@ rawstd::Task<void> Slot::_mark_dirty() {
         co_return;
     }
     std::shared_ptr<Backend> be = _get_backend();
-    RawstorObjectMeta meta =
-        (co_await be->meta(id, offset, RawstdUUID{})).front();
-    if (meta.state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN) {
-        meta.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
-        co_await be->write_meta(id, offset, meta);
-    }
+    co_await be->set_state(
+        id, offset, RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        RAWSTOR_OBJECT_SYNC_STATE_DIRTY
+    );
     member->dirty.store(true, std::memory_order_release);
 }
 
@@ -313,25 +311,15 @@ rawstd::Task<void> Slot::_depart(std::shared_ptr<Backend> be) {
     if (!(_left ? remaining == 0 : _wrote)) {
         co_return;
     }
-    RawstorObjectMeta meta =
-        (co_await be->meta(id, offset, RawstdUUID{})).front();
-    if (meta.state != RAWSTOR_OBJECT_SYNC_STATE_DIRTY) {
-        co_return;
-    }
-    if (_left) {
+    if (_left &&
+        member->writes_flushed.load() != member->writes_issued.load()) {
         co_await be->flush();
-        meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    } else {
-        rawstd_warning(
-            "%s: a writer left without closing; the copy is LOST\n",
-            be->str().c_str()
-        );
-        meta.state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
     }
-    co_await be->write_meta(id, offset, meta);
-    member->dirty.store(
-        meta.state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN, std::memory_order_release
-    );
+    const RawstorObjectSyncStateValue state =
+        _left ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
+              : RAWSTOR_OBJECT_SYNC_STATE_LOST;
+    co_await be->set_state(id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY, state);
+    member->dirty.store(!_left, std::memory_order_release);
 }
 
 // A replacement connection does not erase an unclean departure of the
@@ -345,12 +333,10 @@ rawstd::Task<void> Slot::_lose_backend(std::shared_ptr<Backend> be) {
     const uint64_t offset = _offset;
     co_await member->record.lock(_queue);
     RecordLockGuard guard{member->record};
-    RawstorObjectMeta meta =
-        (co_await be->meta(id, offset, RawstdUUID{})).front();
-    if (meta.state == RAWSTOR_OBJECT_SYNC_STATE_DIRTY) {
-        meta.state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
-        co_await be->write_meta(id, offset, meta);
-    }
+    co_await be->set_state(
+        id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
+        RAWSTOR_OBJECT_SYNC_STATE_LOST
+    );
     _left = false;
 }
 
@@ -382,10 +368,10 @@ void Slot::_finish(rawstor::telemetry::TimePoint t_call) {
     rawstor::telemetry::record_lat(lat);
 }
 
-template <typename T, typename... Args>
+template <typename Owner, typename T, typename... Args>
 rawstd::Task<T> Slot::_with_retry(
     const char* func_name, rawstd::TraceEvent& trace_event,
-    rawstd::Task<T> (Backend::*method)(Args...),
+    rawstd::Task<T> (Owner::*method)(Args...),
     std::type_identity_t<Args>... args
 ) {
     // One retry budget, one behavior, regardless of what went wrong:
@@ -401,6 +387,13 @@ rawstd::Task<T> Slot::_with_retry(
 
     for (;;) {
         std::shared_ptr<Backend> be = _get_backend();
+        auto* owner = [&]() {
+            if constexpr (std::is_same_v<Owner, Backend>) {
+                return be.get();
+            } else {
+                return this;
+            }
+        }();
 
         // co_await is not permitted inside a catch handler, so the catch
         // block below only records what happened; every co_await this
@@ -422,7 +415,7 @@ rawstd::Task<T> Slot::_with_retry(
                 // sidesteps it (same idea as launch_open_op_coro()'s own
                 // workaround for a different GCC/coroutine ICE, just a
                 // different shape of the fix).
-                rawstd::Task<T> t = (be.get()->*method)(args...);
+                rawstd::Task<T> t = (owner->*method)(args...);
                 co_await t;
                 RAWSTD_TRACE_EVENT_MESSAGE(trace_event, "%s\n", "error = 0");
 
@@ -442,7 +435,7 @@ rawstd::Task<T> Slot::_with_retry(
                 // direct-initialized from co_await inside a try block --
                 // declaring `result` separately from the co_await that fills it
                 // in sidesteps it.
-                rawstd::Task<T> t = (be.get()->*method)(args...);
+                rawstd::Task<T> t = (owner->*method)(args...);
                 T result{};
                 result = co_await t;
                 RAWSTD_TRACE_EVENT_MESSAGE(
@@ -895,12 +888,10 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
 
     if ((flags & RAWSTOR_READONLY) == 0 && rawstd_uuid_is_nil(&version_id)) {
         std::shared_ptr<CopyState> member = _copy_state(id, offset);
-        if (member) {
-            co_await member->record.lock(_queue);
-            RecordLockGuard guard{member->record};
-            ++member->writers;
-            _member = std::move(member);
-        }
+        co_await member->record.lock(_queue);
+        RecordLockGuard guard{member->record};
+        ++member->writers;
+        _member = std::move(member);
     }
 
     // set_object() itself doesn't return the object's meta (see its own
@@ -1110,7 +1101,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Slot::meta(
             std::shared_ptr<CopyState> member = _copy_state(id, offset);
             if (member) {
                 for (RawstorObjectMeta& meta : result) {
-                    meta.writers = member->writers.load();
+                    meta.writers =
+                        std::max(meta.writers, member->writers.load());
                 }
             }
         }
@@ -1148,6 +1140,33 @@ rawstd::Task<void> Slot::leave() {
     _left = true;
 }
 
+rawstd::Task<void> Slot::_set_config(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
+    unsigned int flags
+) {
+    std::shared_ptr<CopyState> member = _copy_state(id, offset);
+    co_await member->record.lock(_queue);
+    RecordLockGuard guard{member->record};
+    std::shared_ptr<Backend> be = _get_backend();
+    RawstorObjectMeta meta{};
+    meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    try {
+        meta = (co_await be->meta(id, offset, RawstdUUID{})).front();
+    } catch (const std::system_error&) {
+    }
+    meta.writers = std::max(meta.writers, member->writers.load());
+    if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 &&
+        meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST) {
+        meta.state = meta.writers == 0 ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
+                                       : RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
+    }
+    meta.config = config;
+    co_await be->set_config(id, offset, config, flags, meta);
+    member->dirty.store(
+        meta.state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN, std::memory_order_release
+    );
+}
+
 rawstd::Task<void> Slot::set_config(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
     unsigned int flags
@@ -1158,35 +1177,8 @@ rawstd::Task<void> Slot::set_config(
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        std::shared_ptr<CopyState> member = _copy_state(id, offset);
-        if (member) {
-            co_await member->record.lock(_queue);
-            RecordLockGuard guard{member->record};
-            std::shared_ptr<Backend> be = _get_backend();
-            RawstorObjectMeta meta{};
-            meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-            try {
-                meta = (co_await be->meta(id, offset, RawstdUUID{})).front();
-            } catch (const std::system_error&) {
-            }
-            if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 &&
-                meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST) {
-                meta.state = member->writers.load() == 0
-                                 ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
-                                 : RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
-            }
-            meta.config = config;
-            co_await be->write_meta(id, offset, meta);
-            member->dirty.store(
-                meta.state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
-                std::memory_order_release
-            );
-            _finish(t_call);
-            co_return;
-        }
-
         co_await _with_retry(
-            func_name, trace_event, &Backend::set_config, id, offset, config,
+            func_name, trace_event, &Slot::_set_config, id, offset, config,
             flags
         );
         _finish(t_call);
@@ -1202,8 +1194,16 @@ rawstd::Task<void> Slot::flush() {
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
+    std::shared_ptr<CopyState> member = _member;
+    const uint64_t target = member ? member->writes_issued.load() : 0;
+    const bool sole_writer = member && member->writers.load() == 1;
     try {
         co_await _with_retry(func_name, trace_event, &Backend::flush);
+        // A flush cannot cover another writer whose I/O is still pending.
+        if (sole_writer && member->writers.load() == 1 &&
+            member->writes_issued.load() == target) {
+            member->writes_flushed.store(target);
+        }
         _finish(t_call);
         co_return;
     } catch (...) {

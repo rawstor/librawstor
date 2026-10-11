@@ -27,8 +27,8 @@ class Slot final {
 private:
     rawio::Queue& _queue;
 
-    // Shared by all Slots serving the same local copy, including Slots
-    // used only for metadata. Remote copies are coordinated by their server.
+    // Shared by all Slots serving the same location/id/offset, including
+    // Slots used only for metadata, regardless of the backend implementation.
     struct CopyState;
     std::shared_ptr<CopyState>
     _copy_state(const RawstdUUID& id, uint64_t offset) const;
@@ -40,6 +40,11 @@ private:
     rawstd::Task<void> _mark_dirty();
     rawstd::Task<void> _depart(std::shared_ptr<Backend> be);
     rawstd::Task<void> _lose_backend(std::shared_ptr<Backend> be);
+
+    rawstd::Task<void> _set_config(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectConfig& config, unsigned int flags
+    );
 
     // Set by open() (see its own doc comment) -- unset means this
     // Slot is only ever used for metadata (list/create/remove/
@@ -116,10 +121,10 @@ private:
     // references, and without this, deducing Args a second time from
     // the call arguments themselves (plain by-value here) would conflict
     // with what `method`'s own type already fixed them to.
-    template <typename T, typename... Args>
+    template <typename Owner, typename T, typename... Args>
     rawstd::Task<T> _with_retry(
         const char* func_name, rawstd::TraceEvent& trace_event,
-        rawstd::Task<T> (Backend::*method)(Args...),
+        rawstd::Task<T> (Owner::*method)(Args...),
         std::type_identity_t<Args>... args
     );
 

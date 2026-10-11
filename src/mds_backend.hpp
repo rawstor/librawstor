@@ -164,7 +164,8 @@ public:
     // backend's job to persist, not this one's.
     rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags
+        const RawstorObjectConfig& config, unsigned int flags,
+        const RawstorObjectMeta& meta
     ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;

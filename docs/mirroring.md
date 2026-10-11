@@ -161,7 +161,7 @@ recorded; otherwise it closes without one, and the members it wrote go
 `LOST`. An open reads `LOST` as `DIRTY` (F5).
 
 The state, the session count and the record lock live in the process that
-opens the copy (`LocalMember`, shared by all its sessions to that copy):
+opens the copy (`Slot::CopyState`, shared by all its sessions to that copy):
 a copy is a member of whichever process stores it.
 
 ### One copy per server

@@ -167,6 +167,10 @@ protected:
         RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
     ) = 0;
 
+    rawstd::Task<void> write_meta(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectMeta& meta
+    ) override final;
+
     // Encodes/decodes the copy state and configuration plus a ChunkIdentity
     // (the latter stamped at create and never changed again) as a compact
     // colon-separated string of hex fields, the roles one digit per member
@@ -209,10 +213,15 @@ public:
         const RawstdUUID& version_id
     ) override final;
 
-    bool stores_copy() const noexcept override final { return true; }
+    rawstd::Task<void> set_state(
+        const RawstdUUID& id, uint64_t offset,
+        RawstorObjectSyncStateValue expected, RawstorObjectSyncStateValue state
+    ) override final;
 
-    rawstd::Task<void> write_meta(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectMeta& meta
+    rawstd::Task<void> set_config(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectConfig& config, unsigned int flags,
+        const RawstorObjectMeta& meta
     ) override final;
 
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(

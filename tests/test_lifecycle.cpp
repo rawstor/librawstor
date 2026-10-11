@@ -646,7 +646,8 @@ TEST(OstLifecycleTest, create_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_set_state(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta_body);
+        s.cmd_set_state(RAWSTOR_MAGIC, 1, 0);
     }
 
     {

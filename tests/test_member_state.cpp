@@ -59,7 +59,7 @@ std::string id_string(const RawstdUUID& id) {
     return s;
 }
 
-class FileObject {
+class MemberObject {
 private:
     rawstor::tests::TmpDir _dir;
     RawstdUUID _id;
@@ -67,9 +67,13 @@ private:
 public:
     rawstor::Target target;
 
-    FileObject() :
+    MemberObject() :
         _id(new_id()),
         target({rawstd::URI(rawstd::URI(_dir.uri()), id_string(_id))}) {}
+
+    explicit MemberObject(const rawstd::URI& location) :
+        _id(new_id()),
+        target({rawstd::URI(location, id_string(_id))}) {}
 
     void create(rawio::Queue& queue) {
         RawstorObjectSpec spec{
@@ -96,7 +100,7 @@ void write_one(rawio::Queue& queue, rawstor::Object& object) {
 
 TEST(MemberStateTest, first_write_dirties_and_clean_close_cleans) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
-    FileObject f;
+    MemberObject f;
     f.create(*queue);
 
     std::unique_ptr<rawstor::Object> object =
@@ -114,7 +118,7 @@ TEST(MemberStateTest, first_write_dirties_and_clean_close_cleans) {
 
 TEST(MemberStateTest, last_clean_departure_cleans) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
-    FileObject f;
+    MemberObject f;
     f.create(*queue);
 
     std::unique_ptr<rawstor::Object> a = run(*queue, f.target.open(*queue, 0));
@@ -133,7 +137,7 @@ TEST(MemberStateTest, last_clean_departure_cleans) {
 
 TEST(MemberStateTest, abandoned_writer_loses_the_copy) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
-    FileObject f;
+    MemberObject f;
     f.create(*queue);
 
     std::unique_ptr<rawstor::Object> a = run(*queue, f.target.open(*queue, 0));
@@ -160,7 +164,7 @@ TEST(MemberStateTest, abandoned_writer_loses_the_copy) {
 
 TEST(MemberStateTest, abandoned_reader_changes_nothing) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
-    FileObject f;
+    MemberObject f;
     f.create(*queue);
 
     // Open for writing, but nothing written: leaving uncleanly loses
@@ -172,7 +176,7 @@ TEST(MemberStateTest, abandoned_reader_changes_nothing) {
 
 TEST(MemberStateTest, set_config_keeps_the_state_and_records_roles) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
-    FileObject f;
+    MemberObject f;
     f.create(*queue);
 
     std::unique_ptr<rawstor::Object> a = run(*queue, f.target.open(*queue, 0));
@@ -250,9 +254,10 @@ TEST(MemberStateTest, mds_object_passes_departure_to_its_chunks) {
 
 // Each writer has its own thread and Queue; metadata uses a third Slot.
 // Phase barriers let us inspect completed operations without timing probes.
-TEST(MemberStateTest, threads_share_copy_state_and_metadata_transitions) {
+namespace {
+
+void expect_thread_shared_copy_state(MemberObject& f) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
-    FileObject f;
     f.create(*queue);
     std::barrier phase(3);
     std::array<std::exception_ptr, 2> errors{};
@@ -303,6 +308,15 @@ TEST(MemberStateTest, threads_share_copy_state_and_metadata_transitions) {
         phase.arrive_and_wait();
         EXPECT_NO_THROW({
             RawstorObjectMeta meta = f.meta(*queue);
+            // A remote close completes before the server retires its session.
+            const auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            const uint32_t expected_writers =
+                step < 2 ? 2u : (step == 2 ? 1u : 0u);
+            while (meta.writers != expected_writers &&
+                   std::chrono::steady_clock::now() < deadline) {
+                meta = f.meta(*queue);
+            }
             EXPECT_EQ(meta.writers, step < 2 ? 2u : (step == 2 ? 1u : 0u));
             EXPECT_EQ(
                 meta.state, step == 0 || step == 3
@@ -332,4 +346,17 @@ TEST(MemberStateTest, threads_share_copy_state_and_metadata_transitions) {
     );
     EXPECT_EQ(actual, std::string(4096, 'A') + std::string(4096, 'B'));
     run(*queue, reader->close());
+}
+
+} // namespace
+
+TEST(MemberStateTest, threads_share_copy_state_and_metadata_transitions) {
+    MemberObject f;
+    expect_thread_shared_copy_state(f);
+}
+
+TEST(MemberStateTest, ost_threads_share_copy_state_and_metadata_transitions) {
+    rawstor::tests::ObjectEnv env(8788, 8789);
+    MemberObject f(rawstd::URI("ost://127.0.0.1:8789"));
+    expect_thread_shared_copy_state(f);
 }

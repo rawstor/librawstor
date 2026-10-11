@@ -186,6 +186,24 @@ Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
     set_fd(co_await _open_object(id, offset, flags));
 }
 
+rawstd::Task<void> Backend::set_state(
+    const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue expected,
+    RawstorObjectSyncStateValue state
+) {
+    RawstorObjectMeta meta = (co_await _meta(id, offset, RawstdUUID{})).front();
+    if (meta.state == expected) {
+        meta.state = state;
+        co_await write_meta(id, offset, meta);
+    }
+}
+
+rawstd::Task<void> Backend::set_config(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig&,
+    unsigned int, const RawstorObjectMeta& meta
+) {
+    co_await write_meta(id, offset, meta);
+}
+
 rawstd::Task<void> Backend::write_meta(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectMeta& meta
 ) {

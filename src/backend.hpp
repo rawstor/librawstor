@@ -49,6 +49,12 @@ protected:
     // before it hands the Backend back.
     virtual rawstd::Task<void> _connect() = 0;
 
+    // Persists a prepared transition, preserving immutable placement.
+    // Used by storage backends when applying a request serialized by Slot.
+    virtual rawstd::Task<void> write_meta(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectMeta& meta
+    );
+
 public:
     // Constructs the right backend for `location`'s scheme and
     // _connect()s it -- the returned Backend is immediately usable.
@@ -77,15 +83,12 @@ public:
     // For a locally stored copy this is a no-op: Slot owns writer sessions.
     virtual rawstd::Task<void> leave() = 0;
 
-    // True when this backend stores a copy here. Slot coordinates its
-    // writers and metadata; remote backends forward those requests.
-    virtual bool stores_copy() const noexcept { return false; }
-
-    // Durably replaces mutable copy metadata, preserving placement identity.
-    // Slot serializes read-modify-write transitions around this operation.
-    // Default: ENOTSUP for backends that forward requests elsewhere.
-    virtual rawstd::Task<void> write_meta(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectMeta& meta
+    // Changes the copy's own state only if it still equals expected.
+    // Storage backends persist this transition; forwarding backends leave
+    // it to the destination's writer sessions and use the default no-op.
+    virtual rawstd::Task<void> set_state(
+        const RawstdUUID& id, uint64_t offset,
+        RawstorObjectSyncStateValue expected, RawstorObjectSyncStateValue state
     );
 
     // `chunks`: overwritten with this page's own ChunkGroups, one per id,
@@ -209,12 +212,13 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) = 0;
 
-    // Forwards the chunk's configuration to the copy. Slot applies local
-    // transitions through write_meta(); the default here is ENOTSUP. The copy
-    // keeps its own state, but for RAWSTOR_CONFIG_CLEAR_LOST in `flags`.
+    // Applies a configuration request. Slot supplies the metadata prepared
+    // under its record lock; storage backends persist it, transports send
+    // the request for the destination to apply under its own lock.
     virtual rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags
+        const RawstorObjectConfig& config, unsigned int flags,
+        const RawstorObjectMeta& meta
     );
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
