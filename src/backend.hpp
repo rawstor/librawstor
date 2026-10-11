@@ -49,12 +49,6 @@ protected:
     // before it hands the Backend back.
     virtual rawstd::Task<void> _connect() = 0;
 
-    // Persists a prepared transition, preserving immutable placement.
-    // Used by storage backends when applying a request serialized by Slot.
-    virtual rawstd::Task<void> write_meta(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectMeta& meta
-    );
-
 public:
     // Constructs the right backend for `location`'s scheme and
     // _connect()s it -- the returned Backend is immediately usable.

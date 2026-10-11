@@ -79,11 +79,6 @@ rawstd::Task<void> Backend::set_state(
     co_return;
 }
 
-rawstd::Task<void>
-Backend::write_meta(const RawstdUUID&, uint64_t, const RawstorObjectMeta&) {
-    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
-}
-
 rawstd::Task<void> Backend::set_config(
     const RawstdUUID&, uint64_t, const RawstorObjectConfig&, unsigned int,
     const RawstorObjectMeta&
