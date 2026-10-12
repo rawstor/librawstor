@@ -2,6 +2,7 @@
 #define RAWSTD_CASPAXOS_HPP
 
 #include <rawstd/coro.hpp>
+#include <rawstd/gpp.hpp>
 
 #include <algorithm>
 #include <compare>
@@ -190,7 +191,7 @@ public:
     Task<V>
     change(Transport& transport, Change transform, size_t attempts = 16) {
         if (_busy) {
-            throw std::system_error(EBUSY, std::generic_category());
+            RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
         }
         _busy = true;
         struct Guard {
@@ -207,7 +208,7 @@ public:
                 current = _value;
             } else {
                 if (_counter >= std::numeric_limits<uint64_t>::max() - 1) {
-                    throw std::system_error(EOVERFLOW, std::generic_category());
+                    RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
                 }
                 ballot = Ballot{++_counter, _id};
                 Round prepared = co_await _round([&](size_t index) {
@@ -217,16 +218,14 @@ public:
                     if (prepared.refused) {
                         continue;
                     }
-                    throw std::system_error(
-                        EHOSTUNREACH, std::generic_category()
-                    );
+                    RAWSTD_THROW_SYSTEM_ERROR(EHOSTUNREACH);
                 }
                 current = prepared.latest->value();
             }
             std::optional<V> changed = transform(*current);
             V value = changed ? std::move(*changed) : std::move(*current);
             if (ballot.counter == std::numeric_limits<uint64_t>::max()) {
-                throw std::system_error(EOVERFLOW, std::generic_category());
+                RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
             }
             Ballot next{ballot.counter + 1, _id};
             _counter = std::max(_counter, next.counter);
@@ -241,10 +240,10 @@ public:
                 co_return value;
             }
             if (!accepted.refused) {
-                throw std::system_error(EHOSTUNREACH, std::generic_category());
+                RAWSTD_THROW_SYSTEM_ERROR(EHOSTUNREACH);
             }
         }
-        throw std::system_error(EAGAIN, std::generic_category());
+        RAWSTD_THROW_SYSTEM_ERROR(EAGAIN);
     }
 };
 
