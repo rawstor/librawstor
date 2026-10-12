@@ -97,8 +97,7 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
     config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
     config.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
     reply =
-        run(*queue,
-            target.sync_accept(*queue, 0, 0, {4, 1}, {5, 1}, config, 0));
+        run(*queue, target.sync_accept(*queue, 0, 0, {4, 1}, {5, 1}, config));
     EXPECT_TRUE(reply.ok);
 
     // What the member persisted, read back the ordinary way.
@@ -115,7 +114,7 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
     // A configuration set outside the register keeps the ballots: an old
     // ballot is still refused afterwards.
     config.epoch = 10;
-    run(*queue, target.set_member_config(*queue, 0, 0, config, 0, 0));
+    run(*queue, target.set_member_config(*queue, 0, 0, config, 0));
     meta = run(*queue, target.meta(*queue, 0)).front();
     EXPECT_EQ(meta.config.epoch, 10u);
     EXPECT_EQ(meta.promised.counter, 5u);
@@ -131,7 +130,8 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
     RawstdUUID id = new_id();
     rawstor::Target target(
-        {rawstd::URI(rawstd::URI("ost://127.0.0.1:8753"), id_string(id))}
+        {rawstd::URI(rawstd::URI("ost://127.0.0.1:8754"), id_string(id)),
+         rawstd::URI(rawstd::URI("ost://127.0.0.1:8753"), id_string(id))}
     );
 
     // Accepts the connection the request below opens; left open for the
@@ -161,7 +161,7 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     config.nroles = 3;
     config.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     rawstd::Task<RawstorObjectSyncReply> task =
-        target.sync_accept(*queue, 0, 0, {5, 0x77}, {6, 0x77}, config, 1);
+        target.sync_accept(*queue, 0, 1, {5, 0x77}, {6, 0x77}, config);
 
     for (int i = 0; i < 5000 && !got; ++i) {
         try {
@@ -177,7 +177,7 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     EXPECT_EQ(seen.payload.config.epoch, 3u);
     EXPECT_EQ(seen.payload.config.sync_id_history[0], 0x22u);
     EXPECT_EQ(seen.payload.config.resync_owner, 0x77u);
-    EXPECT_EQ(seen.payload.position, 1);
+    EXPECT_EQ(seen.payload.member_index, 1);
     ASSERT_EQ(seen.payload.config.nroles, 3);
     EXPECT_EQ(seen.payload.config.roles[2], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
 

@@ -287,7 +287,7 @@ struct RawstorFrameConfig {
 /*
  * SET_CONFIG's request: the configuration to record on one copy and
  * RAWSTOR_CONFIG_* `flags` (<rawstor/target.h>). The copy's own state is
- * not set: the copy keeps it. `position` is the copy's position among the
+ * not set: the copy keeps it. `member_index` is the copy's position among the
  * chunk's members, which `config.roles` is indexed by: the copy takes its
  * own role from it. Unlike META, it isn't wrapped in a
  * RawstorFrameBasicPayload of its own, so object_id/chunk_offset here are the
@@ -299,7 +299,7 @@ struct RawstorFrameSetConfigPayload {
     uint64_t chunk_offset;
     struct RawstorFrameConfig config;
     uint8_t flags;
-    uint8_t position;
+    uint8_t member_index;
 } RAWSTOR_PACKED;
 
 /* SET_CONFIG request */
@@ -396,7 +396,7 @@ struct RawstorFrameMetaPayload {
  * the ballot to promise on success (`next`, zero for none), the register's
  * value (`config`). Acceptance is one vote; the caller obtains a majority
  * of register acceptors, including the witness for two data copies.
- * `position` is the copy's position among the chunk's data members, as for
+ * `member_index` is the copy's position among the chunk's data members, as for
  * SET_CONFIG.
  */
 struct RawstorFrameSyncProposePayload {
@@ -405,7 +405,7 @@ struct RawstorFrameSyncProposePayload {
     struct RawstorFrameBallot ballot;
     struct RawstorFrameBallot next;
     struct RawstorFrameConfig config;
-    uint8_t position;
+    uint8_t member_index;
 } RAWSTOR_PACKED;
 
 /* SYNC_PREPARE / SYNC_ACCEPT request */

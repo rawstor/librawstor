@@ -155,13 +155,13 @@ TEST(MemberStateTest, abandoned_writer_loses_the_copy) {
     write_one(*queue, *b);
     RawstorObjectConfig config = f.meta(*queue).config;
     config.epoch += 1;
-    run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0, 0));
+    run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0));
     run(*queue, b->close());
     EXPECT_EQ(f.meta(*queue).state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
 
     // Only an explicit clear does.
     run(*queue, f.target.set_member_config(
-                    *queue, 0, 0, config, RAWSTOR_CONFIG_CLEAR_LOST, 0
+                    *queue, 0, 0, config, RAWSTOR_CONFIG_CLEAR_LOST
                 ));
     EXPECT_EQ(f.meta(*queue).state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 }
@@ -192,7 +192,7 @@ TEST(MemberStateTest, set_config_keeps_the_state_and_records_roles) {
     config.nroles = 2;
     config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
     config.roles[1] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
-    run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0, 0));
+    run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0));
 
     RawstorObjectMeta meta = f.meta(*queue);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
@@ -279,7 +279,7 @@ void expect_clear_lost_with_writer(MemberObject& f) {
     RawstorObjectConfig config = meta.config;
     ++config.epoch;
     run(*queue, f.target.set_member_config(
-                    *queue, 0, 0, config, RAWSTOR_CONFIG_CLEAR_LOST, 0
+                    *queue, 0, 0, config, RAWSTOR_CONFIG_CLEAR_LOST
                 ));
     meta = f.meta(*queue);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
@@ -334,9 +334,9 @@ void expect_thread_shared_copy_state(MemberObject& f) {
             config.sync_id = 0x44;
             config.nroles = 1;
             config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
-            EXPECT_NO_THROW(run(
-                *queue, f.target.set_member_config(*queue, 0, 0, config, 0, 0)
-            ));
+            EXPECT_NO_THROW(
+                run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0))
+            );
         }
         phase.arrive_and_wait();
         EXPECT_NO_THROW({

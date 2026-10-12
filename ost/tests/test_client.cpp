@@ -813,6 +813,11 @@ TEST(OstClientTest, sync_register_promises_and_accepts) {
         return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));
     ASSERT_EQ(client.recv_response().body.res, 0);
+    client.send_set_object(id);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    ASSERT_EQ(client.recv_response().body.res, 0);
 
     RawstorFrameSyncReplyPayload reply = sync_round_trip(
         client, queue, sync_frame(RAWSTOR_CMD_SYNC_PREPARE, id, 2, 7)
@@ -836,16 +841,19 @@ TEST(OstClientTest, sync_register_promises_and_accepts) {
     accept.payload.next = {3, 7};
     accept.payload.config.epoch = 5;
     accept.payload.config.sync_id = 0xabc;
-    accept.payload.config.nroles = 1;
-    accept.payload.config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    accept.payload.member_index = 1;
+    accept.payload.config.nroles = 2;
+    accept.payload.config.roles[0] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    accept.payload.config.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
     reply = sync_round_trip(client, queue, accept);
     EXPECT_EQ(reply.ok, 1);
     EXPECT_EQ(reply.meta.config.epoch, 5u);
     EXPECT_EQ(reply.meta.config.sync_id, 0xabcu);
     EXPECT_EQ(reply.meta.accepted.counter, 2u);
     EXPECT_EQ(reply.meta.promised.counter, 3u);
-    ASSERT_EQ(reply.meta.config.nroles, 1);
-    EXPECT_EQ(reply.meta.config.roles[0], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
+    ASSERT_EQ(reply.meta.config.nroles, 2);
+    EXPECT_EQ(reply.meta.config.roles[0], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
+    EXPECT_EQ(reply.meta.config.roles[1], RAWSTOR_OBJECT_MEMBER_SYNCING);
 
     // The same ballot again: already accepted under it, refused, and the
     // reply carries the value it holds.
@@ -861,6 +869,17 @@ TEST(OstClientTest, sync_register_promises_and_accepts) {
     EXPECT_EQ(reply.ok, 1);
     EXPECT_EQ(reply.meta.config.epoch, 6u);
     EXPECT_EQ(reply.meta.accepted.counter, 3u);
+
+    // The one local copy follows roles[1], not roles[0]. A RESYNC write
+    // succeeds only while the requested member's role is SYNCING.
+    std::string copy(512, 'R');
+    client.send_write_at_epoch(
+        0, copy.data(), copy.size(), 6, RAWSTOR_FLAG_RESYNC
+    );
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    EXPECT_EQ(client.recv_response().body.res, 512);
 }
 
 // A write stamped with an epoch below the copy's accepted configuration is
@@ -941,7 +960,7 @@ TEST(OstClientTest, resync_write_skips_sectors_clients_wrote) {
         frame.payload.config.nroles = 2;
         frame.payload.config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
         frame.payload.config.roles[1] = role;
-        frame.payload.position = 1;
+        frame.payload.member_index = 1;
         client.send_set_config(frame);
         expect_response(RAWSTOR_CMD_SET_CONFIG, 0);
     };

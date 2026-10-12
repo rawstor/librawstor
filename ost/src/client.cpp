@@ -3,6 +3,7 @@
 #include <ost/server.hpp>
 
 #include "object.hpp"
+#include "slot.hpp"
 #include "target.hpp"
 
 #include <rawio/queue.hpp>
@@ -1404,8 +1405,7 @@ rawstd::DetachedTask Client::_set_config(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets =
-        client->_targets(uuid, payload.chunk_offset);
+    const auto locations = client->_server.locations();
 
     RawstorObjectConfig config{};
     config.epoch = payload.config.epoch;
@@ -1418,24 +1418,29 @@ rawstd::DetachedTask Client::_set_config(
     config.nroles = payload.config.nroles;
     memcpy(config.roles, payload.config.roles, config.nroles);
 
-    // To its clients this server is one copy, whatever it stores the
-    // chunk on: the record is its one location's. Several locations are a
-    // mirror of this server's own, whose records belong to that inner
-    // mirror -- there is no record of the copy itself to keep, so it is a
-    // copy without state tracking (docs/mirroring.md, "One copy per
-    // server").
+    // The server's one copy is addressed locally at index 0; the request's
+    // member_index selects its role in the client's configuration.
     int result = 0;
-    if (targets.size() != 1) {
+    if (locations.size() != 1) {
         result = -ENOSYS;
     } else {
-        // Through Target rather than the C API: the copy's position among
-        // the client's members goes along, not this server's own.
         try {
-            rawstor::Target target(targets);
-            co_await target.set_member_config(
-                *static_cast<rawio::Queue*>(client->_queue),
-                payload.chunk_offset, 0, config, payload.flags, payload.position
-            );
+            rawio::Queue& queue = *static_cast<rawio::Queue*>(client->_queue);
+            std::unique_ptr<rawstor::Slot> slot;
+            slot = co_await rawstor::Slot::create(queue, locations.front());
+            std::exception_ptr error;
+            try {
+                co_await slot->set_config(
+                    uuid, payload.chunk_offset, config, payload.flags,
+                    payload.member_index
+                );
+            } catch (...) {
+                error = std::current_exception();
+            }
+            co_await slot->close();
+            if (error) {
+                std::rethrow_exception(error);
+            }
         } catch (const std::system_error& e) {
             result = -e.code().value();
         }
@@ -1466,8 +1471,7 @@ rawstd::DetachedTask Client::_sync(
 
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-    std::vector<rawstd::URI> targets =
-        client->_targets(uuid, payload.chunk_offset);
+    const auto locations = client->_server.locations();
 
     RawstorObjectBallot ballot{payload.ballot.counter, payload.ballot.proposer};
     RawstorObjectBallot next{payload.next.counter, payload.next.proposer};
@@ -1485,22 +1489,31 @@ rawstd::DetachedTask Client::_sync(
     // One copy, as for SET_CONFIG (_set_config()).
     int result = 0;
     RawstorObjectSyncReply reply{};
-    if (targets.size() != 1) {
+    if (locations.size() != 1) {
         result = -ENOSYS;
     } else {
-        // Through Target, as for SET_CONFIG.
         try {
-            rawstor::Target target(targets);
             rawio::Queue& queue = *static_cast<rawio::Queue*>(client->_queue);
-            if (head.cmd == RAWSTOR_CMD_SYNC_PREPARE) {
-                reply = co_await target.sync_prepare(
-                    queue, payload.chunk_offset, 0, ballot
-                );
-            } else {
-                reply = co_await target.sync_accept(
-                    queue, payload.chunk_offset, 0, ballot, next, config,
-                    payload.position
-                );
+            std::unique_ptr<rawstor::Slot> slot;
+            slot = co_await rawstor::Slot::create(queue, locations.front());
+            std::exception_ptr error;
+            try {
+                if (head.cmd == RAWSTOR_CMD_SYNC_PREPARE) {
+                    reply = co_await slot->sync_prepare(
+                        uuid, payload.chunk_offset, ballot
+                    );
+                } else {
+                    reply = co_await slot->sync_accept(
+                        uuid, payload.chunk_offset, ballot, next, config,
+                        payload.member_index
+                    );
+                }
+            } catch (...) {
+                error = std::current_exception();
+            }
+            co_await slot->close();
+            if (error) {
+                std::rethrow_exception(error);
             }
         } catch (const std::system_error& e) {
             result = -e.code().value();

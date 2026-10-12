@@ -211,7 +211,8 @@ public:
     // set_state(); transports forward flags to the destination's Slot.
     virtual rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags, uint8_t position
+        const RawstorObjectConfig& config, unsigned int flags,
+        uint8_t member_index
     ) = 0;
 
     // The two requests of the chunk's configuration register
@@ -219,7 +220,7 @@ public:
     // with the rawstd::caspaxos acceptor rules and persisted before the
     // reply. sync_accept() takes the register's value from `config`.
     // Acceptance is one vote; the caller establishes the register quorum.
-    // `position` is as for set_config(). A backend that holds no copy
+    // `member_index` is as for set_config(). A backend that holds no copy
     // of its own rejects register requests with ENOSYS.
     virtual rawstd::Task<RawstorObjectSyncReply> sync_prepare(
         const RawstdUUID& id, uint64_t offset,
@@ -229,7 +230,7 @@ public:
     virtual rawstd::Task<RawstorObjectSyncReply> sync_accept(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config, uint8_t position,
+        const RawstorObjectConfig& config, uint8_t member_index,
         const RawstorObjectSyncReply& proposed
     ) = 0;
 

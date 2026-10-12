@@ -942,8 +942,7 @@ rawstd::DetachedTask launch_set_member_config_op_coro(
     ssize_t result = 0;
     try {
         co_await t.set_member_config(
-            *queue, offset, member_index, config, flags,
-            static_cast<uint8_t>(member_index)
+            *queue, offset, member_index, config, flags
         );
     } catch (const std::system_error& e) {
         result = -e.code().value();
@@ -1004,8 +1003,7 @@ rawstd::Task<RawstorObjectSyncReply> sync_accept_coro(
     RawstorObjectConfig config
 ) {
     co_return co_await t.sync_accept(
-        *queue, offset, member_index, ballot, next, config,
-        static_cast<uint8_t>(member_index)
+        *queue, offset, member_index, ballot, next, config
     );
 }
 
@@ -1585,7 +1583,7 @@ rawstd::Task<rawstd::URI> Target::_member_location(
 
 rawstd::Task<void> Target::set_member_config(
     rawio::Queue& queue, uint64_t offset, size_t member_index,
-    RawstorObjectConfig config, unsigned int flags, uint8_t position
+    RawstorObjectConfig config, unsigned int flags
 ) const {
     rawstd::URI location =
         co_await _member_location(queue, offset, member_index);
@@ -1595,7 +1593,9 @@ rawstd::Task<void> Target::set_member_config(
         co_await rawstor::Slot::create(queue, location);
     std::exception_ptr error;
     try {
-        co_await slot->set_config(id, offset, config, flags, position);
+        co_await slot->set_config(
+            id, offset, config, flags, static_cast<uint8_t>(member_index)
+        );
     } catch (...) {
         error = std::current_exception();
     }
@@ -1632,7 +1632,7 @@ rawstd::Task<RawstorObjectSyncReply> Target::sync_prepare(
 rawstd::Task<RawstorObjectSyncReply> Target::sync_accept(
     rawio::Queue& queue, uint64_t offset, size_t member_index,
     RawstorObjectBallot ballot, RawstorObjectBallot next,
-    RawstorObjectConfig config, uint8_t position
+    RawstorObjectConfig config
 ) const {
     rawstd::URI location =
         co_await _member_location(queue, offset, member_index);
@@ -1644,7 +1644,7 @@ rawstd::Task<RawstorObjectSyncReply> Target::sync_accept(
     std::exception_ptr error;
     try {
         reply = co_await slot->sync_accept(
-            id, offset, ballot, next, config, position
+            id, offset, ballot, next, config, static_cast<uint8_t>(member_index)
         );
     } catch (...) {
         error = std::current_exception();

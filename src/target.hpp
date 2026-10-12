@@ -266,14 +266,12 @@ public:
     // no chunk sits at `offset`, EINVAL if `member_index` names no real
     // member of it (see this method's own doc comment in target.cpp for
     // how an opaque, e.g. mds://, target's real member list is resolved).
-    // `position` is the member's position among the chunk's members as
-    // `config.roles` lists them (Backend::set_config()): `member_index`
-    // itself for a member addressed among this target's own, rawstor-ost's
-    // client's for the one copy it serves. `config` is taken by value: it
-    // outlives the caller's argument, across the connect.
+    // `member_index` also selects the receiver's role in `config.roles`.
+    // `config` is taken by value and outlives the caller's argument across
+    // the connect. OST forwards this index to its one local copy.
     rawstd::Task<void> set_member_config(
         rawio::Queue& queue, uint64_t offset, size_t member_index,
-        RawstorObjectConfig config, unsigned int flags, uint8_t position
+        RawstorObjectConfig config, unsigned int flags
     ) const;
     // The two requests of the chunk's configuration register
     // (Backend::sync_prepare()/sync_accept()), sent to one member, which
@@ -287,7 +285,7 @@ public:
     rawstd::Task<RawstorObjectSyncReply> sync_accept(
         rawio::Queue& queue, uint64_t offset, size_t member_index,
         RawstorObjectBallot ballot, RawstorObjectBallot next,
-        RawstorObjectConfig config, uint8_t position
+        RawstorObjectConfig config
     ) const;
     // Removes every URI of every chunk concurrently -- unlike create()
     // above, there's no rollback to speak of (removal has nothing to

@@ -46,7 +46,8 @@ private:
 
     rawstd::Task<void> _set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags, uint8_t position
+        const RawstorObjectConfig& config, unsigned int flags,
+        uint8_t member_index
     );
     rawstd::Task<RawstorObjectSyncReply> _sync_prepare(
         const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
@@ -54,7 +55,7 @@ private:
     rawstd::Task<RawstorObjectSyncReply> _sync_accept(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config, uint8_t position
+        const RawstorObjectConfig& config, uint8_t member_index
     );
 
     // Set by open() (see its own doc comment) -- unset means this
@@ -206,7 +207,8 @@ public:
 
     rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags, uint8_t position
+        const RawstorObjectConfig& config, unsigned int flags,
+        uint8_t member_index
     );
 
     rawstd::Task<RawstorObjectSyncReply> sync_prepare(
@@ -216,7 +218,7 @@ public:
     rawstd::Task<RawstorObjectSyncReply> sync_accept(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config, uint8_t position
+        const RawstorObjectConfig& config, uint8_t member_index
     );
 
     // The writer's clean departure from this member's session

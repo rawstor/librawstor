@@ -163,7 +163,8 @@ public:
 
     rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags, uint8_t position
+        const RawstorObjectConfig& config, unsigned int flags,
+        uint8_t member_index
     ) override;
 
     rawstd::Task<void> leave() override;
@@ -177,7 +178,7 @@ public:
     rawstd::Task<RawstorObjectSyncReply> sync_accept(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config, uint8_t position,
+        const RawstorObjectConfig& config, uint8_t member_index,
         const RawstorObjectSyncReply& proposed
     ) override;
 

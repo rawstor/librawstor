@@ -1592,7 +1592,7 @@ rawstd::Task<RawstorObjectSyncReply> Slot::sync_prepare(
 rawstd::Task<RawstorObjectSyncReply> Slot::_sync_accept(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
     const RawstorObjectBallot& next, const RawstorObjectConfig& config,
-    uint8_t position
+    uint8_t member_index
 ) {
     std::shared_ptr<CopyState> member = _copy_state(id, offset);
     co_await member->record.lock(_queue);
@@ -1618,13 +1618,13 @@ rawstd::Task<RawstorObjectSyncReply> Slot::_sync_accept(
     meta.writers = std::max(meta.writers, member->writers.load());
     RawstorObjectSyncReply proposed{ok, meta};
     RawstorObjectSyncReply reply = co_await be->sync_accept(
-        id, offset, ballot, next, config, position, proposed
+        id, offset, ballot, next, config, member_index, proposed
     );
     if (reply.ok) {
         member->follow_role(
-            position < reply.meta.config.nroles
+            member_index < reply.meta.config.nroles
                 ? static_cast<RawstorObjectMemberRole>(
-                      reply.meta.config.roles[position]
+                      reply.meta.config.roles[member_index]
                   )
                 : RAWSTOR_OBJECT_MEMBER_UNKNOWN
         );
@@ -1637,7 +1637,7 @@ rawstd::Task<RawstorObjectSyncReply> Slot::_sync_accept(
 rawstd::Task<RawstorObjectSyncReply> Slot::sync_accept(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
     const RawstorObjectBallot& next, const RawstorObjectConfig& config,
-    uint8_t position
+    uint8_t member_index
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -1647,7 +1647,7 @@ rawstd::Task<RawstorObjectSyncReply> Slot::sync_accept(
     try {
         RawstorObjectSyncReply result = co_await _with_retry(
             func_name, trace_event, &Slot::_sync_accept, id, offset, ballot,
-            next, config, position
+            next, config, member_index
         );
         _finish(t_call);
         co_return result;
@@ -1664,14 +1664,14 @@ rawstd::Task<void> Slot::leave() {
 
 rawstd::Task<void> Slot::_set_config(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int flags, uint8_t position
+    unsigned int flags, uint8_t member_index
 ) {
     std::shared_ptr<CopyState> member = _copy_state(id, offset);
     co_await member->record.lock(_queue);
     RecordLockGuard guard{member->record};
     co_await member->raise_epoch(_queue, config.epoch);
     std::shared_ptr<Backend> be = _get_backend();
-    co_await be->set_config(id, offset, config, flags, position);
+    co_await be->set_config(id, offset, config, flags, member_index);
     if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) {
         co_await be->set_state(
             id, offset, RAWSTOR_OBJECT_SYNC_STATE_LOST,
@@ -1682,15 +1682,15 @@ rawstd::Task<void> Slot::_set_config(
         member->dirty.store(false, std::memory_order_release);
     }
     member->follow_role(
-        position < config.nroles
-            ? static_cast<RawstorObjectMemberRole>(config.roles[position])
+        member_index < config.nroles
+            ? static_cast<RawstorObjectMemberRole>(config.roles[member_index])
             : RAWSTOR_OBJECT_MEMBER_UNKNOWN
     );
 }
 
 rawstd::Task<void> Slot::set_config(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int flags, uint8_t position
+    unsigned int flags, uint8_t member_index
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -1700,7 +1700,7 @@ rawstd::Task<void> Slot::set_config(
     try {
         co_await _with_retry(
             func_name, trace_event, &Slot::_set_config, id, offset, config,
-            flags, position
+            flags, member_index
         );
         _finish(t_call);
     } catch (...) {

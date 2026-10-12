@@ -285,7 +285,7 @@ but for `flags` bit 0, `RAWSTOR_CONFIG_CLEAR_LOST`, which turns a `LOST`
 copy `CLEAN` (no session open for writing) or `DIRTY`. A server with
 several locations keeps no record of the copy it is and answers `-ENOSYS`
 ([mirroring](mirroring.md#one-copy-per-server)). The copy's ballots stay
-as they are: only the register's own requests change them. `position` is
+as they are: only the register's own requests change them. `member_index` is
 the copy's position among the chunk's members, which the Config's roles
 are indexed by: the copy takes its own role from it.
 
@@ -307,10 +307,10 @@ way -- disconnect, a new `SET_OBJECT` -- leaves a `DIRTY` copy `LOST`.
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  24  Config (312 bytes)
-     +----------+----------+
-336  |  flags   | position |
-     |          |          |
-     +----------+----------+
+     +----------+--------------+
+336  |  flags   | member_index |
+     |          |              |
+     +----------+--------------+
 338
 ```
 
@@ -324,7 +324,7 @@ register's value -- the Config -- under `ballot`, and to promise `next` on
 success (zero for none). Each successful accept is one vote; the client
 must obtain a majority of register acceptors. With two data copies, the
 witness supplies the third vote (multi-attach Stage 2 follows witness
-support). `position` is as for SetConfig and indexes data members. A
+support). `member_index` is as for SetConfig and indexes data members. A
 server with several locations answers `-ENOSYS`.
 
 ```text
@@ -342,9 +342,9 @@ server with several locations answers `-ENOSYS`.
  24  Ballot ballot (16 bytes)
  40  Ballot next (16 bytes)
  56  Config (312 bytes)
-     +----------+
-368  | position |
-     +----------+
+     +--------------+
+368  | member_index |
+     +--------------+
 369
 ```
 

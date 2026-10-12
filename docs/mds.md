@@ -843,7 +843,7 @@ durable CASPaxos acceptor for each chunk's configuration register, storing
 `SYNC_PREPARE` / `SYNC_ACCEPT` only after persisting the transition.
 Two data copies and their witness then provide three register votes; any
 two form a majority. The witness is omitted from data I/O and from the
-configuration's data-member `roles` and `position` numbering.
+configuration's data-member `roles` and `member_index` numbering.
 
 In multi-attach Stage 2, excluding a failed data member needs this register
 quorum before writes resume under the new epoch. The asynchronous witness

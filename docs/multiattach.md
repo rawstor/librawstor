@@ -17,7 +17,7 @@ separately.
 | Copies keep their own `DIRTY` / `CLEAN`; `LOST`; `LEAVE`; `rawstor_object_abandon()` | 1 | ✅ | [Mirroring](mirroring.md#dirty-clean-and-lost) |
 | Live writer count in `META` | 1 | ✅ | `RawstorObjectMeta.writers` |
 | A `rawstor-ost` is one copy; with several locations it keeps no record of it | 1 | ✅ | [Mirroring](mirroring.md#one-copy-per-server) |
-| Syncing is a role, not a `state`; a copy learns its own from its position in the request | 1 | ✅ | [Mirroring](mirroring.md#states-and-roles), `position` in `SET_CONFIG` / `SYNC_ACCEPT` |
+| Syncing is a role, not a `state`; a copy learns its own from its position in the request | 1 | ✅ | [Mirroring](mirroring.md#states-and-roles), `member_index` in `SET_CONFIG` / `SYNC_ACCEPT` |
 | `epoch` on write frames, `-ESTALE` below the copy's epoch, drain on raise | 1 | ✅ | `src/slot.cpp` (`Admission`) |
 | `RESYNC` flag on writes; client-write record of a syncing copy | 1 | ✅ | `src/slot.cpp` (`Resync`) |
 | `Proposer<V>`: a change as a coroutine over a pluggable transport | 2 | ✅ | `librawstd/include/rawstd/caspaxos.hpp`, [CASPaxos](caspaxos.md#api) |
@@ -141,7 +141,10 @@ A copy's role is the entry of `roles` at its position among the chunk's
 members ([Mirroring](mirroring.md#states-and-roles)). The record does not
 store that position: every request that records a configuration
 (`SET_CONFIG`, `SYNC_ACCEPT`) carries it for its receiver, which takes its
-own role from it as it records the value. The position is the same for
+own role from it as it records the value. `Target` uses the same
+`member_index` to select the destination and the role. An OST receives that
+index but always addresses its sole local copy; it uses the received index
+only to select `config.roles[member_index]`. The position is the same for
 every writer -- the order of a plain target's URIs, of an `mds://`
 chunk's placement -- and a `rawstor-ost` passes its client's on to the
 copy beneath it, never its own location's index.
@@ -443,9 +446,10 @@ record or frames, so both change in place. Details in
 
 - `include/rawstor/protocol.h`:
   - `SYNC_PREPARE` (`0x10`) and `SYNC_ACCEPT` (`0x11`):
-    `{object_id, chunk_offset, ballot, next, config, position}`; both reply with the member's record
+    `{object_id, chunk_offset, ballot, next, config, member_index}`; both
+    reply with the member's record
     (`RawstorFrameSyncReplyPayload`).
-  - `SET_CONFIG` carries the receiver's `position` too; it goes in stage 2
+  - `SET_CONFIG` carries the receiver's `member_index` too; it goes in stage 2
     (*Retiring `SET_CONFIG`*).
   - `META` reply carries the copy's ballots next to its configuration.
   - `RawstorFrameIOPayload` carries `epoch`, `FLUSH` carries it in `val`;
