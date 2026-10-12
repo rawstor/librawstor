@@ -309,7 +309,14 @@ public:
     // current configuration too; raw storage I/O needs no further checks.
     virtual rawstd::Task<size_t> pwrite(
         const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0, bool resync = false
+        uint64_t epoch = 0
+    ) = 0;
+
+    // Copy restoration data; remote backends preserve the RESYNC flag so
+    // the destination Slot protects newer client writes.
+    virtual rawstd::Task<size_t> resync(
+        const void* buf, size_t size, uint64_t offset, bool sync,
+        uint64_t epoch = 0
     ) = 0;
 
     virtual rawstd::Task<size_t> pwritev(

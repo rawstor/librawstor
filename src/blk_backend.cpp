@@ -396,7 +396,7 @@ Backend::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
 }
 
 rawstd::Task<size_t> Backend::pwrite(
-    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t, bool
+    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t
 ) {
 
     rawstd_debug(
@@ -417,6 +417,12 @@ rawstd::Task<size_t> Backend::pwrite(
     _throttle_release();
 
     co_return result;
+}
+
+rawstd::Task<size_t> Backend::resync(
+    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+) {
+    co_return co_await pwrite(buf, size, offset, sync, epoch);
 }
 
 rawstd::Task<size_t> Backend::pwritev(

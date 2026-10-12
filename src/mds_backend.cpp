@@ -645,14 +645,19 @@ Backend::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
 }
 
 rawstd::Task<size_t> Backend::pwrite(
-    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch,
-    bool resync
+    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
 ) {
-    if (epoch != 0 || resync) {
+    if (epoch != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
     }
 
     co_return co_await _opened().pwrite(buf, size, offset, sync);
+}
+
+rawstd::Task<size_t>
+Backend::resync(const void*, size_t, uint64_t, bool, uint64_t) {
+    RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    co_return 0;
 }
 
 rawstd::Task<size_t> Backend::pwritev(

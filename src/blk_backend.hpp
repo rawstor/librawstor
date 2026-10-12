@@ -239,7 +239,12 @@ public:
 
     rawstd::Task<size_t> pwrite(
         const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0, bool resync = false
+        uint64_t epoch = 0
+    ) override final;
+
+    rawstd::Task<size_t> resync(
+        const void* buf, size_t size, uint64_t offset, bool sync,
+        uint64_t epoch = 0
     ) override final;
 
     rawstd::Task<size_t> pwritev(

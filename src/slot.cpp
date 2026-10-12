@@ -1351,9 +1351,9 @@ rawstd::Task<size_t> Slot::pwrite(
             co_await _mark_dirty();
             for (const auto& [begin, end] : copy.runs) {
                 size_t written = co_await _with_retry(
-                    func_name, trace_event, &Backend::pwrite,
+                    func_name, trace_event, &Backend::resync,
                     static_cast<const char*>(buf) + begin - offset, end - begin,
-                    begin, sync, epoch, true
+                    begin, sync, epoch
                 );
                 if (written != end - begin) {
                     RAWSTD_THROW_SYSTEM_ERROR(EIO);
@@ -1369,7 +1369,7 @@ rawstd::Task<size_t> Slot::pwrite(
 
         size_t result = co_await _with_retry(
             func_name, trace_event, &Backend::pwrite, buf, size, offset, sync,
-            epoch, resync
+            epoch
         );
         _finish(t_call);
         co_return result;

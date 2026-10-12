@@ -2078,6 +2078,18 @@ Backend::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
 }
 
 rawstd::Task<size_t> Backend::pwrite(
+    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+) {
+    return _pwrite(buf, size, offset, sync, epoch, false);
+}
+
+rawstd::Task<size_t> Backend::resync(
+    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+) {
+    return _pwrite(buf, size, offset, sync, epoch, true);
+}
+
+rawstd::Task<size_t> Backend::_pwrite(
     const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch,
     bool resync
 ) {
