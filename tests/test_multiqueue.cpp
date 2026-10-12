@@ -559,7 +559,7 @@ TEST(MultiqueueTest, resync_while_queues_write) {
     }
     std::string log = testing::internal::GetCapturedStderr();
 
-    ASSERT_EQ(failures.load(), 0);
+    ASSERT_EQ(failures.load(), 0) << log;
     EXPECT_TRUE(synced);
     EXPECT_NE(log.find("rejoined the set"), std::string::npos);
     EXPECT_EQ(log.find("Mirror resync aborted"), std::string::npos);

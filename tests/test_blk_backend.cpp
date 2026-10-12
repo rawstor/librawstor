@@ -196,7 +196,7 @@ TEST(BlkBackendTest, write_throttle_limit) {
     tasks.reserve(writes);
     for (unsigned int i = 0; i < writes; ++i) {
         tasks.push_back(backend->pwrite(
-            payload.data(), payload.size(), i * payload.size(), false
+            payload.data(), payload.size(), i * payload.size(), false, 0
         ));
     }
 
@@ -243,7 +243,7 @@ TEST(BlkBackendTest, write_backlog_capacity) {
     tasks.reserve(writes);
     for (unsigned int i = 0; i < writes; ++i) {
         tasks.push_back(backend->pwrite(
-            payload.data(), payload.size(), i * payload.size(), false
+            payload.data(), payload.size(), i * payload.size(), false, 0
         ));
     }
 
@@ -289,12 +289,13 @@ TEST(BlkBackendTest, write_zeroes_zeroes_the_range) {
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
-        run(*queue, backend->pwrite(payload.data(), payload.size(), 0, false)),
+        run(*queue,
+            backend->pwrite(payload.data(), payload.size(), 0, false, 0)),
         payload.size()
     );
 
     EXPECT_EQ(
-        run(*queue, backend->write_zeroes(payload.size(), 0, false, false)),
+        run(*queue, backend->write_zeroes(payload.size(), 0, false, false, 0)),
         payload.size()
     );
 
@@ -326,12 +327,13 @@ TEST(BlkBackendTest, write_zeroes_unmap_zeroes_the_range) {
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
-        run(*queue, backend->pwrite(payload.data(), payload.size(), 0, false)),
+        run(*queue,
+            backend->pwrite(payload.data(), payload.size(), 0, false, 0)),
         payload.size()
     );
 
     EXPECT_EQ(
-        run(*queue, backend->write_zeroes(payload.size(), 0, true, false)),
+        run(*queue, backend->write_zeroes(payload.size(), 0, true, false, 0)),
         payload.size()
     );
 
@@ -363,12 +365,13 @@ TEST(BlkBackendTest, write_zeroes_sync_zeroes_the_range) {
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
-        run(*queue, backend->pwrite(payload.data(), payload.size(), 0, false)),
+        run(*queue,
+            backend->pwrite(payload.data(), payload.size(), 0, false, 0)),
         payload.size()
     );
 
     EXPECT_EQ(
-        run(*queue, backend->write_zeroes(payload.size(), 0, false, true)),
+        run(*queue, backend->write_zeroes(payload.size(), 0, false, true, 0)),
         payload.size()
     );
 
@@ -400,11 +403,14 @@ TEST(BlkBackendTest, discard_reports_requested_size) {
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
-        run(*queue, backend->pwrite(payload.data(), payload.size(), 0, false)),
+        run(*queue,
+            backend->pwrite(payload.data(), payload.size(), 0, false, 0)),
         payload.size()
     );
 
-    EXPECT_EQ(run(*queue, backend->discard(payload.size(), 0)), payload.size());
+    EXPECT_EQ(
+        run(*queue, backend->discard(payload.size(), 0, 0)), payload.size()
+    );
 }
 
 class MetadataBackend : public rawstor::blk::Backend {

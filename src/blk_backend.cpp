@@ -426,8 +426,10 @@ rawstd::Task<size_t> Backend::resync_pwrite(
 }
 
 rawstd::Task<size_t> Backend::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, uint64_t offset, bool sync
+    const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
+    bool sync, uint64_t epoch
 ) {
+    (void)epoch;
     rawstd_debug(
         "%s(): fd = %d, size = %zu, offset = %" PRIu64 ", sync = %d\n",
         __FUNCTION__, fd(), size, offset, sync

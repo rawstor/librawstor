@@ -238,32 +238,30 @@ public:
     ) override final;
 
     rawstd::Task<size_t> pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
     ) override final;
 
     rawstd::Task<size_t> resync_pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
     ) override final;
 
     rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
-        bool sync
+        bool sync, uint64_t epoch
     ) override final;
 
     rawstd::Task<size_t>
-    discard(size_t size, uint64_t offset, uint64_t epoch = 0) override final;
+    discard(size_t size, uint64_t offset, uint64_t epoch) override final;
 
     rawstd::Task<size_t> write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
     ) override final;
 
     rawstd::Task<size_t> resync_write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
     ) override final;
 
-    rawstd::Task<void> flush(uint64_t epoch = 0) override final;
+    rawstd::Task<void> flush(uint64_t epoch) override final;
 
     // For tests/ to verify write-throttling (see pwrite()/pwritev() and
     // _throttle_acquire()) without depending on real storage-completion

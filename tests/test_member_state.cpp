@@ -433,6 +433,10 @@ void expect_copy_write_requests(const rawstd::URI& location) {
     expect_stale(
         writer->pwrite(client_data.data(), client_data.size(), 512, false, 4)
     );
+    iovec stale_iov{client_data.data(), client_data.size()};
+    expect_stale(
+        writer->pwritev(&stale_iov, 1, client_data.size(), 512, false, 4)
+    );
     expect_stale(writer->discard(512, 0, 4));
     expect_stale(writer->write_zeroes(512, 0, false, false, 4));
     try {

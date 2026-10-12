@@ -559,7 +559,7 @@ public:
     BackendOpWriteV(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
-        bool sync, const rawstd::TraceEvent& trace_event
+        bool sync, const rawstd::TraceEvent& trace_event, uint64_t epoch
     ) :
         BackendOp(backend, cid, trace_event, "pwritev", size, offset),
         _request({
@@ -572,7 +572,7 @@ public:
             .payload = {
                 .offset = (uint64_t)offset,
                 .hash = hash(iov, niov),
-                .epoch = 0,
+                .epoch = epoch,
                 .len = (uint32_t)size,
                 .flags = static_cast<uint8_t>(sync ? RAWSTOR_FLAG_SYNC : 0),
             },
@@ -2120,7 +2120,8 @@ rawstd::Task<size_t> Backend::_pwrite(
 }
 
 rawstd::Task<size_t> Backend::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, uint64_t offset, bool sync
+    const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
+    bool sync, uint64_t epoch
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         's', "fd = %d, size = %zu, offset = %" PRIu64 ", sync = %d\n", fd(),
@@ -2129,7 +2130,7 @@ rawstd::Task<size_t> Backend::pwritev(
 
     std::shared_ptr<BackendOpWriteV> op = std::make_shared<BackendOpWriteV>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        iov, niov, size, offset, sync, trace_event
+        iov, niov, size, offset, sync, trace_event, epoch
     );
     _add_op(op);
 

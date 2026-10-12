@@ -336,9 +336,9 @@ TEST(ObjectCloseTest, mds_backend_io_after_close_is_enotconn) {
         }
     };
     char buf[4096] = {};
-    expect_enotconn(backend->flush());
+    expect_enotconn(backend->flush(0));
     expect_enotconn(backend->pread(buf, sizeof(buf), 0));
-    expect_enotconn(backend->pwrite(buf, sizeof(buf), 0, false));
+    expect_enotconn(backend->pwrite(buf, sizeof(buf), 0, false, 0));
 
     EXPECT_EQ(target_remove(*queue, target), 0);
 }

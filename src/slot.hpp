@@ -261,32 +261,29 @@ public:
     preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset);
 
     rawstd::Task<size_t> pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
     );
 
     rawstd::Task<size_t> resync_pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
     );
 
     rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
-        bool sync
+        bool sync, uint64_t epoch
     );
 
-    rawstd::Task<size_t>
-    discard(size_t size, uint64_t offset, uint64_t epoch = 0);
+    rawstd::Task<size_t> discard(size_t size, uint64_t offset, uint64_t epoch);
 
     rawstd::Task<size_t> write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
     );
 
     rawstd::Task<size_t> resync_write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
     );
 
-    rawstd::Task<void> flush(uint64_t epoch = 0);
+    rawstd::Task<void> flush(uint64_t epoch);
 };
 
 } // namespace rawstor

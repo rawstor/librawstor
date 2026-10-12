@@ -661,8 +661,12 @@ Backend::resync_pwrite(const void*, size_t, uint64_t, bool, uint64_t) {
 }
 
 rawstd::Task<size_t> Backend::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, uint64_t offset, bool sync
+    const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
+    bool sync, uint64_t epoch
 ) {
+    if (epoch != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    }
     co_return co_await _opened().pwritev(iov, niov, size, offset, sync);
 }
 

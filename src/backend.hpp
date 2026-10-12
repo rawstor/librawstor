@@ -308,20 +308,18 @@ public:
     // context travels with remote requests so the destination enforces its
     // current configuration too; raw storage I/O needs no further checks.
     virtual rawstd::Task<size_t> pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
     ) = 0;
 
     // Copy restoration data; remote backends preserve the RESYNC flag so
     // the destination Slot protects newer client writes.
     virtual rawstd::Task<size_t> resync_pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
     ) = 0;
 
     virtual rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
-        bool sync
+        bool sync, uint64_t epoch
     ) = 0;
 
     // Hints that [offset, offset + size) is no longer in use -- a pure
@@ -330,7 +328,7 @@ public:
     // range reads back as zero afterward. Returns the number of bytes
     // covered by the hint, mirroring pwrite()'s own byte-count result.
     virtual rawstd::Task<size_t>
-    discard(size_t size, uint64_t offset, uint64_t epoch = 0) = 0;
+    discard(size_t size, uint64_t offset, uint64_t epoch) = 0;
 
     // Zeroes [offset, offset + size) -- unlike discard() above, the range
     // is guaranteed to read back as zero once this completes. `unmap`
@@ -339,14 +337,14 @@ public:
     // VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP. `sync` has the same meaning as
     // pwrite()/pwritev()'s own `sync`.
     virtual rawstd::Task<size_t> write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
     ) = 0;
 
     virtual rawstd::Task<size_t> resync_write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
     ) = 0;
 
-    virtual rawstd::Task<void> flush(uint64_t epoch = 0) = 0;
+    virtual rawstd::Task<void> flush(uint64_t epoch) = 0;
 };
 
 } // namespace rawstor

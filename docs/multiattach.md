@@ -22,7 +22,8 @@ separately.
 | `RESYNC` flag on writes; client-write record of a syncing copy | 1 | ✅ | `src/slot.cpp` (`Resync`) |
 | `Proposer<V>`: a change as a coroutine over a pluggable transport | 2 | ✅ | `librawstd/include/rawstd/caspaxos.hpp`, [CASPaxos](caspaxos.md#api) |
 | Every transition through the register | 2 | ❌ | the client uses `SET_CONFIG` |
-| The client stamps writes with its `epoch`; adoption on `-ESTALE` | 2 | ❌ | the client sends 0 |
+| The client stamps writes with its chunk configuration epoch | 1 | ✅ | ordinary Chunk operations supply the current epoch |
+| Adoption of the register value on `-ESTALE` from another writer process | 2 | ❌ | requires witness and the client Proposer |
 | `LOST` at open and at runtime: resync of the losers | 2 | ❌ | open treats `LOST` as `DIRTY` |
 | Resync across processes (`resync_owner`, sweep with `RESYNC`) | 2 | ❌ | — |
 | `SET_CONFIG` and `rawstor_target_set_member_config()` retired | 2 | ❌ | [Retiring `SET_CONFIG`](#retiring-set_config) |
@@ -52,8 +53,9 @@ member's behavior that several writer processes need, so that stage 2 is a
 client-side change only: servers are upgraded first. With stage 1 the
 client still runs as the one writer process of a chunk: it sets the
 configuration with `SET_CONFIG`, makes no transition through the register
-and stamps its writes with epoch 0. Several processes writing one object
-at once are not supported yet, and nothing refuses them.
+and stamps its writes with the current chunk configuration epoch. Several
+processes writing one object at once are not supported yet, and nothing
+refuses them.
 
 **Stage 2** lets several processes write. There is no primary: no member,
 server or client is the place every write goes through (unlike Ceph's
@@ -262,7 +264,9 @@ The value carries no `state` of the copy itself: `DIRTY`, `CLEAN` and
 `WRITE`, `WRITE_ZEROES`, `DISCARD` and `FLUSH` carry the `epoch` of the
 configuration the writer uses (`FLUSH` in Basic's `val`). A copy whose
 accepted `epoch` is higher refuses the request with `-ESTALE`; `0` is never
-refused (a single-member chunk, `rawstor resolve`, the stage-1 client).
+refused (an unconfigured chunk or an explicitly unstamped request).
+Ordinary Chunk operations supply their current configuration epoch; OST
+operations take the remote writer's epoch explicitly, including zero.
 Cost on the hot path: two atomic operations in the member's memory.
 
 `rawstor-ost` admits every request of a session on the `Slot::CopyState` of
@@ -477,7 +481,7 @@ record or frames, so both change in place. Details in
    copies' own `DIRTY`/`CLEAN`/`LOST`, roles in every record, `LEAVE`, the
    writer count, `-ESTALE`, and the record of client writes for `RESYNC`.
    The client keeps working as one writer process:
-   epoch 0 on its writes, `SET_CONFIG` for its transitions.
+   the current chunk epoch on its writes, `SET_CONFIG` for its transitions.
 
    **Prerequisite before Stage 2: witness support.** ❌ Implement the
    witness planned in [MDS](mds.md#witness-stage-3), including durable
@@ -486,7 +490,7 @@ record or frames, so both change in place. Details in
    development precedes multi-attach Stage 2, rather than following it.
 2. **Several processes and machines, after witness.** ❌ Integrate the
    implemented `rawstd::caspaxos::Proposer`; every transition
-   through the register; the client's epoch on writes and adoption on
+   through the register; adoption of the committed configuration on
    `-ESTALE`; resync of `LOST` chunks; resync across processes; a rule
    for clearing `LOST`, then `SET_CONFIG` and
    `rawstor_target_set_member_config()` removed; the register value kept

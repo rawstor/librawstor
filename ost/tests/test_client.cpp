@@ -781,8 +781,10 @@ TEST(OstClientTest, several_locations_keep_no_record_of_the_copy) {
         0, ping.data(), ping.size(), 0, RAWSTOR_FLAG_RESYNC
     );
     expect_response(RAWSTOR_CMD_WRITE, -EOPNOTSUPP);
+    // An explicit zero epoch still selects the copy-facing operation;
+    // it must not turn the OST into a writer for a nested mirror.
     client.send_write_at_epoch(0, ping.data(), ping.size(), 0);
-    expect_response(RAWSTOR_CMD_WRITE, static_cast<int32_t>(ping.size()));
+    expect_response(RAWSTOR_CMD_WRITE, -EOPNOTSUPP);
 
     client.send_meta(id, 0);
     RawstorFrameMetaPayload meta{};

@@ -401,6 +401,7 @@ Chunk::Chunk(
             _control->states[0].store(MemberState::IN_SYNC);
             _control->records[0] = _members.front().meta.config;
             _control->size = _members.front().meta.spec.size;
+            _control->epoch = _members.front().meta.config.epoch;
         } else {
             _reconcile_sync_set();
         }
@@ -1500,14 +1501,30 @@ rawstd::Task<void> Chunk::_fan_out_write_one(
     size_t idx, std::function<rawstd::Task<size_t>(Slot&)> issue,
     std::shared_ptr<FanOutWriteState> st
 ) {
-    try {
-        size_t result = co_await issue(*_members[idx].slot);
-        st->any_success = true;
-        st->result = std::min(st->result, result);
-    } catch (const std::system_error&) {
-        // Already logged by the member's own Slot; _degrade() reports
-        // the exclusion itself.
-        st->failed.push_back(idx);
+    for (;;) {
+        uint64_t epoch = _epoch();
+        try {
+            size_t result = co_await issue(*_members[idx].slot);
+            st->any_success = true;
+            st->result = std::min(st->result, result);
+            co_return;
+        } catch (const std::system_error& e) {
+            if (e.code().value() != ESTALE) {
+                st->failed.push_back(idx);
+                co_return;
+            }
+        }
+        // This process may have raised the copy's epoch while its shared
+        // configuration is still being persisted. Finish that transition
+        // before retrying with the new epoch. An external stale writer
+        // cannot refresh its configuration this way.
+        co_await _lock();
+        uint64_t current = _epoch();
+        _unlock();
+        if (current == epoch) {
+            st->failed.push_back(idx);
+            co_return;
+        }
     }
 }
 
@@ -1645,7 +1662,7 @@ rawstd::Task<size_t> Chunk::_fan_out_write(
 }
 
 rawstd::Task<size_t> Chunk::_flush_one(Slot& slot) {
-    co_await slot.flush();
+    co_await slot.flush(_epoch());
     co_return 0;
 }
 
@@ -2157,10 +2174,12 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
             try {
                 Slot& target = *_members[idx].slot;
                 if (zero) {
-                    wresult =
-                        co_await target.write_zeroes(len, off, true, false);
+                    wresult = co_await target.write_zeroes(
+                        len, off, true, false, _epoch()
+                    );
                 } else {
-                    wresult = co_await target.pwrite(data, len, off, false);
+                    wresult =
+                        co_await target.pwrite(data, len, off, false, _epoch());
                 }
             } catch (const std::system_error& e) {
                 werror = e.code().value();
@@ -2580,7 +2599,7 @@ rawstd::DetachedTask Chunk::_read_repair(
 
     try {
         size_t result = co_await _members[idx].slot->pwrite(
-            data.data(), data.size(), offset, false
+            data.data(), data.size(), offset, false, _epoch()
         );
         if (alive.expired()) {
             co_return;
@@ -2670,24 +2689,32 @@ Chunk::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
     }
 }
 
+uint64_t Chunk::_epoch() const {
+    std::lock_guard<std::mutex> guard(_control->mu);
+    return _control->epoch;
+}
+
 rawstd::Task<size_t> Chunk::pwrite(
     const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
 ) {
     _check_range(offset, size);
-    if (epoch != 0) {
-        if (_members.size() != 1) {
-            RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
-        }
-        if (_readonly) {
-            RAWSTD_THROW_SYSTEM_ERROR(EROFS);
-        }
-        WriteTicket ticket(*this);
-        size_t result = co_await _members.front().slot->pwrite(
-            buf, size, offset, sync, epoch
-        );
-        _unflushed = true;
-        co_return result;
+
+    if (_members.size() != 1) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
     }
+    if (_readonly) {
+        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+    }
+    WriteTicket ticket(*this);
+    size_t result =
+        co_await _members.front().slot->pwrite(buf, size, offset, sync, epoch);
+    _unflushed = true;
+    co_return result;
+}
+
+rawstd::Task<size_t>
+Chunk::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
+    _check_range(offset, size);
 
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pwrite(): size = %zu, offset = %" PRIu64 ", sync = %d\n", size,
@@ -2705,9 +2732,9 @@ rawstd::Task<size_t> Chunk::pwrite(
         co_await _with_dirty();
         size_t result = co_await _fan_out_write(
             offset, size,
-            [buf, size, offset, sync,
-             epoch](Slot& slot) -> rawstd::Task<size_t> {
-                return slot.pwrite(buf, size, offset, sync, epoch);
+            [this, buf, size, offset,
+             sync](Slot& slot) -> rawstd::Task<size_t> {
+                return slot.pwrite(buf, size, offset, sync, _epoch());
             }
         );
         _unflushed = true;
@@ -2762,9 +2789,9 @@ rawstd::Task<size_t> Chunk::pwritev(
         co_await _with_dirty();
         size_t result = co_await _fan_out_write(
             offset, size,
-            [iov, niov, size, offset,
+            [this, iov, niov, size, offset,
              sync](Slot& slot) -> rawstd::Task<size_t> {
-                return slot.pwritev(iov, niov, size, offset, sync);
+                return slot.pwritev(iov, niov, size, offset, sync, _epoch());
             }
         );
         _unflushed = true;
@@ -2784,19 +2811,22 @@ rawstd::Task<size_t> Chunk::pwritev(
 rawstd::Task<size_t>
 Chunk::discard(size_t size, uint64_t offset, uint64_t epoch) {
     _check_range(offset, size);
-    if (epoch != 0) {
-        if (_members.size() != 1) {
-            RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
-        }
-        if (_readonly) {
-            RAWSTD_THROW_SYSTEM_ERROR(EROFS);
-        }
-        WriteTicket ticket(*this);
-        size_t result =
-            co_await _members.front().slot->discard(size, offset, epoch);
-        _unflushed = true;
-        co_return result;
+
+    if (_members.size() != 1) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
     }
+    if (_readonly) {
+        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+    }
+    WriteTicket ticket(*this);
+    size_t result =
+        co_await _members.front().slot->discard(size, offset, epoch);
+    _unflushed = true;
+    co_return result;
+}
+
+rawstd::Task<size_t> Chunk::discard(size_t size, uint64_t offset) {
+    _check_range(offset, size);
 
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "discard(): size = %zu, offset = %" PRIu64 "\n", size, offset
@@ -2822,8 +2852,8 @@ Chunk::discard(size_t size, uint64_t offset, uint64_t epoch) {
     // other in-sync member, purely for its own space-accounting consistency.
     try {
         size_t result = co_await _fan_out_write(
-            0, 0, [size, offset, epoch](Slot& slot) -> rawstd::Task<size_t> {
-                return slot.discard(size, offset, epoch);
+            0, 0, [this, size, offset](Slot& slot) -> rawstd::Task<size_t> {
+                return slot.discard(size, offset, _epoch());
             }
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
@@ -2843,20 +2873,24 @@ rawstd::Task<size_t> Chunk::write_zeroes(
     size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
 ) {
     _check_range(offset, size);
-    if (epoch != 0) {
-        if (_members.size() != 1) {
-            RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
-        }
-        if (_readonly) {
-            RAWSTD_THROW_SYSTEM_ERROR(EROFS);
-        }
-        WriteTicket ticket(*this);
-        size_t result = co_await _members.front().slot->write_zeroes(
-            size, offset, unmap, sync, epoch
-        );
-        _unflushed = true;
-        co_return result;
+
+    if (_members.size() != 1) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
     }
+    if (_readonly) {
+        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+    }
+    WriteTicket ticket(*this);
+    size_t result = co_await _members.front().slot->write_zeroes(
+        size, offset, unmap, sync, epoch
+    );
+    _unflushed = true;
+    co_return result;
+}
+
+rawstd::Task<size_t>
+Chunk::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
+    _check_range(offset, size);
 
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o',
@@ -2876,9 +2910,9 @@ rawstd::Task<size_t> Chunk::write_zeroes(
         co_await _with_dirty();
         size_t result = co_await _fan_out_write(
             offset, size,
-            [size, offset, unmap, sync,
-             epoch](Slot& slot) -> rawstd::Task<size_t> {
-                return slot.write_zeroes(size, offset, unmap, sync, epoch);
+            [this, size, offset, unmap,
+             sync](Slot& slot) -> rawstd::Task<size_t> {
+                return slot.write_zeroes(size, offset, unmap, sync, _epoch());
             }
         );
         _unflushed = true;
@@ -2914,19 +2948,16 @@ rawstd::Task<size_t> Chunk::resync_write_zeroes(
 }
 
 rawstd::Task<void> Chunk::flush(uint64_t epoch) {
-    if (epoch != 0) {
-        if (_members.size() != 1) {
-            RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
-        }
-        co_await _flush_barrier.at_least(_writes_issued);
-        co_await _members.front().slot->flush(epoch);
-        _unflushed = false;
-        co_return;
-    }
-
-    if ((epoch != 0) && _members.size() != 1) {
+    if (_members.size() != 1) {
         RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
     }
+    co_await _flush_barrier.at_least(_writes_issued);
+    co_await _members.front().slot->flush(epoch);
+    _unflushed = false;
+    co_return;
+}
+
+rawstd::Task<void> Chunk::flush() {
 
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('o', "%s\n", "flush()");
 
@@ -2949,6 +2980,11 @@ rawstd::Task<void> Chunk::flush(uint64_t epoch) {
         co_return;
     }
 
+    // A configuration transition must finish before its epoch is used
+    // for the durability barrier on the surviving members.
+    while (_meta_gate.running()) {
+        co_await _meta_gate.settle();
+    }
     try {
         co_await _fan_out_write(
             0, 0, [this](Slot& slot) -> rawstd::Task<size_t> {

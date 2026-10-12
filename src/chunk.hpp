@@ -38,7 +38,6 @@ enum class MemberState { IN_SYNC, LEAVING, STALE, SYNCING };
 // same mirrored chunk (one per virtqueue of a multiqueue device) shares
 // one; any other Chunk has one of its own.
 struct MirrorControl;
-struct MirrorResync;
 
 // Chunk mirrors a single logical chunk (1..N slots, one per replica) over
 // its own Slot pool -- the sole building block Object routes I/O to. Not a
@@ -155,6 +154,8 @@ private:
     // _probe_pending guards against a second _probe_tick() firing while a
     // reconnect attempt it started is still in flight.
     bool _probe_pending;
+
+    uint64_t _epoch() const;
 
     // Offsets in chunk I/O are relative to this copy, including OST requests.
     void _check_range(uint64_t offset, size_t size) const {
@@ -463,14 +464,21 @@ public:
     rawstd::Task<size_t>
     preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset);
 
+    // Object operations use this chunk's configuration. OST operations
+    // supply the writer's epoch explicitly and forward it to the local copy.
+    rawstd::Task<size_t>
+    pwrite(const void* buf, size_t size, uint64_t offset, bool sync);
+    rawstd::Task<size_t> discard(size_t size, uint64_t offset);
+    rawstd::Task<size_t>
+    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync);
+    rawstd::Task<void> flush();
+
     rawstd::Task<size_t> pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
     );
 
     rawstd::Task<size_t> resync_pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
     );
 
     rawstd::Task<size_t> pwritev(
@@ -478,22 +486,21 @@ public:
         bool sync
     );
 
-    rawstd::Task<size_t>
-    discard(size_t size, uint64_t offset, uint64_t epoch = 0);
+    rawstd::Task<size_t> discard(size_t size, uint64_t offset, uint64_t epoch);
 
     rawstd::Task<size_t> write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
     );
 
     rawstd::Task<size_t> resync_write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
     );
 
     // Waits for every pwrite()/pwritev() issued before this call to
     // complete (see _flush_barrier above), then flushes every in-sync
     // member -- without the wait, a flush() racing an in-flight write
     // could report success before that write's data is actually durable.
-    rawstd::Task<void> flush(uint64_t epoch = 0);
+    rawstd::Task<void> flush(uint64_t epoch);
 
     // flush()es (see above); for a mirrored object that is DIRTY, also
     // durably marks the in-sync members CLEAN with the current epoch/sync_id

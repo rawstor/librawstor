@@ -642,7 +642,9 @@ rawstd::Task<void> Slot::_depart(std::shared_ptr<Backend> be) {
     }
     if (_left &&
         member->writes_flushed.load() != member->writes_issued.load()) {
-        co_await be->flush();
+        // This durability barrier completes already admitted writes while
+        // the record lock excludes configuration changes.
+        co_await be->flush(0);
     }
     const RawstorObjectSyncStateValue state =
         _left ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
@@ -1399,7 +1401,8 @@ rawstd::Task<size_t> Slot::resync_pwrite(
 }
 
 rawstd::Task<size_t> Slot::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, uint64_t offset, bool sync
+    const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
+    bool sync, uint64_t epoch
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
@@ -1409,7 +1412,7 @@ rawstd::Task<size_t> Slot::pwritev(
 
     try {
         Admission admission;
-        int error = admission.admit(_member, 0);
+        int error = admission.admit(_member, epoch);
         if (error) {
             RAWSTD_THROW_SYSTEM_ERROR(error);
         }
@@ -1420,7 +1423,7 @@ rawstd::Task<size_t> Slot::pwritev(
 
         size_t result = co_await _with_retry(
             func_name, trace_event, &Backend::pwritev, iov, niov, size, offset,
-            sync
+            sync, epoch
         );
         _finish(t_call);
         co_return result;
