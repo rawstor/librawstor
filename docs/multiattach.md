@@ -357,6 +357,24 @@ both freeze (`EIO`) instead of splitting the chunk. With several writers,
 writes freeze until the member is back; stage 3's witness supplies the
 third vote.
 
+In stage 2, the mirrored chunk's client-side configuration transition
+will use this exception when one of its two members is unavailable and it
+needs to exclude that member. It sends `SYNC_ACCEPT` to the survivor with
+`RAWSTOR_SYNC_ALONE` and `sessions` equal to the number of its own sessions
+open for writing on that copy. This includes sessions belonging to other
+queues sharing the same chunk in the writer process; it is not the total
+writer count reported by `META`, since that could include other writers.
+The survivor compares its writer count with this allowance under the
+copy's record lock and refuses with `-EBUSY` if other writers are present
+or the copy is `LOST`. The client must then freeze writes rather than
+exclude the missing member unilaterally.
+
+Currently, only the member-side check and the protocol/API plumbing are
+implemented. `Chunk` does not call `sync_accept()` yet; the `sessions`
+argument is supplied only by tests. The stage 2 client will supply it via
+`Target::sync_accept()` (or `rawstor_target_sync_accept()` for C callers).
+Ordinary majority-based accepts do not set `ALONE` and ignore `sessions`.
+
 ---
 
 ## Failure scenarios
