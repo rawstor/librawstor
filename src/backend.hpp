@@ -214,13 +214,6 @@ public:
         const RawstorObjectConfig& config, unsigned int flags, uint8_t position
     ) = 0;
 
-    // A member's reply to SYNC_PREPARE/SYNC_ACCEPT: whether it promised
-    // or accepted, and its whole record either way (docs/caspaxos.md).
-    struct SyncReply {
-        bool ok;
-        RawstorObjectMeta meta;
-    };
-
     // The two requests of the chunk's configuration register
     // (docs/multiattach.md, "The register"), applied to this copy's record
     // with the rawstd::caspaxos acceptor rules and persisted before the
@@ -228,15 +221,16 @@ public:
     // Acceptance is one vote; the caller establishes the register quorum.
     // `position` is as for set_config(). Default: ENOSYS, for a
     // backend that holds no copy of its own.
-    virtual rawstd::Task<SyncReply> sync_prepare(
+    virtual rawstd::Task<RawstorObjectSyncReply> sync_prepare(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectBallot& ballot, const SyncReply& proposed
+        const RawstorObjectBallot& ballot,
+        const RawstorObjectSyncReply& proposed
     );
-    virtual rawstd::Task<SyncReply> sync_accept(
+    virtual rawstd::Task<RawstorObjectSyncReply> sync_accept(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
         const RawstorObjectConfig& config, uint8_t position,
-        const SyncReply& proposed
+        const RawstorObjectSyncReply& proposed
     );
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;

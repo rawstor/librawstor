@@ -68,7 +68,7 @@ private:
     );
     // SYNC_PREPARE/SYNC_ACCEPT: sends `request` and returns the member's
     // reply.
-    rawstd::Task<SyncReply>
+    rawstd::Task<RawstorObjectSyncReply>
     _sync_request(const RawstorFrameSyncPropose& request, const char* op_name);
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
@@ -158,16 +158,17 @@ public:
 
     rawstd::Task<void> leave() override;
 
-    rawstd::Task<SyncReply> sync_prepare(
+    rawstd::Task<RawstorObjectSyncReply> sync_prepare(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectBallot& ballot, const SyncReply& proposed
+        const RawstorObjectBallot& ballot,
+        const RawstorObjectSyncReply& proposed
     ) override;
 
-    rawstd::Task<SyncReply> sync_accept(
+    rawstd::Task<RawstorObjectSyncReply> sync_accept(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
         const RawstorObjectConfig& config, uint8_t position,
-        const SyncReply& proposed
+        const RawstorObjectSyncReply& proposed
     ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;

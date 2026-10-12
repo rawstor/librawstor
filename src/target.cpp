@@ -966,19 +966,12 @@ rawstd::DetachedTask launch_set_member_config_op_coro(
 // Target::sync_prepare()/sync_accept(): `reply` is filled before `cb`
 // runs with a zero result.
 rawstd::DetachedTask launch_sync_op_coro(
-    rawstd::Task<rawstor::Backend::SyncReply> op, RawstorObjectSyncReply* reply,
+    rawstd::Task<RawstorObjectSyncReply> op, RawstorObjectSyncReply* reply,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     try {
-        // GCC 11 (AlmaLinux 9) ICEs ("no suspend point info ... not
-        // supported by dump_decl") on a named local direct-initialized
-        // from co_await inside a try block (see Slot::_with_retry());
-        // declaring it apart from the co_await sidesteps it.
-        rawstor::Backend::SyncReply r{};
-        r = co_await op;
-        reply->ok = r.ok ? 1 : 0;
-        reply->meta = r.meta;
+        *reply = co_await op;
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -998,14 +991,14 @@ rawstd::DetachedTask launch_sync_op_coro(
 
 // Runs one register request against `t`, which lives in this frame for
 // the request's whole life.
-rawstd::Task<rawstor::Backend::SyncReply> sync_prepare_coro(
+rawstd::Task<RawstorObjectSyncReply> sync_prepare_coro(
     rawstor::Target t, rawio::Queue* queue, uint64_t offset,
     size_t member_index, RawstorObjectBallot ballot
 ) {
     co_return co_await t.sync_prepare(*queue, offset, member_index, ballot);
 }
 
-rawstd::Task<rawstor::Backend::SyncReply> sync_accept_coro(
+rawstd::Task<RawstorObjectSyncReply> sync_accept_coro(
     rawstor::Target t, rawio::Queue* queue, uint64_t offset,
     size_t member_index, RawstorObjectBallot ballot, RawstorObjectBallot next,
     RawstorObjectConfig config
@@ -1612,7 +1605,7 @@ rawstd::Task<void> Target::set_member_config(
     }
 }
 
-rawstd::Task<Backend::SyncReply> Target::sync_prepare(
+rawstd::Task<RawstorObjectSyncReply> Target::sync_prepare(
     rawio::Queue& queue, uint64_t offset, size_t member_index,
     RawstorObjectBallot ballot
 ) const {
@@ -1622,7 +1615,7 @@ rawstd::Task<Backend::SyncReply> Target::sync_prepare(
 
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location);
-    Backend::SyncReply reply{};
+    RawstorObjectSyncReply reply{};
     std::exception_ptr error;
     try {
         reply = co_await slot->sync_prepare(id, offset, ballot);
@@ -1636,7 +1629,7 @@ rawstd::Task<Backend::SyncReply> Target::sync_prepare(
     co_return reply;
 }
 
-rawstd::Task<Backend::SyncReply> Target::sync_accept(
+rawstd::Task<RawstorObjectSyncReply> Target::sync_accept(
     rawio::Queue& queue, uint64_t offset, size_t member_index,
     RawstorObjectBallot ballot, RawstorObjectBallot next,
     RawstorObjectConfig config, uint8_t position
@@ -1647,7 +1640,7 @@ rawstd::Task<Backend::SyncReply> Target::sync_accept(
 
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location);
-    Backend::SyncReply reply{};
+    RawstorObjectSyncReply reply{};
     std::exception_ptr error;
     try {
         reply = co_await slot->sync_accept(

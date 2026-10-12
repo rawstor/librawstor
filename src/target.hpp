@@ -280,11 +280,11 @@ public:
     // is addressed as set_member_config() above addresses it. The request
     // is taken by value: it outlives the caller's arguments, across the
     // connect.
-    rawstd::Task<Backend::SyncReply> sync_prepare(
+    rawstd::Task<RawstorObjectSyncReply> sync_prepare(
         rawio::Queue& queue, uint64_t offset, size_t member_index,
         RawstorObjectBallot ballot
     ) const;
-    rawstd::Task<Backend::SyncReply> sync_accept(
+    rawstd::Task<RawstorObjectSyncReply> sync_accept(
         rawio::Queue& queue, uint64_t offset, size_t member_index,
         RawstorObjectBallot ballot, RawstorObjectBallot next,
         RawstorObjectConfig config, uint8_t position

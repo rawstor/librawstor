@@ -219,9 +219,9 @@ rawstd::Task<void> Backend::set_config(
     );
 }
 
-rawstd::Task<Backend::SyncReply> Backend::sync_prepare(
+rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot&,
-    const SyncReply& proposed
+    const RawstorObjectSyncReply& proposed
 ) {
     if (proposed.ok) {
         co_await _write_meta(
@@ -232,10 +232,10 @@ rawstd::Task<Backend::SyncReply> Backend::sync_prepare(
     co_return proposed;
 }
 
-rawstd::Task<Backend::SyncReply> Backend::sync_accept(
+rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot&,
     const RawstorObjectBallot&, const RawstorObjectConfig&, uint8_t,
-    const SyncReply& proposed
+    const RawstorObjectSyncReply& proposed
 ) {
     if (proposed.ok) {
         co_await _write_meta(

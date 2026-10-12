@@ -1692,7 +1692,7 @@ Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     co_return std::vector<rawstd::URI>{location()};
 }
 
-rawstd::Task<rawstor::Backend::SyncReply> Backend::_sync_request(
+rawstd::Task<RawstorObjectSyncReply> Backend::_sync_request(
     const RawstorFrameSyncPropose& request, const char* op_name
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", op_name);
@@ -1736,12 +1736,12 @@ rawstd::Task<rawstor::Backend::SyncReply> Backend::_sync_request(
     memcpy(meta.config.roles, wire.config.roles, meta.config.nroles);
     meta.promised = {wire.promised.counter, wire.promised.proposer};
     meta.accepted = {wire.accepted.counter, wire.accepted.proposer};
-    co_return SyncReply{reply.ok != 0, meta};
+    co_return RawstorObjectSyncReply{reply.ok != 0, meta};
 }
 
-rawstd::Task<rawstor::Backend::SyncReply> Backend::sync_prepare(
+rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
-    const SyncReply&
+    const RawstorObjectSyncReply&
 ) {
     RawstorFrameSyncPropose request{};
     request.head.magic = RAWSTOR_MAGIC;
@@ -1752,10 +1752,10 @@ rawstd::Task<rawstor::Backend::SyncReply> Backend::sync_prepare(
     co_return co_await _sync_request(request, "sync_prepare");
 }
 
-rawstd::Task<rawstor::Backend::SyncReply> Backend::sync_accept(
+rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
     const RawstorObjectBallot& next, const RawstorObjectConfig& config,
-    uint8_t position, const SyncReply&
+    uint8_t position, const RawstorObjectSyncReply&
 ) {
     RawstorFrameSyncPropose request{};
     request.head.magic = RAWSTOR_MAGIC;

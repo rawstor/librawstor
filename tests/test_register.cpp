@@ -79,7 +79,7 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
     };
     run(*queue, target.create(*queue, spec));
 
-    rawstor::Backend::SyncReply reply =
+    RawstorObjectSyncReply reply =
         run(*queue, target.sync_prepare(*queue, 0, 0, {4, 1}));
     EXPECT_TRUE(reply.ok);
     EXPECT_EQ(reply.meta.promised.counter, 4u);
@@ -160,7 +160,7 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     config.resync_owner = 0x77;
     config.nroles = 3;
     config.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
-    rawstd::Task<rawstor::Backend::SyncReply> task =
+    rawstd::Task<RawstorObjectSyncReply> task =
         target.sync_accept(*queue, 0, 0, {5, 0x77}, {6, 0x77}, config, 1);
 
     for (int i = 0; i < 5000 && !got; ++i) {
@@ -201,7 +201,7 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     out.reply.meta.accepted = {8, 0x11};
     server.write("SYNC_ACCEPT >>>", &out, sizeof(out));
 
-    rawstor::Backend::SyncReply reply = run(*queue, std::move(task));
+    RawstorObjectSyncReply reply = run(*queue, std::move(task));
     EXPECT_FALSE(reply.ok);
     EXPECT_EQ(reply.meta.config.epoch, 8u);
     EXPECT_EQ(reply.meta.writers, 4u);

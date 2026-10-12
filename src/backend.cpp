@@ -72,16 +72,17 @@ Backend::create(rawio::Queue& queue, const rawstd::URI& location) {
     co_return backend;
 }
 
-rawstd::Task<Backend::SyncReply> Backend::sync_prepare(
-    const RawstdUUID&, uint64_t, const RawstorObjectBallot&, const SyncReply&
+rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
+    const RawstdUUID&, uint64_t, const RawstorObjectBallot&,
+    const RawstorObjectSyncReply&
 ) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
 }
 
-rawstd::Task<Backend::SyncReply> Backend::sync_accept(
+rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
     const RawstdUUID&, uint64_t, const RawstorObjectBallot&,
     const RawstorObjectBallot&, const RawstorObjectConfig&, uint8_t,
-    const SyncReply&
+    const RawstorObjectSyncReply&
 ) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
 }

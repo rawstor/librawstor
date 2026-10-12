@@ -1492,21 +1492,16 @@ rawstd::DetachedTask Client::_sync(
         try {
             rawstor::Target target(targets);
             rawio::Queue& queue = *static_cast<rawio::Queue*>(client->_queue);
-            // GCC 11 ICE: no co_await in a declaration's initializer here
-            // (launch_sync_op_coro(), src/target.cpp).
-            rawstor::Backend::SyncReply r{};
             if (head.cmd == RAWSTOR_CMD_SYNC_PREPARE) {
-                r = co_await target.sync_prepare(
+                reply = co_await target.sync_prepare(
                     queue, payload.chunk_offset, 0, ballot
                 );
             } else {
-                r = co_await target.sync_accept(
+                reply = co_await target.sync_accept(
                     queue, payload.chunk_offset, 0, ballot, next, config,
                     payload.position
                 );
             }
-            reply.ok = r.ok ? 1 : 0;
-            reply.meta = r.meta;
         } catch (const std::system_error& e) {
             result = -e.code().value();
         }
