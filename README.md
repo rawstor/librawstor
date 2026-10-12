@@ -7,7 +7,8 @@
 > [Architecture](docs/architecture.md) ·
 > [Protocol](docs/protocol.md) ·
 > [MDS design](docs/mds.md) ·
-> [Mirroring](docs/mirroring.md)
+> [Mirroring](docs/mirroring.md) ·
+> [Multi-attach](docs/multiattach.md)
 
 ## TL;DR
 ```
