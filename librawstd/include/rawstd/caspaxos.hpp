@@ -44,7 +44,7 @@ struct Ballot {
 // One acceptor's state. Restored from storage before processing requests;
 // the caller persists a successful transition before sending its reply.
 template <typename V>
-class Acceptor {
+class Acceptor final {
 private:
     Ballot _promised;
     Ballot _accepted;
