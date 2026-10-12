@@ -224,10 +224,9 @@ public:
     // The two requests of the chunk's configuration register
     // (docs/multiattach.md, "The register"), applied to this copy's record
     // with the rawstd::caspaxos acceptor rules and persisted before the
-    // reply. sync_accept() takes the register's value from `config`; with
-    // RAWSTOR_SYNC_ALONE in `flags` it fails with EBUSY while more than
-    // `sessions` sessions have the copy open for writing or the copy is
-    // LOST. `position` is as for set_config(). Default: ENOSYS, for a
+    // reply. sync_accept() takes the register's value from `config`.
+    // Acceptance is one vote; the caller establishes the register quorum.
+    // `position` is as for set_config(). Default: ENOSYS, for a
     // backend that holds no copy of its own.
     virtual rawstd::Task<SyncReply> sync_prepare(
         const RawstdUUID& id, uint64_t offset,
@@ -236,8 +235,8 @@ public:
     virtual rawstd::Task<SyncReply> sync_accept(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config, unsigned int flags,
-        uint32_t sessions, uint8_t position, const SyncReply& proposed
+        const RawstorObjectConfig& config, uint8_t position,
+        const SyncReply& proposed
     );
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;

@@ -418,13 +418,6 @@ int rawstor_target_set_member_config(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * rawstor_target_sync_accept() flag: decide on this member alone. Refused
- * (-EBUSY) while more sessions than the caller's own have the copy open
- * for writing, or while the copy is LOST (docs/multiattach.md, "N = 2").
- */
-#define RAWSTOR_SYNC_ALONE (1u << 0)
-
-/**
  * @brief A member's reply to a request of the chunk's configuration
  *        register.
  *
@@ -472,9 +465,9 @@ int rawstor_target_sync_prepare(
  * above the ballot its configuration was accepted under: it then records
  * @p config as accepted under @p ballot, and promises @p next if that is
  * above @p ballot. It persists that and replies with its whole record in
- * @p reply either way. With RAWSTOR_SYNC_ALONE in @p flags the request
- * fails with -EBUSY while more than @p sessions sessions have the copy
- * open for writing, or while the copy is LOST.
+ * @p reply either way. Acceptance on this member is one vote; the caller
+ * must obtain a majority of the configuration register's acceptors. For
+ * two data copies, a witness supplies the third vote.
  *
  * @return 0 if the request was queued; negative errno on immediate
  *         failure (in which case @p cb is never invoked).
@@ -483,9 +476,9 @@ int rawstor_target_sync_accept(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
     const struct RawstorObjectBallot* ballot,
     const struct RawstorObjectBallot* next,
-    const struct RawstorObjectConfig* config, unsigned int flags,
-    uint32_t sessions, struct RawstorObjectSyncReply* reply,
-    int (*cb)(ssize_t result, void* data), void* data
+    const struct RawstorObjectConfig* config,
+    struct RawstorObjectSyncReply* reply, int (*cb)(ssize_t result, void* data),
+    void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**

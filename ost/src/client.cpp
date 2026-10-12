@@ -1481,8 +1481,6 @@ rawstd::DetachedTask Client::_sync(
     config.resync_owner = payload.config.resync_owner;
     config.nroles = payload.config.nroles;
     memcpy(config.roles, payload.config.roles, config.nroles);
-    unsigned int flags =
-        (payload.flags & RAWSTOR_SYNC_FLAG_ALONE) != 0 ? RAWSTOR_SYNC_ALONE : 0;
 
     // One copy, as for SET_CONFIG (_set_config()).
     int result = 0;
@@ -1503,8 +1501,8 @@ rawstd::DetachedTask Client::_sync(
                 );
             } else {
                 r = co_await target.sync_accept(
-                    queue, payload.chunk_offset, 0, ballot, next, config, flags,
-                    payload.sessions, payload.position
+                    queue, payload.chunk_offset, 0, ballot, next, config,
+                    payload.position
                 );
             }
             reply.ok = r.ok ? 1 : 0;

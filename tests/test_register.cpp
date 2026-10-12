@@ -98,7 +98,7 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
     config.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
     reply =
         run(*queue,
-            target.sync_accept(*queue, 0, 0, {4, 1}, {5, 1}, config, 0, 0, 0));
+            target.sync_accept(*queue, 0, 0, {4, 1}, {5, 1}, config, 0));
     EXPECT_TRUE(reply.ok);
 
     // What the member persisted, read back the ordinary way.
@@ -160,9 +160,8 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     config.resync_owner = 0x77;
     config.nroles = 3;
     config.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
-    rawstd::Task<rawstor::Backend::SyncReply> task = target.sync_accept(
-        *queue, 0, 0, {5, 0x77}, {6, 0x77}, config, RAWSTOR_SYNC_ALONE, 2, 1
-    );
+    rawstd::Task<rawstor::Backend::SyncReply> task =
+        target.sync_accept(*queue, 0, 0, {5, 0x77}, {6, 0x77}, config, 1);
 
     for (int i = 0; i < 5000 && !got; ++i) {
         try {
@@ -178,8 +177,6 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     EXPECT_EQ(seen.payload.config.epoch, 3u);
     EXPECT_EQ(seen.payload.config.sync_id_history[0], 0x22u);
     EXPECT_EQ(seen.payload.config.resync_owner, 0x77u);
-    EXPECT_EQ(seen.payload.flags, RAWSTOR_SYNC_FLAG_ALONE);
-    EXPECT_EQ(seen.payload.sessions, 2u);
     EXPECT_EQ(seen.payload.position, 1);
     ASSERT_EQ(seen.payload.config.nroles, 3);
     EXPECT_EQ(seen.payload.config.roles[2], RAWSTOR_OBJECT_MEMBER_EXCLUDED);

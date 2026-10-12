@@ -1008,10 +1008,10 @@ rawstd::Task<rawstor::Backend::SyncReply> sync_prepare_coro(
 rawstd::Task<rawstor::Backend::SyncReply> sync_accept_coro(
     rawstor::Target t, rawio::Queue* queue, uint64_t offset,
     size_t member_index, RawstorObjectBallot ballot, RawstorObjectBallot next,
-    RawstorObjectConfig config, unsigned int flags, uint32_t sessions
+    RawstorObjectConfig config
 ) {
     co_return co_await t.sync_accept(
-        *queue, offset, member_index, ballot, next, config, flags, sessions,
+        *queue, offset, member_index, ballot, next, config,
         static_cast<uint8_t>(member_index)
     );
 }
@@ -1639,8 +1639,7 @@ rawstd::Task<Backend::SyncReply> Target::sync_prepare(
 rawstd::Task<Backend::SyncReply> Target::sync_accept(
     rawio::Queue& queue, uint64_t offset, size_t member_index,
     RawstorObjectBallot ballot, RawstorObjectBallot next,
-    RawstorObjectConfig config, unsigned int flags, uint32_t sessions,
-    uint8_t position
+    RawstorObjectConfig config, uint8_t position
 ) const {
     rawstd::URI location =
         co_await _member_location(queue, offset, member_index);
@@ -1652,7 +1651,7 @@ rawstd::Task<Backend::SyncReply> Target::sync_accept(
     std::exception_ptr error;
     try {
         reply = co_await slot->sync_accept(
-            id, offset, ballot, next, config, flags, sessions, position
+            id, offset, ballot, next, config, position
         );
     } catch (...) {
         error = std::current_exception();
@@ -2287,16 +2286,15 @@ int rawstor_target_sync_prepare(
 int rawstor_target_sync_accept(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
     const RawstorObjectBallot* ballot, const RawstorObjectBallot* next,
-    const RawstorObjectConfig* config, unsigned int flags, uint32_t sessions,
-    RawstorObjectSyncReply* reply, int (*cb)(ssize_t result, void* data),
-    void* data
+    const RawstorObjectConfig* config, RawstorObjectSyncReply* reply,
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
         launch_sync_op_coro(
             sync_accept_coro(
                 std::move(t), static_cast<rawio::Queue*>(queue), offset,
-                member_index, *ballot, *next, *config, flags, sessions
+                member_index, *ballot, *next, *config
             ),
             reply, cb, data
         );

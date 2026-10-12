@@ -1592,7 +1592,7 @@ rawstd::Task<Backend::SyncReply> Slot::sync_prepare(
 rawstd::Task<Backend::SyncReply> Slot::_sync_accept(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
     const RawstorObjectBallot& next, const RawstorObjectConfig& config,
-    unsigned int flags, uint32_t sessions, uint8_t position
+    uint8_t position
 ) {
     std::shared_ptr<CopyState> member = _copy_state(id, offset);
     co_await member->record.lock(_queue);
@@ -1604,11 +1604,6 @@ rawstd::Task<Backend::SyncReply> Slot::_sync_accept(
     for (bool again = true; again;) {
         meta = (co_await be->meta(id, offset, RawstdUUID{})).front();
         meta.writers = std::max(meta.writers, member->writers.load());
-        if ((flags & RAWSTOR_SYNC_ALONE) != 0 &&
-            (meta.writers > sessions ||
-             meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST)) {
-            RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
-        }
         state = {
             ballot_from(meta.promised), ballot_from(meta.accepted), meta.config
         };
@@ -1623,7 +1618,7 @@ rawstd::Task<Backend::SyncReply> Slot::_sync_accept(
     meta.writers = std::max(meta.writers, member->writers.load());
     Backend::SyncReply proposed{ok, meta};
     Backend::SyncReply reply = co_await be->sync_accept(
-        id, offset, ballot, next, config, flags, sessions, position, proposed
+        id, offset, ballot, next, config, position, proposed
     );
     if (reply.ok) {
         member->follow_role(
@@ -1642,7 +1637,7 @@ rawstd::Task<Backend::SyncReply> Slot::_sync_accept(
 rawstd::Task<Backend::SyncReply> Slot::sync_accept(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
     const RawstorObjectBallot& next, const RawstorObjectConfig& config,
-    unsigned int flags, uint32_t sessions, uint8_t position
+    uint8_t position
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -1652,7 +1647,7 @@ rawstd::Task<Backend::SyncReply> Slot::sync_accept(
     try {
         Backend::SyncReply result = co_await _with_retry(
             func_name, trace_event, &Slot::_sync_accept, id, offset, ballot,
-            next, config, flags, sessions, position
+            next, config, position
         );
         _finish(t_call);
         co_return result;

@@ -1755,7 +1755,7 @@ rawstd::Task<rawstor::Backend::SyncReply> Backend::sync_prepare(
 rawstd::Task<rawstor::Backend::SyncReply> Backend::sync_accept(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
     const RawstorObjectBallot& next, const RawstorObjectConfig& config,
-    unsigned int flags, uint32_t sessions, uint8_t position, const SyncReply&
+    uint8_t position, const SyncReply&
 ) {
     RawstorFrameSyncPropose request{};
     request.head.magic = RAWSTOR_MAGIC;
@@ -1773,9 +1773,6 @@ rawstd::Task<rawstor::Backend::SyncReply> Backend::sync_accept(
     request.payload.config.resync_owner = config.resync_owner;
     request.payload.config.nroles = config.nroles;
     memcpy(request.payload.config.roles, config.roles, config.nroles);
-    request.payload.sessions = sessions;
-    request.payload.flags =
-        (flags & RAWSTOR_SYNC_ALONE) != 0 ? RAWSTOR_SYNC_FLAG_ALONE : 0;
     request.payload.position = position;
     co_return co_await _sync_request(request, "sync_accept");
 }

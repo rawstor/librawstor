@@ -314,16 +314,17 @@ way -- disconnect, a new `SET_OBJECT` -- leaves a `DIRTY` copy `LOST`.
 338
 ```
 
-### SyncPropose — 374 bytes
+### SyncPropose — 369 bytes
 
 The two requests of a chunk's configuration register
 ([multi-attach](multiattach.md#the-register-caspaxos),
 [CASPaxos](caspaxos.md)). `SYNC_PREPARE` asks the member to promise
 `ballot` and leaves the rest zero. `SYNC_ACCEPT` asks it to accept the
 register's value -- the Config -- under `ballot`, and to promise `next` on
-success (zero for none). `flags` bit 0 is `ALONE`: the member refuses with
-`-EBUSY` while more than `sessions` sessions have the copy open for
-writing, or while the copy is `LOST`. `position` is as for SetConfig. A
+success (zero for none). Each successful accept is one vote; the client
+must obtain a majority of register acceptors. With two data copies, the
+witness supplies the third vote (multi-attach Stage 2 follows witness
+support). `position` is as for SetConfig and indexes data members. A
 server with several locations answers `-ENOSYS`.
 
 ```text
@@ -341,11 +342,10 @@ server with several locations answers `-ENOSYS`.
  24  Ballot ballot (16 bytes)
  40  Ballot next (16 bytes)
  56  Config (312 bytes)
-     +-------------------------------------------+----------+----------+
-368  |              uint32_t sessions            |  flags   | position |
-     |                                           |          |          |
-     +-------------------------------------------+----------+----------+
-374
+     +----------+
+368  | position |
+     +----------+
+369
 ```
 
 ### Allocate — 44 bytes

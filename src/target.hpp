@@ -287,8 +287,7 @@ public:
     rawstd::Task<Backend::SyncReply> sync_accept(
         rawio::Queue& queue, uint64_t offset, size_t member_index,
         RawstorObjectBallot ballot, RawstorObjectBallot next,
-        RawstorObjectConfig config, unsigned int flags, uint32_t sessions,
-        uint8_t position
+        RawstorObjectConfig config, uint8_t position
     ) const;
     // Removes every URI of every chunk concurrently -- unlike create()
     // above, there's no rollback to speak of (removal has nothing to

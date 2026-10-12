@@ -394,11 +394,10 @@ struct RawstorFrameMetaPayload {
  * SYNC_PREPARE/SYNC_ACCEPT's request. SYNC_PREPARE uses object_id,
  * chunk_offset and ballot only, the rest zero. SYNC_ACCEPT also carries
  * the ballot to promise on success (`next`, zero for none), the register's
- * value (`config`) and `flags` (RAWSTOR_SYNC_FLAG_*): with
- * RAWSTOR_SYNC_FLAG_ALONE the member refuses (-EBUSY) while more than
- * `sessions` sessions have the copy open for writing, or once a writer
- * left it LOST. `position` is the copy's position among the chunk's
- * members, as for SET_CONFIG.
+ * value (`config`). Acceptance is one vote; the caller obtains a majority
+ * of register acceptors, including the witness for two data copies.
+ * `position` is the copy's position among the chunk's data members, as for
+ * SET_CONFIG.
  */
 struct RawstorFrameSyncProposePayload {
     uint8_t object_id[16];
@@ -406,12 +405,8 @@ struct RawstorFrameSyncProposePayload {
     struct RawstorFrameBallot ballot;
     struct RawstorFrameBallot next;
     struct RawstorFrameConfig config;
-    uint32_t sessions;
-    uint8_t flags;
     uint8_t position;
 } RAWSTOR_PACKED;
-
-#define RAWSTOR_SYNC_FLAG_ALONE (1u << 0)
 
 /* SYNC_PREPARE / SYNC_ACCEPT request */
 struct RawstorFrameSyncPropose {
@@ -603,7 +598,7 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 29);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBallot, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameConfig, 312);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetConfigPayload, 338);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncProposePayload, 374);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncProposePayload, 369);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAllocatePayload, 44);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameResponseBody, 12);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 360);

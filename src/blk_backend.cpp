@@ -234,8 +234,8 @@ rawstd::Task<Backend::SyncReply> Backend::sync_prepare(
 
 rawstd::Task<Backend::SyncReply> Backend::sync_accept(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot&,
-    const RawstorObjectBallot&, const RawstorObjectConfig&, unsigned int,
-    uint32_t, uint8_t, const SyncReply& proposed
+    const RawstorObjectBallot&, const RawstorObjectConfig&, uint8_t,
+    const SyncReply& proposed
 ) {
     if (proposed.ok) {
         co_await _write_meta(

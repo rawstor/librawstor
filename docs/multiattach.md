@@ -12,7 +12,7 @@ separately.
 | Writable opens of one process share the chunk's state; transitions once per process | 1 | ✅ | [Mirroring](mirroring.md#writers), `src/chunk.cpp` (`MirrorControl`) |
 | Acceptor rules (`rawstd::caspaxos::Acceptor<V>::prepare()` / `accept()`) | 1 | ✅ | `librawstd/include/rawstd/caspaxos.hpp`, [CASPaxos](caspaxos.md) |
 | A copy's record carries the register: `promised`, `accepted`, and `resync_owner` in the configuration | 1 | ✅ | `src/blk_backend.cpp` (`meta_encode()`) |
-| `SYNC_PREPARE` / `SYNC_ACCEPT` on every member, reply carries the actual record; `ALONE` | 1 | ✅ | `src/slot.cpp`, `ost/src/client.cpp` (`_sync`), `rawstor_target_sync_prepare()` / `_accept()` |
+| `SYNC_PREPARE` / `SYNC_ACCEPT` on every member, reply carries the actual record | 1 | ✅ | `src/slot.cpp`, `ost/src/client.cpp` (`_sync`), `rawstor_target_sync_prepare()` / `_accept()` |
 | One record lock and one writer count per copy in a process (`Slot::CopyState`) | 1 | ✅ | `src/slot.cpp` |
 | Copies keep their own `DIRTY` / `CLEAN`; `LOST`; `LEAVE`; `rawstor_object_abandon()` | 1 | ✅ | [Mirroring](mirroring.md#dirty-clean-and-lost) |
 | Live writer count in `META` | 1 | ✅ | `RawstorObjectMeta.writers` |
@@ -28,7 +28,14 @@ separately.
 | `SET_CONFIG` and `rawstor_target_set_member_config()` retired | 2 | ❌ | [Retiring `SET_CONFIG`](#retiring-set_config) |
 | The client keeps the register value once per chunk, not per member | 2 | ❌ | [The register](#the-register-caspaxos) |
 | A `rawstor-ost` with several locations: one copy with a record of its own | — | ❌ | [Mirroring](mirroring.md#one-copy-per-server) |
-| Witness vote for N = 2 with several writer processes | 3 | ❌ | waits for the witness, [MDS design](mds.md#witness-stage-3) stage 3 |
+| Witness participation in the configuration register for N = 2 | Before 2 | ❌ | Prerequisite for multi-attach Stage 2; [MDS design](mds.md#witness-stage-3) |
+
+Stage 1 introduces the public ABI, wire layouts and data-member behavior
+needed by multi-attach while the client still operates as one writer
+process. Witness support is implemented next, before multi-attach Stage 2
+starts. Stage 2 then integrates clients on different processes and machines
+with the configuration register, including the witness vote for two data
+copies. There is no single-acceptor exception to the register quorum.
 
 ## Overview
 
@@ -345,35 +352,36 @@ sequenceDiagram
 
 ## N = 2
 
-No transition reaches a majority with one of two members gone. An
-exclusion is still decided on the lone survivor when the deciding writer
-is the only one: the accept carries the flag `ALONE` and the number of
-sessions the writer itself has open on that member, and the member refuses
-with `-EBUSY` when it counts more sessions open for writing, **or when its
-copy is `LOST`**. The second rule matters in a symmetric partition: each
-side's member eventually drops the other writer's session and counts only
-its own -- but that drop left it `LOST`, so neither side decides alone and
-both freeze (`EIO`) instead of splitting the chunk. With several writers,
-writes freeze until the member is back; stage 3's witness supplies the
-third vote.
+Here N counts data copies. Stage 2 uses two data acceptors A and B plus
+one witness W: three configuration-register votes, with a majority of two.
+The witness stores the register's ballots and configuration, not object
+data. It participates in `prepare` and `accept` with the same CASPaxos
+rules as data acceptors; a cached or asynchronously updated witness record
+alone is not a configuration-register vote.
 
-In stage 2, the mirrored chunk's client-side configuration transition
-will use this exception when one of its two members is unavailable and it
-needs to exclude that member. It sends `SYNC_ACCEPT` to the survivor with
-`RAWSTOR_SYNC_ALONE` and `sessions` equal to the number of its own sessions
-open for writing on that copy. This includes sessions belonging to other
-queues sharing the same chunk in the writer process; it is not the total
-writer count reported by `META`, since that could include other writers.
-The survivor compares its writer count with this allowance under the
-copy's record lock and refuses with `-EBUSY` if other writers are present
-or the copy is `LOST`. The client must then freeze writes rather than
-exclude the missing member unilaterally.
+If B is unavailable, A and W can decide a configuration excluding B. The
+client then writes data to A under the decided epoch. If W is unavailable,
+A and B can still decide together. If only A is reachable, no configuration
+transition has a quorum; the client must freeze writes when proceeding
+requires such a transition. A witness alone cannot serve object data.
 
-Currently, only the member-side check and the protocol/API plumbing are
-implemented. `Chunk` does not call `sync_accept()` yet; the `sessions`
-argument is supplied only by tests. The stage 2 client will supply it via
-`Target::sync_accept()` (or `rawstor_target_sync_accept()` for C callers).
-Ordinary majority-based accepts do not set `ALONE` and ignore `sessions`.
+In a partition where one writer reaches A and another reaches B, neither
+may decide alone. Competing proposals must obey the same witness
+promises and accepted configuration; a retry adopts the highest accepted
+value before applying its change. Data-copy epoch fencing prevents writes
+under an older configuration after a newer one is adopted. Writer counts
+and `LOST` remain useful for copy lifecycle and recovery; they never replace
+a register quorum. No `ALONE` flag or session allowance is needed in the
+public ABI or wire request.
+
+This is Stage 2 behavior, after witness support is implemented. Stage 1
+retains the single-writer client's current `SET_CONFIG` transitions and
+the existing two-copy degraded behavior described in
+[Mirroring](mirroring.md#known-limitation-two-mirrors-one-survivor).
+The witness design in [MDS](mds.md#witness-stage-3) describes single-writer
+recovery; before Stage 2 it must also provide durable CASPaxos acceptor
+state and synchronous prepare/accept votes for configuration transitions.
+Its asynchronous single-writer updates do not satisfy that requirement.
 
 ---
 
@@ -390,7 +398,7 @@ refer to [Mirroring](mirroring.md#failure-cases).
 | The only writer crashes (VM, `rawstor-vhost` killed) | Through `rawstor-ost`: its sessions drop without `LEAVE`, every copy it wrote goes `LOST`. Direct local open: nobody marks, the copies stay `DIRTY` | ✅ Next open: same `sync_id`, not `CLEAN` → F5, served from the first in-sync member | Same, and `LOST` makes the losers' resync mandatory |
 | One of several writers crashes | Its sessions drop: the copies it wrote go `LOST`, `writers` drops; the other writers' writes go on | — (one writer) | The copies may differ only in its unacknowledged regions; the next writer to see `LOST` (any `META`, transition or reply) resyncs the losers from the first in-sync member while writes continue. The chunk is never marked `CLEAN` over it |
 | A writer closes cleanly while others go on | `LEAVE` on each session, `writers` drops, the copy stays `DIRTY` | ✅ (member side, tested with several sessions) | The last `LEAVE` marks it `CLEAN` |
-| A writer hangs (alive, not writing, sessions open) | Nothing: its sessions count | — | Holds `ALONE` off on N = 2 (safe: freeze rather than decide); otherwise harmless |
+| A writer hangs (alive, not writing, sessions open) | Nothing: its sessions count | — | Does not prevent a quorum-backed transition; stale writes are fenced by epoch |
 | A writer's close fails to flush, a write failed outright, or an exclusion is unrecorded | The chunk closes without `LEAVE`: the copies it wrote go `LOST` | ✅ | Same |
 | A writer reconnects after a dropped session (F6) | The dropped session left the copy `LOST`; the new one counts in `writers` again | ✅ The writer excludes that member anyway (F6) and resyncs it on rejoin | Same; `LOST` stays until the resync |
 
@@ -409,9 +417,9 @@ refer to [Mirroring](mirroring.md#failure-cases).
 |---|---|---|---|
 | A writer loses one member (N ≥ 3) | Its writes to it fail | ✅ F1: exclude, continue on the majority | The exclusion is a transition: one writer decides, the others get `-ESTALE` at their next write to the survivors and adopt it |
 | Partition {X, A} \| {Y, B, C} (N = 3) | X reaches a minority, Y a majority | — | Y excludes A (majority B, C → epoch e+1) and goes on. X cannot reach a majority to exclude B and C: its writes freeze (`EIO`), unacknowledged. Its writes may still land on A at epoch e -- A is excluded, they are resynced away. X's reads from A are stale until it learns of the exclusion (allowed, *Requirements*). After the heal X gets `-ESTALE` from B and C and adopts |
-| Partition {X, A} \| {Y, B} (N = 2) | Neither side has a majority | — (one writer: continue on one survivor as in [Mirroring](mirroring.md#known-limitation-two-mirrors-one-survivor)) | Each side's `ALONE` is refused: first while the other writer's session still counts, then because its drop left the copy `LOST`. Both freeze until the partition heals; stage 3's witness lets one side go on |
+| Partition {X, A} \| {Y, B} (N = 2) | Neither side has a majority | — (one writer: continue on one survivor as in [Mirroring](mirroring.md#known-limitation-two-mirrors-one-survivor)) | Only a side with a data acceptor and W can decide exclusion; without a register quorum, transitions freeze |
 | Asymmetric: X reaches A, B, C; Y only C (N = 3) | Y's writes to A and B fail | — | Y cannot exclude A and B (no majority): it freezes. Its failed writes may have landed on C only: those regions differ on C until written again -- when Y gives up, its sessions drop and C goes `LOST`, so the divergence is resynced away. X goes on |
-| Only the server side of a session hangs (no FIN) | The member keeps counting the session | — | `ALONE` stays refused; no harm otherwise. TCP keepalive / the writer's own reconnect bound how long |
+| Only the server side of a session hangs (no FIN) | The member keeps counting the session | — | The writer count may stay high; it does not gate register votes. TCP keepalive / reconnect bound how long |
 | A reply is lost | The proposer cannot tell whether its request took effect | ✅ (acceptor side: every reply is the record, repeated requests are refused or idempotent) | The proposer retries with a higher ballot; step 2 finds its own change already in the value and adopts it |
 
 ### Transitions
@@ -435,8 +443,7 @@ record or frames, so both change in place. Details in
 
 - `include/rawstor/protocol.h`:
   - `SYNC_PREPARE` (`0x10`) and `SYNC_ACCEPT` (`0x11`):
-    `{object_id, chunk_offset, ballot, next, config, sessions, flags,
-    position}` (flag `ALONE`); both reply with the member's record
+    `{object_id, chunk_offset, ballot, next, config, position}`; both reply with the member's record
     (`RawstorFrameSyncReplyPayload`).
   - `SET_CONFIG` carries the receiver's `position` too; it goes in stage 2
     (*Retiring `SET_CONFIG`*).
@@ -464,14 +471,19 @@ record or frames, so both change in place. Details in
    chunk's state ([Mirroring](mirroring.md#writers)); every protocol, record
    and ABI change above, with the member-side behavior: acceptor rules,
    copies' own `DIRTY`/`CLEAN`/`LOST`, roles in every record, `LEAVE`, the
-   writer count, `-ESTALE`, the record of client writes for `RESYNC`, the
-   N = 2 `ALONE` rules. The client keeps working as one writer process:
+   writer count, `-ESTALE`, and the record of client writes for `RESYNC`.
+   The client keeps working as one writer process:
    epoch 0 on its writes, `SET_CONFIG` for its transitions.
-2. **Several processes.** ❌ `rawstd::caspaxos::Proposer`; every transition
+
+   **Prerequisite before Stage 2: witness support.** ❌ Implement the
+   witness planned in [MDS](mds.md#witness-stage-3), including durable
+   CASPaxos votes for the chunk configuration register. Two data copies
+   plus the witness form three acceptors; no single-copy override. Witness
+   development precedes multi-attach Stage 2, rather than following it.
+2. **Several processes and machines, after witness.** ❌ Integrate the
+   implemented `rawstd::caspaxos::Proposer`; every transition
    through the register; the client's epoch on writes and adoption on
    `-ESTALE`; resync of `LOST` chunks; resync across processes; a rule
    for clearing `LOST`, then `SET_CONFIG` and
    `rawstor_target_set_member_config()` removed; the register value kept
    once per chunk in the client.
-3. **Witness vote** ❌ for N = 2 with several writer processes, with
-   [MDS](mds.md) stage 3.

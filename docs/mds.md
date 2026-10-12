@@ -835,6 +835,21 @@ reconstruct scan (below).
 
 ## Witness (stage 3)
 
+This stage is implemented before [multi-attach Stage 2](multiattach.md#implementation-stages).
+The recovery rules below describe the single-writer client. To support
+writers on different processes and machines, the witness must also be a
+durable CASPaxos acceptor for each chunk's configuration register, storing
+`promised`, `accepted` and the accepted configuration. It confirms
+`SYNC_PREPARE` / `SYNC_ACCEPT` only after persisting the transition.
+Two data copies and their witness then provide three register votes; any
+two form a majority. The witness is omitted from data I/O and from the
+configuration's data-member `roles` and `position` numbering.
+
+In multi-attach Stage 2, excluding a failed data member needs this register
+quorum before writes resume under the new epoch. The asynchronous witness
+updates and the failure-hot-path requirement below apply to single-writer
+recovery; they cannot supply CASPaxos votes for multi-attach transitions.
+
 A witness is a **metadata-only member** of a chunk's quorum: it
 stores the consistency tuple (`state`-like record, `sync_id`,
 `sync_id_history`, `mirror_epoch`) and holds no data. For N=2 data mirrors it

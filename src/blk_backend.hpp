@@ -225,8 +225,8 @@ public:
     rawstd::Task<SyncReply> sync_accept(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config, unsigned int flags,
-        uint32_t sessions, uint8_t position, const SyncReply& proposed
+        const RawstorObjectConfig& config, uint8_t position,
+        const SyncReply& proposed
     ) override final;
 
     rawstd::Task<size_t>
