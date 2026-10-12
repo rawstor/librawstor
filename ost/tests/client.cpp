@@ -82,7 +82,7 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
     return cid;
 }
 
-uint16_t Client::send_set_object(const RawstdUUID& id) {
+uint16_t Client::send_set_object(const RawstdUUID& id, uint64_t chunk_offset) {
     uint16_t cid = _next_cid++;
     RawstorFrameBasic frame = {
         .head =
@@ -91,7 +91,9 @@ uint16_t Client::send_set_object(const RawstdUUID& id) {
                 .cmd = RAWSTOR_CMD_SET_OBJECT,
                 .cid = cid,
             },
-        .payload = {.object_id = {}, .offset = 0, .version_id = {}, .val = 0},
+        .payload = {
+            .object_id = {}, .offset = chunk_offset, .version_id = {}, .val = 0
+        },
     };
     std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));
     send_all(_fd, &frame, sizeof(frame));

@@ -37,7 +37,7 @@ public:
     // eventual recv_response().
     uint16_t
     send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width);
-    uint16_t send_set_object(const RawstdUUID& id);
+    uint16_t send_set_object(const RawstdUUID& id, uint64_t chunk_offset = 0);
     uint16_t send_meta(const RawstdUUID& id, uint64_t chunk_offset);
     uint16_t send_set_config(RawstorFrameSetConfig frame);
     uint16_t send_leave();

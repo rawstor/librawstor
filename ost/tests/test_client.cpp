@@ -300,7 +300,7 @@ TEST(OstClientTest, set_object_twice_does_not_crash) {
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_ALLOCATE);
     EXPECT_EQ(response.body.res, 0);
 
-    // First SET_OBJECT: the client's _object starts null, so this only
+    // First SET_OBJECT: the client's _chunk starts null, so this only
     // exercises rawstor_target_open() (same as simple_success above).
     client.send_set_object(id);
     ASSERT_TRUE(pump_until(queue, [&] {
@@ -310,7 +310,7 @@ TEST(OstClientTest, set_object_twice_does_not_crash) {
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
     EXPECT_EQ(response.body.res, 0);
 
-    // Second SET_OBJECT on the same client: _object is already set, so
+    // Second SET_OBJECT on the same client: _chunk is already set, so
     // the server's Client::_set_object() first closes it (via
     // Client::_close_current_object(), asynchronously -- rawstor_object_close()
     // queues the close and returns immediately, deferring the actual
@@ -565,6 +565,44 @@ TEST(OstClientTest, list_reports_every_chunk_offset) {
     std::memcpy(row_id.bytes, entries[1].id, sizeof(row_id.bytes));
     EXPECT_EQ(rawstd_uuid_cmp(&row_id, &id), 0);
     EXPECT_EQ(entries[1].chunk_offset, second_offset);
+
+    // Bind to the second chunk and use offsets relative to it.
+    client.send_set_object(id, second_offset);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    EXPECT_EQ(client.recv_response().body.res, 0);
+    const std::string data = "chunk";
+    client.send_write(0, data.data(), data.size(), false);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    EXPECT_EQ(
+        client.recv_response().body.res, static_cast<int32_t>(data.size())
+    );
+    client.send_read(0, data.size());
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >=
+               sizeof(RawstorFrameResponse) + data.size();
+    }));
+    std::string read_back(data.size(), '\0');
+    EXPECT_EQ(
+        client.recv_response(read_back.data(), read_back.size()).body.res,
+        static_cast<int32_t>(data.size())
+    );
+    EXPECT_EQ(read_back, data);
+    for (uint64_t offset : {uint64_t{4096}, UINT64_MAX}) {
+        client.send_read(offset, 1);
+        ASSERT_TRUE(pump_until(queue, [&] {
+            return client.bytes_available() >= sizeof(RawstorFrameResponse);
+        }));
+        EXPECT_EQ(client.recv_response().body.res, -EINVAL);
+        client.send_write(offset, data.data(), data.size(), false);
+        ASSERT_TRUE(pump_until(queue, [&] {
+            return client.bytes_available() >= sizeof(RawstorFrameResponse);
+        }));
+        EXPECT_EQ(client.recv_response().body.res, -EINVAL);
+    }
 
     // The last row is always the resume cursor -- nil here, since nothing
     // was left after this one id (RawstorPaginationToken's own doc

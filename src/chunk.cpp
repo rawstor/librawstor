@@ -647,7 +647,11 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     const RawstdUUID& id, uint64_t offset, int flags,
     const RawstdUUID& version_id
 ) {
-    // Object's lazy per-chunk opening and tests/ call this directly, so
+    if ((flags & ~RAWSTOR_READONLY) != 0 ||
+        (!rawstd_uuid_is_nil(&version_id) && (flags & RAWSTOR_READONLY) == 0)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    // Object and OST open chunks directly, so
     // the location list is validated here. Identity needs no check: it
     // arrives as the explicit `id`/`offset`/`version_id` parameters.
     validate_not_empty(locations);
@@ -2610,6 +2614,7 @@ Chunk::_degrade_detached(std::vector<size_t> idxs, std::weak_ptr<void> alive) {
 }
 
 rawstd::Task<size_t> Chunk::pread(void* buf, size_t size, uint64_t offset) {
+    _check_range(offset, size);
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pread(): size = %zu, offset = %" PRIu64 "\n", size, offset
     );
@@ -2638,6 +2643,7 @@ rawstd::Task<size_t> Chunk::pread(void* buf, size_t size, uint64_t offset) {
 
 rawstd::Task<size_t>
 Chunk::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
+    _check_range(offset, size);
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "preadv(): size = %zu, offset = %" PRIu64 "\n", size, offset
     );
@@ -2667,6 +2673,7 @@ Chunk::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
 rawstd::Task<size_t> Chunk::pwrite(
     const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
 ) {
+    _check_range(offset, size);
     if (epoch != 0) {
         if (_members.size() != 1) {
             RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
@@ -2720,6 +2727,7 @@ rawstd::Task<size_t> Chunk::pwrite(
 rawstd::Task<size_t> Chunk::resync_pwrite(
     const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
 ) {
+    _check_range(offset, size);
     if (_members.size() != 1) {
         RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
     }
@@ -2737,6 +2745,7 @@ rawstd::Task<size_t> Chunk::resync_pwrite(
 rawstd::Task<size_t> Chunk::pwritev(
     const iovec* iov, unsigned int niov, size_t size, uint64_t offset, bool sync
 ) {
+    _check_range(offset, size);
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pwritev(): size = %zu, offset = %" PRIu64 ", sync = %d\n", size,
         offset, sync
@@ -2774,6 +2783,7 @@ rawstd::Task<size_t> Chunk::pwritev(
 
 rawstd::Task<size_t>
 Chunk::discard(size_t size, uint64_t offset, uint64_t epoch) {
+    _check_range(offset, size);
     if (epoch != 0) {
         if (_members.size() != 1) {
             RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
@@ -2832,6 +2842,7 @@ Chunk::discard(size_t size, uint64_t offset, uint64_t epoch) {
 rawstd::Task<size_t> Chunk::write_zeroes(
     size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
 ) {
+    _check_range(offset, size);
     if (epoch != 0) {
         if (_members.size() != 1) {
             RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
@@ -2887,6 +2898,7 @@ rawstd::Task<size_t> Chunk::write_zeroes(
 rawstd::Task<size_t> Chunk::resync_write_zeroes(
     size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
 ) {
+    _check_range(offset, size);
     if (_members.size() != 1) {
         RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
     }

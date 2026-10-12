@@ -278,6 +278,12 @@ Chunk *is* the target string that opened it; a multi-chunk `mds://`
 object's chunks are each one same-offset group of the internal form
 above.
 
+An OST session opens a Chunk directly, using the object UUID, chunk offset
+and version supplied by `SET_OBJECT`. Its I/O offsets are relative to that
+chunk. Configuration epochs and resync operations belong to the Chunk and
+its copies; the client-facing Object routes ordinary I/O without exposing
+those parameters.
+
 ## Slot
 
 A **Slot** is one physical mirror arm of a Chunk: a single URI, backed by

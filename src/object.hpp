@@ -19,7 +19,7 @@
 // Opaque tag behind the C handle: rawstor::Object (a client-facing
 // entity made of one or more Chunks, docs/mds.md: "Object = group of
 // chunks") is its sole implementation. Every component that merely
-// passes a RawstorObject* around (ost/, vhost/, vduse/, ...) never
+// passes a RawstorObject* around (vhost/, vduse/, ...) never
 // dereferences it at all; object.cpp's own C ABI adapters (the only code
 // that does) static_cast<Object*> first, including to destroy it
 // (`delete static_cast<Object*>(object);`, launch_close_op_coro()) --
@@ -112,33 +112,20 @@ public:
     virtual rawstd::Task<size_t>
     preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) = 0;
 
-    virtual rawstd::Task<size_t> pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0
-    ) = 0;
-
-    virtual rawstd::Task<size_t> resync_pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0
-    ) = 0;
+    virtual rawstd::Task<size_t>
+    pwrite(const void* buf, size_t size, uint64_t offset, bool sync) = 0;
 
     virtual rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync
     ) = 0;
 
+    virtual rawstd::Task<size_t> discard(size_t size, uint64_t offset) = 0;
+
     virtual rawstd::Task<size_t>
-    discard(size_t size, uint64_t offset, uint64_t epoch = 0) = 0;
+    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) = 0;
 
-    virtual rawstd::Task<size_t> write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
-    ) = 0;
-
-    virtual rawstd::Task<size_t> resync_write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
-    ) = 0;
-
-    virtual rawstd::Task<void> flush(uint64_t epoch = 0) = 0;
+    virtual rawstd::Task<void> flush() = 0;
 
     // `clean`: the writer is done cleanly (Chunk::close()); false for a
     // writer gone mid-flight -- rawstor_object_abandon().
@@ -176,33 +163,20 @@ public:
         iovec* iov, unsigned int niov, size_t size, uint64_t offset
     ) override;
 
-    rawstd::Task<size_t> pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0
-    ) override;
-
-    rawstd::Task<size_t> resync_pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0
-    ) override;
+    rawstd::Task<size_t>
+    pwrite(const void* buf, size_t size, uint64_t offset, bool sync) override;
 
     rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync
     ) override;
 
+    rawstd::Task<size_t> discard(size_t size, uint64_t offset) override;
+
     rawstd::Task<size_t>
-    discard(size_t size, uint64_t offset, uint64_t epoch = 0) override;
+    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) override;
 
-    rawstd::Task<size_t> write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
-    ) override;
-
-    rawstd::Task<size_t> resync_write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
-    ) override;
-
-    rawstd::Task<void> flush(uint64_t epoch = 0) override;
+    rawstd::Task<void> flush() override;
 
     rawstd::Task<void> close(bool clean = true) override;
 };
@@ -329,33 +303,20 @@ public:
         iovec* iov, unsigned int niov, size_t size, uint64_t offset
     ) override;
 
-    rawstd::Task<size_t> pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0
-    ) override;
-
-    rawstd::Task<size_t> resync_pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0
-    ) override;
+    rawstd::Task<size_t>
+    pwrite(const void* buf, size_t size, uint64_t offset, bool sync) override;
 
     rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync
     ) override;
 
+    rawstd::Task<size_t> discard(size_t size, uint64_t offset) override;
+
     rawstd::Task<size_t>
-    discard(size_t size, uint64_t offset, uint64_t epoch = 0) override;
+    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) override;
 
-    rawstd::Task<size_t> write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
-    ) override;
-
-    rawstd::Task<size_t> resync_write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
-    ) override;
-
-    rawstd::Task<void> flush(uint64_t epoch = 0) override;
+    rawstd::Task<void> flush() override;
 
     rawstd::Task<void> close(bool clean = true) override;
 };

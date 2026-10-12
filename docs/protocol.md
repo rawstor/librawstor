@@ -48,8 +48,9 @@ A client may pipeline requests: each carries a `cid` (command id) and its
 response echoes it back, so responses are matched by `cid`, not by order.
 
 The first request on a connection is `SET_OBJECT`. On an OST it binds the
-connection to one object (one chunk of it, one version of it); the I/O
-commands then act on that object. On the MDS it is a plain handshake. A
+connection to a Chunk identified by `object_id`, `offset` (the chunk
+offset within the object), and `version_id`. I/O offsets are relative to
+that chunk; the OST does not open an Object or route I/O between chunks. On the MDS it is a plain handshake. A
 server answers any command outside its role with `res = -ENOSYS`.
 
 ## Frame head

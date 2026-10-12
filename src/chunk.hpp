@@ -44,7 +44,7 @@ struct MirrorResync;
 // its own Slot pool -- the sole building block Object routes I/O to. Not a
 // RawstorObject itself: only Object is ever handed out as a top-level
 // handle (see object.hpp); Chunk is built and consumed entirely inside
-// Target::open()/Object, via the create() factory below.
+// Target::open()/Object and OST, via the create() factory below.
 class Chunk final {
 private:
     struct ResyncTicket;
@@ -155,6 +155,13 @@ private:
     // _probe_pending guards against a second _probe_tick() firing while a
     // reconnect attempt it started is still in flight.
     bool _probe_pending;
+
+    // Offsets in chunk I/O are relative to this copy, including OST requests.
+    void _check_range(uint64_t offset, size_t size) const {
+        if (offset > _spec.size || size > _spec.size - offset) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
 
     // Ticket dispenser: each pwrite()/pwritev()/write_zeroes() call takes
     // the next one at entry (WriteTicket below) and hands it to
@@ -394,8 +401,7 @@ private:
     // Adapts Slot::flush() (Task<void>) to _fan_out_write()'s own
     // Task<size_t> issue signature -- a named coroutine, not a lambda one:
     // an immediately-invoked lambda coroutine would dangle its own
-    // closure (see co_target_open()'s doc comment in ost/src/client.cpp
-    // for the general hazard).
+    // closure, which must outlive every suspension of its coroutine.
     rawstd::Task<size_t> _flush_one(Slot& slot);
 
     // Chunk is final -- unlike Backend::Private (which every backend
