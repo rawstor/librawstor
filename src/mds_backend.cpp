@@ -655,7 +655,7 @@ rawstd::Task<size_t> Backend::pwrite(
 }
 
 rawstd::Task<size_t>
-Backend::resync(const void*, size_t, uint64_t, bool, uint64_t) {
+Backend::resync_pwrite(const void*, size_t, uint64_t, bool, uint64_t) {
     RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
     co_return 0;
 }
@@ -676,14 +676,19 @@ Backend::discard(size_t size, uint64_t offset, uint64_t epoch) {
 }
 
 rawstd::Task<size_t> Backend::write_zeroes(
-    size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch,
-    bool resync
+    size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
 ) {
-    if (epoch != 0 || resync) {
+    if (epoch != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
     }
 
     co_return co_await _opened().write_zeroes(size, offset, unmap, sync);
+}
+
+rawstd::Task<size_t>
+Backend::resync_write_zeroes(size_t, uint64_t, bool, bool, uint64_t) {
+    RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    co_return 0;
 }
 
 rawstd::Task<void> Backend::flush(uint64_t epoch) {

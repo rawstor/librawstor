@@ -314,7 +314,7 @@ public:
 
     // Copy restoration data; remote backends preserve the RESYNC flag so
     // the destination Slot protects newer client writes.
-    virtual rawstd::Task<size_t> resync(
+    virtual rawstd::Task<size_t> resync_pwrite(
         const void* buf, size_t size, uint64_t offset, bool sync,
         uint64_t epoch = 0
     ) = 0;
@@ -339,8 +339,11 @@ public:
     // VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP. `sync` has the same meaning as
     // pwrite()/pwritev()'s own `sync`.
     virtual rawstd::Task<size_t> write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0,
-        bool resync = false
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
+    ) = 0;
+
+    virtual rawstd::Task<size_t> resync_write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
     ) = 0;
 
     virtual rawstd::Task<void> flush(uint64_t epoch = 0) = 0;

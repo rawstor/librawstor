@@ -2083,7 +2083,7 @@ rawstd::Task<size_t> Backend::pwrite(
     return _pwrite(buf, size, offset, sync, epoch, false);
 }
 
-rawstd::Task<size_t> Backend::resync(
+rawstd::Task<size_t> Backend::resync_pwrite(
     const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
 ) {
     return _pwrite(buf, size, offset, sync, epoch, true);
@@ -2176,6 +2176,18 @@ Backend::discard(size_t size, uint64_t offset, uint64_t epoch) {
 }
 
 rawstd::Task<size_t> Backend::write_zeroes(
+    size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+) {
+    return _write_zeroes(size, offset, unmap, sync, epoch, false);
+}
+
+rawstd::Task<size_t> Backend::resync_write_zeroes(
+    size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+) {
+    return _write_zeroes(size, offset, unmap, sync, epoch, true);
+}
+
+rawstd::Task<size_t> Backend::_write_zeroes(
     size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch,
     bool resync
 ) {
