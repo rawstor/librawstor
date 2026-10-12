@@ -565,6 +565,23 @@ rawstd::Task<void> Backend::set_config(
     co_return;
 }
 
+rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
+    const RawstdUUID&, uint64_t, const RawstorObjectBallot&,
+    const RawstorObjectSyncReply&
+) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
+    co_return RawstorObjectSyncReply{};
+}
+
+rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
+    const RawstdUUID&, uint64_t, const RawstorObjectBallot&,
+    const RawstorObjectBallot&, const RawstorObjectConfig&, uint8_t,
+    const RawstorObjectSyncReply&
+) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
+    co_return RawstorObjectSyncReply{};
+}
+
 rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return co_await _client.info();
 }
