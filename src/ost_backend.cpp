@@ -771,9 +771,9 @@ private:
 public:
     BackendOpSetConfig(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
-        const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& id, uint64_t chunk_offset, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags,
-        uint8_t member_index, const rawstd::TraceEvent& trace_event
+        const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "set_config", 0, 0),
         _request{} {
@@ -1753,9 +1753,9 @@ rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
 }
 
 rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
-    const RawstorObjectBallot& next, const RawstorObjectConfig& config,
-    uint8_t member_index, const RawstorObjectSyncReply&
+    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+    const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+    const RawstorObjectConfig& config, const RawstorObjectSyncReply&
 ) {
     RawstorFrameSyncPropose request{};
     request.head.magic = RAWSTOR_MAGIC;
@@ -1790,15 +1790,15 @@ rawstd::Task<void> Backend::set_state(
 }
 
 rawstd::Task<void> Backend::set_config(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int flags, uint8_t member_index
+    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+    const RawstorObjectConfig& config, unsigned int flags
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpSetConfig> op =
         std::make_shared<BackendOpSetConfig>(
             std::static_pointer_cast<Backend>(shared_from_this()),
-            _cid_counter++, id, offset, config, flags, member_index, trace_event
+            _cid_counter++, id, offset, member_index, config, flags, trace_event
         );
     _add_op(op);
 

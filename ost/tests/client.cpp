@@ -216,10 +216,10 @@ uint16_t Client::send_discard(uint64_t offset, uint32_t size) {
 }
 
 uint16_t Client::send_write_zeroes(
-    uint64_t offset, uint32_t size, bool unmap, bool sync
+    uint64_t offset, uint32_t size, bool unmap, bool sync, uint8_t flags
 ) {
     uint16_t cid = _next_cid++;
-    uint8_t flags = static_cast<uint8_t>(
+    flags |= static_cast<uint8_t>(
         (unmap ? RAWSTOR_FLAG_UNMAP : 0) | (sync ? RAWSTOR_FLAG_SYNC : 0)
     );
     RawstorFrameIO frame = {

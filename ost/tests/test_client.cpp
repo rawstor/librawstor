@@ -1009,10 +1009,18 @@ TEST(OstClientTest, resync_write_skips_sectors_clients_wrote) {
         std::string(512, 'R') + whole + std::string(1024, 'R');
     EXPECT_EQ(read_all(2048), expected);
 
+    // Zeroing during restoration protects the same client-written sectors.
+    client.send_write_zeroes(0, 2048, false, true, RAWSTOR_FLAG_RESYNC);
+    expect_response(RAWSTOR_CMD_WRITE_ZEROES, 2048);
+    expected = std::string(512, '\0') + whole + std::string(1024, '\0');
+    EXPECT_EQ(read_all(2048), expected);
+
     set_role(RAWSTOR_OBJECT_MEMBER_IN_SYNC);
     client.send_write_at_epoch(
         0, copy.data(), copy.size(), 0, RAWSTOR_FLAG_RESYNC
     );
     expect_response(RAWSTOR_CMD_WRITE, -ESTALE);
+    client.send_write_zeroes(0, 2048, false, false, RAWSTOR_FLAG_RESYNC);
+    expect_response(RAWSTOR_CMD_WRITE_ZEROES, -ESTALE);
     EXPECT_EQ(read_all(2048), expected);
 }

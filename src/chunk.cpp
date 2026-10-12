@@ -1447,7 +1447,7 @@ rawstd::Task<void> Chunk::_set_config_one(
         co_return;
     }
     try {
-        co_await _members[idx].slot->set_config(_id, _offset, config, 0, idx);
+        co_await _members[idx].slot->set_config(_id, _offset, idx, config, 0);
     } catch (const std::system_error& e) {
         int error = e.code().value();
         if (error == ENOSYS) {
@@ -1861,7 +1861,7 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
 
         int error = 0;
         try {
-            co_await _members[idx].slot->set_config(_id, _offset, m, 0, idx);
+            co_await _members[idx].slot->set_config(_id, _offset, idx, m, 0);
         } catch (const std::system_error& e) {
             error = e.code().value();
         }
@@ -2252,7 +2252,7 @@ rawstd::Task<void> Chunk::_resync_finish(uint64_t generation) {
 
     int error = 0;
     try {
-        co_await _members[idx].slot->set_config(_id, _offset, m, 0, idx);
+        co_await _members[idx].slot->set_config(_id, _offset, idx, m, 0);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -2665,10 +2665,9 @@ Chunk::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
 }
 
 rawstd::Task<size_t> Chunk::pwrite(
-    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch,
-    bool resync
+    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
 ) {
-    if (epoch != 0 || resync) {
+    if (epoch != 0) {
         if (_members.size() != 1) {
             RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
         }
@@ -2677,7 +2676,7 @@ rawstd::Task<size_t> Chunk::pwrite(
         }
         WriteTicket ticket(*this);
         size_t result = co_await _members.front().slot->pwrite(
-            buf, size, offset, sync, epoch, resync
+            buf, size, offset, sync, epoch
         );
         _unflushed = true;
         co_return result;
@@ -2699,9 +2698,9 @@ rawstd::Task<size_t> Chunk::pwrite(
         co_await _with_dirty();
         size_t result = co_await _fan_out_write(
             offset, size,
-            [buf, size, offset, sync, epoch,
-             resync](Slot& slot) -> rawstd::Task<size_t> {
-                return slot.pwrite(buf, size, offset, sync, epoch, resync);
+            [buf, size, offset, sync,
+             epoch](Slot& slot) -> rawstd::Task<size_t> {
+                return slot.pwrite(buf, size, offset, sync, epoch);
             }
         );
         _unflushed = true;
@@ -2716,6 +2715,23 @@ rawstd::Task<size_t> Chunk::pwrite(
         );
         throw;
     }
+}
+
+rawstd::Task<size_t> Chunk::resync_pwrite(
+    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+) {
+    if (_members.size() != 1) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    }
+    if (_readonly) {
+        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+    }
+    WriteTicket ticket(*this);
+    size_t result = co_await _members.front().slot->resync_pwrite(
+        buf, size, offset, sync, epoch
+    );
+    _unflushed = true;
+    co_return result;
 }
 
 rawstd::Task<size_t> Chunk::pwritev(
@@ -2814,10 +2830,9 @@ Chunk::discard(size_t size, uint64_t offset, uint64_t epoch) {
 }
 
 rawstd::Task<size_t> Chunk::write_zeroes(
-    size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch,
-    bool resync
+    size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
 ) {
-    if (epoch != 0 || resync) {
+    if (epoch != 0) {
         if (_members.size() != 1) {
             RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
         }
@@ -2826,7 +2841,7 @@ rawstd::Task<size_t> Chunk::write_zeroes(
         }
         WriteTicket ticket(*this);
         size_t result = co_await _members.front().slot->write_zeroes(
-            size, offset, unmap, sync, epoch, resync
+            size, offset, unmap, sync, epoch
         );
         _unflushed = true;
         co_return result;
@@ -2850,11 +2865,9 @@ rawstd::Task<size_t> Chunk::write_zeroes(
         co_await _with_dirty();
         size_t result = co_await _fan_out_write(
             offset, size,
-            [size, offset, unmap, sync, epoch,
-             resync](Slot& slot) -> rawstd::Task<size_t> {
-                return slot.write_zeroes(
-                    size, offset, unmap, sync, epoch, resync
-                );
+            [size, offset, unmap, sync,
+             epoch](Slot& slot) -> rawstd::Task<size_t> {
+                return slot.write_zeroes(size, offset, unmap, sync, epoch);
             }
         );
         _unflushed = true;
@@ -2869,6 +2882,23 @@ rawstd::Task<size_t> Chunk::write_zeroes(
         );
         throw;
     }
+}
+
+rawstd::Task<size_t> Chunk::resync_write_zeroes(
+    size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+) {
+    if (_members.size() != 1) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    }
+    if (_readonly) {
+        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+    }
+    WriteTicket ticket(*this);
+    size_t result = co_await _members.front().slot->resync_write_zeroes(
+        size, offset, unmap, sync, epoch
+    );
+    _unflushed = true;
+    co_return result;
 }
 
 rawstd::Task<void> Chunk::flush(uint64_t epoch) {

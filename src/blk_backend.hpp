@@ -213,9 +213,8 @@ public:
     ) override final;
 
     rawstd::Task<void> set_config(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags,
-        uint8_t member_index
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstorObjectConfig& config, unsigned int flags
     ) override final;
 
     rawstd::Task<RawstorObjectSyncReply> sync_prepare(
@@ -225,9 +224,9 @@ public:
     ) override final;
 
     rawstd::Task<RawstorObjectSyncReply> sync_accept(
-        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config, uint8_t member_index,
+        const RawstorObjectConfig& config,
         const RawstorObjectSyncReply& proposed
     ) override final;
 

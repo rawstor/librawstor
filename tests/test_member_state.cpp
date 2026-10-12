@@ -428,7 +428,7 @@ void expect_copy_write_requests(const rawstd::URI& location) {
     config.epoch = 5;
     config.nroles = 1;
     config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
-    run(*queue, peer->set_config(id, 0, config, 0, 0));
+    run(*queue, peer->set_config(id, 0, 0, config, 0));
     std::string client_data(512, 'W');
     expect_stale(
         writer->pwrite(client_data.data(), client_data.size(), 512, false, 4)
@@ -442,13 +442,13 @@ void expect_copy_write_requests(const rawstd::URI& location) {
         EXPECT_EQ(e.code().value(), ESTALE);
     }
     // RESYNC needs a copy currently tracking client writes.
-    expect_stale(writer->pwrite(
-        client_data.data(), client_data.size(), 0, false, 5, true
+    expect_stale(writer->resync_pwrite(
+        client_data.data(), client_data.size(), 0, false, 5
     ));
 
     config.epoch = 7;
     config.roles[0] = RAWSTOR_OBJECT_MEMBER_SYNCING;
-    run(*queue, peer->set_config(id, 0, config, 0, 0));
+    run(*queue, peer->set_config(id, 0, 0, config, 0));
     ASSERT_EQ(
         run(*queue, writer->pwrite(
                         client_data.data(), client_data.size(), 512, false, 7
@@ -462,7 +462,7 @@ void expect_copy_write_requests(const rawstd::URI& location) {
     std::string repair(2048, 'R');
     ASSERT_EQ(
         run(*queue,
-            peer->pwrite(repair.data(), repair.size(), 0, false, 7, true)),
+            peer->resync_pwrite(repair.data(), repair.size(), 0, false, 7)),
         repair.size()
     );
     std::string data(2048, '\0');
@@ -473,7 +473,7 @@ void expect_copy_write_requests(const rawstd::URI& location) {
         data, std::string(512, 'R') + client_data + std::string(1024, 'R')
     );
     ASSERT_EQ(
-        run(*queue, peer->write_zeroes(data.size(), 0, false, false, 7, true)),
+        run(*queue, peer->resync_write_zeroes(data.size(), 0, false, false, 7)),
         data.size()
     );
     ASSERT_EQ(
@@ -494,7 +494,7 @@ void expect_copy_write_requests(const rawstd::URI& location) {
     }
     config.epoch = 9;
     config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
-    run(*queue, peer->set_config(id, 0, config, 0, 0));
+    run(*queue, peer->set_config(id, 0, 0, config, 0));
     std::string actual(block.size(), '\0');
     ASSERT_EQ(
         run(*queue, peer->pread(actual.data(), actual.size(), 4096)),
@@ -507,7 +507,9 @@ void expect_copy_write_requests(const rawstd::URI& location) {
     expect_stale(
         writer->pwrite(client_data.data(), client_data.size(), 0, false, 7)
     );
-    expect_stale(peer->pwrite(repair.data(), repair.size(), 0, false, 9, true));
+    expect_stale(
+        peer->resync_pwrite(repair.data(), repair.size(), 0, false, 9)
+    );
     EXPECT_EQ(
         run(*queue, writer->pwrite(
                         client_data.data(), client_data.size(), 0, false, 0

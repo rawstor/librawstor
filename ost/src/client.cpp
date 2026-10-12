@@ -1431,8 +1431,8 @@ rawstd::DetachedTask Client::_set_config(
             std::exception_ptr error;
             try {
                 co_await slot->set_config(
-                    uuid, payload.chunk_offset, config, payload.flags,
-                    payload.member_index
+                    uuid, payload.chunk_offset, payload.member_index, config,
+                    payload.flags
                 );
             } catch (...) {
                 error = std::current_exception();
@@ -1504,8 +1504,8 @@ rawstd::DetachedTask Client::_sync(
                     );
                 } else {
                     reply = co_await slot->sync_accept(
-                        uuid, payload.chunk_offset, ballot, next, config,
-                        payload.member_index
+                        uuid, payload.chunk_offset, payload.member_index,
+                        ballot, next, config
                     );
                 }
             } catch (...) {
@@ -1871,10 +1871,16 @@ rawstd::DetachedTask Client::_dispatch_write(
         if (object == nullptr) {
             RAWSTD_THROW_SYSTEM_ERROR(EBADF);
         }
-        result = co_await static_cast<rawstor::Object*>(object)->pwrite(
-            data->data(), data->size(), offset, sync, epoch,
-            (flags & RAWSTOR_FLAG_RESYNC) != 0
-        );
+        auto* opened = static_cast<rawstor::Object*>(object);
+        if ((flags & RAWSTOR_FLAG_RESYNC) != 0) {
+            result = co_await opened->resync_pwrite(
+                data->data(), data->size(), offset, sync, epoch
+            );
+        } else {
+            result = co_await opened->pwrite(
+                data->data(), data->size(), offset, sync, epoch
+            );
+        }
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -2060,10 +2066,16 @@ rawstd::DetachedTask Client::_write_zeroes(
         if (object == nullptr) {
             RAWSTD_THROW_SYSTEM_ERROR(EBADF);
         }
-        result = co_await static_cast<rawstor::Object*>(object)->write_zeroes(
-            payload.len, payload.offset, unmap, sync, payload.epoch,
-            (payload.flags & RAWSTOR_FLAG_RESYNC) != 0
-        );
+        auto* opened = static_cast<rawstor::Object*>(object);
+        if ((payload.flags & RAWSTOR_FLAG_RESYNC) != 0) {
+            result = co_await opened->resync_write_zeroes(
+                payload.len, payload.offset, unmap, sync, payload.epoch
+            );
+        } else {
+            result = co_await opened->write_zeroes(
+                payload.len, payload.offset, unmap, sync, payload.epoch
+            );
+        }
     } catch (const std::system_error& e) {
         error = e.code().value();
     }

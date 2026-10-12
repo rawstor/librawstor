@@ -114,7 +114,12 @@ public:
 
     virtual rawstd::Task<size_t> pwrite(
         const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0, bool resync = false
+        uint64_t epoch = 0
+    ) = 0;
+
+    virtual rawstd::Task<size_t> resync_pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync,
+        uint64_t epoch = 0
     ) = 0;
 
     virtual rawstd::Task<size_t> pwritev(
@@ -126,8 +131,11 @@ public:
     discard(size_t size, uint64_t offset, uint64_t epoch = 0) = 0;
 
     virtual rawstd::Task<size_t> write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0,
-        bool resync = false
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
+    ) = 0;
+
+    virtual rawstd::Task<size_t> resync_write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
     ) = 0;
 
     virtual rawstd::Task<void> flush(uint64_t epoch = 0) = 0;
@@ -170,7 +178,12 @@ public:
 
     rawstd::Task<size_t> pwrite(
         const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0, bool resync = false
+        uint64_t epoch = 0
+    ) override;
+
+    rawstd::Task<size_t> resync_pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync,
+        uint64_t epoch = 0
     ) override;
 
     rawstd::Task<size_t> pwritev(
@@ -182,8 +195,11 @@ public:
     discard(size_t size, uint64_t offset, uint64_t epoch = 0) override;
 
     rawstd::Task<size_t> write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0,
-        bool resync = false
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
+    ) override;
+
+    rawstd::Task<size_t> resync_write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
     ) override;
 
     rawstd::Task<void> flush(uint64_t epoch = 0) override;
@@ -315,7 +331,12 @@ public:
 
     rawstd::Task<size_t> pwrite(
         const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch = 0, bool resync = false
+        uint64_t epoch = 0
+    ) override;
+
+    rawstd::Task<size_t> resync_pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync,
+        uint64_t epoch = 0
     ) override;
 
     rawstd::Task<size_t> pwritev(
@@ -327,8 +348,11 @@ public:
     discard(size_t size, uint64_t offset, uint64_t epoch = 0) override;
 
     rawstd::Task<size_t> write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0,
-        bool resync = false
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
+    ) override;
+
+    rawstd::Task<size_t> resync_write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch = 0
     ) override;
 
     rawstd::Task<void> flush(uint64_t epoch = 0) override;

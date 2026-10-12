@@ -210,9 +210,8 @@ public:
     // Slot serializes it with state transitions and applies CLEAR_LOST via
     // set_state(); transports forward flags to the destination's Slot.
     virtual rawstd::Task<void> set_config(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags,
-        uint8_t member_index
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstorObjectConfig& config, unsigned int flags
     ) = 0;
 
     // The two requests of the chunk's configuration register
@@ -228,9 +227,9 @@ public:
         const RawstorObjectSyncReply& proposed
     ) = 0;
     virtual rawstd::Task<RawstorObjectSyncReply> sync_accept(
-        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config, uint8_t member_index,
+        const RawstorObjectConfig& config,
         const RawstorObjectSyncReply& proposed
     ) = 0;
 

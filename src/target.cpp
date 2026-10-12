@@ -1594,7 +1594,7 @@ rawstd::Task<void> Target::set_member_config(
     std::exception_ptr error;
     try {
         co_await slot->set_config(
-            id, offset, config, flags, static_cast<uint8_t>(member_index)
+            id, offset, static_cast<uint8_t>(member_index), config, flags
         );
     } catch (...) {
         error = std::current_exception();
@@ -1644,7 +1644,7 @@ rawstd::Task<RawstorObjectSyncReply> Target::sync_accept(
     std::exception_ptr error;
     try {
         reply = co_await slot->sync_accept(
-            id, offset, ballot, next, config, static_cast<uint8_t>(member_index)
+            id, offset, static_cast<uint8_t>(member_index), ballot, next, config
         );
     } catch (...) {
         error = std::current_exception();

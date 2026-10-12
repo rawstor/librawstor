@@ -558,8 +558,8 @@ rawstd::Task<void> Backend::set_state(
 }
 
 rawstd::Task<void> Backend::set_config(
-    const RawstdUUID&, uint64_t, const RawstorObjectConfig&, unsigned int,
-    uint8_t
+    const RawstdUUID&, uint64_t, uint8_t, const RawstorObjectConfig&,
+    unsigned int
 ) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     co_return;
@@ -574,8 +574,8 @@ rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
 }
 
 rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
-    const RawstdUUID&, uint64_t, const RawstorObjectBallot&,
-    const RawstorObjectBallot&, const RawstorObjectConfig&, uint8_t,
+    const RawstdUUID&, uint64_t, uint8_t, const RawstorObjectBallot&,
+    const RawstorObjectBallot&, const RawstorObjectConfig&,
     const RawstorObjectSyncReply&
 ) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);

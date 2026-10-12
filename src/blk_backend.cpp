@@ -201,8 +201,8 @@ rawstd::Task<void> Backend::set_state(
 }
 
 rawstd::Task<void> Backend::set_config(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int, uint8_t
+    const RawstdUUID& id, uint64_t offset, uint8_t,
+    const RawstorObjectConfig& config, unsigned int
 ) {
     RawstorObjectMeta meta{};
     meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
@@ -233,8 +233,8 @@ rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
 }
 
 rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot&,
-    const RawstorObjectBallot&, const RawstorObjectConfig&, uint8_t,
+    const RawstdUUID& id, uint64_t offset, uint8_t, const RawstorObjectBallot&,
+    const RawstorObjectBallot&, const RawstorObjectConfig&,
     const RawstorObjectSyncReply& proposed
 ) {
     if (proposed.ok) {
