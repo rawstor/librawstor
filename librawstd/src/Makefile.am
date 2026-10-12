@@ -14,7 +14,8 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-librawstd_la_SOURCES = $(top_srcdir)/librawstd/include/rawstd/coro.hpp \
+librawstd_la_SOURCES = $(top_srcdir)/librawstd/include/rawstd/caspaxos.hpp \
+                       $(top_srcdir)/librawstd/include/rawstd/coro.hpp \
                        $(top_srcdir)/librawstd/include/rawstd/endian.h \
                        $(top_srcdir)/librawstd/include/rawstd/env.h \
                        $(top_srcdir)/librawstd/include/rawstd/exitcode.h \
