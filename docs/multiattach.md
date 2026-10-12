@@ -10,7 +10,7 @@ separately.
 | Feature | Stage | Status | Where |
 |---|---|---|---|
 | Writable opens of one process share the chunk's state; transitions once per process | 1 | ✅ | [Mirroring](mirroring.md#writers), `src/chunk.cpp` (`MirrorControl`) |
-| Acceptor rules (`rawstd::caspaxos::prepare()` / `accept()`) | 1 | ✅ | `librawstd/include/rawstd/caspaxos.hpp`, [CASPaxos](caspaxos.md) |
+| Acceptor rules (`rawstd::caspaxos::Acceptor<V>::prepare()` / `accept()`) | 1 | ✅ | `librawstd/include/rawstd/caspaxos.hpp`, [CASPaxos](caspaxos.md) |
 | A copy's record carries the register: `promised`, `accepted`, and `resync_owner` in the configuration | 1 | ✅ | `src/blk_backend.cpp` (`meta_encode()`) |
 | `SYNC_PREPARE` / `SYNC_ACCEPT` on every member, reply carries the actual record; `ALONE` | 1 | ✅ | `src/slot.cpp`, `ost/src/client.cpp` (`_sync`), `rawstor_target_sync_prepare()` / `_accept()` |
 | One record lock and one writer count per copy in a process (`Slot::CopyState`) | 1 | ✅ | `src/slot.cpp` |
@@ -20,7 +20,7 @@ separately.
 | Syncing is a role, not a `state`; a copy learns its own from its position in the request | 1 | ✅ | [Mirroring](mirroring.md#states-and-roles), `position` in `SET_CONFIG` / `SYNC_ACCEPT` |
 | `epoch` on write frames, `-ESTALE` below the copy's epoch, drain on raise | 1 | ✅ | `src/slot.cpp` (`Admission`) |
 | `RESYNC` flag on writes; client-write record of a syncing copy | 1 | ✅ | `src/slot.cpp` (`Resync`) |
-| `Proposer<V>`: a change as a coroutine over a pluggable transport | 2 | ❌ | [CASPaxos](caspaxos.md#api) |
+| `Proposer<V>`: a change as a coroutine over a pluggable transport | 2 | ✅ | `librawstd/include/rawstd/caspaxos.hpp`, [CASPaxos](caspaxos.md#api) |
 | Every transition through the register | 2 | ❌ | the client uses `SET_CONFIG` |
 | The client stamps writes with its `epoch`; adoption on `-ESTALE` | 2 | ❌ | the client sends 0 |
 | `LOST` at open and at runtime: resync of the losers | 2 | ❌ | open treats `LOST` as `DIRTY` |
