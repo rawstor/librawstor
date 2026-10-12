@@ -37,7 +37,7 @@ enum class MemberState { IN_SYNC, LEAVING, STALE, SYNCING };
 // and the online resync. Every writable Chunk this process opened on the
 // same mirrored chunk (one per virtqueue of a multiqueue device) shares
 // one; any other Chunk has one of its own.
-struct MirrorControl;
+class MirrorControl;
 
 // Chunk mirrors a single logical chunk (1..N slots, one per replica) over
 // its own Slot pool -- the sole building block Object routes I/O to. Not a
@@ -143,7 +143,7 @@ private:
     size_t _resync_idx;
     uint64_t _resync_attach_epoch;
     size_t _resync_untracked;
-    // MirrorControl::resync_seq as the write path and the watcher last
+    // The shared resync sequence as the write path and the watcher last
     // saw it.
     uint64_t _resync_seen;
     uint64_t _watch_seen;
@@ -228,10 +228,9 @@ private:
     // _write_finished() in its destructor, however the write ends.
     class WriteTicket;
 
-    // Member `idx`'s state; read without any lock. _set_state() is called
-    // with MirrorControl::mu held.
+    // Member `idx`'s state; read without any lock. MirrorControl manages
+    // state transitions under its mutex.
     MemberState _state(size_t idx) const noexcept;
-    void _set_state(size_t idx, MemberState state) noexcept;
     size_t _in_sync_count() const noexcept;
     bool _any_leaving() const noexcept;
 
@@ -338,7 +337,7 @@ private:
         const ResyncTicket& ticket, uint64_t offset, size_t size, bool written,
         bool written_ok
     ) noexcept;
-    // With MirrorControl::mu held: once the resync this Chunk is attached
+    // With the MirrorControl mutex held: once the resync this Chunk is attached
     // to has ended, detaches it -- marking the member unreachable if the
     // resync was aborted, so the probe brings it back.
     void _resync_follow_locked() noexcept;
@@ -354,7 +353,7 @@ private:
     // target, no such member, empty object).
     rawstd::DetachedTask _resync_maybe_start();
     // Attaches this Chunk to the running resync `generation`: the first
-    // with MirrorControl::mu held and a session to the member already
+    // with the MirrorControl mutex held and a session to the member already
     // there, the second connecting to it first.
     void _resync_attach_locked(uint64_t generation);
     rawstd::Task<void> _resync_attach(uint64_t generation, size_t idx);
