@@ -585,6 +585,33 @@ Slot::Slot(Private, rawio::Queue& queue, std::shared_ptr<Backend> backend) :
     _transparent_retry(true) {
 }
 
+class Slot::OperationGuard final {
+private:
+    Slot& _slot;
+
+public:
+    explicit OperationGuard(Slot& slot) : _slot(slot) {
+        if (_slot._closing) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+        }
+        ++_slot._operations;
+    }
+    OperationGuard(const OperationGuard&) = delete;
+    OperationGuard& operator=(const OperationGuard&) = delete;
+    ~OperationGuard() {
+        if (--_slot._operations == 0) {
+            rawstd::Barrier barrier = std::move(_slot._drained);
+            barrier.advance();
+        }
+    }
+};
+
+void Slot::_check_write() const {
+    if (_flags & RAWSTOR_READONLY) {
+        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+    }
+}
+
 Slot::~Slot() {
     if (_member) {
         --_member->writers;
@@ -1183,6 +1210,10 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     const RawstdUUID& id, uint64_t offset, int flags,
     const RawstdUUID& version_id
 ) {
+    if ((flags & ~RAWSTOR_READONLY) != 0 ||
+        (!rawstd_uuid_is_nil(&version_id) && !(flags & RAWSTOR_READONLY))) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     // Set before the set_object() call below: on failure,
     // _reconnect() reconnects and set_object()s the replacement
     // itself, using these same members.
@@ -1248,7 +1279,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // -- every real open (this call) goes through here regardless of
     // caller, client-side (Chunk::create()'s own per-member connect) or
     // server-side (rawstor-ost's own SET_OBJECT handler opens its local
-    // storage the same way, ost/src/client.cpp's co_target_open()), so
+    // storage the same way, ost/src/client.cpp's _set_object()), so
     // this is the one place that needs to know. A read-only metadata
     // lookup (meta()/spec()/chunks(), target.cpp) never calls open() at
     // all -- it talks to meta()/chunks()/resolve_locations() directly on
@@ -1272,6 +1303,10 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
 }
 
 rawstd::Task<void> Slot::close() {
+    _closing = true;
+    while (_operations > 0) {
+        co_await _drained.at_least(_drained.value() + 1);
+    }
     std::shared_ptr<Backend> be = std::move(_backend);
     if (!be) {
         co_return;
@@ -1290,6 +1325,8 @@ rawstd::Task<void> Slot::close() {
 }
 
 rawstd::Task<size_t> Slot::pread(void* buf, size_t size, uint64_t offset) {
+    OperationGuard operation(*this);
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
@@ -1310,6 +1347,8 @@ rawstd::Task<size_t> Slot::pread(void* buf, size_t size, uint64_t offset) {
 
 rawstd::Task<size_t>
 Slot::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
+    OperationGuard operation(*this);
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
@@ -1331,6 +1370,9 @@ Slot::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
 rawstd::Task<size_t> Slot::pwrite(
     const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
 ) {
+    OperationGuard operation(*this);
+    _check_write();
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
@@ -1364,6 +1406,9 @@ rawstd::Task<size_t> Slot::pwrite(
 rawstd::Task<size_t> Slot::resync_pwrite(
     const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
 ) {
+    OperationGuard operation(*this);
+    _check_write();
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
@@ -1404,6 +1449,9 @@ rawstd::Task<size_t> Slot::pwritev(
     const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
     bool sync, uint64_t epoch
 ) {
+    OperationGuard operation(*this);
+    _check_write();
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
@@ -1435,6 +1483,9 @@ rawstd::Task<size_t> Slot::pwritev(
 
 rawstd::Task<size_t>
 Slot::discard(size_t size, uint64_t offset, uint64_t epoch) {
+    OperationGuard operation(*this);
+    _check_write();
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
@@ -1466,6 +1517,9 @@ Slot::discard(size_t size, uint64_t offset, uint64_t epoch) {
 rawstd::Task<size_t> Slot::write_zeroes(
     size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
 ) {
+    OperationGuard operation(*this);
+    _check_write();
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %" PRIu64 ", unmap = %d, sync = %d\n",
@@ -1500,6 +1554,9 @@ rawstd::Task<size_t> Slot::write_zeroes(
 rawstd::Task<size_t> Slot::resync_write_zeroes(
     size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
 ) {
+    OperationGuard operation(*this);
+    _check_write();
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %" PRIu64 ", unmap = %d, sync = %d\n",
@@ -1700,6 +1757,10 @@ rawstd::Task<RawstorObjectSyncReply> Slot::sync_accept(
 }
 
 rawstd::Task<void> Slot::leave() {
+    _closing = true;
+    while (_operations > 0) {
+        co_await _drained.at_least(_drained.value() + 1);
+    }
     co_await _get_backend()->leave();
     _left = true;
 }
@@ -1752,6 +1813,8 @@ rawstd::Task<void> Slot::set_config(
 }
 
 rawstd::Task<void> Slot::flush(uint64_t epoch) {
+    OperationGuard operation(*this);
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);

@@ -300,7 +300,7 @@ TEST(OstClientTest, set_object_twice_does_not_crash) {
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_ALLOCATE);
     EXPECT_EQ(response.body.res, 0);
 
-    // First SET_OBJECT: the client's _chunk starts null, so this only
+    // First SET_OBJECT: the client's _slot starts null, so this only
     // exercises rawstor_target_open() (same as simple_success above).
     client.send_set_object(id);
     ASSERT_TRUE(pump_until(queue, [&] {
@@ -310,7 +310,7 @@ TEST(OstClientTest, set_object_twice_does_not_crash) {
     EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_SET_OBJECT);
     EXPECT_EQ(response.body.res, 0);
 
-    // Second SET_OBJECT on the same client: _chunk is already set, so
+    // Second SET_OBJECT on the same client: _slot is already set, so
     // the server's Client::_set_object() first closes it (via
     // Client::_close_current_object(), asynchronously -- rawstor_object_close()
     // queues the close and returns immediately, deferring the actual
@@ -694,13 +694,28 @@ TEST(OstClientTest, leave_cleans_and_a_dropped_writer_loses) {
             stored_state(queue, dir.uri(), id), RAWSTOR_OBJECT_SYNC_STATE_DIRTY
         );
 
-        client.send_leave();
+        // Pipeline another write with LEAVE: departure must drain the I/O
+        // already dispatched to the Slot before marking the copy CLEAN.
+        std::string pending(4096, 'W');
+        uint16_t write_cid =
+            client.send_write(0, pending.data(), pending.size(), false);
+        uint16_t leave_cid = client.send_leave();
         ASSERT_TRUE(pump_until(queue, [&] {
-            return client.bytes_available() >= sizeof(RawstorFrameResponse);
+            return client.bytes_available() >= 2 * sizeof(RawstorFrameResponse);
         }));
-        RawstorFrameResponse response = client.recv_response();
-        EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_LEAVE);
-        EXPECT_EQ(response.body.res, 0);
+        for (size_t i = 0; i < 2; ++i) {
+            RawstorFrameResponse response = client.recv_response();
+            if (response.head.cid == write_cid) {
+                EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_WRITE);
+                EXPECT_EQ(
+                    response.body.res, static_cast<int32_t>(pending.size())
+                );
+            } else {
+                EXPECT_EQ(response.head.cid, leave_cid);
+                EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_LEAVE);
+                EXPECT_EQ(response.body.res, 0);
+            }
+        }
         EXPECT_EQ(
             stored_state(queue, dir.uri(), id), RAWSTOR_OBJECT_SYNC_STATE_CLEAN
         );
@@ -727,11 +742,9 @@ TEST(OstClientTest, leave_cleans_and_a_dropped_writer_loses) {
     );
 }
 
-// A server with several locations is still one copy to its clients, but
-// keeps no record of that copy: the locations' records belong to its own
-// mirror of them. It answers SET_CONFIG with -ENOSYS and reports no sync
-// identity (docs/mirroring.md, "One copy per server").
-TEST(OstClientTest, several_locations_keep_no_record_of_the_copy) {
+// Direct construction can bypass the CLI's one-location constraint.
+// Such a server must reject data sessions instead of opening a nested mirror.
+TEST(OstClientTest, several_locations_refuse_data_sessions) {
     rawstor::ostserver::tests::TmpDir a;
     rawstor::ostserver::tests::TmpDir b;
     std::string locations = a.uri() + "," + b.uri();
@@ -770,21 +783,19 @@ TEST(OstClientTest, several_locations_keep_no_record_of_the_copy) {
     client.send_sync(prepare);
     expect_response(RAWSTOR_CMD_SYNC_PREPARE, -ENOSYS);
 
-    // No copy of its own to fence a stamped write on, or to tell a RESYNC
-    // write which sectors to skip.
+    // The failed open leaves the connection without a data session.
     client.send_set_object(id);
-    expect_response(RAWSTOR_CMD_SET_OBJECT, 0);
+    expect_response(RAWSTOR_CMD_SET_OBJECT, -EOPNOTSUPP);
     std::string ping = "ping";
     client.send_write_at_epoch(0, ping.data(), ping.size(), 1);
-    expect_response(RAWSTOR_CMD_WRITE, -EOPNOTSUPP);
+    expect_response(RAWSTOR_CMD_WRITE, -EBADF);
     client.send_write_at_epoch(
         0, ping.data(), ping.size(), 0, RAWSTOR_FLAG_RESYNC
     );
-    expect_response(RAWSTOR_CMD_WRITE, -EOPNOTSUPP);
-    // An explicit zero epoch still selects the copy-facing operation;
-    // it must not turn the OST into a writer for a nested mirror.
+    expect_response(RAWSTOR_CMD_WRITE, -EBADF);
+    // A session cannot open a nested mirror, including for unstamped writes.
     client.send_write_at_epoch(0, ping.data(), ping.size(), 0);
-    expect_response(RAWSTOR_CMD_WRITE, -EOPNOTSUPP);
+    expect_response(RAWSTOR_CMD_WRITE, -EBADF);
 
     client.send_meta(id, 0);
     RawstorFrameMetaPayload meta{};

@@ -2,7 +2,6 @@
 
 #include <ost/server.hpp>
 
-#include "chunk.hpp"
 #include "slot.hpp"
 #include "target.hpp"
 
@@ -113,6 +112,34 @@ void append_list_entries(
         RawstorFrameListEntry entry = base;
         entry.chunk_offset = offset;
         out.push_back(entry);
+    }
+}
+
+void check_copy_range(uint64_t offset, size_t size, uint64_t capacity) {
+    if (offset > capacity || size > capacity - offset) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+}
+
+// Own the Slot until its pending I/O and departure have completed.
+rawstd::DetachedTask abandon_slot(std::shared_ptr<rawstor::Slot> slot) {
+    try {
+        co_await slot->close();
+    } catch (const std::exception& e) {
+        rawstd_error("Failed to close slot after disconnect: %s\n", e.what());
+    }
+}
+
+rawstd::Task<void> co_leave_slot(std::shared_ptr<rawstor::Slot> slot) {
+    std::exception_ptr error;
+    try {
+        co_await slot->leave();
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
     }
 }
 
@@ -354,17 +381,18 @@ Client::Client(Private, RawIOQueue* queue, Server& server, int fd) :
     _server(server),
     _fd(fd),
     _recv_event(nullptr),
-    _chunk(nullptr) {
+    _slot(nullptr) {
 }
 
 Client::~Client() noexcept {
-    // Synchronous fallback for whichever of _chunk/_recv_event/_fd
+    // Fallback cleanup for whichever of _slot/_recv_event/_fd
     // close() (see there) didn't already get to -- each is cleared as
     // it's closed, by either one, so the two never redo each other's
     // work; a caller that awaited close() before letting this Client be
     // destroyed finds nothing left to do here at all.
-    // Chunk destruction abandons its remaining sessions.
-    _chunk.reset();
+    if (_slot) {
+        abandon_slot(std::move(_slot));
+    }
     if (_recv_event != nullptr) {
         int res = rawio_cancel(_queue, _recv_event);
         // ENOENT means the multishot recv already terminated on its own
@@ -389,13 +417,13 @@ rawstd::Task<void> Client::close() {
         _recv_event = nullptr;
     }
 
-    if (_chunk != nullptr) {
-        std::shared_ptr<rawstor::Chunk> chunk = std::move(_chunk);
+    if (_slot != nullptr) {
+        std::shared_ptr<rawstor::Slot> slot = std::move(_slot);
         try {
-            co_await chunk->close(false);
+            co_await slot->close();
         } catch (const std::system_error& e) {
             rawstd_error(
-                "Failed to close chunk in client: %s\n",
+                "Failed to close slot in client: %s\n",
                 strerror(e.code().value())
             );
         }
@@ -733,7 +761,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                     RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
                 }
 
-                // Always keeps reading -- Chunk::pwrite()'s
+                // Always keeps reading -- Slot::pwrite()'s
                 // underlying blk::Backend applies write-throttling
                 // itself (see blk_backend.hpp's _throttle_acquire()), so
                 // nothing here needs to pause the recv while a write
@@ -804,25 +832,25 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
 }
 
 rawstd::Task<std::shared_ptr<Client>>
-Client::_close_current_chunk(std::weak_ptr<Client> weak) {
-    std::shared_ptr<rawstor::Chunk> chunk;
+Client::_close_current_slot(std::weak_ptr<Client> weak) {
+    std::shared_ptr<rawstor::Slot> slot;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
             co_return nullptr;
         }
-        chunk = std::move(client->_chunk);
+        slot = std::move(client->_slot);
     }
 
-    if (chunk != nullptr) {
+    if (slot != nullptr) {
         // co_await isn't allowed inside a catch block, so the del_client()
         // below has to run after leaving the handler.
         bool close_failed = false;
         try {
-            co_await chunk->close(false);
+            co_await slot->close();
         } catch (const std::system_error& e) {
             rawstd_error(
-                "Failed to close chunk in client: %s\n",
+                "Failed to close slot in client: %s\n",
                 strerror(e.code().value())
             );
             close_failed = true;
@@ -843,7 +871,7 @@ rawstd::DetachedTask Client::_list(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameListPayload payload
 ) {
-    std::shared_ptr<Client> client = co_await _close_current_chunk(weak);
+    std::shared_ptr<Client> client = co_await _close_current_slot(weak);
     if (client == nullptr) {
         co_return;
     }
@@ -922,7 +950,7 @@ rawstd::DetachedTask Client::_allocate(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameAllocatePayload payload
 ) {
-    std::shared_ptr<Client> client = co_await _close_current_chunk(weak);
+    std::shared_ptr<Client> client = co_await _close_current_slot(weak);
     if (client == nullptr) {
         co_return;
     }
@@ -945,7 +973,7 @@ rawstd::DetachedTask Client::_allocate(
         // itself always creates RAWSTOR_MEMBER_DATA members (create_one()'s
         // own comment, target.cpp) -- a witness (docs/mds.md, "Witness",
         // stage 3) is a metadata-only member attached to an
-        // already-existing chunk's own quorum, never something ALLOCATE
+        // already-existing slot's own quorum, never something ALLOCATE
         // itself builds.
         RawstorObjectSpec spec{
             .size = payload.size,
@@ -1457,19 +1485,19 @@ rawstd::DetachedTask Client::_sync(
 
 rawstd::DetachedTask
 Client::_leave(std::weak_ptr<Client> weak, RawstorFrameHead head) {
-    std::shared_ptr<rawstor::Chunk> chunk;
+    std::shared_ptr<rawstor::Slot> slot;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
             co_return;
         }
-        chunk = std::move(client->_chunk);
+        slot = std::move(client->_slot);
     }
 
     int result = 0;
-    if (chunk != nullptr) {
+    if (slot != nullptr) {
         try {
-            co_await chunk->close(true);
+            co_await co_leave_slot(slot);
         } catch (const std::system_error& e) {
             result = -e.code().value();
         }
@@ -1547,7 +1575,7 @@ rawstd::DetachedTask Client::_set_object(
     RawstdUUID version_id;
     memcpy(version_id.bytes, payload.version_id, sizeof(payload.version_id));
     {
-        std::shared_ptr<Client> client = co_await _close_current_chunk(weak);
+        std::shared_ptr<Client> client = co_await _close_current_slot(weak);
         if (client == nullptr) {
             co_return;
         }
@@ -1555,32 +1583,44 @@ rawstd::DetachedTask Client::_set_object(
         locations = client->_server.locations();
     }
 
-    std::shared_ptr<rawstor::Chunk> chunk;
+    std::shared_ptr<rawstor::Slot> slot;
     int error = 0;
+    uint64_t size = 0;
     try {
-        chunk = co_await rawstor::Chunk::create(
-            *static_cast<rawio::Queue*>(queue), locations, id, payload.offset,
-            static_cast<int>(payload.val), version_id
+        if (locations.size() != 1) {
+            RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+        }
+        slot = co_await rawstor::Slot::create(
+            *static_cast<rawio::Queue*>(queue), locations.front()
         );
+        RawstorObjectMeta meta = co_await slot->open(
+            id, payload.offset, static_cast<int>(payload.val), version_id
+        );
+        size = meta.spec.size;
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
 
+    if (error && slot) {
+        co_await slot->close();
+        slot.reset();
+    }
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
-        if (chunk != nullptr) {
+        if (slot != nullptr) {
             try {
-                co_await chunk->close(false);
+                co_await slot->close();
             } catch (const std::system_error& e) {
                 rawstd_error(
-                    "Failed to close chunk after disconnect: %s\n", e.what()
+                    "Failed to close slot after disconnect: %s\n", e.what()
                 );
             }
         }
         co_return;
     }
     if (!error) {
-        client->_chunk = std::move(chunk);
+        client->_slot = std::move(slot);
+        client->_size = size;
     }
     bool send_failed = false;
     try {
@@ -1600,13 +1640,14 @@ rawstd::DetachedTask Client::_read(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameIOPayload payload
 ) {
-    std::shared_ptr<rawstor::Chunk> chunk;
+    std::shared_ptr<rawstor::Slot> slot;
+    uint64_t capacity = 0;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
             co_return;
         }
-        if (client->_chunk == nullptr) {
+        if (client->_slot == nullptr) {
             bool send_failed = false;
             try {
                 co_await client->_send_response(
@@ -1637,7 +1678,8 @@ rawstd::DetachedTask Client::_read(
             }
             co_return;
         }
-        chunk = client->_chunk;
+        slot = client->_slot;
+        capacity = client->_size;
     }
 
     size_t len = payload.len;
@@ -1646,8 +1688,8 @@ rawstd::DetachedTask Client::_read(
     size_t result = 0;
     int error = 0;
     try {
-        result =
-            co_await chunk->pread(data.data(), data.size(), payload.offset);
+        check_copy_range(payload.offset, payload.len, capacity);
+        result = co_await slot->pread(data.data(), data.size(), payload.offset);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1686,7 +1728,7 @@ rawstd::DetachedTask Client::_write(
         co_return;
     }
 
-    if (client->_chunk == nullptr) {
+    if (client->_slot == nullptr) {
         bool send_failed = false;
         try {
             co_await client->_send_response(
@@ -1745,13 +1787,15 @@ rawstd::DetachedTask Client::_dispatch_write(
     uint8_t flags, uint64_t epoch,
     std::shared_ptr<std::vector<unsigned char>> data
 ) {
-    std::shared_ptr<rawstor::Chunk> chunk;
+    std::shared_ptr<rawstor::Slot> slot;
+    uint64_t capacity = 0;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
             co_return;
         }
-        chunk = client->_chunk;
+        slot = client->_slot;
+        capacity = client->_size;
     }
 
     bool sync = (flags & RAWSTOR_FLAG_SYNC) != 0;
@@ -1759,15 +1803,16 @@ rawstd::DetachedTask Client::_dispatch_write(
     size_t result = 0;
     int error = 0;
     try {
-        if (chunk == nullptr) {
+        if (slot == nullptr) {
             RAWSTD_THROW_SYSTEM_ERROR(EBADF);
         }
+        check_copy_range(offset, data->size(), capacity);
         if ((flags & RAWSTOR_FLAG_RESYNC) != 0) {
-            result = co_await chunk->resync_pwrite(
+            result = co_await slot->resync_pwrite(
                 data->data(), data->size(), offset, sync, epoch
             );
         } else {
-            result = co_await chunk->pwrite(
+            result = co_await slot->pwrite(
                 data->data(), data->size(), offset, sync, epoch
             );
         }
@@ -1801,13 +1846,13 @@ rawstd::DetachedTask Client::_dispatch_write(
 rawstd::DetachedTask Client::_flush(
     std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t epoch
 ) {
-    std::shared_ptr<rawstor::Chunk> chunk;
+    std::shared_ptr<rawstor::Slot> slot;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
             co_return;
         }
-        if (client->_chunk == nullptr) {
+        if (client->_slot == nullptr) {
             bool send_failed = false;
             try {
                 co_await client->_send_response(
@@ -1822,15 +1867,15 @@ rawstd::DetachedTask Client::_flush(
             }
             co_return;
         }
-        chunk = client->_chunk;
+        slot = client->_slot;
     }
 
     int error = 0;
     try {
-        if (chunk == nullptr) {
+        if (slot == nullptr) {
             RAWSTD_THROW_SYSTEM_ERROR(EBADF);
         }
-        co_await chunk->flush(epoch);
+        co_await slot->flush(epoch);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1860,13 +1905,14 @@ rawstd::DetachedTask Client::_discard(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameIOPayload payload
 ) {
-    std::shared_ptr<rawstor::Chunk> chunk;
+    std::shared_ptr<rawstor::Slot> slot;
+    uint64_t capacity = 0;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
             co_return;
         }
-        if (client->_chunk == nullptr) {
+        if (client->_slot == nullptr) {
             bool send_failed = false;
             try {
                 co_await client->_send_response(
@@ -1881,17 +1927,19 @@ rawstd::DetachedTask Client::_discard(
             }
             co_return;
         }
-        chunk = client->_chunk;
+        slot = client->_slot;
+        capacity = client->_size;
     }
 
     size_t result = 0;
     int error = 0;
     try {
-        if (chunk == nullptr) {
+        if (slot == nullptr) {
             RAWSTD_THROW_SYSTEM_ERROR(EBADF);
         }
+        check_copy_range(payload.offset, payload.len, capacity);
         result =
-            co_await chunk->discard(payload.len, payload.offset, payload.epoch);
+            co_await slot->discard(payload.len, payload.offset, payload.epoch);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1922,13 +1970,14 @@ rawstd::DetachedTask Client::_write_zeroes(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameIOPayload payload
 ) {
-    std::shared_ptr<rawstor::Chunk> chunk;
+    std::shared_ptr<rawstor::Slot> slot;
+    uint64_t capacity = 0;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
             co_return;
         }
-        if (client->_chunk == nullptr) {
+        if (client->_slot == nullptr) {
             bool send_failed = false;
             try {
                 co_await client->_send_response(
@@ -1943,7 +1992,8 @@ rawstd::DetachedTask Client::_write_zeroes(
             }
             co_return;
         }
-        chunk = client->_chunk;
+        slot = client->_slot;
+        capacity = client->_size;
     }
 
     bool unmap = (payload.flags & RAWSTOR_FLAG_UNMAP) != 0;
@@ -1952,15 +2002,16 @@ rawstd::DetachedTask Client::_write_zeroes(
     size_t result = 0;
     int error = 0;
     try {
-        if (chunk == nullptr) {
+        if (slot == nullptr) {
             RAWSTD_THROW_SYSTEM_ERROR(EBADF);
         }
+        check_copy_range(payload.offset, payload.len, capacity);
         if ((payload.flags & RAWSTOR_FLAG_RESYNC) != 0) {
-            result = co_await chunk->resync_write_zeroes(
+            result = co_await slot->resync_write_zeroes(
                 payload.len, payload.offset, unmap, sync, payload.epoch
             );
         } else {
-            result = co_await chunk->write_zeroes(
+            result = co_await slot->write_zeroes(
                 payload.len, payload.offset, unmap, sync, payload.epoch
             );
         }

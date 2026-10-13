@@ -71,6 +71,13 @@ private:
     // The open flags (RAWSTOR_READONLY or 0) open() bound _id with --
     // carried alongside _id/_offset/_version_id for the same replay reason.
     int _flags;
+    // Departure waits for the session's outstanding I/O before closing its
+    // backend.
+    bool _closing = false;
+    size_t _operations = 0;
+    rawstd::Barrier _drained;
+    class OperationGuard;
+    void _check_write() const;
     RawstdUUID _version_id;
 
     std::shared_ptr<Backend> _backend;
@@ -248,6 +255,7 @@ public:
         const RawstdUUID& version_id
     );
 
+    // Stops new data I/O and drains outstanding operations before departure.
     // Not called implicitly by ~Slot() (a coroutine can't run in a
     // destructor, and there's no other synchronous fallback here beyond
     // each Backend's own -- see Backend::close()'s doc comment) --

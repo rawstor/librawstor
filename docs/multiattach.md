@@ -16,7 +16,7 @@ separately.
 | One record lock and one writer count per copy in a process (`Slot::CopyState`) | 1 | ✅ | `src/slot.cpp` |
 | Copies keep their own `DIRTY` / `CLEAN`; `LOST`; `LEAVE`; `rawstor_object_abandon()` | 1 | ✅ | [Mirroring](mirroring.md#dirty-clean-and-lost) |
 | Live writer count in `META` | 1 | ✅ | `RawstorObjectMeta.writers` |
-| A `rawstor-ost` is one copy; with several locations it keeps no record of it | 1 | ✅ | [Mirroring](mirroring.md#one-copy-per-server) |
+| A `rawstor-ost` data session opens one copy through a Slot | 1 | ✅ | [Mirroring](mirroring.md#one-copy-per-server) |
 | Syncing is a role, not a `state`; a copy learns its own from its position in the request | 1 | ✅ | [Mirroring](mirroring.md#states-and-roles), `member_index` in `SET_CONFIG` / `SYNC_ACCEPT` |
 | `epoch` on write frames, `-ESTALE` below the copy's epoch, drain on raise | 1 | ✅ | `src/slot.cpp` (`Admission`) |
 | `RESYNC` flag on writes; client-write record of a syncing copy | 1 | ✅ | `src/slot.cpp` (`Resync`) |
@@ -266,7 +266,7 @@ configuration the writer uses (`FLUSH` in Basic's `val`). A copy whose
 accepted `epoch` is higher refuses the request with `-ESTALE`; `0` is never
 refused (an unconfigured chunk or an explicitly unstamped request).
 Ordinary Chunk operations supply their current configuration epoch; OST
-operations take the remote writer's epoch explicitly, including zero.
+passes the remote writer's epoch directly to its Slot, including zero.
 Cost on the hot path: two atomic operations in the member's memory.
 
 `rawstor-ost` admits every request of a session on the `Slot::CopyState` of

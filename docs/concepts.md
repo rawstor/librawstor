@@ -278,11 +278,11 @@ Chunk *is* the target string that opened it; a multi-chunk `mds://`
 object's chunks are each one same-offset group of the internal form
 above.
 
-An OST session opens a Chunk directly, using the object UUID, chunk offset
-and version supplied by `SET_OBJECT`. Its I/O offsets are relative to that
-chunk. Configuration epochs and resync operations belong to the Chunk and
-its copies; the client-facing Object routes ordinary I/O without exposing
-those parameters.
+An OST session opens a Slot for one copy, using the object UUID, chunk
+offset and version supplied by `SET_OBJECT`. Its I/O offsets are relative
+to that copy. The Slot enforces the writer's configuration epoch and
+protects client writes during resync; the client-side Chunk coordinates
+the mirror and routes I/O to its Slots.
 
 ## Slot
 
