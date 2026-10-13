@@ -41,9 +41,20 @@ private:
     rawstd::Task<void> _depart(std::shared_ptr<Backend> be);
     rawstd::Task<void> _lose_backend(std::shared_ptr<Backend> be);
 
+    class Admission;
+    class Resync;
+
     rawstd::Task<void> _set_config(
-        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags
+    );
+    rawstd::Task<RawstorObjectSyncReply> _sync_prepare(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+    );
+    rawstd::Task<RawstorObjectSyncReply> _sync_accept(
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config
     );
 
     // Set by open() (see its own doc comment) -- unset means this
@@ -60,6 +71,14 @@ private:
     // The open flags (RAWSTOR_READONLY or 0) open() bound _id with --
     // carried alongside _id/_offset/_version_id for the same replay reason.
     int _flags;
+    // Departure waits for the session's outstanding I/O before closing its
+    // backend.
+    bool _closing = false;
+    size_t _operations = 0;
+    rawstd::Barrier _drained;
+    class OperationGuard;
+    void _check_write() const;
+    rawstd::Task<void> _flush_copy(const RawstdUUID& id, uint64_t offset);
     RawstdUUID _version_id;
 
     std::shared_ptr<Backend> _backend;
@@ -194,8 +213,18 @@ public:
     );
 
     rawstd::Task<void> set_config(
-        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags
+    );
+
+    rawstd::Task<RawstorObjectSyncReply> sync_prepare(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+    );
+
+    rawstd::Task<RawstorObjectSyncReply> sync_accept(
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config
     );
 
     // The writer's clean departure from this member's session
@@ -227,6 +256,7 @@ public:
         const RawstdUUID& version_id
     );
 
+    // Stops new data I/O and drains outstanding operations before departure.
     // Not called implicitly by ~Slot() (a coroutine can't run in a
     // destructor, and there's no other synchronous fallback here beyond
     // each Backend's own -- see Backend::close()'s doc comment) --
@@ -239,20 +269,30 @@ public:
     rawstd::Task<size_t>
     preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset);
 
-    rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, uint64_t offset, bool sync);
+    rawstd::Task<size_t> pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+    );
+
+    rawstd::Task<size_t> resync_pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+    );
 
     rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
-        bool sync
+        bool sync, uint64_t epoch
     );
 
-    rawstd::Task<size_t> discard(size_t size, uint64_t offset);
+    rawstd::Task<size_t> discard(size_t size, uint64_t offset, uint64_t epoch);
 
-    rawstd::Task<size_t>
-    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync);
+    rawstd::Task<size_t> write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+    );
 
-    rawstd::Task<void> flush();
+    rawstd::Task<size_t> resync_write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+    );
+
+    rawstd::Task<void> flush(uint64_t epoch);
 };
 
 } // namespace rawstor

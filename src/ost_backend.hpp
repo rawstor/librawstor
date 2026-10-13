@@ -31,6 +31,16 @@ class Backend final : public rawstor::Backend {
     friend class BackendOp;
 
 private:
+    rawstd::Task<size_t> _write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch,
+        bool resync
+    );
+
+    rawstd::Task<size_t> _pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync,
+        uint64_t epoch, bool resync
+    );
+
     uint16_t _cid_counter;
 
     rawio::Event* _read_event;
@@ -66,6 +76,10 @@ private:
         RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
         uint64_t offset, uint64_t val = 0, const RawstdUUID& version_id = {}
     );
+    // SYNC_PREPARE/SYNC_ACCEPT: sends `request` and returns the member's
+    // reply.
+    rawstd::Task<RawstorObjectSyncReply>
+    _sync_request(const RawstorFrameSyncPropose& request, const char* op_name);
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
     // response can legitimately race with Slot::_op() already having
@@ -148,11 +162,24 @@ public:
     ) override;
 
     rawstd::Task<void> set_config(
-        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags
     ) override;
 
     rawstd::Task<void> leave() override;
+
+    rawstd::Task<RawstorObjectSyncReply> sync_prepare(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot,
+        const RawstorObjectSyncReply& proposed
+    ) override;
+
+    rawstd::Task<RawstorObjectSyncReply> sync_accept(
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config,
+        const RawstorObjectSyncReply& proposed
+    ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
 
@@ -183,20 +210,31 @@ public:
         iovec* iov, unsigned int niov, size_t size, uint64_t offset
     ) override;
 
-    rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, uint64_t offset, bool sync) override;
+    rawstd::Task<size_t> pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+    ) override;
+
+    rawstd::Task<size_t> resync_pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+    ) override;
 
     rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
-        bool sync
+        bool sync, uint64_t epoch
     ) override;
 
-    rawstd::Task<size_t> discard(size_t size, uint64_t offset) override;
-
     rawstd::Task<size_t>
-    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) override;
+    discard(size_t size, uint64_t offset, uint64_t epoch) override;
 
-    rawstd::Task<void> flush() override;
+    rawstd::Task<size_t> write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+    ) override;
+
+    rawstd::Task<size_t> resync_write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+    ) override;
+
+    rawstd::Task<void> flush(uint64_t epoch) override;
 };
 
 } // namespace ost

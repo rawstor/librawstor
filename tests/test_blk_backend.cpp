@@ -196,7 +196,7 @@ TEST(BlkBackendTest, write_throttle_limit) {
     tasks.reserve(writes);
     for (unsigned int i = 0; i < writes; ++i) {
         tasks.push_back(backend->pwrite(
-            payload.data(), payload.size(), i * payload.size(), false
+            payload.data(), payload.size(), i * payload.size(), false, 0
         ));
     }
 
@@ -243,7 +243,7 @@ TEST(BlkBackendTest, write_backlog_capacity) {
     tasks.reserve(writes);
     for (unsigned int i = 0; i < writes; ++i) {
         tasks.push_back(backend->pwrite(
-            payload.data(), payload.size(), i * payload.size(), false
+            payload.data(), payload.size(), i * payload.size(), false, 0
         ));
     }
 
@@ -289,12 +289,13 @@ TEST(BlkBackendTest, write_zeroes_zeroes_the_range) {
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
-        run(*queue, backend->pwrite(payload.data(), payload.size(), 0, false)),
+        run(*queue,
+            backend->pwrite(payload.data(), payload.size(), 0, false, 0)),
         payload.size()
     );
 
     EXPECT_EQ(
-        run(*queue, backend->write_zeroes(payload.size(), 0, false, false)),
+        run(*queue, backend->write_zeroes(payload.size(), 0, false, false, 0)),
         payload.size()
     );
 
@@ -326,12 +327,13 @@ TEST(BlkBackendTest, write_zeroes_unmap_zeroes_the_range) {
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
-        run(*queue, backend->pwrite(payload.data(), payload.size(), 0, false)),
+        run(*queue,
+            backend->pwrite(payload.data(), payload.size(), 0, false, 0)),
         payload.size()
     );
 
     EXPECT_EQ(
-        run(*queue, backend->write_zeroes(payload.size(), 0, true, false)),
+        run(*queue, backend->write_zeroes(payload.size(), 0, true, false, 0)),
         payload.size()
     );
 
@@ -363,12 +365,13 @@ TEST(BlkBackendTest, write_zeroes_sync_zeroes_the_range) {
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
-        run(*queue, backend->pwrite(payload.data(), payload.size(), 0, false)),
+        run(*queue,
+            backend->pwrite(payload.data(), payload.size(), 0, false, 0)),
         payload.size()
     );
 
     EXPECT_EQ(
-        run(*queue, backend->write_zeroes(payload.size(), 0, false, true)),
+        run(*queue, backend->write_zeroes(payload.size(), 0, false, true, 0)),
         payload.size()
     );
 
@@ -400,11 +403,14 @@ TEST(BlkBackendTest, discard_reports_requested_size) {
 
     const std::string payload(64, 'x');
     EXPECT_EQ(
-        run(*queue, backend->pwrite(payload.data(), payload.size(), 0, false)),
+        run(*queue,
+            backend->pwrite(payload.data(), payload.size(), 0, false, 0)),
         payload.size()
     );
 
-    EXPECT_EQ(run(*queue, backend->discard(payload.size(), 0)), payload.size());
+    EXPECT_EQ(
+        run(*queue, backend->discard(payload.size(), 0, 0)), payload.size()
+    );
 }
 
 class MetadataBackend : public rawstor::blk::Backend {
@@ -416,6 +422,8 @@ public:
 TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     RawstorObjectSyncStateValue state{};
     RawstorObjectConfig config{};
+    RawstorObjectBallot promised{};
+    RawstorObjectBallot accepted{};
     state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
     RawstorObjectConfig& c = config;
     c.epoch = 7;
@@ -424,23 +432,31 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     c.sync_id_history[1] = 1;
     c.sync_id_history[2] = 2;
     c.sync_id_history[3] = 3;
+    c.resync_owner = 0x77;
     c.nroles = 3;
     c.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
     c.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
     c.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    promised = {0x12, 0x34};
+    accepted = {0x56, 0x78};
 
     rawstor::blk::Backend::ChunkIdentity identity{};
     identity.member_role = RAWSTOR_MEMBER_WITNESS;
     identity.width = 3;
     identity.chunk_size = 0x1000;
 
-    std::string encoded = MetadataBackend::meta_encode(state, config, identity);
+    std::string encoded = MetadataBackend::meta_encode(
+        state, config, promised, accepted, identity
+    );
 
     RawstorObjectSyncStateValue decoded_state{};
     RawstorObjectConfig decoded_config{};
+    RawstorObjectBallot decoded_promised{};
+    RawstorObjectBallot decoded_accepted{};
     rawstor::blk::Backend::ChunkIdentity decoded_identity;
     MetadataBackend::meta_decode(
-        encoded, &decoded_state, &decoded_config, &decoded_identity
+        encoded, &decoded_state, &decoded_config, &decoded_promised,
+        &decoded_accepted, &decoded_identity
     );
     const RawstorObjectConfig& d = decoded_config;
     EXPECT_EQ(decoded_state, state);
@@ -449,6 +465,11 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     for (size_t i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; ++i) {
         EXPECT_EQ(d.sync_id_history[i], c.sync_id_history[i]);
     }
+    EXPECT_EQ(d.resync_owner, 0x77u);
+    EXPECT_EQ(decoded_promised.counter, 0x12u);
+    EXPECT_EQ(decoded_promised.proposer, 0x34u);
+    EXPECT_EQ(decoded_accepted.counter, 0x56u);
+    EXPECT_EQ(decoded_accepted.proposer, 0x78u);
     ASSERT_EQ(d.nroles, 3);
     EXPECT_EQ(d.roles[0], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
     EXPECT_EQ(d.roles[1], RAWSTOR_OBJECT_MEMBER_SYNCING);
@@ -463,6 +484,8 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
 TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
     RawstorObjectSyncStateValue state{};
     RawstorObjectConfig config{};
+    RawstorObjectBallot promised{};
+    RawstorObjectBallot accepted{};
     state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
     RawstorObjectConfig& c = config;
     c.epoch = ~0ull;
@@ -470,6 +493,9 @@ TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
     for (uint64_t& h : c.sync_id_history) {
         h = ~0ull;
     }
+    c.resync_owner = ~0ull;
+    promised = {~0ull, ~0ull};
+    accepted = {~0ull, ~0ull};
     c.nroles = RAWSTOR_OBJECT_MAX_WIDTH;
     for (uint8_t& r : c.roles) {
         r = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
@@ -478,12 +504,17 @@ TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
         RAWSTOR_MEMBER_WITNESS, 255, ~0ull
     };
 
-    std::string encoded = MetadataBackend::meta_encode(state, config, identity);
+    std::string encoded = MetadataBackend::meta_encode(
+        state, config, promised, accepted, identity
+    );
     RawstorObjectSyncStateValue decoded_state{};
     RawstorObjectConfig decoded_config{};
+    RawstorObjectBallot decoded_promised{};
+    RawstorObjectBallot decoded_accepted{};
     rawstor::blk::Backend::ChunkIdentity decoded_identity;
     MetadataBackend::meta_decode(
-        encoded, &decoded_state, &decoded_config, &decoded_identity
+        encoded, &decoded_state, &decoded_config, &decoded_promised,
+        &decoded_accepted, &decoded_identity
     );
     EXPECT_EQ(decoded_config.nroles, RAWSTOR_OBJECT_MAX_WIDTH);
 }
@@ -493,9 +524,13 @@ TEST(BlkBackendTest, meta_decode_rejects_empty_string) {
      * one. */
     RawstorObjectSyncStateValue state{};
     RawstorObjectConfig config{};
+    RawstorObjectBallot promised{};
+    RawstorObjectBallot accepted{};
     rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
-        MetadataBackend::meta_decode("", &state, &config, &identity),
+        MetadataBackend::meta_decode(
+            "", &state, &config, &promised, &accepted, &identity
+        ),
         std::system_error
     );
 }
@@ -505,9 +540,13 @@ TEST(BlkBackendTest, meta_decode_rejects_dash) {
      * valid record either. */
     RawstorObjectSyncStateValue state{};
     RawstorObjectConfig config{};
+    RawstorObjectBallot promised{};
+    RawstorObjectBallot accepted{};
     rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
-        MetadataBackend::meta_decode("-", &state, &config, &identity),
+        MetadataBackend::meta_decode(
+            "-", &state, &config, &promised, &accepted, &identity
+        ),
         std::system_error
     );
 }
@@ -515,10 +554,13 @@ TEST(BlkBackendTest, meta_decode_rejects_dash) {
 TEST(BlkBackendTest, meta_decode_rejects_malformed_string) {
     RawstorObjectSyncStateValue state{};
     RawstorObjectConfig config{};
+    RawstorObjectBallot promised{};
+    RawstorObjectBallot accepted{};
     rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
         MetadataBackend::meta_decode(
-            "not the right format", &state, &config, &identity
+            "not the right format", &state, &config, &promised, &accepted,
+            &identity
         ),
         std::system_error
     );
@@ -529,12 +571,15 @@ TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
      * ever wrote) must not be mistaken for a valid one. */
     RawstorObjectSyncStateValue state{};
     RawstorObjectConfig config{};
+    RawstorObjectBallot promised{};
+    RawstorObjectBallot accepted{};
     rawstor::blk::Backend::ChunkIdentity identity;
     EXPECT_THROW(
         MetadataBackend::meta_decode(
             "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
-            "roles=-:member_role=0:width=0:chunk_size=0",
-            &state, &config, &identity
+            "resync_owner=0:promised=0.0:accepted=0.0:roles=-:member_role=0:"
+            "width=0:chunk_size=0",
+            &state, &config, &promised, &accepted, &identity
         ),
         std::system_error
     );

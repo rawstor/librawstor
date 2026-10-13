@@ -1,5 +1,7 @@
 #include "rawthread/condition.hpp"
 
+#include <utility>
+
 namespace rawthread {
 
 rawstd::Task<void> Condition::wait(
@@ -12,18 +14,22 @@ rawstd::Task<void> Condition::wait(
             if (ready()) {
                 co_return;
             }
-            wake = std::make_shared<Wake>();
-            _waiters.push_back(wake);
+            if (!_wake) {
+                _wake = std::make_shared<Wake>();
+            }
+            wake = _wake;
         }
         co_await wake->wait(queue);
     }
 }
 
 void Condition::notify_all() noexcept {
-    for (const std::shared_ptr<Wake>& wake : _waiters) {
+    // Waiters own this generation until their polls complete. A waiter
+    // that rechecks a false predicate joins a fresh, unsignalled generation.
+    std::shared_ptr<Wake> wake = std::move(_wake);
+    if (wake) {
         wake->signal();
     }
-    _waiters.clear();
 }
 
 } // namespace rawthread

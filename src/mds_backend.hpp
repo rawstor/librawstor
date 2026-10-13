@@ -165,8 +165,21 @@ public:
 
     // Unsupported: configuration requests must address a specific real copy.
     rawstd::Task<void> set_config(
-        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags
+    ) override;
+
+    // MDS holds no copy of its own: register requests fail with ENOSYS.
+    rawstd::Task<RawstorObjectSyncReply> sync_prepare(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot,
+        const RawstorObjectSyncReply& proposed
+    ) override;
+    rawstd::Task<RawstorObjectSyncReply> sync_accept(
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config,
+        const RawstorObjectSyncReply& proposed
     ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
@@ -200,20 +213,31 @@ public:
         iovec* iov, unsigned int niov, size_t size, uint64_t offset
     ) override;
 
-    rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, uint64_t offset, bool sync) override;
+    rawstd::Task<size_t> pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+    ) override;
+
+    rawstd::Task<size_t> resync_pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+    ) override;
 
     rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
-        bool sync
+        bool sync, uint64_t epoch
     ) override;
 
-    rawstd::Task<size_t> discard(size_t size, uint64_t offset) override;
-
     rawstd::Task<size_t>
-    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) override;
+    discard(size_t size, uint64_t offset, uint64_t epoch) override;
 
-    rawstd::Task<void> flush() override;
+    rawstd::Task<size_t> write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+    ) override;
+
+    rawstd::Task<size_t> resync_write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+    ) override;
+
+    rawstd::Task<void> flush(uint64_t epoch) override;
 };
 
 } // namespace mds

@@ -13,6 +13,9 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>
+
+#include <sys/resource.h>
 
 using rawthread::tests::run_for;
 
@@ -83,4 +86,48 @@ TEST(ConditionTest, notify_all_wakes_waiters_of_every_thread) {
     a.join();
     b.join();
     EXPECT_EQ(woken.load(), 2);
+}
+
+TEST(ConditionTest, many_waiters_share_wakeup_descriptors) {
+    auto queue = rawio::Queue::create(256);
+    rlimit previous{};
+    ASSERT_EQ(getrlimit(RLIMIT_NOFILE, &previous), 0);
+    struct LimitGuard {
+        rlimit previous;
+        ~LimitGuard() { EXPECT_EQ(setrlimit(RLIMIT_NOFILE, &previous), 0); }
+    } limit{previous};
+    if (limit.previous.rlim_cur < 64) {
+        GTEST_SKIP() << "requires at least 64 descriptors";
+    }
+    rlimit restricted = limit.previous;
+    restricted.rlim_cur = 64;
+    ASSERT_EQ(setrlimit(RLIMIT_NOFILE, &restricted), 0);
+    std::mutex mu;
+    rawthread::Condition cond;
+    bool ready = false;
+    std::vector<rawstd::Task<void>> tasks;
+    tasks.reserve(128);
+    bool failed = false;
+    try {
+        for (size_t i = 0; i < 128; ++i) {
+            tasks.push_back(cond.wait(*queue, mu, [&]() { return ready; }));
+        }
+    } catch (const std::system_error&) {
+        failed = true;
+    }
+    {
+        std::lock_guard<std::mutex> lock(mu);
+        ready = true;
+        cond.notify_all();
+    }
+    for (auto& task : tasks) {
+        ASSERT_TRUE(run_for(*queue, task, 5000));
+        try {
+            task.get();
+        } catch (const std::system_error&) {
+            failed = true;
+        }
+    }
+    EXPECT_FALSE(failed);
+    EXPECT_EQ(tasks.size(), 128u);
 }

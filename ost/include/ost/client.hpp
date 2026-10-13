@@ -15,6 +15,9 @@
 #include <vector>
 
 namespace rawstor {
+
+class Slot;
+
 namespace ostserver {
 
 class Server;
@@ -29,7 +32,8 @@ private:
     Server& _server;
     int _fd;
     RawIOEvent* _recv_event;
-    RawstorObject* _object;
+    std::shared_ptr<Slot> _slot;
+    uint64_t _size = 0;
 
     // Drives this Client's whole request-dispatch lifetime: registers the
     // multishot recv, then loops co_awaiting one length-prefixed frame at
@@ -66,7 +70,7 @@ private:
     // additionally launching _dispatch_write() itself once it validates the
     // incoming WRITE's hash.
     //
-    // Closes `client->_object` (if any) before the rest of a `_*()` runs --
+    // Closes `client->_slot` (if any) before the rest of a `_*()` runs --
     // shared by _list()/_allocate()/_set_object(). Returns the still-live
     // Client to continue with, or nullptr if the caller should co_return
     // immediately (either the Client was already gone, or the close failed
@@ -76,7 +80,7 @@ private:
     // enclosing catch by the time an async close's completion resumes
     // this, so it's handled directly instead).
     static rawstd::Task<std::shared_ptr<Client>>
-    _close_current_object(std::weak_ptr<Client> weak);
+    _close_current_slot(std::weak_ptr<Client> weak);
 
     static rawstd::DetachedTask _list(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
@@ -119,12 +123,13 @@ private:
         RawstorFrameIOPayload payload,
         std::shared_ptr<std::vector<unsigned char>> data
     );
-    // Issues a validated WRITE to storage -- rawstor_object_pwrite()'s
+    // Issues a validated WRITE to storage -- Slot::pwrite()'s
     // underlying blk::Backend applies write-throttling itself (see
     // blk_backend.hpp's _throttle_acquire()), so this just dispatches.
     static rawstd::DetachedTask _dispatch_write(
         std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t offset,
-        bool sync, std::shared_ptr<std::vector<unsigned char>> data
+        uint8_t flags, uint64_t epoch,
+        std::shared_ptr<std::vector<unsigned char>> data
     );
     static rawstd::DetachedTask _discard(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
@@ -135,7 +140,7 @@ private:
         RawstorFrameIOPayload payload
     );
     static rawstd::DetachedTask
-    _flush(std::weak_ptr<Client> weak, RawstorFrameHead head);
+    _flush(std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t epoch);
     static rawstd::DetachedTask _set_config(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameSetConfigPayload payload
@@ -143,11 +148,16 @@ private:
     // The session's clean departure: closes the object it set cleanly.
     static rawstd::DetachedTask
     _leave(std::weak_ptr<Client> weak, RawstorFrameHead head);
+    // SYNC_PREPARE/SYNC_ACCEPT on the copy this server is (_set_config()).
+    static rawstd::DetachedTask _sync(
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameSyncProposePayload payload
+    );
     // Every configured location's own URI for `uuid`, with `offset`/
     // `version_id` folded into each one's own path as
     // "<uuid>[/<offset>[/<version_id>]]" (TargetPath's own doc comment,
     // src/target.hpp) -- the same self-describing name every backend on
-    // the receiving end already expects (docs/mds.md, "Chunk identity").
+    // the receiving end already expects (docs/mds.md, "Slot identity").
     std::vector<rawstd::URI> _targets(
         const RawstdUUID& uuid, uint64_t offset = 0,
         const RawstdUUID& version_id = {}
@@ -186,7 +196,7 @@ public:
     // Never throws -- every failure along the way is logged and otherwise
     // ignored, same as ~Client()'s own (synchronous) cleanup. Not required
     // before destruction: ~Client() falls back to the same cleanup,
-    // synchronously, for whichever of _object/_fd/_recv_event this didn't
+    // for whichever of _slot/_fd/_recv_event this didn't
     // already get to (each is cleared here as it's closed, so the two
     // never redo each other's work).
     rawstd::Task<void> close();

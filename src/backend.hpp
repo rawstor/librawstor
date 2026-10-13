@@ -210,8 +210,27 @@ public:
     // Slot serializes it with state transitions and applies CLEAR_LOST via
     // set_state(); transports forward flags to the destination's Slot.
     virtual rawstd::Task<void> set_config(
-        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags
+    ) = 0;
+
+    // The two requests of the chunk's configuration register
+    // (docs/multiattach.md, "The register"), applied to this copy's record
+    // with the rawstd::caspaxos acceptor rules and persisted before the
+    // reply. sync_accept() takes the register's value from `config`.
+    // Acceptance is one vote; the caller establishes the register quorum.
+    // `member_index` is as for set_config(). A backend that holds no copy
+    // of its own rejects register requests with ENOSYS.
+    virtual rawstd::Task<RawstorObjectSyncReply> sync_prepare(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot,
+        const RawstorObjectSyncReply& proposed
+    ) = 0;
+    virtual rawstd::Task<RawstorObjectSyncReply> sync_accept(
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config,
+        const RawstorObjectSyncReply& proposed
     ) = 0;
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
@@ -285,12 +304,22 @@ public:
     virtual rawstd::Task<size_t>
     preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) = 0;
 
-    virtual rawstd::Task<size_t>
-    pwrite(const void* buf, size_t size, uint64_t offset, bool sync) = 0;
+    // Slot admits requests by epoch and coordinates resync ranges. The
+    // context travels with remote requests so the destination enforces its
+    // current configuration too; raw storage I/O needs no further checks.
+    virtual rawstd::Task<size_t> pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+    ) = 0;
+
+    // Copy restoration data; remote backends preserve the RESYNC flag so
+    // the destination Slot protects newer client writes.
+    virtual rawstd::Task<size_t> resync_pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+    ) = 0;
 
     virtual rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
-        bool sync
+        bool sync, uint64_t epoch
     ) = 0;
 
     // Hints that [offset, offset + size) is no longer in use -- a pure
@@ -298,7 +327,8 @@ public:
     // unlike write_zeroes() below, discard() does *not* guarantee the
     // range reads back as zero afterward. Returns the number of bytes
     // covered by the hint, mirroring pwrite()'s own byte-count result.
-    virtual rawstd::Task<size_t> discard(size_t size, uint64_t offset) = 0;
+    virtual rawstd::Task<size_t>
+    discard(size_t size, uint64_t offset, uint64_t epoch) = 0;
 
     // Zeroes [offset, offset + size) -- unlike discard() above, the range
     // is guaranteed to read back as zero once this completes. `unmap`
@@ -306,10 +336,15 @@ public:
     // storage for the zeroed range, same as virtio-blk's
     // VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP. `sync` has the same meaning as
     // pwrite()/pwritev()'s own `sync`.
-    virtual rawstd::Task<size_t>
-    write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) = 0;
+    virtual rawstd::Task<size_t> write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+    ) = 0;
 
-    virtual rawstd::Task<void> flush() = 0;
+    virtual rawstd::Task<size_t> resync_write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+    ) = 0;
+
+    virtual rawstd::Task<void> flush(uint64_t epoch) = 0;
 };
 
 } // namespace rawstor

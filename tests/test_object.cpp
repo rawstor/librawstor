@@ -8,8 +8,10 @@
 // (see object_env.hpp's own doc comment).
 #include "backend.hpp"
 #include "mds_client.hpp"
+#include "object.hpp"
 #include "object_env.hpp"
 #include "rawio_sync.hpp"
+#include "target.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -336,9 +338,9 @@ TEST(ObjectCloseTest, mds_backend_io_after_close_is_enotconn) {
         }
     };
     char buf[4096] = {};
-    expect_enotconn(backend->flush());
+    expect_enotconn(backend->flush(0));
     expect_enotconn(backend->pread(buf, sizeof(buf), 0));
-    expect_enotconn(backend->pwrite(buf, sizeof(buf), 0, false));
+    expect_enotconn(backend->pwrite(buf, sizeof(buf), 0, false, 0));
 
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
@@ -836,4 +838,43 @@ TEST(ObjectLocationInfoTest, mds_returns_cached_database_statistics) {
     ASSERT_EQ(res, 0);
     EXPECT_EQ(info.used, 123u);
     EXPECT_EQ(info.total, 456u);
+}
+
+TEST(ObjectTest, mds_io_beyond_first_chunk) {
+    rawstor::tests::ObjectEnv env(8896, 8897);
+    auto queue = rawio::Queue::create(16);
+    const uint64_t chunk_size = 64 * 1024;
+    RawstorObjectSpec spec{};
+    spec.size = 4 * chunk_size;
+    spec.chunk_size = chunk_size;
+    spec.width = 1;
+    char created[4096]{};
+    ASSERT_GT(
+        location_create(*queue, env.location(), spec, created, sizeof(created)),
+        0
+    );
+    rawstor::Target target(rawstd::URI::uriv(created));
+    auto object = run(*queue, target.open(*queue, 0));
+    for (uint64_t offset :
+         {chunk_size - 8, 2 * chunk_size + 8, spec.size - 16}) {
+        std::string data(16, 'x');
+        EXPECT_EQ(
+            run(*queue, object->pwrite(data.data(), data.size(), offset, true)),
+            data.size()
+        );
+        std::string read(data.size(), '\0');
+        EXPECT_EQ(
+            run(*queue, object->pread(read.data(), read.size(), offset)),
+            data.size()
+        );
+        EXPECT_EQ(read, data);
+    }
+    EXPECT_THROW(
+        run(*queue, object->pwrite("x", 1, spec.size, false)), std::system_error
+    );
+    EXPECT_THROW(
+        run(*queue, object->pread(created, 1, spec.size)), std::system_error
+    );
+    run(*queue, object->close());
+    run(*queue, target.remove(*queue));
 }

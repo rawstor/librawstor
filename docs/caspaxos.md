@@ -15,7 +15,7 @@ the acceptor; stage 2 adds the generic proposer.
 ## Overview
 
 CASPaxos (Denis Rystsov,
-["CASPaxos: Replicated State Machines without logs"](https://arxiv.org/abs/1802.07000))
+["CASPaxos: Replicated State Machines without logs"](https://github.com/rystsov/caspaxos))
 keeps one value replicated over a set of **acceptors** and lets any number
 of **proposers** change it, with no leader: a change is a function of the
 current value, and it is decided once a majority of acceptors accepted the

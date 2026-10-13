@@ -558,10 +558,28 @@ rawstd::Task<void> Backend::set_state(
 }
 
 rawstd::Task<void> Backend::set_config(
-    const RawstdUUID&, uint64_t, const RawstorObjectConfig&, unsigned int
+    const RawstdUUID&, uint64_t, uint8_t, const RawstorObjectConfig&,
+    unsigned int
 ) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     co_return;
+}
+
+rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
+    const RawstdUUID&, uint64_t, const RawstorObjectBallot&,
+    const RawstorObjectSyncReply&
+) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
+    co_return RawstorObjectSyncReply{};
+}
+
+rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
+    const RawstdUUID&, uint64_t, uint8_t, const RawstorObjectBallot&,
+    const RawstorObjectBallot&, const RawstorObjectConfig&,
+    const RawstorObjectSyncReply&
+) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
+    co_return RawstorObjectSyncReply{};
 }
 
 rawstd::Task<RawstorLocationInfo> Backend::info() {
@@ -626,27 +644,62 @@ Backend::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
     co_return co_await _opened().preadv(iov, niov, size, offset);
 }
 
-rawstd::Task<size_t>
-Backend::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
+rawstd::Task<size_t> Backend::pwrite(
+    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+) {
+    if (epoch != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    }
+
     co_return co_await _opened().pwrite(buf, size, offset, sync);
 }
 
+rawstd::Task<size_t>
+Backend::resync_pwrite(const void*, size_t, uint64_t, bool, uint64_t) {
+    RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    co_return 0;
+}
+
 rawstd::Task<size_t> Backend::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, uint64_t offset, bool sync
+    const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
+    bool sync, uint64_t epoch
 ) {
+    if (epoch != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    }
     co_return co_await _opened().pwritev(iov, niov, size, offset, sync);
 }
 
-rawstd::Task<size_t> Backend::discard(size_t size, uint64_t offset) {
+rawstd::Task<size_t>
+Backend::discard(size_t size, uint64_t offset, uint64_t epoch) {
+    if (epoch != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    }
+
     co_return co_await _opened().discard(size, offset);
 }
 
-rawstd::Task<size_t>
-Backend::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
+rawstd::Task<size_t> Backend::write_zeroes(
+    size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+) {
+    if (epoch != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    }
+
     co_return co_await _opened().write_zeroes(size, offset, unmap, sync);
 }
 
-rawstd::Task<void> Backend::flush() {
+rawstd::Task<size_t>
+Backend::resync_write_zeroes(size_t, uint64_t, bool, bool, uint64_t) {
+    RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    co_return 0;
+}
+
+rawstd::Task<void> Backend::flush(uint64_t epoch) {
+    if (epoch != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    }
+
     co_await _opened().flush();
 }
 

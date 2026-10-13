@@ -94,6 +94,22 @@ TEST(MultiChunkTest, create_open_read_write_across_chunk_boundary) {
     };
     run(*queue, target.create(*queue, spec));
 
+    // A physical chunk checks its own size, even when its object is larger.
+    auto chunk =
+        run(*queue, rawstor::Chunk::create(
+                        *queue, {location}, id, chunk_size, 0, RawstdUUID{}
+                    ));
+    char bytes[8]{};
+    EXPECT_THROW(
+        run(*queue, chunk->pread(bytes, sizeof(bytes), chunk_size - 4)),
+        std::system_error
+    );
+    EXPECT_THROW(
+        run(*queue, chunk->pwrite(bytes, sizeof(bytes), chunk_size, false)),
+        std::system_error
+    );
+    run(*queue, chunk->close());
+
     std::unique_ptr<rawstor::Object> object =
         run(*queue, target.open(*queue, 0));
 

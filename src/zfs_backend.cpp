@@ -335,13 +335,15 @@ rawstd::Task<void> Backend::create(
     // the zvol exists without one.
     RawstorObjectSyncStateValue state{};
     RawstorObjectConfig config{};
+    RawstorObjectBallot promised{};
+    RawstorObjectBallot accepted{};
     state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     Backend::ChunkIdentity identity;
     identity.member_role = member_role;
     identity.width = static_cast<uint8_t>(sp.width);
     identity.chunk_size = sp.chunk_size;
     std::string prop = std::string(rawstor_property) + "=" +
-                       meta_encode(state, config, identity);
+                       meta_encode(state, config, promised, accepted, identity);
 
     rawstd_info(
         "zfs: creating zvol %s, size %s bytes\n", dataset.c_str(), size_buf
@@ -471,9 +473,11 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     // stale, needs a resync" (docs/mirroring.md, case F10).
     RawstorObjectSyncStateValue state{};
     RawstorObjectConfig config{};
+    RawstorObjectBallot promised{};
+    RawstorObjectBallot accepted{};
     Backend::ChunkIdentity identity;
     try {
-        meta_decode(output, &state, &config, &identity);
+        meta_decode(output, &state, &config, &promised, &accepted, &identity);
     } catch (const std::system_error&) {
         rawstd_error("zfs: no recorded mirror state on %s\n", dataset.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
@@ -490,6 +494,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     ret.member_role = identity.member_role;
     ret.state = state;
     ret.config = config;
+    ret.promised = promised;
+    ret.accepted = accepted;
 
     co_return std::vector<RawstorObjectMeta>{ret};
 }
@@ -551,7 +557,8 @@ Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
 
 rawstd::Task<void> Backend::_write_meta(
     const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
-    const RawstorObjectConfig& config
+    const RawstorObjectConfig& config, const RawstorObjectBallot& promised,
+    const RawstorObjectBallot& accepted
 ) {
     std::string dataset = _dataset(id, offset);
 
@@ -574,15 +581,18 @@ rawstd::Task<void> Backend::_write_meta(
         }
         RawstorObjectSyncStateValue old_record_state{};
         RawstorObjectConfig old_record_config{};
+        RawstorObjectBallot old_record_promised{};
+        RawstorObjectBallot old_record_accepted{};
         meta_decode(
-            old_output, &old_record_state, &old_record_config, &identity
+            old_output, &old_record_state, &old_record_config,
+            &old_record_promised, &old_record_accepted, &identity
         );
     } catch (const std::system_error&) {
         identity = Backend::ChunkIdentity{};
     }
 
     std::string prop = std::string(rawstor_property) + "=" +
-                       meta_encode(state, config, identity);
+                       meta_encode(state, config, promised, accepted, identity);
 
     std::vector<std::string> argv = {"zfs", "set", prop, dataset};
     try {

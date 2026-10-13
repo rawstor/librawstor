@@ -2,6 +2,7 @@
 
 #include <ost/server.hpp>
 
+#include "slot.hpp"
 #include "target.hpp"
 
 #include <rawio/queue.hpp>
@@ -34,15 +35,6 @@
 #include <cstring>
 
 namespace {
-
-// Fire-and-forget close callback for the one case a close outcome can't be
-// reported anywhere meaningful: an object opened by
-// Client::_set_object()'s own co_target_open() after its Client has
-// already been torn down (see there), and ~Client()'s own close, which
-// can't co_await anything (a destructor can't be a coroutine).
-int ignore_close_result(ssize_t, void*) {
-    return 0;
-}
 
 int validate_result(int fd, size_t size, size_t result) noexcept {
     if (result == size) {
@@ -123,146 +115,35 @@ void append_list_entries(
     }
 }
 
-// ---------------------------------------------------------------------
-// rawstd::CallbackAwaitable<T> bridge over the async rawstor/{object,
-// target}.h C API: each co_object_*()/co_target_open() wrapper submits
-// the C call synchronously (throwing immediately on a synchronous
-// rejection, exactly like the C call itself would report) and co_awaits
-// its own trampoline's result -- everything below this point can be
-// ordinary, sequential coroutine code instead of hand-written
-// continuation-passing. See rawstd::CallbackAwaitable<T>'s own doc
-// comment for the general shape this follows.
-// ---------------------------------------------------------------------
-
-// rawstor_target_open()'s callback delivers a single ssize_t (0 or
-// negative errno) -- same shape as close_trampoline()/flush_trampoline()/
-// close_fd_trampoline()/result_trampoline() below.
-int open_trampoline(ssize_t result, void* data) {
-    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
-    return 0;
-}
-
-// `target` already has any bound version folded into its own trailing
-// path segment (Client::_targets()'s own `version_id` parameter, called
-// by _set_object() below) -- rawstor_target_open()'s `flags` is the only
-// other input this needs (a bound-version target can only be opened
-// RAWSTOR_READONLY, docs/mds.md, "Versions"). Taken by value: a
-// coroutine parameter declared as a reference is not lifetime-extended
-// past the initiating call the way an ordinary function's would be.
-rawstd::Task<RawstorObject*>
-co_target_open(RawIOQueue* queue, std::string target, int flags) {
-    rawstd::CallbackAwaitable<void> awaiter;
-    RawstorObject* object = nullptr;
-    int res = rawstor_target_open(
-        queue, target.c_str(), flags, &object, open_trampoline, &awaiter
-    );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+void check_copy_range(uint64_t offset, size_t size, uint64_t capacity) {
+    if (offset > capacity || size > capacity - offset) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    co_await awaiter;
-    co_return object;
 }
 
-int close_trampoline(ssize_t result, void* data) {
-    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
-    return 0;
-}
-
-// `clean`: the session's writer departed cleanly (LEAVE); otherwise the
-// object is abandoned (rawstor_object_abandon()), and a copy it wrote that
-// is DIRTY goes LOST.
-rawstd::Task<void> co_object_close(RawstorObject* object, bool clean) {
-    rawstd::CallbackAwaitable<void> awaiter;
-    int res = clean
-                  ? rawstor_object_close(object, close_trampoline, &awaiter)
-                  : rawstor_object_abandon(object, close_trampoline, &awaiter);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+// Own the Slot until its pending I/O and departure have completed.
+rawstd::DetachedTask abandon_slot(std::shared_ptr<rawstor::Slot> slot) {
+    try {
+        co_await slot->close();
+    } catch (const std::exception& e) {
+        rawstd_error("Failed to close slot after disconnect: %s\n", e.what());
     }
-    co_await awaiter;
 }
 
-// Shared by pread/pwrite -- both share the same result/error/data
-// callback shape (see co_object_flush()'s own flush_trampoline() below
-// for why flush isn't part of this group).
-int io_trampoline(size_t result, int error, void* data) {
-    static_cast<rawstd::CallbackAwaitable<size_t>*>(data)->complete(
-        result, error
-    );
-    return 0;
-}
-
-rawstd::Task<size_t> co_object_pread(
-    RawstorObject* object, void* buf, size_t size, uint64_t offset
-) {
-    rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawstor_object_pread(
-        object, buf, size, offset, io_trampoline, &awaiter
-    );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+rawstd::Task<void> co_leave_slot(std::shared_ptr<rawstor::Slot> slot) {
+    std::exception_ptr error;
+    try {
+        co_await slot->leave();
+    } catch (...) {
+        error = std::current_exception();
     }
-    co_return co_await awaiter;
-}
-
-rawstd::Task<size_t> co_object_pwrite(
-    RawstorObject* object, const void* buf, size_t size, uint64_t offset,
-    bool sync
-) {
-    rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawstor_object_pwrite(
-        object, buf, size, offset, sync, io_trampoline, &awaiter
-    );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
     }
-    co_return co_await awaiter;
 }
 
-rawstd::Task<size_t>
-co_object_discard(RawstorObject* object, size_t size, uint64_t offset) {
-    rawstd::CallbackAwaitable<size_t> awaiter;
-    int res =
-        rawstor_object_discard(object, size, offset, io_trampoline, &awaiter);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_return co_await awaiter;
-}
-
-rawstd::Task<size_t> co_object_write_zeroes(
-    RawstorObject* object, size_t size, uint64_t offset, bool unmap, bool sync
-) {
-    rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawstor_object_write_zeroes(
-        object, size, offset, unmap, sync, io_trampoline, &awaiter
-    );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_return co_await awaiter;
-}
-
-// rawstor_object_flush()'s own callback shape (ssize_t result) -- there's
-// nothing else to report, unlike io_trampoline()'s pread/pwrite group
-// above.
-int flush_trampoline(ssize_t result, void* data) {
-    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
-    return 0;
-}
-
-rawstd::Task<void> co_object_flush(RawstorObject* object) {
-    rawstd::CallbackAwaitable<void> awaiter;
-    int res = rawstor_object_flush(object, flush_trampoline, &awaiter);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_await awaiter;
-}
-
-// rawio_close()'s callback delivers a single combined "0 or -errno"
-// result, same shape rawstor_object_close()'s close_trampoline() above
-// already works with.
+// rawio_close() reports zero or a negative errno through its callback.
 int close_fd_trampoline(ssize_t result, void* data) {
     static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
     return 0;
@@ -287,8 +168,7 @@ rawstd::Task<void> co_close_fd(RawIOQueue* queue, int fd) {
 // CallbackAwaitable<void>'s plain error convention, covers every one of
 // their call sites below; whatever else a given call delivers
 // (spec/meta/info/targets/token) is written to its own out-parameter
-// before this fires, same convention as co_target_open()'s `object`
-// above.
+// before this fires.
 int result_trampoline(ssize_t result, void* data) {
     static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
     return 0;
@@ -501,28 +381,17 @@ Client::Client(Private, RawIOQueue* queue, Server& server, int fd) :
     _server(server),
     _fd(fd),
     _recv_event(nullptr),
-    _object(nullptr) {
+    _slot(nullptr) {
 }
 
 Client::~Client() noexcept {
-    // Synchronous fallback for whichever of _object/_recv_event/_fd
+    // Fallback cleanup for whichever of _slot/_recv_event/_fd
     // close() (see there) didn't already get to -- each is cleared as
     // it's closed, by either one, so the two never redo each other's
     // work; a caller that awaited close() before letting this Client be
     // destroyed finds nothing left to do here at all.
-    if (_object != nullptr) {
-        // Fire-and-forget: the close's own Task<> is driven by `_queue`
-        // (owned by Server, outliving every Client), not by this Client,
-        // so it completes fine whether or not this destructor's caller
-        // sticks around to see it -- same as ~Chunk()'s own connection
-        // cleanup doesn't need Client to still exist either.
-        int res = rawstor_object_abandon(_object, ignore_close_result, nullptr);
-        if (res < 0) {
-            rawstd_error(
-                "Failed to close object in client: %s\n", strerror(-res)
-            );
-        }
-        _object = nullptr;
+    if (_slot) {
+        abandon_slot(std::move(_slot));
     }
     if (_recv_event != nullptr) {
         int res = rawio_cancel(_queue, _recv_event);
@@ -548,14 +417,13 @@ rawstd::Task<void> Client::close() {
         _recv_event = nullptr;
     }
 
-    if (_object != nullptr) {
-        RawstorObject* object = _object;
-        _object = nullptr;
+    if (_slot != nullptr) {
+        std::shared_ptr<rawstor::Slot> slot = std::move(_slot);
         try {
-            co_await co_object_close(object, false);
+            co_await slot->close();
         } catch (const std::system_error& e) {
             rawstd_error(
-                "Failed to close object in client: %s\n",
+                "Failed to close slot in client: %s\n",
                 strerror(e.code().value())
             );
         }
@@ -782,7 +650,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
-                _flush(weak, head);
+                _flush(weak, head, basic.val);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -797,6 +665,21 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                     co_return;
                 }
                 _leave(weak, head);
+                rawstd::DetachedTask::rethrow_if_pending();
+                break;
+            }
+            case RAWSTOR_CMD_SYNC_PREPARE:
+            case RAWSTOR_CMD_SYNC_ACCEPT: {
+                RawstorFrameSyncProposePayload propose_payload;
+                co_await recv_frame(
+                    stream, &propose_payload, sizeof(propose_payload), fd,
+                    "request payload", &stream_failed
+                );
+                client = weak.lock();
+                if (client == nullptr) {
+                    co_return;
+                }
+                _sync(weak, head, propose_payload);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -878,7 +761,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                     RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
                 }
 
-                // Always keeps reading -- rawstor_object_pwrite()'s
+                // Always keeps reading -- Slot::pwrite()'s
                 // underlying blk::Backend applies write-throttling
                 // itself (see blk_backend.hpp's _throttle_acquire()), so
                 // nothing here needs to pause the recv while a write
@@ -949,26 +832,25 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
 }
 
 rawstd::Task<std::shared_ptr<Client>>
-Client::_close_current_object(std::weak_ptr<Client> weak) {
-    RawstorObject* object;
+Client::_close_current_slot(std::weak_ptr<Client> weak) {
+    std::shared_ptr<rawstor::Slot> slot;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
             co_return nullptr;
         }
-        object = client->_object;
-        client->_object = nullptr;
+        slot = std::move(client->_slot);
     }
 
-    if (object != nullptr) {
+    if (slot != nullptr) {
         // co_await isn't allowed inside a catch block, so the del_client()
         // below has to run after leaving the handler.
         bool close_failed = false;
         try {
-            co_await co_object_close(object, false);
+            co_await slot->close();
         } catch (const std::system_error& e) {
             rawstd_error(
-                "Failed to close object in client: %s\n",
+                "Failed to close slot in client: %s\n",
                 strerror(e.code().value())
             );
             close_failed = true;
@@ -989,7 +871,7 @@ rawstd::DetachedTask Client::_list(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameListPayload payload
 ) {
-    std::shared_ptr<Client> client = co_await _close_current_object(weak);
+    std::shared_ptr<Client> client = co_await _close_current_slot(weak);
     if (client == nullptr) {
         co_return;
     }
@@ -1068,7 +950,7 @@ rawstd::DetachedTask Client::_allocate(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameAllocatePayload payload
 ) {
-    std::shared_ptr<Client> client = co_await _close_current_object(weak);
+    std::shared_ptr<Client> client = co_await _close_current_slot(weak);
     if (client == nullptr) {
         co_return;
     }
@@ -1091,7 +973,7 @@ rawstd::DetachedTask Client::_allocate(
         // itself always creates RAWSTOR_MEMBER_DATA members (create_one()'s
         // own comment, target.cpp) -- a witness (docs/mds.md, "Witness",
         // stage 3) is a metadata-only member attached to an
-        // already-existing chunk's own quorum, never something ALLOCATE
+        // already-existing slot's own quorum, never something ALLOCATE
         // itself builds.
         RawstorObjectSpec spec{
             .size = payload.size,
@@ -1310,6 +1192,8 @@ rawstd::DetachedTask Client::_meta(
             // mirror, not of the copy it is to its clients (_set_config()):
             // it reports none -- a copy without state tracking.
             meta.config = RawstorObjectConfig{};
+            meta.promised = RawstorObjectBallot{};
+            meta.accepted = RawstorObjectBallot{};
         }
     } catch (const std::system_error& e) {
         result = -e.code().value();
@@ -1335,10 +1219,13 @@ rawstd::DetachedTask Client::_meta(
                 body_out.config.sync_id_history, meta.config.sync_id_history,
                 sizeof(body_out.config.sync_id_history)
             );
+            body_out.config.resync_owner = meta.config.resync_owner;
             body_out.config.nroles = meta.config.nroles;
             memcpy(
                 body_out.config.roles, meta.config.roles, meta.config.nroles
             );
+            body_out.promised = {meta.promised.counter, meta.promised.proposer};
+            body_out.accepted = {meta.accepted.counter, meta.accepted.proposer};
             std::vector<unsigned char> data(sizeof(body_out));
             memcpy(data.data(), &body_out, sizeof(body_out));
             co_await client->_send_response(
@@ -1440,8 +1327,7 @@ rawstd::DetachedTask Client::_set_config(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets =
-        client->_targets(uuid, payload.chunk_offset);
+    const auto locations = client->_server.locations();
 
     RawstorObjectConfig config{};
     config.epoch = payload.config.epoch;
@@ -1450,30 +1336,33 @@ rawstd::DetachedTask Client::_set_config(
         config.sync_id_history, payload.config.sync_id_history,
         sizeof(config.sync_id_history)
     );
+    config.resync_owner = payload.config.resync_owner;
     config.nroles = payload.config.nroles;
     memcpy(config.roles, payload.config.roles, config.nroles);
 
-    // To its clients this server is one copy, whatever it stores the
-    // chunk on: the record is its one location's. Several locations are a
-    // mirror of this server's own, whose records belong to that inner
-    // mirror -- there is no record of the copy itself to keep, so it is a
-    // copy without state tracking (docs/mirroring.md, "One copy per
-    // server").
+    // The server's one copy is addressed locally at index 0; the request's
+    // member_index selects its role in the client's configuration.
     int result = 0;
-    if (targets.size() != 1) {
+    if (locations.size() != 1) {
         result = -ENOSYS;
     } else {
         try {
-            std::string target = rawstd::URI::uris(targets);
-            rawstd::CallbackAwaitable<void> awaiter;
-            int res = rawstor_target_set_member_config(
-                client->_queue, target.c_str(), payload.chunk_offset, 0,
-                &config, payload.flags, result_trampoline, &awaiter
-            );
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            rawio::Queue& queue = *static_cast<rawio::Queue*>(client->_queue);
+            std::unique_ptr<rawstor::Slot> slot;
+            slot = co_await rawstor::Slot::create(queue, locations.front());
+            std::exception_ptr error;
+            try {
+                co_await slot->set_config(
+                    uuid, payload.chunk_offset, payload.member_index, config,
+                    payload.flags
+                );
+            } catch (...) {
+                error = std::current_exception();
             }
-            co_await awaiter;
+            co_await slot->close();
+            if (error) {
+                std::rethrow_exception(error);
+            }
         } catch (const std::system_error& e) {
             result = -e.code().value();
         }
@@ -1493,22 +1382,122 @@ rawstd::DetachedTask Client::_set_config(
     }
 }
 
+rawstd::DetachedTask Client::_sync(
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameSyncProposePayload payload
+) {
+    std::shared_ptr<Client> client = weak.lock();
+    if (client == nullptr) {
+        co_return;
+    }
+
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
+    const auto locations = client->_server.locations();
+
+    RawstorObjectBallot ballot{payload.ballot.counter, payload.ballot.proposer};
+    RawstorObjectBallot next{payload.next.counter, payload.next.proposer};
+    RawstorObjectConfig config{};
+    config.epoch = payload.config.epoch;
+    config.sync_id = payload.config.sync_id;
+    memcpy(
+        config.sync_id_history, payload.config.sync_id_history,
+        sizeof(config.sync_id_history)
+    );
+    config.resync_owner = payload.config.resync_owner;
+    config.nroles = payload.config.nroles;
+    memcpy(config.roles, payload.config.roles, config.nroles);
+
+    // One copy, as for SET_CONFIG (_set_config()).
+    int result = 0;
+    RawstorObjectSyncReply reply{};
+    if (locations.size() != 1) {
+        result = -ENOSYS;
+    } else {
+        try {
+            rawio::Queue& queue = *static_cast<rawio::Queue*>(client->_queue);
+            std::unique_ptr<rawstor::Slot> slot;
+            slot = co_await rawstor::Slot::create(queue, locations.front());
+            std::exception_ptr error;
+            try {
+                if (head.cmd == RAWSTOR_CMD_SYNC_PREPARE) {
+                    reply = co_await slot->sync_prepare(
+                        uuid, payload.chunk_offset, ballot
+                    );
+                } else {
+                    reply = co_await slot->sync_accept(
+                        uuid, payload.chunk_offset, payload.member_index,
+                        ballot, next, config
+                    );
+                }
+            } catch (...) {
+                error = std::current_exception();
+            }
+            co_await slot->close();
+            if (error) {
+                std::rethrow_exception(error);
+            }
+        } catch (const std::system_error& e) {
+            result = -e.code().value();
+        }
+    }
+
+    bool send_failed = false;
+    try {
+        if (result < 0) {
+            co_await client->_send_response(head.cmd, head.cid, result, 0);
+        } else {
+            RawstorFrameSyncReplyPayload body_out{};
+            body_out.ok = reply.ok != 0 ? 1 : 0;
+            const RawstorObjectMeta& meta = reply.meta;
+            RawstorFrameMetaPayload& wire = body_out.meta;
+            wire.size = meta.spec.size;
+            wire.state = static_cast<RawstorSyncStateType>(meta.state);
+            wire.chunk_shift = chunk_size_to_shift(meta.spec.chunk_size);
+            wire.width = static_cast<uint8_t>(meta.spec.width);
+            wire.member_role = static_cast<uint8_t>(meta.member_role);
+            wire.writers = meta.writers;
+            wire.config.epoch = meta.config.epoch;
+            wire.config.sync_id = meta.config.sync_id;
+            memcpy(
+                wire.config.sync_id_history, meta.config.sync_id_history,
+                sizeof(wire.config.sync_id_history)
+            );
+            wire.config.resync_owner = meta.config.resync_owner;
+            wire.config.nroles = meta.config.nroles;
+            memcpy(wire.config.roles, meta.config.roles, meta.config.nroles);
+            wire.promised = {meta.promised.counter, meta.promised.proposer};
+            wire.accepted = {meta.accepted.counter, meta.accepted.proposer};
+            std::vector<unsigned char> data(sizeof(body_out));
+            memcpy(data.data(), &body_out, sizeof(body_out));
+            co_await client->_send_response(
+                head.cmd, head.cid, data.size(), 0, data
+            );
+        }
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        send_failed = true;
+    }
+    if (send_failed) {
+        co_await client->_server.del_client(client->_fd);
+    }
+}
+
 rawstd::DetachedTask
 Client::_leave(std::weak_ptr<Client> weak, RawstorFrameHead head) {
-    RawstorObject* object = nullptr;
+    std::shared_ptr<rawstor::Slot> slot;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
             co_return;
         }
-        object = client->_object;
-        client->_object = nullptr;
+        slot = std::move(client->_slot);
     }
 
     int result = 0;
-    if (object != nullptr) {
+    if (slot != nullptr) {
         try {
-            co_await co_object_close(object, true);
+            co_await co_leave_slot(slot);
         } catch (const std::system_error& e) {
             result = -e.code().value();
         }
@@ -1580,48 +1569,58 @@ rawstd::DetachedTask Client::_set_object(
     RawstorFrameBasicPayload payload
 ) {
     RawIOQueue* queue;
-    std::string target;
+    std::vector<rawstd::URI> locations;
+    RawstdUUID id;
+    memcpy(id.bytes, payload.object_id, sizeof(payload.object_id));
+    RawstdUUID version_id;
+    memcpy(version_id.bytes, payload.version_id, sizeof(payload.version_id));
     {
-        std::shared_ptr<Client> client = co_await _close_current_object(weak);
+        std::shared_ptr<Client> client = co_await _close_current_slot(weak);
         if (client == nullptr) {
             co_return;
         }
         queue = client->_queue;
-
-        RawstdUUID uuid;
-        memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-        // version_id is the bound version -- nil for live, or a previously
-        // created id (docs/mds.md, "Versions").
-        RawstdUUID version_id;
-        memcpy(
-            version_id.bytes, payload.version_id, sizeof(payload.version_id)
-        );
-        target = rawstd::URI::uris(
-            client->_targets(uuid, payload.offset, version_id)
-        );
+        locations = client->_server.locations();
     }
 
-    RawstorObject* object = nullptr;
+    std::shared_ptr<rawstor::Slot> slot;
     int error = 0;
+    uint64_t size = 0;
     try {
-        object = co_await co_target_open(
-            queue, target, static_cast<int>(payload.val)
+        if (locations.size() != 1) {
+            RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+        }
+        slot = co_await rawstor::Slot::create(
+            *static_cast<rawio::Queue*>(queue), locations.front()
         );
+        RawstorObjectMeta meta = co_await slot->open(
+            id, payload.offset, static_cast<int>(payload.val), version_id
+        );
+        size = meta.spec.size;
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
 
+    if (error && slot) {
+        co_await slot->close();
+        slot.reset();
+    }
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
-        // Nobody left to hand `object` to (and nothing left to respond
-        // to) -- close it ourselves so it doesn't leak.
-        if (object != nullptr) {
-            rawstor_object_abandon(object, ignore_close_result, nullptr);
+        if (slot != nullptr) {
+            try {
+                co_await slot->close();
+            } catch (const std::system_error& e) {
+                rawstd_error(
+                    "Failed to close slot after disconnect: %s\n", e.what()
+                );
+            }
         }
         co_return;
     }
     if (!error) {
-        client->_object = object;
+        client->_slot = std::move(slot);
+        client->_size = size;
     }
     bool send_failed = false;
     try {
@@ -1641,13 +1640,14 @@ rawstd::DetachedTask Client::_read(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameIOPayload payload
 ) {
-    RawstorObject* object;
+    std::shared_ptr<rawstor::Slot> slot;
+    uint64_t capacity = 0;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
             co_return;
         }
-        if (client->_object == nullptr) {
+        if (client->_slot == nullptr) {
             bool send_failed = false;
             try {
                 co_await client->_send_response(
@@ -1678,7 +1678,8 @@ rawstd::DetachedTask Client::_read(
             }
             co_return;
         }
-        object = client->_object;
+        slot = client->_slot;
+        capacity = client->_size;
     }
 
     size_t len = payload.len;
@@ -1687,15 +1688,15 @@ rawstd::DetachedTask Client::_read(
     size_t result = 0;
     int error = 0;
     try {
-        result = co_await co_object_pread(
-            object, data.data(), data.size(), payload.offset
-        );
+        check_copy_range(payload.offset, payload.len, capacity);
+        result = co_await slot->pread(data.data(), data.size(), payload.offset);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
     if (error) {
         rawstd_warning("%s\n", strerror(error));
     }
+    data.resize(error ? 0 : result);
 
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
@@ -1727,7 +1728,7 @@ rawstd::DetachedTask Client::_write(
         co_return;
     }
 
-    if (client->_object == nullptr) {
+    if (client->_slot == nullptr) {
         bool send_failed = false;
         try {
             co_await client->_send_response(
@@ -1776,31 +1777,45 @@ rawstd::DetachedTask Client::_write(
     }
 
     _dispatch_write(
-        weak, head, payload.offset, (payload.flags & RAWSTOR_FLAG_SYNC) != 0,
-        data
+        weak, head, payload.offset, payload.flags, payload.epoch, data
     );
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
 rawstd::DetachedTask Client::_dispatch_write(
     std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t offset,
-    bool sync, std::shared_ptr<std::vector<unsigned char>> data
+    uint8_t flags, uint64_t epoch,
+    std::shared_ptr<std::vector<unsigned char>> data
 ) {
-    RawstorObject* object;
+    std::shared_ptr<rawstor::Slot> slot;
+    uint64_t capacity = 0;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
             co_return;
         }
-        object = client->_object;
+        slot = client->_slot;
+        capacity = client->_size;
     }
+
+    bool sync = (flags & RAWSTOR_FLAG_SYNC) != 0;
 
     size_t result = 0;
     int error = 0;
     try {
-        result = co_await co_object_pwrite(
-            object, data->data(), data->size(), offset, sync
-        );
+        if (slot == nullptr) {
+            RAWSTD_THROW_SYSTEM_ERROR(EBADF);
+        }
+        check_copy_range(offset, data->size(), capacity);
+        if ((flags & RAWSTOR_FLAG_RESYNC) != 0) {
+            result = co_await slot->resync_pwrite(
+                data->data(), data->size(), offset, sync, epoch
+            );
+        } else {
+            result = co_await slot->pwrite(
+                data->data(), data->size(), offset, sync, epoch
+            );
+        }
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1828,15 +1843,16 @@ rawstd::DetachedTask Client::_dispatch_write(
     }
 }
 
-rawstd::DetachedTask
-Client::_flush(std::weak_ptr<Client> weak, RawstorFrameHead head) {
-    RawstorObject* object;
+rawstd::DetachedTask Client::_flush(
+    std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t epoch
+) {
+    std::shared_ptr<rawstor::Slot> slot;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
             co_return;
         }
-        if (client->_object == nullptr) {
+        if (client->_slot == nullptr) {
             bool send_failed = false;
             try {
                 co_await client->_send_response(
@@ -1851,12 +1867,15 @@ Client::_flush(std::weak_ptr<Client> weak, RawstorFrameHead head) {
             }
             co_return;
         }
-        object = client->_object;
+        slot = client->_slot;
     }
 
     int error = 0;
     try {
-        co_await co_object_flush(object);
+        if (slot == nullptr) {
+            RAWSTD_THROW_SYSTEM_ERROR(EBADF);
+        }
+        co_await slot->flush(epoch);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1886,13 +1905,14 @@ rawstd::DetachedTask Client::_discard(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameIOPayload payload
 ) {
-    RawstorObject* object;
+    std::shared_ptr<rawstor::Slot> slot;
+    uint64_t capacity = 0;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
             co_return;
         }
-        if (client->_object == nullptr) {
+        if (client->_slot == nullptr) {
             bool send_failed = false;
             try {
                 co_await client->_send_response(
@@ -1907,14 +1927,19 @@ rawstd::DetachedTask Client::_discard(
             }
             co_return;
         }
-        object = client->_object;
+        slot = client->_slot;
+        capacity = client->_size;
     }
 
     size_t result = 0;
     int error = 0;
     try {
+        if (slot == nullptr) {
+            RAWSTD_THROW_SYSTEM_ERROR(EBADF);
+        }
+        check_copy_range(payload.offset, payload.len, capacity);
         result =
-            co_await co_object_discard(object, payload.len, payload.offset);
+            co_await slot->discard(payload.len, payload.offset, payload.epoch);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -1945,13 +1970,14 @@ rawstd::DetachedTask Client::_write_zeroes(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameIOPayload payload
 ) {
-    RawstorObject* object;
+    std::shared_ptr<rawstor::Slot> slot;
+    uint64_t capacity = 0;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
             co_return;
         }
-        if (client->_object == nullptr) {
+        if (client->_slot == nullptr) {
             bool send_failed = false;
             try {
                 co_await client->_send_response(
@@ -1966,7 +1992,8 @@ rawstd::DetachedTask Client::_write_zeroes(
             }
             co_return;
         }
-        object = client->_object;
+        slot = client->_slot;
+        capacity = client->_size;
     }
 
     bool unmap = (payload.flags & RAWSTOR_FLAG_UNMAP) != 0;
@@ -1975,9 +2002,19 @@ rawstd::DetachedTask Client::_write_zeroes(
     size_t result = 0;
     int error = 0;
     try {
-        result = co_await co_object_write_zeroes(
-            object, payload.len, payload.offset, unmap, sync
-        );
+        if (slot == nullptr) {
+            RAWSTD_THROW_SYSTEM_ERROR(EBADF);
+        }
+        check_copy_range(payload.offset, payload.len, capacity);
+        if ((payload.flags & RAWSTOR_FLAG_RESYNC) != 0) {
+            result = co_await slot->resync_write_zeroes(
+                payload.len, payload.offset, unmap, sync, payload.epoch
+            );
+        } else {
+            result = co_await slot->write_zeroes(
+                payload.len, payload.offset, unmap, sync, payload.epoch
+            );
+        }
     } catch (const std::system_error& e) {
         error = e.code().value();
     }

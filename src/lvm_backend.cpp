@@ -455,13 +455,15 @@ rawstd::Task<void> Backend::create(
     // window -- staged or revealed -- where the LV exists without one.
     RawstorObjectSyncStateValue state{};
     RawstorObjectConfig config{};
+    RawstorObjectBallot promised{};
+    RawstorObjectBallot accepted{};
     state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     Backend::ChunkIdentity identity;
     identity.member_role = member_role;
     identity.width = static_cast<uint8_t>(sp.width);
     identity.chunk_size = sp.chunk_size;
-    std::string tag =
-        std::string(rawstor_tag_prefix) + meta_encode(state, config, identity);
+    std::string tag = std::string(rawstor_tag_prefix) +
+                      meta_encode(state, config, promised, accepted, identity);
 
     rawstd_info(
         "lvm: creating LV %s in VG %s, size %s\n", uuid_str, _vg_name.c_str(),
@@ -690,9 +692,11 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     // resync" (docs/mirroring.md, case F10).
     RawstorObjectSyncStateValue state{};
     RawstorObjectConfig config{};
+    RawstorObjectBallot promised{};
+    RawstorObjectBallot accepted{};
     Backend::ChunkIdentity identity;
     try {
-        meta_decode(tag, &state, &config, &identity);
+        meta_decode(tag, &state, &config, &promised, &accepted, &identity);
     } catch (const std::system_error&) {
         rawstd_error("lvm: no recorded mirror state on %s\n", path.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
@@ -709,6 +713,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     ret.member_role = identity.member_role;
     ret.state = state;
     ret.config = config;
+    ret.promised = promised;
+    ret.accepted = accepted;
 
     co_return std::vector<RawstorObjectMeta>{ret};
 }
@@ -720,7 +726,8 @@ Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
 
 rawstd::Task<void> Backend::_write_meta(
     const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
-    const RawstorObjectConfig& config
+    const RawstorObjectConfig& config, const RawstorObjectBallot& promised,
+    const RawstorObjectBallot& accepted
 ) {
     std::string path = _device_path(id, offset);
 
@@ -735,14 +742,20 @@ rawstd::Task<void> Backend::_write_meta(
     Backend::ChunkIdentity identity;
     RawstorObjectSyncStateValue old_record_state{};
     RawstorObjectConfig old_record_config{};
+    RawstorObjectBallot old_record_promised{};
+    RawstorObjectBallot old_record_accepted{};
     try {
-        meta_decode(old_tag, &old_record_state, &old_record_config, &identity);
+        meta_decode(
+            old_tag, &old_record_state, &old_record_config,
+            &old_record_promised, &old_record_accepted, &identity
+        );
     } catch (const std::system_error&) {
         identity = Backend::ChunkIdentity{};
     }
 
     std::string new_tag =
-        std::string(rawstor_tag_prefix) + meta_encode(state, config, identity);
+        std::string(rawstor_tag_prefix) +
+        meta_encode(state, config, promised, accepted, identity);
 
     std::vector<std::string> argv = {"lvchange", "--config", lvm_config};
     if (!old_tag.empty()) {

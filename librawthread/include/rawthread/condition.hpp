@@ -10,7 +10,6 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <vector>
 
 namespace rawthread {
 
@@ -22,12 +21,12 @@ namespace rawthread {
  * around every check, notify_all() is called with it held.
  *
  * The notifier may run on another thread, which cannot resume a coroutine
- * of the waiter's queue directly: each waiter suspends on a Wake of its
- * own, and notify_all() signals them.
+ * of the waiter's queue directly. All waiters of a notification generation
+ * share one Wake and suspend on their own queues.
  */
 class Condition final {
 private:
-    std::vector<std::shared_ptr<Wake>> _waiters;
+    std::shared_ptr<Wake> _wake;
 
 public:
     /*

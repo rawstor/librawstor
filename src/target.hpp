@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_TARGET_HPP
 #define RAWSTOR_TARGET_HPP
 
+#include "backend.hpp"
+
 #include <rawstor/target.h>
 
 #include <rawio/queue.hpp>
@@ -145,6 +147,12 @@ private:
     RawstdUUID _id;
     RawstdUUID _version_id;
 
+    // The bare location of real member `member_index` of the chunk at
+    // `offset`, as set_member_config() below addresses it.
+    rawstd::Task<rawstd::URI> _member_location(
+        rawio::Queue& queue, uint64_t offset, size_t member_index
+    ) const;
+
 public:
     explicit Target(const std::vector<rawstd::URI>& uris);
 
@@ -258,11 +266,26 @@ public:
     // no chunk sits at `offset`, EINVAL if `member_index` names no real
     // member of it (see this method's own doc comment in target.cpp for
     // how an opaque, e.g. mds://, target's real member list is resolved).
-    // `config` is taken by value: it outlives the caller's argument,
-    // across the connect.
+    // `member_index` also selects the receiver's role in `config.roles`.
+    // `config` is taken by value and outlives the caller's argument across
+    // the connect. OST forwards this index to its one local copy.
     rawstd::Task<void> set_member_config(
         rawio::Queue& queue, uint64_t offset, size_t member_index,
         RawstorObjectConfig config, unsigned int flags
+    ) const;
+    // The two requests of the chunk's configuration register
+    // (Backend::sync_prepare()/sync_accept()), sent to one member, which
+    // is addressed as set_member_config() above addresses it. The request
+    // is taken by value: it outlives the caller's arguments, across the
+    // connect.
+    rawstd::Task<RawstorObjectSyncReply> sync_prepare(
+        rawio::Queue& queue, uint64_t offset, size_t member_index,
+        RawstorObjectBallot ballot
+    ) const;
+    rawstd::Task<RawstorObjectSyncReply> sync_accept(
+        rawio::Queue& queue, uint64_t offset, size_t member_index,
+        RawstorObjectBallot ballot, RawstorObjectBallot next,
+        RawstorObjectConfig config
     ) const;
     // Removes every URI of every chunk concurrently -- unlike create()
     // above, there's no rollback to speak of (removal has nothing to

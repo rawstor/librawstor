@@ -298,8 +298,11 @@ bool wait_member_config_synced(
         if (target_meta(queue, behind, &b) != 0) {
             continue;
         }
-        if (!any_syncing(b.config) && a.config.sync_id != 0 &&
-            b.config.sync_id == a.config.sync_id) {
+        // Config publication precedes clearing LOST. Wait for both
+        // externally visible steps before treating the rejoin as complete.
+        if (!any_syncing(b.config) &&
+            b.state != RAWSTOR_OBJECT_SYNC_STATE_LOST &&
+            a.config.sync_id != 0 && b.config.sync_id == a.config.sync_id) {
             return true;
         }
     }
@@ -810,10 +813,11 @@ TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
 
 // A write that starts while the rejoining member is getting its final
 // state is duplicated onto that member and may still fail there after the
-// final state lands. The member must not join the set before that write
-// has settled: here the write comes back short on it, which aborts the
-// resync instead of leaving a member in the set that missed the write.
-TEST(MirrorResyncTest, rejoin_waits_for_writes_in_flight) {
+// final state lands. The member joins the set without waiting for it, but
+// the write is not acknowledged before the member it missed is excluded
+// again: here the write comes back short on it, which degrades the member
+// once it has joined.
+TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
     struct ScopedOpts {
         ScopedOpts() {
             RawstorOpts opts{};
@@ -850,13 +854,17 @@ TEST(MirrorResyncTest, rejoin_waits_for_writes_in_flight) {
         .width = 2,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
-        .config = {
-            .epoch = 1,
-            .sync_id = 0x2222222222222222ull,
-            .sync_id_history = {},
-            .nroles = 0,
-            .roles = {},
-        },
+        .config =
+            {
+                .epoch = 1,
+                .sync_id = 0x2222222222222222ull,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
     };
     std::atomic<bool> syncing_sent(false);
     std::atomic<bool> final_state_sent(false);
@@ -887,13 +895,14 @@ TEST(MirrorResyncTest, rejoin_waits_for_writes_in_flight) {
 
     s->cmd_set_state_response(RAWSTOR_MAGIC, 2, 0);
     s->cmd_write(RAWSTOR_MAGIC, 3, spec.size); // the copy
+    s->cmd_flush(RAWSTOR_MAGIC, 4, 0);         // durable before clearing LOST
     // The final state, answered only once the client's write is in.
     server.read(
         "final SET_CONFIG <<<", sizeof(RawstorFrameSetConfig),
         [&final_state_sent](const void*) { final_state_sent = true; }
     );
     s->cmd_write_request(4096);
-    s->cmd_set_state_response(RAWSTOR_MAGIC, 4, 0);
+    s->cmd_set_state_response(RAWSTOR_MAGIC, 5, 0);
     for (int i = 0; i < 1000 && !final_state_sent; ++i) {
         rawio_wait_timeout(queue, 10);
     }
@@ -921,14 +930,16 @@ TEST(MirrorResyncTest, rejoin_waits_for_writes_in_flight) {
         rawio_wait_timeout(queue, 10);
     }
     EXPECT_FALSE(written);
-    s->cmd_write_response(RAWSTOR_MAGIC, 5, 2048);
+    s->cmd_write_response(RAWSTOR_MAGIC, 6, 2048);
     for (int i = 0; i < 1000 && !written; ++i) {
         rawio_wait_timeout(queue, 10);
     }
     ASSERT_TRUE(written);
     std::string log = testing::internal::GetCapturedStderr();
-    EXPECT_NE(log.find("Mirror resync aborted"), std::string::npos) << log;
-    EXPECT_EQ(log.find("rejoined the set"), std::string::npos) << log;
+    size_t rejoined = log.find("rejoined the set");
+    ASSERT_NE(rejoined, std::string::npos) << log;
+    EXPECT_NE(log.find("Mirror member degraded", rejoined), std::string::npos)
+        << log;
 
     // The member is out of the set: the close touches only the first one.
     object_close_clean(queue, object);
@@ -959,6 +970,25 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     stale.sync_id = 0x2222222222222222ull;
     ASSERT_EQ(target_set_config(queue, members.target(1), stale), 0);
 
+    // An unclean writer left the stale copy LOST. A full resync must
+    // remove that state after restoring its data.
+    RawstorObject* stale_writer = nullptr;
+    ASSERT_EQ(target_open(queue, members.target(1), &stale_writer), 0);
+    const std::string obsolete = "obsolete";
+    object_write(queue, stale_writer, obsolete.data(), obsolete.size(), 0, 0);
+    ASSERT_EQ(
+        rawstor::tests::sync_run(
+            queue,
+            [&](auto cb, void* data) {
+                return rawstor_object_abandon(stale_writer, cb, data);
+            }
+        ),
+        0
+    );
+    RawstorObjectMeta behind{};
+    ASSERT_EQ(target_meta(queue, members.target(1), &behind), 0);
+    ASSERT_EQ(behind.state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+
     /* Pre-existing content on the fresh member across every chunk. */
     for (uint64_t off = 0; off < size; off += 1ull << 20) {
         std::string block(4096, 'S');
@@ -983,6 +1013,8 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
         wait_member_config_synced(queue, members.target(0), members.target(1))
     );
 
+    ASSERT_EQ(target_meta(queue, members.target(1), &behind), 0);
+    EXPECT_EQ(behind.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     object_close_clean(queue, object);
 
     /* Byte-for-byte identity after the rejoin. */
@@ -1370,13 +1402,17 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
-        .config = {
-            .epoch = 0,
-            .sync_id = 0,
-            .sync_id_history = {},
-            .nroles = 0,
-            .roles = {},
-        },
+        .config =
+            {
+                .epoch = 0,
+                .sync_id = 0,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
     };
 
     /*
@@ -1452,13 +1488,17 @@ TEST(MirrorOstTest, degrade_and_continue) {
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
-        .config = {
-            .epoch = 0,
-            .sync_id = 0,
-            .sync_id_history = {},
-            .nroles = 0,
-            .roles = {},
-        },
+        .config =
+            {
+                .epoch = 0,
+                .sync_id = 0,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
     };
 
     {
@@ -1536,13 +1576,17 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
-        .config = {
-            .epoch = 0,
-            .sync_id = 0,
-            .sync_id_history = {},
-            .nroles = 0,
-            .roles = {},
-        },
+        .config =
+            {
+                .epoch = 0,
+                .sync_id = 0,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
     };
 
     {
@@ -1607,13 +1651,17 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         .width = 1,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
-        .config = {
-            .epoch = 0,
-            .sync_id = 0,
-            .sync_id_history = {},
-            .nroles = 0,
-            .roles = {},
-        },
+        .config =
+            {
+                .epoch = 0,
+                .sync_id = 0,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
     };
 
     {

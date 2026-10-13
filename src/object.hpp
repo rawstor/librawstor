@@ -19,7 +19,7 @@
 // Opaque tag behind the C handle: rawstor::Object (a client-facing
 // entity made of one or more Chunks, docs/mds.md: "Object = group of
 // chunks") is its sole implementation. Every component that merely
-// passes a RawstorObject* around (ost/, vhost/, vduse/, ...) never
+// passes a RawstorObject* around (vhost/, vduse/, ...) never
 // dereferences it at all; object.cpp's own C ABI adapters (the only code
 // that does) static_cast<Object*> first, including to destroy it
 // (`delete static_cast<Object*>(object);`, launch_close_op_coro()) --

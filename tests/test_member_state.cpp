@@ -1,6 +1,7 @@
 #include "object.hpp"
 #include "object_env.hpp"
 #include "opts.h"
+#include "slot.hpp"
 #include "target.hpp"
 #include "tmp_dir.hpp"
 
@@ -20,7 +21,10 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
+
+#include <cerrno>
 
 /*
  * A copy keeps its own DIRTY/CLEAN/LOST from the sessions writing it
@@ -390,6 +394,171 @@ TEST(MemberStateTest, ost_threads_share_copy_state_and_metadata_transitions) {
     expect_thread_shared_copy_state(f);
 }
 
+namespace {
+
+void expect_copy_write_requests(const rawstd::URI& location) {
+    auto queue = rawio::Queue::create(16);
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    RawstdUUIDString id_string;
+    rawstd_uuid_to_string(&id, &id_string);
+    rawstor::Target target({rawstd::URI(location, id_string)});
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .width = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    run(*queue, target.create(*queue, spec));
+    auto writer = run(*queue, rawstor::Slot::create(*queue, location));
+    auto peer = run(*queue, rawstor::Slot::create(*queue, location));
+    run(*queue, writer->open(id, 0, 0, RawstdUUID{}));
+    run(*queue, peer->open(id, 0, 0, RawstdUUID{}));
+
+    auto expect_stale = [&](rawstd::Task<size_t> task) {
+        try {
+            run(*queue, std::move(task));
+            ADD_FAILURE() << "stale request accepted";
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), ESTALE);
+        }
+    };
+    RawstorObjectConfig config{};
+    config.epoch = 5;
+    config.nroles = 1;
+    config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    run(*queue, peer->set_config(id, 0, 0, config, 0));
+    std::string client_data(512, 'W');
+    expect_stale(
+        writer->pwrite(client_data.data(), client_data.size(), 512, false, 4)
+    );
+    iovec stale_iov{client_data.data(), client_data.size()};
+    expect_stale(
+        writer->pwritev(&stale_iov, 1, client_data.size(), 512, false, 4)
+    );
+    expect_stale(writer->discard(512, 0, 4));
+    expect_stale(writer->write_zeroes(512, 0, false, false, 4));
+    try {
+        run(*queue, writer->flush(4));
+        ADD_FAILURE() << "stale flush accepted";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ESTALE);
+    }
+    // RESYNC needs a copy currently tracking client writes.
+    expect_stale(writer->resync_pwrite(
+        client_data.data(), client_data.size(), 0, false, 5
+    ));
+
+    config.epoch = 7;
+    config.roles[0] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+    run(*queue, peer->set_config(id, 0, 0, config, 0));
+    ASSERT_EQ(
+        run(*queue, writer->pwrite(
+                        client_data.data(), client_data.size(), 512, false, 7
+                    )),
+        client_data.size()
+    );
+    // Protect only the bytes written, including partial sectors.
+    ASSERT_EQ(
+        run(*queue, writer->pwrite(client_data.data(), 10, 1636, false, 7)), 10u
+    );
+    std::string prefix(12, 'P');
+    ASSERT_EQ(
+        run(*queue,
+            writer->pwrite(prefix.data(), prefix.size(), 1628, false, 7)),
+        prefix.size()
+    );
+    std::string left = "abc";
+    std::string right = "xyz";
+    iovec parts[] = {{left.data(), left.size()}, {right.data(), right.size()}};
+    ASSERT_EQ(run(*queue, writer->pwritev(parts, 2, 6, 1533, false, 7)), 6u);
+    std::string repair(2048, 'R');
+    ASSERT_EQ(
+        run(*queue,
+            peer->resync_pwrite(repair.data(), repair.size(), 0, false, 7)),
+        repair.size()
+    );
+    std::string data(2048, '\0');
+    ASSERT_EQ(
+        run(*queue, writer->pread(data.data(), data.size(), 0)), data.size()
+    );
+    std::string expected(2048, 'R');
+    expected.replace(512, client_data.size(), client_data);
+    expected.replace(1636, 10, client_data.data(), 10);
+    expected.replace(1628, prefix.size(), prefix);
+    expected.replace(1533, 6, left + right);
+    EXPECT_EQ(data, expected);
+    ASSERT_EQ(
+        run(*queue, peer->resync_write_zeroes(data.size(), 0, false, false, 7)),
+        data.size()
+    );
+    ASSERT_EQ(
+        run(*queue, writer->pread(data.data(), data.size(), 0)), data.size()
+    );
+    expected.assign(2048, '\0');
+    expected.replace(512, client_data.size(), client_data);
+    expected.replace(1636, 10, client_data.data(), 10);
+    expected.replace(1628, prefix.size(), prefix);
+    expected.replace(1533, 6, left + right);
+    EXPECT_EQ(data, expected);
+
+    // Raising the configuration on another open preserves admitted data.
+    std::string block(4096, 'A');
+    auto written = writer->pwrite(block.data(), block.size(), 4096, false, 7);
+    bool remote = location.scheme() == "ost";
+    if (remote) {
+        // A second connection may deliver SET_CONFIG before the first
+        // connection has delivered this write. Await its acknowledgement.
+        EXPECT_EQ(run(*queue, std::move(written)), block.size());
+    }
+    config.epoch = 9;
+    config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    run(*queue, peer->set_config(id, 0, 0, config, 0));
+    std::string actual(block.size(), '\0');
+    ASSERT_EQ(
+        run(*queue, peer->pread(actual.data(), actual.size(), 4096)),
+        actual.size()
+    );
+    EXPECT_EQ(actual, block);
+    if (!remote) {
+        EXPECT_EQ(run(*queue, std::move(written)), block.size());
+    }
+    expect_stale(
+        writer->pwrite(client_data.data(), client_data.size(), 0, false, 7)
+    );
+    expect_stale(
+        peer->resync_pwrite(repair.data(), repair.size(), 0, false, 9)
+    );
+    EXPECT_EQ(
+        run(*queue, writer->pwrite(
+                        client_data.data(), client_data.size(), 0, false, 0
+                    )),
+        client_data.size()
+    );
+    run(*queue, writer->flush(9));
+    run(*queue, peer->flush(9));
+    run(*queue, writer->leave());
+    run(*queue, peer->leave());
+    run(*queue, writer->close());
+    run(*queue, peer->close());
+    auto meta = run(*queue, target.meta(*queue, 0)).front();
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(meta.writers, 0u);
+}
+
+} // namespace
+
+TEST(MemberStateTest, shared_copy_fences_and_preserves_client_sectors) {
+    rawstor::tests::TmpDir dir;
+    expect_copy_write_requests(rawstd::URI(dir.uri()));
+}
+
+TEST(MemberStateTest, ost_forwards_copy_write_requests_to_slot) {
+    rawstor::tests::ObjectEnv env(8796, 8797);
+    expect_copy_write_requests(rawstd::URI("ost://127.0.0.1:8797"));
+}
+
 TEST(MemberStateTest, clear_lost_keeps_an_open_writer_dirty) {
     MemberObject f;
     expect_clear_lost_with_writer(f);
@@ -399,4 +568,62 @@ TEST(MemberStateTest, ost_clear_lost_keeps_an_open_writer_dirty) {
     rawstor::tests::ObjectEnv env(8786, 8787);
     MemberObject f(rawstd::URI("ost://127.0.0.1:8787"));
     expect_clear_lost_with_writer(f);
+}
+
+TEST(
+    MemberStateTest,
+    resync_tracking_bounds_fragmentation_and_reuses_merged_ranges
+) {
+    rawstor::tests::TmpDir dir;
+    auto queue = rawio::Queue::create(16);
+    RawstdUUID id = new_id();
+    rawstd::URI location(dir.uri());
+    rawstor::Target target({rawstd::URI(location, id_string(id))});
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .width = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0
+    };
+    run(*queue, target.create(*queue, spec));
+    auto slot = run(*queue, rawstor::Slot::create(*queue, location));
+    run(*queue, slot->open(id, 0, 0, RawstdUUID{}));
+    RawstorObjectConfig config{};
+    config.epoch = 1;
+    config.nroles = 1;
+    config.roles[0] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+    run(*queue, slot->set_config(id, 0, 0, config, 0));
+    char data = 'B';
+    size_t count = 0;
+    bool limited = false;
+    for (; count < 250000; ++count) {
+        try {
+            run(*queue, slot->pwrite(&data, 1, 2 * count, false, 1));
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), ENOBUFS);
+            limited = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(limited);
+    EXPECT_GT(count, 1u);
+    // Updating an existing range needs no extra capacity; bridging two
+    // ranges frees capacity for a new, disjoint write.
+    EXPECT_EQ(run(*queue, slot->pwrite(&data, 1, 0, false, 1)), 1u);
+    EXPECT_EQ(run(*queue, slot->pwrite(&data, 1, 1, false, 1)), 1u);
+    EXPECT_EQ(run(*queue, slot->pwrite(&data, 1, 2 * count, false, 1)), 1u);
+    std::string repair(4, 'R');
+    EXPECT_EQ(
+        run(*queue,
+            slot->resync_pwrite(repair.data(), repair.size(), 0, false, 1)),
+        repair.size()
+    );
+    std::string actual(4, '\0');
+    EXPECT_EQ(
+        run(*queue, slot->pread(actual.data(), actual.size(), 0)), actual.size()
+    );
+    EXPECT_EQ(actual, "BBBR");
+    run(*queue, slot->leave());
+    run(*queue, slot->close());
 }

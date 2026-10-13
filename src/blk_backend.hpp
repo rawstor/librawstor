@@ -152,21 +152,23 @@ protected:
     // subclass that needs it, sizes its own fixed-length on-disk .meta
     // record to this constant instead of guessing; nothing outside the
     // class hierarchy needs it.
-    static constexpr size_t META_MAX_SIZE = 512;
+    static constexpr size_t META_MAX_SIZE = 1024;
 
     // Durably writes the copy metadata, preserving its ChunkIdentity.
     // Slot holds the copy's record lock while applying metadata requests.
     virtual rawstd::Task<void> _write_meta(
         const RawstdUUID& id, uint64_t offset,
-        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
+        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config,
+        const RawstorObjectBallot& promised, const RawstorObjectBallot& accepted
     ) = 0;
 
     // Encodes/decodes the copy state and configuration plus a ChunkIdentity
     // (the latter stamped at create and never changed again) as a compact
     // colon-separated string of hex fields, the roles one digit per member
-    // (enum RawstorObjectMemberRole), "-" when none are recorded, e.g.
-    // "version=1:state=1:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:roles=-:
-    // member_role=0:width=0:chunk_size=0" -- shared by every blk-backed
+    // (enum RawstorObjectMemberRole), "-" when none are recorded, and a ballot
+    // as "counter.proposer", e.g. "version=1:state=1:epoch=0:sync_id=0:
+    // h0=0:h1=0:h2=0:h3=0:resync_owner=0:promised=0.0:accepted=0.0:
+    // roles=-:member_role=0:width=0:chunk_size=0" -- shared by every blk-backed
     // subclass's own native per-copy metadata storage: lvm::Backend's LVM
     // tag, zfs::Backend's ZFS user property, and file::Backend's own
     // on-disk .meta file (NUL-padded out to META_MAX_SIZE bytes -- see
@@ -181,11 +183,13 @@ protected:
     // once it's bumped).
     static std::string meta_encode(
         RawstorObjectSyncStateValue state, const RawstorObjectConfig& config,
-        const ChunkIdentity& identity
+        const RawstorObjectBallot& promised,
+        const RawstorObjectBallot& accepted, const ChunkIdentity& identity
     );
     static void meta_decode(
         const std::string& value, RawstorObjectSyncStateValue* state,
-        RawstorObjectConfig* config, ChunkIdentity* identity
+        RawstorObjectConfig* config, RawstorObjectBallot* promised,
+        RawstorObjectBallot* accepted, ChunkIdentity* identity
     );
 
 public:
@@ -209,8 +213,21 @@ public:
     ) override final;
 
     rawstd::Task<void> set_config(
-        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags
+    ) override final;
+
+    rawstd::Task<RawstorObjectSyncReply> sync_prepare(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot,
+        const RawstorObjectSyncReply& proposed
+    ) override final;
+
+    rawstd::Task<RawstorObjectSyncReply> sync_accept(
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config,
+        const RawstorObjectSyncReply& proposed
     ) override final;
 
     rawstd::Task<size_t>
@@ -221,21 +238,30 @@ public:
     ) override final;
 
     rawstd::Task<size_t> pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+    ) override final;
+
+    rawstd::Task<size_t> resync_pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
     ) override final;
 
     rawstd::Task<size_t> pwritev(
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
-        bool sync
+        bool sync, uint64_t epoch
     ) override final;
 
-    rawstd::Task<size_t> discard(size_t size, uint64_t offset) override final;
+    rawstd::Task<size_t>
+    discard(size_t size, uint64_t offset, uint64_t epoch) override final;
 
     rawstd::Task<size_t> write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
     ) override final;
 
-    rawstd::Task<void> flush() override final;
+    rawstd::Task<size_t> resync_write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+    ) override final;
+
+    rawstd::Task<void> flush(uint64_t epoch) override final;
 
     // For tests/ to verify write-throttling (see pwrite()/pwritev() and
     // _throttle_acquire()) without depending on real storage-completion

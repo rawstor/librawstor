@@ -21,6 +21,8 @@
 #include <map>
 #include <mutex>
 #include <random>
+#include <rawstd/caspaxos.hpp>
+#include <rawthread/condition.hpp>
 #include <rawthread/lock.hpp>
 #include <system_error>
 #include <tuple>
@@ -32,6 +34,20 @@
 #include <cstring>
 
 namespace {
+
+const size_t max_written_ranges = 64 * 1024;
+
+bool overlaps(uint64_t a, uint64_t b, uint64_t c, uint64_t d) noexcept {
+    return a < d && c < b;
+}
+
+rawstd::caspaxos::Ballot ballot_from(const RawstorObjectBallot& b) noexcept {
+    return rawstd::caspaxos::Ballot{b.counter, b.proposer};
+}
+
+RawstorObjectBallot ballot_to(const rawstd::caspaxos::Ballot& b) noexcept {
+    return RawstorObjectBallot{b.counter, b.proposer};
+}
 
 // Releases a member's record lock on every way out of a coroutine.
 struct RecordLockGuard {
@@ -101,13 +117,16 @@ RawstdUUID new_idempotency_key() {
 // cancelled on purpose through its rawio::Queue (ECANCELED -- e.g. a
 // shutdown; a backend closed under an operation fails it with
 // ECONNABORTED instead, which stays retryable).
+// A stale epoch (ESTALE) also rejects the request permanently: reconnecting
+// cannot make that epoch current.
 // Anything else defaults to retryable -- safer to spend a few pointless
 // retries on a genuinely transient rejection we don't recognize than to
 // silently give up on one that would have gone away on its own (e.g.
 // EBUSY, ENOSPC, EIO).
 bool is_permanent_backend_error(int error) {
     return error == ENOENT || error == EEXIST || error == EINVAL ||
-           error == ENOTSUP || error == ENOSYS || error == ECANCELED;
+           error == ENOTSUP || error == ENOSYS || error == ECANCELED ||
+           error == ESTALE;
 }
 
 // Binds `backend` to `id`/`offset`'s live version, or one previously
@@ -216,7 +235,255 @@ struct Slot::CopyState {
     std::atomic<bool> dirty{false};
     std::atomic<uint64_t> writes_issued{0};
     std::atomic<uint64_t> writes_flushed{0};
+
+    /*
+     * Fencing (docs/multiattach.md, "Epoch on writes"): writes stamped
+     * with an epoch below the copy's accepted configuration are refused.
+     * A write is admitted under the current generation and counted there
+     * until it completes; raise_epoch() moves to the next generation and
+     * waits for the previous one to drain, so nothing admitted under the
+     * old configuration lands once the new one is recorded. Writes
+     * stamped 0 are never fenced and never counted.
+     */
+
+    // Raises the known epoch to `epoch` without waiting for anything:
+    // learning the copy's own record, nothing to drain against.
+    void learn_epoch(uint64_t epoch) noexcept;
+
+    // Admits a write stamped `epoch`: false if it is below the copy's
+    // epoch. On success the write counts in `generation` until release().
+    bool admit(uint64_t epoch, uint64_t& generation) noexcept;
+    void release(uint64_t generation) noexcept;
+
+    // Called with `record` held, before a record with `epoch` is
+    // persisted: from now on writes stamped below it are refused, and this
+    // returns once every write admitted under an older one has completed.
+    // While it waits for them it lets go of `record` -- one of them may
+    // need it for its DIRTY mark -- and takes it back before returning;
+    // true then, and the caller reads the record anew.
+    rawstd::Task<bool> raise_epoch(rawio::Queue& queue, uint64_t epoch);
+
+    /*
+     * Resync across processes (docs/multiattach.md, "Resync across
+     * processes"): while the copy's role is SYNCING, the byte ranges
+     * client writes reached since it became SYNCING, so that a RESYNC
+     * write preserves those bytes and restores the gaps between them.
+     * The record lives in memory only: a copy that has none -- not
+     * SYNCING, or SYNCING since before this process started -- refuses
+     * RESYNC writes, and the resync starts over from a configuration that
+     * marks the copy SYNCING again.
+     */
+
+    // Called with `record` held whenever the copy records a
+    // configuration, with the copy's own role in it. Becoming SYNCING
+    // starts an empty record (a resync starts: nothing is known to be
+    // written yet); staying SYNCING keeps it; any other role drops it.
+    void follow_role(RawstorObjectMemberRole role) noexcept;
+
+    // Before a client write of [offset, offset + size) goes out: waits for
+    // an overlapping RESYNC write still in flight, then records the
+    // exact bytes the write covers. A no-op while the copy keeps no
+    // record.
+    rawstd::Task<void>
+    client_write(rawio::Queue& queue, uint64_t offset, uint64_t size);
+
+    using Ranges = std::vector<std::pair<uint64_t, uint64_t>>;
+
+    // A RESYNC write of [offset, offset + size): false if the copy keeps no
+    // record. Otherwise `runs` are the ranges in it no client write
+    // reached, to be written, and the whole range counts as in flight
+    // until resync_end().
+    bool resync_begin(uint64_t offset, uint64_t size, Ranges& runs);
+    void resync_end(uint64_t offset, uint64_t size) noexcept;
+
+private:
+    std::atomic<uint64_t> _epoch{0};
+    std::atomic<uint64_t> _generation{0};
+    std::atomic<int64_t> _admitted[2] = {0, 0};
+    std::mutex _drain_mu;
+    rawthread::Condition _drain_waiters;
+
+    std::atomic<bool> _syncing{false};
+    std::mutex _resync_mu;
+    // Disjoint byte ranges, merged when overlapping or adjacent. Bound
+    // fragmentation so sparse writes cannot exhaust the process's memory.
+    std::map<uint64_t, uint64_t> _written;
+    // RESYNC writes in flight, [begin, end).
+    Ranges _resyncing;
+    rawthread::Condition _resync_waiters;
 };
+
+void Slot::CopyState::learn_epoch(uint64_t epoch) noexcept {
+    uint64_t known = _epoch.load();
+    while (known < epoch && !_epoch.compare_exchange_weak(known, epoch)) {
+    }
+}
+
+bool Slot::CopyState::admit(uint64_t epoch, uint64_t& generation) noexcept {
+    if (epoch == 0) {
+        return true;
+    }
+    for (;;) {
+        uint64_t g = _generation.load();
+        if (epoch < _epoch.load()) {
+            return false;
+        }
+        ++_admitted[g & 1];
+        // A raise_epoch() that moved on meanwhile may already have checked
+        // this generation: count again under the new one instead.
+        if (_generation.load() == g) {
+            generation = g;
+            return true;
+        }
+        release(g);
+    }
+}
+
+void Slot::CopyState::release(uint64_t generation) noexcept {
+    if (--_admitted[generation & 1] == 0) {
+        std::lock_guard<std::mutex> guard(_drain_mu);
+        _drain_waiters.notify_all();
+    }
+}
+
+rawstd::Task<bool>
+Slot::CopyState::raise_epoch(rawio::Queue& queue, uint64_t epoch) {
+    if (epoch <= _epoch.load()) {
+        co_return false;
+    }
+    _epoch.store(epoch);
+    uint64_t old = _generation.fetch_add(1);
+    if (_admitted[old & 1].load() == 0) {
+        co_return false;
+    }
+    record.unlock();
+    std::exception_ptr error;
+    try {
+        co_await _drain_waiters.wait(queue, _drain_mu, [this, old]() {
+            return _admitted[old & 1].load() == 0;
+        });
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await record.lock(queue);
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    co_return true;
+}
+
+void Slot::CopyState::follow_role(RawstorObjectMemberRole role) noexcept {
+    std::lock_guard<std::mutex> guard(_resync_mu);
+    if (role == RAWSTOR_OBJECT_MEMBER_SYNCING) {
+        if (!_syncing.load()) {
+            _written.clear();
+            _syncing.store(true);
+        }
+    } else {
+        _syncing.store(false);
+        _written.clear();
+    }
+}
+
+rawstd::Task<void> Slot::CopyState::client_write(
+    rawio::Queue& queue, uint64_t offset, uint64_t size
+) {
+    if (!_syncing.load() || size == 0) {
+        co_return;
+    }
+    if (size > UINT64_MAX - offset) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    uint64_t end = offset + size;
+    co_await _resync_waiters.wait(queue, _resync_mu, [&]() {
+        if (!_syncing.load()) {
+            return true;
+        }
+        for (const auto& [b, e] : _resyncing) {
+            if (overlaps(offset, end, b, e)) {
+                return false;
+            }
+        }
+        auto first = _written.lower_bound(offset);
+        if (first != _written.begin()) {
+            auto previous = std::prev(first);
+            if (previous->second >= offset) {
+                first = previous;
+            }
+        }
+        uint64_t begin = offset;
+        uint64_t finish = end;
+        auto last = first;
+        while (last != _written.end() && last->first <= finish) {
+            begin = std::min(begin, last->first);
+            finish = std::max(finish, last->second);
+            ++last;
+        }
+        if (first == last) {
+            if (_written.size() >= max_written_ranges) {
+                RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
+            }
+            _written.emplace(begin, finish);
+        } else {
+            // Reuse an existing node: merging ranges needs no allocation.
+            auto node = _written.extract(first++);
+            _written.erase(first, last);
+            node.key() = begin;
+            node.mapped() = finish;
+            _written.insert(std::move(node));
+        }
+        return true;
+    });
+}
+
+bool Slot::CopyState::resync_begin(
+    uint64_t offset, uint64_t size, Ranges& runs
+) {
+    if (size > UINT64_MAX - offset) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    uint64_t end = offset + size;
+    runs.clear();
+    std::lock_guard<std::mutex> guard(_resync_mu);
+    if (!_syncing.load()) {
+        return false;
+    }
+    auto written = _written.upper_bound(offset);
+    if (written != _written.begin()) {
+        auto previous = std::prev(written);
+        if (previous->second > offset) {
+            written = previous;
+        }
+    }
+    uint64_t cursor = offset;
+    for (; written != _written.end() && written->first < end; ++written) {
+        if (cursor < written->first) {
+            runs.emplace_back(cursor, written->first);
+        }
+        cursor = std::max(cursor, written->second);
+        if (cursor >= end) {
+            break;
+        }
+    }
+    if (cursor < end) {
+        runs.emplace_back(cursor, end);
+    }
+    // Register only after building the runs: allocation failures must
+    // not leave a range permanently blocking client writes.
+    _resyncing.emplace_back(offset, end);
+    return true;
+}
+
+void Slot::CopyState::resync_end(uint64_t offset, uint64_t size) noexcept {
+    std::lock_guard<std::mutex> guard(_resync_mu);
+    for (auto it = _resyncing.begin(); it != _resyncing.end(); ++it) {
+        if (it->first == offset && it->second == offset + size) {
+            _resyncing.erase(it);
+            break;
+        }
+    }
+    _resync_waiters.notify_all();
+}
 
 std::shared_ptr<Slot::CopyState>
 Slot::_copy_state(const RawstdUUID& id, uint64_t offset) const {
@@ -242,6 +509,88 @@ Slot::_copy_state(const RawstdUUID& id, uint64_t offset) const {
     }
     return ret;
 }
+// One request admitted on the session's copy by its epoch
+// (CopyState::admit()) for as long as it runs, released on the way out
+// however it ends.
+class Slot::Admission final {
+private:
+    std::shared_ptr<CopyState> _member;
+    uint64_t _generation;
+
+public:
+    Admission() : _generation(0) {}
+    Admission(const Admission&) = delete;
+    Admission(Admission&&) = delete;
+    Admission& operator=(const Admission&) = delete;
+    Admission& operator=(Admission&&) = delete;
+
+    ~Admission() {
+        if (_member) {
+            _member->release(_generation);
+        }
+    }
+
+    // 0, or the errno to refuse the request with: ESTALE if the copy's
+    // configuration is newer than `epoch`, EOPNOTSUPP if a request stamped
+    // with an epoch reaches a server with no copy of its own to fence on.
+    int admit(const std::shared_ptr<CopyState>& member, uint64_t epoch) {
+        if (epoch == 0) {
+            return 0;
+        }
+        if (!member) {
+            return EOPNOTSUPP;
+        }
+        uint64_t generation = 0;
+        if (!member->admit(epoch, generation)) {
+            return ESTALE;
+        }
+        _member = member;
+        _generation = generation;
+        return 0;
+    }
+};
+
+// A RESYNC write in flight on the session's copy, for as long as it runs:
+// `runs` are the ranges in it no client write reached.
+class Slot::Resync final {
+private:
+    std::shared_ptr<CopyState> _member;
+    uint64_t _offset;
+    uint64_t _size;
+
+public:
+    CopyState::Ranges runs;
+
+    Resync() : _offset(0), _size(0) {}
+    Resync(const Resync&) = delete;
+    Resync(Resync&&) = delete;
+    Resync& operator=(const Resync&) = delete;
+    Resync& operator=(Resync&&) = delete;
+
+    ~Resync() {
+        if (_member) {
+            _member->resync_end(_offset, _size);
+        }
+    }
+
+    // 0, or the errno to refuse the write with: EOPNOTSUPP with no copy
+    // of its own here, ESTALE if the copy keeps no record of what client
+    // writes reached (CopyState::resync_begin()).
+    int begin(
+        const std::shared_ptr<CopyState>& member, uint64_t offset, uint64_t size
+    ) {
+        if (!member) {
+            return EOPNOTSUPP;
+        }
+        if (!member->resync_begin(offset, size, runs)) {
+            return ESTALE;
+        }
+        _member = member;
+        _offset = offset;
+        _size = size;
+        return 0;
+    }
+};
 
 Slot::Slot(Private, rawio::Queue& queue, std::shared_ptr<Backend> backend) :
     _queue(queue),
@@ -254,6 +603,33 @@ Slot::Slot(Private, rawio::Queue& queue, std::shared_ptr<Backend> backend) :
     _backend(std::move(backend)),
     _reconnecting(false),
     _transparent_retry(true) {
+}
+
+class Slot::OperationGuard final {
+private:
+    Slot& _slot;
+
+public:
+    explicit OperationGuard(Slot& slot) : _slot(slot) {
+        if (_slot._closing) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+        }
+        ++_slot._operations;
+    }
+    OperationGuard(const OperationGuard&) = delete;
+    OperationGuard& operator=(const OperationGuard&) = delete;
+    ~OperationGuard() {
+        if (--_slot._operations == 0) {
+            rawstd::Barrier barrier = std::move(_slot._drained);
+            barrier.advance();
+        }
+    }
+};
+
+void Slot::_check_write() const {
+    if (_flags & RAWSTOR_READONLY) {
+        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+    }
 }
 
 Slot::~Slot() {
@@ -313,7 +689,9 @@ rawstd::Task<void> Slot::_depart(std::shared_ptr<Backend> be) {
     }
     if (_left &&
         member->writes_flushed.load() != member->writes_issued.load()) {
-        co_await be->flush();
+        // This durability barrier completes already admitted writes while
+        // the record lock excludes configuration changes.
+        co_await be->flush(0);
     }
     const RawstorObjectSyncStateValue state =
         _left ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
@@ -852,6 +1230,10 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     const RawstdUUID& id, uint64_t offset, int flags,
     const RawstdUUID& version_id
 ) {
+    if ((flags & ~RAWSTOR_READONLY) != 0 ||
+        (!rawstd_uuid_is_nil(&version_id) && !(flags & RAWSTOR_READONLY))) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     // Set before the set_object() call below: on failure,
     // _reconnect() reconnects and set_object()s the replacement
     // itself, using these same members.
@@ -917,7 +1299,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // -- every real open (this call) goes through here regardless of
     // caller, client-side (Chunk::create()'s own per-member connect) or
     // server-side (rawstor-ost's own SET_OBJECT handler opens its local
-    // storage the same way, ost/src/client.cpp's co_target_open()), so
+    // storage the same way, ost/src/client.cpp's _set_object()), so
     // this is the one place that needs to know. A read-only metadata
     // lookup (meta()/spec()/chunks(), target.cpp) never calls open() at
     // all -- it talks to meta()/chunks()/resolve_locations() directly on
@@ -934,10 +1316,17 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
 
+    if (_member) {
+        _member->learn_epoch(answer->config.epoch);
+    }
     co_return *answer;
 }
 
 rawstd::Task<void> Slot::close() {
+    _closing = true;
+    while (_operations > 0) {
+        co_await _drained.at_least(_drained.value() + 1);
+    }
     std::shared_ptr<Backend> be = std::move(_backend);
     if (!be) {
         co_return;
@@ -956,6 +1345,8 @@ rawstd::Task<void> Slot::close() {
 }
 
 rawstd::Task<size_t> Slot::pread(void* buf, size_t size, uint64_t offset) {
+    OperationGuard operation(*this);
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
@@ -976,6 +1367,8 @@ rawstd::Task<size_t> Slot::pread(void* buf, size_t size, uint64_t offset) {
 
 rawstd::Task<size_t>
 Slot::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
+    OperationGuard operation(*this);
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
@@ -994,8 +1387,12 @@ Slot::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
     }
 }
 
-rawstd::Task<size_t>
-Slot::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
+rawstd::Task<size_t> Slot::pwrite(
+    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+) {
+    OperationGuard operation(*this);
+    _check_write();
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
@@ -1003,13 +1400,65 @@ Slot::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
+        Admission admission;
+        int error = admission.admit(_member, epoch);
+        if (error) {
+            RAWSTD_THROW_SYSTEM_ERROR(error);
+        }
+
+        if (_member) {
+            co_await _member->client_write(_queue, offset, size);
+        }
         co_await _mark_dirty();
 
         size_t result = co_await _with_retry(
-            func_name, trace_event, &Backend::pwrite, buf, size, offset, sync
+            func_name, trace_event, &Backend::pwrite, buf, size, offset, sync,
+            epoch
         );
         _finish(t_call);
         co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<size_t> Slot::resync_pwrite(
+    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+) {
+    OperationGuard operation(*this);
+    _check_write();
+
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
+    );
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        Admission admission;
+        int error = admission.admit(_member, epoch);
+        if (error) {
+            RAWSTD_THROW_SYSTEM_ERROR(error);
+        }
+        Resync copy;
+        int copy_error = copy.begin(_member, offset, size);
+        if (copy_error) {
+            RAWSTD_THROW_SYSTEM_ERROR(copy_error);
+        }
+        co_await _mark_dirty();
+        for (const auto& [begin, end] : copy.runs) {
+            size_t written = co_await _with_retry(
+                func_name, trace_event, &Backend::resync_pwrite,
+                static_cast<const char*>(buf) + begin - offset, end - begin,
+                begin, sync, epoch
+            );
+            if (written != end - begin) {
+                RAWSTD_THROW_SYSTEM_ERROR(EIO);
+            }
+        }
+        _finish(t_call);
+        co_return size;
     } catch (...) {
         _finish(t_call);
         throw;
@@ -1017,8 +1466,12 @@ Slot::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
 }
 
 rawstd::Task<size_t> Slot::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, uint64_t offset, bool sync
+    const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
+    bool sync, uint64_t epoch
 ) {
+    OperationGuard operation(*this);
+    _check_write();
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
@@ -1026,32 +1479,19 @@ rawstd::Task<size_t> Slot::pwritev(
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
+        Admission admission;
+        int error = admission.admit(_member, epoch);
+        if (error) {
+            RAWSTD_THROW_SYSTEM_ERROR(error);
+        }
+        if (_member) {
+            co_await _member->client_write(_queue, offset, size);
+        }
         co_await _mark_dirty();
 
         size_t result = co_await _with_retry(
             func_name, trace_event, &Backend::pwritev, iov, niov, size, offset,
-            sync
-        );
-        _finish(t_call);
-        co_return result;
-    } catch (...) {
-        _finish(t_call);
-        throw;
-    }
-}
-
-rawstd::Task<size_t> Slot::discard(size_t size, uint64_t offset) {
-    const char* func_name = __FUNCTION__;
-    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
-        'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
-    );
-    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
-
-    try {
-        co_await _mark_dirty();
-
-        size_t result = co_await _with_retry(
-            func_name, trace_event, &Backend::discard, size, offset
+            sync, epoch
         );
         _finish(t_call);
         co_return result;
@@ -1062,7 +1502,44 @@ rawstd::Task<size_t> Slot::discard(size_t size, uint64_t offset) {
 }
 
 rawstd::Task<size_t>
-Slot::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
+Slot::discard(size_t size, uint64_t offset, uint64_t epoch) {
+    OperationGuard operation(*this);
+    _check_write();
+
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        'c', "%s(): size = %zu, offset = %" PRIu64 "\n", func_name, size, offset
+    );
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        Admission admission;
+        int error = admission.admit(_member, epoch);
+        if (error) {
+            RAWSTD_THROW_SYSTEM_ERROR(error);
+        }
+        if (_member) {
+            co_await _member->client_write(_queue, offset, size);
+        }
+        co_await _mark_dirty();
+
+        size_t result = co_await _with_retry(
+            func_name, trace_event, &Backend::discard, size, offset, epoch
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<size_t> Slot::write_zeroes(
+    size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+) {
+    OperationGuard operation(*this);
+    _check_write();
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'c', "%s(): size = %zu, offset = %" PRIu64 ", unmap = %d, sync = %d\n",
@@ -1071,14 +1548,65 @@ Slot::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
+        Admission admission;
+        int error = admission.admit(_member, epoch);
+        if (error) {
+            RAWSTD_THROW_SYSTEM_ERROR(error);
+        }
+
+        if (_member) {
+            co_await _member->client_write(_queue, offset, size);
+        }
         co_await _mark_dirty();
 
         size_t result = co_await _with_retry(
             func_name, trace_event, &Backend::write_zeroes, size, offset, unmap,
-            sync
+            sync, epoch
         );
         _finish(t_call);
         co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<size_t> Slot::resync_write_zeroes(
+    size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+) {
+    OperationGuard operation(*this);
+    _check_write();
+
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        'c', "%s(): size = %zu, offset = %" PRIu64 ", unmap = %d, sync = %d\n",
+        func_name, size, offset, unmap, sync
+    );
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        Admission admission;
+        int error = admission.admit(_member, epoch);
+        if (error) {
+            RAWSTD_THROW_SYSTEM_ERROR(error);
+        }
+        Resync copy;
+        int copy_error = copy.begin(_member, offset, size);
+        if (copy_error) {
+            RAWSTD_THROW_SYSTEM_ERROR(copy_error);
+        }
+        co_await _mark_dirty();
+        for (const auto& [begin, end] : copy.runs) {
+            size_t written = co_await _with_retry(
+                func_name, trace_event, &Backend::resync_write_zeroes,
+                end - begin, begin, unmap, sync, epoch
+            );
+            if (written != end - begin) {
+                RAWSTD_THROW_SYSTEM_ERROR(EIO);
+            }
+        }
+        _finish(t_call);
+        co_return size;
     } catch (...) {
         _finish(t_call);
         throw;
@@ -1135,20 +1663,174 @@ rawstd::Task<std::vector<rawstd::URI>> Slot::resolve_locations(
     }
 }
 
-rawstd::Task<void> Slot::leave() {
-    co_await _get_backend()->leave();
-    _left = true;
-}
-
-rawstd::Task<void> Slot::_set_config(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int flags
+rawstd::Task<RawstorObjectSyncReply> Slot::_sync_prepare(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
 ) {
     std::shared_ptr<CopyState> member = _copy_state(id, offset);
     co_await member->record.lock(_queue);
     RecordLockGuard guard{member->record};
     std::shared_ptr<Backend> be = _get_backend();
-    co_await be->set_config(id, offset, config, flags);
+    RawstorObjectMeta meta =
+        (co_await be->meta(id, offset, RawstdUUID{})).front();
+    rawstd::caspaxos::Acceptor<RawstorObjectConfig> state{
+        ballot_from(meta.promised), ballot_from(meta.accepted), meta.config
+    };
+    bool ok = state.prepare(ballot_from(ballot));
+    if (ok) {
+        meta.promised = ballot_to(state.promised());
+    }
+    meta.writers = std::max(meta.writers, member->writers.load());
+    RawstorObjectSyncReply proposed{ok, meta};
+    RawstorObjectSyncReply reply =
+        co_await be->sync_prepare(id, offset, ballot, proposed);
+    reply.meta.writers = std::max(reply.meta.writers, member->writers.load());
+    member->learn_epoch(reply.meta.config.epoch);
+    co_return reply;
+}
+
+rawstd::Task<RawstorObjectSyncReply> Slot::sync_prepare(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        RawstorObjectSyncReply result = co_await _with_retry(
+            func_name, trace_event, &Slot::_sync_prepare, id, offset, ballot
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<RawstorObjectSyncReply> Slot::_sync_accept(
+    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+    const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+    const RawstorObjectConfig& config
+) {
+    if (member_index >= RAWSTOR_OBJECT_MAX_WIDTH) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    std::shared_ptr<CopyState> member = _copy_state(id, offset);
+    co_await member->record.lock(_queue);
+    RecordLockGuard guard{member->record};
+    std::shared_ptr<Backend> be = _get_backend();
+    RawstorObjectMeta meta{};
+    rawstd::caspaxos::Acceptor<RawstorObjectConfig> state{};
+    bool ok = false;
+    for (bool again = true; again;) {
+        meta = (co_await be->meta(id, offset, RawstdUUID{})).front();
+        meta.writers = std::max(meta.writers, member->writers.load());
+        state = {
+            ballot_from(meta.promised), ballot_from(meta.accepted), meta.config
+        };
+        ok = state.accept(ballot_from(ballot), config, ballot_from(next));
+        again = ok && co_await member->raise_epoch(_queue, config.epoch);
+    }
+    if (ok) {
+        meta.promised = ballot_to(state.promised());
+        meta.accepted = ballot_to(state.accepted());
+        meta.config = state.value();
+    }
+    meta.writers = std::max(meta.writers, member->writers.load());
+    RawstorObjectSyncReply proposed{ok, meta};
+    RawstorObjectSyncReply reply = co_await be->sync_accept(
+        id, offset, member_index, ballot, next, config, proposed
+    );
+    if (reply.ok) {
+        member->follow_role(
+            member_index < reply.meta.config.nroles
+                ? static_cast<RawstorObjectMemberRole>(
+                      reply.meta.config.roles[member_index]
+                  )
+                : RAWSTOR_OBJECT_MEMBER_UNKNOWN
+        );
+    }
+    reply.meta.writers = std::max(reply.meta.writers, member->writers.load());
+    member->learn_epoch(reply.meta.config.epoch);
+    co_return reply;
+}
+
+rawstd::Task<RawstorObjectSyncReply> Slot::sync_accept(
+    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+    const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+    const RawstorObjectConfig& config
+) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        RawstorObjectSyncReply result = co_await _with_retry(
+            func_name, trace_event, &Slot::_sync_accept, id, offset,
+            member_index, ballot, next, config
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void> Slot::leave() {
+    _closing = true;
+    while (_operations > 0) {
+        co_await _drained.at_least(_drained.value() + 1);
+    }
+    co_await _get_backend()->leave();
+    _left = true;
+}
+
+// Flush the addressed copy even for a metadata-only Slot. The temporary
+// backend is not a writer session of this Slot and holds no record lock.
+rawstd::Task<void> Slot::_flush_copy(const RawstdUUID& id, uint64_t offset) {
+    std::shared_ptr<Backend> be = _get_backend();
+    if (_id && rawstd_uuid_cmp(&*_id, &id) == 0 && _offset == offset &&
+        rawstd_uuid_is_nil(&_version_id)) {
+        co_await be->flush(0);
+        co_return;
+    }
+    std::shared_ptr<Backend> copy =
+        co_await Backend::create(_queue, be->location());
+    std::exception_ptr error;
+    try {
+        co_await copy->set_object(id, offset, 0);
+        co_await copy->flush(0);
+        co_await copy->leave();
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await copy->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+}
+
+rawstd::Task<void> Slot::_set_config(
+    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+    const RawstorObjectConfig& config, unsigned int flags
+) {
+    if (member_index >= RAWSTOR_OBJECT_MAX_WIDTH) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    std::shared_ptr<CopyState> member = _copy_state(id, offset);
+    co_await member->record.lock(_queue);
+    RecordLockGuard guard{member->record};
+    co_await member->raise_epoch(_queue, config.epoch);
+    std::shared_ptr<Backend> be = _get_backend();
+    if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) {
+        co_await _flush_copy(id, offset);
+    }
+    co_await be->set_config(id, offset, member_index, config, flags);
     if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) {
         co_await be->set_state(
             id, offset, RAWSTOR_OBJECT_SYNC_STATE_LOST,
@@ -1158,11 +1840,16 @@ rawstd::Task<void> Slot::_set_config(
         // Recheck the persisted state before the next first write.
         member->dirty.store(false, std::memory_order_release);
     }
+    member->follow_role(
+        member_index < config.nroles
+            ? static_cast<RawstorObjectMemberRole>(config.roles[member_index])
+            : RAWSTOR_OBJECT_MEMBER_UNKNOWN
+    );
 }
 
 rawstd::Task<void> Slot::set_config(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int flags
+    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+    const RawstorObjectConfig& config, unsigned int flags
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -1171,8 +1858,8 @@ rawstd::Task<void> Slot::set_config(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Slot::_set_config, id, offset, config,
-            flags
+            func_name, trace_event, &Slot::_set_config, id, offset,
+            member_index, config, flags
         );
         _finish(t_call);
     } catch (...) {
@@ -1181,7 +1868,9 @@ rawstd::Task<void> Slot::set_config(
     }
 }
 
-rawstd::Task<void> Slot::flush() {
+rawstd::Task<void> Slot::flush(uint64_t epoch) {
+    OperationGuard operation(*this);
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -1191,7 +1880,13 @@ rawstd::Task<void> Slot::flush() {
     const uint64_t target = member ? member->writes_issued.load() : 0;
     const bool sole_writer = member && member->writers.load() == 1;
     try {
-        co_await _with_retry(func_name, trace_event, &Backend::flush);
+        Admission admission;
+        int error = admission.admit(_member, epoch);
+        if (error) {
+            RAWSTD_THROW_SYSTEM_ERROR(error);
+        }
+
+        co_await _with_retry(func_name, trace_event, &Backend::flush, epoch);
         // A flush cannot cover another writer whose I/O is still pending.
         if (sole_writer && member->writers.load() == 1 &&
             member->writes_issued.load() == target) {

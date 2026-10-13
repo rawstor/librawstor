@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rawstor-ost@<uuid>.service` systemd template (one instance per OST, configured by `/etc/rawstor/ost/<uuid>.conf`, serving `/var/lib/rawstor/ost/<uuid>` by default), so a host runs several OSTs; installing the package starts nothing and an upgrade restarts the running instances, of `rawstor-mds@` too.
 - `rawstor info mds://` reads cached backend space statistics from MDS, with configurable periodic health probes and placement restricted to available backends.
 - N-way mirroring ([design](docs/mirroring.md)): quorum-gated open, degrade-and-continue writes, read failover and repair, and online resync of a stale, reconnected or missing member (a copy lost from one member is recreated at open while the remaining copies are still a majority), with each copy's own consistency state persisted by its backend (a `meta` file next to `file://`'s data, an LVM tag, a ZFS user property).
+- A mirrored object may be open for writing several times within one process (every virtqueue of a multiqueue `rawstor-vhost`/`rawstor-vduse` device), all opens sharing its mirror state; several writer processes (multi-attach) are not supported.
 - `rawstor create -m`/`--mirrors N` and the matching `RawstorObjectSpec.width`/pyrawstor `width` (both required); a width of 0, or one that doesn't match a multi-URI target's own URI count, is `-EINVAL`.
 - `rawstor show -v` (every copy's own consistency state and role, per chunk) and `rawstor resolve TARGET --winner=N[,N...] [--offset OFFSET]` for manual split-brain recovery, backed by the new `rawstor_target_meta()`/`rawstor_target_chunks()`/`rawstor_target_set_member_config()` API (pyrawstor `Target.meta()`/`Target.set_member_config()`).
 - Each copy of a mirrored chunk keeps its own `DIRTY`/`CLEAN` state from the sessions writing it, and goes `LOST` when one that wrote vanished without a clean close; `rawstor_object_abandon()` closes without one ([design](docs/mirroring.md#dirty-clean-and-lost)).
@@ -41,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rawstor-vhost`'s `--num-queues`: it now serves as many virtqueues as the front-end sets up (QEMU's own `num-queues=`), so QEMU no longer fails to start a guest with more vCPUs than `--num-queues` (default `4`).
 
 ### Fixed
+- Multi-chunk `mds://` objects accept I/O beyond the first chunk while retaining object bounds checks.
+- Resync preserves partial-sector client writes and clears `LOST` only after flushing the restored copy.
 - With the `poll()` backend (`--without-liburing`, always on macOS), the next request after one that had exhausted its retries hung forever instead of reconnecting.
 - A restarted `rawstor-vduse` now resumes serving a device the driver is already using instead of leaving its I/O hanging, and starts each virtqueue from the driver-set ring state, so a guest that resets the device and sets it up again no longer hangs either.
 - `rawstor-vhost`/`rawstor-vduse` now let in-flight requests complete on `SIGINT`/`SIGTERM` instead of dropping them, so a planned restart is invisible to the guest.

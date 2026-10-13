@@ -420,6 +420,8 @@ rawstd::Task<void> Backend::create(
         try {
             RawstorObjectSyncStateValue state{};
             RawstorObjectConfig config{};
+            RawstorObjectBallot promised{};
+            RawstorObjectBallot accepted{};
             state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
 
             // The placement identity (docs/mds.md, chunk_meta) is
@@ -435,7 +437,8 @@ rawstd::Task<void> Backend::create(
             // rather than written at its own length, so this file's own
             // byte length stays fixed across every rewrite -- see
             // _write_meta() below for why that matters.
-            std::string encoded = meta_encode(state, config, identity);
+            std::string encoded =
+                meta_encode(state, config, promised, accepted, identity);
             std::array<char, META_MAX_SIZE> disk{};
             memcpy(disk.data(), encoded.data(), encoded.size());
 
@@ -548,6 +551,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
 
     RawstorObjectSyncStateValue state{};
     RawstorObjectConfig config{};
+    RawstorObjectBallot promised{};
+    RawstorObjectBallot accepted{};
     ChunkIdentity identity;
     std::exception_ptr eptr;
     try {
@@ -558,7 +563,10 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
         try {
-            meta_decode(std::string(disk.data()), &state, &config, &identity);
+            meta_decode(
+                std::string(disk.data()), &state, &config, &promised, &accepted,
+                &identity
+            );
         } catch (const std::system_error&) {
             rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
             throw;
@@ -578,6 +586,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     ret.member_role = identity.member_role;
     ret.state = state;
     ret.config = config;
+    ret.promised = promised;
+    ret.accepted = accepted;
 
     co_return std::vector<RawstorObjectMeta>{ret};
 }
@@ -589,7 +599,8 @@ Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
 
 rawstd::Task<void> Backend::_write_meta(
     const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
-    const RawstorObjectConfig& config
+    const RawstorObjectConfig& config, const RawstorObjectBallot& promised,
+    const RawstorObjectBallot& accepted
 ) {
     std::string location_path = get_location_path(location());
 
@@ -622,11 +633,13 @@ rawstd::Task<void> Backend::_write_meta(
         // lvm::Backend::_write_meta()'s own equivalent fallback.
         RawstorObjectSyncStateValue old_record_state{};
         RawstorObjectConfig old_record_config{};
+        RawstorObjectBallot old_record_promised{};
+        RawstorObjectBallot old_record_accepted{};
         ChunkIdentity identity{};
         try {
             meta_decode(
                 std::string(disk.data()), &old_record_state, &old_record_config,
-                &identity
+                &old_record_promised, &old_record_accepted, &identity
             );
         } catch (const std::system_error&) {
             identity = ChunkIdentity{};
@@ -636,7 +649,8 @@ rawstd::Task<void> Backend::_write_meta(
         // META_MAX_SIZE bytes so this file's own byte length stays fixed
         // across every rewrite -- required here specifically, since this
         // is an in-place overwrite without O_TRUNC (see above).
-        std::string encoded = meta_encode(state, config, identity);
+        std::string encoded =
+            meta_encode(state, config, promised, accepted, identity);
         disk.fill('\0');
         memcpy(disk.data(), encoded.data(), encoded.size());
 
