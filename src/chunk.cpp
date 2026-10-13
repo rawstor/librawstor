@@ -2799,7 +2799,6 @@ Chunk::_degrade_detached(std::vector<size_t> idxs, std::weak_ptr<void> alive) {
 }
 
 rawstd::Task<size_t> Chunk::pread(void* buf, size_t size, uint64_t offset) {
-    _check_range(offset, size);
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pread(): size = %zu, offset = %" PRIu64 "\n", size, offset
     );
@@ -2828,7 +2827,6 @@ rawstd::Task<size_t> Chunk::pread(void* buf, size_t size, uint64_t offset) {
 
 rawstd::Task<size_t>
 Chunk::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
-    _check_range(offset, size);
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "preadv(): size = %zu, offset = %" PRIu64 "\n", size, offset
     );
@@ -2861,7 +2859,6 @@ uint64_t Chunk::_epoch() const {
 
 rawstd::Task<size_t>
 Chunk::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
-    _check_range(offset, size);
 
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pwrite(): size = %zu, offset = %" PRIu64 ", sync = %d\n", size,
@@ -2901,7 +2898,6 @@ Chunk::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
 rawstd::Task<size_t> Chunk::pwritev(
     const iovec* iov, unsigned int niov, size_t size, uint64_t offset, bool sync
 ) {
-    _check_range(offset, size);
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pwritev(): size = %zu, offset = %" PRIu64 ", sync = %d\n", size,
         offset, sync
@@ -2938,7 +2934,6 @@ rawstd::Task<size_t> Chunk::pwritev(
 }
 
 rawstd::Task<size_t> Chunk::discard(size_t size, uint64_t offset) {
-    _check_range(offset, size);
 
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "discard(): size = %zu, offset = %" PRIu64 "\n", size, offset
@@ -2983,7 +2978,6 @@ rawstd::Task<size_t> Chunk::discard(size_t size, uint64_t offset) {
 
 rawstd::Task<size_t>
 Chunk::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
-    _check_range(offset, size);
 
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o',

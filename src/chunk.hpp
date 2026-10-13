@@ -157,13 +157,6 @@ private:
 
     uint64_t _epoch() const;
 
-    // Offsets in chunk I/O are relative to this copy, within the logical chunk.
-    void _check_range(uint64_t offset, size_t size) const {
-        if (offset > _spec.size || size > _spec.size - offset) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-    }
-
     // Ticket dispenser: each pwrite()/pwritev()/write_zeroes() call takes
     // the next one at entry (WriteTicket below) and hands it to
     // _write_finished() once it ends, success or failure -- after a
