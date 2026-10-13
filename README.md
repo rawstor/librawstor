@@ -481,7 +481,7 @@ A witness stores consistency metadata and supplies a safe degraded-open vote
 for an even number of data copies; it never stores or serves their data. Declare it explicitly:
 
 ```sh
-rawstor create --size=1G --mirrors=2 --witness=2 \
+rawstor create --size=1G --mirrors=2 \
   'ost://10.0.0.11:9090,ost://10.0.0.12:9090,mds://10.0.0.13:9091'
 ```
 
@@ -490,7 +490,7 @@ open and write quorums count it after a synchronous configuration barrier:
 1 of 2 data copies plus witness, or 2 of 4 plus witness, can continue.
 `--mirrors` counts data copies. Keep the complete target and member order.
 URI schemes remain `ost://`, `mds://`, `file://`, `lvm://` or `zfs://`.
-`--witness` selects a zero-based member index at creation; the stored
+With one more location than `--mirrors`, the last is the witness; the stored
 `META.member_role` identifies its type at subsequent opens. MDS stores its witness records durably in SQLite;
 ordinary `mds://` placement does not automatically attach a witness.
 `rawstor show -v` reports its member role and record state. See

@@ -91,7 +91,7 @@ class TestWitnessLocation(unittest.TestCase):
                      for _ in range(3)]
             location = rawstor.Location(
                 ','.join(f'file://{path}' for path in paths))
-            target = location.create(size=65536, width=2, witness_index=2)
+            target = location.create(size=65536, width=2)
             self.assertNotIn('witness+', target.uri)
             self.assertEqual(target.spec().width, 2)
             self.assertEqual(target.spec().witness_member, 3)
@@ -112,5 +112,5 @@ class TestWitnessLocation(unittest.TestCase):
             location = rawstor.Location(
                 ','.join(f'file://{path}' for path in paths))
             with self.assertRaises(OSError) as error:
-                location.create(size=65536, width=3, witness_index=3)
+                location.create(size=65536, width=3)
             self.assertEqual(error.exception.errno, errno.EINVAL)

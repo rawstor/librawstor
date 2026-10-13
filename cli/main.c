@@ -95,10 +95,11 @@ static void command_create_usage(void) {
         "                        Each target must include the UUID, e.g. "
         "ost://host/uuid.\n"
         "\n"
+        "With N data copies and N+1 locations, the last is a witness "
+        "(even N only).\n"
+        "\n"
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
-        "      --witness INDEX   Create the member at zero-based INDEX as "
-        "witness.\n"
         "  -m, --mirrors N       Number of mirrors (copies per chunk, "
         "0 < N <= 255).\n"
         "                        Required. Normally the entry count of a "
@@ -144,7 +145,6 @@ static int command_create(int argc, char** argv) {
         {"chunk-size", required_argument, NULL, 'C'},
         {"failure-domain", required_argument, NULL, 'F'},
         {"stripe-width", required_argument, NULL, 'K'},
-        {"witness", required_argument, NULL, 'W'},
         {},
     };
 
@@ -156,7 +156,6 @@ static int command_create(int argc, char** argv) {
     const char* chunk_size_arg = NULL;
     const char* failure_domain_arg = NULL;
     const char* stripe_width_arg = NULL;
-    unsigned int witness_member = 0;
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -168,18 +167,6 @@ static int command_create(int argc, char** argv) {
         case 'h':
             command_create_usage();
             return EXIT_SUCCESS;
-
-        case 'W': {
-            char* end = NULL;
-            unsigned long index = strtoul(optarg, &end, 10);
-            if (optarg[0] == '\0' || end == NULL || *end != '\0' ||
-                index >= 255) {
-                fprintf(stderr, "Invalid witness index: %s\n", optarg);
-                return EX_USAGE;
-            }
-            witness_member = (unsigned int)index + 1;
-            break;
-        }
 
         case 'm':
             mirrors_arg = optarg;
@@ -349,13 +336,12 @@ static int command_create(int argc, char** argv) {
 
     if (target_arg != NULL) {
         return rawstor_cli_create(
-            target_arg, size, chunk_size, mirrors, failure_domain, stripe_width,
-            witness_member
+            target_arg, size, chunk_size, mirrors, failure_domain, stripe_width
         );
     } else {
         return rawstor_cli_create_at(
             location_arg, uuid_arg, size, chunk_size, mirrors, failure_domain,
-            stripe_width, witness_member
+            stripe_width
         );
     }
 }

@@ -840,9 +840,9 @@ reconstruct scan (below).
 
 Witness members use ordinary backend URIs: `ost://host:port`,
 `mds://host:port`, `file:///path`, `lvm://vg` or `zfs://pool/rawstor`.
-The URI contains only the address. Creation selects the witness with
-`--witness INDEX` (zero-based), or `RawstorObjectSpec.witness_member`
-(position plus one, zero means none). Each member reports its own type
+The URI contains only the address. Creation makes the last location a witness when the chunk has `width + 1`
+locations and `width` is even and at least two. With `width` locations, all
+members store data. Each member reports its own type
 through `META.member_role`. Every copy also persists `spec.witness_member`,
 so a missing member's type can be recovered from the surviving metadata
 without guessing or changing the quorum denominator.
@@ -856,7 +856,7 @@ registration. An `mds://` object's placement does not automatically add one.
 For example, create a two-copy object with a witness on MDS:
 
 ```sh
-rawstor create -s 1G -m 2 --witness=2 'ost://10.0.0.11:9090,ost://10.0.0.12:9090,mds://10.0.0.13:9091'
+rawstor create -s 1G -m 2 'ost://10.0.0.11:9090,ost://10.0.0.12:9090,mds://10.0.0.13:9091'
 ```
 
 The mirroring model supports several writer queues within one process (see

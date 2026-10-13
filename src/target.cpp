@@ -1284,9 +1284,8 @@ rawstd::Task<void> Target::create(
     // each), as Chunk::create() checks at open: none is created that could
     // not be opened.
     for (const std::vector<rawstd::URI>& uris : chunks) {
-        if (!member && sp.witness_member != 0 &&
-            (sp.witness_member > uris.size() || uris.size() < 3 ||
-             (uris.size() - 1) % 2 != 0)) {
+        if (!member && uris.size() == sp.width + 1 &&
+            (sp.width < 2 || sp.width % 2 != 0)) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
         if (sp.witness_member > RAWSTOR_OBJECT_MAX_WIDTH) {
@@ -1354,6 +1353,10 @@ rawstd::Task<void> Target::create(
         // (the size check above), starting at its own offset
         // (extract_offset(), already stamped on its own URIs).
         RawstorObjectSpec chunk_sp = sp;
+        if (!member) {
+            chunk_sp.witness_member =
+                uris.size() == sp.width + 1 ? uris.size() : 0;
+        }
         if (chunks.size() > 1) {
             uint64_t offset = extract_offset(uris.front());
             if (offset >= sp.size) {
@@ -1380,9 +1383,10 @@ rawstd::Task<void> Target::create(
         std::vector<rawstd::Task<void>> tasks;
         tasks.reserve(uris.size());
         for (size_t index = 0; index < uris.size(); ++index) {
-            RawstorMemberRole role = !member && sp.witness_member == index + 1
-                                         ? RAWSTOR_MEMBER_WITNESS
-                                         : RAWSTOR_MEMBER_DATA;
+            RawstorMemberRole role =
+                !member && chunk_sp.witness_member == index + 1
+                    ? RAWSTOR_MEMBER_WITNESS
+                    : RAWSTOR_MEMBER_DATA;
             tasks.push_back(create_one(queue, uris[index], chunk_sp, role));
         }
 
@@ -1412,9 +1416,9 @@ rawstd::Task<void> Target::create(
 
         if (!eptr) {
             try {
-                if (!member && sp.witness_member != 0) {
+                if (!member && chunk_sp.witness_member != 0) {
                     co_await initialize_witness(
-                        queue, uris, sp.witness_member - 1
+                        queue, uris, chunk_sp.witness_member - 1
                     );
                 }
             } catch (...) {

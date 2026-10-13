@@ -491,6 +491,7 @@ TEST(TargetCreateTest, width_rules) {
     expect_einval(single, 0);
     expect_einval(single, 256);
     expect_einval(mirrored, 0);
+    expect_einval(mirrored, 1);
 
     spec.width = 1;
     spec.failure_domain = 256;
@@ -505,7 +506,7 @@ TEST(TargetCreateTest, width_rules) {
     // Two local copies of an object whose own policy is a single copy
     // (rawstor-ost relaying onto two locations).
     spec.width = 1;
-    run(*queue, mirrored.create(*queue, spec));
+    run(*queue, mirrored.create(*queue, spec, true));
     std::vector<RawstorObjectMeta> metas =
         run(*queue, mirrored.meta(*queue, 0));
     ASSERT_EQ(metas.size(), 2u);

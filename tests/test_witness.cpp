@@ -75,7 +75,6 @@ protected:
         witness = witness_uri.empty() ? w.uri() : witness_uri;
         spec.size = 65536;
         spec.width = 2;
-        spec.witness_member = 3;
         target = std::make_unique<rawstor::Target>(std::vector<rawstd::URI>{
             rawstd::URI(a.uri() + "/" + id_string(id)),
             rawstd::URI(
@@ -89,7 +88,6 @@ protected:
         witness = w.uri();
         spec.size = 65536;
         spec.width = 4;
-        spec.witness_member = 5;
         target = std::make_unique<rawstor::Target>(std::vector<rawstd::URI>{
             rawstd::URI(a.uri() + "/" + id_string(id)),
             rawstd::URI(b.uri() + "/" + id_string(id)),
@@ -271,8 +269,8 @@ TEST_F(WitnessTest, witness_alone_cannot_serve_data) {
 }
 
 TEST_F(WitnessTest, ost_forwards_witness_creation_and_state) {
-    rawstor::tests::ObjectEnv servers(39601, 39602);
-    create("ost://127.0.0.1:39602");
+    rawstor::tests::ObjectEnv servers(29601, 29602);
+    create("ost://127.0.0.1:29602");
     seed();
     EXPECT_EQ(metas()[2].spec.size, 0u);
     HiddenLocation offline(b);
@@ -282,7 +280,7 @@ TEST_F(WitnessTest, ost_forwards_witness_creation_and_state) {
 }
 
 TEST_F(WitnessTest, mds_stores_witness_and_votes) {
-    rawstor::tests::ObjectEnv servers(39603, 39604);
+    rawstor::tests::ObjectEnv servers(29603, 29604);
     create(servers.location());
     seed();
     {
@@ -298,8 +296,8 @@ TEST_F(WitnessTest, mds_stores_witness_and_votes) {
 TEST_F(
     WitnessTest, runtime_degrade_updates_witness_and_allows_survivor_restart
 ) {
-    auto servers = std::make_unique<rawstor::tests::ObjectEnv>(39605, 39606);
-    create("", "ost://127.0.0.1:39606");
+    auto servers = std::make_unique<rawstor::tests::ObjectEnv>(29605, 29606);
+    create("", "ost://127.0.0.1:29606");
     auto object = run(*queue, target->open(*queue, 0));
     write(*object);
     servers.reset();
@@ -367,7 +365,6 @@ TEST_F(WitnessTest, rejects_witness_with_odd_number_of_data_members) {
     id = new_id();
     spec.size = 65536;
     spec.width = 3;
-    spec.witness_member = 4;
     witness = w.uri();
     target = std::make_unique<rawstor::Target>(std::vector<rawstd::URI>{
         rawstd::URI(a.uri() + "/" + id_string(id)),
@@ -401,17 +398,26 @@ TEST_F(WitnessTest, newly_created_object_can_open_degraded_before_first_write) {
     run(*queue, object->close(true));
 }
 
-TEST_F(WitnessTest, witness_first_in_target_does_not_supply_data_or_size) {
+TEST_F(WitnessTest, matching_location_count_creates_only_data_members) {
     spec.size = 65536;
-    spec.width = 2;
-    spec.witness_member = 1;
-    witness = w.uri();
+    spec.width = 3;
     target = std::make_unique<rawstor::Target>(std::vector<rawstd::URI>{
-        rawstd::URI(witness + "/" + id_string(id)),
         rawstd::URI(a.uri() + "/" + id_string(id)),
-        rawstd::URI(b.uri() + "/" + id_string(id))
+        rawstd::URI(b.uri() + "/" + id_string(id)),
+        rawstd::URI(w.uri() + "/" + id_string(id))
     });
     run(*queue, target->create(*queue, spec));
+    for (const auto& metadata : metas()) {
+        EXPECT_EQ(metadata.member_role, RAWSTOR_MEMBER_DATA);
+        EXPECT_EQ(metadata.spec.witness_member, 0u);
+    }
+}
+
+TEST_F(WitnessTest, last_location_is_witness_and_does_not_supply_data_or_size) {
+    create();
+    EXPECT_EQ(metas()[0].member_role, RAWSTOR_MEMBER_DATA);
+    EXPECT_EQ(metas()[1].member_role, RAWSTOR_MEMBER_DATA);
+    EXPECT_EQ(metas()[2].member_role, RAWSTOR_MEMBER_WITNESS);
     EXPECT_EQ(run(*queue, target->spec(*queue)).size, spec.size);
     seed();
     HiddenLocation offline(b);
@@ -425,7 +431,6 @@ TEST_F(WitnessTest, witness_records_and_votes_are_per_chunk) {
     spec.size = 131072;
     spec.chunk_size = 65536;
     spec.width = 2;
-    spec.witness_member = 3;
     rawstor::Location location(
         {rawstd::URI(a.uri()), rawstd::URI(b.uri()), rawstd::URI(witness)}
     );
@@ -449,8 +454,8 @@ TEST_F(WitnessTest, witness_records_and_votes_are_per_chunk) {
 }
 
 TEST_F(WitnessTest, stale_clean_witness_cannot_orphan_first_degraded_write) {
-    auto servers = std::make_unique<rawstor::tests::ObjectEnv>(39607, 39608);
-    create("", "ost://127.0.0.1:39608");
+    auto servers = std::make_unique<rawstor::tests::ObjectEnv>(29607, 29608);
+    create("", "ost://127.0.0.1:29608");
     auto object = run(*queue, target->open(*queue, 0));
     servers.reset();
     {
@@ -467,7 +472,7 @@ TEST_F(WitnessTest, stale_clean_witness_cannot_orphan_first_degraded_write) {
 }
 
 TEST_F(WitnessTest, listed_target_keeps_mds_witness_and_its_vote) {
-    rawstor::tests::ObjectEnv servers(39609, 39610);
+    rawstor::tests::ObjectEnv servers(29609, 29610);
     create(servers.location());
     seed();
     rawstor::Location location(
@@ -523,7 +528,7 @@ TEST_F(WitnessTest, generic_config_update_invalidates_witness_vote) {
 }
 
 TEST_F(WitnessTest, mds_generic_config_update_invalidates_witness_vote) {
-    rawstor::tests::ObjectEnv servers(39611, 39612);
+    rawstor::tests::ObjectEnv servers(29611, 29612);
     create(servers.location());
     seed();
     auto config = metas()[2].config;
@@ -597,9 +602,9 @@ TEST_F(WitnessTest, half_of_four_requires_durable_witness_before_write) {
 }
 
 TEST_F(WitnessTest, four_runtime_degrade_persists_witness_before_ack) {
-    auto server_c = std::make_unique<rawstor::tests::ObjectEnv>(39613, 39614);
-    auto server_d = std::make_unique<rawstor::tests::ObjectEnv>(39615, 39616);
-    create_four("ost://127.0.0.1:39614", "ost://127.0.0.1:39616");
+    auto server_c = std::make_unique<rawstor::tests::ObjectEnv>(29613, 29614);
+    auto server_d = std::make_unique<rawstor::tests::ObjectEnv>(29615, 29616);
+    create_four("ost://127.0.0.1:29614", "ost://127.0.0.1:29616");
     auto object = run(*queue, target->open(*queue, 0));
     write(*object);
     server_c.reset();
@@ -619,9 +624,9 @@ TEST_F(WitnessTest, four_runtime_degrade_persists_witness_before_ack) {
 }
 
 TEST_F(WitnessTest, four_runtime_degrade_freezes_without_witness) {
-    auto server_c = std::make_unique<rawstor::tests::ObjectEnv>(39617, 39618);
-    auto server_d = std::make_unique<rawstor::tests::ObjectEnv>(39619, 39620);
-    create_four("ost://127.0.0.1:39618", "ost://127.0.0.1:39620");
+    auto server_c = std::make_unique<rawstor::tests::ObjectEnv>(29617, 29618);
+    auto server_d = std::make_unique<rawstor::tests::ObjectEnv>(29619, 29620);
+    create_four("ost://127.0.0.1:29618", "ost://127.0.0.1:29620");
     auto object = run(*queue, target->open(*queue, 0));
     write(*object);
     server_c.reset();
@@ -654,7 +659,6 @@ TEST_F(WitnessTest, six_data_members_write_on_three_plus_witness) {
     witness = w.uri();
     spec.size = 65536;
     spec.width = 6;
-    spec.witness_member = 7;
     std::vector<rawstd::URI> members;
     for (const auto& uri :
          {a.uri(), b.uri(), c.uri(), d.uri(), e.uri(), f.uri(), witness}) {
@@ -675,7 +679,6 @@ TEST_F(WitnessTest, six_data_members_write_on_three_plus_witness) {
 TEST_F(WitnessTest, rejects_witness_with_single_data_member) {
     spec.size = 65536;
     spec.width = 1;
-    spec.witness_member = 2;
     witness = w.uri();
     target = std::make_unique<rawstor::Target>(std::vector<rawstd::URI>{
         rawstd::URI(a.uri() + "/" + id_string(id)),
@@ -826,7 +829,7 @@ TEST_F(WitnessTest, missing_witness_type_is_recovered_from_surviving_metadata) {
 }
 
 TEST_F(WitnessTest, mds_lists_objects_and_witnesses_with_one_cursor) {
-    rawstor::tests::ObjectEnv servers(39623, 39624);
+    rawstor::tests::ObjectEnv servers(29623, 29624);
     create(servers.location());
     RawstdUUID object_id = new_id();
     rawstor::Target data(
@@ -857,12 +860,11 @@ TEST_F(WitnessTest, mds_lists_objects_and_witnesses_with_one_cursor) {
 }
 
 TEST_F(WitnessTest, plain_mds_witness_listing_preserves_all_chunk_offsets) {
-    rawstor::tests::ObjectEnv servers(39625, 39626);
+    rawstor::tests::ObjectEnv servers(29625, 29626);
     witness = servers.location();
     spec.size = 131072;
     spec.chunk_size = 65536;
     spec.width = 2;
-    spec.witness_member = 3;
     rawstor::Location location(
         {rawstd::URI(a.uri()), rawstd::URI(b.uri()), rawstd::URI(witness)}
     );

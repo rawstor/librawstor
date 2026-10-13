@@ -386,8 +386,8 @@ directly (a single entry, 0, for a plain, non-`mds://` target).
 
 ### Witness members
 
-Witnesses use ordinary backend addresses. `rawstor create --witness INDEX`
-selects one zero-based member index; subsequent opens discover the member
+Witnesses use ordinary backend addresses. With `width + 1` locations and an
+even data width, creation makes the last location a witness; subsequent opens discover the member
 through `META.member_role`. `RawstorObjectSpec.witness_member` stores its
 position plus one on every copy (zero means none), including metadata used
 to identify an offline member safely. `width` counts only data copies;
