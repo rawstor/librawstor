@@ -117,7 +117,6 @@ enum RawstorObjectSyncStateValue {
     RAWSTOR_OBJECT_SYNC_STATE_CLEAN = 1,
     RAWSTOR_OBJECT_SYNC_STATE_DIRTY = 2,
     RAWSTOR_OBJECT_SYNC_STATE_LOST = 3,
-
 };
 
 /** Number of ancestor sync ids kept in RawstorObjectConfig. */
