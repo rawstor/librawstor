@@ -10,7 +10,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Response `hash` (xxh3 with libxxhash) | ✅ | `librawstd/src/hash.c` |
 | Session: `SET_OBJECT` | ✅ | OST `ost/src/client.cpp`, MDS `mds/src/client.cpp` |
 | Data: `READ` `WRITE` `DISCARD` `ALLOCATE` `RELEASE` `FLUSH` `WRITE_ZEROES` | ✅ | OST server + `src/ost_backend.cpp` |
-| Metadata: `META` `SET_CONFIG` `SET_WITNESS` `LIST_WITNESSES` `LEAVE` `CREATE_VERSION` `LIST_VERSIONS` | ✅ | OST server + `src/ost_backend.cpp` |
+| Metadata: `META` `SET_CONFIG` `SET_WITNESS` `LEAVE` `CREATE_VERSION` `LIST_VERSIONS` | ✅ | OST server + `src/ost_backend.cpp` |
 | `LIST`, `LOCATION_INFO` | ✅ | OST and MDS servers, both clients |
 | Object: `OBJ_CREATE` `OBJ_OPEN` `OBJ_RESIZE` `OBJ_REMOVE` | ✅ | MDS server + `src/mds_client.cpp` |
 | Object versions: `OBJ_COMMIT_VERSION` `OBJ_REMOVE_VERSION` `OBJ_LIST_VERSIONS` | ✅ | MDS server + `src/mds_client.cpp` |
@@ -93,7 +93,6 @@ keep `0x0b`/`0x0c`.
 | `0x10` | `SYNC_PREPARE` | OST | SyncPropose (`ballot` only) | SyncReply |
 | `0x11` | `SYNC_ACCEPT` | OST | SyncPropose | SyncReply |
 | `0x22` | `SET_WITNESS` | OST / MDS | SetConfig (`flags` = witness state) | — |
-| `0x23` | `LIST_WITNESSES` | MDS | List | List rows |
 | `0x40` | `OBJ_CREATE` | MDS | ObjCreate | ObjCreated |
 | `0x41` | `OBJ_OPEN` | MDS | Basic (`version_id`, nil = live) | ObjDescriptor + chunks |
 | `0x42` | `OBJ_RESIZE` | MDS | ObjOp (`val` = new size) | ObjResized |
@@ -705,8 +704,8 @@ A generic `SET_CONFIG` on a witness also changes its state to LOST,
 invalidating a vote until the chunk establishes a new trustworthy record.
 Witnesses do not accept data I/O or object versions.
 
-`LIST_WITNESSES` (`0x23`, MDS) uses `RawstorFrameListPayload` and returns
-`RawstorFrameListEntry` rows plus the final pagination cursor row. Limits
-count object IDs; every chunk offset of an ID stays on the same page.
-Witness locations filter listings by member role, so a shared backing store
-can contain both data and witness records.
+Ordinary `LIST` reports every registered MDS object and native witness member,
+using `RawstorFrameListEntry` rows plus the final pagination cursor row.
+Registered objects appear at offset zero; witness records carry their real
+chunk offsets. Limits count IDs, and all offsets of an ID stay on one page.
+Member metadata determines the type of each listed address.

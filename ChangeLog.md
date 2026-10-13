@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- MDS lists objects and witness members through the ordinary `LIST` command.
 - Witness members use ordinary backend URIs and use the last location when there is one more location than the even data width, with their type reported by metadata.
 - Every backend now stores an object per chunk (`file://` `<uuid>/<offset>/data`, LVM `<uuid>-<offset>`, ZFS `<uuid>:<offset>`), with no migration: objects created by 0.2.x are not visible to this release.
 - `rawstor_target_open()` gains an `int flags` argument (`0` or `RAWSTOR_READONLY`: no write quorum needed, every write fails `-EROFS`). Breaking C API change.

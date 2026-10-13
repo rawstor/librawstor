@@ -446,17 +446,17 @@ TEST_F(ObjectStoreTest, list_objects_pages_by_id) {
         store.create(RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1));
     }
 
-    bool more = true;
-    std::vector<RawstdUUID> page = store.list_objects(RawstdUUID{}, 2, &more);
+    RawstdUUID token{};
+    auto page = store.list_chunks(token, 2);
     ASSERT_EQ(page.size(), 2u);
-    EXPECT_TRUE(more);
-    EXPECT_EQ(rawstd_uuid_cmp(&page[0], &ids[0]), 0);
-    EXPECT_EQ(rawstd_uuid_cmp(&page[1], &ids[1]), 0);
+    EXPECT_FALSE(rawstd_uuid_is_nil(&token));
+    EXPECT_EQ(rawstd_uuid_cmp(&page[0].id, &ids[0]), 0);
+    EXPECT_EQ(rawstd_uuid_cmp(&page[1].id, &ids[1]), 0);
 
-    page = store.list_objects(page.back(), 2, &more);
+    page = store.list_chunks(token, 2);
     ASSERT_EQ(page.size(), 1u);
-    EXPECT_FALSE(more);
-    EXPECT_EQ(rawstd_uuid_cmp(&page[0], &ids[2]), 0);
+    EXPECT_TRUE(rawstd_uuid_is_nil(&token));
+    EXPECT_EQ(rawstd_uuid_cmp(&page[0].id, &ids[2]), 0);
 }
 
 TEST_F(ObjectStoreTest, list_versions_oldest_first) {
@@ -830,14 +830,40 @@ TEST_F(
     store.create_witness(first, chunk_size, spec);
     store.create_witness(second, 0, spec);
     RawstdUUID token{};
-    auto entries = store.list_witnesses(token, 1);
+    auto entries = store.list_chunks(token, 1);
     ASSERT_EQ(entries.size(), 2u);
     EXPECT_EQ(rawstd_uuid_cmp(&entries[0].id, &first), 0);
     EXPECT_EQ(entries[0].offset, 0u);
     EXPECT_EQ(entries[1].offset, chunk_size);
     EXPECT_EQ(rawstd_uuid_cmp(&token, &first), 0);
-    entries = store.list_witnesses(token, 1);
+    entries = store.list_chunks(token, 1);
     ASSERT_EQ(entries.size(), 1u);
     EXPECT_EQ(rawstd_uuid_cmp(&entries[0].id, &second), 0);
+    EXPECT_TRUE(rawstd_uuid_is_nil(&token));
+}
+
+TEST_F(ObjectStoreTest, list_chunks_merges_objects_and_native_members) {
+    ObjectStore store = make_store();
+    auto object = make_id();
+    auto witness = make_id();
+    store.create(RawstdUUID{}, object, chunk_size, chunk_size, make_policy(1));
+    // A reconstructed object map can also index a native member's id.
+    store.create(RawstdUUID{}, witness, chunk_size, chunk_size, make_policy(1));
+    RawstorObjectSpec spec{};
+    spec.width = 2;
+    spec.chunk_size = chunk_size;
+    store.create_witness(witness, 0, spec);
+    store.create_witness(witness, chunk_size, spec);
+    RawstdUUID token{};
+    auto entries = store.list_chunks(token, 1);
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(rawstd_uuid_cmp(&entries[0].id, &object), 0);
+    EXPECT_EQ(entries[0].offset, 0u);
+    EXPECT_EQ(rawstd_uuid_cmp(&token, &object), 0);
+    entries = store.list_chunks(token, 1);
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(rawstd_uuid_cmp(&entries[0].id, &witness), 0);
+    EXPECT_EQ(entries[0].offset, 0u);
+    EXPECT_EQ(entries[1].offset, chunk_size);
     EXPECT_TRUE(rawstd_uuid_is_nil(&token));
 }

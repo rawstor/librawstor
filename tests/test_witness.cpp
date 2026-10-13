@@ -16,6 +16,7 @@
 #include <rawio/queue.hpp>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
+#include <rawstor/rawstor.h>
 #include <rawstor/target.h>
 #include <string>
 #include <system_error>
@@ -852,9 +853,13 @@ TEST_F(WitnessTest, mds_lists_objects_and_witnesses_with_one_cursor) {
         ASSERT_EQ(metadata.size(), 1u);
         witnesses += metadata.front().member_role == RAWSTOR_MEMBER_WITNESS;
         objects += metadata.front().member_role == RAWSTOR_MEMBER_DATA;
+        if (rawstor_pagination_token_empty(&token)) {
+            break;
+        }
     }
     EXPECT_EQ(witnesses, 1u);
     EXPECT_EQ(objects, 1u);
+    EXPECT_TRUE(rawstor_pagination_token_empty(&token));
 }
 
 TEST_F(WitnessTest, plain_mds_witness_listing_preserves_all_chunk_offsets) {

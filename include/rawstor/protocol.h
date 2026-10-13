@@ -91,8 +91,6 @@ extern "C" {
 /* Metadata-only member update. Same payload as SET_CONFIG; flags carries
  * CLEAN, DIRTY or LOST, not SET_CONFIG flags. */
 #define RAWSTOR_CMD_SET_WITNESS 0x22
-/* MDS witness records, using LIST's payload, rows and pagination cursor. */
-#define RAWSTOR_CMD_LIST_WITNESSES 0x23
 
 /*
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/open/

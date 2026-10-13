@@ -1058,15 +1058,14 @@ public:
     BackendOpList(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const RawstdUUID& token, unsigned int limit,
-        const rawstd::TraceEvent& trace_event,
-        RawstorCommandType cmd = RAWSTOR_CMD_LIST
+        const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "list", 0, 0),
         _request({
             .head =
                 {
                     .magic = RAWSTOR_MAGIC,
-                    .cmd = cmd,
+                    .cmd = RAWSTOR_CMD_LIST,
                     .cid = cid,
                 },
             .payload = {
@@ -1477,9 +1476,7 @@ rawstd::Task<void> Backend::list_chunks(
 
     std::shared_ptr<BackendOpList> op = std::make_shared<BackendOpList>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        input_token, limit, trace_event,
-        location().scheme() == "mds" ? RAWSTOR_CMD_LIST_WITNESSES
-                                     : RAWSTOR_CMD_LIST
+        input_token, limit, trace_event
     );
     _add_op(op);
 

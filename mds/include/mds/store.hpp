@@ -20,7 +20,7 @@ struct sqlite3;
 namespace rawstor {
 namespace mdsserver {
 
-struct WitnessEntry {
+struct ChunkEntry {
     RawstdUUID id;
     uint64_t offset;
 };
@@ -120,8 +120,8 @@ public:
     );
     void remove_witness(const RawstdUUID& id, uint64_t offset);
 
-    std::vector<WitnessEntry>
-    list_witnesses(RawstdUUID& token, unsigned int limit);
+    /* One page of ids and all their offsets; token is nil on the last page. */
+    std::vector<ChunkEntry> list_chunks(RawstdUUID& token, unsigned int limit);
 
     std::shared_ptr<const Topology> topology();
 
@@ -201,14 +201,6 @@ public:
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         const RawstdUUID& version_id, const std::vector<VersionMember>& members
     );
-
-    /*
-     * One page of every object's id, ascending, strictly after `after`
-     * (nil: from the start), at most `limit` of them. `*more` says whether
-     * any are left past the page.
-     */
-    std::vector<RawstdUUID>
-    list_objects(const RawstdUUID& after, unsigned int limit, bool* more);
 
     /*
      * Every version registered for `id`, oldest first (version ids are

@@ -580,25 +580,29 @@ void ObjectStore::remove_witness(const RawstdUUID& id, uint64_t offset) {
     }
 }
 
-std::vector<WitnessEntry>
-ObjectStore::list_witnesses(RawstdUUID& token, unsigned int limit) {
+std::vector<ChunkEntry>
+ObjectStore::list_chunks(RawstdUUID& token, unsigned int limit) {
     std::lock_guard<std::mutex> guard(_mutex);
     Stmt stmt(
-        _db, "SELECT id,chunk_offset FROM witnesses WHERE id>? ORDER BY "
-             "id,chunk_offset"
+        _db, "WITH entries AS ("
+             "SELECT id,chunk_offset FROM witnesses UNION ALL "
+             "SELECT id,0 FROM objects WHERE NOT EXISTS "
+             "(SELECT 1 FROM witnesses WHERE witnesses.id=objects.id)) "
+             "SELECT id,chunk_offset FROM entries WHERE id>? "
+             "ORDER BY id,chunk_offset"
     );
     RawstdUUID after = token;
     stmt.bind_blob(1, after.bytes, sizeof(after.bytes));
-    std::vector<WitnessEntry> entries;
+    std::vector<ChunkEntry> entries;
     RawstdUUID last{};
     unsigned int groups = 0;
     token = {};
     while (stmt.step()) {
-        WitnessEntry entry{};
+        ChunkEntry entry{};
         stmt.column_uuid(0, &entry.id);
         entry.offset = stmt.column_int64(1);
         if (rawstd_uuid_cmp(&entry.id, &last) != 0) {
-            if (groups == limit) {
+            if (limit != 0 && groups == limit) {
                 token = last;
                 break;
             }
@@ -609,7 +613,7 @@ ObjectStore::list_witnesses(RawstdUUID& token, unsigned int limit) {
     }
     std::sort(
         entries.begin(), entries.end(),
-        [](const WitnessEntry& a, const WitnessEntry& b) {
+        [](const ChunkEntry& a, const ChunkEntry& b) {
             int order = rawstd_uuid_cmp(&a.id, &b.id);
             return order == 0 ? a.offset < b.offset : order < 0;
         }
@@ -1142,31 +1146,6 @@ ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
 
     tx.commit();
 
-    return ret;
-}
-
-std::vector<RawstdUUID> ObjectStore::list_objects(
-    const RawstdUUID& after, unsigned int limit, bool* more
-) {
-    std::lock_guard<std::mutex> lock(_mutex);
-
-    // One row past the page tells whether any are left.
-    Stmt select(
-        _db, "SELECT id FROM objects WHERE id > ? ORDER BY id LIMIT ?;"
-    );
-    select.bind_blob(1, after.bytes, sizeof(after.bytes))
-        .bind_int64(2, static_cast<uint64_t>(limit) + 1);
-    std::vector<RawstdUUID> ret;
-    *more = false;
-    while (select.step()) {
-        if (ret.size() == limit) {
-            *more = true;
-            break;
-        }
-        RawstdUUID id;
-        select.column_uuid(0, &id);
-        ret.push_back(id);
-    }
     return ret;
 }
 

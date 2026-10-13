@@ -458,7 +458,7 @@ reserved ranges per role:
 ```
 0x00    session:         SET_OBJECT                    // handshake, every role
 0x01..  data:            READ, WRITE, DISCARD, ALLOCATE, RELEASE, FLUSH
-0x20..  shared metadata: SET_WITNESS, LIST_WITNESSES    // shared metadata
+0x20..  shared metadata: SET_WITNESS                    // shared metadata
 0x40..  object (MDS):    OBJ_CREATE, OBJ_OPEN, OBJ_RESIZE, OBJ_REMOVE,
                          OBJ_COMMIT_VERSION, OBJ_REMOVE_VERSION,
                          OBJ_LIST_VERSIONS
@@ -482,8 +482,8 @@ Role matrix:
 | data (`READ`,`WRITE`,`DISCARD`,`FLUSH`) | yes | yes | no (`-ENOSYS`) |
 | member lifecycle (`ALLOCATE`,`RELEASE`) | yes | yes | witness members only |
 | member metadata (`META`, `SET_CONFIG`, `SET_WITNESS`) | yes | yes | witness members only |
-| witness listing (`LIST_WITNESSES`) | no (ordinary `LIST` + role filter) | no | yes |
-| reconstruct scan (`LIST` + member `META`) | yes | yes | `LIST` serves its object index; witnesses use `LIST_WITNESSES` |
+| member listing (`LIST` + `META`) | yes | yes | yes |
+| reconstruct scan (`LIST` + member `META`) | yes | yes | `LIST` serves registered objects and native witnesses |
 | object commands (`CMD_OBJ_*`) | no | optional | yes |
 
 Consequence: **a witness needs no new server.** A metadata-only
@@ -1106,9 +1106,9 @@ Witness metadata uses the existing 360-byte Meta record: state encodes
 `CLEAN` / `DIRTY` / `LOST`, and `config.roles` identifies
 survivors in member order.
 `SET_WITNESS` atomically persists state plus
-configuration using the existing SetConfig request layout. `LIST_WITNESSES`
-uses the existing List request and response layouts on MDS. No data I/O or
-CoW operation is issued to a witness.
+configuration using the existing SetConfig request layout. Ordinary `LIST`
+reports both registered objects and native witness records on MDS. No data
+I/O or CoW operation is issued to a witness.
 
 Protocol version/feature negotiation and an I/O `map_epoch` fence are
 future extensions. The current client still tolerates `-ENOSYS` from

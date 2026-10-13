@@ -431,7 +431,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         }
         break;
     }
-    case RAWSTOR_CMD_LIST_WITNESSES: {
+    case RAWSTOR_CMD_LIST: {
         RawstorFrameListPayload payload{};
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         auto token = uuid_of(payload.token_id);
@@ -441,7 +441,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         int32_t res = 0;
         std::vector<RawstorFrameListEntry> entries;
         try {
-            auto records = store.list_witnesses(token, limit);
+            auto records = store.list_chunks(token, limit);
             entries.resize(records.size() + 1);
             for (size_t i = 0; i < records.size(); ++i) {
                 memcpy(
@@ -458,47 +458,6 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
             head.cmd, head.cid, res, res > 0 ? entries.data() : nullptr,
             res > 0 ? static_cast<size_t>(res) : 0
         );
-        break;
-    }
-    case RAWSTOR_CMD_LIST: {
-        // The same LIST an OST answers (protocol.h, RawstorFrameListEntry):
-        // one row per object (chunk_offset 0 -- an mds:// object is
-        // addressed whole), then the resume cursor row, the last id
-        // returned while any are left, nil once none are.
-        RawstorFrameListPayload payload;
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
-        unsigned int limit = payload.limit == 0 || payload.limit > list_limit
-                                 ? list_limit
-                                 : payload.limit;
-        int32_t res = 0;
-        std::vector<unsigned char> data;
-        try {
-            bool more = false;
-            std::vector<RawstdUUID> ids =
-                store.list_objects(uuid_of(payload.token_id), limit, &more);
-            std::vector<RawstorFrameListEntry> entries(ids.size() + 1);
-            for (size_t i = 0; i < ids.size(); ++i) {
-                memcpy(entries[i].id, ids[i].bytes, sizeof(entries[i].id));
-            }
-            if (more) {
-                memcpy(
-                    entries.back().id, ids.back().bytes,
-                    sizeof(entries.back().id)
-                );
-            }
-            data.resize(entries.size() * sizeof(RawstorFrameListEntry));
-            memcpy(data.data(), entries.data(), data.size());
-        } catch (const std::system_error& e) {
-            res = -e.code().value();
-        }
-        if (res < 0) {
-            co_await client->_send_response(head.cmd, head.cid, res);
-        } else {
-            co_await client->_send_response(
-                head.cmd, head.cid, static_cast<int32_t>(data.size()),
-                data.data(), data.size()
-            );
-        }
         break;
     }
     case RAWSTOR_CMD_OBJ_LIST_VERSIONS: {

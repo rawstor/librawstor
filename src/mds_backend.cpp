@@ -214,64 +214,31 @@ rawstd::Task<void> Backend::_connect() {
     co_await _client.connect();
 }
 
-// A nil `id` lists every object the MDS knows, one page at a time (its
-// LIST): each as a group of just offset 0, since an mds:// object is
-// addressed whole (Location::list() builds its target with no offset
-// segment). A non-nil `id` is the filtered form (Backend::list_chunks()'s
-// own doc comment): this object's own real chunk offsets -- or
-// `version_id`'s, when non-nil -- off the matching WireMap; an `id` the
-// MDS doesn't know comes back as an empty listing, same as any other
-// backend holding nothing of it.
+// LIST reports registered objects at offset 0 and native members at their
+// physical chunk offsets. META distinguishes a whole-object map from a
+// metadata-only member; filtered whole-object queries resolve its WireMap.
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
     RawstdUUID& token, RawstdUUID version_id
 ) {
     chunks.clear();
     if (rawstd_uuid_is_nil(&id)) {
-        RawstdUUID after = token;
-        std::vector<RawstdUUID> ids =
-            co_await _client.list_objects(token, limit);
-        for (const auto& object_id : ids) {
-            chunks.push_back(ChunkGroup{object_id, {0}, true});
-        }
         auto members = co_await _member_transport();
-        std::vector<ChunkGroup> witnesses;
-        RawstdUUID witness_token = after;
-        try {
-            co_await members->list_chunks(
-                {}, limit, witnesses, witness_token, version_id
-            );
-        } catch (const std::system_error& error) {
-            if (error.code().value() != ENOSYS) {
-                throw;
-            }
+        co_await members->list_chunks({}, limit, chunks, token, version_id);
+        for (auto& group : chunks) {
+            group.opaque =
+                !(co_await _witness_meta(group.id, group.offsets.front()));
         }
-        // A reconstructed object map may also index a witness's logical id.
-        // The native member record determines the type of that address.
-        for (const auto& witness : witnesses) {
-            std::erase_if(chunks, [&](const auto& object) {
-                return rawstd_uuid_cmp(&object.id, &witness.id) == 0;
-            });
-        }
-        chunks.insert(chunks.end(), witnesses.begin(), witnesses.end());
-        std::sort(
-            chunks.begin(), chunks.end(),
-            [](const auto& left, const auto& right) {
-                return rawstd_uuid_cmp(&left.id, &right.id) < 0;
-            }
-        );
-        if (limit != 0 && chunks.size() > limit) {
-            chunks.resize(limit);
-        }
-        token = chunks.empty() ? RawstdUUID{} : chunks.back().id;
         co_return;
     }
     if (rawstd_uuid_is_nil(&version_id)) {
         auto members = co_await _member_transport();
         co_await members->list_chunks(id, limit, chunks, token, version_id);
-        if (!chunks.empty()) {
+        if (!chunks.empty() &&
+            co_await _witness_meta(id, chunks.front().offsets.front())) {
             co_return;
         }
+        chunks.clear();
     }
     token = {};
 
