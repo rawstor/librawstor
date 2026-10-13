@@ -63,6 +63,8 @@ private:
         // member back; reset once it is reachable again, so each outage
         // is reported once rather than on every probe tick.
         bool probe_announced;
+        bool witness;
+        bool recreated;
     };
 
     rawio::Queue& _queue;
@@ -89,6 +91,14 @@ private:
     // barrier, no read-repair, no reconnect probe/resync -- every write
     // fails with EROFS instead.
     bool _readonly;
+
+    size_t _data_count() const noexcept;
+    bool _has_witness() const noexcept;
+    rawstd::Task<void> _write_witness(
+        RawstorObjectSyncStateValue state, RawstorObjectConfig config,
+        bool required = false
+    );
+    rawstd::Task<void> _record_witness(bool bump, size_t joining);
 
     std::shared_ptr<MirrorControl> _control;
 
@@ -248,7 +258,8 @@ private:
     // `m`'s own chunk, as a target URI (location/id/offset), for logs.
     std::string _member_str(const Member& m) const;
 
-    // Below-quorum writes freeze for N >= 3 only: with N = 2 a single
+    // A witness requires a majority of all members. Without one,
+    // below-quorum writes freeze for N >= 3 only: with N = 2 a single
     // survivor may continue, because auto-open requires both members, so the
     // abandoned peer can never auto-start alone (docs/mirroring.md,
     // quorum rules).

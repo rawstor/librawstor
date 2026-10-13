@@ -8,6 +8,7 @@
 #include "ost_backend.hpp"
 #include "slot.hpp"
 #include "target.hpp"
+#include "witness.hpp"
 
 #include <rawio/awaitable.hpp>
 #include <rawio/stream.hpp>
@@ -302,6 +303,7 @@ private:
     bool _valid = false;
     std::atomic<bool> _dirty{false};
     std::atomic<bool> _frozen{false};
+    std::atomic<bool> _witness_vote{false};
     std::vector<std::atomic<MemberState>> _states;
     std::vector<RawstorObjectConfig> _records;
     uint64_t _size = 0;
@@ -317,6 +319,12 @@ private:
     void _fill_roles(RawstorObjectConfig& config) const noexcept {
         config.nroles = static_cast<uint8_t>(_states.size());
         for (size_t i = 0; i < _states.size(); ++i) {
+            if (witness_location(_locations[i])) {
+                config.roles[i] = witness_vote()
+                                      ? RAWSTOR_OBJECT_MEMBER_IN_SYNC
+                                      : RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+                continue;
+            }
             switch (state(i)) {
             case MemberState::IN_SYNC:
                 config.roles[i] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
@@ -335,6 +343,11 @@ private:
         size_t survivors = 0;
         for (size_t i = 0; i < _states.size(); ++i) {
             survivors += state(i) == MemberState::IN_SYNC;
+        }
+        bool witness =
+            std::any_of(_locations.begin(), _locations.end(), witness_location);
+        if (witness) {
+            return (survivors + witness_vote()) * 2 <= _states.size();
         }
         return _states.size() >= 3 && survivors * 2 <= _states.size();
     }
@@ -392,6 +405,12 @@ public:
         }
     }
     bool initialized() const noexcept { return _valid; }
+    bool witness_vote() const noexcept {
+        return _witness_vote.load(std::memory_order_acquire);
+    }
+    void witness_vote_locked(bool valid) noexcept {
+        _witness_vote.store(valid, std::memory_order_release);
+    }
     bool dirty() const noexcept {
         return _dirty.load(std::memory_order_acquire);
     }
@@ -660,7 +679,7 @@ void Chunk::_disable_retry() noexcept {
     // (docs/mirroring.md, case F6).
     _retry_disabled = true;
     for (Member& m : _members) {
-        if (m.slot) {
+        if (m.slot && !m.witness) {
             m.slot->set_transparent_retry(false);
         }
     }
@@ -851,6 +870,55 @@ namespace {
 // Never for a read-only open (it writes nothing) or a bound version
 // version (a CoW version can't be regenerated from live data). A member
 // whose recreate fails just stays unreachable.
+rawstd::Task<std::vector<RawstorObjectMeta>> metadata_after_departure(
+    rawio::Queue& queue, const rawstd::URI& location, const RawstdUUID& id,
+    uint64_t offset
+) {
+    auto slot = co_await Slot::create(queue, location);
+    std::vector<RawstorObjectMeta> result;
+    std::exception_ptr error;
+    try {
+        result = co_await slot->meta(id, offset, RawstdUUID{});
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    co_return result;
+}
+
+rawstd::Task<RawstorObjectMeta>
+inspect_witness(Slot& slot, const RawstdUUID& id, uint64_t offset) {
+    auto metas = co_await slot.meta(id, offset, RawstdUUID{});
+    if (metas.size() != 1 ||
+        metas.front().member_role != RAWSTOR_MEMBER_WITNESS) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    co_return metas.front();
+}
+
+// F10 (docs/mirroring.md): a member whose own copy is missing
+// (`missing`, its open failed ENOENT on a location that's still there)
+// gets that copy recreated on a fresh Slot and opened again, turning it
+// into a reachable, blank member (sync_id 0) -- _reconcile_sync_set()
+// then marks it STALE next to any established sync set, and online
+// resync fills it from a survivor, same as any other stale member (or
+// keeps it IN_SYNC alongside survivors that were never written either).
+// Only rebuilt when the surviving copies alone are a majority of the
+// chunk's members (more than half): a blank copy holds none of the
+// acknowledged writes, so it must never be what makes up a quorum --
+// otherwise a surviving copy that fell behind could be opened as the
+// authoritative one and the newer, lost copy's writes silently dropped.
+// A consistent witness can establish that quorum with half the data
+// copies. Without either proof, the missing copy must be recreated by hand
+// once the survivors are known to be current. With every copy missing there's
+// nothing to vouch that the chunk never held data either. The survivors'
+// own META gives the recreated copy's size.
+// Never for a read-only open (it writes nothing) or a bound version
+// version (a CoW version can't be regenerated from live data). A member
+// whose recreate fails just stays unreachable.
 rawstd::Task<void> recreate_missing(
     rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
     const RawstdUUID& id, uint64_t offset, int flags,
@@ -869,7 +937,7 @@ rawstd::Task<void> recreate_missing(
     const RawstorObjectMeta* survivor = nullptr;
     uint64_t size = 0;
     for (size_t i = 0; i < locations.size(); ++i) {
-        if (!opened[i]) {
+        if (!opened[i] || witness_location(locations[i])) {
             continue;
         }
         if (survivor == nullptr) {
@@ -882,9 +950,31 @@ rawstd::Task<void> recreate_missing(
         co_return;
     }
 
-    size_t survivors =
-        static_cast<size_t>(std::count(opened.begin(), opened.end(), true));
-    if (survivors * 2 <= locations.size()) {
+    size_t survivors = 0;
+    size_t data_members = 0;
+    for (size_t i = 0; i < locations.size(); ++i) {
+        if (!witness_location(locations[i])) {
+            ++data_members;
+            survivors += opened[i];
+        }
+    }
+    bool witness_quorum = false;
+    for (size_t wi = 0; wi < locations.size(); ++wi) {
+        if (!opened[wi] || !witness_location(locations[wi])) {
+            continue;
+        }
+        size_t approved = 0;
+        for (size_t di = 0; di < locations.size(); ++di) {
+            if (opened[di] && !witness_location(locations[di]) &&
+                witness_approves(
+                    metas[wi], metas[di], di, locations.size(), wi
+                )) {
+                ++approved;
+            }
+        }
+        witness_quorum |= (approved + 1) * 2 > locations.size();
+    }
+    if (survivors * 2 <= data_members && !witness_quorum) {
         rawstd_error(
             "Mirror member copy missing, not recreated: only %zu of %zu "
             "copies survive, not a majority; recreate it explicitly "
@@ -901,7 +991,7 @@ rawstd::Task<void> recreate_missing(
     sp.chunk_size = survivor->spec.chunk_size;
 
     for (size_t i = 0; i < locations.size(); ++i) {
-        if (!missing[i]) {
+        if (!missing[i] || witness_location(locations[i])) {
             continue;
         }
         rawstd_warning(
@@ -957,6 +1047,12 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     validate_not_empty(locations);
     validate_width(locations);
     validate_different_uris(locations);
+    size_t witnesses =
+        std::count_if(locations.begin(), locations.end(), witness_location);
+    if (witnesses > 1 || witnesses == locations.size() ||
+        (witnesses && (locations.size() - witnesses) % 2 != 0)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
 
     // A writable, live, mirrored open shares the chunk's control with
     // every other one of this process; any other open has one of its own.
@@ -1068,7 +1164,13 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     );
     for (size_t i = 0; i < slots.size(); ++i) {
         if (slots[i]) {
-            open_tasks[i] = slots[i]->open(id, offset, flags, version_id);
+            if (witness_location(locations[i])) {
+                if (rawstd_uuid_is_nil(&version_id)) {
+                    open_tasks[i] = inspect_witness(*slots[i], id, offset);
+                }
+            } else {
+                open_tasks[i] = slots[i]->open(id, offset, flags, version_id);
+            }
         }
     }
 
@@ -1139,10 +1241,11 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     for (size_t i = 0; i < locations.size(); ++i) {
         members.push_back(
             Member{
-                std::move(slots[i]), locations[i], metas[i], opened[i], false
+                std::move(slots[i]), locations[i], metas[i], opened[i], false,
+                witness_location(locations[i]), missing[i] && opened[i]
             }
         );
-        if (opened[i]) {
+        if (opened[i] && !witness_location(locations[i])) {
             ++reachable;
             if (!got_spec) {
                 spec = metas[i].spec;
@@ -1287,7 +1390,68 @@ bool Chunk::_any_leaving() const noexcept {
     return false;
 }
 
+size_t Chunk::_data_count() const noexcept {
+    size_t count = 0;
+    for (const auto& m : _members) {
+        count += !m.witness;
+    }
+    return count;
+}
+
+bool Chunk::_has_witness() const noexcept {
+    return _data_count() != _members.size();
+}
+
+rawstd::Task<void> Chunk::_write_witness(
+    RawstorObjectSyncStateValue state, RawstorObjectConfig config, bool required
+) {
+    for (auto& m : _members) {
+        if (!m.witness) {
+            continue;
+        }
+        std::exception_ptr error;
+        try {
+            if (!m.slot) {
+                m.slot = co_await Slot::create(_queue, m.location);
+            }
+            bool missing = false;
+            try {
+                co_await m.slot->set_witness(_id, _offset, state, config);
+            } catch (const std::system_error& e) {
+                if (e.code().value() != ENOENT || required) {
+                    throw;
+                }
+                missing = true;
+            }
+            if (missing) {
+                co_await m.slot->create(
+                    _id, _offset, _spec, RAWSTOR_MEMBER_WITNESS
+                );
+                co_await m.slot->set_witness(_id, _offset, state, config);
+            }
+            m.reachable = true;
+            m.meta.member_role = RAWSTOR_MEMBER_WITNESS;
+            m.meta.state = state;
+            m.meta.config = config;
+        } catch (...) {
+            m.reachable = false;
+            error = std::current_exception();
+        }
+        if (error) {
+            if (required) {
+                std::rethrow_exception(error);
+            }
+            rawstd_warning(
+                "Witness configuration update failed; member excluded\n"
+            );
+        }
+    }
+}
+
 bool Chunk::_below_write_quorum(size_t survivors) const noexcept {
+    if (_has_witness()) {
+        return (survivors + _control->witness_vote()) * 2 <= _members.size();
+    }
     return _members.size() >= 3 && survivors * 2 <= _members.size();
 }
 
@@ -1307,25 +1471,30 @@ bool Chunk::_below_write_quorum(size_t survivors) const noexcept {
 void Chunk::_reconcile_sync_set() {
     size_t reachable = 0;
     for (const Member& m : _members) {
-        if (m.reachable) {
+        if (m.reachable && !m.witness && !m.recreated) {
             ++reachable;
         }
     }
 
-    // READONLY reads from whatever is reachable: any one member is enough
-    // (create() already refused an open with none), so no quorum.
-    if (!_readonly && reachable * 2 <= _members.size()) {
-        rawstd_error(
-            "Mirror quorum not met: %zu of %zu members reachable\n", reachable,
-            _members.size()
-        );
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
-    }
-
     std::vector<MemberState> state(_members.size());
     for (size_t i = 0; i < _members.size(); ++i) {
-        state[i] =
-            _members[i].reachable ? MemberState::IN_SYNC : MemberState::STALE;
+        state[i] = (_members[i].reachable && !_members[i].witness)
+                       ? MemberState::IN_SYNC
+                       : MemberState::STALE;
+    }
+
+    for (const auto& w : _members) {
+        if (!w.witness || !w.reachable || w.meta.config.sync_id == 0) {
+            continue;
+        }
+        for (size_t i = 0; i < _members.size(); ++i) {
+            const auto& m = _members[i];
+            if (!m.witness && m.reachable &&
+                m.meta.config.sync_id != w.meta.config.sync_id &&
+                in_history(w.meta.config, m.meta.config.sync_id)) {
+                state[i] = MemberState::STALE;
+            }
+        }
     }
 
     /*
@@ -1337,13 +1506,15 @@ void Chunk::_reconcile_sync_set() {
      */
     uint64_t max_reachable_size = 0;
     for (const Member& m : _members) {
-        if (m.reachable && m.meta.spec.size > max_reachable_size) {
+        if (!m.witness && m.reachable &&
+            m.meta.spec.size > max_reachable_size) {
             max_reachable_size = m.meta.spec.size;
         }
     }
     for (size_t i = 0; i < _members.size(); ++i) {
         const Member& m = _members[i];
-        if (m.reachable && m.meta.spec.size < max_reachable_size) {
+        if (!m.witness && m.reachable &&
+            m.meta.spec.size < max_reachable_size) {
             rawstd_warning(
                 "Mirror member size %llu below the mirror set's %llu; "
                 "excluding as stale\n",
@@ -1358,7 +1529,7 @@ void Chunk::_reconcile_sync_set() {
         const Member& m = _members[i];
         bool syncing = i < m.meta.config.nroles &&
                        m.meta.config.roles[i] == RAWSTOR_OBJECT_MEMBER_SYNCING;
-        if (m.reachable && syncing) {
+        if (!m.witness && m.reachable && syncing) {
             rawstd_warning(
                 "Mirror member with interrupted resync is stale: %s\n",
                 _member_str(m).c_str()
@@ -1390,7 +1561,7 @@ void Chunk::_reconcile_sync_set() {
                 }
                 bool found = false;
                 for (const Member& m : _members) {
-                    if (m.meta.config.sync_id == x &&
+                    if (!m.witness && m.meta.config.sync_id == x &&
                         in_history(m.meta.config, y)) {
                         found = true;
                         break;
@@ -1455,6 +1626,27 @@ void Chunk::_reconcile_sync_set() {
         }
     }
 
+    bool witness_vote = false;
+    for (size_t wi = 0; wi < _members.size(); ++wi) {
+        const auto& w = _members[wi];
+        if (!w.witness || !w.reachable) {
+            continue;
+        }
+        size_t approved = 0;
+        for (size_t di = 0; di < _members.size(); ++di) {
+            const auto& d = _members[di];
+            if (!d.witness && !d.recreated &&
+                state[di] == MemberState::IN_SYNC &&
+                witness_approves(w.meta, d.meta, di, _members.size(), wi)) {
+                ++approved;
+            }
+        }
+        witness_vote = (approved + 1) * 2 > _members.size();
+    }
+    if (!_readonly && reachable * 2 <= _data_count() && !witness_vote) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+    }
+
     if (in_sync == 0) {
         rawstd_error("No trusted mirror member to serve from\n");
         RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
@@ -1470,10 +1662,10 @@ void Chunk::_reconcile_sync_set() {
      * in-sync at the next open: its exclusion is recorded by the dirty
      * gate, with a new sync_id, before the first write.
      */
-    size_t unrecorded_stale = 0;
+    size_t unrecorded_stale = witness_vote && reachable * 2 <= _data_count();
     for (size_t i = 0; i < _members.size(); ++i) {
         const Member& m = _members[i];
-        if (state[i] == MemberState::IN_SYNC) {
+        if (m.witness || state[i] == MemberState::IN_SYNC) {
             continue;
         }
         bool syncing = i < m.meta.config.nroles &&
@@ -1496,6 +1688,7 @@ void Chunk::_reconcile_sync_set() {
     memcpy(
         config.sync_id_history, sync_id_history, sizeof(config.sync_id_history)
     );
+    c.witness_vote_locked(witness_vote);
     c.initialize_locked(
         state, std::move(records), size, config, unrecorded_stale
     );
@@ -1553,8 +1746,8 @@ rawstd::Task<void> Chunk::_run_dirty_barrier() {
                 bump = c.needs_new_identity_locked();
             }
 
-            if (bump) {
-                co_await _record(true, 0);
+            if (bump || _has_witness()) {
+                co_await _record(bump, 0);
             }
 
             std::lock_guard<std::mutex> guard(c.mutex());
@@ -1662,6 +1855,10 @@ rawstd::Task<void> Chunk::_degrade(std::vector<size_t> idxs) {
  * tolerated for a hypothetical backend that chooses not to support this.
  */
 rawstd::Task<void> Chunk::_record(bool bump, size_t joining) {
+    if (_has_witness()) {
+        co_await _record_witness(bump, joining);
+        co_return;
+    }
     MirrorControl& c = *_control;
 
     std::vector<size_t> targets;
@@ -1715,6 +1912,118 @@ rawstd::Task<void> Chunk::_record(bool bump, size_t joining) {
     }
 }
 
+// The shared transition lock stays held until data and witness record the
+// same final composition. LEAVING members hold dependent acknowledgements.
+rawstd::Task<void> Chunk::_record_witness(bool bump, size_t joining) {
+    MirrorControl& c = *_control;
+    bool try_witness = true;
+    RawstorObjectConfig config{};
+    {
+        std::lock_guard<std::mutex> guard(c.mutex());
+        config = c.configuration_locked(bump || !c.witness_vote(), joining > 0);
+    }
+    auto advance = [&config]() {
+        ++config.epoch;
+        memmove(
+            &config.sync_id_history[1], config.sync_id_history,
+            (RAWSTOR_OBJECT_SYNC_ID_HISTORY - 1) * sizeof(uint64_t)
+        );
+        config.sync_id_history[0] = config.sync_id;
+        config.sync_id = random_sync_id();
+    };
+    for (;;) {
+        std::vector<size_t> targets, leaving;
+        {
+            std::lock_guard<std::mutex> guard(c.mutex());
+            for (size_t i = 0; i < _members.size(); ++i) {
+                if (_members[i].witness) {
+                    config.roles[i] = try_witness
+                                          ? RAWSTOR_OBJECT_MEMBER_IN_SYNC
+                                          : RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+                } else if (_state(i) == MemberState::IN_SYNC) {
+                    targets.push_back(i);
+                } else if (_state(i) == MemberState::LEAVING) {
+                    leaving.push_back(i);
+                    config.roles[i] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+                } else if (_state(i) == MemberState::STALE) {
+                    config.roles[i] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+                }
+            }
+            if (targets.empty() ||
+                (targets.size() + joining + try_witness) * 2 <=
+                    _members.size()) {
+                c.freeze_locked();
+                RAWSTD_THROW_SYSTEM_ERROR(EIO);
+            }
+        }
+        auto failed = std::make_shared<std::vector<size_t>>();
+        failed->reserve(targets.size());
+        co_await rawstd::gather(targets.size(), [&](size_t i) {
+            return _set_config_one(targets[i], config, failed);
+        });
+        {
+            std::lock_guard<std::mutex> guard(c.mutex());
+            for (size_t i : targets) {
+                if (_state(i) != MemberState::IN_SYNC &&
+                    std::find(failed->begin(), failed->end(), i) ==
+                        failed->end()) {
+                    failed->push_back(i);
+                }
+            }
+            for (size_t i : *failed) {
+                c.begin_exclusion_locked(i);
+                _members[i].reachable = false;
+            }
+        }
+        if (!failed->empty()) {
+            advance();
+            continue;
+        }
+        if (try_witness) {
+            bool required = (targets.size() + joining) * 2 <= _data_count();
+            std::exception_ptr error;
+            try {
+                co_await _write_witness(
+                    RAWSTOR_OBJECT_SYNC_STATE_DIRTY, config, required
+                );
+            } catch (...) {
+                error = std::current_exception();
+            }
+            bool valid = true;
+            for (const auto& member : _members) {
+                valid &= !member.witness || member.reachable;
+            }
+            if (!valid) {
+                std::lock_guard<std::mutex> guard(c.mutex());
+                c.witness_vote_locked(false);
+                if (error) {
+                    c.freeze_locked();
+                    std::rethrow_exception(error);
+                }
+                try_witness = false;
+                advance();
+                continue;
+            }
+        }
+        bool changed = false;
+        {
+            std::lock_guard<std::mutex> guard(c.mutex());
+            for (size_t i : targets) {
+                changed |= _state(i) != MemberState::IN_SYNC;
+            }
+            if (!changed) {
+                c.witness_vote_locked(try_witness);
+                c.record_transition_locked(config, targets, leaving, {}, true);
+            }
+        }
+        if (changed) {
+            advance();
+            continue;
+        }
+        co_return;
+    }
+}
+
 rawstd::Task<void> Chunk::_set_config_one(
     size_t idx, RawstorObjectConfig config,
     std::shared_ptr<std::vector<size_t>> failed
@@ -1727,7 +2036,7 @@ rawstd::Task<void> Chunk::_set_config_one(
         co_await _members[idx].slot->set_config(_id, _offset, idx, config, 0);
     } catch (const std::system_error& e) {
         int error = e.code().value();
-        if (error == ENOSYS) {
+        if (error == ENOSYS && !_has_witness()) {
             rawstd_warning(
                 "Mirror member does not support state tracking; "
                 "treating as legacy\n"
@@ -2063,8 +2372,8 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
                 return _members.size();
             }
             for (size_t i = 0; i < _members.size(); ++i) {
-                if (_state(i) == MemberState::STALE && _members[i].slot &&
-                    _members[i].reachable) {
+                if (!_members[i].witness && _state(i) == MemberState::STALE &&
+                    _members[i].slot && _members[i].reachable) {
                     return i;
                 }
             }
@@ -2108,7 +2417,7 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
             error = e.code().value();
         }
 
-        if (error == ENOSYS) {
+        if (error == ENOSYS && !_has_witness()) {
             rawstd_warning(
                 "Mirror member does not support state tracking; resyncing "
                 "anyway\n"
@@ -2470,7 +2779,7 @@ rawstd::Task<void> Chunk::_resync_finish(uint64_t generation) {
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
-    if (error == ENOSYS) {
+    if (error == ENOSYS && !_has_witness()) {
         error = 0;
     }
 
@@ -2608,7 +2917,8 @@ rawstd::DetachedTask Chunk::_probe_tick() {
 
     size_t idx = _members.size();
     for (size_t i = 0; i < _members.size(); ++i) {
-        if (_state(i) == MemberState::STALE && !_members[i].reachable) {
+        if (!_members[i].witness && _state(i) == MemberState::STALE &&
+            !_members[i].reachable) {
             idx = i;
             break;
         }
@@ -3120,29 +3430,66 @@ rawstd::Task<void> Chunk::close(bool clean) {
             leaving.push_back(_members[i].slot.get());
         }
     }
-    c.release();
-    _unlock();
-    _control.reset();
-
-    std::vector<Slot*> slots;
-    slots.reserve(_members.size());
-    for (auto& m : _members) {
-        // An unreachable member's slot has no Slot to close.
-        if (m.slot) {
-            slots.push_back(m.slot.get());
-        }
+    const bool witness = _has_witness();
+    if (!witness) {
+        c.release();
+        _unlock();
+        _control.reset();
     }
 
+    std::vector<Slot*> slots;
+    for (auto& member : _members) {
+        if (member.slot) {
+            slots.push_back(member.slot.get());
+        }
+    }
     if (!leaving.empty()) {
         try {
             co_await rawstd::gather(leaving.size(), [&](size_t i) {
                 return leaving[i]->leave();
             });
-        } catch (const std::system_error& e) {
-            rawstd_warning(
-                "Chunk::close(): leave failed: %s\n", strerror(e.code().value())
-            );
+            if (!_readonly && witness) {
+                co_await rawstd::gather(leaving.size(), [&](size_t i) {
+                    return leaving[i]->close();
+                });
+                std::vector<rawstd::URI> locations;
+                for (size_t i = 0; i < _members.size(); ++i) {
+                    if (!_members[i].witness &&
+                        _state(i) == MemberState::IN_SYNC) {
+                        locations.push_back(_members[i].location);
+                    }
+                }
+                auto records =
+                    co_await rawstd::gather(locations.size(), [&](size_t i) {
+                        return metadata_after_departure(
+                            _queue, locations[i], _id, _offset
+                        );
+                    });
+                bool all_clean = true;
+                for (const auto& record : records) {
+                    all_clean &=
+                        record.size() == 1 &&
+                        record.front().state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+                }
+                if (all_clean) {
+                    RawstorObjectConfig config;
+                    {
+                        std::lock_guard<std::mutex> guard(c.mutex());
+                        config = c.configuration_locked();
+                    }
+                    co_await _write_witness(
+                        RAWSTOR_OBJECT_SYNC_STATE_CLEAN, config
+                    );
+                }
+            }
+        } catch (const std::exception& e) {
+            rawstd_warning("Chunk::close(): leave failed: %s\n", e.what());
         }
+    }
+    if (witness) {
+        c.release();
+        _unlock();
+        _control.reset();
     }
 
     // Every Slot is closed concurrently; every one is still attempted

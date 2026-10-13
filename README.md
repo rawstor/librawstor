@@ -475,6 +475,27 @@ vduse`), and attaching it to the vDPA bus requires the `vdpa` tool
 (`iproute2`) and `CAP_NET_ADMIN` -- neither is something `rawstor-vduse`
 itself does; both are external, one-time-per-device administrative steps.
 
+## Witness members
+
+A witness stores consistency metadata and supplies a safe degraded-open vote
+for an even number of data copies; it never stores or serves their data. Declare it explicitly:
+
+```sh
+rawstor create --size=1G --mirrors=2 \
+  'ost://10.0.0.11:9090,ost://10.0.0.12:9090,witness+mds://10.0.0.13:9091'
+```
+
+One witness is supported only with an even number of data copies. Both
+open and write quorums count it after a synchronous configuration barrier:
+1 of 2 data copies plus witness, or 2 of 4 plus witness, can continue.
+`--mirrors` counts data copies. Keep the complete target and member order.
+Witnesses can also use `witness+ost://`, `witness+file://`, `witness+lvm://`
+or `witness+zfs://`. MDS stores its witness records durably in SQLite;
+ordinary `mds://` placement does not automatically attach a witness.
+`rawstor show -v` reports its member role and record state. See
+[Witness](docs/mds.md#witness) for voting and failure rules. Interprocess
+mirror coordination is multiattach stage 2 and is not implemented here.
+
 ## rawstor-mds – Metadata Server
 
 `rawstor-mds` is the metadata server behind `mds://<host>:<port>/<uuid>`

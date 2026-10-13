@@ -1,3 +1,4 @@
+#include "witness.hpp"
 #include <mds/store.hpp>
 
 #include <rawstd/gpp.hpp>
@@ -23,6 +24,10 @@ namespace {
 using rawstor::mdsserver::PlacementPolicy;
 
 constexpr const char* SCHEMA =
+    "CREATE TABLE IF NOT EXISTS witnesses ("
+    " id BLOB NOT NULL, chunk_offset INTEGER NOT NULL, record BLOB NOT NULL,"
+    " PRIMARY KEY(id, chunk_offset)"
+    ") WITHOUT ROWID;"
     "CREATE TABLE IF NOT EXISTS backends ("
     " id BLOB PRIMARY KEY, location TEXT NOT NULL, active INTEGER NOT NULL,"
     " available INTEGER NOT NULL DEFAULT 0,"
@@ -447,7 +452,7 @@ ObjectStore::ObjectStore(const std::string& path, Topology topology) :
     try {
         /*
          * WAL + synchronous=FULL: every committed mutation is durable —
-         * non-negotiable once witness records live here (stage 3).
+         * required for witness votes and object-map mutations.
          */
         exec(_db, "PRAGMA journal_mode=WAL;");
         exec(_db, "PRAGMA synchronous=FULL;");
@@ -487,6 +492,129 @@ ObjectDescriptor ObjectStore::_descriptor(const RawstdUUID& id) {
     ret.policy.seed = select.column_int64(5);
     ret.map_epoch = select.column_int64(6);
     return ret;
+}
+
+void ObjectStore::create_witness(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& spec
+) {
+    if (rawstd_uuid_is_nil(&id) || spec.width == 0 ||
+        spec.width > RAWSTOR_OBJECT_MAX_WIDTH ||
+        (spec.chunk_size != 0 &&
+         (spec.chunk_size & (spec.chunk_size - 1)) != 0)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    RawstorObjectMeta meta{};
+    meta.spec = spec;
+    meta.spec.size = 0;
+    meta.member_role = RAWSTOR_MEMBER_WITNESS;
+    meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    auto record = encode_witness(meta);
+    std::lock_guard<std::mutex> guard(_mutex);
+    Stmt stmt(
+        _db, "INSERT INTO witnesses(id,chunk_offset,record) VALUES(?,?,?)"
+    );
+    stmt.bind_blob(1, id.bytes, sizeof(id.bytes))
+        .bind_int64(2, offset)
+        .bind_blob(3, &record, sizeof(record))
+        .step();
+}
+
+RawstorObjectMeta
+ObjectStore::witness_meta(const RawstdUUID& id, uint64_t offset) {
+    std::lock_guard<std::mutex> guard(_mutex);
+    Stmt stmt(
+        _db, "SELECT record FROM witnesses WHERE id=? AND chunk_offset=?"
+    );
+    stmt.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, offset);
+    if (!stmt.step()) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+    auto bytes = stmt.column_blob(0);
+    if (bytes.size() != sizeof(RawstorFrameMetaPayload)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    RawstorFrameMetaPayload record{};
+    memcpy(&record, bytes.data(), sizeof(record));
+    return decode_witness(record);
+}
+
+void ObjectStore::set_witness(
+    const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
+    const RawstorObjectConfig& config
+) {
+    std::lock_guard<std::mutex> guard(_mutex);
+    Transaction tx(_db);
+    Stmt stmt(
+        _db, "SELECT record FROM witnesses WHERE id=? AND chunk_offset=?"
+    );
+    stmt.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, offset);
+    if (!stmt.step()) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+    auto bytes = stmt.column_blob(0);
+    if (bytes.size() != sizeof(RawstorFrameMetaPayload)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    RawstorFrameMetaPayload record{};
+    memcpy(&record, bytes.data(), sizeof(record));
+    auto meta = decode_witness(record);
+    meta.state = state;
+    meta.config = config;
+    record = encode_witness(meta);
+    Stmt update(
+        _db, "UPDATE witnesses SET record=? WHERE id=? AND chunk_offset=?"
+    );
+    update.bind_blob(1, &record, sizeof(record))
+        .bind_blob(2, id.bytes, sizeof(id.bytes))
+        .bind_int64(3, offset)
+        .step();
+    tx.commit();
+}
+
+void ObjectStore::remove_witness(const RawstdUUID& id, uint64_t offset) {
+    std::lock_guard<std::mutex> guard(_mutex);
+    Stmt stmt(_db, "DELETE FROM witnesses WHERE id=? AND chunk_offset=?");
+    stmt.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, offset).step();
+    if (sqlite3_changes(_db) == 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+}
+
+std::vector<WitnessEntry>
+ObjectStore::list_witnesses(RawstdUUID& token, unsigned int limit) {
+    std::lock_guard<std::mutex> guard(_mutex);
+    Stmt stmt(
+        _db, "SELECT id,chunk_offset FROM witnesses WHERE id>? ORDER BY "
+             "id,chunk_offset"
+    );
+    RawstdUUID after = token;
+    stmt.bind_blob(1, after.bytes, sizeof(after.bytes));
+    std::vector<WitnessEntry> entries;
+    RawstdUUID last{};
+    unsigned int groups = 0;
+    token = {};
+    while (stmt.step()) {
+        WitnessEntry entry{};
+        stmt.column_uuid(0, &entry.id);
+        entry.offset = stmt.column_int64(1);
+        if (rawstd_uuid_cmp(&entry.id, &last) != 0) {
+            if (groups == limit) {
+                token = last;
+                break;
+            }
+            ++groups;
+            last = entry.id;
+        }
+        entries.push_back(entry);
+    }
+    std::sort(
+        entries.begin(), entries.end(),
+        [](const WitnessEntry& a, const WitnessEntry& b) {
+            int order = rawstd_uuid_cmp(&a.id, &b.id);
+            return order == 0 ? a.offset < b.offset : order < 0;
+        }
+    );
+    return entries;
 }
 
 std::shared_ptr<const Topology> ObjectStore::topology() {

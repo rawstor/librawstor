@@ -392,7 +392,7 @@ rawstd::Task<void> Backend::create(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
     const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
-    if (sp.size == 0) {
+    if (sp.size == 0 && member_role != RAWSTOR_MEMBER_WITNESS) {
         rawstd_error("lvm: object size must be positive\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -447,7 +447,10 @@ rawstd::Task<void> Backend::create(
 
     // lvcreate rounds the size up to the VG extent size itself.
     char size_buf[32];
-    snprintf(size_buf, sizeof(size_buf), "%" PRIu64 "b", sp.size);
+    snprintf(
+        size_buf, sizeof(size_buf), "%" PRIu64 "b",
+        member_role == RAWSTOR_MEMBER_WITNESS ? uint64_t{1} : sp.size
+    );
 
     // A fresh copy starts with sync_id 0: it has never been part of an
     // established sync set (docs/mirroring.md). Set on the staging LV
@@ -516,7 +519,9 @@ rawstd::Task<void> Backend::create(
 
         std::exception_ptr zero_eptr;
         try {
-            co_await _zero_fill(fd, 0, sp.size, /*unmap=*/false);
+            if (member_role != RAWSTOR_MEMBER_WITNESS) {
+                co_await _zero_fill(fd, 0, sp.size, /*unmap=*/false);
+            }
         } catch (...) {
             zero_eptr = std::current_exception();
         }
@@ -707,7 +712,9 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     // a value that could go stale if the LV were ever resized outside
     // rawstor.
     RawstorObjectMeta ret{};
-    ret.spec.size = co_await _blk_size(id, offset, version_id);
+    ret.spec.size = identity.member_role == RAWSTOR_MEMBER_WITNESS
+                        ? 0
+                        : co_await _blk_size(id, offset, version_id);
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;

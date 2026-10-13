@@ -1,3 +1,4 @@
+#include "witness.hpp"
 #include <mds/client.hpp>
 
 #include <mds/server.hpp>
@@ -301,6 +302,78 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         }
         break;
     }
+    case RAWSTOR_CMD_ALLOCATE: {
+        RawstorFrameAllocatePayload payload{};
+        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        int32_t res = 0;
+        try {
+            if (payload.member_role != RAWSTOR_MEMBER_WITNESS ||
+                payload.chunk_shift >= 64) {
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
+            RawstorObjectSpec spec{};
+            spec.width = payload.width;
+            spec.chunk_size = payload.chunk_shift == 0
+                                  ? 0
+                                  : uint64_t{1} << payload.chunk_shift;
+            store.create_witness(
+                uuid_of(payload.object_id), payload.chunk_offset, spec
+            );
+        } catch (const std::system_error& e) {
+            res = -e.code().value();
+        }
+        co_await client->_send_response(head.cmd, head.cid, res);
+        break;
+    }
+    case RAWSTOR_CMD_META:
+    case RAWSTOR_CMD_RELEASE: {
+        RawstorFrameBasicPayload payload{};
+        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        int32_t res = 0;
+        RawstorFrameMetaPayload out{};
+        try {
+            RawstdUUID version = uuid_of(payload.version_id);
+            if (!rawstd_uuid_is_nil(&version)) {
+                RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+            }
+            if (head.cmd == RAWSTOR_CMD_META) {
+                out = encode_witness(store.witness_meta(
+                    uuid_of(payload.object_id), payload.offset
+                ));
+                res = sizeof(out);
+            } else {
+                store.remove_witness(
+                    uuid_of(payload.object_id), payload.offset
+                );
+            }
+        } catch (const std::system_error& e) {
+            res = -e.code().value();
+        }
+        co_await client->_send_response(
+            head.cmd, head.cid, res, res > 0 ? &out : nullptr,
+            res > 0 ? sizeof(out) : 0
+        );
+        break;
+    }
+    case RAWSTOR_CMD_SET_CONFIG:
+    case RAWSTOR_CMD_SET_WITNESS: {
+        RawstorFrameSetConfigPayload payload{};
+        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        int32_t res = 0;
+        try {
+            store.set_witness(
+                uuid_of(payload.object_id), payload.chunk_offset,
+                head.cmd == RAWSTOR_CMD_SET_CONFIG
+                    ? RAWSTOR_OBJECT_SYNC_STATE_LOST
+                    : static_cast<RawstorObjectSyncStateValue>(payload.flags),
+                decode_config(payload.config)
+            );
+        } catch (const std::system_error& e) {
+            res = -e.code().value();
+        }
+        co_await client->_send_response(head.cmd, head.cid, res);
+        break;
+    }
     case RAWSTOR_CMD_OBJ_CREATE: {
         RawstorFrameObjCreatePayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
@@ -356,6 +429,35 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                 data.data(), data.size()
             );
         }
+        break;
+    }
+    case RAWSTOR_CMD_LIST_WITNESSES: {
+        RawstorFrameListPayload payload{};
+        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        auto token = uuid_of(payload.token_id);
+        unsigned int limit = payload.limit == 0 || payload.limit > list_limit
+                                 ? list_limit
+                                 : payload.limit;
+        int32_t res = 0;
+        std::vector<RawstorFrameListEntry> entries;
+        try {
+            auto records = store.list_witnesses(token, limit);
+            entries.resize(records.size() + 1);
+            for (size_t i = 0; i < records.size(); ++i) {
+                memcpy(
+                    entries[i].id, records[i].id.bytes, sizeof(entries[i].id)
+                );
+                entries[i].chunk_offset = records[i].offset;
+            }
+            memcpy(entries.back().id, token.bytes, sizeof(entries.back().id));
+            res = entries.size() * sizeof(RawstorFrameListEntry);
+        } catch (const std::system_error& e) {
+            res = -e.code().value();
+        }
+        co_await client->_send_response(
+            head.cmd, head.cid, res, res > 0 ? entries.data() : nullptr,
+            res > 0 ? static_cast<size_t>(res) : 0
+        );
         break;
     }
     case RAWSTOR_CMD_LIST: {

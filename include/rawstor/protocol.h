@@ -88,6 +88,12 @@ extern "C" {
 #define RAWSTOR_CMD_SYNC_PREPARE 0x10
 #define RAWSTOR_CMD_SYNC_ACCEPT 0x11
 
+/* Metadata-only member update. Same payload as SET_CONFIG; flags carries
+ * CLEAN, DIRTY or LOST, not SET_CONFIG flags. */
+#define RAWSTOR_CMD_SET_WITNESS 0x22
+/* MDS witness records, using LIST's payload, rows and pagination cursor. */
+#define RAWSTOR_CMD_LIST_WITNESSES 0x23
+
 /*
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/open/
  * resize/remove a whole, possibly multi-chunk mds:// object. OBJ_OPEN
@@ -126,7 +132,7 @@ typedef uint16_t RawstorCommandType;
 // typedef rather than the enum itself, same reasoning as
 // RawstorCommandType above: an enum's underlying type isn't guaranteed
 // portable across compilers, which a RAWSTOR_PACKED wire struct can't risk.
-// uint8_t is plenty for a 3-value state (same size class as
+// uint8_t covers the copy and witness states (same size class as
 // RawstorFrameIOPayload::flags below).
 typedef uint8_t RawstorSyncStateType;
 

@@ -159,7 +159,7 @@ Currently, five URI schemes are supported:
 |--------|-------------|
 | `ost`  | Backend server speaking the OST protocol (see [Protocol](protocol.md)) |
 | `file` | Local filesystem backend (a folder path) |
-| `lvm`  | Local LVM thin pool backend |
+| `lvm`  | Local LVM volume group backend |
 | `zfs`  | Local ZFS pool backend |
 | `mds`  | Metadata server addressing a whole chunked, possibly multi-copy object rather than a single physical store (see [mds.md](mds.md)) |
 
@@ -383,3 +383,15 @@ directly (a single entry, 0, for a plain, non-`mds://` target).
   `TOPOLOGY_PATH`/`topology.conf`, scanned by `rawstor-mds --reconstruct`).
   Reusing it here for this document would make the two docs' shared
   vocabulary actively misleading, so this file keeps its current name.
+
+### Witness locations
+
+A `witness+` prefix marks a metadata-only member in a multi-member target:
+`witness+ost://host:port`, `witness+mds://host:port`,
+`witness+file:///path`, `witness+lvm://vg`, or `witness+zfs://pool/rawstor`.
+`width` counts only data copies; `config.nroles` counts data and witness
+members. At most one witness is supported per chunk, only with an even
+number of data members. It participates in synchronous membership barriers
+and quorum. Reads, data writes, flushes and resync use only data members;
+a witness may supply a safe degraded-open vote (see [Witness](mds.md#witness)).
+Keep the complete target and member ordering for subsequent opens.

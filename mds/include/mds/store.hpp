@@ -20,6 +20,11 @@ struct sqlite3;
 namespace rawstor {
 namespace mdsserver {
 
+struct WitnessEntry {
+    RawstdUUID id;
+    uint64_t offset;
+};
+
 struct ObjectDescriptor {
     RawstdUUID id;
     uint64_t logical_size;
@@ -104,6 +109,19 @@ public:
 
     ObjectStore& operator=(const ObjectStore&) = delete;
     ObjectStore& operator=(ObjectStore&&) = delete;
+
+    void create_witness(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& spec
+    );
+    RawstorObjectMeta witness_meta(const RawstdUUID& id, uint64_t offset);
+    void set_witness(
+        const RawstdUUID& id, uint64_t offset,
+        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
+    );
+    void remove_witness(const RawstdUUID& id, uint64_t offset);
+
+    std::vector<WitnessEntry>
+    list_witnesses(RawstdUUID& token, unsigned int limit);
 
     std::shared_ptr<const Topology> topology();
 

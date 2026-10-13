@@ -1295,7 +1295,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     }
 
     // A witness holds no data and is never a valid target for real I/O
-    // (docs/mds.md, "Witness (stage 3)": "data I/O and resync skip it")
+    // (docs/mds.md, "Witness": "data I/O and resync skip it")
     // -- every real open (this call) goes through here regardless of
     // caller, client-side (Chunk::create()'s own per-member connect) or
     // server-side (rawstor-ost's own SET_OBJECT handler opens its local
@@ -1866,6 +1866,20 @@ rawstd::Task<void> Slot::set_config(
         _finish(t_call);
         throw;
     }
+}
+
+rawstd::Task<void> Slot::set_witness(
+    const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
+    const RawstorObjectConfig& config
+) {
+    auto member = _copy_state(id, offset);
+    co_await member->record.lock(_queue);
+    RecordLockGuard guard{member->record};
+    co_await member->raise_epoch(_queue, config.epoch);
+    auto trace = RAWSTD_TRACE_EVENT('c', "%s\n", "set_witness");
+    co_await _with_retry(
+        "set_witness", trace, &Backend::set_witness, id, offset, state, config
+    );
 }
 
 rawstd::Task<void> Slot::flush(uint64_t epoch) {

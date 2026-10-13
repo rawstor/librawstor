@@ -166,6 +166,11 @@ public:
         const RawstorObjectConfig& config, unsigned int flags
     ) override;
 
+    rawstd::Task<void> set_witness(
+        const RawstdUUID& id, uint64_t offset,
+        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
+    ) override;
+
     rawstd::Task<void> leave() override;
 
     rawstd::Task<RawstorObjectSyncReply> sync_prepare(

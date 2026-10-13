@@ -296,13 +296,17 @@ rawstd::Task<void> Backend::create(
     // the requested size up front.
     const uint64_t volblocksize = 16384;
 
-    if (sp.size == 0 || sp.size > UINT64_MAX - (volblocksize - 1)) {
+    if (member_role != RAWSTOR_MEMBER_WITNESS &&
+        (sp.size == 0 || sp.size > UINT64_MAX - (volblocksize - 1))) {
         rawstd_error("zfs: invalid object size: %" PRIu64 "\n", sp.size);
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    uint64_t size = (sp.size + volblocksize - 1) / volblocksize * volblocksize;
-    if (size != sp.size) {
+    uint64_t size =
+        member_role == RAWSTOR_MEMBER_WITNESS
+            ? volblocksize
+            : (sp.size + volblocksize - 1) / volblocksize * volblocksize;
+    if (member_role != RAWSTOR_MEMBER_WITNESS && size != sp.size) {
         rawstd_info(
             "zfs: rounding volume size up from %" PRIu64 " to %" PRIu64
             " bytes\n",
@@ -488,7 +492,9 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     // trust a value that could go stale if the zvol were ever resized
     // outside rawstor.
     RawstorObjectMeta ret{};
-    ret.spec.size = co_await _blk_size(id, offset, version_id);
+    ret.spec.size = identity.member_role == RAWSTOR_MEMBER_WITNESS
+                        ? 0
+                        : co_await _blk_size(id, offset, version_id);
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;

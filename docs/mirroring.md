@@ -28,7 +28,7 @@ numbers its stages separately.
 | `rawstor resolve TARGET --winner=N [--offset]` | — | ✅ | `cli/resolve.c` |
 | Force-open below quorum (CLI / opts) | — | ❌ | — |
 | Persistent write-intent bitmap (resumable resync, cheaper F5) | 4 | ❌ | — |
-| MDS witness in quorum | 4 | ❌ | designed in [MDS design](mds.md#witness-stage-3) |
+| Metadata-only witness on MDS, OST or local backend | 4 | ✅ | [Witness](mds.md#witness), `Backend::set_witness()`, `src/chunk.cpp` |
 | Stored checksums / scrub | 4 | ❌ | — |
 | Fastest-mirror read selection | 4 | ❌ | — |
 
@@ -36,7 +36,7 @@ numbers its stages separately.
 
 A comma-separated target list (see [Concepts](concepts.md)) makes the client keep N identical copies of a chunk on different backends -- each copy is a **slot**, addressed by one URI in the list. A plain (non-`mds://`) target is the degenerate single-chunk case: the whole object it addresses **is** that one chunk, so everything below applies to it directly; an `mds://` object's own chunks (`docs/mds.md`) each get this same treatment independently, possibly with different widths. This document defines the failure model for N-way mirroring: what can fail, how the client reacts, and how byte-for-byte identity of the copies is restored afterwards. Erasure coding is out of scope.
 
-Status: stages 1-3 are implemented (per-copy metadata, quorum open, degrade & continue, read failover/repair, clean close, online resync with automatic rejoin through a periodic reconnect probe) for all backends, including `lvm://`/`zfs://` (native ZFS user properties / LVM tags — see below). Not yet implemented: a persistent write-intent bitmap (a crashed resync restarts from scratch and an unclean shutdown costs a full resync), stored checksums/scrub, the MDS witness.
+Status: stages 1-3 are implemented (per-copy metadata, quorum open, degrade & continue, read failover/repair, clean close, online resync with automatic rejoin through a periodic reconnect probe) for all backends, including `lvm://`/`zfs://` (native ZFS user properties / LVM tags — see below). Not yet implemented: a persistent write-intent bitmap (a crashed resync restarts from scratch and an unclean shutdown costs a full resync), stored checksums/scrub. Witness members and their degraded-open voting rules are implemented; interprocess mirror coordination is deferred to multiattach stage 2.
 
 Error codes: open without quorum (including the case where every mirror is unreachable, F3) fails with `-ENOTCONN`; split brain (or no trusted member) fails with `-ENOTRECOVERABLE`; a write that loses its write quorum, or every member, on an already-open chunk fails with `-EIO`.
 
@@ -253,7 +253,7 @@ to history) exactly when that membership changes, in either direction:
   in between, the copy is still syncing on its old record — stale either
   way. Data-only quorum would be safe without this bump (the copies are
   identical), but a record naming the old membership — such as a witness
-  record whose update failed (see [MDS design](mds.md#witness-stage-3)) —
+  record whose update failed (see [MDS design](mds.md#witness)) —
   must never match a copy of the new one.
 
 Everything else keeps the identity:
@@ -282,6 +282,8 @@ Metadata transitions (marking `DIRTY`, epoch/`sync_id` bump, resync completion) 
 
 ## Quorum: excluding split brain by construction
 
+The following data-only rules apply when no witness is declared.
+
 Key invariant: **every acknowledged write exists on a set of copies that intersects any future auto-start set.** Therefore the newest `sync_id` is always visible at auto-start, and two disjoint write histories cannot be created through automatic paths.
 
 - **Auto-start (open) requires strictly more than N/2 reachable mirrors** (N=2 → both). Within the reachable majority, the copy with the newest `sync_id` is authoritative (majority intersection guarantees it is present); stale copies get an online resync.
@@ -301,7 +303,13 @@ Key invariant: **every acknowledged write exists on a set of copies that interse
   (N ≥ 3) counts only IN-SYNC copies: a STALE or resyncing copy doesn't
   hold the writes it would be vouching for.
 - **`sync_id_history` stays as defense in depth**: it catches consequences of a wrong manual force-open, an OST restored from backup, or bugs.
-- **Roadmap — MDS as witness.** A future MDS participates in quorum as a metadata-only member (stores `sync_id`/`epoch`, no data). This restores auto-start for 2 data mirrors with one OST down (2 of 3 votes). Not part of v1, but quorum rules and the metadata format are designed so a witness member fits without schema changes (quorum counts all members, including metadata-only ones).
+- **Witness members.** An explicitly declared metadata-only member can
+  participate in the same synchronous membership barriers and quorum,
+  only for an even number of data copies. With N data copies and one witness,
+  both writable open and runtime writes require a majority of N+1 members:
+  N/2 matching data copies plus witness, or N/2+1 data copies alone. A failed
+  witness update excludes its vote; writes below quorum freeze. See
+  [Witness](mds.md#witness). Reads, data writes and resync use only data copies.
 
 The open decision, put together:
 
@@ -470,7 +478,7 @@ round trip): if an OST crash (losing acknowledged writes from page cache)
 is followed by a client crash *before* the F1/F6 barrier lands, the next
 open sees all copies `DIRTY` in the same sync set (F5) and the
 deterministic winner may be the member that lost data. Closing this window
-requires synchronous writes or a witness; it is accepted for now and
+requires synchronous durable data writes; it is accepted for now and
 bounded by the barrier latency.
 
 ### Known limitation: two mirrors, one survivor
@@ -494,9 +502,10 @@ quorum (F10), so the open is refused rather than served off B as if it were
 current. An operator who accepts B's content recreates A's copy by hand,
 and the next open resyncs it from B.
 
-Avoiding the window takes a third vote: three data copies (N = 3 freezes
-writes below a majority instead of continuing on one copy) or, for two data
-copies, a witness (*Roadmap — MDS as witness* above).
+A third data copy retains data redundancy after one member fails, and
+N = 3 freezes writes below a data majority. A metadata-only witness improves
+degraded-start availability for two data copies, but cannot recover their
+contents if both data copies are lost.
 
 ---
 
@@ -519,4 +528,4 @@ copies, a witness (*Roadmap — MDS as witness* above).
 1. Metadata + new opcodes + the fsync protocol for metadata.
 2. Quorum rules at open + degrade & continue / write freeze + read failover and read-repair.
 3. Online resync.
-4. (v2+) persistent write-intent bitmap, MDS witness in quorum, stored checksums / scrub, fastest-mirror read selection.
+4. Witness members are implemented; v2+ work includes persistent write-intent bitmap, stored checksums / scrub, fastest-mirror read selection.

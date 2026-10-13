@@ -122,12 +122,8 @@ public:
         RawstdUUID& token, RawstdUUID version_id = {}
     ) = 0;
 
-    // `member_role` is the copy being created's own placement identity
-    // (docs/mds.md, chunk_meta) -- not part of `sp` (RawstorObjectSpec's
-    // own doc comment, target.h): every real caller today creates a
-    // RAWSTOR_MEMBER_DATA copy (Target::create()'s own create_one()
-    // hardcodes it), a witness copy being a stage-3 operation on an
-    // already-existing chunk's quorum, never a create() of its own.
+    // Creates one data or metadata-only witness member. member_role is
+    // placement identity, distinct from the chunk-wide specification.
     virtual rawstd::Task<void> create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstorObjectSpec& sp,
@@ -232,6 +228,13 @@ public:
         const RawstorObjectConfig& config,
         const RawstorObjectSyncReply& proposed
     ) = 0;
+
+    // Atomically persists a witness record before replying. No writer session
+    // or data object is bound: witness state is controlled by the chunk.
+    virtual rawstd::Task<void> set_witness(
+        const RawstdUUID& id, uint64_t offset,
+        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
+    );
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 

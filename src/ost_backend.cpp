@@ -773,13 +773,14 @@ public:
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const RawstdUUID& id, uint64_t chunk_offset, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags,
-        const rawstd::TraceEvent& trace_event
+        const rawstd::TraceEvent& trace_event,
+        RawstorCommandType cmd = RAWSTOR_CMD_SET_CONFIG
     ) :
         BackendOp(backend, cid, trace_event, "set_config", 0, 0),
         _request{} {
         _request.head = {
             .magic = RAWSTOR_MAGIC,
-            .cmd = RAWSTOR_CMD_SET_CONFIG,
+            .cmd = cmd,
             .cid = cid,
         };
         memcpy(
@@ -813,7 +814,7 @@ public:
         }
 
         if (!error) {
-            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_SET_CONFIG);
+            error = validate_cmd(response->head.cmd, _request.head.cmd);
         }
 
         _dispatch(0, error);
@@ -1057,14 +1058,15 @@ public:
     BackendOpList(
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const RawstdUUID& token, unsigned int limit,
-        const rawstd::TraceEvent& trace_event
+        const rawstd::TraceEvent& trace_event,
+        RawstorCommandType cmd = RAWSTOR_CMD_LIST
     ) :
         BackendOp(backend, cid, trace_event, "list", 0, 0),
         _request({
             .head =
                 {
                     .magic = RAWSTOR_MAGIC,
-                    .cmd = RAWSTOR_CMD_LIST,
+                    .cmd = cmd,
                     .cid = cid,
                 },
             .payload = {
@@ -1091,7 +1093,7 @@ public:
         }
 
         if (!error) {
-            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_LIST);
+            error = validate_cmd(response->head.cmd, _request.head.cmd);
         }
 
         if (!error && response->body.res > 0) {
@@ -1475,7 +1477,9 @@ rawstd::Task<void> Backend::list_chunks(
 
     std::shared_ptr<BackendOpList> op = std::make_shared<BackendOpList>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        input_token, limit, trace_event
+        input_token, limit, trace_event,
+        location().scheme() == "witness+mds" ? RAWSTOR_CMD_LIST_WITNESSES
+                                             : RAWSTOR_CMD_LIST
     );
     _add_op(op);
 
@@ -1541,11 +1545,8 @@ rawstd::Task<void> Backend::list_chunks(
 }
 
 // sp is forwarded on the wire unchanged (see BackendOpAllocate); the
-// remote rawstor-ost's own Client::_allocate() derives its own local
-// copy count from its own configured location count directly (see its
-// own comment), never from anything in the request -- this connection is
-// still one copy from its caller's point of view, same as every other
-// backend.
+// The server preserves the requested member role and placement identity;
+// one connection addresses one data or metadata-only member.
 rawstd::Task<void> Backend::create(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
     const RawstorObjectSpec& sp, RawstorMemberRole member_role
@@ -1799,6 +1800,36 @@ rawstd::Task<void> Backend::set_config(
         std::make_shared<BackendOpSetConfig>(
             std::static_pointer_cast<Backend>(shared_from_this()),
             _cid_counter++, id, offset, member_index, config, flags, trace_event
+        );
+    _add_op(op);
+
+    try {
+        size_t result = co_await _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", result, op->request_size()
+        );
+        op->request_cb(validate_result(op->request_size(), result));
+    } catch (const std::system_error& e) {
+        op->request_cb(e.code().value());
+    }
+
+    co_await *op;
+}
+
+rawstd::Task<void> Backend::set_witness(
+    const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
+    const RawstorObjectConfig& config
+) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
+
+    std::shared_ptr<BackendOpSetConfig> op =
+        std::make_shared<BackendOpSetConfig>(
+            std::static_pointer_cast<Backend>(shared_from_this()),
+            _cid_counter++, id, offset, 0, config,
+            static_cast<unsigned int>(state), trace_event,
+            RAWSTOR_CMD_SET_WITNESS
         );
     _add_op(op);
 

@@ -214,6 +214,9 @@ rawstd::Task<void> Backend::set_config(
         }
     }
     meta.config = config;
+    if (meta.member_role == RAWSTOR_MEMBER_WITNESS) {
+        meta.state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
+    }
     co_await _write_meta(
         id, offset, meta.state, meta.config, meta.promised, meta.accepted
     );
@@ -244,6 +247,30 @@ rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
         );
     }
     co_return proposed;
+}
+
+rawstd::Task<void> Backend::set_witness(
+    const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
+    const RawstorObjectConfig& config
+) {
+    if (state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN &&
+        state != RAWSTOR_OBJECT_SYNC_STATE_LOST &&
+        state != RAWSTOR_OBJECT_SYNC_STATE_DIRTY) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    auto metas = co_await meta(id, offset, RawstdUUID{});
+    if (metas.front().member_role != RAWSTOR_MEMBER_WITNESS) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    for (size_t i = 0; i < config.nroles; ++i) {
+        if (config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
+    co_await _write_meta(
+        id, offset, state, config, metas.front().promised,
+        metas.front().accepted
+    );
 }
 
 rawstd::Task<void> Backend::set_version(

@@ -230,6 +230,11 @@ public:
         const RawstorObjectSyncReply& proposed
     ) override final;
 
+    rawstd::Task<void> set_witness(
+        const RawstdUUID& id, uint64_t offset,
+        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
+    ) override final;
+
     rawstd::Task<size_t>
     pread(void* buf, size_t size, uint64_t offset) override final;
 

@@ -10,7 +10,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Response `hash` (xxh3 with libxxhash) | ✅ | `librawstd/src/hash.c` |
 | Session: `SET_OBJECT` | ✅ | OST `ost/src/client.cpp`, MDS `mds/src/client.cpp` |
 | Data: `READ` `WRITE` `DISCARD` `ALLOCATE` `RELEASE` `FLUSH` `WRITE_ZEROES` | ✅ | OST server + `src/ost_backend.cpp` |
-| Metadata: `META` `SET_CONFIG` `LEAVE` `CREATE_VERSION` `LIST_VERSIONS` | ✅ | OST server + `src/ost_backend.cpp` |
+| Metadata: `META` `SET_CONFIG` `SET_WITNESS` `LIST_WITNESSES` `LEAVE` `CREATE_VERSION` `LIST_VERSIONS` | ✅ | OST server + `src/ost_backend.cpp` |
 | `LIST`, `LOCATION_INFO` | ✅ | OST and MDS servers, both clients |
 | Object: `OBJ_CREATE` `OBJ_OPEN` `OBJ_RESIZE` `OBJ_REMOVE` | ✅ | MDS server + `src/mds_client.cpp` |
 | Object versions: `OBJ_COMMIT_VERSION` `OBJ_REMOVE_VERSION` `OBJ_LIST_VERSIONS` | ✅ | MDS server + `src/mds_client.cpp` |
@@ -79,19 +79,21 @@ keep `0x0b`/`0x0c`.
 | `0x01` | `READ` | OST | IO | data (`res` bytes) |
 | `0x02` | `WRITE` | OST | IO (`flags`: `SYNC`, `RESYNC`), then `len` bytes of data | — |
 | `0x03` | `DISCARD` | OST | IO | — |
-| `0x04` | `ALLOCATE` | OST | Allocate | — |
-| `0x05` | `RELEASE` | OST | Basic (non-nil `version_id`: that version only) | — |
+| `0x04` | `ALLOCATE` | OST / MDS (witness only) | Allocate | — |
+| `0x05` | `RELEASE` | OST / MDS (witness only) | Basic (non-nil `version_id`: that version only) | — |
 | `0x06` | `LIST` | OST, MDS | List | List rows |
 | `0x08` | `LOCATION_INFO` | OST / MDS | Basic (unused) | `RawstorLocationInfo` |
 | `0x09` | `FLUSH` | OST | Basic (`val` = epoch) | — |
 | `0x0a` | `WRITE_ZEROES` | OST | IO (`flags`: `SYNC`, `UNMAP`, `RESYNC`) | — |
-| `0x0b` | `SET_CONFIG` | OST | SetConfig | — |
-| `0x0c` | `META` | OST | Basic (`offset` = chunk offset, `version_id`, nil = live) | Meta |
+| `0x0b` | `SET_CONFIG` | OST / MDS (witness only) | SetConfig | — |
+| `0x0c` | `META` | OST / MDS (witness only) | Basic (`offset` = chunk offset, `version_id`, nil = live) | Meta |
 | `0x0d` | `CREATE_VERSION` | OST | Basic (`version_id` = new version) | — |
 | `0x0e` | `LIST_VERSIONS` | OST | Basic (`offset` = chunk offset) | Version rows |
 | `0x0f` | `LEAVE` | OST | Basic (unused) | — |
 | `0x10` | `SYNC_PREPARE` | OST | SyncPropose (`ballot` only) | SyncReply |
 | `0x11` | `SYNC_ACCEPT` | OST | SyncPropose | SyncReply |
+| `0x22` | `SET_WITNESS` | OST / MDS | SetConfig (`flags` = witness state) | — |
+| `0x23` | `LIST_WITNESSES` | MDS | List | List rows |
 | `0x40` | `OBJ_CREATE` | MDS | ObjCreate | ObjCreated |
 | `0x41` | `OBJ_OPEN` | MDS | Basic (`version_id`, nil = live) | ObjDescriptor + chunks |
 | `0x42` | `OBJ_RESIZE` | MDS | ObjOp (`val` = new size) | ObjResized |
@@ -423,7 +425,7 @@ in no particular order. An empty payload means the object has no versions
 ### Meta — 360 bytes
 
 Everything about one stored copy: its size, its placement identity, its own
-state (`CLEAN`, `DIRTY`, `LOST`), how many sessions have it open for
+state (`CLEAN`, `DIRTY`, `LOST` for data; `CLEAN`, `DIRTY`, `LOST` for witnesses), how many sessions have it open for
 writing right now (`writers`), and the chunk's configuration as last set on
 it (a [Config](#config--312-bytes), at offset 16), and the copy's
 replica of the register's ballots: the highest it promised and the one
@@ -678,3 +680,28 @@ ObjVersionMember — 24 bytes:
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
 ```
+
+## Witness member operations
+
+Both OST and MDS accept `ALLOCATE` with `member_role = 1` to create a
+metadata-only member, `META` to read it and `RELEASE` to remove it.
+`SET_WITNESS` (`0x22`, shared metadata) uses `RawstorFrameSetConfigPayload`.
+For this command only, `flags` is the witness record state: `CLEAN = 1`,
+`DIRTY = 2`, or `LOST = 3`; other values are `-EINVAL`.
+State and config are persisted together before the empty success response.
+It cannot modify a data member. `config.roles` records all members in
+the target's stable order; the witness entry is IN_SYNC after a successful
+configuration update, or EXCLUDED when the data quorum continues without it.
+MDS accepts these operations independently of its `OBJ_*` map registry.
+`width` is data-copy redundancy; the configuration role array includes the
+witness. One witness per chunk is allowed only with an even data-member count.
+
+A generic `SET_CONFIG` on a witness also changes its state to LOST,
+invalidating a vote until the chunk establishes a new trustworthy record.
+Witnesses do not accept data I/O or object versions.
+
+`LIST_WITNESSES` (`0x23`, MDS) uses `RawstorFrameListPayload` and returns
+`RawstorFrameListEntry` rows plus the final pagination cursor row. Limits
+count object IDs; every chunk offset of an ID stays on the same page.
+Witness locations filter listings by member role, so a shared backing store
+can contain both data and witness records.

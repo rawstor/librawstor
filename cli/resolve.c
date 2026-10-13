@@ -116,6 +116,10 @@ static int resolve_chunk(
             );
             return EX_USAGE;
         }
+        if (metas[winners[i]].member_role == RAWSTOR_MEMBER_WITNESS) {
+            fprintf(stderr, "A witness cannot be a data winner\n");
+            return EX_USAGE;
+        }
         if (metas[winners[i]].state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             fprintf(
                 stderr,
@@ -184,6 +188,33 @@ static int resolve_chunk(
         new_config.roles[i] = is_winner(winners, num_winners, (size_t)i)
                                   ? RAWSTOR_OBJECT_MEMBER_IN_SYNC
                                   : RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    }
+
+    /* Invalidate witness votes before establishing the operator's new
+     * branch. Failure aborts: an old CLEAN vote could otherwise endorse
+     * an excluded data member after the operator's chosen winner is lost. */
+    for (ssize_t i = 0; i < result; ++i) {
+        if (metas[i].member_role != RAWSTOR_MEMBER_WITNESS) {
+            continue;
+        }
+        RawstorCliOp witness_op;
+        res = rawstor_cli_op_init(&witness_op);
+        if (res < 0) {
+            return rawstd_exitcode_for_errno(-res);
+        }
+        int sres = rawstor_target_set_member_config(
+            witness_op.queue, target, offset, (size_t)i, &new_config, 0,
+            rawstor_cli_op_cb, &witness_op
+        );
+        ssize_t sresult = rawstor_cli_op_wait(&witness_op, sres);
+        rawstor_cli_op_destroy(&witness_op);
+        if (sresult < 0) {
+            fprintf(
+                stderr, "Cannot invalidate witness before resolve: %s\n",
+                strerror((int)-sresult)
+            );
+            return rawstd_exitcode_for_errno((int)-sresult);
+        }
     }
 
     /* Every winner gets the exact same new identity, written one at a

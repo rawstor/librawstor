@@ -5,6 +5,7 @@
 #include "object.hpp"
 #include "opts.h"
 #include "slot.hpp"
+#include "witness.hpp"
 
 #include <rawstor/list.h>
 #include <rawstor/target.h>
@@ -251,17 +252,74 @@ rawstd::Task<void> create_one(
         co_await rawstor::Slot::create(queue, strip_path(target));
     std::exception_ptr error;
     try {
-        // Every target created through this, the ordinary create() path,
-        // is a data copy -- a witness (docs/mds.md, "Witness", stage 3)
-        // is a metadata-only member attached to an already-existing
-        // chunk's own quorum, never something create_one() itself builds.
-        co_await slot->create(id, offset, sp, RAWSTOR_MEMBER_DATA);
+        RawstorMemberRole role = target.scheme().starts_with("witness+")
+                                     ? RAWSTOR_MEMBER_WITNESS
+                                     : RAWSTOR_MEMBER_DATA;
+        co_await slot->create(id, offset, sp, role);
     } catch (...) {
         error = std::current_exception();
     }
     co_await slot->close();
     if (error) {
         std::rethrow_exception(error);
+    }
+}
+
+rawstd::Task<void> initialize_witness(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& members
+) {
+    size_t witness = members.size();
+    for (size_t i = 0; i < members.size(); ++i) {
+        if (rawstor::witness_location(members[i])) {
+            witness = i;
+        }
+    }
+    if (witness == members.size() || members.size() == 1) {
+        co_return;
+    }
+    RawstdUUID generation{};
+    if (rawstd_uuid7_init(&generation) != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    RawstorObjectConfig config{};
+    config.epoch = 1;
+    memcpy(&config.sync_id, generation.bytes + 8, sizeof(config.sync_id));
+    config.nroles = static_cast<uint8_t>(members.size());
+    for (size_t i = 0; i < members.size(); ++i) {
+        config.roles[i] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    }
+    // Publish the CLEAN witness only after all data members durably carry
+    // the initial generation. A failure is rolled back with the creation.
+    for (size_t pass = 0; pass < 2; ++pass) {
+        for (size_t i = 0; i < members.size(); ++i) {
+            if ((i == witness) != (pass == 1)) {
+                continue;
+            }
+            auto slot =
+                co_await rawstor::Slot::create(queue, strip_path(members[i]));
+            std::exception_ptr error;
+            try {
+                if (i == witness) {
+                    co_await slot->set_witness(
+                        uuid_from_target(members[i]),
+                        extract_offset(members[i]),
+                        RAWSTOR_OBJECT_SYNC_STATE_CLEAN, config
+                    );
+                } else {
+                    co_await slot->set_config(
+                        uuid_from_target(members[i]),
+                        extract_offset(members[i]), static_cast<uint8_t>(i),
+                        config, 0
+                    );
+                }
+            } catch (...) {
+                error = std::current_exception();
+            }
+            co_await slot->close();
+            if (error) {
+                std::rethrow_exception(error);
+            }
+        }
     }
 }
 
@@ -459,8 +517,10 @@ rawstd::Task<RawstorObjectSpec> resolve_spec(
             // that did answer, and none answering is this location's own
             // failure.
             auto answered = std::find_if(
-                ms.begin(), ms.end(), [](const RawstorObjectMeta& m) {
-                    return m.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE;
+                ms.begin(), ms.end(), [&locations](const RawstorObjectMeta& m) {
+                    return m.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
+                           (locations.size() == 1 ||
+                            m.member_role != RAWSTOR_MEMBER_WITNESS);
                 }
             );
             if (answered == ms.end()) {
@@ -468,7 +528,12 @@ rawstd::Task<RawstorObjectSpec> resolve_spec(
             }
             RawstorObjectSpec ret = answered->spec;
             if (locations.size() > 1 || ret.width == 0) {
-                ret.width = static_cast<unsigned int>(locations.size());
+                ret.width = static_cast<unsigned int>(std::count_if(
+                    locations.begin(), locations.end(),
+                    [](const rawstd::URI& uri) {
+                        return !rawstor::witness_location(uri);
+                    }
+                ));
             }
             co_return ret;
         } catch (const std::system_error& e) {
@@ -525,7 +590,11 @@ rawstd::Task<std::vector<RawstorObjectMeta>> resolve_meta(
             ret.insert(ret.end(), ms.begin(), ms.end());
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unreachable: %s\n", e.what());
-            ret.push_back(RawstorObjectMeta{});
+            RawstorObjectMeta missing{};
+            if (witness_location(locations[i])) {
+                missing.member_role = RAWSTOR_MEMBER_WITNESS;
+            }
+            ret.push_back(missing);
         }
     }
 
@@ -1217,6 +1286,14 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     // each), as Chunk::create() checks at open: none is created that could
     // not be opened.
     for (const std::vector<rawstd::URI>& uris : chunks) {
+        size_t witnesses = 0;
+        for (const auto& uri : uris) {
+            witnesses += witness_location(uri);
+        }
+        if (witnesses > 1 || witnesses == uris.size() ||
+            (witnesses && (uris.size() - witnesses) % 2 != 0)) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
         if (uris.size() > RAWSTOR_OBJECT_MAX_WIDTH) {
             rawstd_error(
                 "Too many uris: %zu, at most %d\n", uris.size(),
@@ -1332,6 +1409,13 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
             }
         }
 
+        if (!eptr) {
+            try {
+                co_await initialize_witness(queue, uris);
+            } catch (...) {
+                eptr = std::current_exception();
+            }
+        }
         if (eptr) {
             // A later chunk's own mirrors were never even attempted --
             // nothing of theirs to roll back.
@@ -1371,7 +1455,13 @@ rawstd::Task<void> Target::create_version(rawio::Queue& queue) const {
     // version this call didn't create.
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_uris.size());
+    std::vector<rawstd::URI> data_uris;
     for (const auto& uri : _uris) {
+        if (!witness_location(uri)) {
+            data_uris.push_back(uri);
+        }
+    }
+    for (const auto& uri : data_uris) {
         tasks.push_back(create_version_one(queue, uri, _version_id));
     }
 
@@ -1379,10 +1469,10 @@ rawstd::Task<void> Target::create_version(rawio::Queue& queue) const {
     // only recorded here; rolling back happens just below.
     std::vector<rawstd::URI> created;
     std::exception_ptr eptr;
-    for (size_t i = 0; i < _uris.size(); ++i) {
+    for (size_t i = 0; i < data_uris.size(); ++i) {
         try {
             co_await tasks[i];
-            created.push_back(_uris[i]);
+            created.push_back(data_uris[i]);
         } catch (...) {
             if (!eptr) {
                 eptr = std::current_exception();
@@ -1593,9 +1683,15 @@ rawstd::Task<void> Target::set_member_config(
         co_await rawstor::Slot::create(queue, location);
     std::exception_ptr error;
     try {
-        co_await slot->set_config(
-            id, offset, static_cast<uint8_t>(member_index), config, flags
-        );
+        if (witness_location(location)) {
+            co_await slot->set_witness(
+                id, offset, RAWSTOR_OBJECT_SYNC_STATE_LOST, config
+            );
+        } else {
+            co_await slot->set_config(
+                id, offset, static_cast<uint8_t>(member_index), config, flags
+            );
+        }
     } catch (...) {
         error = std::current_exception();
     }
@@ -1669,7 +1765,13 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
     // Slot::remove()/remove_version() accordingly -- this method itself
     // stays a single entry point regardless, since the identity being
     // removed is already fully described by the target string.
-    co_await remove_many(queue, _uris);
+    std::vector<rawstd::URI> members;
+    for (const auto& uri : _uris) {
+        if (rawstd_uuid_is_nil(&_version_id) || !witness_location(uri)) {
+            members.push_back(uri);
+        }
+    }
+    co_await remove_many(queue, members);
 }
 
 rawstd::Task<void>

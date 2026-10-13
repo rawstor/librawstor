@@ -313,7 +313,7 @@ rawstd::Task<void> Backend::create(
 
     std::exception_ptr create_error;
     try {
-        // A witness holds no data (docs/mds.md, "Witness (stage 3)") --
+        // A witness holds no data (docs/mds.md, "Witness") --
         // skips the whole real-storage dance below entirely, leaving
         // `target_path` at the 0 bytes O_CREAT just gave it. This still
         // needs to be a real (if empty) file rather than none at all:
@@ -536,6 +536,11 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     }
     std::string location_path = get_location_path(location());
 
+    std::error_code location_error;
+    if (!std::filesystem::is_directory(location_path, location_error)) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+    }
+
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
@@ -580,7 +585,9 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     }
 
     RawstorObjectMeta ret{};
-    ret.spec.size = static_cast<uint64_t>(st.st_size);
+    ret.spec.size = identity.member_role == RAWSTOR_MEMBER_WITNESS
+                        ? 0
+                        : static_cast<uint64_t>(st.st_size);
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;

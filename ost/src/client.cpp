@@ -4,6 +4,7 @@
 
 #include "slot.hpp"
 #include "target.hpp"
+#include "witness.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -683,6 +684,7 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
+            case RAWSTOR_CMD_SET_WITNESS:
             case RAWSTOR_CMD_SET_CONFIG: {
                 RawstorFrameSetConfigPayload set_config_payload;
                 co_await recv_frame(
@@ -969,12 +971,6 @@ rawstd::DetachedTask Client::_allocate(
         // this relay/multi-location rawstor-ost happens to have
         // configured locally. chunk_shift_to_size() can throw on a
         // malformed chunk_shift, so it needs to run inside this try too.
-        // payload.member_role isn't forwarded: rawstor_target_create()
-        // itself always creates RAWSTOR_MEMBER_DATA members (create_one()'s
-        // own comment, target.cpp) -- a witness (docs/mds.md, "Witness",
-        // stage 3) is a metadata-only member attached to an
-        // already-existing slot's own quorum, never something ALLOCATE
-        // itself builds.
         RawstorObjectSpec spec{
             .size = payload.size,
             .width = payload.width,
@@ -983,15 +979,41 @@ rawstd::DetachedTask Client::_allocate(
             .failure_domain = payload.failure_domain,
         };
 
-        std::string target = rawstd::URI::uris(targets);
-        rawstd::CallbackAwaitable<void> awaiter;
-        int res = rawstor_target_create(
-            client->_queue, target.c_str(), &spec, result_trampoline, &awaiter
-        );
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        if (payload.member_role == RAWSTOR_MEMBER_WITNESS) {
+            if (client->_server.locations().size() != 1) {
+                RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+            }
+            auto& queue = *static_cast<rawio::Queue*>(client->_queue);
+            auto slot = co_await Slot::create(
+                queue, client->_server.locations().front()
+            );
+            std::exception_ptr error;
+            try {
+                co_await slot->create(
+                    uuid, payload.chunk_offset, spec, RAWSTOR_MEMBER_WITNESS
+                );
+            } catch (...) {
+                error = std::current_exception();
+            }
+            co_await slot->close();
+            if (error) {
+                std::rethrow_exception(error);
+            }
+        } else {
+            if (payload.member_role != RAWSTOR_MEMBER_DATA) {
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
+            std::string target = rawstd::URI::uris(targets);
+            rawstd::CallbackAwaitable<void> awaiter;
+            int res = rawstor_target_create(
+                client->_queue, target.c_str(), &spec, result_trampoline,
+                &awaiter
+            );
+            if (res < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(-res);
+            }
+            co_await awaiter;
         }
-        co_await awaiter;
     } catch (const std::system_error& e) {
         result = -e.code().value();
     }
@@ -1352,10 +1374,18 @@ rawstd::DetachedTask Client::_set_config(
             slot = co_await rawstor::Slot::create(queue, locations.front());
             std::exception_ptr error;
             try {
-                co_await slot->set_config(
-                    uuid, payload.chunk_offset, payload.member_index, config,
-                    payload.flags
-                );
+                if (head.cmd == RAWSTOR_CMD_SET_WITNESS) {
+                    co_await slot->set_witness(
+                        uuid, payload.chunk_offset,
+                        static_cast<RawstorObjectSyncStateValue>(payload.flags),
+                        config
+                    );
+                } else {
+                    co_await slot->set_config(
+                        uuid, payload.chunk_offset, payload.member_index,
+                        config, payload.flags
+                    );
+                }
             } catch (...) {
                 error = std::current_exception();
             }
@@ -1370,9 +1400,7 @@ rawstd::DetachedTask Client::_set_config(
 
     bool send_failed = false;
     try {
-        co_await client->_send_response(
-            RAWSTOR_CMD_SET_CONFIG, head.cid, result, 0
-        );
+        co_await client->_send_response(head.cmd, head.cid, result, 0);
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
         send_failed = true;

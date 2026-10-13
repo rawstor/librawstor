@@ -227,6 +227,11 @@ public:
         const RawstorObjectConfig& config
     );
 
+    rawstd::Task<void> set_witness(
+        const RawstdUUID& id, uint64_t offset,
+        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
+    );
+
     // The writer's clean departure from this member's session
     // (Backend::leave()), on the session as it is: a session already
     // gone has left uncleanly anyway.
@@ -249,7 +254,7 @@ public:
     // set_version() instead, read-only by nature). Throws ENOTSUP if
     // that answer's own member_role is RAWSTOR_MEMBER_WITNESS -- a
     // witness holds no data and is never a valid target for real I/O
-    // (docs/mds.md, "Witness (stage 3)"); its own .cpp doc comment on
+    // (docs/mds.md, "Witness"); its own .cpp doc comment on
     // why this is the one place that needs to check.
     rawstd::Task<RawstorObjectMeta> open(
         const RawstdUUID& id, uint64_t offset, int flags,

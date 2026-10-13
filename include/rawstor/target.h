@@ -22,7 +22,7 @@ extern "C" {
 /** Chunk member roles (docs/mds.md, chunk_meta.member_role). */
 enum RawstorMemberRole {
     RAWSTOR_MEMBER_DATA = 0,
-    RAWSTOR_MEMBER_WITNESS = 1, /**< Metadata-only quorum member; stage 3. */
+    RAWSTOR_MEMBER_WITNESS = 1, /**< Metadata-only quorum member. */
 };
 
 /**
@@ -36,13 +36,11 @@ enum RawstorMemberRole {
  *
  * When used with rawstor_target_create(), the size field must be set to the
  * desired size of the object to be created; width is mandatory too, and
- * never defaulted or derived: for a comma-separated target string with more
- * than one URI, it must equal that count exactly (@c -EINVAL otherwise,
- * including when left at 0); for a single-URI target it's the caller's own
- * chosen redundancy -- 1 for an ordinary single-copy object, or an mds://
- * object's own real width -- but it must be stated (0 is refused, never
- * silently treated as 1). chunk_size, when nonzero, must be a power of
- * two and size a multiple of it (@c -EINVAL otherwise): every chunk is
+ * never defaulted or derived: it specifies data-copy redundancy, independent
+ * of the physical URI count (a relay can itself contain several copies).
+ * Use 1 for an ordinary single-copy object or the desired data redundancy
+ * for an mds:// object. Zero is refused. chunk_size, when nonzero, must be a
+ * power of two and size a multiple of it (@c -EINVAL otherwise): every chunk is
  * exactly chunk_size. It is mandatory for an mds:// object, and for a
  * target string naming more than one chunk's own uris (see
  * docs/concepts.md); 0 means one chunk spans the whole object, which then
@@ -50,7 +48,7 @@ enum RawstorMemberRole {
  *
  * When used with rawstor_target_spec(), the fields are filled with the
  * actual shape of the existing object: its size in bytes, the number of
- * copies configured for it -- the number of URIs in the target string
+ * data copies configured for it -- the number of data URIs in the target string
  * for a plain target, or an mds:// object's own configured redundancy
  * (never derivable by counting URIs, since an mds:// target is always a
  * single URI) -- and the per-chunk share it was created with (0 for the
@@ -59,14 +57,18 @@ enum RawstorMemberRole {
  * chunking policy, persisted identically on every chunk at create()
  * time, so any one of them answers it correctly.
  *
+ * A witness+ URI declares a metadata-only member, excluded from width.
+ * At most one witness per chunk is supported, only with an even number of
+ * data members; ordinary mds:// placement does not automatically attach one.
+ *
  * @see rawstor_target_spec
  * @see rawstor_target_create
  */
 
 struct RawstorObjectSpec {
     uint64_t size;      /**< Size of the object in bytes. */
-    unsigned int width; /**< Copies per chunk: the number of URIs in a plain
-                              target, or an mds:// object's own configured
+    unsigned int width; /**< Data copies per chunk: the number of data URIs in a
+                           plain target, or an mds:// object's own configured
                               redundancy. Mandatory at create() time -- see
                               rawstor_target_create()'s own doc comment. */
 
@@ -102,7 +104,10 @@ struct RawstorObjectSpec {
  *               that writer's unacknowledged writes. It stays LOST until
  *               cleared explicitly (RAWSTOR_CONFIG_CLEAR_LOST).
  *
- * The copy keeps its state itself, from the sessions it serves
+ * Witness members use the same states for their durable metadata record;
+ * LOST invalidates their vote. They have no data writer sessions.
+ *
+ * The data copy keeps its state itself, from the sessions it serves
  * (docs/mirroring.md, "DIRTY, CLEAN and LOST"): it is read in
  * RawstorObjectMeta, never written by a caller.
  */
@@ -111,12 +116,13 @@ enum RawstorObjectSyncStateValue {
     RAWSTOR_OBJECT_SYNC_STATE_CLEAN = 1,
     RAWSTOR_OBJECT_SYNC_STATE_DIRTY = 2,
     RAWSTOR_OBJECT_SYNC_STATE_LOST = 3,
+
 };
 
 /** Number of ancestor sync ids kept in RawstorObjectConfig. */
 #define RAWSTOR_OBJECT_SYNC_ID_HISTORY 4
 
-/** Most members a chunk can have: RawstorObjectSpec.width fits a byte. */
+/** Most members a chunk can have: the role count fits a byte. */
 #define RAWSTOR_OBJECT_MAX_WIDTH 255
 
 /**
