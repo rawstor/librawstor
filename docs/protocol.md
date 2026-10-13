@@ -427,7 +427,7 @@ in no particular order. An empty payload means the object has no versions
 ### Meta — 360 bytes
 
 Everything about one stored copy: its size, its placement identity, its own
-state (`CLEAN`, `DIRTY`, `LOST` for data; `CLEAN`, `DIRTY`, `LOST` for witnesses), how many sessions have it open for
+state (`CLEAN`, `DIRTY`, `LOST`), how many sessions have it open for
 writing right now (`writers`), and the chunk's configuration as last set on
 it (a [Config](#config--312-bytes), at offset 16), and the copy's
 replica of the register's ballots: the highest it promised and the one
