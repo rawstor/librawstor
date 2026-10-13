@@ -298,8 +298,11 @@ bool wait_member_config_synced(
         if (target_meta(queue, behind, &b) != 0) {
             continue;
         }
-        if (!any_syncing(b.config) && a.config.sync_id != 0 &&
-            b.config.sync_id == a.config.sync_id) {
+        // Config publication precedes clearing LOST. Wait for both
+        // externally visible steps before treating the rejoin as complete.
+        if (!any_syncing(b.config) &&
+            b.state != RAWSTOR_OBJECT_SYNC_STATE_LOST &&
+            a.config.sync_id != 0 && b.config.sync_id == a.config.sync_id) {
             return true;
         }
     }
