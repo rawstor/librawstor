@@ -61,6 +61,8 @@ private:
     // Slot is only ever used for metadata (list/create/remove/
     // meta/info), which needs no SET_OBJECT step of its own.
     std::optional<RawstdUUID> _id;
+    // A successful DATA open makes the durability barrier need no META lookup.
+    bool _data_bound = false;
     // The chunk offset/version open() bound _id to -- 0/0 (whole object,
     // live) unless open() was called otherwise (docs/mds.md, "Chunk
     // identity"/"Versions"). Meaningless while _id is unset; carried
@@ -225,11 +227,6 @@ public:
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
         const RawstorObjectConfig& config
-    );
-
-    rawstd::Task<void> set_witness(
-        const RawstdUUID& id, uint64_t offset,
-        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
     );
 
     // The writer's clean departure from this member's session

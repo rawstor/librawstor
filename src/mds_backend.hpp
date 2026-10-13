@@ -173,10 +173,6 @@ public:
     ) override;
 
     // MDS holds no copy of its own: register requests fail with ENOSYS.
-    rawstd::Task<void> set_witness(
-        const RawstdUUID& id, uint64_t offset,
-        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
-    ) override;
 
     rawstd::Task<RawstorObjectSyncReply> sync_prepare(
         const RawstdUUID& id, uint64_t offset,

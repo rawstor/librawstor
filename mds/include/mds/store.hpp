@@ -114,9 +114,9 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& spec
     );
     RawstorObjectMeta witness_meta(const RawstdUUID& id, uint64_t offset);
-    void set_witness(
+    void set_config(
         const RawstdUUID& id, uint64_t offset,
-        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
+        const RawstorObjectConfig& config, unsigned int flags
     );
     void remove_witness(const RawstdUUID& id, uint64_t offset);
 

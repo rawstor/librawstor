@@ -684,7 +684,6 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
-            case RAWSTOR_CMD_SET_WITNESS:
             case RAWSTOR_CMD_SET_CONFIG: {
                 RawstorFrameSetConfigPayload set_config_payload;
                 co_await recv_frame(
@@ -1366,18 +1365,10 @@ rawstd::DetachedTask Client::_set_config(
             slot = co_await rawstor::Slot::create(queue, locations.front());
             std::exception_ptr error;
             try {
-                if (head.cmd == RAWSTOR_CMD_SET_WITNESS) {
-                    co_await slot->set_witness(
-                        uuid, payload.chunk_offset,
-                        static_cast<RawstorObjectSyncStateValue>(payload.flags),
-                        config
-                    );
-                } else {
-                    co_await slot->set_config(
-                        uuid, payload.chunk_offset, payload.member_index,
-                        config, payload.flags
-                    );
-                }
+                co_await slot->set_config(
+                    uuid, payload.chunk_offset, payload.member_index, config,
+                    payload.flags
+                );
             } catch (...) {
                 error = std::current_exception();
             }

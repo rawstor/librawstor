@@ -1,4 +1,5 @@
 #include "slot.hpp"
+#include "config.hpp"
 
 #include "backend.hpp"
 #include "opts.h"
@@ -1237,6 +1238,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // Set before the set_object() call below: on failure,
     // _reconnect() reconnects and set_object()s the replacement
     // itself, using these same members.
+    _data_bound = false;
     _id = id;
     _offset = offset;
     _flags = flags;
@@ -1319,6 +1321,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     if (_member) {
         _member->learn_epoch(answer->config.epoch);
     }
+    _data_bound = true;
     co_return *answer;
 }
 
@@ -1337,6 +1340,7 @@ rawstd::Task<void> Slot::close() {
         rawstd_error("Slot::close(): departure: %s\n", e.what());
     }
     _id = std::nullopt;
+    _data_bound = false;
     try {
         co_await be->close();
     } catch (const std::exception& e) {
@@ -1818,6 +1822,7 @@ rawstd::Task<void> Slot::_set_config(
     const RawstdUUID& id, uint64_t offset, uint8_t member_index,
     const RawstorObjectConfig& config, unsigned int flags
 ) {
+    auto state = config_state(flags);
     if (member_index >= RAWSTOR_OBJECT_MAX_WIDTH) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -1827,10 +1832,27 @@ rawstd::Task<void> Slot::_set_config(
     RecordLockGuard guard{member->record};
     co_await member->raise_epoch(_queue, config.epoch);
     std::shared_ptr<Backend> be = _get_backend();
-    if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) {
-        co_await _flush_copy(id, offset);
+    if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 ||
+        state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN) {
+        bool data = _data_bound && _id && rawstd_uuid_cmp(&*_id, &id) == 0 &&
+                    _offset == offset && rawstd_uuid_is_nil(&_version_id);
+        if (!data) {
+            auto metas = co_await be->meta(id, offset, RawstdUUID{});
+            if (metas.size() != 1) {
+                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            }
+            data = metas.front().member_role == RAWSTOR_MEMBER_DATA;
+        }
+        if (data) {
+            co_await _flush_copy(id, offset);
+        }
     }
     co_await be->set_config(id, offset, member_index, config, flags);
+    if (state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+        member->dirty.store(
+            state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN, std::memory_order_release
+        );
+    }
     if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) {
         co_await be->set_state(
             id, offset, RAWSTOR_OBJECT_SYNC_STATE_LOST,
@@ -1866,20 +1888,6 @@ rawstd::Task<void> Slot::set_config(
         _finish(t_call);
         throw;
     }
-}
-
-rawstd::Task<void> Slot::set_witness(
-    const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
-    const RawstorObjectConfig& config
-) {
-    auto member = _copy_state(id, offset);
-    co_await member->record.lock(_queue);
-    RecordLockGuard guard{member->record};
-    co_await member->raise_epoch(_queue, config.epoch);
-    auto trace = RAWSTD_TRACE_EVENT('c', "%s\n", "set_witness");
-    co_await _with_retry(
-        "set_witness", trace, &Backend::set_witness, id, offset, state, config
-    );
 }
 
 rawstd::Task<void> Slot::flush(uint64_t epoch) {

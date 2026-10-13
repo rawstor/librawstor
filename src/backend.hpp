@@ -208,7 +208,8 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) = 0;
 
-    // Persists the configuration or forwards the request to the destination.
+    // Persists configuration and any explicit state atomically, or forwards
+    // the request to the destination.
     // Slot serializes it with state transitions and applies CLEAR_LOST via
     // set_state(); transports forward flags to the destination's Slot.
     virtual rawstd::Task<void> set_config(
@@ -234,13 +235,6 @@ public:
         const RawstorObjectConfig& config,
         const RawstorObjectSyncReply& proposed
     ) = 0;
-
-    // Atomically persists a witness record before replying. No writer session
-    // or data object is bound: witness state is controlled by the chunk.
-    virtual rawstd::Task<void> set_witness(
-        const RawstdUUID& id, uint64_t offset,
-        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
-    );
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 

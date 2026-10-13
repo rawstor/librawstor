@@ -28,7 +28,7 @@ numbers its stages separately.
 | `rawstor resolve TARGET --winner=N [--offset]` | — | ✅ | `cli/resolve.c` |
 | Force-open below quorum (CLI / opts) | — | ❌ | — |
 | Persistent write-intent bitmap (resumable resync, cheaper F5) | 4 | ❌ | — |
-| Metadata-only witness on MDS, OST or local backend | 4 | ✅ | [Witness](mds.md#witness), `Backend::set_witness()`, `src/chunk.cpp` |
+| Metadata-only witness on MDS, OST or local backend | 4 | ✅ | [Witness](mds.md#witness), `Backend::set_config()`, `src/chunk.cpp` |
 | Stored checksums / scrub | 4 | ❌ | — |
 | Fastest-mirror read selection | 4 | ❌ | — |
 
@@ -134,8 +134,9 @@ syncing is mid-resync, and an open treats it as stale (F8).
 
 ### DIRTY, CLEAN and LOST
 
-The copy keeps its `state` by itself, from the sessions it serves; the
-writer never sets it.
+Data I/O changes the copy's `state` from the sessions it serves. Explicit
+metadata transitions use `SET_CONFIG` with `RAWSTOR_CONFIG_STATE_*` for data
+and witness members alike; zero flags preserve the existing state.
 
 - **`DIRTY`**: before the first write into a `CLEAN` copy the copy marks
   itself `DIRTY` (fsync), under its record lock. Later writes see a cached

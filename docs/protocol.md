@@ -10,7 +10,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Response `hash` (xxh3 with libxxhash) | ✅ | `librawstd/src/hash.c` |
 | Session: `SET_OBJECT` | ✅ | OST `ost/src/client.cpp`, MDS `mds/src/client.cpp` |
 | Data: `READ` `WRITE` `DISCARD` `ALLOCATE` `RELEASE` `FLUSH` `WRITE_ZEROES` | ✅ | OST server + `src/ost_backend.cpp` |
-| Metadata: `META` `SET_CONFIG` `SET_WITNESS` `LEAVE` `CREATE_VERSION` `LIST_VERSIONS` | ✅ | OST server + `src/ost_backend.cpp` |
+| Metadata: `META` `SET_CONFIG` `LEAVE` `CREATE_VERSION` `LIST_VERSIONS` | ✅ | OST server + `src/ost_backend.cpp` |
 | `LIST`, `LOCATION_INFO` | ✅ | OST and MDS servers, both clients |
 | Object: `OBJ_CREATE` `OBJ_OPEN` `OBJ_RESIZE` `OBJ_REMOVE` | ✅ | MDS server + `src/mds_client.cpp` |
 | Object versions: `OBJ_COMMIT_VERSION` `OBJ_REMOVE_VERSION` `OBJ_LIST_VERSIONS` | ✅ | MDS server + `src/mds_client.cpp` |
@@ -92,7 +92,6 @@ keep `0x0b`/`0x0c`.
 | `0x0f` | `LEAVE` | OST | Basic (unused) | — |
 | `0x10` | `SYNC_PREPARE` | OST | SyncPropose (`ballot` only) | SyncReply |
 | `0x11` | `SYNC_ACCEPT` | OST | SyncPropose | SyncReply |
-| `0x22` | `SET_WITNESS` | OST / MDS | SetConfig (`flags` = witness state) | — |
 | `0x40` | `OBJ_CREATE` | MDS | ObjCreate | ObjCreated |
 | `0x41` | `OBJ_OPEN` | MDS | Basic (`version_id`, nil = live) | ObjDescriptor + chunks |
 | `0x42` | `OBJ_RESIZE` | MDS | ObjOp (`val` = new size) | ObjResized |
@@ -283,9 +282,13 @@ A ballot of the configuration register (`RawstorObjectBallot`):
 ### SetConfig — 338 bytes
 
 Records the chunk's configuration on one copy (`SET_CONFIG`). The copy's
-own state is not set: the copy keeps it ([mirroring](mirroring.md#dirty-clean-and-lost)),
-but for `flags` bit 0, `RAWSTOR_CONFIG_CLEAR_LOST`, which turns a `LOST`
-copy `CLEAN` (no session open for writing) or `DIRTY`. A server with
+state is preserved when flags are zero. Bits 1–2 optionally record `CLEAN`
+(`RAWSTOR_CONFIG_STATE_CLEAN = 2`), `DIRTY` (`STATE_DIRTY = 4`), or `LOST`
+(`STATE_LOST = 6`) atomically with the configuration, for data and witness
+members alike. Bit 0, `RAWSTOR_CONFIG_CLEAR_LOST`, turns a `LOST` copy
+`CLEAN` (no session open for writing) or `DIRTY`. Explicit state and
+CLEAR_LOST cannot be combined; unknown flag bits return `-EINVAL`. A server
+with
 several locations keeps no record of the copy it is and answers `-ENOSYS`
 ([mirroring](mirroring.md#one-copy-per-server)). The copy's ballots stay
 as they are: only the register's own requests change them. `member_index` is
@@ -689,19 +692,18 @@ address count.
 
 Both OST and MDS accept `ALLOCATE` with `member_role = 1` to create a
 metadata-only member, `META` to read it and `RELEASE` to remove it.
-`SET_WITNESS` (`0x22`, shared metadata) uses `RawstorFrameSetConfigPayload`.
-For this command only, `flags` is the witness record state: `CLEAN = 1`,
-`DIRTY = 2`, or `LOST = 3`; other values are `-EINVAL`.
-State and config are persisted together before the empty success response.
-It cannot modify a data member. `config.roles` records all members in
+The common `SET_CONFIG` request atomically records state and configuration
+with `RAWSTOR_CONFIG_STATE_*` flags. Without these flags, state is preserved.
+The update is serialized with member state transitions and persisted before
+the empty success response. `config.roles` records all members in
 the target's stable order; the witness entry is IN_SYNC after a successful
 configuration update, or EXCLUDED when the data quorum continues without it.
 MDS accepts these operations independently of its `OBJ_*` map registry.
 `width` is data-copy redundancy; the configuration role array includes the
 witness. One witness per chunk is allowed only with an even data-member count.
 
-A generic `SET_CONFIG` on a witness also changes its state to LOST,
-invalidating a vote until the chunk establishes a new trustworthy record.
+A manual branch resolution explicitly sets the witness to LOST through
+`SET_CONFIG`, invalidating its vote until a trustworthy record is established.
 Witnesses do not accept data I/O or object versions.
 
 Ordinary `LIST` reports every registered MDS object and native witness member,

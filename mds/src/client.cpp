@@ -355,18 +355,14 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         );
         break;
     }
-    case RAWSTOR_CMD_SET_CONFIG:
-    case RAWSTOR_CMD_SET_WITNESS: {
+    case RAWSTOR_CMD_SET_CONFIG: {
         RawstorFrameSetConfigPayload payload{};
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
         try {
-            store.set_witness(
+            store.set_config(
                 uuid_of(payload.object_id), payload.chunk_offset,
-                head.cmd == RAWSTOR_CMD_SET_CONFIG
-                    ? RAWSTOR_OBJECT_SYNC_STATE_LOST
-                    : static_cast<RawstorObjectSyncStateValue>(payload.flags),
-                decode_config(payload.config)
+                decode_config(payload.config), payload.flags
             );
         } catch (const std::system_error& e) {
             res = -e.code().value();

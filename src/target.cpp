@@ -1,4 +1,5 @@
 #include "target.hpp"
+#include "config.hpp"
 
 #include "chunk.hpp"
 #include "location.hpp"
@@ -288,19 +289,11 @@ rawstd::Task<void> initialize_witness(
                 co_await rawstor::Slot::create(queue, strip_path(members[i]));
             std::exception_ptr error;
             try {
-                if (i == witness) {
-                    co_await slot->set_witness(
-                        uuid_from_target(members[i]),
-                        extract_offset(members[i]),
-                        RAWSTOR_OBJECT_SYNC_STATE_CLEAN, config
-                    );
-                } else {
-                    co_await slot->set_config(
-                        uuid_from_target(members[i]),
-                        extract_offset(members[i]), static_cast<uint8_t>(i),
-                        config, 0
-                    );
-                }
+                co_await slot->set_config(
+                    uuid_from_target(members[i]), extract_offset(members[i]),
+                    static_cast<uint8_t>(i), config,
+                    i == witness ? RAWSTOR_CONFIG_STATE_CLEAN : 0
+                );
             } catch (...) {
                 error = std::current_exception();
             }
@@ -1703,17 +1696,9 @@ rawstd::Task<void> Target::set_member_config(
         co_await rawstor::Slot::create(queue, location);
     std::exception_ptr error;
     try {
-        auto metadata = co_await slot->meta(id, offset, RawstdUUID{});
-        if (metadata.size() == 1 &&
-            metadata.front().member_role == RAWSTOR_MEMBER_WITNESS) {
-            co_await slot->set_witness(
-                id, offset, RAWSTOR_OBJECT_SYNC_STATE_LOST, config
-            );
-        } else {
-            co_await slot->set_config(
-                id, offset, static_cast<uint8_t>(member_index), config, flags
-            );
-        }
+        co_await slot->set_config(
+            id, offset, static_cast<uint8_t>(member_index), config, flags
+        );
     } catch (...) {
         error = std::current_exception();
     }

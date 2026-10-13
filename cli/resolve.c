@@ -203,8 +203,8 @@ static int resolve_chunk(
             return rawstd_exitcode_for_errno(-res);
         }
         int sres = rawstor_target_set_member_config(
-            witness_op.queue, target, offset, (size_t)i, &new_config, 0,
-            rawstor_cli_op_cb, &witness_op
+            witness_op.queue, target, offset, (size_t)i, &new_config,
+            RAWSTOR_CONFIG_STATE_LOST, rawstor_cli_op_cb, &witness_op
         );
         ssize_t sresult = rawstor_cli_op_wait(&witness_op, sres);
         rawstor_cli_op_destroy(&witness_op);

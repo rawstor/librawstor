@@ -1,4 +1,5 @@
 #include "blk_backend.hpp"
+#include "config.hpp"
 
 #include "opts.h"
 
@@ -202,8 +203,14 @@ rawstd::Task<void> Backend::set_state(
 
 rawstd::Task<void> Backend::set_config(
     const RawstdUUID& id, uint64_t offset, uint8_t,
-    const RawstorObjectConfig& config, unsigned int
+    const RawstorObjectConfig& config, unsigned int flags
 ) {
+    auto state = config_state(flags);
+    for (size_t i = 0; i < config.nroles; ++i) {
+        if (config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
     RawstorObjectMeta meta{};
     meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     try {
@@ -214,8 +221,8 @@ rawstd::Task<void> Backend::set_config(
         }
     }
     meta.config = config;
-    if (meta.member_role == RAWSTOR_MEMBER_WITNESS) {
-        meta.state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
+    if (state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+        meta.state = state;
     }
     co_await _write_meta(
         id, offset, meta.state, meta.config, meta.promised, meta.accepted
@@ -247,30 +254,6 @@ rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
         );
     }
     co_return proposed;
-}
-
-rawstd::Task<void> Backend::set_witness(
-    const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
-    const RawstorObjectConfig& config
-) {
-    if (state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN &&
-        state != RAWSTOR_OBJECT_SYNC_STATE_LOST &&
-        state != RAWSTOR_OBJECT_SYNC_STATE_DIRTY) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    auto metas = co_await meta(id, offset, RawstdUUID{});
-    if (metas.front().member_role != RAWSTOR_MEMBER_WITNESS) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    for (size_t i = 0; i < config.nroles; ++i) {
-        if (config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-    }
-    co_await _write_meta(
-        id, offset, state, config, metas.front().promised,
-        metas.front().accepted
-    );
 }
 
 rawstd::Task<void> Backend::set_version(

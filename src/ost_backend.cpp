@@ -773,14 +773,13 @@ public:
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const RawstdUUID& id, uint64_t chunk_offset, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags,
-        const rawstd::TraceEvent& trace_event,
-        RawstorCommandType cmd = RAWSTOR_CMD_SET_CONFIG
+        const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "set_config", 0, 0),
         _request{} {
         _request.head = {
             .magic = RAWSTOR_MAGIC,
-            .cmd = cmd,
+            .cmd = RAWSTOR_CMD_SET_CONFIG,
             .cid = cid,
         };
         memcpy(
@@ -1797,36 +1796,6 @@ rawstd::Task<void> Backend::set_config(
         std::make_shared<BackendOpSetConfig>(
             std::static_pointer_cast<Backend>(shared_from_this()),
             _cid_counter++, id, offset, member_index, config, flags, trace_event
-        );
-    _add_op(op);
-
-    try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
-        );
-        RAWSTD_TRACE_EVENT_MESSAGE(
-            trace_event, "%zu of %zu\n", result, op->request_size()
-        );
-        op->request_cb(validate_result(op->request_size(), result));
-    } catch (const std::system_error& e) {
-        op->request_cb(e.code().value());
-    }
-
-    co_await *op;
-}
-
-rawstd::Task<void> Backend::set_witness(
-    const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
-    const RawstorObjectConfig& config
-) {
-    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
-
-    std::shared_ptr<BackendOpSetConfig> op =
-        std::make_shared<BackendOpSetConfig>(
-            std::static_pointer_cast<Backend>(shared_from_this()),
-            _cid_counter++, id, offset, 0, config,
-            static_cast<unsigned int>(state), trace_event,
-            RAWSTOR_CMD_SET_WITNESS
         );
     _add_op(op);
 

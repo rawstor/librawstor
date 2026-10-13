@@ -88,10 +88,6 @@ extern "C" {
 #define RAWSTOR_CMD_SYNC_PREPARE 0x10
 #define RAWSTOR_CMD_SYNC_ACCEPT 0x11
 
-/* Metadata-only member update. Same payload as SET_CONFIG; flags carries
- * CLEAN, DIRTY or LOST, not SET_CONFIG flags. */
-#define RAWSTOR_CMD_SET_WITNESS 0x22
-
 /*
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/open/
  * resize/remove a whole, possibly multi-chunk mds:// object. OBJ_OPEN
@@ -291,7 +287,8 @@ struct RawstorFrameConfig {
 /*
  * SET_CONFIG's request: the configuration to record on one copy and
  * RAWSTOR_CONFIG_* `flags` (<rawstor/target.h>). The copy's own state is
- * not set: the copy keeps it. `member_index` is the copy's position among the
+ * preserved unless RAWSTOR_CONFIG_STATE_* selects an explicit state.
+ * `member_index` is the copy's position among the
  * chunk's members, which `config.roles` is indexed by: the copy takes its
  * own role from it. Unlike META, it isn't wrapped in a
  * RawstorFrameBasicPayload of its own, so object_id/chunk_offset here are the
@@ -370,8 +367,9 @@ struct RawstorFrameResponse {
  * chunk's configuration as last set on it (see docs/mirroring.md) -- the
  * one wire round trip that reports everything a caller could want about
  * one copy. The only per-copy response payload -- SET_CONFIG's request
- * is RawstorFrameSetConfigPayload (the configuration only). No object_id: this
- * is only ever a response, correlated to its request via RawstorFrameHead::cid
+ * is RawstorFrameSetConfigPayload (configuration and optional state). No
+ * object_id: this is only ever a response, correlated to its request via
+ * RawstorFrameHead::cid
  * -- the caller already knows which object it asked about. Sent as a
  * RawstorFrameResponse (body.res = sizeof(this), body.hash covering
  * it) immediately followed by this payload -- no combined frame struct,

@@ -35,7 +35,7 @@ numbers its stages separately.
 | Backend health / `LOCATION_INFO` collector | — | ✅ | `mds/src/monitor.cpp`, `mds/src/opts.cpp` |
 | Protocol version + feature bits in `SET_OBJECT` | — | ❌ | — |
 | Unified response frame `{res, len, hash}` | — | ❌ | — |
-| Witness: metadata-only members and quorum | 3 | ✅ | `src/chunk.cpp`, `Backend::set_witness()`, SQLite witness records |
+| Witness: metadata-only members and quorum | 3 | ✅ | `src/chunk.cpp`, `Backend::set_config()`, SQLite witness records |
 | Witness: durable states, voting rules, synchronous barriers, re-attach | 3 | ✅ | `src/chunk.cpp` |
 | MDS replication (primary + log) | v2+ | ❌ | — |
 | EC policy | v2+ | ❌ | — |
@@ -159,7 +159,7 @@ in four places and spent on one addition:
 
 | Draft decision | Verdict | Why |
 |---|---|---|
-| Separate MDS wire protocol, distinct magic `rsmd` | **Changed: single protocol with OST** | An OST doubles as a partial MDS (the witness subset — `META`/`SET_WITNESS` — already exists on OSTs today); one framing/parsing stack; misconnection safety comes from `-ENOSYS` on unknown opcodes instead of a magic mismatch |
+| Separate MDS wire protocol, distinct magic `rsmd` | **Changed: single protocol with OST** | An OST doubles as a partial MDS (the witness subset — `META`/`SET_CONFIG` — already exists on OSTs today); one framing/parsing stack; misconnection safety comes from `-ENOSYS` on unknown opcodes instead of a magic mismatch |
 | Explicit stored map (not CRUSH-computed) | Keep | ≤ 1024 entries/TiB; placement function stays the generator |
 | Weighted rendezvous (HRW) placement | Keep | deterministic, minimal reshuffle, stateless, O(N) fine at this scale |
 | Hand-rolled packed structs, count prefixes, `format_version` | Keep | codebase idiom, no new dependency |
@@ -458,7 +458,6 @@ reserved ranges per role:
 ```
 0x00    session:         SET_OBJECT                    // handshake, every role
 0x01..  data:            READ, WRITE, DISCARD, ALLOCATE, RELEASE, FLUSH
-0x20..  shared metadata: SET_WITNESS                    // shared metadata
 0x40..  object (MDS):    OBJ_CREATE, OBJ_OPEN, OBJ_RESIZE, OBJ_REMOVE,
                          OBJ_COMMIT_VERSION, OBJ_REMOVE_VERSION,
                          OBJ_LIST_VERSIONS
@@ -481,7 +480,7 @@ Role matrix:
 | session (`SET_OBJECT`) | yes | yes | yes |
 | data (`READ`,`WRITE`,`DISCARD`,`FLUSH`) | yes | yes | no (`-ENOSYS`) |
 | member lifecycle (`ALLOCATE`,`RELEASE`) | yes | yes | witness members only |
-| member metadata (`META`, `SET_CONFIG`, `SET_WITNESS`) | yes | yes | witness members only |
+| member metadata (`META`, `SET_CONFIG`) | yes | yes | witness members only |
 | member listing (`LIST` + `META`) | yes | yes | yes |
 | reconstruct scan (`LIST` + member `META`) | yes | yes | `LIST` serves registered objects and native witnesses |
 | object commands (`CMD_OBJ_*`) | no | optional | yes |
@@ -870,8 +869,8 @@ opens. Member ordering and the member set must stay fixed. Interprocess
 coordination between independently attached writers is multiattach stage 2
 and is not implemented by this feature.
 
-`Backend::set_witness()` atomically stores the record's state and configuration.
-The OST transports it using `SET_WITNESS`; MDS commits it in SQLite WAL with
+`Backend::set_config()` atomically stores the record's state and configuration.
+The OST transports it using `SET_CONFIG`; MDS commits it in SQLite WAL with
 `synchronous=FULL`. The block backends use their existing metadata format:
 file witnesses keep an empty data file plus metadata, LVM witnesses use a
 minimum-size LV and its tag, and ZFS witnesses use a minimum-size zvol and its
@@ -899,7 +898,7 @@ A witness is a **metadata-only member** of a chunk's quorum: it
 stores the consistency tuple (`state`-like record, `sync_id`,
 `sync_id_history`, `mirror_epoch`) and holds no data. For N=2 data mirrors it
 is the third vote that restores auto-start with one OST down. Implementation:
-any server speaking the witness subset (`ALLOCATE`/`META`/`SET_WITNESS`/`RELEASE`) — a plain OST, an
+any server speaking the witness subset (`ALLOCATE`/`META`/`SET_CONFIG`/`RELEASE`) — a plain OST, an
 OST doubling as partial MDS, or the MDS itself. The member appears in the
 target list like any other member; data I/O and resync skip it. Its stored
 record carries `member_role = witness` (see `chunk_meta`), so the
@@ -1105,14 +1104,15 @@ open flags. I/O offsets are local to the chunk bound by that handshake.
 Witness metadata uses the existing 360-byte Meta record: state encodes
 `CLEAN` / `DIRTY` / `LOST`, and `config.roles` identifies
 survivors in member order.
-`SET_WITNESS` atomically persists state plus
+`SET_CONFIG` atomically persists state plus
 configuration using the existing SetConfig request layout. Ordinary `LIST`
 reports both registered objects and native witness records on MDS. No data
 I/O or CoW operation is issued to a witness.
 
 Protocol version/feature negotiation and an I/O `map_epoch` fence are
 future extensions. The current client still tolerates `-ENOSYS` from
-ordinary `SET_CONFIG`; witness updates require support for `SET_WITNESS`.
+configuration-only `SET_CONFIG`; state updates require support for
+`RAWSTOR_CONFIG_STATE_*`.
 Interprocess mirror coordination remains multiattach stage 2.
 
 ## Implementation stages

@@ -109,7 +109,8 @@ struct RawstorObjectSpec {
  *
  * The data copy keeps its state itself, from the sessions it serves
  * (docs/mirroring.md, "DIRTY, CLEAN and LOST"): it is read in
- * RawstorObjectMeta, never written by a caller.
+ * RawstorObjectMeta. Explicit metadata transitions use
+ * RAWSTOR_CONFIG_STATE_* flags for data and witness members alike.
  */
 enum RawstorObjectSyncStateValue {
     RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE = 0,
@@ -186,6 +187,13 @@ struct RawstorObjectConfig {
  * copies consistent by hand, e.g. `rawstor resolve`.
  */
 #define RAWSTOR_CONFIG_CLEAR_LOST (1u << 0)
+
+/** Optional state recorded atomically with the configuration, for any member.
+ * Choose one state; zero preserves it. Do not combine with CLEAR_LOST. */
+#define RAWSTOR_CONFIG_STATE_CLEAN (1u << 1)
+#define RAWSTOR_CONFIG_STATE_DIRTY (2u << 1)
+#define RAWSTOR_CONFIG_STATE_LOST (3u << 1)
+#define RAWSTOR_CONFIG_STATE_MASK (3u << 1)
 
 /**
  * @brief Object copy metadata.

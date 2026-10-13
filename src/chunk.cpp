@@ -1,4 +1,5 @@
 #include "chunk.hpp"
+#include "config.hpp"
 #include <rawstor/object.h>
 
 #include "config.h"
@@ -1455,7 +1456,8 @@ bool Chunk::_has_witness() const noexcept {
 rawstd::Task<void> Chunk::_write_witness(
     RawstorObjectSyncStateValue state, RawstorObjectConfig config, bool required
 ) {
-    for (auto& m : _members) {
+    for (size_t index = 0; index < _members.size(); ++index) {
+        auto& m = _members[index];
         if (!m.witness) {
             continue;
         }
@@ -1466,7 +1468,10 @@ rawstd::Task<void> Chunk::_write_witness(
             }
             bool missing = false;
             try {
-                co_await m.slot->set_witness(_id, _offset, state, config);
+                co_await m.slot->set_config(
+                    _id, _offset, static_cast<uint8_t>(index), config,
+                    config_state_flags(state)
+                );
             } catch (const std::system_error& e) {
                 if (e.code().value() != ENOENT || required) {
                     throw;
@@ -1477,7 +1482,10 @@ rawstd::Task<void> Chunk::_write_witness(
                 co_await m.slot->create(
                     _id, _offset, _spec, RAWSTOR_MEMBER_WITNESS
                 );
-                co_await m.slot->set_witness(_id, _offset, state, config);
+                co_await m.slot->set_config(
+                    _id, _offset, static_cast<uint8_t>(index), config,
+                    config_state_flags(state)
+                );
             }
             m.reachable = true;
             m.meta.member_role = RAWSTOR_MEMBER_WITNESS;

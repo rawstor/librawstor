@@ -613,14 +613,6 @@ rawstd::Task<void> Backend::set_config(
     co_await members->set_config(id, offset, member_index, config, flags);
 }
 
-rawstd::Task<void> Backend::set_witness(
-    const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
-    const RawstorObjectConfig& config
-) {
-    auto members = co_await _member_transport();
-    co_await members->set_witness(id, offset, state, config);
-}
-
 rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
     const RawstdUUID&, uint64_t, const RawstorObjectBallot&,
     const RawstorObjectSyncReply&
