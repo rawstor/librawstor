@@ -945,7 +945,7 @@ rawstd::Task<void> recreate_missing(
 rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
     const RawstdUUID& id, uint64_t offset, int flags,
-    const RawstdUUID& version_id
+    const RawstdUUID& version_id, std::optional<uint64_t> logical_size
 ) {
     if ((flags & ~RAWSTOR_READONLY) != 0 ||
         (!rawstd_uuid_is_nil(&version_id) && (flags & RAWSTOR_READONLY) == 0)) {
@@ -1172,6 +1172,12 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
             }
         }
         RAWSTD_THROW_SYSTEM_ERROR(all_missing ? ENOENT : ENOTCONN);
+    }
+
+    // An opaque backend serves the entire logical resource through this
+    // Chunk. Its member metadata still describes physical copies.
+    if (logical_size) {
+        spec.size = *logical_size;
     }
 
     // Everything Chunk needs to exist is gathered -- deciding whether
@@ -2799,6 +2805,7 @@ Chunk::_degrade_detached(std::vector<size_t> idxs, std::weak_ptr<void> alive) {
 }
 
 rawstd::Task<size_t> Chunk::pread(void* buf, size_t size, uint64_t offset) {
+    _check_range(offset, size);
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pread(): size = %zu, offset = %" PRIu64 "\n", size, offset
     );
@@ -2827,6 +2834,7 @@ rawstd::Task<size_t> Chunk::pread(void* buf, size_t size, uint64_t offset) {
 
 rawstd::Task<size_t>
 Chunk::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
+    _check_range(offset, size);
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "preadv(): size = %zu, offset = %" PRIu64 "\n", size, offset
     );
@@ -2859,6 +2867,7 @@ uint64_t Chunk::_epoch() const {
 
 rawstd::Task<size_t>
 Chunk::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
+    _check_range(offset, size);
 
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pwrite(): size = %zu, offset = %" PRIu64 ", sync = %d\n", size,
@@ -2898,6 +2907,7 @@ Chunk::pwrite(const void* buf, size_t size, uint64_t offset, bool sync) {
 rawstd::Task<size_t> Chunk::pwritev(
     const iovec* iov, unsigned int niov, size_t size, uint64_t offset, bool sync
 ) {
+    _check_range(offset, size);
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "pwritev(): size = %zu, offset = %" PRIu64 ", sync = %d\n", size,
         offset, sync
@@ -2934,6 +2944,7 @@ rawstd::Task<size_t> Chunk::pwritev(
 }
 
 rawstd::Task<size_t> Chunk::discard(size_t size, uint64_t offset) {
+    _check_range(offset, size);
 
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o', "discard(): size = %zu, offset = %" PRIu64 "\n", size, offset
@@ -2978,6 +2989,7 @@ rawstd::Task<size_t> Chunk::discard(size_t size, uint64_t offset) {
 
 rawstd::Task<size_t>
 Chunk::write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) {
+    _check_range(offset, size);
 
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
         'o',

@@ -1756,7 +1756,8 @@ Target::open(rawio::Queue& queue, int flags) const {
     RawstdUUID last_version_id = extract_version_id(chunks.back().front());
     std::unique_ptr<Chunk> last = co_await Chunk::create(
         queue, chunk_locations.back(), last_id, last_offset, flags,
-        last_version_id
+        last_version_id,
+        is_opaque(_uris) ? std::optional<uint64_t>(opaque_size) : std::nullopt
     );
 
     uint64_t chunk_size = last->spec().chunk_size;

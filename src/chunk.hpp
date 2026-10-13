@@ -12,6 +12,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -156,6 +157,12 @@ private:
     bool _probe_pending;
 
     uint64_t _epoch() const;
+
+    void _check_range(uint64_t offset, size_t size) const {
+        if (offset > _spec.size || size > _spec.size - offset) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
 
     // Ticket dispenser: each pwrite()/pwritev()/write_zeroes() call takes
     // the next one at entry (WriteTicket below) and hands it to
@@ -428,10 +435,13 @@ public:
     // for the live version, or a version id previously registered via
     // Target::create_version() (docs/mds.md, "Versions") -- only ever
     // opened with READONLY (Target::open()'s own check).
+    // logical_size describes an opaque backend's whole resource; otherwise
+    // the I/O range is the physical chunk size reported by its members.
     static rawstd::Task<std::unique_ptr<Chunk>> create(
         rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
         const RawstdUUID& id, uint64_t offset, int flags,
-        const RawstdUUID& version_id
+        const RawstdUUID& version_id,
+        std::optional<uint64_t> logical_size = std::nullopt
     );
 
     Chunk(
