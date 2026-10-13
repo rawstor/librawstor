@@ -35,8 +35,7 @@
 
 namespace {
 
-const uint64_t sector_size = 512;
-const uint64_t region_sectors = 2048;
+const size_t max_written_ranges = 64 * 1024;
 
 bool overlaps(uint64_t a, uint64_t b, uint64_t c, uint64_t d) noexcept {
     return a < d && c < b;
@@ -266,10 +265,9 @@ struct Slot::CopyState {
 
     /*
      * Resync across processes (docs/multiattach.md, "Resync across
-     * processes"): while the copy's role is SYNCING, the sectors (512
-     * bytes) client writes reached since it became SYNCING, so that a
-     * resync's own copy (a RESYNC write) never overwrites one of them. A
-     * client write covering a sector only in part leaves it to the copy.
+     * processes"): while the copy's role is SYNCING, the byte ranges
+     * client writes reached since it became SYNCING, so that a RESYNC
+     * write preserves those bytes and restores the gaps between them.
      * The record lives in memory only: a copy that has none -- not
      * SYNCING, or SYNCING since before this process started -- refuses
      * RESYNC writes, and the resync starts over from a configuration that
@@ -284,7 +282,7 @@ struct Slot::CopyState {
 
     // Before a client write of [offset, offset + size) goes out: waits for
     // an overlapping RESYNC write still in flight, then records the
-    // sectors the write covers whole. A no-op while the copy keeps no
+    // exact bytes the write covers. A no-op while the copy keeps no
     // record.
     rawstd::Task<void>
     client_write(rawio::Queue& queue, uint64_t offset, uint64_t size);
@@ -307,9 +305,9 @@ private:
 
     std::atomic<bool> _syncing{false};
     std::mutex _resync_mu;
-    // Written sectors, one bitmap of 2048 sectors per 1 MiB region,
-    // allocated only for regions a client write reached.
-    std::map<uint64_t, std::vector<uint64_t>> _written;
+    // Disjoint byte ranges, merged when overlapping or adjacent. Bound
+    // fragmentation so sparse writes cannot exhaust the process's memory.
+    std::map<uint64_t, uint64_t> _written;
     // RESYNC writes in flight, [begin, end).
     Ranges _resyncing;
     rawthread::Condition _resync_waiters;
@@ -393,6 +391,9 @@ rawstd::Task<void> Slot::CopyState::client_write(
     if (!_syncing.load() || size == 0) {
         co_return;
     }
+    if (size > UINT64_MAX - offset) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     uint64_t end = offset + size;
     co_await _resync_waiters.wait(queue, _resync_mu, [&]() {
         if (!_syncing.load()) {
@@ -403,16 +404,33 @@ rawstd::Task<void> Slot::CopyState::client_write(
                 return false;
             }
         }
-        // Whole sectors only.
-        uint64_t first = (offset + sector_size - 1) / sector_size;
-        uint64_t last = end / sector_size;
-        for (uint64_t s = first; s < last; ++s) {
-            std::vector<uint64_t>& bits = _written[s / region_sectors];
-            if (bits.empty()) {
-                bits.assign(region_sectors / 64, 0);
+        auto first = _written.lower_bound(offset);
+        if (first != _written.begin()) {
+            auto previous = std::prev(first);
+            if (previous->second >= offset) {
+                first = previous;
             }
-            uint64_t i = s % region_sectors;
-            bits[i / 64] |= 1ull << (i % 64);
+        }
+        uint64_t begin = offset;
+        uint64_t finish = end;
+        auto last = first;
+        while (last != _written.end() && last->first <= finish) {
+            begin = std::min(begin, last->first);
+            finish = std::max(finish, last->second);
+            ++last;
+        }
+        if (first == last) {
+            if (_written.size() >= max_written_ranges) {
+                RAWSTD_THROW_SYSTEM_ERROR(ENOBUFS);
+            }
+            _written.emplace(begin, finish);
+        } else {
+            // Reuse an existing node: merging ranges needs no allocation.
+            auto node = _written.extract(first++);
+            _written.erase(first, last);
+            node.key() = begin;
+            node.mapped() = finish;
+            _written.insert(std::move(node));
         }
         return true;
     });
@@ -421,36 +439,38 @@ rawstd::Task<void> Slot::CopyState::client_write(
 bool Slot::CopyState::resync_begin(
     uint64_t offset, uint64_t size, Ranges& runs
 ) {
+    if (size > UINT64_MAX - offset) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     uint64_t end = offset + size;
     runs.clear();
     std::lock_guard<std::mutex> guard(_resync_mu);
     if (!_syncing.load()) {
         return false;
     }
+    auto written = _written.upper_bound(offset);
+    if (written != _written.begin()) {
+        auto previous = std::prev(written);
+        if (previous->second > offset) {
+            written = previous;
+        }
+    }
+    uint64_t cursor = offset;
+    for (; written != _written.end() && written->first < end; ++written) {
+        if (cursor < written->first) {
+            runs.emplace_back(cursor, written->first);
+        }
+        cursor = std::max(cursor, written->second);
+        if (cursor >= end) {
+            break;
+        }
+    }
+    if (cursor < end) {
+        runs.emplace_back(cursor, end);
+    }
+    // Register only after building the runs: allocation failures must
+    // not leave a range permanently blocking client writes.
     _resyncing.emplace_back(offset, end);
-
-    uint64_t run = offset;
-    uint64_t pos = offset;
-    while (pos < end) {
-        uint64_t s = pos / sector_size;
-        uint64_t next = std::min(end, (s + 1) * sector_size);
-        bool written = false;
-        auto it = _written.find(s / region_sectors);
-        if (it != _written.end()) {
-            uint64_t i = s % region_sectors;
-            written = (it->second[i / 64] >> (i % 64)) & 1;
-        }
-        if (written) {
-            if (run < pos) {
-                runs.emplace_back(run, pos);
-            }
-            run = next;
-        }
-        pos = next;
-    }
-    if (run < end) {
-        runs.emplace_back(run, end);
-    }
     return true;
 }
 
@@ -1693,6 +1713,10 @@ rawstd::Task<RawstorObjectSyncReply> Slot::_sync_accept(
     const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
     const RawstorObjectConfig& config
 ) {
+    if (member_index >= RAWSTOR_OBJECT_MAX_WIDTH) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     std::shared_ptr<CopyState> member = _copy_state(id, offset);
     co_await member->record.lock(_queue);
     RecordLockGuard guard{member->record};
@@ -1765,15 +1789,47 @@ rawstd::Task<void> Slot::leave() {
     _left = true;
 }
 
+// Flush the addressed copy even for a metadata-only Slot. The temporary
+// backend is not a writer session of this Slot and holds no record lock.
+rawstd::Task<void> Slot::_flush_copy(const RawstdUUID& id, uint64_t offset) {
+    std::shared_ptr<Backend> be = _get_backend();
+    if (_id && rawstd_uuid_cmp(&*_id, &id) == 0 && _offset == offset &&
+        rawstd_uuid_is_nil(&_version_id)) {
+        co_await be->flush(0);
+        co_return;
+    }
+    std::shared_ptr<Backend> copy =
+        co_await Backend::create(_queue, be->location());
+    std::exception_ptr error;
+    try {
+        co_await copy->set_object(id, offset, 0);
+        co_await copy->flush(0);
+        co_await copy->leave();
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await copy->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+}
+
 rawstd::Task<void> Slot::_set_config(
     const RawstdUUID& id, uint64_t offset, uint8_t member_index,
     const RawstorObjectConfig& config, unsigned int flags
 ) {
+    if (member_index >= RAWSTOR_OBJECT_MAX_WIDTH) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     std::shared_ptr<CopyState> member = _copy_state(id, offset);
     co_await member->record.lock(_queue);
     RecordLockGuard guard{member->record};
     co_await member->raise_epoch(_queue, config.epoch);
     std::shared_ptr<Backend> be = _get_backend();
+    if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) {
+        co_await _flush_copy(id, offset);
+    }
     co_await be->set_config(id, offset, member_index, config, flags);
     if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) {
         co_await be->set_state(

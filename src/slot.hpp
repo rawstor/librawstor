@@ -78,6 +78,7 @@ private:
     rawstd::Barrier _drained;
     class OperationGuard;
     void _check_write() const;
+    rawstd::Task<void> _flush_copy(const RawstdUUID& id, uint64_t offset);
     RawstdUUID _version_id;
 
     std::shared_ptr<Backend> _backend;

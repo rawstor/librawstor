@@ -2458,7 +2458,9 @@ rawstd::Task<void> Chunk::_resync_finish(uint64_t generation) {
 
     int error = 0;
     try {
-        co_await _members[idx].slot->set_config(_id, _offset, idx, m, 0);
+        co_await _members[idx].slot->set_config(
+            _id, _offset, idx, m, RAWSTOR_CONFIG_CLEAR_LOST
+        );
     } catch (const std::system_error& e) {
         error = e.code().value();
     }

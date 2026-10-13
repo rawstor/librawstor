@@ -459,10 +459,20 @@ void expect_copy_write_requests(const rawstd::URI& location) {
                     )),
         client_data.size()
     );
-    // Partial-sector client writes do not protect the whole sector.
+    // Protect only the bytes written, including partial sectors.
     ASSERT_EQ(
         run(*queue, writer->pwrite(client_data.data(), 10, 1636, false, 7)), 10u
     );
+    std::string prefix(12, 'P');
+    ASSERT_EQ(
+        run(*queue,
+            writer->pwrite(prefix.data(), prefix.size(), 1628, false, 7)),
+        prefix.size()
+    );
+    std::string left = "abc";
+    std::string right = "xyz";
+    iovec parts[] = {{left.data(), left.size()}, {right.data(), right.size()}};
+    ASSERT_EQ(run(*queue, writer->pwritev(parts, 2, 6, 1533, false, 7)), 6u);
     std::string repair(2048, 'R');
     ASSERT_EQ(
         run(*queue,
@@ -473,9 +483,12 @@ void expect_copy_write_requests(const rawstd::URI& location) {
     ASSERT_EQ(
         run(*queue, writer->pread(data.data(), data.size(), 0)), data.size()
     );
-    EXPECT_EQ(
-        data, std::string(512, 'R') + client_data + std::string(1024, 'R')
-    );
+    std::string expected(2048, 'R');
+    expected.replace(512, client_data.size(), client_data);
+    expected.replace(1636, 10, client_data.data(), 10);
+    expected.replace(1628, prefix.size(), prefix);
+    expected.replace(1533, 6, left + right);
+    EXPECT_EQ(data, expected);
     ASSERT_EQ(
         run(*queue, peer->resync_write_zeroes(data.size(), 0, false, false, 7)),
         data.size()
@@ -483,9 +496,12 @@ void expect_copy_write_requests(const rawstd::URI& location) {
     ASSERT_EQ(
         run(*queue, writer->pread(data.data(), data.size(), 0)), data.size()
     );
-    EXPECT_EQ(
-        data, std::string(512, '\0') + client_data + std::string(1024, '\0')
-    );
+    expected.assign(2048, '\0');
+    expected.replace(512, client_data.size(), client_data);
+    expected.replace(1636, 10, client_data.data(), 10);
+    expected.replace(1628, prefix.size(), prefix);
+    expected.replace(1533, 6, left + right);
+    EXPECT_EQ(data, expected);
 
     // Raising the configuration on another open preserves admitted data.
     std::string block(4096, 'A');
@@ -552,4 +568,62 @@ TEST(MemberStateTest, ost_clear_lost_keeps_an_open_writer_dirty) {
     rawstor::tests::ObjectEnv env(8786, 8787);
     MemberObject f(rawstd::URI("ost://127.0.0.1:8787"));
     expect_clear_lost_with_writer(f);
+}
+
+TEST(
+    MemberStateTest,
+    resync_tracking_bounds_fragmentation_and_reuses_merged_ranges
+) {
+    rawstor::tests::TmpDir dir;
+    auto queue = rawio::Queue::create(16);
+    RawstdUUID id = new_id();
+    rawstd::URI location(dir.uri());
+    rawstor::Target target({rawstd::URI(location, id_string(id))});
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .width = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0
+    };
+    run(*queue, target.create(*queue, spec));
+    auto slot = run(*queue, rawstor::Slot::create(*queue, location));
+    run(*queue, slot->open(id, 0, 0, RawstdUUID{}));
+    RawstorObjectConfig config{};
+    config.epoch = 1;
+    config.nroles = 1;
+    config.roles[0] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+    run(*queue, slot->set_config(id, 0, 0, config, 0));
+    char data = 'B';
+    size_t count = 0;
+    bool limited = false;
+    for (; count < 250000; ++count) {
+        try {
+            run(*queue, slot->pwrite(&data, 1, 2 * count, false, 1));
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), ENOBUFS);
+            limited = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(limited);
+    EXPECT_GT(count, 1u);
+    // Updating an existing range needs no extra capacity; bridging two
+    // ranges frees capacity for a new, disjoint write.
+    EXPECT_EQ(run(*queue, slot->pwrite(&data, 1, 0, false, 1)), 1u);
+    EXPECT_EQ(run(*queue, slot->pwrite(&data, 1, 1, false, 1)), 1u);
+    EXPECT_EQ(run(*queue, slot->pwrite(&data, 1, 2 * count, false, 1)), 1u);
+    std::string repair(4, 'R');
+    EXPECT_EQ(
+        run(*queue,
+            slot->resync_pwrite(repair.data(), repair.size(), 0, false, 1)),
+        repair.size()
+    );
+    std::string actual(4, '\0');
+    EXPECT_EQ(
+        run(*queue, slot->pread(actual.data(), actual.size(), 0)), actual.size()
+    );
+    EXPECT_EQ(actual, "BBBR");
+    run(*queue, slot->leave());
+    run(*queue, slot->close());
 }

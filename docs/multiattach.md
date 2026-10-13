@@ -316,29 +316,32 @@ With N = 2, see below.
   next write and duplicates its writes onto m from then on.
 - **The sweep** copies regions from an in-sync source with writes flagged
   **`RESYNC`**. From the moment m records a configuration naming it
-  syncing, its `Slot::CopyState` records the sectors (512 bytes) client
-  writes covered whole, and a `RESYNC` write is applied only to the
-  sectors not among them; a client write overlapping a `RESYNC` write in
+  syncing, its `Slot::CopyState` records the exact byte ranges client
+  writes covered, and a `RESYNC` write is applied only to the gaps
+  between them; a client write overlapping a `RESYNC` write in
   flight waits for it. The sweep therefore never overwrites a fresher
   client write of any writer, with no lock between writers (A4). A
   `RESYNC` write still answers with its full length. A configuration that
   keeps m syncing keeps the record; any other role drops it.
-- **Rejoin** is a transition "m → in-sync, `resync_owner` = 0".
+- **Rejoin** is a transition "m → in-sync, `resync_owner` = 0". Stage 1
+  flushes the restored copy before clearing `LOST` in this transition.
 - An owner that disappears leaves m syncing; any writer aborts the resync
   with "m → excluded, `resync_owner` = 0".
 
 The record of client writes lives in memory only. A copy that keeps none
 -- not syncing, or syncing since before its `rawstor-ost` started --
-refuses a `RESYNC` write with `-ESTALE`: it cannot tell which sectors a
+refuses a `RESYNC` write with `-ESTALE`: it cannot tell which bytes a
 client wrote, and copying over all of them could overwrite one. The owner
 then records the syncing role anew, which starts an empty record, and
 starts the sweep over. A server with no copy of its own refuses `RESYNC`
 with `-EOPNOTSUPP`.
 
-A client write covering a sector only in part leaves that sector to the
-sweep. vhost-user and VDUSE devices only issue whole sectors; a writer
-that issues partial ones during a resync may see its partial sector
-overwritten by the sweep on the syncing copy.
+Partial-sector writes are preserved byte for byte; the sweep restores the
+remaining bytes of the sector. Overlapping and adjacent written ranges
+are merged. A copy tracks at most 65,536 disjoint ranges while syncing;
+a write requiring another range is rejected with `-ENOBUFS` before any
+of its data is written. Updating or merging existing ranges remains
+possible. Leaving the syncing role releases the range record.
 
 ```mermaid
 sequenceDiagram

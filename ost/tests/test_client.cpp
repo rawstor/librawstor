@@ -896,6 +896,24 @@ TEST(OstClientTest, sync_register_promises_and_accepts) {
     accept.payload.config.nroles = 2;
     accept.payload.config.roles[0] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     accept.payload.config.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+    // Invalid positions must not change the register or the copy's epoch.
+    RawstorFrameSyncPropose invalid_accept = accept;
+    invalid_accept.payload.member_index = RAWSTOR_OBJECT_MAX_WIDTH;
+    invalid_accept.payload.config.epoch = 100;
+    client.send_sync(invalid_accept);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    EXPECT_EQ(client.recv_response().body.res, -EINVAL);
+    RawstorFrameSetConfig invalid_config{};
+    std::memcpy(invalid_config.payload.object_id, id.bytes, sizeof(id.bytes));
+    invalid_config.payload.member_index = RAWSTOR_OBJECT_MAX_WIDTH;
+    invalid_config.payload.config.epoch = 100;
+    client.send_set_config(invalid_config);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    EXPECT_EQ(client.recv_response().body.res, -EINVAL);
     reply = sync_round_trip(client, queue, accept);
     EXPECT_EQ(reply.ok, 1);
     EXPECT_EQ(reply.meta.config.epoch, 5u);
@@ -985,7 +1003,7 @@ TEST(OstClientTest, write_below_the_accepted_epoch_is_stale) {
 // the position the request names; a RESYNC write then lands only on the
 // sectors no client write covered whole since it became SYNCING, and once
 // its role is anything else a RESYNC write is refused.
-TEST(OstClientTest, resync_write_skips_sectors_clients_wrote) {
+TEST(OstClientTest, resync_write_preserves_exact_client_ranges) {
     rawstor::ostserver::tests::TmpDir dir;
     int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
     rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
@@ -1057,13 +1075,13 @@ TEST(OstClientTest, resync_write_skips_sectors_clients_wrote) {
     expect_response(RAWSTOR_CMD_WRITE, 2048);
 
     std::string expected =
-        std::string(512, 'R') + whole + std::string(1024, 'R');
+        std::string(512, 'R') + whole + part + std::string(1022, 'R');
     EXPECT_EQ(read_all(2048), expected);
 
     // Zeroing during restoration protects the same client-written sectors.
     client.send_write_zeroes(0, 2048, false, true, RAWSTOR_FLAG_RESYNC);
     expect_response(RAWSTOR_CMD_WRITE_ZEROES, 2048);
-    expected = std::string(512, '\0') + whole + std::string(1024, '\0');
+    expected = std::string(512, '\0') + whole + part + std::string(1022, '\0');
     EXPECT_EQ(read_all(2048), expected);
 
     set_role(RAWSTOR_OBJECT_MEMBER_IN_SYNC);
