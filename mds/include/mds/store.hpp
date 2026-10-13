@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_MDS_STORE_HPP
 #define RAWSTOR_MDS_STORE_HPP
 
+#include <optional>
+
 #include "placement.hpp"
 #include "topology.hpp"
 
@@ -116,7 +118,8 @@ public:
     RawstorObjectMeta witness_meta(const RawstdUUID& id, uint64_t offset);
     void set_config(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags
+        const RawstorObjectConfig& config, unsigned int flags,
+        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     );
     void remove_witness(const RawstdUUID& id, uint64_t offset);
 

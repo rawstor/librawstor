@@ -287,7 +287,7 @@ struct RawstorFrameConfig {
 /*
  * SET_CONFIG's request: the configuration to record on one copy and
  * RAWSTOR_CONFIG_* `flags` (<rawstor/target.h>). The copy's own state is
- * preserved unless RAWSTOR_CONFIG_STATE_* selects an explicit state.
+ * preserved when the optional state byte is zero.
  * `member_index` is the copy's position among the
  * chunk's members, which `config.roles` is indexed by: the copy takes its
  * own role from it. Unlike META, it isn't wrapped in a
@@ -301,6 +301,7 @@ struct RawstorFrameSetConfigPayload {
     struct RawstorFrameConfig config;
     uint8_t flags;
     uint8_t member_index;
+    uint8_t state; /* 0 = preserve; otherwise RawstorObjectSyncStateValue */
 } RAWSTOR_PACKED;
 
 /* SET_CONFIG request */
@@ -599,7 +600,7 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameVersionEntry, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 29);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBallot, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameConfig, 312);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetConfigPayload, 338);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetConfigPayload, 339);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncProposePayload, 369);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAllocatePayload, 44);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameResponseBody, 12);

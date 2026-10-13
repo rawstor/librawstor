@@ -135,8 +135,9 @@ syncing is mid-resync, and an open treats it as stale (F8).
 ### DIRTY, CLEAN and LOST
 
 Data I/O changes the copy's `state` from the sessions it serves. Explicit
-metadata transitions use `SET_CONFIG` with `RAWSTOR_CONFIG_STATE_*` for data
-and witness members alike; zero flags preserve the existing state.
+metadata transitions use `SET_CONFIG` with an optional
+`RawstorObjectSyncStateValue` for data and witness members alike; omitting
+state preserves it.
 
 - **`DIRTY`**: before the first write into a `CLEAN` copy the copy marks
   itself `DIRTY` (fsync), under its record lock. Later writes see a cached

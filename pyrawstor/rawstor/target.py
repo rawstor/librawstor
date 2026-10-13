@@ -104,17 +104,20 @@ class Target:
 
     def set_member_config(
             self, config: librawstor.ObjectConfig,
-            member_index: int = 0, offset: int = 0, flags: int = 0) -> None:
+            member_index: int = 0, offset: int = 0, flags: int = 0,
+            state: int | None = None) -> None:
         """Write the chunk's configuration to one real member (position
         `member_index` in meta()'s own per-chunk order) of the chunk at
-        `offset` (0 for an ordinary, single-chunk target). A sharp tool:
+        `offset` (0 for an ordinary, single-chunk target). state=None preserves
+        its state; an OBJECT_SYNC_STATE_* value sets it with the configuration.
+        A sharp tool:
         setting this by hand can desynchronize a target's copies in ways
         the library's own quorum/reconciliation logic isn't designed to
         recover from automatically -- not meant for routine use. A caller
         wanting every member of the chunk written calls this once per
         member instead of relying on any fan-out here."""
         librawstor.object_set_member_config(
-            self._uri, config, member_index, offset, flags)
+            self._uri, config, member_index, offset, flags, state)
 
     def chunks(self) -> list[int]:
         """Every chunk offset this target's object has, ascending (see

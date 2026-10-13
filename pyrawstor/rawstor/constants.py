@@ -26,9 +26,6 @@ OBJECT_MEMBER_EXCLUDED = 3
 
 # Target.set_member_config() flags: RAWSTOR_CONFIG_* (<rawstor/target.h>).
 CONFIG_CLEAR_LOST = 1
-CONFIG_STATE_CLEAN = 2
-CONFIG_STATE_DIRTY = 4
-CONFIG_STATE_LOST = 6
 
 # ObjectMeta.member_role: RAWSTOR_MEMBER_* (<rawstor/target.h>).
 MEMBER_DATA = 0

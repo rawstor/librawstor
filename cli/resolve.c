@@ -202,9 +202,11 @@ static int resolve_chunk(
         if (res < 0) {
             return rawstd_exitcode_for_errno(-res);
         }
+        enum RawstorObjectSyncStateValue witness_state =
+            RAWSTOR_OBJECT_SYNC_STATE_LOST;
         int sres = rawstor_target_set_member_config(
-            witness_op.queue, target, offset, (size_t)i, &new_config,
-            RAWSTOR_CONFIG_STATE_LOST, rawstor_cli_op_cb, &witness_op
+            witness_op.queue, target, offset, (size_t)i, &new_config, 0,
+            &witness_state, rawstor_cli_op_cb, &witness_op
         );
         ssize_t sresult = rawstor_cli_op_wait(&witness_op, sres);
         rawstor_cli_op_destroy(&witness_op);
@@ -232,7 +234,7 @@ static int resolve_chunk(
         }
         int sres = rawstor_target_set_member_config(
             set_op.queue, target, offset, winners[i], &new_config,
-            RAWSTOR_CONFIG_CLEAR_LOST, rawstor_cli_op_cb, &set_op
+            RAWSTOR_CONFIG_CLEAR_LOST, NULL, rawstor_cli_op_cb, &set_op
         );
         ssize_t sresult = rawstor_cli_op_wait(&set_op, sres);
         rawstor_cli_op_destroy(&set_op);

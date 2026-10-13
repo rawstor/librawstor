@@ -1,4 +1,5 @@
 #include "ost_backend.hpp"
+#include "config.hpp"
 
 #include "opts.h"
 #include "telemetry.hpp"
@@ -773,7 +774,8 @@ public:
         const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
         const RawstdUUID& id, uint64_t chunk_offset, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags,
-        const rawstd::TraceEvent& trace_event
+        const rawstd::TraceEvent& trace_event,
+        std::optional<RawstorObjectSyncStateValue> state
     ) :
         BackendOp(backend, cid, trace_event, "set_config", 0, 0),
         _request{} {
@@ -798,6 +800,7 @@ public:
         memcpy(_request.payload.config.roles, config.roles, config.nroles);
         _request.payload.flags = static_cast<uint8_t>(flags);
         _request.payload.member_index = member_index;
+        _request.payload.state = state ? static_cast<uint8_t>(*state) : 0;
     }
 
     const void* request_data() const noexcept { return &_request; }
@@ -1788,14 +1791,17 @@ rawstd::Task<void> Backend::set_state(
 
 rawstd::Task<void> Backend::set_config(
     const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-    const RawstorObjectConfig& config, unsigned int flags
+    const RawstorObjectConfig& config, unsigned int flags,
+    std::optional<RawstorObjectSyncStateValue> state
 ) {
+    validate_config_update(flags, state);
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpSetConfig> op =
         std::make_shared<BackendOpSetConfig>(
             std::static_pointer_cast<Backend>(shared_from_this()),
-            _cid_counter++, id, offset, member_index, config, flags, trace_event
+            _cid_counter++, id, offset, member_index, config, flags,
+            trace_event, state
         );
     _add_op(op);
 

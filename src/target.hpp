@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_TARGET_HPP
 #define RAWSTOR_TARGET_HPP
 
+#include <optional>
+
 #include "backend.hpp"
 
 #include <rawstor/target.h>
@@ -272,7 +274,8 @@ public:
     // the connect. OST forwards this index to its one local copy.
     rawstd::Task<void> set_member_config(
         rawio::Queue& queue, uint64_t offset, size_t member_index,
-        RawstorObjectConfig config, unsigned int flags
+        RawstorObjectConfig config, unsigned int flags,
+        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     ) const;
     // The two requests of the chunk's configuration register
     // (Backend::sync_prepare()/sync_accept()), sent to one member, which

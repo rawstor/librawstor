@@ -791,7 +791,9 @@ TEST_F(
     {
         ObjectStore store = make_store();
         store.create_witness(id, chunk_size, spec);
-        store.set_config(id, chunk_size, config, RAWSTOR_CONFIG_STATE_DIRTY);
+        store.set_config(
+            id, chunk_size, config, 0, RAWSTOR_OBJECT_SYNC_STATE_DIRTY
+        );
         store.set_config(id, chunk_size, config, 0);
         EXPECT_EQ(
             store.witness_meta(id, chunk_size).state,

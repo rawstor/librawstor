@@ -291,8 +291,10 @@ rawstd::Task<void> initialize_witness(
             try {
                 co_await slot->set_config(
                     uuid_from_target(members[i]), extract_offset(members[i]),
-                    static_cast<uint8_t>(i), config,
-                    i == witness ? RAWSTOR_CONFIG_STATE_CLEAN : 0
+                    static_cast<uint8_t>(i), config, 0,
+                    i == witness
+                        ? std::optional(RAWSTOR_OBJECT_SYNC_STATE_CLEAN)
+                        : std::nullopt
                 );
             } catch (...) {
                 error = std::current_exception();
@@ -998,12 +1000,13 @@ rawstd::DetachedTask launch_versions_op_coro(
 rawstd::DetachedTask launch_set_member_config_op_coro(
     rawstor::Target t, rawio::Queue* queue, uint64_t offset,
     size_t member_index, RawstorObjectConfig config, unsigned int flags,
+    std::optional<RawstorObjectSyncStateValue> state,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     try {
         co_await t.set_member_config(
-            *queue, offset, member_index, config, flags
+            *queue, offset, member_index, config, flags, state
         );
     } catch (const std::system_error& e) {
         result = -e.code().value();
@@ -1686,7 +1689,8 @@ rawstd::Task<rawstd::URI> Target::_member_location(
 
 rawstd::Task<void> Target::set_member_config(
     rawio::Queue& queue, uint64_t offset, size_t member_index,
-    RawstorObjectConfig config, unsigned int flags
+    RawstorObjectConfig config, unsigned int flags,
+    std::optional<RawstorObjectSyncStateValue> state
 ) const {
     rawstd::URI location =
         co_await _member_location(queue, offset, member_index);
@@ -1697,7 +1701,7 @@ rawstd::Task<void> Target::set_member_config(
     std::exception_ptr error;
     try {
         co_await slot->set_config(
-            id, offset, static_cast<uint8_t>(member_index), config, flags
+            id, offset, static_cast<uint8_t>(member_index), config, flags, state
         );
     } catch (...) {
         error = std::current_exception();
@@ -2081,13 +2085,15 @@ int rawstor_target_meta(
 int rawstor_target_set_member_config(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
     const RawstorObjectConfig* config, unsigned int flags,
+    const RawstorObjectSyncStateValue* state,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
         launch_set_member_config_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), offset,
-            member_index, *config, flags, cb, data
+            member_index, *config, flags,
+            state ? std::optional(*state) : std::nullopt, cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;

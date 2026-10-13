@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_BACKEND_HPP
 #define RAWSTOR_BACKEND_HPP
 
+#include <optional>
+
 #include <rawio/queue.hpp>
 
 #include <rawstd/coro.hpp>
@@ -214,7 +216,8 @@ public:
     // set_state(); transports forward flags to the destination's Slot.
     virtual rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-        const RawstorObjectConfig& config, unsigned int flags
+        const RawstorObjectConfig& config, unsigned int flags,
+        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     ) = 0;
 
     // The two requests of the chunk's configuration register

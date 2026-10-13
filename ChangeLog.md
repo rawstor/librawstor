@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Member configuration updates take an optional typed state separately from flags.
 - Data and witness members share `SET_CONFIG` for atomic state and configuration updates.
 - MDS lists objects and witness members through the ordinary `LIST` command.
 - Witness members use ordinary backend URIs and use the last location when there is one more location than the even data width, with their type reported by metadata.

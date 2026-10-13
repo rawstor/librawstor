@@ -279,17 +279,15 @@ A ballot of the configuration register (`RawstorObjectBallot`):
 16
 ```
 
-### SetConfig — 338 bytes
+### SetConfig — 339 bytes
 
-Records the chunk's configuration on one copy (`SET_CONFIG`). The copy's
-state is preserved when flags are zero. Bits 1–2 optionally record `CLEAN`
-(`RAWSTOR_CONFIG_STATE_CLEAN = 2`), `DIRTY` (`STATE_DIRTY = 4`), or `LOST`
-(`STATE_LOST = 6`) atomically with the configuration, for data and witness
-members alike. Bit 0, `RAWSTOR_CONFIG_CLEAR_LOST`, turns a `LOST` copy
-`CLEAN` (no session open for writing) or `DIRTY`. Explicit state and
-CLEAR_LOST cannot be combined; unknown flag bits return `-EINVAL`. A server
-with
-several locations keeps no record of the copy it is and answers `-ENOSYS`
+Records the chunk's configuration on one copy (`SET_CONFIG`). The separate
+`state` byte contains a `RawstorObjectSyncStateValue`: `CLEAN = 1`,
+`DIRTY = 2`, or `LOST = 3`, persisted atomically with configuration. Zero
+means preserve the current state. `flags` contains only bit 0,
+`RAWSTOR_CONFIG_CLEAR_LOST`, which turns a `LOST` copy `CLEAN` (no writer
+sessions) or `DIRTY`. Explicit state and CLEAR_LOST cannot be combined;
+invalid states or unknown flag bits return `-EINVAL`. A server with several locations keeps no record of the copy it is and answers `-ENOSYS`
 ([mirroring](mirroring.md#one-copy-per-server)). The copy's ballots stay
 as they are: only the register's own requests change them. `member_index` is
 the copy's position among the chunk's members, which the Config's roles
@@ -313,11 +311,10 @@ way -- disconnect, a new `SET_OBJECT` -- leaves a `DIRTY` copy `LOST`.
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  24  Config (312 bytes)
-     +----------+--------------+
-336  |  flags   | member_index |
-     |          |              |
-     +----------+--------------+
-338
+     +----------+--------------+----------+
+336  |  flags   | member_index |  state   |
+     +----------+--------------+----------+
+339
 ```
 
 ### SyncPropose — 369 bytes
@@ -693,7 +690,7 @@ address count.
 Both OST and MDS accept `ALLOCATE` with `member_role = 1` to create a
 metadata-only member, `META` to read it and `RELEASE` to remove it.
 The common `SET_CONFIG` request atomically records state and configuration
-with `RAWSTOR_CONFIG_STATE_*` flags. Without these flags, state is preserved.
+with its separate optional `state` field. Zero preserves the existing state.
 The update is serialized with member state transitions and persisted before
 the empty success response. `config.roles` records all members in
 the target's stable order; the witness entry is IN_SYNC after a successful

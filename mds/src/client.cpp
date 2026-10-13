@@ -1,3 +1,4 @@
+#include "config.hpp"
 #include "witness.hpp"
 #include <mds/client.hpp>
 
@@ -362,7 +363,8 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         try {
             store.set_config(
                 uuid_of(payload.object_id), payload.chunk_offset,
-                decode_config(payload.config), payload.flags
+                decode_config(payload.config), payload.flags,
+                rawstor::decode_config_state(payload.state)
             );
         } catch (const std::system_error& e) {
             res = -e.code().value();

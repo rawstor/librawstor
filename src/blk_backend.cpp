@@ -203,9 +203,10 @@ rawstd::Task<void> Backend::set_state(
 
 rawstd::Task<void> Backend::set_config(
     const RawstdUUID& id, uint64_t offset, uint8_t,
-    const RawstorObjectConfig& config, unsigned int flags
+    const RawstorObjectConfig& config, unsigned int flags,
+    std::optional<RawstorObjectSyncStateValue> state
 ) {
-    auto state = config_state(flags);
+    validate_config_update(flags, state);
     for (size_t i = 0; i < config.nroles; ++i) {
         if (config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -221,8 +222,8 @@ rawstd::Task<void> Backend::set_config(
         }
     }
     meta.config = config;
-    if (state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
-        meta.state = state;
+    if (state) {
+        meta.state = *state;
     }
     co_await _write_meta(
         id, offset, meta.state, meta.config, meta.promised, meta.accepted

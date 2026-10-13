@@ -110,7 +110,7 @@ struct RawstorObjectSpec {
  * The data copy keeps its state itself, from the sessions it serves
  * (docs/mirroring.md, "DIRTY, CLEAN and LOST"): it is read in
  * RawstorObjectMeta. Explicit metadata transitions use
- * RAWSTOR_CONFIG_STATE_* flags for data and witness members alike.
+ * the optional RawstorObjectSyncStateValue argument for any member.
  */
 enum RawstorObjectSyncStateValue {
     RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE = 0,
@@ -187,13 +187,6 @@ struct RawstorObjectConfig {
  * copies consistent by hand, e.g. `rawstor resolve`.
  */
 #define RAWSTOR_CONFIG_CLEAR_LOST (1u << 0)
-
-/** Optional state recorded atomically with the configuration, for any member.
- * Choose one state; zero preserves it. Do not combine with CLEAR_LOST. */
-#define RAWSTOR_CONFIG_STATE_CLEAN (1u << 1)
-#define RAWSTOR_CONFIG_STATE_DIRTY (2u << 1)
-#define RAWSTOR_CONFIG_STATE_LOST (3u << 1)
-#define RAWSTOR_CONFIG_STATE_MASK (3u << 1)
 
 /**
  * @brief Object copy metadata.
@@ -405,6 +398,8 @@ int rawstor_target_meta(
  *                      call is being queued -- need not stay valid until
  *                      @p cb runs.
  * @param flags         RAWSTOR_CONFIG_* flags, 0 for none.
+ * @param state         Optional state to record with config; NULL preserves it.
+ *                      Read while queuing. Cannot be combined with CLEAR_LOST.
  * @param cb            Callback invoked on completion.
  *                      - @p result is zero on success, or a negative
  *                        errno on failure (@c -EINVAL for invalid target
@@ -428,6 +423,7 @@ int rawstor_target_meta(
 int rawstor_target_set_member_config(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
     const struct RawstorObjectConfig* config, unsigned int flags,
+    const enum RawstorObjectSyncStateValue* state,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 

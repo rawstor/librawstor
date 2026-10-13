@@ -607,10 +607,13 @@ rawstd::Task<void> Backend::set_state(
 
 rawstd::Task<void> Backend::set_config(
     const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-    const RawstorObjectConfig& config, unsigned int flags
+    const RawstorObjectConfig& config, unsigned int flags,
+    std::optional<RawstorObjectSyncStateValue> state
 ) {
     auto members = co_await _member_transport();
-    co_await members->set_config(id, offset, member_index, config, flags);
+    co_await members->set_config(
+        id, offset, member_index, config, flags, state
+    );
 }
 
 rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(

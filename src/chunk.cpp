@@ -1469,8 +1469,7 @@ rawstd::Task<void> Chunk::_write_witness(
             bool missing = false;
             try {
                 co_await m.slot->set_config(
-                    _id, _offset, static_cast<uint8_t>(index), config,
-                    config_state_flags(state)
+                    _id, _offset, static_cast<uint8_t>(index), config, 0, state
                 );
             } catch (const std::system_error& e) {
                 if (e.code().value() != ENOENT || required) {
@@ -1483,8 +1482,7 @@ rawstd::Task<void> Chunk::_write_witness(
                     _id, _offset, _spec, RAWSTOR_MEMBER_WITNESS
                 );
                 co_await m.slot->set_config(
-                    _id, _offset, static_cast<uint8_t>(index), config,
-                    config_state_flags(state)
+                    _id, _offset, static_cast<uint8_t>(index), config, 0, state
                 );
             }
             m.reachable = true;

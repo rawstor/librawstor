@@ -118,9 +118,10 @@ protected:
     ) {
         auto slot =
             run(*queue, rawstor::Slot::create(*queue, rawstd::URI(witness)));
-        run(*queue, slot->set_config(
-                        id, 0, 2, config, rawstor::config_state_flags(state)
-                    ));
+        run(*queue,
+            slot->set_config(
+                id, 0, static_cast<uint8_t>(spec.width), config, 0, state
+            ));
         run(*queue, slot->close());
     }
     void refused() {
@@ -360,9 +361,7 @@ TEST_F(WitnessTest, metadata_update_applies_state_and_config_to_data_member) {
     for (auto state :
          {RAWSTOR_OBJECT_SYNC_STATE_DIRTY, RAWSTOR_OBJECT_SYNC_STATE_LOST,
           RAWSTOR_OBJECT_SYNC_STATE_CLEAN}) {
-        run(*queue, slot->set_config(
-                        id, 0, 0, config, rawstor::config_state_flags(state)
-                    ));
+        run(*queue, slot->set_config(id, 0, 0, config, 0, state));
         auto meta = run(*queue, slot->meta(id, 0)).front();
         EXPECT_EQ(meta.member_role, RAWSTOR_MEMBER_DATA);
         EXPECT_EQ(meta.state, state);
@@ -381,14 +380,21 @@ TEST_F(WitnessTest, configuration_only_update_preserves_witness_state) {
     EXPECT_EQ(metas()[2].state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     EXPECT_EQ(metas()[2].config.sync_id, config.sync_id);
     run(*queue, target->set_member_config(
-                    *queue, 0, 2, config, RAWSTOR_CONFIG_STATE_LOST
+                    *queue, 0, 2, config, 0, RAWSTOR_OBJECT_SYNC_STATE_LOST
                 ));
     EXPECT_EQ(metas()[2].state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
     EXPECT_THROW(
         run(*queue, target->set_member_config(
-                        *queue, 0, 2, config,
-                        RAWSTOR_CONFIG_STATE_CLEAN | RAWSTOR_CONFIG_CLEAR_LOST
+                        *queue, 0, 2, config, RAWSTOR_CONFIG_CLEAR_LOST,
+                        RAWSTOR_OBJECT_SYNC_STATE_CLEAN
                     )),
+        std::system_error
+    );
+    EXPECT_THROW(
+        run(*queue,
+            target->set_member_config(
+                *queue, 0, 2, config, 0, RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE
+            )),
         std::system_error
     );
     EXPECT_EQ(metas()[2].state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
@@ -553,7 +559,8 @@ TEST_F(WitnessTest, explicit_lost_update_invalidates_witness_vote) {
     auto config = metas()[2].config;
     auto slot =
         run(*queue, rawstor::Slot::create(*queue, rawstd::URI(w.uri())));
-    run(*queue, slot->set_config(id, 0, 2, config, RAWSTOR_CONFIG_STATE_LOST));
+    run(*queue,
+        slot->set_config(id, 0, 2, config, 0, RAWSTOR_OBJECT_SYNC_STATE_LOST));
     run(*queue, slot->close());
     EXPECT_EQ(metas()[2].state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
     HiddenLocation offline(b);
@@ -567,7 +574,8 @@ TEST_F(WitnessTest, mds_explicit_lost_update_invalidates_witness_vote) {
     auto config = metas()[2].config;
     auto slot =
         run(*queue, rawstor::Slot::create(*queue, rawstd::URI(witness)));
-    run(*queue, slot->set_config(id, 0, 2, config, RAWSTOR_CONFIG_STATE_LOST));
+    run(*queue,
+        slot->set_config(id, 0, 2, config, 0, RAWSTOR_OBJECT_SYNC_STATE_LOST));
     run(*queue, slot->close());
     EXPECT_EQ(metas()[2].state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
     HiddenLocation offline(b);
@@ -833,7 +841,8 @@ TEST_F(WitnessTest, native_witness_update_preserves_register_ballots) {
     auto accepted =
         run(*queue, slot->sync_accept(id, 0, 2, ballot, next, config));
     ASSERT_TRUE(accepted.ok);
-    run(*queue, slot->set_config(id, 0, 2, config, RAWSTOR_CONFIG_STATE_DIRTY));
+    run(*queue,
+        slot->set_config(id, 0, 2, config, 0, RAWSTOR_OBJECT_SYNC_STATE_DIRTY));
     run(*queue, slot->close());
     auto metadata = metas()[2];
     EXPECT_EQ(metadata.accepted.counter, ballot.counter);

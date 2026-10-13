@@ -541,9 +541,9 @@ ObjectStore::witness_meta(const RawstdUUID& id, uint64_t offset) {
 
 void ObjectStore::set_config(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int flags
+    unsigned int flags, std::optional<RawstorObjectSyncStateValue> state
 ) {
-    auto state = rawstor::config_state(flags);
+    rawstor::validate_config_update(flags, state);
     std::lock_guard<std::mutex> guard(_mutex);
     Transaction tx(_db);
     Stmt stmt(
@@ -560,8 +560,8 @@ void ObjectStore::set_config(
     RawstorFrameMetaPayload record{};
     memcpy(&record, bytes.data(), sizeof(record));
     auto meta = decode_witness(record);
-    if (state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
-        meta.state = state;
+    if (state) {
+        meta.state = *state;
     } else if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 &&
                meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST) {
         meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;

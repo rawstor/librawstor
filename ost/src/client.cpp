@@ -1,3 +1,4 @@
+#include "config.hpp"
 #include <ost/client.hpp>
 
 #include <ost/server.hpp>

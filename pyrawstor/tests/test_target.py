@@ -112,6 +112,34 @@ class TestTarget(unittest.TestCase):
 
             target.remove()
 
+    def test_optional_member_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = rawstor.Location(f"file://{temp_dir}").create(
+                size=65536, width=1)
+            config = rawstor.librawstor.ObjectConfig(epoch=1, sync_id=41)
+            target.set_member_config(
+                config, state=rawstor.OBJECT_SYNC_STATE_DIRTY)
+            self.assertEqual(target.meta()[0].state,
+                             rawstor.OBJECT_SYNC_STATE_DIRTY)
+            config.sync_id = 42
+            target.set_member_config(config, state=None)
+            self.assertEqual(target.meta()[0].state,
+                             rawstor.OBJECT_SYNC_STATE_DIRTY)
+            self.assertEqual(target.meta()[0].sync_id, 42)
+            target.set_member_config(
+                config, state=rawstor.OBJECT_SYNC_STATE_CLEAN)
+            self.assertEqual(target.meta()[0].state,
+                             rawstor.OBJECT_SYNC_STATE_CLEAN)
+            with self.assertRaises(ValueError):
+                target.set_member_config(
+                    config, state=rawstor.OBJECT_SYNC_STATE_UNREACHABLE)
+            with self.assertRaises(OSError) as error:
+                target.set_member_config(
+                    config, flags=rawstor.CONFIG_CLEAR_LOST,
+                    state=rawstor.OBJECT_SYNC_STATE_CLEAN)
+            self.assertEqual(error.exception.errno, errno.EINVAL)
+            target.remove()
+
     def test_chunks(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             location = rawstor.Location(f"file://{temp_dir}")

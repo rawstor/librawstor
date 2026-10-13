@@ -1820,9 +1820,10 @@ rawstd::Task<void> Slot::_flush_copy(const RawstdUUID& id, uint64_t offset) {
 
 rawstd::Task<void> Slot::_set_config(
     const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-    const RawstorObjectConfig& config, unsigned int flags
+    const RawstorObjectConfig& config, unsigned int flags,
+    std::optional<RawstorObjectSyncStateValue> state
 ) {
-    auto state = config_state(flags);
+    validate_config_update(flags, state);
     if (member_index >= RAWSTOR_OBJECT_MAX_WIDTH) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -1847,8 +1848,8 @@ rawstd::Task<void> Slot::_set_config(
             co_await _flush_copy(id, offset);
         }
     }
-    co_await be->set_config(id, offset, member_index, config, flags);
-    if (state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+    co_await be->set_config(id, offset, member_index, config, flags, state);
+    if (state) {
         member->dirty.store(
             state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN, std::memory_order_release
         );
@@ -1871,7 +1872,8 @@ rawstd::Task<void> Slot::_set_config(
 
 rawstd::Task<void> Slot::set_config(
     const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-    const RawstorObjectConfig& config, unsigned int flags
+    const RawstorObjectConfig& config, unsigned int flags,
+    std::optional<RawstorObjectSyncStateValue> state
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -1881,7 +1883,7 @@ rawstd::Task<void> Slot::set_config(
     try {
         co_await _with_retry(
             func_name, trace_event, &Slot::_set_config, id, offset,
-            member_index, config, flags
+            member_index, config, flags, state
         );
         _finish(t_call);
     } catch (...) {

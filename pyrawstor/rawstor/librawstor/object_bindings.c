@@ -1192,12 +1192,31 @@ py_rawstor_object_set_member_config(PyObject* Py_UNUSED(self), PyObject* args) {
     unsigned long long member_index = 0;
     unsigned long long offset = 0;
     unsigned int flags = 0;
+    PyObject* state_obj = Py_None;
+    enum RawstorObjectSyncStateValue state;
+    const enum RawstorObjectSyncStateValue* state_ptr = NULL;
     if (!PyArg_ParseTuple(
-            args, "sO|KKI", &target, &config_obj, &member_index, &offset, &flags
+            args, "sO|KKIO", &target, &config_obj, &member_index, &offset,
+            &flags, &state_obj
         )) {
         return NULL;
     }
 
+    if (state_obj != Py_None) {
+        long value = PyLong_AsLong(state_obj);
+        if (PyErr_Occurred()) {
+            return NULL;
+        }
+        if (value < RAWSTOR_OBJECT_SYNC_STATE_CLEAN ||
+            value > RAWSTOR_OBJECT_SYNC_STATE_LOST) {
+            PyErr_SetString(
+                PyExc_ValueError, "state must be CLEAN, DIRTY, LOST or None"
+            );
+            return NULL;
+        }
+        state = (enum RawstorObjectSyncStateValue)value;
+        state_ptr = &state;
+    }
     if (!PyObject_TypeCheck(config_obj, PyObjectConfigType)) {
         PyErr_SetString(
             PyExc_TypeError, "config must be an ObjectConfig instance"
@@ -1224,7 +1243,7 @@ py_rawstor_object_set_member_config(PyObject* Py_UNUSED(self), PyObject* args) {
     }
     int sres = rawstor_target_set_member_config(
         op.queue, target, offset, (size_t)member_index, &config, flags,
-        rawstor_sync_op_cb, &op
+        state_ptr, rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);
     rawstor_sync_op_destroy(&op);

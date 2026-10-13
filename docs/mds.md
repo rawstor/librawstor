@@ -1112,7 +1112,7 @@ I/O or CoW operation is issued to a witness.
 Protocol version/feature negotiation and an I/O `map_epoch` fence are
 future extensions. The current client still tolerates `-ENOSYS` from
 configuration-only `SET_CONFIG`; state updates require support for
-`RAWSTOR_CONFIG_STATE_*`.
+the optional state field.
 Interprocess mirror coordination remains multiattach stage 2.
 
 ## Implementation stages
