@@ -977,7 +977,6 @@ rawstd::DetachedTask Client::_allocate(
             .chunk_size = chunk_shift_to_size(payload.chunk_shift),
             .stripe_width = payload.stripe_width,
             .failure_domain = payload.failure_domain,
-            .witness_member = payload.witness_member,
         };
 
         if (payload.member_role == RAWSTOR_MEMBER_WITNESS) {
@@ -1226,8 +1225,6 @@ rawstd::DetachedTask Client::_meta(
             body_out.state = static_cast<RawstorSyncStateType>(meta.state);
             body_out.chunk_shift = chunk_size_to_shift(meta.spec.chunk_size);
             body_out.width = static_cast<uint8_t>(meta.spec.width);
-            body_out.witness_member =
-                static_cast<uint8_t>(meta.spec.witness_member);
             body_out.member_role = static_cast<uint8_t>(meta.member_role);
             body_out.writers = meta.writers;
             body_out.config.epoch = meta.config.epoch;
@@ -1478,8 +1475,6 @@ rawstd::DetachedTask Client::_sync(
             wire.state = static_cast<RawstorSyncStateType>(meta.state);
             wire.chunk_shift = chunk_size_to_shift(meta.spec.chunk_size);
             wire.width = static_cast<uint8_t>(meta.spec.width);
-            wire.witness_member =
-                static_cast<uint8_t>(meta.spec.witness_member);
             wire.member_role = static_cast<uint8_t>(meta.member_role);
             wire.writers = meta.writers;
             wire.config.epoch = meta.config.epoch;

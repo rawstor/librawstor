@@ -76,7 +76,6 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
     run(*queue, target.create(*queue, spec));
 

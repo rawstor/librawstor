@@ -179,7 +179,6 @@ TEST(FileLifecycleTest, create_spec_list_remove) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
     ssize_t res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
@@ -234,7 +233,6 @@ TEST(FileLifecycleTest, remove_finishes_interrupted_remove) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
     ASSERT_EQ(target_create(*queue, target, spec), 0);
 
@@ -265,7 +263,6 @@ TEST(FileLifecycleTest, create_twice_preserves_existing) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
     ssize_t res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
@@ -302,7 +299,6 @@ TEST(FileLifecycleTest, remove_already_removed_target_fails_with_enoent) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
     ssize_t res = target_create(*queue, target, spec);
     ASSERT_EQ(res, 0);
@@ -379,7 +375,6 @@ TEST(FileLifecycleTest, create_is_zero_filled) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
     ssize_t res = target_create(*queue, target, spec);
     ASSERT_EQ(res, 0);
@@ -416,7 +411,6 @@ TEST(FileLifecycleTest, create_at_default_spec_list_remove) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
     ssize_t res = location_create(
         *queue, location, nullptr, spec, target.data(), target.size()
@@ -476,7 +470,6 @@ TEST(FileLifecycleTest, create_at_chunk_size_splits_into_multiple_chunks) {
         .chunk_size = 1ull << 20,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
     ssize_t res = location_create(
         *queue, location, uuid.c_str(), spec, target.data(), target.size()
@@ -518,7 +511,6 @@ TEST(FileLifecycleTest, create_at_spec_list_remove) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
     ssize_t res = location_create(
         *queue, location, uuid.c_str(), spec, target.data(), target.size()
@@ -578,7 +570,6 @@ TEST(FileLifecycleTest, meta_set_config) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
     ssize_t res = target_create(*queue, target, spec);
     EXPECT_EQ(res, 0);
@@ -640,7 +631,6 @@ TEST(OstLifecycleTest, create_spec_remove) {
             },
         .promised = {},
         .accepted = {},
-        .witness_member = 0,
     };
 
     {
@@ -678,7 +668,6 @@ TEST(OstLifecycleTest, create_spec_remove) {
             .chunk_size = 0,
             .stripe_width = 0,
             .failure_domain = 0,
-            .witness_member = 0,
         };
 
         ssize_t res = target_create(*queue, target, spec);
@@ -747,7 +736,6 @@ TEST(OstLifecycleTest, meta_of_bound_version_carries_version_id) {
             },
         .promised = {},
         .accepted = {},
-        .witness_member = 0,
     };
 
     auto requested = std::make_shared<RawstdUUID>();
@@ -889,7 +877,6 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
             },
         .promised = {},
         .accepted = {},
-        .witness_member = 0,
     };
 
     {
@@ -916,7 +903,6 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
             .chunk_size = 0,
             .stripe_width = 0,
             .failure_domain = 0,
-            .witness_member = 0,
         };
 
         ssize_t res = location_create(
@@ -966,7 +952,6 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
             },
         .promised = {},
         .accepted = {},
-        .witness_member = 0,
     };
 
     {
@@ -993,7 +978,6 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
             .chunk_size = 0,
             .stripe_width = 0,
             .failure_domain = 0,
-            .witness_member = 0,
         };
 
         ssize_t res = location_create(

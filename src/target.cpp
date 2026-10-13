@@ -522,8 +522,10 @@ rawstd::Task<RawstorObjectSpec> resolve_spec(
             }
             if (locations.size() > 1 || ret.width == 0) {
                 ret.width = static_cast<unsigned int>(
-                    locations.size() - (ret.witness_member != 0 &&
-                                        ret.witness_member <= locations.size())
+                    locations.size() == ret.width + 1 && ret.width >= 2 &&
+                            ret.width % 2 == 0
+                        ? ret.width
+                        : locations.size()
                 );
             }
             co_return ret;
@@ -588,11 +590,11 @@ rawstd::Task<std::vector<RawstorObjectMeta>> resolve_meta(
 
     for (const auto& answer : ret) {
         if (answer.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
-            answer.spec.witness_member != 0 &&
-            answer.spec.witness_member <= ret.size() &&
+            answer.spec.width >= 2 && answer.spec.width % 2 == 0 &&
+            ret.size() == answer.spec.width + 1 &&
+            ret.back().state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
             answer.config.nroles == ret.size()) {
-            ret[answer.spec.witness_member - 1].member_role =
-                RAWSTOR_MEMBER_WITNESS;
+            ret.back().member_role = RAWSTOR_MEMBER_WITNESS;
         }
     }
     co_return ret;
@@ -1288,9 +1290,6 @@ rawstd::Task<void> Target::create(
             (sp.width < 2 || sp.width % 2 != 0)) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
-        if (sp.witness_member > RAWSTOR_OBJECT_MAX_WIDTH) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
         if (uris.size() > RAWSTOR_OBJECT_MAX_WIDTH) {
             rawstd_error(
                 "Too many uris: %zu, at most %d\n", uris.size(),
@@ -1353,10 +1352,7 @@ rawstd::Task<void> Target::create(
         // (the size check above), starting at its own offset
         // (extract_offset(), already stamped on its own URIs).
         RawstorObjectSpec chunk_sp = sp;
-        if (!member) {
-            chunk_sp.witness_member =
-                uris.size() == sp.width + 1 ? uris.size() : 0;
-        }
+        bool witness = !member && uris.size() == sp.width + 1;
         if (chunks.size() > 1) {
             uint64_t offset = extract_offset(uris.front());
             if (offset >= sp.size) {
@@ -1383,10 +1379,9 @@ rawstd::Task<void> Target::create(
         std::vector<rawstd::Task<void>> tasks;
         tasks.reserve(uris.size());
         for (size_t index = 0; index < uris.size(); ++index) {
-            RawstorMemberRole role =
-                !member && chunk_sp.witness_member == index + 1
-                    ? RAWSTOR_MEMBER_WITNESS
-                    : RAWSTOR_MEMBER_DATA;
+            RawstorMemberRole role = witness && index + 1 == uris.size()
+                                         ? RAWSTOR_MEMBER_WITNESS
+                                         : RAWSTOR_MEMBER_DATA;
             tasks.push_back(create_one(queue, uris[index], chunk_sp, role));
         }
 
@@ -1416,10 +1411,8 @@ rawstd::Task<void> Target::create(
 
         if (!eptr) {
             try {
-                if (!member && chunk_sp.witness_member != 0) {
-                    co_await initialize_witness(
-                        queue, uris, chunk_sp.witness_member - 1
-                    );
+                if (witness) {
+                    co_await initialize_witness(queue, uris, uris.size() - 1);
                 }
             } catch (...) {
                 eptr = std::current_exception();

@@ -83,10 +83,6 @@ struct RawstorObjectSpec {
                                        object-local. */
     unsigned int failure_domain; /**< RAWSTOR_OBJ_DOMAIN_*; 0 = default
                                   (server). */
-    /** Witness member position plus one; 0 means no witness. Creation derives
-     * this value from width and locations; META preserves it on every copy.
-     */
-    unsigned int witness_member;
 };
 
 /**

@@ -344,7 +344,6 @@ struct RawstorFrameAllocatePayload {
     uint8_t failure_domain; /* RAWSTOR_OBJ_DOMAIN_* */
     uint8_t width;          /* redundancy: copies per chunk */
     uint8_t member_role;    /* enum RawstorMemberRole, <rawstor/target.h> */
-    uint8_t witness_member; /* complete target witness position + 1, 0 = none */
 } RAWSTOR_PACKED;
 
 /* ALLOCATE request */
@@ -395,7 +394,6 @@ struct RawstorFrameMetaPayload {
     /* The copy's replica of the register: its ballots. */
     struct RawstorFrameBallot promised;
     struct RawstorFrameBallot accepted;
-    uint8_t witness_member; /* complete target witness position + 1 */
 } RAWSTOR_PACKED;
 
 /*
@@ -607,10 +605,10 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBallot, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameConfig, 312);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetConfigPayload, 338);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncProposePayload, 369);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAllocatePayload, 45);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAllocatePayload, 44);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameResponseBody, 12);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 361);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncReplyPayload, 362);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 360);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncReplyPayload, 361);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjPolicy, 19);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjCreatePayload, 60);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjOpPayload, 56);

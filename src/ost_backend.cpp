@@ -919,7 +919,6 @@ public:
                 .failure_domain = (uint8_t)sp.failure_domain,
                 .width = (uint8_t)sp.width,
                 .member_role = (uint8_t)member_role,
-                .witness_member = static_cast<uint8_t>(sp.witness_member),
             },
         }) {
         memcpy(
@@ -1644,7 +1643,6 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
         // given one (Target::meta()'s own doc comment on the resulting
         // fallback).
         ret.spec.width = payload.width;
-        ret.spec.witness_member = payload.witness_member;
         ret.spec.chunk_size = chunk_shift_to_size(payload.chunk_shift);
         ret.state = static_cast<RawstorObjectSyncStateValue>(payload.state);
         ret.writers = payload.writers;
@@ -1724,7 +1722,6 @@ rawstd::Task<RawstorObjectSyncReply> Backend::_sync_request(
     RawstorObjectMeta meta{};
     meta.spec.size = wire.size;
     meta.spec.width = wire.width;
-    meta.spec.witness_member = wire.witness_member;
     meta.spec.chunk_size = chunk_shift_to_size(wire.chunk_shift);
     meta.member_role = static_cast<RawstorMemberRole>(wire.member_role);
     meta.state = static_cast<RawstorObjectSyncStateValue>(wire.state);

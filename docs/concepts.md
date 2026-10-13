@@ -388,9 +388,9 @@ directly (a single entry, 0, for a plain, non-`mds://` target).
 
 Witnesses use ordinary backend addresses. With `width + 1` locations and an
 even data width, creation makes the last location a witness; subsequent opens discover the member
-through `META.member_role`. `RawstorObjectSpec.witness_member` stores its
-position plus one on every copy (zero means none), including metadata used
-to identify an offline member safely. `width` counts only data copies;
+through `META.member_role`. An offline witness is identified by the last
+extra location beyond the surviving copies' data width. `width` counts
+only data copies;
 `config.nroles` counts all members. One witness is supported only with an
 even number of data members. It participates in synchronous membership
 barriers and quorum; data I/O and resync skip it. Keep the complete target

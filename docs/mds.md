@@ -840,12 +840,14 @@ reconstruct scan (below).
 
 Witness members use ordinary backend URIs: `ost://host:port`,
 `mds://host:port`, `file:///path`, `lvm://vg` or `zfs://pool/rawstor`.
-The URI contains only the address. Creation makes the last location a witness when the chunk has `width + 1`
+The URI contains only the address. Creation makes the last location a
+witness when the chunk has `width + 1`
 locations and `width` is even and at least two. With `width` locations, all
 members store data. Each member reports its own type
-through `META.member_role`. Every copy also persists `spec.witness_member`,
-so a missing member's type can be recovered from the surviving metadata
-without guessing or changing the quorum denominator.
+through `META.member_role`. If the last member is unavailable, its role
+follows
+from the complete target and the surviving copies' data width: `width + 1`
+locations declare a witness. No extra position field is stored.
 One witness per chunk is supported, only alongside an even number of data
 members (2, 4, 6, ...). Odd data-member counts are rejected with `EINVAL`.
 The ordinary create path creates it with the other members; `width` counts
@@ -1100,9 +1102,9 @@ a response head plus `{hash, res}` body (`res` is the following payload's
 length), and a Basic `SET_OBJECT` handshake with object/chunk/version and
 open flags. I/O offsets are local to the chunk bound by that handshake.
 
-Witness metadata uses the existing 361-byte Meta record: state encodes
+Witness metadata uses the existing 360-byte Meta record: state encodes
 `CLEAN` / `DIRTY` / `LOST`, and `config.roles` identifies
-survivors in member order; `witness_member` preserves the witness position.
+survivors in member order.
 `SET_WITNESS` atomically persists state plus
 configuration using the existing SetConfig request layout. `LIST_WITNESSES`
 uses the existing List request and response layouts on MDS. No data I/O or

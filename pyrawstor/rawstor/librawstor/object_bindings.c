@@ -21,7 +21,6 @@ typedef struct {
     unsigned long long chunk_size;
     unsigned long long stripe_width;
     unsigned int failure_domain;
-    unsigned int witness_member;
 } PyObjectSpec;
 
 // ObjectSpec is Py_TPFLAGS_BASETYPE (subclassable from Python), and a
@@ -49,7 +48,6 @@ static PyObject* PyObjectSpec_new(
         self->chunk_size = 0;
         self->stripe_width = 0;
         self->failure_domain = 0;
-        self->witness_member = 0;
     }
     return (PyObject*)self;
 }
@@ -61,14 +59,11 @@ PyObjectSpec_init(PyObjectSpec* self, PyObject* args, PyObject* kwargs) {
     unsigned long long chunk_size = 0;
     unsigned long long stripe_width = 0;
     unsigned int failure_domain = 0;
-    unsigned int witness_member = 0;
-    static char* kwlist[] = {
-        "size",           "width",          "chunk_size", "stripe_width",
-        "failure_domain", "witness_member", NULL
-    };
+    static char* kwlist[] = {"size",         "width",          "chunk_size",
+                             "stripe_width", "failure_domain", NULL};
     if (!PyArg_ParseTupleAndKeywords(
-            args, kwargs, "LI|KKII", kwlist, &size, &width, &chunk_size,
-            &stripe_width, &failure_domain, &witness_member
+            args, kwargs, "LI|KKI", kwlist, &size, &width, &chunk_size,
+            &stripe_width, &failure_domain
         )) {
         return -1;
     }
@@ -81,7 +76,6 @@ PyObjectSpec_init(PyObjectSpec* self, PyObject* args, PyObject* kwargs) {
     self->chunk_size = chunk_size;
     self->stripe_width = stripe_width;
     self->failure_domain = failure_domain;
-    self->witness_member = witness_member;
     return 0;
 }
 
@@ -203,34 +197,7 @@ static int PyObjectSpec_set_failure_domain(
     return 0;
 }
 
-static PyObject*
-PyObjectSpec_get_witness_member(PyObjectSpec* self, void* Py_UNUSED(closure)) {
-    return PyLong_FromUnsignedLong(self->witness_member);
-}
-static int PyObjectSpec_set_witness_member(
-    PyObjectSpec* self, PyObject* value, void* Py_UNUSED(closure)
-) {
-    if (value == NULL) {
-        PyErr_SetString(PyExc_TypeError, "cannot delete witness_member");
-        return -1;
-    }
-    unsigned long index = PyLong_AsUnsignedLong(value);
-    if (PyErr_Occurred()) {
-        return -1;
-    }
-    if (index > RAWSTOR_OBJECT_MAX_WIDTH) {
-        PyErr_SetString(
-            PyExc_ValueError, "witness_member must be between 0 and 255"
-        );
-        return -1;
-    }
-    self->witness_member = (unsigned int)index;
-    return 0;
-}
-
 static PyGetSetDef PyObjectSpec_getset[] = {
-    {"witness_member", (getter)PyObjectSpec_get_witness_member,
-     (setter)PyObjectSpec_set_witness_member, NULL, NULL},
     {"size", (getter)PyObjectSpec_get_size, (setter)PyObjectSpec_set_size, NULL,
      NULL},
     {"width", (getter)PyObjectSpec_get_width, (setter)PyObjectSpec_set_width,
@@ -935,7 +902,6 @@ PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
         .chunk_size = py_spec->chunk_size,
         .stripe_width = py_spec->stripe_width,
         .failure_domain = py_spec->failure_domain,
-        .witness_member = py_spec->witness_member,
     };
 
     RawstorSyncOp op;
@@ -976,7 +942,6 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
         .chunk_size = py_spec->chunk_size,
         .stripe_width = py_spec->stripe_width,
         .failure_domain = py_spec->failure_domain,
-        .witness_member = py_spec->witness_member,
     };
 
     char target[65536];
@@ -1111,7 +1076,6 @@ PyObject* py_rawstor_object_spec(PyObject* Py_UNUSED(self), PyObject* args) {
     py_spec->chunk_size = spec.chunk_size;
     py_spec->stripe_width = spec.stripe_width;
     py_spec->failure_domain = spec.failure_domain;
-    py_spec->witness_member = spec.witness_member;
 
     return (PyObject*)py_spec;
 }

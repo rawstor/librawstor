@@ -93,8 +93,9 @@ class TestWitnessLocation(unittest.TestCase):
                 ','.join(f'file://{path}' for path in paths))
             target = location.create(size=65536, width=2)
             self.assertNotIn('witness+', target.uri)
+            self.assertFalse(hasattr(target.spec(), 'witness_member'))
             self.assertEqual(target.spec().width, 2)
-            self.assertEqual(target.spec().witness_member, 3)
+
             metadata = target.meta()
             self.assertEqual([member.member_role for member in metadata],
                              [rawstor.MEMBER_DATA, rawstor.MEMBER_DATA,

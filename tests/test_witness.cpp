@@ -409,7 +409,6 @@ TEST_F(WitnessTest, matching_location_count_creates_only_data_members) {
     run(*queue, target->create(*queue, spec));
     for (const auto& metadata : metas()) {
         EXPECT_EQ(metadata.member_role, RAWSTOR_MEMBER_DATA);
-        EXPECT_EQ(metadata.spec.witness_member, 0u);
     }
 }
 
@@ -824,7 +823,6 @@ TEST_F(WitnessTest, missing_witness_type_is_recovered_from_surviving_metadata) {
     metadata = metas();
     EXPECT_EQ(metadata[2].member_role, RAWSTOR_MEMBER_WITNESS);
     EXPECT_EQ(metadata[2].spec.size, 0u);
-    EXPECT_EQ(metadata[2].spec.witness_member, 3u);
     run(*queue, object->close(true));
 }
 

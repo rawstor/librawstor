@@ -993,7 +993,6 @@ rawstd::Task<void> recreate_missing(
     sp.size = size;
     sp.width = survivor->spec.width;
     sp.chunk_size = survivor->spec.chunk_size;
-    sp.witness_member = survivor->spec.witness_member;
 
     for (size_t i = 0; i < locations.size(); ++i) {
         if (!missing[i] || witnesses[i]) {
@@ -1175,14 +1174,6 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         }
         try {
             metas[i] = co_await *inspections[i];
-            unsigned int declared = metas[i].spec.witness_member;
-            if (metas[i].config.nroles == locations.size() && declared != 0) {
-                if (declared > locations.size() ||
-                    (witness_member && witness_member != declared)) {
-                    RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
-                }
-                witness_member = declared;
-            }
         } catch (const std::system_error& error) {
             if (error.code().value() == ENOTRECOVERABLE) {
                 throw;
@@ -1196,6 +1187,18 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
                 RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
             }
             witness_member = i + 1;
+        }
+    }
+    if (!witness_member && !metas.empty() &&
+        metas.back().state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+        for (const auto& meta : metas) {
+            if (meta.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
+                meta.spec.width >= 2 && meta.spec.width % 2 == 0 &&
+                locations.size() == meta.spec.width + 1 &&
+                meta.config.nroles == locations.size()) {
+                witness_member = locations.size();
+                break;
+            }
         }
     }
     if (witness_member &&

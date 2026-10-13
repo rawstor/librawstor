@@ -201,7 +201,6 @@ RawstorObjectSpec spec_n(unsigned int width) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
 }
 

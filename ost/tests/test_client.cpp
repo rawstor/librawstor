@@ -526,7 +526,6 @@ TEST(OstClientTest, list_reports_every_chunk_offset) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
 
     CreateResult res0;

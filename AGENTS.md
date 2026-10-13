@@ -33,7 +33,8 @@ The two headline consumers are:
   layouts and must be kept in sync with it.
 - **Witness**: a metadata-only chunk member, hosted on OST, MDS (SQLite),
   file, LVM or ZFS. Ordinary URIs contain only addresses; META reports the
-  member role, and spec.witness_member preserves its position on every copy. `Backend::set_witness()`
+  member role; an offline witness is the last extra location beyond
+  spec.width. `Backend::set_witness()`
   durably updates its record; `Chunk` includes it in synchronous membership
   barriers and quorum only with an even data-member count, and skips data I/O. See
   `docs/mds.md#witness`. Interprocess mirror coordination is multiattach

@@ -86,7 +86,6 @@ public:
             .chunk_size = 0,
             .stripe_width = 0,
             .failure_domain = 0,
-            .witness_member = 0,
         };
         run(queue, target.create(queue, spec));
     }
@@ -221,7 +220,6 @@ TEST(MemberStateTest, mds_object_passes_departure_to_its_chunks) {
         .chunk_size = 1u << 20,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
     run(*queue, target.create(*queue, spec));
 
@@ -411,7 +409,6 @@ void expect_copy_write_requests(const rawstd::URI& location) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
     run(*queue, target.create(*queue, spec));
     auto writer = run(*queue, rawstor::Slot::create(*queue, location));
@@ -588,7 +585,6 @@ TEST(
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
     run(*queue, target.create(*queue, spec));
     auto slot = run(*queue, rawstor::Slot::create(*queue, location));

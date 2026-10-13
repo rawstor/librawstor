@@ -95,7 +95,6 @@ TEST(ListTest, merge) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
     res = create(target11, spec);
     ASSERT_EQ(res, 0);
@@ -201,7 +200,6 @@ TEST(ListTest, merge_multi_chunk) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
-        .witness_member = 0,
     };
     ssize_t res = create(chunk0, spec);
     ASSERT_EQ(res, 0);
@@ -290,7 +288,6 @@ TEST(ListTest, pagination) {
             .chunk_size = 0,
             .stripe_width = 0,
             .failure_domain = 0,
-            .witness_member = 0,
         };
 
         char target[65536];

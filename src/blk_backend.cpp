@@ -341,8 +341,7 @@ std::string Backend::meta_encode(
     if (n < 0 || static_cast<size_t>(n) >= sizeof(buf)) {
         RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
     }
-    return std::string(buf, static_cast<size_t>(n)) +
-           ":witness_member=" + std::to_string(identity.witness_member);
+    return std::string(buf, static_cast<size_t>(n));
 }
 
 void Backend::meta_decode(
@@ -376,20 +375,6 @@ void Backend::meta_decode(
         &(*accepted).counter, &(*accepted).proposer, roles, &member_role,
         &width, &identity->chunk_size, &consumed
     );
-    if (n == 17 && static_cast<size_t>(consumed) < v.size()) {
-        unsigned int witness_member = 0;
-        int suffix = 0;
-        int fields = sscanf(
-            v.c_str() + consumed, ":witness_member=%u%n", &witness_member,
-            &suffix
-        );
-        if (fields != 1 || witness_member > RAWSTOR_OBJECT_MAX_WIDTH ||
-            static_cast<size_t>(consumed + suffix) != v.size()) {
-            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-        }
-        identity->witness_member = static_cast<uint8_t>(witness_member);
-        consumed += suffix;
-    }
     if (n != 17 || static_cast<size_t>(consumed) != v.size() ||
         version != META_FORMAT_VERSION) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);

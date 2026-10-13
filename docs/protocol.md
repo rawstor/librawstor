@@ -352,7 +352,7 @@ server with several locations answers `-ENOSYS`.
 369
 ```
 
-### Allocate — 45 bytes
+### Allocate — 44 bytes
 
 Creates one copy of one chunk. `chunk_shift` is `log2(chunk_size)`, 0 for an
 unchunked object; `stripe_width`/`failure_domain`/`width`/`member_role` are the
@@ -380,10 +380,6 @@ chunk's placement identity, stored with it.
      |  shift   |  domain  |          |   role   |
      +----------+----------+----------+----------+
 ```
-
-Byte 44 is `uint8_t witness_member`: the witness position plus one in the
-complete target, zero when no witness is declared.
-
 
 ## Response payloads
 
@@ -426,7 +422,7 @@ in no particular order. An empty payload means the object has no versions
      +---------------------------------------------------------------------------------------+
 ```
 
-### Meta — 361 bytes
+### Meta — 360 bytes
 
 Everything about one stored copy: its size, its placement identity, its own
 state (`CLEAN`, `DIRTY`, `LOST` for data; `CLEAN`, `DIRTY`, `LOST` for witnesses), how many sessions have it open for
@@ -448,23 +444,22 @@ zero Config and zero ballots.
  16  Config (312 bytes)
 328  Ballot promised (16 bytes)
 344  Ballot accepted (16 bytes)
-360  uint8_t witness_member (position + 1, zero = none)
-361
+360
 ```
 
-### SyncReply — 362 bytes
+### SyncReply — 361 bytes
 
 `SYNC_PREPARE`/`SYNC_ACCEPT`'s reply, sent whether the member promised or
 accepted (`ok` = 1) or refused (`ok` = 0): its whole record, a
-[Meta](#meta--361-bytes), follows at offset 1, so a refused proposer sees
+[Meta](#meta--360-bytes), follows at offset 1, so a refused proposer sees
 the actual value.
 
 ```text
      +0         +1
      +----------+--------------------------------------
-  0  |    ok    |  Meta (361 bytes)
+  0  |    ok    |  Meta (360 bytes)
      +----------+--------------------------------------
-362
+361
 ```
 
 ### RawstorLocationInfo — 16 bytes
@@ -689,8 +684,9 @@ ObjVersionMember — 24 bytes:
 ## Witness member operations
 
 URI schemes do not encode member roles. `META.member_role` identifies the
-addressed member; `witness_member` in ALLOCATE and META preserves the witness
-position on every copy. A quorum always uses the complete address count.
+addressed member. If the last member is unavailable, its role follows from
+the complete target and data width. A quorum always uses the complete
+address count.
 
 Both OST and MDS accept `ALLOCATE` with `member_role = 1` to create a
 metadata-only member, `META` to read it and `RELEASE` to remove it.
