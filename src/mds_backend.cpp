@@ -185,6 +185,31 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     _left(false) {
 }
 
+rawstd::Task<std::shared_ptr<rawstor::Backend>> Backend::_member_transport() {
+    if (!_members) {
+        _members = co_await rawstor::Backend::create_member(_queue, location());
+    }
+    co_return _members;
+}
+
+rawstd::Task<std::optional<RawstorObjectMeta>>
+Backend::_witness_meta(const RawstdUUID& id, uint64_t offset) {
+    auto members = co_await _member_transport();
+    try {
+        auto records = co_await members->meta(id, offset, RawstdUUID{});
+        if (records.size() != 1 ||
+            records.front().member_role != RAWSTOR_MEMBER_WITNESS) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        co_return records.front();
+    } catch (const std::system_error& error) {
+        if (error.code().value() != ENOENT && error.code().value() != ENOSYS) {
+            throw;
+        }
+    }
+    co_return std::nullopt;
+}
+
 rawstd::Task<void> Backend::_connect() {
     co_await _client.connect();
 }
@@ -203,13 +228,50 @@ rawstd::Task<void> Backend::list_chunks(
 ) {
     chunks.clear();
     if (rawstd_uuid_is_nil(&id)) {
+        RawstdUUID after = token;
         std::vector<RawstdUUID> ids =
             co_await _client.list_objects(token, limit);
-        chunks.reserve(ids.size());
-        for (const RawstdUUID& object_id : ids) {
-            chunks.push_back(ChunkGroup{object_id, {0}});
+        for (const auto& object_id : ids) {
+            chunks.push_back(ChunkGroup{object_id, {0}, true});
         }
+        auto members = co_await _member_transport();
+        std::vector<ChunkGroup> witnesses;
+        RawstdUUID witness_token = after;
+        try {
+            co_await members->list_chunks(
+                {}, limit, witnesses, witness_token, version_id
+            );
+        } catch (const std::system_error& error) {
+            if (error.code().value() != ENOSYS) {
+                throw;
+            }
+        }
+        // A reconstructed object map may also index a witness's logical id.
+        // The native member record determines the type of that address.
+        for (const auto& witness : witnesses) {
+            std::erase_if(chunks, [&](const auto& object) {
+                return rawstd_uuid_cmp(&object.id, &witness.id) == 0;
+            });
+        }
+        chunks.insert(chunks.end(), witnesses.begin(), witnesses.end());
+        std::sort(
+            chunks.begin(), chunks.end(),
+            [](const auto& left, const auto& right) {
+                return rawstd_uuid_cmp(&left.id, &right.id) < 0;
+            }
+        );
+        if (limit != 0 && chunks.size() > limit) {
+            chunks.resize(limit);
+        }
+        token = chunks.empty() ? RawstdUUID{} : chunks.back().id;
         co_return;
+    }
+    if (rawstd_uuid_is_nil(&version_id)) {
+        auto members = co_await _member_transport();
+        co_await members->list_chunks(id, limit, chunks, token, version_id);
+        if (!chunks.empty()) {
+            co_return;
+        }
     }
     token = {};
 
@@ -234,9 +296,14 @@ rawstd::Task<void> Backend::list_chunks(
 }
 
 rawstd::Task<void> Backend::create(
-    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t,
-    const RawstorObjectSpec& sp, RawstorMemberRole
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
+    const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
+    if (member_role == RAWSTOR_MEMBER_WITNESS) {
+        auto members = co_await _member_transport();
+        co_await members->create(idempotency_key, id, offset, sp, member_role);
+        co_return;
+    }
     // An mds:// object is always chunked: the MDS map is per-chunk, and
     // there is no single-chunk layout for it to fall back on.
     if (sp.size == 0 || sp.chunk_size == 0) {
@@ -291,8 +358,13 @@ rawstd::Task<void> Backend::remove_version(
 }
 
 rawstd::Task<void> Backend::remove(
-    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
 ) {
+    if (co_await _witness_meta(id, offset)) {
+        auto members = co_await _member_transport();
+        co_await members->remove(idempotency_key, id, offset);
+        co_return;
+    }
     /*
      * Unregister first (docs/mds.md, deletion order): the MDS is where
      * "the object still has versions" refuses with EBUSY -- before any
@@ -521,6 +593,12 @@ rawstd::Task<void> Backend::_remove_version(
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
+    if (rawstd_uuid_is_nil(&version_id)) {
+        auto witness = co_await _witness_meta(id, offset);
+        if (witness) {
+            co_return std::vector<RawstorObjectMeta>{*witness};
+        }
+    }
     WireMap map = co_await _client.open(id, version_id);
     uint64_t index = chunk_index_at(map, offset);
     std::vector<RawstorObjectMeta> ret = co_await resolve_meta(
@@ -545,6 +623,9 @@ Backend::list_versions(const RawstdUUID& id, uint64_t) {
 rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
+    if (rawstd_uuid_is_nil(&version_id) && co_await _witness_meta(id, offset)) {
+        co_return std::vector<rawstd::URI>{location()};
+    }
     WireMap map = co_await _client.open(id, version_id);
     uint64_t index = chunk_index_at(map, offset);
     co_return chunk_locations(map, index);
@@ -558,11 +639,19 @@ rawstd::Task<void> Backend::set_state(
 }
 
 rawstd::Task<void> Backend::set_config(
-    const RawstdUUID&, uint64_t, uint8_t, const RawstorObjectConfig&,
-    unsigned int
+    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+    const RawstorObjectConfig& config, unsigned int flags
 ) {
-    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
-    co_return;
+    auto members = co_await _member_transport();
+    co_await members->set_config(id, offset, member_index, config, flags);
+}
+
+rawstd::Task<void> Backend::set_witness(
+    const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
+    const RawstorObjectConfig& config
+) {
+    auto members = co_await _member_transport();
+    co_await members->set_witness(id, offset, state, config);
 }
 
 rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
@@ -627,6 +716,10 @@ rawstd::Task<void> Backend::close() {
     if (_object) {
         co_await _object->close(_left);
         _object.reset();
+    }
+    if (_members) {
+        co_await _members->close();
+        _members.reset();
     }
 }
 

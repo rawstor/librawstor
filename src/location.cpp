@@ -86,7 +86,7 @@ std::vector<rawstd::URI> build_create_uris(
     const std::vector<rawstd::URI>& uris, const RawstdUUIDString& uuid_string,
     const RawstorObjectSpec& sp
 ) {
-    bool is_mds = !uris.empty() && uris.front().scheme() == "mds";
+    bool is_mds = uris.size() == 1 && uris.front().scheme() == "mds";
     uint64_t num_chunks =
         (!is_mds && sp.chunk_size != 0 && sp.chunk_size < sp.size)
             ? sp.size / sp.chunk_size
@@ -161,24 +161,6 @@ rawstd::Task<std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID>> list_one(
     std::exception_ptr error;
     try {
         co_await slot->list_chunks(RawstdUUID{}, limit, ret.first, ret.second);
-        if (rawstor::witness_location(location)) {
-            std::vector<rawstor::ChunkGroup> witnesses;
-            for (const auto& group : ret.first) {
-                rawstor::ChunkGroup filtered{group.id, {}};
-                for (uint64_t offset : group.offsets) {
-                    auto metas =
-                        co_await slot->meta(group.id, offset, RawstdUUID{});
-                    if (metas.size() == 1 &&
-                        metas.front().member_role == RAWSTOR_MEMBER_WITNESS) {
-                        filtered.offsets.push_back(offset);
-                    }
-                }
-                if (!filtered.offsets.empty()) {
-                    witnesses.push_back(std::move(filtered));
-                }
-            }
-            ret.first = std::move(witnesses);
-        }
     } catch (...) {
         error = std::current_exception();
     }
@@ -356,18 +338,9 @@ Location::Location(const std::vector<rawstd::URI>& uris) : _uris(uris) {
 }
 
 rawstd::Task<RawstorLocationInfo> Location::info(rawio::Queue& queue) const {
-    std::vector<rawstd::URI> stores;
-    for (const auto& uri : _uris) {
-        if (!witness_location(uri)) {
-            stores.push_back(uri);
-        }
-    }
-    if (stores.empty()) {
-        stores = _uris;
-    }
     std::vector<RawstorLocationInfo> infos =
-        co_await rawstd::gather(stores.size(), [&](size_t i) {
-            return info_one(queue, stores[i]);
+        co_await rawstd::gather(_uris.size(), [&](size_t i) {
+            return info_one(queue, _uris[i]);
         });
 
     RawstorLocationInfo ret = infos.front();
@@ -420,13 +393,12 @@ rawstd::Task<void> Location::list(
         const auto& [loc_groups, loc_token] = listings[i];
         // An mds:// object is addressed whole (build_create_uris()'s own
         // comment): its target names the id alone, no offset segment.
-        bool is_mds = location.scheme() == "mds";
         for (const auto& group : loc_groups) {
             std::vector<std::pair<uint64_t, rawstd::URI>>& entries =
                 targets_map[group.id];
             RawstdUUIDString uuid_string;
             rawstd_uuid_to_string(&group.id, &uuid_string);
-            if (is_mds) {
+            if (group.opaque) {
                 entries.emplace_back(0, rawstd::URI(location, uuid_string));
                 continue;
             }

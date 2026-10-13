@@ -430,6 +430,7 @@ rawstd::Task<void> Backend::create(
             ChunkIdentity identity;
             identity.member_role = member_role;
             identity.width = static_cast<uint8_t>(sp.width);
+            identity.witness_member = static_cast<uint8_t>(sp.witness_member);
             identity.chunk_size = sp.chunk_size;
 
             // meta_encode()'s own (shorter, variable-length) return value
@@ -589,6 +590,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
                         ? 0
                         : static_cast<uint64_t>(st.st_size);
     ret.spec.width = identity.width;
+    ret.spec.witness_member = identity.witness_member;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
     ret.state = state;

@@ -1,12 +1,14 @@
 #include "rawio_sync.h"
 
+#include <rawstor/target.h>
 #include <stddef.h>
 
 int rawstor_sync_op_init(RawstorSyncOp* op) {
     op->result = 0;
     op->done = 0;
 
-    return rawio_queue_create(2, &op->queue);
+    /* Metadata operations fan out over the complete member set. */
+    return rawio_queue_create(2 * RAWSTOR_OBJECT_MAX_WIDTH + 2, &op->queue);
 }
 
 void rawstor_sync_op_destroy(RawstorSyncOp* op) {

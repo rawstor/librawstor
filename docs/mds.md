@@ -838,10 +838,14 @@ reconstruct scan (below).
 
 ## Witness
 
-Witness members are declared explicitly with a `witness+` URI prefix:
-`witness+ost://host:port`, `witness+mds://host:port`, or
-`witness+file:///path`, `witness+lvm://vg`, `witness+zfs://pool/rawstor`.
-The prefix records the role in the target even while the host is down.
+Witness members use ordinary backend URIs: `ost://host:port`,
+`mds://host:port`, `file:///path`, `lvm://vg` or `zfs://pool/rawstor`.
+The URI contains only the address. Creation selects the witness with
+`--witness INDEX` (zero-based), or `RawstorObjectSpec.witness_member`
+(position plus one, zero means none). Each member reports its own type
+through `META.member_role`. Every copy also persists `spec.witness_member`,
+so a missing member's type can be recovered from the surviving metadata
+without guessing or changing the quorum denominator.
 One witness per chunk is supported, only alongside an even number of data
 members (2, 4, 6, ...). Odd data-member counts are rejected with `EINVAL`.
 The ordinary create path creates it with the other members; `width` counts
@@ -852,7 +856,7 @@ registration. An `mds://` object's placement does not automatically add one.
 For example, create a two-copy object with a witness on MDS:
 
 ```sh
-rawstor create -s 1G -m 2 'ost://10.0.0.11:9090,ost://10.0.0.12:9090,witness+mds://10.0.0.13:9091'
+rawstor create -s 1G -m 2 --witness=2 'ost://10.0.0.11:9090,ost://10.0.0.12:9090,mds://10.0.0.13:9091'
 ```
 
 The mirroring model supports several writer queues within one process (see
@@ -871,8 +875,9 @@ file witnesses keep an empty data file plus metadata, LVM witnesses use a
 minimum-size LV and its tag, and ZFS witnesses use a minimum-size zvol and its
 property. They report zero logical data size, receive no data I/O and never
 participate in resync or snapshot CoW. An OST hosting a witness must have
-one underlying location; a relay over MDS uses `witness+mds://` for that
-location so it selects the member protocol rather than object placement.
+one underlying location. MDS discovers witness records from metadata and
+forwards their member operations through the same shared protocol; its
+ordinary object placement API remains separate.
 
 This stage is implemented before [multi-attach Stage 2](multiattach.md#implementation-stages).
 The recovery rules below describe shared in-process writer control. To support
@@ -1095,9 +1100,10 @@ a response head plus `{hash, res}` body (`res` is the following payload's
 length), and a Basic `SET_OBJECT` handshake with object/chunk/version and
 open flags. I/O offsets are local to the chunk bound by that handshake.
 
-Witness metadata uses the existing 360-byte Meta record: state encodes
+Witness metadata uses the existing 361-byte Meta record: state encodes
 `CLEAN` / `DIRTY` / `LOST`, and `config.roles` identifies
-survivors in member order. `SET_WITNESS` atomically persists state plus
+survivors in member order; `witness_member` preserves the witness position.
+`SET_WITNESS` atomically persists state plus
 configuration using the existing SetConfig request layout. `LIST_WITNESSES`
 uses the existing List request and response layouts on MDS. No data I/O or
 CoW operation is issued to a witness.

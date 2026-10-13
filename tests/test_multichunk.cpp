@@ -91,6 +91,7 @@ TEST(MultiChunkTest, create_open_read_write_across_chunk_boundary) {
         .chunk_size = chunk_size,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     run(*queue, target.create(*queue, spec));
 
@@ -181,6 +182,7 @@ TEST(MultiChunkTest, rejects_wrapping_io_range) {
         .chunk_size = chunk_size,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     run(*queue, target.create(*queue, spec));
     std::unique_ptr<rawstor::Object> object =
@@ -241,6 +243,7 @@ TEST(MultiChunkTest, preadv_pwritev_across_chunk_boundary) {
         .chunk_size = chunk_size,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     run(*queue, target.create(*queue, spec));
 
@@ -312,6 +315,7 @@ TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_offset) {
         .chunk_size = chunk_size,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     run(*queue, target.create(*queue, spec));
 
@@ -382,6 +386,7 @@ TEST(MultiChunkTest, open_rejects_misplaced_last_chunk) {
         .chunk_size = chunk_size,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     run(*queue, target.create(*queue, spec));
 
@@ -419,6 +424,7 @@ TEST(MultiChunkTest, single_uri_target_with_chunk_size_below_size) {
         .chunk_size = chunk_size,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     run(*queue, target.create(*queue, spec));
 
@@ -470,6 +476,7 @@ TEST(TargetCreateTest, width_rules) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
 
     auto expect_einval = [&](const rawstor::Target& target, unsigned width) {

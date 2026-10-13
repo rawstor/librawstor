@@ -15,6 +15,7 @@
 #include <rawstor/target.h>
 
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -43,6 +44,10 @@ namespace mds {
 class Backend final : public rawstor::Backend {
 private:
     mds::Client _client;
+    std::shared_ptr<rawstor::Backend> _members;
+    rawstd::Task<std::shared_ptr<rawstor::Backend>> _member_transport();
+    rawstd::Task<std::optional<RawstorObjectMeta>>
+    _witness_meta(const RawstdUUID& id, uint64_t offset);
     std::unique_ptr<Object> _object;
     // leave() was called: close() closes the nested Object cleanly, so its
     // chunks leave their members in turn.
@@ -76,9 +81,7 @@ public:
         RawstdUUID& token, RawstdUUID version_id = {}
     ) override;
 
-    // `member_role` is unused: an mds:// object is always created whole,
-    // via this same call -- always RAWSTOR_MEMBER_DATA for every one of
-    // its own chunks (create_one()'s own comment, target.cpp).
+    // DATA creates a whole placed object; WITNESS creates one metadata member.
     rawstd::Task<void> create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstorObjectSpec& sp,
@@ -170,6 +173,11 @@ public:
     ) override;
 
     // MDS holds no copy of its own: register requests fail with ENOSYS.
+    rawstd::Task<void> set_witness(
+        const RawstdUUID& id, uint64_t offset,
+        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config
+    ) override;
+
     rawstd::Task<RawstorObjectSyncReply> sync_prepare(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot,

@@ -82,3 +82,35 @@ class TestLocation(unittest.TestCase):
             self.assertEqual(list(location), [target])
 
             target.remove()
+
+class TestWitnessLocation(unittest.TestCase):
+    def test_plain_uris_and_metadata_discovery(self):
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            paths = [stack.enter_context(tempfile.TemporaryDirectory())
+                     for _ in range(3)]
+            location = rawstor.Location(
+                ','.join(f'file://{path}' for path in paths))
+            target = location.create(size=65536, width=2, witness_index=2)
+            self.assertNotIn('witness+', target.uri)
+            self.assertEqual(target.spec().width, 2)
+            self.assertEqual(target.spec().witness_member, 3)
+            metadata = target.meta()
+            self.assertEqual([member.member_role for member in metadata],
+                             [rawstor.MEMBER_DATA, rawstor.MEMBER_DATA,
+                              rawstor.MEMBER_WITNESS])
+            self.assertEqual(metadata[2].size, 0)
+            self.assertEqual(list(location), [target])
+            target.remove()
+            self.assertEqual(list(location), [])
+
+    def test_odd_data_count_is_rejected(self):
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            paths = [stack.enter_context(tempfile.TemporaryDirectory())
+                     for _ in range(4)]
+            location = rawstor.Location(
+                ','.join(f'file://{path}' for path in paths))
+            with self.assertRaises(OSError) as error:
+                location.create(size=65536, width=3, witness_index=3)
+            self.assertEqual(error.exception.errno, errno.EINVAL)

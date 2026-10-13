@@ -217,8 +217,9 @@ public:
     // bound version (version_id() above, non-nil) -- creating a version of an
     // existing object is create_version()'s own job below, never this
     // method's, so there is no dispatch on version_id() here at all.
-    rawstd::Task<void>
-    create(rawio::Queue& queue, const RawstorObjectSpec& sp) const;
+    rawstd::Task<void> create(
+        rawio::Queue& queue, const RawstorObjectSpec& sp, bool member = false
+    ) const;
 
     // Creates a native CoW version of the live object as the version
     // `this` is bound to (version_id() above, a target string of the form

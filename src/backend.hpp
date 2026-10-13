@@ -27,6 +27,8 @@ namespace rawstor {
 struct ChunkGroup {
     RawstdUUID id;
     std::vector<uint64_t> offsets;
+    bool opaque =
+        false; // One URI addresses the whole object, not physical chunks.
 };
 
 class Backend : public std::enable_shared_from_this<Backend> {
@@ -54,6 +56,10 @@ public:
     // _connect()s it -- the returned Backend is immediately usable.
     static rawstd::Task<std::shared_ptr<Backend>>
     create(rawio::Queue& queue, const rawstd::URI& location);
+
+    // Connect to the shared member protocol, including MDS metadata members.
+    static rawstd::Task<std::shared_ptr<Backend>>
+    create_member(rawio::Queue& queue, const rawstd::URI& location);
 
     Backend(Private, rawio::Queue& queue, const rawstd::URI& location);
     Backend(const Backend&) = delete;

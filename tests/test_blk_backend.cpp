@@ -109,6 +109,7 @@ rawstor::blk::Backend* open_blk_backend(
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     run(queue, target.create(queue, spec));
 
@@ -136,6 +137,7 @@ void expect_chunks_of_multichunk_object(const rawstd::URI& location) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     RawstorObjectSpec three_chunks = one_chunk;
     three_chunks.size = 3u << 20;
@@ -604,6 +606,7 @@ TEST(BlkBackendTest, witness_member_holds_no_data_and_refuses_real_io) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
 
     std::unique_ptr<rawstor::Slot> slot =
@@ -692,6 +695,7 @@ TEST(ChunkF10Test, missing_copy_recreated_over_ost) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     run(*queue,
         rawstor::Target({rawstd::URI(file_location, uuid_string),

@@ -78,6 +78,7 @@ open_object(rawio::Queue& queue, const rawstd::URI& location) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     run(queue, target.create(queue, spec));
 
@@ -229,6 +230,7 @@ void expect_flush_write_order(bool later_first) {
             },
         .promised = {},
         .accepted = {},
+        .witness_member = 0,
     };
 
     // Left open for the whole test -- see server.hpp's Session::~Session()
@@ -407,6 +409,7 @@ TEST(ChunkTest, flush_flushes_the_write_it_waited_for) {
             },
         .promised = {},
         .accepted = {},
+        .witness_member = 0,
     };
 
     // Left open for the whole test, see
@@ -533,6 +536,7 @@ TEST(ChunkTest, too_many_copies_is_not_created) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     try {
         run(*queue, rawstor::Target(uris).create(*queue, spec));

@@ -43,23 +43,6 @@ Backend::~Backend() {
 
 rawstd::Task<std::shared_ptr<Backend>>
 Backend::create(rawio::Queue& queue, const rawstd::URI& location) {
-    // The prefix declares the member's role even when it is unreachable.
-    // A witness on MDS uses the shared member protocol, not OBJ_* commands.
-    if (location.scheme().starts_with("witness+")) {
-        rawstd::URI store(location.str().substr(8));
-        if (store.scheme().starts_with("witness+")) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-        if (store.scheme() == "mds") {
-            std::shared_ptr<Backend> backend =
-                std::make_shared<rawstor::ost::Backend>(
-                    Private(), queue, location
-                );
-            co_await backend->_connect();
-            co_return backend;
-        }
-        co_return co_await create(queue, store);
-    }
     std::shared_ptr<Backend> backend;
     if (location.scheme() == "ost") {
         backend =
@@ -86,6 +69,17 @@ Backend::create(rawio::Queue& queue, const rawstd::URI& location) {
     co_await backend->_connect();
     rawstd_debug("%s: Connected\n", backend->str().c_str());
 
+    co_return backend;
+}
+
+rawstd::Task<std::shared_ptr<Backend>>
+Backend::create_member(rawio::Queue& queue, const rawstd::URI& location) {
+    if (location.scheme() != "mds") {
+        co_return co_await create(queue, location);
+    }
+    std::shared_ptr<Backend> backend =
+        std::make_shared<rawstor::ost::Backend>(Private(), queue, location);
+    co_await backend->_connect();
     co_return backend;
 }
 

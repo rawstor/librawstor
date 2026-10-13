@@ -298,6 +298,7 @@ private:
     std::mutex _mutex;
     rawthread::Lock _transition;
     const std::vector<rawstd::URI> _locations;
+    uint8_t _witness_member = 0;
     size_t _users = 0;
     std::set<const Chunk*> _chunks;
     bool _valid = false;
@@ -319,7 +320,7 @@ private:
     void _fill_roles(RawstorObjectConfig& config) const noexcept {
         config.nroles = static_cast<uint8_t>(_states.size());
         for (size_t i = 0; i < _states.size(); ++i) {
-            if (witness_location(_locations[i])) {
+            if (_witness_member == i + 1) {
                 config.roles[i] = witness_vote()
                                       ? RAWSTOR_OBJECT_MEMBER_IN_SYNC
                                       : RAWSTOR_OBJECT_MEMBER_EXCLUDED;
@@ -344,8 +345,7 @@ private:
         for (size_t i = 0; i < _states.size(); ++i) {
             survivors += state(i) == MemberState::IN_SYNC;
         }
-        bool witness =
-            std::any_of(_locations.begin(), _locations.end(), witness_location);
+        bool witness = _witness_member != 0;
         if (witness) {
             return (survivors + witness_vote()) * 2 <= _states.size();
         }
@@ -405,6 +405,9 @@ public:
         }
     }
     bool initialized() const noexcept { return _valid; }
+    void declare_witness_locked(uint8_t member) noexcept {
+        _witness_member = member;
+    }
     bool witness_vote() const noexcept {
         return _witness_vote.load(std::memory_order_acquire);
     }
@@ -890,13 +893,14 @@ rawstd::Task<std::vector<RawstorObjectMeta>> metadata_after_departure(
 }
 
 rawstd::Task<RawstorObjectMeta>
-inspect_witness(Slot& slot, const RawstdUUID& id, uint64_t offset) {
+inspect_member(Slot& slot, const RawstdUUID& id, uint64_t offset) {
     auto metas = co_await slot.meta(id, offset, RawstdUUID{});
-    if (metas.size() != 1 ||
-        metas.front().member_role != RAWSTOR_MEMBER_WITNESS) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    for (const auto& meta : metas) {
+        if (meta.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+            co_return meta;
+        }
     }
-    co_return metas.front();
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
 }
 
 // F10 (docs/mirroring.md): a member whose own copy is missing
@@ -925,7 +929,7 @@ rawstd::Task<void> recreate_missing(
     const RawstdUUID& version_id,
     std::vector<std::unique_ptr<rawstor::Slot>>& slots,
     std::vector<RawstorObjectMeta>& metas, std::vector<bool>& opened,
-    const std::vector<bool>& missing
+    const std::vector<bool>& missing, const std::vector<bool>& witnesses
 ) {
     if ((flags & RAWSTOR_READONLY) != 0 || !rawstd_uuid_is_nil(&version_id)) {
         co_return;
@@ -937,7 +941,7 @@ rawstd::Task<void> recreate_missing(
     const RawstorObjectMeta* survivor = nullptr;
     uint64_t size = 0;
     for (size_t i = 0; i < locations.size(); ++i) {
-        if (!opened[i] || witness_location(locations[i])) {
+        if (!opened[i] || witnesses[i]) {
             continue;
         }
         if (survivor == nullptr) {
@@ -953,19 +957,19 @@ rawstd::Task<void> recreate_missing(
     size_t survivors = 0;
     size_t data_members = 0;
     for (size_t i = 0; i < locations.size(); ++i) {
-        if (!witness_location(locations[i])) {
+        if (!witnesses[i]) {
             ++data_members;
             survivors += opened[i];
         }
     }
     bool witness_quorum = false;
     for (size_t wi = 0; wi < locations.size(); ++wi) {
-        if (!opened[wi] || !witness_location(locations[wi])) {
+        if (!opened[wi] || !witnesses[wi]) {
             continue;
         }
         size_t approved = 0;
         for (size_t di = 0; di < locations.size(); ++di) {
-            if (opened[di] && !witness_location(locations[di]) &&
+            if (opened[di] && !witnesses[di] &&
                 witness_approves(
                     metas[wi], metas[di], di, locations.size(), wi
                 )) {
@@ -989,9 +993,10 @@ rawstd::Task<void> recreate_missing(
     sp.size = size;
     sp.width = survivor->spec.width;
     sp.chunk_size = survivor->spec.chunk_size;
+    sp.witness_member = survivor->spec.witness_member;
 
     for (size_t i = 0; i < locations.size(); ++i) {
-        if (!missing[i] || witness_location(locations[i])) {
+        if (!missing[i] || witnesses[i]) {
             continue;
         }
         rawstd_warning(
@@ -1047,13 +1052,6 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     validate_not_empty(locations);
     validate_width(locations);
     validate_different_uris(locations);
-    size_t witnesses =
-        std::count_if(locations.begin(), locations.end(), witness_location);
-    if (witnesses > 1 || witnesses == locations.size() ||
-        (witnesses && (locations.size() - witnesses) % 2 != 0)) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-
     // A writable, live, mirrored open shares the chunk's control with
     // every other one of this process; any other open has one of its own.
     // The transition lock is held across the whole open, so it never reads
@@ -1159,22 +1157,71 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // Concurrent across every connected member; a failure here demotes
     // that one member to unreachable (same F1/F4 tolerance as a connect
     // failure above), not a whole-create() failure by itself.
+    std::vector<RawstorObjectMeta> metas(locations.size());
+    std::vector<std::optional<rawstd::Task<RawstorObjectMeta>>> inspections(
+        locations.size()
+    );
+    for (size_t i = 0; i < slots.size(); ++i) {
+        // A valid witness layout has at least three members. Single-copy
+        // and two-copy opens keep their existing member handshake.
+        if (slots[i] && locations.size() > 2) {
+            inspections[i] = inspect_member(*slots[i], id, offset);
+        }
+    }
+    unsigned int witness_member = 0;
+    for (size_t i = 0; i < inspections.size(); ++i) {
+        if (!inspections[i]) {
+            continue;
+        }
+        try {
+            metas[i] = co_await *inspections[i];
+            unsigned int declared = metas[i].spec.witness_member;
+            if (metas[i].config.nroles == locations.size() && declared != 0) {
+                if (declared > locations.size() ||
+                    (witness_member && witness_member != declared)) {
+                    RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
+                }
+                witness_member = declared;
+            }
+        } catch (const std::system_error& error) {
+            if (error.code().value() == ENOTRECOVERABLE) {
+                throw;
+            }
+        }
+    }
+    for (size_t i = 0; i < metas.size(); ++i) {
+        if (metas[i].state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
+            metas[i].member_role == RAWSTOR_MEMBER_WITNESS) {
+            if (witness_member && witness_member != i + 1) {
+                RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
+            }
+            witness_member = i + 1;
+        }
+    }
+    if (witness_member &&
+        (locations.size() < 3 || (locations.size() - 1) % 2 != 0)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    std::vector<bool> witnesses(locations.size(), false);
+    if (witness_member) {
+        witnesses[witness_member - 1] = true;
+    }
     std::vector<std::optional<rawstd::Task<RawstorObjectMeta>>> open_tasks(
         slots.size()
     );
     for (size_t i = 0; i < slots.size(); ++i) {
-        if (slots[i]) {
-            if (witness_location(locations[i])) {
-                if (rawstd_uuid_is_nil(&version_id)) {
-                    open_tasks[i] = inspect_witness(*slots[i], id, offset);
-                }
-            } else {
-                open_tasks[i] = slots[i]->open(id, offset, flags, version_id);
+        if (!slots[i]) {
+            continue;
+        }
+        if (witnesses[i]) {
+            if (rawstd_uuid_is_nil(&version_id)) {
+                open_tasks[i] = inspect_member(*slots[i], id, offset);
             }
+        } else {
+            open_tasks[i] = slots[i]->open(id, offset, flags, version_id);
         }
     }
 
-    std::vector<RawstorObjectMeta> metas(locations.size());
     std::vector<bool> opened(locations.size(), false);
     // Whether a member's own open failed because its copy is missing
     // (ENOENT -- docs/mirroring.md, case F10) rather than for any other
@@ -1217,7 +1264,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
 
     co_await recreate_missing(
         queue, locations, id, offset, flags, version_id, slots, metas, opened,
-        missing
+        missing, witnesses
     );
 
     // Members are assembled only now, with connect/open all already
@@ -1242,10 +1289,10 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         members.push_back(
             Member{
                 std::move(slots[i]), locations[i], metas[i], opened[i], false,
-                witness_location(locations[i]), missing[i] && opened[i]
+                witnesses[i], missing[i] && opened[i]
             }
         );
-        if (opened[i] && !witness_location(locations[i])) {
+        if (opened[i] && !witnesses[i]) {
             ++reachable;
             if (!got_spec) {
                 spec = metas[i].spec;
@@ -1643,7 +1690,7 @@ void Chunk::_reconcile_sync_set() {
         }
         witness_vote = (approved + 1) * 2 > _members.size();
     }
-    if (!_readonly && reachable * 2 <= _data_count() && !witness_vote) {
+    if (!_readonly && (reachable + witness_vote) * 2 <= _members.size()) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
 
@@ -1662,7 +1709,7 @@ void Chunk::_reconcile_sync_set() {
      * in-sync at the next open: its exclusion is recorded by the dirty
      * gate, with a new sync_id, before the first write.
      */
-    size_t unrecorded_stale = witness_vote && reachable * 2 <= _data_count();
+    size_t unrecorded_stale = witness_vote && reachable * 2 <= _members.size();
     for (size_t i = 0; i < _members.size(); ++i) {
         const Member& m = _members[i];
         if (m.witness || state[i] == MemberState::IN_SYNC) {
@@ -1688,6 +1735,11 @@ void Chunk::_reconcile_sync_set() {
     memcpy(
         config.sync_id_history, sync_id_history, sizeof(config.sync_id_history)
     );
+    for (size_t i = 0; i < _members.size(); ++i) {
+        if (_members[i].witness) {
+            c.declare_witness_locked(i + 1);
+        }
+    }
     c.witness_vote_locked(witness_vote);
     c.initialize_locked(
         state, std::move(records), size, config, unrecorded_stale

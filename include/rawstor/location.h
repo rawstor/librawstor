@@ -44,7 +44,6 @@ struct RawstorLocationInfo {
  * backend URIs (mirroring / data locality). When multiple backends are
  * given, each is queried independently and the results are combined as
  * follows:
- * Witness locations are excluded when data locations are present.
  * - @c total is the minimum of the per-backend totals (the smallest backend
  *   caps how much the whole location can actually hold).
  * - @c used is the maximum of the per-backend used values (mirrors are

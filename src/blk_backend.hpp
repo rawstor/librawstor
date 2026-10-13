@@ -88,6 +88,7 @@ public:
         RawstorMemberRole member_role;
         uint8_t width;
         uint64_t chunk_size;
+        uint8_t witness_member = 0;
     };
 
 protected:

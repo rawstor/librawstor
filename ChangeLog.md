@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--readonly` for `rawstor-vhost`, `rawstor-vhost-qemu` and `rawstor-vduse`: advertises `VIRTIO_BLK_F_RO` and opens the target `RAWSTOR_READONLY`, which is also how a version is exported.
 
 ### Changed
+
+- Witness members use ordinary backend URIs and are selected with `rawstor create --witness INDEX`, with their type and position stored in metadata.
 - Every backend now stores an object per chunk (`file://` `<uuid>/<offset>/data`, LVM `<uuid>-<offset>`, ZFS `<uuid>:<offset>`), with no migration: objects created by 0.2.x are not visible to this release.
 - `rawstor_target_open()` gains an `int flags` argument (`0` or `RAWSTOR_READONLY`: no write quorum needed, every write fails `-EROFS`). Breaking C API change.
 - The transitional `rawstor_object_*2()`/`rawio_*2()` functions are gone: their callback-based shapes (including `rawstor_object_pwrite()`/`pwritev()`'s `sync` argument and an `ssize_t` result for every `rawio_*()` callback) now live under the original names. Breaking C API change.

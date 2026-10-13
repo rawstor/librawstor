@@ -22,6 +22,9 @@ static void log_spec(FILE* output, const struct RawstorObjectSpec* spec) {
     /* chunk_size is meaningful for both a plain object (create-by-location
      * splits it itself) and an mds:// one; failure_domain/stripe_width are
      * mds:// object policy only. Silently unused otherwise. */
+    if (spec->witness_member != 0) {
+        fprintf(output, "  witness member: %u\n", spec->witness_member - 1);
+    }
     if (spec->chunk_size != 0) {
         rawstd_bytes_to_size(spec->chunk_size, buf, sizeof(buf));
         fprintf(output, "  chunk size: %s\n", buf);
@@ -39,7 +42,8 @@ static void log_spec(FILE* output, const struct RawstorObjectSpec* spec) {
 
 int rawstor_cli_create(
     const char* target, uint64_t size, uint64_t chunk_size,
-    unsigned int mirrors, unsigned int failure_domain, uint64_t stripe_width
+    unsigned int mirrors, unsigned int failure_domain, uint64_t stripe_width,
+    unsigned int witness_member
 ) {
     struct RawstorObjectSpec spec = {
         .size = size,
@@ -47,6 +51,7 @@ int rawstor_cli_create(
         .chunk_size = chunk_size,
         .stripe_width = stripe_width,
         .failure_domain = failure_domain,
+        .witness_member = witness_member,
     };
 
     fprintf(stderr, "Creating object with specification:\n");
@@ -102,7 +107,8 @@ static ssize_t try_location_create(
 
 int rawstor_cli_create_at(
     const char* location, const char* uuid, uint64_t size, uint64_t chunk_size,
-    unsigned int mirrors, unsigned int failure_domain, uint64_t stripe_width
+    unsigned int mirrors, unsigned int failure_domain, uint64_t stripe_width,
+    unsigned int witness_member
 ) {
     struct RawstorObjectSpec spec = {
         .size = size,
@@ -110,6 +116,7 @@ int rawstor_cli_create_at(
         .chunk_size = chunk_size,
         .stripe_width = stripe_width,
         .failure_domain = failure_domain,
+        .witness_member = witness_member,
     };
 
     fprintf(stderr, "Creating object with specification:\n");

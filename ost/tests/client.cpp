@@ -75,6 +75,7 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
             .failure_domain = 0,
             .width = static_cast<uint8_t>(width),
             .member_role = 0, /* RAWSTOR_MEMBER_DATA, <rawstor/target.h> */
+            .witness_member = 0,
         },
     };
     std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));

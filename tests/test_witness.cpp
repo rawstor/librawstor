@@ -72,9 +72,10 @@ protected:
     std::string witness;
     void
     create(const std::string& witness_uri = "", const std::string& b_uri = "") {
-        witness = witness_uri.empty() ? "witness+" + w.uri() : witness_uri;
+        witness = witness_uri.empty() ? w.uri() : witness_uri;
         spec.size = 65536;
         spec.width = 2;
+        spec.witness_member = 3;
         target = std::make_unique<rawstor::Target>(std::vector<rawstd::URI>{
             rawstd::URI(a.uri() + "/" + id_string(id)),
             rawstd::URI(
@@ -85,9 +86,10 @@ protected:
         run(*queue, target->create(*queue, spec));
     }
     void create_four(const std::string& c_uri, const std::string& d_uri) {
-        witness = "witness+" + w.uri();
+        witness = w.uri();
         spec.size = 65536;
         spec.width = 4;
+        spec.witness_member = 5;
         target = std::make_unique<rawstor::Target>(std::vector<rawstd::URI>{
             rawstd::URI(a.uri() + "/" + id_string(id)),
             rawstd::URI(b.uri() + "/" + id_string(id)),
@@ -270,7 +272,7 @@ TEST_F(WitnessTest, witness_alone_cannot_serve_data) {
 
 TEST_F(WitnessTest, ost_forwards_witness_creation_and_state) {
     rawstor::tests::ObjectEnv servers(39601, 39602);
-    create("witness+ost://127.0.0.1:39602");
+    create("ost://127.0.0.1:39602");
     seed();
     EXPECT_EQ(metas()[2].spec.size, 0u);
     HiddenLocation offline(b);
@@ -281,7 +283,7 @@ TEST_F(WitnessTest, ost_forwards_witness_creation_and_state) {
 
 TEST_F(WitnessTest, mds_stores_witness_and_votes) {
     rawstor::tests::ObjectEnv servers(39603, 39604);
-    create("witness+" + servers.location());
+    create(servers.location());
     seed();
     {
         HiddenLocation offline(b);
@@ -365,7 +367,8 @@ TEST_F(WitnessTest, rejects_witness_with_odd_number_of_data_members) {
     id = new_id();
     spec.size = 65536;
     spec.width = 3;
-    witness = "witness+" + w.uri();
+    spec.witness_member = 4;
+    witness = w.uri();
     target = std::make_unique<rawstor::Target>(std::vector<rawstd::URI>{
         rawstd::URI(a.uri() + "/" + id_string(id)),
         rawstd::URI(b.uri() + "/" + id_string(id)),
@@ -401,7 +404,8 @@ TEST_F(WitnessTest, newly_created_object_can_open_degraded_before_first_write) {
 TEST_F(WitnessTest, witness_first_in_target_does_not_supply_data_or_size) {
     spec.size = 65536;
     spec.width = 2;
-    witness = "witness+" + w.uri();
+    spec.witness_member = 1;
+    witness = w.uri();
     target = std::make_unique<rawstor::Target>(std::vector<rawstd::URI>{
         rawstd::URI(witness + "/" + id_string(id)),
         rawstd::URI(a.uri() + "/" + id_string(id)),
@@ -417,10 +421,11 @@ TEST_F(WitnessTest, witness_first_in_target_does_not_supply_data_or_size) {
 }
 
 TEST_F(WitnessTest, witness_records_and_votes_are_per_chunk) {
-    witness = "witness+" + w.uri();
+    witness = w.uri();
     spec.size = 131072;
     spec.chunk_size = 65536;
     spec.width = 2;
+    spec.witness_member = 3;
     rawstor::Location location(
         {rawstd::URI(a.uri()), rawstd::URI(b.uri()), rawstd::URI(witness)}
     );
@@ -463,7 +468,7 @@ TEST_F(WitnessTest, stale_clean_witness_cannot_orphan_first_degraded_write) {
 
 TEST_F(WitnessTest, listed_target_keeps_mds_witness_and_its_vote) {
     rawstor::tests::ObjectEnv servers(39609, 39610);
-    create("witness+" + servers.location());
+    create(servers.location());
     seed();
     rawstor::Location location(
         {rawstd::URI(a.uri()), rawstd::URI(b.uri()), rawstd::URI(witness)}
@@ -473,14 +478,14 @@ TEST_F(WitnessTest, listed_target_keeps_mds_witness_and_its_vote) {
     run(*queue, location.list(*queue, 1, listed, token));
     ASSERT_EQ(listed.size(), 1u);
     ASSERT_EQ(listed.front().uris().size(), 3u);
-    EXPECT_EQ(listed.front().uris()[2].scheme(), "witness+mds");
+    EXPECT_EQ(listed.front().uris()[2].scheme(), "mds");
     HiddenLocation offline(b);
     auto object = run(*queue, listed.front().open(*queue, 0));
     write(*object);
     run(*queue, object->close(true));
 }
 
-TEST_F(WitnessTest, witness_listing_skips_data_records_in_shared_store) {
+TEST_F(WitnessTest, listing_keeps_data_and_witness_records_in_shared_store) {
     create();
     RawstdUUID data_id = new_id();
     rawstor::Target data({rawstd::URI(w.uri() + "/" + id_string(data_id))});
@@ -492,11 +497,16 @@ TEST_F(WitnessTest, witness_listing_skips_data_records_in_shared_store) {
     std::list<rawstor::Target> listed;
     RawstorPaginationToken token{};
     run(*queue, location.list(*queue, 0, listed, token));
-    ASSERT_EQ(listed.size(), 1u);
-    auto metadata = run(*queue, listed.front().meta(*queue, 0));
-    ASSERT_EQ(metadata.size(), 1u);
-    EXPECT_EQ(metadata.front().member_role, RAWSTOR_MEMBER_WITNESS);
-    EXPECT_EQ(run(*queue, listed.front().spec(*queue)).size, 0u);
+    ASSERT_EQ(listed.size(), 2u);
+    unsigned witnesses = 0, data_members = 0;
+    for (const auto& entry : listed) {
+        auto metadata = run(*queue, entry.meta(*queue, 0));
+        ASSERT_EQ(metadata.size(), 1u);
+        witnesses += metadata.front().member_role == RAWSTOR_MEMBER_WITNESS;
+        data_members += metadata.front().member_role == RAWSTOR_MEMBER_DATA;
+    }
+    EXPECT_EQ(witnesses, 1u);
+    EXPECT_EQ(data_members, 1u);
 }
 
 TEST_F(WitnessTest, generic_config_update_invalidates_witness_vote) {
@@ -514,7 +524,7 @@ TEST_F(WitnessTest, generic_config_update_invalidates_witness_vote) {
 
 TEST_F(WitnessTest, mds_generic_config_update_invalidates_witness_vote) {
     rawstor::tests::ObjectEnv servers(39611, 39612);
-    create("witness+" + servers.location());
+    create(servers.location());
     seed();
     auto config = metas()[2].config;
     auto slot =
@@ -641,9 +651,10 @@ TEST_F(WitnessTest, four_data_members_continue_on_three_without_witness) {
 
 TEST_F(WitnessTest, six_data_members_write_on_three_plus_witness) {
     rawstor::tests::TmpDir c, d, e, f;
-    witness = "witness+" + w.uri();
+    witness = w.uri();
     spec.size = 65536;
     spec.width = 6;
+    spec.witness_member = 7;
     std::vector<rawstd::URI> members;
     for (const auto& uri :
          {a.uri(), b.uri(), c.uri(), d.uri(), e.uri(), f.uri(), witness}) {
@@ -664,7 +675,8 @@ TEST_F(WitnessTest, six_data_members_write_on_three_plus_witness) {
 TEST_F(WitnessTest, rejects_witness_with_single_data_member) {
     spec.size = 65536;
     spec.width = 1;
-    witness = "witness+" + w.uri();
+    spec.witness_member = 2;
+    witness = w.uri();
     target = std::make_unique<rawstor::Target>(std::vector<rawstd::URI>{
         rawstd::URI(a.uri() + "/" + id_string(id)),
         rawstd::URI(witness + "/" + id_string(id))
@@ -793,4 +805,89 @@ TEST_F(WitnessTest, native_witness_update_preserves_register_ballots) {
     EXPECT_EQ(metadata.accepted.proposer, ballot.proposer);
     EXPECT_EQ(metadata.promised.counter, next.counter);
     EXPECT_EQ(metadata.promised.proposer, next.proposer);
+}
+
+TEST_F(WitnessTest, missing_witness_type_is_recovered_from_surviving_metadata) {
+    create();
+    auto slot =
+        run(*queue, rawstor::Slot::create(*queue, rawstd::URI(witness)));
+    run(*queue, slot->remove(id, 0));
+    run(*queue, slot->close());
+    auto metadata = metas();
+    EXPECT_EQ(metadata[2].state, RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE);
+    EXPECT_EQ(metadata[2].member_role, RAWSTOR_MEMBER_WITNESS);
+    auto object = run(*queue, target->open(*queue, 0));
+    write(*object);
+    metadata = metas();
+    EXPECT_EQ(metadata[2].member_role, RAWSTOR_MEMBER_WITNESS);
+    EXPECT_EQ(metadata[2].spec.size, 0u);
+    EXPECT_EQ(metadata[2].spec.witness_member, 3u);
+    run(*queue, object->close(true));
+}
+
+TEST_F(WitnessTest, mds_lists_objects_and_witnesses_with_one_cursor) {
+    rawstor::tests::ObjectEnv servers(39623, 39624);
+    create(servers.location());
+    RawstdUUID object_id = new_id();
+    rawstor::Target data(
+        {rawstd::URI(servers.location() + "/" + id_string(object_id))}
+    );
+    RawstorObjectSpec data_spec{};
+    data_spec.size = 65536;
+    data_spec.chunk_size = 65536;
+    data_spec.width = 1;
+    run(*queue, data.create(*queue, data_spec));
+    rawstor::Location location({rawstd::URI(servers.location())});
+    RawstorPaginationToken token{};
+    unsigned witnesses = 0, objects = 0;
+    for (unsigned page = 0; page < 4; ++page) {
+        std::list<rawstor::Target> listed;
+        run(*queue, location.list(*queue, 1, listed, token));
+        if (listed.empty()) {
+            break;
+        }
+        ASSERT_EQ(listed.size(), 1u);
+        auto metadata = run(*queue, listed.front().meta(*queue, 0));
+        ASSERT_EQ(metadata.size(), 1u);
+        witnesses += metadata.front().member_role == RAWSTOR_MEMBER_WITNESS;
+        objects += metadata.front().member_role == RAWSTOR_MEMBER_DATA;
+    }
+    EXPECT_EQ(witnesses, 1u);
+    EXPECT_EQ(objects, 1u);
+}
+
+TEST_F(WitnessTest, plain_mds_witness_listing_preserves_all_chunk_offsets) {
+    rawstor::tests::ObjectEnv servers(39625, 39626);
+    witness = servers.location();
+    spec.size = 131072;
+    spec.chunk_size = 65536;
+    spec.width = 2;
+    spec.witness_member = 3;
+    rawstor::Location location(
+        {rawstd::URI(a.uri()), rawstd::URI(b.uri()), rawstd::URI(witness)}
+    );
+    target = std::make_unique<rawstor::Target>(
+        run(*queue, location.create(*queue, id, spec))
+    );
+    rawstor::Location witness_location({rawstd::URI(witness)});
+    std::list<rawstor::Target> witness_records;
+    RawstorPaginationToken witness_token{};
+    run(*queue,
+        witness_location.list(*queue, 1, witness_records, witness_token));
+    ASSERT_EQ(witness_records.size(), 1u);
+    ASSERT_EQ(witness_records.front().uris().size(), 2u);
+    EXPECT_EQ(run(*queue, witness_records.front().spec(*queue)).size, 0u);
+    std::list<rawstor::Target> listed;
+    RawstorPaginationToken token{};
+    run(*queue, location.list(*queue, 1, listed, token));
+    ASSERT_EQ(listed.size(), 1u);
+    ASSERT_EQ(listed.front().uris().size(), 6u);
+    HiddenLocation offline_b(b);
+    auto object = run(*queue, listed.front().open(*queue, 0));
+    std::string value = "last chunk";
+    EXPECT_EQ(
+        run(*queue, object->pwrite(value.data(), value.size(), 65536, false)),
+        value.size()
+    );
+    run(*queue, object->close(true));
 }

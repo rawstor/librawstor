@@ -919,6 +919,7 @@ public:
                 .failure_domain = (uint8_t)sp.failure_domain,
                 .width = (uint8_t)sp.width,
                 .member_role = (uint8_t)member_role,
+                .witness_member = static_cast<uint8_t>(sp.witness_member),
             },
         }) {
         memcpy(
@@ -1478,8 +1479,8 @@ rawstd::Task<void> Backend::list_chunks(
     std::shared_ptr<BackendOpList> op = std::make_shared<BackendOpList>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
         input_token, limit, trace_event,
-        location().scheme() == "witness+mds" ? RAWSTOR_CMD_LIST_WITNESSES
-                                             : RAWSTOR_CMD_LIST
+        location().scheme() == "mds" ? RAWSTOR_CMD_LIST_WITNESSES
+                                     : RAWSTOR_CMD_LIST
     );
     _add_op(op);
 
@@ -1643,6 +1644,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
         // given one (Target::meta()'s own doc comment on the resulting
         // fallback).
         ret.spec.width = payload.width;
+        ret.spec.witness_member = payload.witness_member;
         ret.spec.chunk_size = chunk_shift_to_size(payload.chunk_shift);
         ret.state = static_cast<RawstorObjectSyncStateValue>(payload.state);
         ret.writers = payload.writers;
@@ -1722,6 +1724,7 @@ rawstd::Task<RawstorObjectSyncReply> Backend::_sync_request(
     RawstorObjectMeta meta{};
     meta.spec.size = wire.size;
     meta.spec.width = wire.width;
+    meta.spec.witness_member = wire.witness_member;
     meta.spec.chunk_size = chunk_shift_to_size(wire.chunk_shift);
     meta.member_role = static_cast<RawstorMemberRole>(wire.member_role);
     meta.state = static_cast<RawstorObjectSyncStateValue>(wire.state);
@@ -1879,7 +1882,9 @@ Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
-    assert(_read_event != nullptr);
+    if (_read_event == nullptr) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+    }
 
     // `flags` rides `val` (protocol.h's own doc comment on SET_OBJECT).
     co_await _basic_request(
@@ -1891,7 +1896,9 @@ Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
 rawstd::Task<void> Backend::set_version(
     const RawstdUUID& object_id, uint64_t offset, const RawstdUUID& version_id
 ) {
-    assert(_read_event != nullptr);
+    if (_read_event == nullptr) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+    }
 
     // A version is only ever opened read-only (Target::open()'s own
     // check), which is exactly what the remote rawstor-ost's own

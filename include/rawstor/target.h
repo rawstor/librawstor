@@ -57,7 +57,7 @@ enum RawstorMemberRole {
  * chunking policy, persisted identically on every chunk at create()
  * time, so any one of them answers it correctly.
  *
- * A witness+ URI declares a metadata-only member, excluded from width.
+ * witness_member selects a metadata-only member, excluded from width.
  * At most one witness per chunk is supported, only with an even number of
  * data members; ordinary mds:// placement does not automatically attach one.
  *
@@ -83,6 +83,10 @@ struct RawstorObjectSpec {
                                        object-local. */
     unsigned int failure_domain; /**< RAWSTOR_OBJ_DOMAIN_*; 0 = default
                                   (server). */
+    /** Witness member position plus one; 0 means no witness. Creation selects
+     * this member, and META preserves it on every copy for offline discovery.
+     */
+    unsigned int witness_member;
 };
 
 /**

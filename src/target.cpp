@@ -178,7 +178,7 @@ chunk_uris_at_offset(const std::vector<rawstd::URI>& uris, uint64_t offset) {
 // unambiguously chunk 0 -- neither needs a backend to confirm it, so
 // `false` covers both without distinguishing them.
 bool is_opaque(const std::vector<rawstd::URI>& uris) {
-    return uris.front().scheme() == "mds";
+    return uris.size() == 1 && uris.front().scheme() == "mds";
 }
 
 // The (stripped) locations resolve_spec()/resolve_meta()/resolve_chunks()
@@ -244,7 +244,8 @@ void validate_same_uuid(
 // and swallowed, best-effort), so this never masks the op's own
 // exception with a second one.
 rawstd::Task<void> create_one(
-    rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectSpec& sp
+    rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectSpec& sp,
+    RawstorMemberRole role = RAWSTOR_MEMBER_DATA
 ) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t offset = extract_offset(target);
@@ -252,9 +253,6 @@ rawstd::Task<void> create_one(
         co_await rawstor::Slot::create(queue, strip_path(target));
     std::exception_ptr error;
     try {
-        RawstorMemberRole role = target.scheme().starts_with("witness+")
-                                     ? RAWSTOR_MEMBER_WITNESS
-                                     : RAWSTOR_MEMBER_DATA;
         co_await slot->create(id, offset, sp, role);
     } catch (...) {
         error = std::current_exception();
@@ -266,17 +264,8 @@ rawstd::Task<void> create_one(
 }
 
 rawstd::Task<void> initialize_witness(
-    rawio::Queue& queue, const std::vector<rawstd::URI>& members
+    rawio::Queue& queue, const std::vector<rawstd::URI>& members, size_t witness
 ) {
-    size_t witness = members.size();
-    for (size_t i = 0; i < members.size(); ++i) {
-        if (rawstor::witness_location(members[i])) {
-            witness = i;
-        }
-    }
-    if (witness == members.size() || members.size() == 1) {
-        co_return;
-    }
     RawstdUUID generation{};
     if (rawstd_uuid7_init(&generation) != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
@@ -504,7 +493,8 @@ rawstd::Task<std::vector<rawstd::URI>> member_locations_one(
 // first answer.
 rawstd::Task<RawstorObjectSpec> resolve_spec(
     rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
-    uint64_t offset, RawstdUUID version_id
+    uint64_t offset, RawstdUUID version_id,
+    RawstorMemberRole* member_role = nullptr
 ) {
     int first_error = 0;
     for (const auto& location : locations) {
@@ -527,13 +517,14 @@ rawstd::Task<RawstorObjectSpec> resolve_spec(
                 RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
             }
             RawstorObjectSpec ret = answered->spec;
+            if (member_role != nullptr) {
+                *member_role = answered->member_role;
+            }
             if (locations.size() > 1 || ret.width == 0) {
-                ret.width = static_cast<unsigned int>(std::count_if(
-                    locations.begin(), locations.end(),
-                    [](const rawstd::URI& uri) {
-                        return !rawstor::witness_location(uri);
-                    }
-                ));
+                ret.width = static_cast<unsigned int>(
+                    locations.size() - (ret.witness_member != 0 &&
+                                        ret.witness_member <= locations.size())
+                );
             }
             co_return ret;
         } catch (const std::system_error& e) {
@@ -591,13 +582,19 @@ rawstd::Task<std::vector<RawstorObjectMeta>> resolve_meta(
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unreachable: %s\n", e.what());
             RawstorObjectMeta missing{};
-            if (witness_location(locations[i])) {
-                missing.member_role = RAWSTOR_MEMBER_WITNESS;
-            }
             ret.push_back(missing);
         }
     }
 
+    for (const auto& answer : ret) {
+        if (answer.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
+            answer.spec.witness_member != 0 &&
+            answer.spec.witness_member <= ret.size() &&
+            answer.config.nroles == ret.size()) {
+            ret[answer.spec.witness_member - 1].member_role =
+                RAWSTOR_MEMBER_WITNESS;
+        }
+    }
     co_return ret;
 }
 
@@ -1256,8 +1253,9 @@ const RawstdUUID& Target::version_id() const {
     return _version_id;
 }
 
-rawstd::Task<void>
-Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
+rawstd::Task<void> Target::create(
+    rawio::Queue& queue, const RawstorObjectSpec& sp, bool member
+) const {
     if (!rawstd_uuid_is_nil(&_version_id)) {
         // create() is only ever for a fresh object -- creating a version
         // of an existing one is create_version()'s own job (this class's
@@ -1286,12 +1284,12 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     // each), as Chunk::create() checks at open: none is created that could
     // not be opened.
     for (const std::vector<rawstd::URI>& uris : chunks) {
-        size_t witnesses = 0;
-        for (const auto& uri : uris) {
-            witnesses += witness_location(uri);
+        if (!member && sp.witness_member != 0 &&
+            (sp.witness_member > uris.size() || uris.size() < 3 ||
+             (uris.size() - 1) % 2 != 0)) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
-        if (witnesses > 1 || witnesses == uris.size() ||
-            (witnesses && (uris.size() - witnesses) % 2 != 0)) {
+        if (sp.witness_member > RAWSTOR_OBJECT_MAX_WIDTH) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
         if (uris.size() > RAWSTOR_OBJECT_MAX_WIDTH) {
@@ -1381,8 +1379,11 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
         // whole-batch result.
         std::vector<rawstd::Task<void>> tasks;
         tasks.reserve(uris.size());
-        for (const auto& target : uris) {
-            tasks.push_back(create_one(queue, target, chunk_sp));
+        for (size_t index = 0; index < uris.size(); ++index) {
+            RawstorMemberRole role = !member && sp.witness_member == index + 1
+                                         ? RAWSTOR_MEMBER_WITNESS
+                                         : RAWSTOR_MEMBER_DATA;
+            tasks.push_back(create_one(queue, uris[index], chunk_sp, role));
         }
 
         // co_await isn't allowed inside a catch block, so the failure is
@@ -1411,7 +1412,11 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
 
         if (!eptr) {
             try {
-                co_await initialize_witness(queue, uris);
+                if (!member && sp.witness_member != 0) {
+                    co_await initialize_witness(
+                        queue, uris, sp.witness_member - 1
+                    );
+                }
             } catch (...) {
                 eptr = std::current_exception();
             }
@@ -1456,9 +1461,23 @@ rawstd::Task<void> Target::create_version(rawio::Queue& queue) const {
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_uris.size());
     std::vector<rawstd::URI> data_uris;
-    for (const auto& uri : _uris) {
-        if (!witness_location(uri)) {
-            data_uris.push_back(uri);
+    for (const auto& uris : chunk_uris_by_offset(_uris)) {
+        auto metadata = co_await resolve_meta(
+            queue,
+            [&]() {
+                std::vector<rawstd::URI> locations;
+                for (const auto& uri : uris) {
+                    locations.push_back(strip_path(uri));
+                }
+                return locations;
+            }(),
+            uuid_from_target(uris.front()), extract_offset(uris.front()),
+            RawstdUUID{}
+        );
+        for (size_t i = 0; i < uris.size(); ++i) {
+            if (metadata[i].member_role != RAWSTOR_MEMBER_WITNESS) {
+                data_uris.push_back(uris[i]);
+            }
         }
     }
     for (const auto& uri : data_uris) {
@@ -1517,10 +1536,14 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
 
     std::vector<uint64_t> offsets = co_await chunks(queue);
 
+    RawstorMemberRole member_role = RAWSTOR_MEMBER_DATA;
     RawstorObjectSpec ret = co_await resolve_spec(
         queue, locations_for(_uris, offsets.front(), opaque), id,
-        offsets.front(), _version_id
+        offsets.front(), _version_id, &member_role
     );
+    if (member_role == RAWSTOR_MEMBER_WITNESS) {
+        co_return ret;
+    }
     if (ret.chunk_size != 0 && (opaque || offsets.size() > 1)) {
         ret.size = ret.chunk_size * offsets.size();
     }
@@ -1683,7 +1706,9 @@ rawstd::Task<void> Target::set_member_config(
         co_await rawstor::Slot::create(queue, location);
     std::exception_ptr error;
     try {
-        if (witness_location(location)) {
+        auto metadata = co_await slot->meta(id, offset, RawstdUUID{});
+        if (metadata.size() == 1 &&
+            metadata.front().member_role == RAWSTOR_MEMBER_WITNESS) {
             co_await slot->set_witness(
                 id, offset, RAWSTOR_OBJECT_SYNC_STATE_LOST, config
             );
@@ -1766,9 +1791,23 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
     // stays a single entry point regardless, since the identity being
     // removed is already fully described by the target string.
     std::vector<rawstd::URI> members;
-    for (const auto& uri : _uris) {
-        if (rawstd_uuid_is_nil(&_version_id) || !witness_location(uri)) {
-            members.push_back(uri);
+    if (rawstd_uuid_is_nil(&_version_id)) {
+        members = _uris;
+    } else {
+        for (const auto& uris : chunk_uris_by_offset(_uris)) {
+            std::vector<rawstd::URI> locations;
+            for (const auto& uri : uris) {
+                locations.push_back(strip_path(uri));
+            }
+            auto metadata = co_await resolve_meta(
+                queue, locations, uuid_from_target(uris.front()),
+                extract_offset(uris.front()), RawstdUUID{}
+            );
+            for (size_t i = 0; i < uris.size(); ++i) {
+                if (metadata[i].member_role != RAWSTOR_MEMBER_WITNESS) {
+                    members.push_back(uris[i]);
+                }
+            }
         }
     }
     co_await remove_many(queue, members);

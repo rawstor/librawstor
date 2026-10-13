@@ -52,6 +52,7 @@ const RawstorFrameMetaPayload clean_meta_1mb = {
         },
     .promised = {},
     .accepted = {},
+    .witness_member = 0,
 };
 
 int callback(size_t result, int error, void* data) {
@@ -154,6 +155,7 @@ public:
             .chunk_size = 0,
             .stripe_width = 0,
             .failure_domain = 0,
+            .witness_member = 0,
         };
         ssize_t res =
             rawstor::tests::sync_run(_queue, [&](auto cb, void* data) {

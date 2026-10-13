@@ -50,7 +50,8 @@ class Location:
         self, *, size: int, width: int, chunk_size: int = 0,
         stripe_width: int = 0,
         failure_domain: int | str = OBJ_DOMAIN_DEFAULT,
-        uuid: str | None = None
+        uuid: str | None = None,
+        witness_index: int | None = None
     ) -> Target:
         return Target(
             librawstor.object_create_at(
@@ -58,7 +59,7 @@ class Location:
                 object_spec(
                     size=size, width=width, chunk_size=chunk_size,
                     stripe_width=stripe_width,
-                    failure_domain=failure_domain)))
+                    failure_domain=failure_domain, witness_index=witness_index)))
 
     def info(self) -> librawstor.LocationInfo:
         return librawstor.location_info(self._uri)

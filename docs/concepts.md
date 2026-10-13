@@ -384,14 +384,14 @@ directly (a single entry, 0, for a plain, non-`mds://` target).
   Reusing it here for this document would make the two docs' shared
   vocabulary actively misleading, so this file keeps its current name.
 
-### Witness locations
+### Witness members
 
-A `witness+` prefix marks a metadata-only member in a multi-member target:
-`witness+ost://host:port`, `witness+mds://host:port`,
-`witness+file:///path`, `witness+lvm://vg`, or `witness+zfs://pool/rawstor`.
-`width` counts only data copies; `config.nroles` counts data and witness
-members. At most one witness is supported per chunk, only with an even
-number of data members. It participates in synchronous membership barriers
-and quorum. Reads, data writes, flushes and resync use only data members;
-a witness may supply a safe degraded-open vote (see [Witness](mds.md#witness)).
-Keep the complete target and member ordering for subsequent opens.
+Witnesses use ordinary backend addresses. `rawstor create --witness INDEX`
+selects one zero-based member index; subsequent opens discover the member
+through `META.member_role`. `RawstorObjectSpec.witness_member` stores its
+position plus one on every copy (zero means none), including metadata used
+to identify an offline member safely. `width` counts only data copies;
+`config.nroles` counts all members. One witness is supported only with an
+even number of data members. It participates in synchronous membership
+barriers and quorum; data I/O and resync skip it. Keep the complete target
+and member order. See [Witness](mds.md#witness).

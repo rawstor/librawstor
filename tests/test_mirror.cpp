@@ -319,6 +319,7 @@ TEST(MirrorQuorumTest, open_refused_without_quorum_n2) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -351,6 +352,7 @@ TEST(MirrorQuorumTest, all_mirrors_down_at_open_refused) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -407,6 +409,7 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -452,6 +455,7 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -512,6 +516,7 @@ TEST(MirrorResyncTest, close_during_resync) {
             .chunk_size = 0,
             .stripe_width = 0,
             .failure_domain = 0,
+            .witness_member = 0,
         };
         ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -576,6 +581,7 @@ TEST(MirrorQuorumTest, stale_arm_resynced_zero_blocks) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -627,6 +633,7 @@ TEST(MirrorQuorumTest, split_brain_refused) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -659,6 +666,7 @@ TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -697,6 +705,7 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -750,6 +759,7 @@ TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -837,6 +847,7 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
     RawstorObjectConfig fresh{};
@@ -865,6 +876,7 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
             },
         .promised = {},
         .accepted = {},
+        .witness_member = 0,
     };
     std::atomic<bool> syncing_sent(false);
     std::atomic<bool> final_state_sent(false);
@@ -956,6 +968,7 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -1038,6 +1051,7 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -1057,6 +1071,7 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target(2), member_spec), 0);
 
@@ -1094,6 +1109,7 @@ TEST(MirrorQuorumTest, missing_copy_recreated_and_resynced) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -1141,6 +1157,7 @@ TEST(MirrorQuorumTest, recreated_copy_does_not_make_quorum) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -1168,6 +1185,7 @@ TEST(MirrorQuorumTest, two_way_missing_copy_recreated_by_hand) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -1213,6 +1231,7 @@ TEST(MirrorQuorumTest, all_copies_missing_not_recreated) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -1239,6 +1258,7 @@ TEST(MirrorQuorumTest, readonly_open_does_not_recreate_missing_copy) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -1262,6 +1282,7 @@ TEST(MirrorQuorumTest, clean_close_stable_identity) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -1304,6 +1325,7 @@ TEST(MirrorQuorumTest, stale_member_bumps_identity_on_rejoin_only) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -1356,6 +1378,7 @@ TEST(MirrorQuorumTest, degraded_open_changes_identity) {
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
+        .witness_member = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -1413,6 +1436,7 @@ TEST(MirrorOstTest, read_failover_and_repair) {
             },
         .promised = {},
         .accepted = {},
+        .witness_member = 0,
     };
 
     /*
@@ -1499,6 +1523,7 @@ TEST(MirrorOstTest, degrade_and_continue) {
             },
         .promised = {},
         .accepted = {},
+        .witness_member = 0,
     };
 
     {
@@ -1587,6 +1612,7 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
             },
         .promised = {},
         .accepted = {},
+        .witness_member = 0,
     };
 
     {
@@ -1662,6 +1688,7 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
             },
         .promised = {},
         .accepted = {},
+        .witness_member = 0,
     };
 
     {

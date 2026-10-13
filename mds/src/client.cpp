@@ -313,6 +313,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
             }
             RawstorObjectSpec spec{};
             spec.width = payload.width;
+            spec.witness_member = payload.witness_member;
             spec.chunk_size = payload.chunk_shift == 0
                                   ? 0
                                   : uint64_t{1} << payload.chunk_shift;

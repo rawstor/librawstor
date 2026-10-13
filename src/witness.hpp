@@ -8,9 +8,6 @@
 #include <rawstor/target.h>
 
 namespace rawstor {
-inline bool witness_location(const rawstd::URI& uri) {
-    return uri.scheme().starts_with("witness+");
-}
 inline bool witness_state(RawstorObjectSyncStateValue state) {
     return state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN ||
            state == RAWSTOR_OBJECT_SYNC_STATE_DIRTY ||
@@ -61,6 +58,7 @@ inline RawstorFrameMetaPayload encode_witness(const RawstorObjectMeta& meta) {
     }
     RawstorFrameMetaPayload out{};
     out.width = static_cast<uint8_t>(meta.spec.width);
+    out.witness_member = static_cast<uint8_t>(meta.spec.witness_member);
     out.chunk_shift =
         meta.spec.chunk_size == 0 ? 0 : __builtin_ctzll(meta.spec.chunk_size);
     out.member_role = RAWSTOR_MEMBER_WITNESS;
@@ -105,6 +103,7 @@ inline RawstorObjectMeta decode_witness(const RawstorFrameMetaPayload& in) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
     out.spec.width = in.width;
+    out.spec.witness_member = in.witness_member;
     out.spec.chunk_size =
         in.chunk_shift == 0 ? 0 : uint64_t{1} << in.chunk_shift;
     out.config = decode_config(in.config);
