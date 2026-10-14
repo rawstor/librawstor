@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- BLK metadata stores logical size for DATA and WITNESS members independently of physical allocation.
+
 - OST serves exactly one backend Slot and rejects multiple locations at startup.
 - Member configuration updates take an optional typed state separately from flags.
 - Data and witness members share `SET_CONFIG` for atomic state and configuration updates.

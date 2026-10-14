@@ -346,6 +346,7 @@ rawstd::Task<void> Backend::create(
     identity.member_role = member_role;
     identity.width = static_cast<uint8_t>(sp.width);
     identity.chunk_size = sp.chunk_size;
+    identity.size = sp.size;
     std::string prop = std::string(rawstor_property) + "=" +
                        meta_encode(state, config, promised, accepted, identity);
 
@@ -487,14 +488,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
 
-    // The property never carries size (see meta_encode()): merge in the
-    // zvol's real, current size (_blk_size(), blk_backend.cpp) rather than
-    // trust a value that could go stale if the zvol were ever resized
-    // outside rawstor.
     RawstorObjectMeta ret{};
-    ret.spec.size = identity.member_role == RAWSTOR_MEMBER_WITNESS
-                        ? 0
-                        : co_await _blk_size(id, offset, version_id);
+    ret.spec.size = identity.size;
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
@@ -568,34 +563,26 @@ rawstd::Task<void> Backend::_write_meta(
 ) {
     std::string dataset = _dataset(id, offset);
 
-    // The placement identity is immutable once stamped at create() --
-    // read the existing property first and carry it through unchanged
-    // rather than clobber it with a zeroed one. A missing/unrecorded
-    // property (a zvol created before this feature, or by something
-    // else) has no identity to preserve; it degenerates to the all-zero
-    // default.
+    // Preserve the declared logical size and placement identity.
+    // Missing or unreadable metadata is rejected instead of zeroing it.
     std::vector<std::string> get_argv = {"zfs",  "get",   "-H",
                                          "-o",   "value", rawstor_property,
                                          dataset};
     Backend::ChunkIdentity identity;
-    try {
-        std::string old_output =
-            co_await rawstor::run_command_capture(_queue, std::move(get_argv));
-        while (!old_output.empty() &&
-               (old_output.back() == '\n' || old_output.back() == '\r')) {
-            old_output.pop_back();
-        }
-        RawstorObjectSyncStateValue old_record_state{};
-        RawstorObjectConfig old_record_config{};
-        RawstorObjectBallot old_record_promised{};
-        RawstorObjectBallot old_record_accepted{};
-        meta_decode(
-            old_output, &old_record_state, &old_record_config,
-            &old_record_promised, &old_record_accepted, &identity
-        );
-    } catch (const std::system_error&) {
-        identity = Backend::ChunkIdentity{};
+    std::string old_output =
+        co_await rawstor::run_command_capture(_queue, std::move(get_argv));
+    while (!old_output.empty() &&
+           (old_output.back() == '\n' || old_output.back() == '\r')) {
+        old_output.pop_back();
     }
+    RawstorObjectSyncStateValue old_record_state{};
+    RawstorObjectConfig old_record_config{};
+    RawstorObjectBallot old_record_promised{};
+    RawstorObjectBallot old_record_accepted{};
+    meta_decode(
+        old_output, &old_record_state, &old_record_config, &old_record_promised,
+        &old_record_accepted, &identity
+    );
 
     std::string prop = std::string(rawstor_property) + "=" +
                        meta_encode(state, config, promised, accepted, identity);

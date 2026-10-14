@@ -57,7 +57,7 @@ const char* const lvm_config =
 
 // Prefix of the LVM tag this backend stores native per-copy mirror
 // metadata under (see blk::Backend::meta_encode()) -- e.g.
-// "rawstor.meta=version=1:state=0:epoch=0:...".
+// "rawstor.meta=version=2:state=0:epoch=0:...".
 const char* const rawstor_tag_prefix = "rawstor.meta=";
 
 // Suffix a staging LV carries between lvcreate and the lvrename that
@@ -465,6 +465,7 @@ rawstd::Task<void> Backend::create(
     identity.member_role = member_role;
     identity.width = static_cast<uint8_t>(sp.width);
     identity.chunk_size = sp.chunk_size;
+    identity.size = sp.size;
     std::string tag = std::string(rawstor_tag_prefix) +
                       meta_encode(state, config, promised, accepted, identity);
 
@@ -707,14 +708,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
 
-    // The tag never carries size (see meta_encode()): merge in the LV's
-    // real, current size (_blk_size(), blk_backend.cpp) rather than trust
-    // a value that could go stale if the LV were ever resized outside
-    // rawstor.
     RawstorObjectMeta ret{};
-    ret.spec.size = identity.member_role == RAWSTOR_MEMBER_WITNESS
-                        ? 0
-                        : co_await _blk_size(id, offset, version_id);
+    ret.spec.size = identity.size;
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
@@ -741,24 +736,17 @@ rawstd::Task<void> Backend::_write_meta(
     std::string tags = co_await _lv_tags(path);
     std::string old_tag = find_tag(tags, rawstor_tag_prefix);
 
-    // The placement identity is immutable once stamped at create() --
-    // carry the existing tag's through unchanged rather than clobber it
-    // with a zeroed one. An empty/unrecorded old_tag (an LV created
-    // before this feature, or by something else) has no identity to
-    // preserve; it degenerates to the all-zero default.
+    // Preserve the declared logical size and placement identity.
+    // Missing or unreadable metadata is rejected instead of zeroing it.
     Backend::ChunkIdentity identity;
     RawstorObjectSyncStateValue old_record_state{};
     RawstorObjectConfig old_record_config{};
     RawstorObjectBallot old_record_promised{};
     RawstorObjectBallot old_record_accepted{};
-    try {
-        meta_decode(
-            old_tag, &old_record_state, &old_record_config,
-            &old_record_promised, &old_record_accepted, &identity
-        );
-    } catch (const std::system_error&) {
-        identity = Backend::ChunkIdentity{};
-    }
+    meta_decode(
+        old_tag, &old_record_state, &old_record_config, &old_record_promised,
+        &old_record_accepted, &identity
+    );
 
     std::string new_tag =
         std::string(rawstor_tag_prefix) +

@@ -145,7 +145,7 @@ TEST_F(WitnessTest, metadata_only_creation_and_clean_close) {
     auto metadata = metas();
     ASSERT_EQ(metadata.size(), 3u);
     EXPECT_EQ(metadata[2].member_role, RAWSTOR_MEMBER_WITNESS);
-    EXPECT_EQ(metadata[2].spec.size, 0u);
+    EXPECT_EQ(metadata[2].spec.size, spec.size);
     EXPECT_EQ(metadata[2].spec.width, 2u);
     EXPECT_EQ(run(*queue, target->spec(*queue)).width, 2u);
     EXPECT_EQ(metadata[2].state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
@@ -278,7 +278,7 @@ TEST_F(WitnessTest, ost_forwards_witness_creation_and_state) {
     rawstor::tests::ObjectEnv servers(29601, 29602);
     create("ost://127.0.0.1:29602");
     seed();
-    EXPECT_EQ(metas()[2].spec.size, 0u);
+    EXPECT_EQ(metas()[2].spec.size, spec.size);
     HiddenLocation offline(b);
     auto object = run(*queue, target->open(*queue, 0));
     write(*object);
@@ -288,7 +288,9 @@ TEST_F(WitnessTest, ost_forwards_witness_creation_and_state) {
 TEST_F(WitnessTest, mds_stores_witness_and_votes) {
     rawstor::tests::ObjectEnv servers(29603, 29604);
     create(servers.location());
+    EXPECT_EQ(metas()[2].spec.size, spec.size);
     seed();
+    EXPECT_EQ(metas()[2].spec.size, spec.size);
     {
         HiddenLocation offline(b);
         auto object = run(*queue, target->open(*queue, 0));
@@ -452,7 +454,7 @@ TEST_F(WitnessTest, matching_location_count_creates_only_data_members) {
     }
 }
 
-TEST_F(WitnessTest, last_location_is_witness_and_does_not_supply_data_or_size) {
+TEST_F(WitnessTest, last_location_is_witness_and_preserves_data_quorum) {
     create();
     EXPECT_EQ(metas()[0].member_role, RAWSTOR_MEMBER_DATA);
     EXPECT_EQ(metas()[1].member_role, RAWSTOR_MEMBER_DATA);
@@ -864,7 +866,7 @@ TEST_F(WitnessTest, missing_witness_type_is_recovered_from_surviving_metadata) {
     write(*object);
     metadata = metas();
     EXPECT_EQ(metadata[2].member_role, RAWSTOR_MEMBER_WITNESS);
-    EXPECT_EQ(metadata[2].spec.size, 0u);
+    EXPECT_EQ(metadata[2].spec.size, spec.size);
     run(*queue, object->close(true));
 }
 
@@ -933,7 +935,9 @@ TEST_F(WitnessTest, plain_mds_witness_listing_preserves_all_chunk_offsets) {
         witness_location.list(*queue, 1, witness_records, witness_token));
     ASSERT_EQ(witness_records.size(), 1u);
     ASSERT_EQ(witness_records.front().uris().size(), 2u);
-    EXPECT_EQ(run(*queue, witness_records.front().spec(*queue)).size, 0u);
+    EXPECT_EQ(
+        run(*queue, witness_records.front().spec(*queue)).size, spec.size
+    );
     std::list<rawstor::Target> listed;
     RawstorPaginationToken token{};
     run(*queue, location.list(*queue, 1, listed, token));
@@ -1040,4 +1044,13 @@ TEST_F(WitnessTest, creation_initializes_plain_mirror_configuration) {
         EXPECT_EQ(record.config.roles[0], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
         EXPECT_EQ(record.config.roles[1], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
     }
+}
+
+TEST_F(WitnessTest, witness_reports_spec_when_data_members_are_unavailable) {
+    create();
+    HiddenLocation offline_a(a), offline_b(b);
+    auto reported = run(*queue, target->spec(*queue));
+    EXPECT_EQ(reported.size, spec.size);
+    EXPECT_EQ(reported.width, spec.width);
+    refused();
 }

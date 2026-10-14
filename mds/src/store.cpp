@@ -506,7 +506,6 @@ void ObjectStore::create_witness(
     }
     RawstorObjectMeta meta{};
     meta.spec = spec;
-    meta.spec.size = 0;
     meta.member_role = RAWSTOR_MEMBER_WITNESS;
     meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     auto record = encode_witness(meta);

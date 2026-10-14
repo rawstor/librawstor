@@ -777,6 +777,7 @@ TEST_F(
 ) {
     RawstdUUID id = make_id();
     RawstorObjectSpec spec{};
+    spec.size = chunk_size;
     spec.width = 2;
     spec.chunk_size = chunk_size;
     RawstorObjectConfig config{};
@@ -809,7 +810,7 @@ TEST_F(
     store.reconstruct({});
     auto meta = store.witness_meta(id, chunk_size);
     EXPECT_EQ(meta.member_role, RAWSTOR_MEMBER_WITNESS);
-    EXPECT_EQ(meta.spec.size, 0u);
+    EXPECT_EQ(meta.spec.size, spec.size);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     EXPECT_EQ(meta.config.sync_id, config.sync_id);
     EXPECT_EQ(meta.config.resync_owner, config.resync_owner);

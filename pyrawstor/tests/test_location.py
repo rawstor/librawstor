@@ -100,7 +100,7 @@ class TestWitnessLocation(unittest.TestCase):
             self.assertEqual([member.member_role for member in metadata],
                              [rawstor.MEMBER_DATA, rawstor.MEMBER_DATA,
                               rawstor.MEMBER_WITNESS])
-            self.assertEqual(metadata[2].size, 0)
+            self.assertEqual(metadata[2].size, 65536)
             self.assertEqual(list(location), [target])
             target.remove()
             self.assertEqual(list(location), [])

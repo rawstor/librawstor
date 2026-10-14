@@ -743,75 +743,37 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
     EXPECT_EQ(object_close(queue, member), 0);
 }
 
-TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
+TEST(MirrorQuorumTest, physically_short_member_cannot_open_for_data) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000aa");
-
-    RawstorObjectSpec spec{
-        .size = 1ull << 20,
-        .width = 2,
-        .chunk_size = 0,
-        .stripe_width = 0,
-        .failure_domain = 0,
-    };
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    spec.width = 2;
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+    fs::resize_file(members.dat(1), spec.size - 4096);
+    RawstorObjectMeta meta{};
+    ASSERT_EQ(target_meta(queue, members.target(1), &meta), 0);
+    EXPECT_EQ(meta.spec.size, spec.size);
+    RawstorObject* object = nullptr;
+    EXPECT_EQ(target_open(queue, members.target_all(), &object), -ENOTCONN);
+    EXPECT_EQ(object, nullptr);
+}
 
-    /* An established sync set on both members: a freshly created (sync_id
-     * 0) pair wouldn't exercise wait_member_config_synced()'s own sync_id check
-     * below, and F11 exclusion is meant to apply on top of an otherwise
-     * ordinary in-sync mirror, not only to never-opened copies. */
-    RawstorObjectConfig established{};
-    established.epoch = 1;
-    established.sync_id = 0xaaaaaaaaaaaaaaaaull;
-    ASSERT_EQ(target_set_config(queue, members.target(0), established), 0);
-    ASSERT_EQ(target_set_config(queue, members.target(1), established), 0);
-
-    /* Distinct content on the full-size member only, so a successful
-     * online resync back onto member1 is observable below. */
-    std::string ping = "ping";
-    object_write_single(queue, members.target(0), ping.data(), ping.size(), 0);
-
-    /* member1's copy is short of the mirror's logical size -- e.g. a
-     * block-device member whose extent/volblocksize rounding went the
-     * other way, or a truncated/partial copy (docs/mirroring.md, F11:
-     * "Physical < logical -> the copy is invalid (treat as F10)"). */
-    fs::resize_file(members.dat(1), (1ull << 20) - 4096);
-
+TEST(MirrorQuorumTest, physical_growth_does_not_change_logical_size) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000ae");
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    spec.width = 2;
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+    fs::resize_file(members.dat(1), 2 * spec.size);
+    RawstorObjectMeta meta{};
+    ASSERT_EQ(target_meta(queue, members.target(1), &meta), 0);
+    EXPECT_EQ(meta.spec.size, spec.size);
     RawstorObject* object = nullptr;
     ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
-
-    /* The short member is excluded at open (not silently adopted as a
-     * smaller logical size) and resynced online. Excluded by size alone,
-     * it still carries the set's sync_id: the resync is done once its
-     * rejoin has moved the set to a new one. */
-    bool rejoined = false;
-    for (int i = 0; i < 3000 && !rejoined; ++i) {
-        rawio_wait_timeout(queue, 10);
-        RawstorObjectMeta a{};
-        rejoined = target_meta(queue, members.target(0), &a) == 0 &&
-                   a.config.sync_id != established.sync_id;
-    }
-    EXPECT_TRUE(rejoined);
-    EXPECT_TRUE(
-        wait_member_config_synced(queue, members.target(0), members.target(1))
-    );
-
+    object_write(queue, object, "x", 1, spec.size, EINVAL);
     object_close_clean(queue, object);
-
-    RawstorObjectMeta a{};
-    RawstorObjectMeta b{};
-    ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
-    ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
-    EXPECT_EQ(a.config.sync_id, b.config.sync_id);
-    EXPECT_EQ(a.spec.size, spec.size);
-    EXPECT_EQ(b.spec.size, spec.size);
-
-    RawstorObject* member = nullptr;
-    ASSERT_EQ(target_open(queue, members.target(1), &member), 0);
-    std::string data(4, '\0');
-    object_read(queue, member, data.data(), data.size(), 0);
-    EXPECT_EQ(data, "ping");
-    EXPECT_EQ(object_close(queue, member), 0);
 }
 
 // A write that starts while the rejoining member is getting its final

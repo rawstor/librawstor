@@ -482,8 +482,7 @@ rawstd::Task<std::vector<rawstd::URI>> member_locations_one(
 // first answer.
 rawstd::Task<RawstorObjectSpec> resolve_spec(
     rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
-    uint64_t offset, RawstdUUID version_id,
-    RawstorMemberRole* member_role = nullptr
+    uint64_t offset, RawstdUUID version_id
 ) {
     int first_error = 0;
     for (const auto& location : locations) {
@@ -496,19 +495,14 @@ rawstd::Task<RawstorObjectSpec> resolve_spec(
             // that did answer, and none answering is this location's own
             // failure.
             auto answered = std::find_if(
-                ms.begin(), ms.end(), [&locations](const RawstorObjectMeta& m) {
-                    return m.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
-                           (locations.size() == 1 ||
-                            m.member_role != RAWSTOR_MEMBER_WITNESS);
+                ms.begin(), ms.end(), [](const RawstorObjectMeta& m) {
+                    return m.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE;
                 }
             );
             if (answered == ms.end()) {
                 RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
             }
             RawstorObjectSpec ret = answered->spec;
-            if (member_role != nullptr) {
-                *member_role = answered->member_role;
-            }
             if (locations.size() > 1 || ret.width == 0) {
                 ret.width = static_cast<unsigned int>(
                     locations.size() == ret.width + 1 && ret.width != 0 &&
@@ -1521,14 +1515,10 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
 
     std::vector<uint64_t> offsets = co_await chunks(queue);
 
-    RawstorMemberRole member_role = RAWSTOR_MEMBER_DATA;
     RawstorObjectSpec ret = co_await resolve_spec(
         queue, locations_for(_uris, offsets.front(), opaque), id,
-        offsets.front(), _version_id, &member_role
+        offsets.front(), _version_id
     );
-    if (member_role == RAWSTOR_MEMBER_WITNESS) {
-        co_return ret;
-    }
     if (ret.chunk_size != 0 && (opaque || offsets.size() > 1)) {
         ret.size = ret.chunk_size * offsets.size();
     }

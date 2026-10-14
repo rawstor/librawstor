@@ -444,6 +444,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     identity.member_role = RAWSTOR_MEMBER_WITNESS;
     identity.width = 3;
     identity.chunk_size = 0x1000;
+    identity.size = 0x123456789abcdef0ull;
 
     std::string encoded = MetadataBackend::meta_encode(
         state, config, promised, accepted, identity
@@ -477,6 +478,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     EXPECT_EQ(decoded_identity.member_role, identity.member_role);
     EXPECT_EQ(decoded_identity.width, identity.width);
     EXPECT_EQ(decoded_identity.chunk_size, identity.chunk_size);
+    EXPECT_EQ(decoded_identity.size, identity.size);
 }
 
 // The widest record -- every field at its widest, every member's role --
@@ -501,7 +503,7 @@ TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
         r = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     }
     rawstor::blk::Backend::ChunkIdentity identity{
-        RAWSTOR_MEMBER_WITNESS, 255, ~0ull
+        RAWSTOR_MEMBER_WITNESS, 255, ~0ull, ~0ull
     };
 
     std::string encoded = MetadataBackend::meta_encode(
@@ -578,7 +580,7 @@ TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
         MetadataBackend::meta_decode(
             "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
             "resync_owner=0:promised=0.0:accepted=0.0:roles=-:member_role=0:"
-            "width=0:chunk_size=0",
+            "width=0:chunk_size=0:size=0",
             &state, &config, &promised, &accepted, &identity
         ),
         std::system_error

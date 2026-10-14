@@ -320,6 +320,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
             RawstorObjectSpec spec{};
+            spec.size = payload.size;
             spec.width = payload.width;
             spec.chunk_size = payload.chunk_shift == 0
                                   ? 0

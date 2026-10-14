@@ -57,6 +57,7 @@ inline RawstorFrameMetaPayload encode_witness(const RawstorObjectMeta& meta) {
         }
     }
     RawstorFrameMetaPayload out{};
+    out.size = meta.spec.size;
     out.width = static_cast<uint8_t>(meta.spec.width);
     out.chunk_shift =
         meta.spec.chunk_size == 0 ? 0 : __builtin_ctzll(meta.spec.chunk_size);
@@ -97,10 +98,10 @@ inline RawstorObjectMeta decode_witness(const RawstorFrameMetaPayload& in) {
     out.member_role = static_cast<RawstorMemberRole>(in.member_role);
     out.state = static_cast<RawstorObjectSyncStateValue>(in.state);
     if (out.member_role != RAWSTOR_MEMBER_WITNESS ||
-        !witness_state(out.state) || in.size != 0 || in.chunk_shift >= 64 ||
-        in.width == 0) {
+        !witness_state(out.state) || in.chunk_shift >= 64 || in.width == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
+    out.spec.size = in.size;
     out.spec.width = in.width;
     out.spec.chunk_size =
         in.chunk_shift == 0 ? 0 : uint64_t{1} << in.chunk_shift;

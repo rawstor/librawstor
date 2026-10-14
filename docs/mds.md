@@ -886,8 +886,12 @@ The OST transports it using `SET_CONFIG`; MDS commits it in SQLite WAL with
 `synchronous=FULL`. The block backends use their existing metadata format:
 file witnesses keep an empty data file plus metadata, LVM witnesses use a
 minimum-size LV and its tag, and ZFS witnesses use a minimum-size zvol and its
-property. They report zero logical data size, receive no data I/O and never
-participate in resync or snapshot CoW. An OST hosting a witness must have
+property. All BLK members persist the requested logical size in native
+metadata (format version 2), independently of file length, LV extents or
+zvol allocation. MDS witness records retain the same declared size. Witnesses
+can answer spec queries when data members are unavailable, but receive no
+data I/O and never participate in resync or snapshot CoW. DATA opens validate
+physical capacity separately from the logical size returned by META. An OST hosting a witness must have
 one underlying location. MDS discovers witness records from metadata and
 forwards their member operations through the same shared protocol; its
 ordinary object placement API remains separate.
