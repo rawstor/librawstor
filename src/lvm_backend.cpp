@@ -392,7 +392,7 @@ rawstd::Task<void> Backend::create(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
     const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
-    if (sp.size == 0 && member_role != RAWSTOR_MEMBER_WITNESS) {
+    if (sp.size == 0 && member_role != RAWSTOR_MEMBER_META) {
         rawstd_error("lvm: object size must be positive\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -449,7 +449,7 @@ rawstd::Task<void> Backend::create(
     char size_buf[32];
     snprintf(
         size_buf, sizeof(size_buf), "%" PRIu64 "b",
-        member_role == RAWSTOR_MEMBER_WITNESS ? uint64_t{1} : sp.size
+        member_role == RAWSTOR_MEMBER_META ? uint64_t{1} : sp.size
     );
 
     // A fresh copy starts with sync_id 0: it has never been part of an
@@ -520,7 +520,7 @@ rawstd::Task<void> Backend::create(
 
         std::exception_ptr zero_eptr;
         try {
-            if (member_role != RAWSTOR_MEMBER_WITNESS) {
+            if (member_role != RAWSTOR_MEMBER_META) {
                 co_await _zero_fill(fd, 0, sp.size, /*unmap=*/false);
             }
         } catch (...) {

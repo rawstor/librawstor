@@ -116,7 +116,7 @@ static int resolve_chunk(
             );
             return EX_USAGE;
         }
-        if (metas[winners[i]].member_role == RAWSTOR_MEMBER_WITNESS) {
+        if (metas[winners[i]].member_role == RAWSTOR_MEMBER_META) {
             fprintf(stderr, "A witness cannot be a data winner\n");
             return EX_USAGE;
         }
@@ -194,7 +194,7 @@ static int resolve_chunk(
      * branch. Failure aborts: an old CLEAN vote could otherwise endorse
      * an excluded data member after the operator's chosen winner is lost. */
     for (ssize_t i = 0; i < result; ++i) {
-        if (metas[i].member_role != RAWSTOR_MEMBER_WITNESS) {
+        if (metas[i].member_role != RAWSTOR_MEMBER_META) {
             continue;
         }
         RawstorCliOp witness_op;

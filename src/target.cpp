@@ -1351,7 +1351,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
         tasks.reserve(uris.size());
         for (size_t index = 0; index < uris.size(); ++index) {
             RawstorMemberRole role = witness && index + 1 == uris.size()
-                                         ? RAWSTOR_MEMBER_WITNESS
+                                         ? RAWSTOR_MEMBER_META
                                          : RAWSTOR_MEMBER_DATA;
             tasks.push_back(create_one(queue, uris[index], chunk_sp, role));
         }

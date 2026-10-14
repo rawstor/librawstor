@@ -441,7 +441,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     accepted = {0x56, 0x78};
 
     rawstor::blk::Backend::ChunkIdentity identity{};
-    identity.member_role = RAWSTOR_MEMBER_WITNESS;
+    identity.member_role = RAWSTOR_MEMBER_META;
     identity.width = 3;
     identity.chunk_size = 0x1000;
     identity.size = 0x123456789abcdef0ull;
@@ -503,7 +503,7 @@ TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
         r = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     }
     rawstor::blk::Backend::ChunkIdentity identity{
-        RAWSTOR_MEMBER_WITNESS, 255, ~0ull, ~0ull
+        RAWSTOR_MEMBER_META, 255, ~0ull, ~0ull
     };
 
     std::string encoded = MetadataBackend::meta_encode(
@@ -577,7 +577,7 @@ TEST(BlkBackendTest, meta_decode_rejects_invalid_width) {
         rawstor::blk::Backend::ChunkIdentity identity;
         std::string encoded =
             "version=1:state=1:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
-            "resync_owner=0:promised=0.0:accepted=0.0:roles=-:member_role=0:"
+            "resync_owner=0:promised=0.0:accepted=0.0:roles=-:member_role=1:"
             "width=" +
             std::to_string(width) + ":chunk_size=0:size=1000";
         try {
@@ -585,6 +585,29 @@ TEST(BlkBackendTest, meta_decode_rejects_invalid_width) {
                 encoded, &state, &config, &promised, &accepted, &identity
             );
             FAIL() << "Accepted invalid width " << width;
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), EPROTO);
+        }
+    }
+}
+
+TEST(BlkBackendTest, meta_decode_rejects_unknown_member_role) {
+    for (unsigned int role : {0u, 3u}) {
+        RawstorObjectSyncStateValue state{};
+        RawstorObjectConfig config{};
+        RawstorObjectBallot promised{}, accepted{};
+        rawstor::blk::Backend::ChunkIdentity identity{};
+        identity.member_role = static_cast<RawstorMemberRole>(role);
+        identity.width = 1;
+        auto encoded = MetadataBackend::meta_encode(
+            RAWSTOR_OBJECT_SYNC_STATE_CLEAN, config, promised, accepted,
+            identity
+        );
+        try {
+            MetadataBackend::meta_decode(
+                encoded, &state, &config, &promised, &accepted, &identity
+            );
+            FAIL() << "Accepted unknown member role " << role;
         } catch (const std::system_error& e) {
             EXPECT_EQ(e.code().value(), EPROTO);
         }
@@ -602,7 +625,7 @@ TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
     EXPECT_THROW(
         MetadataBackend::meta_decode(
             "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
-            "resync_owner=0:promised=0.0:accepted=0.0:roles=-:member_role=0:"
+            "resync_owner=0:promised=0.0:accepted=0.0:roles=-:member_role=1:"
             "width=1:chunk_size=0:size=0",
             &state, &config, &promised, &accepted, &identity
         ),
@@ -612,7 +635,7 @@ TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
 
 // A witness (docs/mds.md, "Witness (stage 3)") isn't reachable through
 // any public API yet -- no placement code anywhere ever passes
-// RAWSTOR_MEMBER_WITNESS to Slot::create()/Backend::create() -- so this
+// RAWSTOR_MEMBER_META to Slot::create()/Backend::create() -- so this
 // goes straight to Slot::create() itself, the same way Target::create()'s
 // own create_one() (target.cpp) would if a witness-attach path existed.
 TEST(BlkBackendTest, witness_member_holds_no_data_and_refuses_real_io) {
@@ -633,7 +656,7 @@ TEST(BlkBackendTest, witness_member_holds_no_data_and_refuses_real_io) {
 
     std::unique_ptr<rawstor::Slot> slot =
         run(*queue, rawstor::Slot::create(*queue, location));
-    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_WITNESS));
+    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_META));
 
     // Holds no data: its own "data" file exists (still enumerable --
     // e.g. rawstor-mds's reconstruct scan, which tells it apart from a

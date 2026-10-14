@@ -571,7 +571,7 @@ RawstorObjectMeta make_meta(uint64_t size, unsigned width) {
     meta.spec.size = size;
     meta.spec.width = width;
     meta.spec.chunk_size = chunk_size;
-    // member_role defaults to RAWSTOR_MEMBER_DATA (0) via zero-init.
+    meta.member_role = RAWSTOR_MEMBER_DATA;
     return meta;
 }
 
@@ -620,7 +620,7 @@ TEST_F(ObjectStoreTest, reconstruct_skips_witness_records) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
     RawstorObjectMeta meta = make_meta(chunk_size, 1);
-    meta.member_role = RAWSTOR_MEMBER_WITNESS;
+    meta.member_role = RAWSTOR_MEMBER_META;
 
     std::vector<ScanRecord> records{
         ScanRecord{make_id(), id, 0, meta},
@@ -809,7 +809,7 @@ TEST_F(
     ObjectStore store = make_store();
     store.reconstruct({});
     auto meta = store.witness_meta(id, chunk_size);
-    EXPECT_EQ(meta.member_role, RAWSTOR_MEMBER_WITNESS);
+    EXPECT_EQ(meta.member_role, RAWSTOR_MEMBER_META);
     EXPECT_EQ(meta.spec.size, spec.size);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     EXPECT_EQ(meta.config.sync_id, config.sync_id);

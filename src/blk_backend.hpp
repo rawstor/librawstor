@@ -155,7 +155,7 @@ protected:
     // (enum RawstorObjectMemberRole), "-" when none are recorded, and a ballot
     // as "counter.proposer", e.g. "version=1:state=1:epoch=0:sync_id=0:
     // h0=0:h1=0:h2=0:h3=0:resync_owner=0:promised=0.0:accepted=0.0:
-    // roles=-:member_role=0:width=0:chunk_size=0:size=0" -- shared by every
+    // roles=-:member_role=1:width=0:chunk_size=0:size=0" -- shared by every
     // blk-backed subclass's own native per-copy metadata storage:
     // lvm::Backend's LVM tag, zfs::Backend's ZFS user property, and
     // file::Backend's own on-disk .meta file (NUL-padded out to META_MAX_SIZE

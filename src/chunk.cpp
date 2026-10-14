@@ -1178,7 +1178,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     }
     for (size_t i = 0; i < metas.size(); ++i) {
         if (metas[i].state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
-            metas[i].member_role == RAWSTOR_MEMBER_WITNESS) {
+            metas[i].member_role == RAWSTOR_MEMBER_META) {
             if (witness_member && witness_member != i + 1) {
                 RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
             }
@@ -1469,19 +1469,19 @@ rawstd::Task<void> Chunk::_set_member_config(
         if (missing) {
             co_await member.slot->create(
                 _id, _offset, _spec,
-                member.witness ? RAWSTOR_MEMBER_WITNESS : RAWSTOR_MEMBER_DATA
+                member.witness ? RAWSTOR_MEMBER_META : RAWSTOR_MEMBER_DATA
             );
             co_await member.slot->set_config(
                 _id, _offset, static_cast<uint8_t>(index), config, flags, state
             );
+            member.meta = co_await inspect_member(*member.slot, _id, _offset);
+        } else {
+            member.meta.config = config;
+            if (state) {
+                member.meta.state = *state;
+            }
         }
         member.reachable = true;
-        member.meta.member_role =
-            member.witness ? RAWSTOR_MEMBER_WITNESS : RAWSTOR_MEMBER_DATA;
-        member.meta.config = config;
-        if (state) {
-            member.meta.state = *state;
-        }
     } catch (const std::system_error& e) {
         if (e.code().value() != ENOSYS || _has_witness()) {
             member.reachable = false;

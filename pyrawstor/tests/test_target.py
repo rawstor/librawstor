@@ -185,6 +185,10 @@ class TestTarget(unittest.TestCase):
             target = rawstor.Target(
                 f"file://{temp_dir}/00000000-0000-0000-0000-000000000005")
 
+            rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000005"
+            ).create(size=1 << 20, width=1)
+
             with self.assertRaises(OSError) as cm:
                 target.create_version()
             self.assertEqual(cm.exception.errno, errno.ENOTSUP)
@@ -196,6 +200,10 @@ class TestTarget(unittest.TestCase):
                 f"file://{temp_dir}/00000000-0000-0000-0000-000000000005/"
                 f"{version_id}")
 
+            rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000005"
+            ).create(size=1 << 20, width=1)
+
             with self.assertRaises(OSError) as cm:
                 target.create_version()
             self.assertEqual(cm.exception.errno, errno.ENOTSUP)
@@ -205,6 +213,10 @@ class TestTarget(unittest.TestCase):
             target = rawstor.Target(
                 f"file://{temp_dir}/00000000-0000-0000-0000-000000000005")
             version_id = str(uuid.uuid4())
+
+            rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000005"
+            ).create(size=1 << 20, width=1)
 
             with self.assertRaises(OSError) as cm:
                 target.create_version(version_id)

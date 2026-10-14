@@ -28,8 +28,8 @@ OBJECT_MEMBER_EXCLUDED = 3
 CONFIG_CLEAR_LOST = 1
 
 # ObjectMeta.member_role: RAWSTOR_MEMBER_* (<rawstor/target.h>).
-MEMBER_DATA = 0
-MEMBER_WITNESS = 1
+MEMBER_DATA = 1
+MEMBER_META = 2
 
 # The names the CLI's own --failure-domain takes.
 FAILURE_DOMAINS = {

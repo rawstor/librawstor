@@ -433,6 +433,8 @@ replica of the register's ballots: the highest it promised and the one
 its Config was accepted under. OST reports the record of its one backend Slot.
 `width` is the non-zero number of data members; witness members are excluded
 from this count. A zero width in received metadata is a protocol error.
+Member roles are `DATA = 1` and `META = 2` (metadata-only witnesses); zero
+is reserved for an unknown role in an unavailable member's local placeholder.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -690,7 +692,7 @@ addressed member. If the last member is unavailable, its role follows from
 the complete target and data width. A quorum always uses the complete
 address count.
 
-Both OST and MDS accept `ALLOCATE` with `member_role = 1` to create a
+Both OST and MDS accept `ALLOCATE` with `member_role = 2` to create a
 metadata-only member, `META` to read it and `RELEASE` to remove it.
 The common `SET_CONFIG` request atomically records state and configuration
 with its separate optional `state` field. Zero preserves the existing state.

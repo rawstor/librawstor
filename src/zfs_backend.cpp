@@ -296,17 +296,17 @@ rawstd::Task<void> Backend::create(
     // the requested size up front.
     const uint64_t volblocksize = 16384;
 
-    if (member_role != RAWSTOR_MEMBER_WITNESS &&
+    if (member_role != RAWSTOR_MEMBER_META &&
         (sp.size == 0 || sp.size > UINT64_MAX - (volblocksize - 1))) {
         rawstd_error("zfs: invalid object size: %" PRIu64 "\n", sp.size);
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
     uint64_t size =
-        member_role == RAWSTOR_MEMBER_WITNESS
+        member_role == RAWSTOR_MEMBER_META
             ? volblocksize
             : (sp.size + volblocksize - 1) / volblocksize * volblocksize;
-    if (member_role != RAWSTOR_MEMBER_WITNESS && size != sp.size) {
+    if (member_role != RAWSTOR_MEMBER_META && size != sp.size) {
         rawstd_info(
             "zfs: rounding volume size up from %" PRIu64 " to %" PRIu64
             " bytes\n",

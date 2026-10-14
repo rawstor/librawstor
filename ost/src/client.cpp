@@ -902,7 +902,7 @@ rawstd::DetachedTask Client::_allocate(
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
         if (payload.member_role != RAWSTOR_MEMBER_DATA &&
-            payload.member_role != RAWSTOR_MEMBER_WITNESS) {
+            payload.member_role != RAWSTOR_MEMBER_META) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
         co_await with_slot(

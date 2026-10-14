@@ -506,7 +506,7 @@ void ObjectStore::create_witness(
     }
     RawstorObjectMeta meta{};
     meta.spec = spec;
-    meta.member_role = RAWSTOR_MEMBER_WITNESS;
+    meta.member_role = RAWSTOR_MEMBER_META;
     meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     auto record = encode_witness(meta);
     std::lock_guard<std::mutex> guard(_mutex);

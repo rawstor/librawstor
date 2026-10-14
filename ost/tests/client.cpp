@@ -1,5 +1,7 @@
 #include "client.hpp"
 
+#include <rawstor/target.h>
+
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
 
@@ -80,7 +82,7 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
             .chunk_shift = 0,
             .failure_domain = 0,
             .width = static_cast<uint8_t>(width),
-            .member_role = 0, /* RAWSTOR_MEMBER_DATA, <rawstor/target.h> */
+            .member_role = RAWSTOR_MEMBER_DATA,
         },
     };
     std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));

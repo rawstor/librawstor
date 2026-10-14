@@ -116,7 +116,7 @@ show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
             rawstd_bytes_to_size(meta->spec.size, buf, sizeof(buf));
             printf(
                 "    member: %s\n",
-                meta->member_role == RAWSTOR_MEMBER_WITNESS ? "witness" : "data"
+                meta->member_role == RAWSTOR_MEMBER_META ? "witness" : "data"
             );
             printf("    size: %s\n", buf);
             printf("    state: %s\n", sync_state_to_string(meta->state));

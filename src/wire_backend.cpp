@@ -1036,7 +1036,9 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_wire_meta(
             );
         ret.spec.size = payload.size;
         ret.member_role = static_cast<RawstorMemberRole>(payload.member_role);
-        if (payload.width == 0) {
+        if (payload.width == 0 ||
+            (payload.member_role != RAWSTOR_MEMBER_DATA &&
+             payload.member_role != RAWSTOR_MEMBER_META)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
         ret.spec.width = payload.width;
@@ -1117,7 +1119,8 @@ rawstd::Task<RawstorObjectSyncReply> Backend::_sync_request(
     co_await *op;
     const RawstorFrameSyncReplyPayload& reply = op->reply();
     const RawstorFrameMetaPayload& wire = reply.meta;
-    if (wire.width == 0) {
+    if (wire.width == 0 || (wire.member_role != RAWSTOR_MEMBER_DATA &&
+                            wire.member_role != RAWSTOR_MEMBER_META)) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
     RawstorObjectMeta meta{};

@@ -18,7 +18,7 @@ inline bool witness_approves(
     size_t index, size_t members, size_t witness_index
 ) noexcept {
     const auto& config = witness.config;
-    if (witness.member_role != RAWSTOR_MEMBER_WITNESS ||
+    if (witness.member_role != RAWSTOR_MEMBER_META ||
         data.member_role != RAWSTOR_MEMBER_DATA || config.sync_id == 0 ||
         config.sync_id != data.config.sync_id || config.nroles != members ||
         data.config.nroles != members || index >= config.nroles ||
@@ -47,8 +47,7 @@ inline bool witness_approves(
 }
 
 inline RawstorFrameMetaPayload encode_witness(const RawstorObjectMeta& meta) {
-    if (meta.member_role != RAWSTOR_MEMBER_WITNESS ||
-        !witness_state(meta.state)) {
+    if (meta.member_role != RAWSTOR_MEMBER_META || !witness_state(meta.state)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     for (size_t i = 0; i < meta.config.nroles; ++i) {
@@ -61,7 +60,7 @@ inline RawstorFrameMetaPayload encode_witness(const RawstorObjectMeta& meta) {
     out.width = static_cast<uint8_t>(meta.spec.width);
     out.chunk_shift =
         meta.spec.chunk_size == 0 ? 0 : __builtin_ctzll(meta.spec.chunk_size);
-    out.member_role = RAWSTOR_MEMBER_WITNESS;
+    out.member_role = RAWSTOR_MEMBER_META;
     out.state = meta.state;
     out.config.epoch = meta.config.epoch;
     out.config.sync_id = meta.config.sync_id;
@@ -97,8 +96,8 @@ inline RawstorObjectMeta decode_witness(const RawstorFrameMetaPayload& in) {
     RawstorObjectMeta out{};
     out.member_role = static_cast<RawstorMemberRole>(in.member_role);
     out.state = static_cast<RawstorObjectSyncStateValue>(in.state);
-    if (out.member_role != RAWSTOR_MEMBER_WITNESS ||
-        !witness_state(out.state) || in.chunk_shift >= 64 || in.width == 0) {
+    if (out.member_role != RAWSTOR_MEMBER_META || !witness_state(out.state) ||
+        in.chunk_shift >= 64 || in.width == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
     out.spec.size = in.size;

@@ -252,7 +252,7 @@ chunk_meta {
   version                  // version_id this slot belongs to; nil = live
   redundancy               // mirror{R} | ec{k,m} — how to decode
   slot_index
-  member_role              // data | witness — witness records are metadata-only
+  member_role              // DATA = 1 | META = 2 — witness records are metadata-only
                            // and are excluded from the map reconstruct
   created_at, project_id
   // per-slot consistency (exists today, per mirroring.md)
@@ -889,6 +889,7 @@ Chunk uses the same member configuration/state update path for DATA and
 witness members. The caller decides whether quorum permits recreating a
 missing member. The member role selects
 the allocation type; it does not select a separate state-write operation.
+After recreation, Chunk re-reads META to obtain the persisted member record.
 The OST transports it using `SET_CONFIG`; MDS commits it in SQLite WAL with
 `synchronous=FULL`. The block backends use their existing metadata format:
 file witnesses keep an empty data file plus metadata, LVM witnesses use a
@@ -927,7 +928,7 @@ is the third vote that restores auto-start with one OST down. Implementation:
 any server speaking the witness subset (`ALLOCATE`/`META`/`SET_CONFIG`/`RELEASE`) — a plain OST, an
 OST doubling as partial MDS, or the MDS itself. The member appears in the
 target list like any other member; data I/O and resync skip it. Its stored
-record carries `member_role = witness` (see `chunk_meta`), so the
+record carries `member_role = META` (see `chunk_meta`), so the
 reconstruct scan (`LIST` + per-object `META`) never mistakes the witness
 host for a data slot.
 
@@ -1055,7 +1056,7 @@ witness tables being the reason `synchronous=FULL` is non-negotiable.
 rebuild the map:
   get the OST roster from topology (v1: static config)
   for each OST: LIST -> physical ids, then per id: META -> chunk_meta
-  drop member_role = witness records (metadata-only, not slots)
+  drop member_role = META records (metadata-only, not slots)
   group by (id, version): nil version -> live chunk_map,
                                  version = version_id -> version view
   within each group: order by logical_index
@@ -1069,7 +1070,7 @@ flowchart TB
         direction LR
         L["LIST: physical ids"] --> Me["META per id: chunk_meta"]
     end
-    Scan --> W{"member_role<br/>= witness?"}
+    Scan --> W{"member_role<br/>= META?"}
     W -- yes --> Drop["dropped: metadata only, not a slot"]
     W -- no --> G["group by (id, version)"]
     G -- "nil version" --> Live["live chunk_map<br/>ordered by logical_index"]
