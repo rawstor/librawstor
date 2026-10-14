@@ -743,73 +743,61 @@ TEST(OstClientTest, leave_cleans_and_a_dropped_writer_loses) {
 }
 
 // Direct construction can bypass the CLI's one-location constraint.
-// Such a server must reject data sessions instead of opening a nested mirror.
-TEST(OstClientTest, several_locations_refuse_data_sessions) {
+// One server represents one member backed by one Slot.
+TEST(OstClientTest, several_locations_are_rejected) {
     rawstor::ostserver::tests::TmpDir a;
     rawstor::ostserver::tests::TmpDir b;
     std::string locations = a.uri() + "," + b.uri();
     int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
-    rawstor::ostserver::Server server(256, listen_fd, locations.c_str());
+    try {
+        rawstor::ostserver::Server server(256, listen_fd, locations.c_str());
+        ADD_FAILURE() << "server accepted multiple locations";
+    } catch (const std::system_error& error) {
+        EXPECT_EQ(error.code().value(), EINVAL);
+    }
+    ::close(listen_fd);
+}
+
+TEST(OstClientTest, set_config_forwards_explicit_state_to_slot) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
     rawstor::ostserver::tests::Queue queue;
     auto [raw_client, client_fd] = connect_client(server, queue);
     ClientCleanup server_client(std::move(raw_client), queue);
     rawstor::ostserver::tests::Client client(client_fd);
-
     RawstdUUID id;
     ASSERT_EQ(rawstd_uuid7_init(&id), 0);
-    auto expect_response = [&](RawstorCommandType cmd, int32_t res) {
+    auto expect_response = [&](RawstorCommandType cmd, int32_t result) {
         ASSERT_TRUE(pump_until(queue, [&] {
             return client.bytes_available() >= sizeof(RawstorFrameResponse);
         }));
-        RawstorFrameResponse response = client.recv_response();
+        auto response = client.recv_response();
         EXPECT_EQ(response.head.cmd, cmd);
-        EXPECT_EQ(response.body.res, res);
+        EXPECT_EQ(response.body.res, result);
     };
-
     client.send_allocate(id, 4096, 2);
     expect_response(RAWSTOR_CMD_ALLOCATE, 0);
-
     RawstorFrameSetConfig set{};
     std::memcpy(set.payload.object_id, id.bytes, sizeof(id.bytes));
     set.payload.config.epoch = 3;
-    set.payload.config.sync_id = 0x33;
+    set.payload.state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
     client.send_set_config(set);
-    expect_response(RAWSTOR_CMD_SET_CONFIG, -ENOSYS);
-
-    RawstorFrameSyncPropose prepare{};
-    prepare.head.cmd = RAWSTOR_CMD_SYNC_PREPARE;
-    std::memcpy(prepare.payload.object_id, id.bytes, sizeof(id.bytes));
-    prepare.payload.ballot = {1, 1};
-    client.send_sync(prepare);
-    expect_response(RAWSTOR_CMD_SYNC_PREPARE, -ENOSYS);
-
-    // The failed open leaves the connection without a data session.
-    client.send_set_object(id);
-    expect_response(RAWSTOR_CMD_SET_OBJECT, -EOPNOTSUPP);
-    std::string ping = "ping";
-    client.send_write_at_epoch(0, ping.data(), ping.size(), 1);
-    expect_response(RAWSTOR_CMD_WRITE, -EBADF);
-    client.send_write_at_epoch(
-        0, ping.data(), ping.size(), 0, RAWSTOR_FLAG_RESYNC
-    );
-    expect_response(RAWSTOR_CMD_WRITE, -EBADF);
-    // A session cannot open a nested mirror, including for unstamped writes.
-    client.send_write_at_epoch(0, ping.data(), ping.size(), 0);
-    expect_response(RAWSTOR_CMD_WRITE, -EBADF);
-
+    expect_response(RAWSTOR_CMD_SET_CONFIG, 0);
+    set.payload.config.epoch = 4;
+    set.payload.state = 4;
+    client.send_set_config(set);
+    expect_response(RAWSTOR_CMD_SET_CONFIG, -EINVAL);
     client.send_meta(id, 0);
     RawstorFrameMetaPayload meta{};
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >=
                sizeof(RawstorFrameResponse) + sizeof(meta);
     }));
-    RawstorFrameResponse response = client.recv_response(&meta, sizeof(meta));
-    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_META);
+    auto response = client.recv_response(&meta, sizeof(meta));
     EXPECT_EQ(response.body.res, static_cast<int32_t>(sizeof(meta)));
-    EXPECT_EQ(meta.size, 4096u);
-    EXPECT_EQ(meta.config.epoch, 0u);
-    EXPECT_EQ(meta.config.sync_id, 0u);
-    EXPECT_EQ(meta.config.nroles, 0);
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+    EXPECT_EQ(meta.config.epoch, 3u);
 }
 
 namespace {

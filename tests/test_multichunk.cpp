@@ -1,6 +1,7 @@
 #include "chunk.hpp"
 #include "object.hpp"
 #include "opts.h"
+#include "slot.hpp"
 #include "target.hpp"
 #include "tmp_dir.hpp"
 
@@ -496,10 +497,15 @@ TEST(TargetCreateTest, width_rules) {
     }
     spec.failure_domain = 0;
 
-    // Two local copies of an object whose own policy is a single copy
-    // (rawstor-ost relaying onto two locations).
+    // Individual Slots preserve the object's policy width independently
+    // of how many physical members are inspected together.
     spec.width = 1;
-    run(*queue, mirrored.create(*queue, spec, true));
+    for (const auto& location : {dir1.uri(), dir2.uri()}) {
+        auto slot =
+            run(*queue, rawstor::Slot::create(*queue, rawstd::URI(location)));
+        run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_DATA));
+        run(*queue, slot->close());
+    }
     std::vector<RawstorObjectMeta> metas =
         run(*queue, mirrored.meta(*queue, 0));
     ASSERT_EQ(metas.size(), 2u);

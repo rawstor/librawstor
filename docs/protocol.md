@@ -287,7 +287,7 @@ Records the chunk's configuration on one copy (`SET_CONFIG`). The separate
 means preserve the current state. `flags` contains only bit 0,
 `RAWSTOR_CONFIG_CLEAR_LOST`, which turns a `LOST` copy `CLEAN` (no writer
 sessions) or `DIRTY`. Explicit state and CLEAR_LOST cannot be combined;
-invalid states or unknown flag bits return `-EINVAL`. A server with several locations keeps no record of the copy it is and answers `-ENOSYS`
+invalid states or unknown flag bits return `-EINVAL`. OST accepts one backend location
 ([mirroring](mirroring.md#one-copy-per-server)). The copy's ballots stay
 as they are: only the register's own requests change them. `member_index` is
 the copy's position among the chunk's members, which the Config's roles
@@ -327,8 +327,7 @@ register's value -- the Config -- under `ballot`, and to promise `next` on
 success (zero for none). Each successful accept is one vote; the client
 must obtain a majority of register acceptors. With two data copies, the
 witness supplies the third vote (multi-attach Stage 2 follows witness
-support). `member_index` is as for SetConfig and indexes data members. A
-server with several locations answers `-ENOSYS`.
+support). `member_index` is as for SetConfig and indexes data members. OST accepts one backend location.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -428,8 +427,7 @@ state (`CLEAN`, `DIRTY`, `LOST`), how many sessions have it open for
 writing right now (`writers`), and the chunk's configuration as last set on
 it (a [Config](#config--312-bytes), at offset 16), and the copy's
 replica of the register's ballots: the highest it promised and the one
-its Config was accepted under. A server with several locations reports a
-zero Config and zero ballots.
+its Config was accepted under. OST reports the record of its one backend Slot.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7

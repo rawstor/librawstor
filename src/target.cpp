@@ -1251,9 +1251,8 @@ const RawstdUUID& Target::version_id() const {
     return _version_id;
 }
 
-rawstd::Task<void> Target::create(
-    rawio::Queue& queue, const RawstorObjectSpec& sp, bool member
-) const {
+rawstd::Task<void>
+Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     if (!rawstd_uuid_is_nil(&_version_id)) {
         // create() is only ever for a fresh object -- creating a version
         // of an existing one is create_version()'s own job (this class's
@@ -1266,10 +1265,10 @@ rawstd::Task<void> Target::create(
     // No implicit width, ever: the caller must always state it, checked
     // before any I/O at all. It is the object's redundancy policy,
     // persisted verbatim on every copy, and need not equal a chunk's own
-    // URI count: e.g. rawstor-ost relaying one copy of an object onto
-    // several local locations stamps each of them with the object's own
-    // width. Every persisted/wire width and failure_domain is a uint8_t, so
-    // anything wider is rejected rather than silently truncated.
+    // URI count: a target may address one data member of a wider object,
+    // and its stored width is that object's policy. Every persisted/wire width
+    // and failure_domain is a uint8_t, so anything wider is rejected rather
+    // than silently truncated.
     if (sp.width == 0) {
         rawstd_error("Spec width must be set (0 is not a valid width)\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -1282,7 +1281,7 @@ rawstd::Task<void> Target::create(
     // each), as Chunk::create() checks at open: none is created that could
     // not be opened.
     for (const std::vector<rawstd::URI>& uris : chunks) {
-        if (!member && uris.size() == sp.width + 1 &&
+        if (uris.size() == sp.width + 1 &&
             (sp.width < 2 || sp.width % 2 != 0)) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
@@ -1348,7 +1347,7 @@ rawstd::Task<void> Target::create(
         // (the size check above), starting at its own offset
         // (extract_offset(), already stamped on its own URIs).
         RawstorObjectSpec chunk_sp = sp;
-        bool witness = !member && uris.size() == sp.width + 1;
+        bool witness = uris.size() == sp.width + 1;
         if (chunks.size() > 1) {
             uint64_t offset = extract_offset(uris.front());
             if (offset >= sp.size) {

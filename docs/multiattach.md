@@ -28,7 +28,7 @@ separately.
 | Resync across processes (`resync_owner`, sweep with `RESYNC`) | 2 | ❌ | — |
 | `SET_CONFIG` and `rawstor_target_set_member_config()` retired | 2 | ❌ | [Retiring `SET_CONFIG`](#retiring-set_config) |
 | The client keeps the register value once per chunk, not per member | 2 | ❌ | [The register](#the-register-caspaxos) |
-| A `rawstor-ost` with several locations: one copy with a record of its own | — | ❌ | [Mirroring](mirroring.md#one-copy-per-server) |
+| OST serves one backend Slot; mirroring is coordinated by the client | 1 | ✅ | [Mirroring](mirroring.md#one-copy-per-server) |
 | Witness participation in the configuration register for N = 2 | Before 2 | ❌ | Prerequisite for multi-attach Stage 2; [MDS design](mds.md#witness-stage-3) |
 
 Stage 1 introduces the public ABI, wire layouts and data-member behavior
@@ -234,7 +234,7 @@ The stage-1 client still keeps a whole configuration per member and makes
 no use of the register; stage 2 moves to one value per chunk.
 
 `rawstor-ost` applies both requests to the copy it is, on its one
-location; a server with several locations answers `-ENOSYS`
+location; multiple locations are rejected at startup
 ([Mirroring](mirroring.md#one-copy-per-server)).
 
 ### Retiring `SET_CONFIG`
@@ -278,9 +278,8 @@ every write admitted under it to complete** before the record is
 written, so nothing stamped with the old configuration lands once the
 new one is recorded. While it waits it lets go of the record lock -- an
 admitted write may need it for the copy's `DIRTY` mark -- and decides on
-the record as it finds it once it has the lock back. A server with no
-copy of its own -- several locations, or one reached through another
-server -- has nothing to fence on, and refuses a stamped request with
+the record as it finds it once it has the lock back. A server with its copy reached through another
+server has no local copy to fence on, and refuses a stamped request with
 `-EOPNOTSUPP` rather than let it through.
 
 ```mermaid

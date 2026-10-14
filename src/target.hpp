@@ -23,7 +23,7 @@ namespace rawstor {
 // - Physical, with a bound version: `/<uuid>/<offset>/<version_id>`
 //   -- offset always an explicit segment (even "0"), the convention
 //   every internal builder in this codebase uses (mds_backend.cpp's
-//   chunk_slot_target(), ost/src/client.cpp's _targets(), Target's own
+//   chunk_slot_target(), Target's own
 //   synthetic constructor) whenever it addresses one chunk of a larger
 //   object, since a chunk's own offset is a real, meaningful value
 //   there.
@@ -219,9 +219,8 @@ public:
     // bound version (version_id() above, non-nil) -- creating a version of an
     // existing object is create_version()'s own job below, never this
     // method's, so there is no dispatch on version_id() here at all.
-    rawstd::Task<void> create(
-        rawio::Queue& queue, const RawstorObjectSpec& sp, bool member = false
-    ) const;
+    rawstd::Task<void>
+    create(rawio::Queue& queue, const RawstorObjectSpec& sp) const;
 
     // Creates a native CoW version of the live object as the version
     // `this` is bound to (version_id() above, a target string of the form

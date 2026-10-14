@@ -112,7 +112,7 @@ exits with `EX_CONFIG` (78), which the shipped systemd units do not restart.
 
 ## rawstor-ost – OST Protocol Server
 
-`rawstor-ost` implements the **OST protocol** (see [Protocol](https://github.com/rawstor/librawstor/blob/main/docs/protocol.md)), handling network connections and providing access to data stored in **locations** (as defined in the [Concepts](https://github.com/rawstor/librawstor/blob/main/docs/concepts.md) documentation).
+`rawstor-ost` implements the **OST protocol** (see [Protocol](https://github.com/rawstor/librawstor/blob/main/docs/protocol.md)), handling network connections and providing access to data stored in one backend **location** (as defined in the [Concepts](https://github.com/rawstor/librawstor/blob/main/docs/concepts.md) documentation).
 
 - `file://` scheme → serves data directly from the local filesystem.
 - `ost://` scheme → acts as a proxy to an underlying OST backend.
@@ -519,7 +519,7 @@ the placed OSTs directly once it has resolved an object's own chunk map.
 | `-h, --help` | Show help message and exit. |
 | `-b, --bind ADDR` | Bind address in `<ip>:<port>` format (e.g., `127.0.0.1:7776`). |
 | `-d, --db PATH` | SQLite database file holding the chunk map (created if missing). |
-| `-t, --topology PATH` | Static topology config file: one `<uuid> <location> <weight> [[[<dc>/]<row>/]<rack>/]<server>` line per OST (failure domains from the root down; only `<server>` is required), `<location>` being a single location URI (`ost://host:port`; a client-local one such as `file://` only makes sense on a single host; to put several stores under one entry, list a `rawstor-ost` serving them all) (see [MDS design](https://github.com/rawstor/librawstor/blob/main/docs/mds.md)). |
+| `-t, --topology PATH` | Static topology config file: one `<uuid> <location> <weight> [[[<dc>/]<row>/]<rack>/]<server>` line per OST (failure domains from the root down; only `<server>` is required), `<location>` being a single location URI (`ost://host:port`; a client-local one such as `file://` only makes sense on a single host; each `rawstor-ost` serves one backend location) (see [MDS design](https://github.com/rawstor/librawstor/blob/main/docs/mds.md)). |
 | `--queue-size SIZE` | RawIO queue (`io_uring`) depth. Default: `4096`. |
 | `-w, --workers N` | Number of worker threads, each with its own client connections and I/O queue, all accepting on the same listening socket and sharing one database (default: `4`). |
 | `-r, --reconstruct` | Rebuild the chunk map from a LIST+META scan of every OST in the topology before serving -- for recovering from a lost or corrupted database. |

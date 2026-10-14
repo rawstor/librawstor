@@ -131,6 +131,10 @@ Server::Server(
     _locations(rawstd::URI::uriv(location)),
     _accept_event(nullptr) {
 
+    if (_locations.size() != 1) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     int res = rawio_queue_create(queue_size, &_queue);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);

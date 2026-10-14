@@ -153,16 +153,6 @@ private:
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameSyncProposePayload payload
     );
-    // Every configured location's own URI for `uuid`, with `offset`/
-    // `version_id` folded into each one's own path as
-    // "<uuid>[/<offset>[/<version_id>]]" (TargetPath's own doc comment,
-    // src/target.hpp) -- the same self-describing name every backend on
-    // the receiving end already expects (docs/mds.md, "Slot identity").
-    std::vector<rawstd::URI> _targets(
-        const RawstdUUID& uuid, uint64_t offset = 0,
-        const RawstdUUID& version_id = {}
-    );
-
     // Sends a response frame and awaits its actual completion (not just
     // submission) -- unlike every other rawio_*() bridge in the .cpp,
     // there's no separate fire-and-forget IOCallback anymore: a failure

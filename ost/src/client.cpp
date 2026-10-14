@@ -1,10 +1,8 @@
-#include "config.hpp"
 #include <ost/client.hpp>
 
 #include <ost/server.hpp>
 
 #include "slot.hpp"
-#include "target.hpp"
 #include "witness.hpp"
 
 #include <rawio/queue.hpp>
@@ -18,7 +16,6 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
-#include <rawstor/list.h>
 #include <rawstor/location.h>
 #include <rawstor/object.h>
 #include <rawstor/protocol.h>
@@ -29,7 +26,7 @@
 
 #include <functional>
 #include <memory>
-#include <sstream>
+#include <optional>
 #include <vector>
 
 #include <cerrno>
@@ -71,49 +68,25 @@ uint64_t chunk_shift_to_size(uint8_t chunk_shift) {
     return chunk_shift == 0 ? 0 : (1ull << chunk_shift);
 }
 
-// One LIST response row per distinct chunk offset a target string
-// rawstor_location_list() returned actually names -- a target string can
-// join more than one URI with a comma, each already carrying its own
-// offset segment (or none at all, for an ordinary single-chunk one), so
-// this is purely a syntactic read of `target`'s own shape (parse_target_
-// path(), src/target.hpp), not rawstor_target_chunks()'s own (possibly
-// backend-verified, e.g. for an mds:// target) real answer -- `target`
-// here always already names this OST's own local, self-describing
-// storage, never an mds:// one, so there is nothing to verify: whatever
-// offsets its own comma-joined URIs literally spell out are all there
-// is to report. Same-offset mirrors collapse down to one entry per
-// distinct chunk -- matching RawstorFrameListEntry's own doc comment
-// (protocol.h): one row per offset, all sharing that id, for the
-// receiving end to group back into one rawstor::ChunkGroup.
-void append_list_entries(
-    const char* target, std::vector<RawstorFrameListEntry>& out
+template <typename F>
+rawstd::Task<void> with_slot(
+    RawIOQueue* queue, const std::vector<rawstd::URI>& locations, F operation
 ) {
-    RawstdUUIDString id_buf;
-    int res = rawstor_target_id(target, id_buf, sizeof(id_buf));
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    if (locations.size() != 1) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
     }
-    RawstdUUID id;
-    res = rawstd_uuid_from_string(&id, id_buf);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    auto slot = co_await rawstor::Slot::create(
+        *static_cast<rawio::Queue*>(queue), locations.front()
+    );
+    std::exception_ptr error;
+    try {
+        co_await operation(*slot);
+    } catch (...) {
+        error = std::current_exception();
     }
-
-    RawstorFrameListEntry base{};
-    memcpy(base.id, id.bytes, sizeof(base.id));
-
-    std::vector<uint64_t> offsets;
-    for (const rawstd::URI& uri : rawstd::URI::uriv(target)) {
-        uint64_t offset = rawstor::parse_target_path(uri.path().str()).offset;
-        if (offsets.empty() || offsets.back() != offset) {
-            offsets.push_back(offset);
-        }
-    }
-
-    for (uint64_t offset : offsets) {
-        RawstorFrameListEntry entry = base;
-        entry.chunk_offset = offset;
-        out.push_back(entry);
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
     }
 }
 
@@ -158,22 +131,6 @@ rawstd::Task<void> co_close_fd(RawIOQueue* queue, int fd) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }
     co_await awaiter;
-}
-
-// rawstor_target_spec()/_meta()/_set_member_config()/_create()/_remove() and
-// rawstor_location_info()/_list() all report their own result via a
-// single ssize_t (0 or a snprintf()-style positive value for success,
-// negative errno for failure) rather than object.h's split error/data,
-// but none of _list()/etc. below ever hits the positive-value case
-// (only rawstor_location_create() produces one, and nothing here calls
-// it) -- so this one trampoline, collapsing straight to
-// CallbackAwaitable<void>'s plain error convention, covers every one of
-// their call sites below; whatever else a given call delivers
-// (spec/meta/info/targets/token) is written to its own out-parameter
-// before this fires.
-int result_trampoline(ssize_t result, void* data) {
-    static_cast<rawstd::CallbackAwaitable<void>*>(data)->complete(result);
-    return 0;
 }
 
 // rawio_send()/rawio_sendmsg() share this callback shape (ssize_t
@@ -878,71 +835,50 @@ rawstd::DetachedTask Client::_list(
         co_return;
     }
 
-    RawstorPaginationToken token{};
+    RawstdUUID token{};
     memcpy(token.bytes, payload.token_id, sizeof(token.bytes));
-
-    RawstorStringList* targets;
+    std::vector<rawstor::ChunkGroup> groups;
+    std::vector<unsigned char> data;
     int result = 0;
     try {
-        std::string location = rawstd::URI::uris(client->_server.locations());
-        rawstd::CallbackAwaitable<void> awaiter;
-        int res = rawstor_location_list(
-            client->_queue, location.c_str(), payload.limit, &targets, &token,
-            result_trampoline, &awaiter
+        co_await with_slot(
+            client->_queue, client->_server.locations(),
+            [&](rawstor::Slot& slot) -> rawstd::Task<void> {
+                co_await slot.list_chunks({}, payload.limit, groups, token);
+            }
         );
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-        co_await awaiter;
-    } catch (const std::system_error& e) {
-        result = -e.code().value();
-    }
-    if (result < 0) {
-        bool send_failed = false;
-        try {
-            co_await client->_send_response(
-                RAWSTOR_CMD_LIST, head.cid, result, 0
-            );
-        } catch (const std::exception& e) {
-            rawstd_error("%s\n", e.what());
-            send_failed = true;
-        }
-        if (send_failed) {
-            co_await client->_server.del_client(client->_fd);
-        }
-        co_return;
-    }
-
-    // co_await isn't allowed inside a catch block, so rawstor_string_list_
-    // delete() (needed on both paths) runs unconditionally right after,
-    // and del_client() (only on failure) after that.
-    bool send_failed = false;
-    try {
         std::vector<RawstorFrameListEntry> entries;
-        for (const char** in_it = rawstor_string_list_iter(targets);
-             in_it != NULL; in_it = rawstor_string_list_next(in_it)) {
-            append_list_entries(*in_it, entries);
+        for (const auto& group : groups) {
+            RawstorFrameListEntry entry{};
+            memcpy(entry.id, group.id.bytes, sizeof(entry.id));
+            if (group.offsets.empty()) {
+                entries.push_back(entry);
+            } else {
+                for (uint64_t offset : group.offsets) {
+                    entry.chunk_offset = offset;
+                    entries.push_back(entry);
+                }
+            }
         }
-        // The final row is always the resume cursor, never a real result
-        // (RawstorFrameListEntry's own doc comment, protocol.h) --
-        // chunk_offset stays 0, unused by a cursor row.
         RawstorFrameListEntry cursor{};
         memcpy(cursor.id, token.bytes, sizeof(cursor.id));
         entries.push_back(cursor);
-
-        std::vector<unsigned char> data(
-            sizeof(RawstorFrameListEntry) * entries.size()
-        );
+        data.resize(entries.size() * sizeof(RawstorFrameListEntry));
         memcpy(data.data(), entries.data(), data.size());
+    } catch (const std::system_error& error) {
+        result = -error.code().value();
+    }
+    bool send_failed = false;
+    try {
         co_await client->_send_response(
-            RAWSTOR_CMD_LIST, head.cid, static_cast<int32_t>(data.size()), 0,
-            data
+            RAWSTOR_CMD_LIST, head.cid,
+            result < 0 ? result : static_cast<int32_t>(data.size()), 0,
+            result < 0 ? std::vector<unsigned char>{} : data
         );
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
+    } catch (const std::exception& error) {
+        rawstd_error("%s\n", error.what());
         send_failed = true;
     }
-    rawstor_string_list_delete(targets);
     if (send_failed) {
         co_await client->_server.del_client(client->_fd);
     }
@@ -960,17 +896,8 @@ rawstd::DetachedTask Client::_allocate(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets =
-        client->_targets(uuid, payload.chunk_offset);
-
     int result = 0;
     try {
-        // width is forwarded straight through: it's the object's own
-        // configured policy (persisted per-copy for reconstruct,
-        // docs/mds.md, chunk_meta), not a statement about how many URIs
-        // this relay/multi-location rawstor-ost happens to have
-        // configured locally. chunk_shift_to_size() can throw on a
-        // malformed chunk_shift, so it needs to run inside this try too.
         RawstorObjectSpec spec{
             .size = payload.size,
             .width = payload.width,
@@ -978,36 +905,24 @@ rawstd::DetachedTask Client::_allocate(
             .stripe_width = payload.stripe_width,
             .failure_domain = payload.failure_domain,
         };
-
-        if (payload.member_role == RAWSTOR_MEMBER_WITNESS) {
-            if (client->_server.locations().size() != 1) {
-                RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
-            }
-            auto& queue = *static_cast<rawio::Queue*>(client->_queue);
-            auto slot = co_await Slot::create(
-                queue, client->_server.locations().front()
-            );
-            std::exception_ptr error;
-            try {
-                co_await slot->create(
-                    uuid, payload.chunk_offset, spec, RAWSTOR_MEMBER_WITNESS
-                );
-            } catch (...) {
-                error = std::current_exception();
-            }
-            co_await slot->close();
-            if (error) {
-                std::rethrow_exception(error);
-            }
-        } else {
-            if (payload.member_role != RAWSTOR_MEMBER_DATA) {
-                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-            }
-            auto& queue = *static_cast<rawio::Queue*>(client->_queue);
-            co_await Target(targets).create(queue, spec, true);
+        if (spec.width == 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
-    } catch (const std::system_error& e) {
-        result = -e.code().value();
+        if (payload.member_role != RAWSTOR_MEMBER_DATA &&
+            payload.member_role != RAWSTOR_MEMBER_WITNESS) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        co_await with_slot(
+            client->_queue, client->_server.locations(),
+            [&](rawstor::Slot& slot) -> rawstd::Task<void> {
+                co_await slot.create(
+                    uuid, payload.chunk_offset, spec,
+                    static_cast<RawstorMemberRole>(payload.member_role)
+                );
+            }
+        );
+    } catch (const std::system_error& error) {
+        result = -error.code().value();
     }
 
     bool send_failed = false;
@@ -1038,22 +953,22 @@ rawstd::DetachedTask Client::_release(
     RawstdUUID version_id;
     memcpy(version_id.bytes, payload.version_id, sizeof(payload.version_id));
 
-    std::vector<rawstd::URI> targets =
-        client->_targets(uuid, payload.offset, version_id);
-
     int result = 0;
     try {
-        std::string target = rawstd::URI::uris(targets);
-        rawstd::CallbackAwaitable<void> awaiter;
-        int res = rawstor_target_remove(
-            client->_queue, target.c_str(), result_trampoline, &awaiter
+        co_await with_slot(
+            client->_queue, client->_server.locations(),
+            [&](rawstor::Slot& slot) -> rawstd::Task<void> {
+                if (rawstd_uuid_is_nil(&version_id)) {
+                    co_await slot.remove(uuid, payload.offset);
+                } else {
+                    co_await slot.remove_version(
+                        uuid, payload.offset, version_id
+                    );
+                }
+            }
         );
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-        co_await awaiter;
-    } catch (const std::system_error& e) {
-        result = -e.code().value();
+    } catch (const std::system_error& error) {
+        result = -error.code().value();
     }
 
     bool send_failed = false;
@@ -1070,11 +985,7 @@ rawstd::DetachedTask Client::_release(
     }
 }
 
-// CREATE_VERSION (docs/mds.md, "Versions"): forwarded to the same
-// rawstor_target_create() this server's own local backend(s) implement --
-// the bound version_id baked into the target's own path (_targets()'s
-// own `version_id` parameter) makes it take a CoW version instead of
-// creating a fresh object, same shape as _release() above.
+// Create a native version of the one member served by this OST.
 rawstd::DetachedTask Client::_create_version(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameBasicPayload payload
@@ -1092,46 +1003,19 @@ rawstd::DetachedTask Client::_create_version(
     RawstdUUID version_id;
     memcpy(version_id.bytes, payload.version_id, sizeof(payload.version_id));
 
-    std::vector<rawstd::URI> targets =
-        client->_targets(uuid, payload.offset, version_id);
-
     int result = 0;
     try {
-        std::string target = rawstd::URI::uris(targets);
-        // `target` already carries the bound version_id (_targets() above)
-        // -- rawstor_target_create_version() takes that as-is (its own
-        // mode 1, doc comment) and does the actual CoW; it is the only
-        // entry point for this (create() rejects a bound target with
-        // -EINVAL). The resulting target string it also returns is
-        // discarded -- this wire command only reports success/failure.
-        //
-        // NULL/0 asks for the version target string's own length alone --
-        // the same snprintf(NULL, 0, ...) idiom rawstor_target_create_
-        // version() itself just forwards to (target.cpp), needing no I/O
-        // and creating nothing. send_trampoline() (above) already matches
-        // its callback shape (ssize_t result/data). The second call, into
-        // a buffer sized exactly for that length, does the real CoW.
-        rawstd::CallbackAwaitable<size_t> length_awaiter;
-        int lres = rawstor_target_create_version(
-            client->_queue, target.c_str(), nullptr, nullptr, 0,
-            send_trampoline, &length_awaiter
-        );
-        if (lres < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-lres);
+        if (rawstd_uuid_is_nil(&version_id)) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
-        std::vector<char> version_target(co_await length_awaiter + 1);
-
-        rawstd::CallbackAwaitable<void> awaiter;
-        int res = rawstor_target_create_version(
-            client->_queue, target.c_str(), nullptr, version_target.data(),
-            version_target.size(), result_trampoline, &awaiter
+        co_await with_slot(
+            client->_queue, client->_server.locations(),
+            [&](rawstor::Slot& slot) -> rawstd::Task<void> {
+                co_await slot.create_version(uuid, payload.offset, version_id);
+            }
         );
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-        co_await awaiter;
-    } catch (const std::system_error& e) {
-        result = -e.code().value();
+    } catch (const std::system_error& error) {
+        result = -error.code().value();
     }
 
     bool send_failed = false;
@@ -1148,9 +1032,7 @@ rawstd::DetachedTask Client::_create_version(
     }
 }
 
-// The full per-copy mirror consistency record: size/width/chunk_size plus
-// state/epoch/sync_id, via rawstor_target_meta() -- of the version
-// `payload.version_id` names, or the live one when it's nil.
+// Read the member record, including an explicitly requested version.
 rawstd::DetachedTask Client::_meta(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameBasicPayload payload
@@ -1165,52 +1047,25 @@ rawstd::DetachedTask Client::_meta(
 
     RawstdUUID version_id;
     memcpy(version_id.bytes, payload.version_id, sizeof(payload.version_id));
-    std::vector<rawstd::URI> targets =
-        client->_targets(uuid, payload.offset, version_id);
-
-    // rawstor_target_meta() now reports one entry per URI (a URI that
-    // didn't answer is zero-filled, RawstorObjectSyncStateValue's own doc
-    // comment on why that's unambiguous) instead of stopping at the first
-    // reachable one -- this wire response is still a single record
-    // though, so the first entry that did answer is picked below, same
-    // fail-over tolerance every caller of rawstor_target_meta() used to
-    // get automatically.
-    std::vector<RawstorObjectMeta> metas(targets.size());
     RawstorObjectMeta meta{};
     int result = 0;
     try {
-        std::string target = rawstd::URI::uris(targets);
-        rawstd::CallbackAwaitable<void> awaiter;
-        int res = rawstor_target_meta(
-            client->_queue, target.c_str(), payload.offset, metas.data(),
-            metas.size(), result_trampoline, &awaiter
-        );
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-        co_await awaiter;
-
-        bool found = false;
-        for (const RawstorObjectMeta& m : metas) {
-            if (m.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
-                meta = m;
-                found = true;
-                break;
+        co_await with_slot(
+            client->_queue, client->_server.locations(),
+            [&](rawstor::Slot& slot) -> rawstd::Task<void> {
+                auto records =
+                    co_await slot.meta(uuid, payload.offset, version_id);
+                for (const auto& record : records) {
+                    if (record.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+                        meta = record;
+                        co_return;
+                    }
+                }
+                RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
             }
-        }
-        if (!found) {
-            RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
-        }
-        if (targets.size() != 1) {
-            // Several locations hold the records of this server's own
-            // mirror, not of the copy it is to its clients (_set_config()):
-            // it reports none -- a copy without state tracking.
-            meta.config = RawstorObjectConfig{};
-            meta.promised = RawstorObjectBallot{};
-            meta.accepted = RawstorObjectBallot{};
-        }
-    } catch (const std::system_error& e) {
-        result = -e.code().value();
+        );
+    } catch (const std::system_error& error) {
+        result = -error.code().value();
     }
 
     bool send_failed = false;
@@ -1255,9 +1110,7 @@ rawstd::DetachedTask Client::_meta(
     }
 }
 
-// Every version of the object at `payload.object_id`/`payload.offset`
-// on this server's own locations, via rawstor_target_versions(): each
-// returned version target string's own trailing id is one response row.
+// List native versions held by this member.
 rawstd::DetachedTask Client::_list_versions(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameBasicPayload payload
@@ -1270,44 +1123,29 @@ rawstd::DetachedTask Client::_list_versions(
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
 
-    std::vector<rawstd::URI> targets = client->_targets(uuid, payload.offset);
-
     std::vector<unsigned char> data;
     int result = 0;
-    RawstorStringList* versions = nullptr;
     try {
-        std::string target = rawstd::URI::uris(targets);
-        rawstd::CallbackAwaitable<void> awaiter;
-        int res = rawstor_target_versions(
-            client->_queue, target.c_str(), &versions, result_trampoline,
-            &awaiter
-        );
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-        co_await awaiter;
-
-        for (const char** it = rawstor_string_list_iter(versions);
-             it != nullptr; it = rawstor_string_list_next(it)) {
-            RawstdUUIDString id_string;
-            RawstorFrameVersionEntry entry{};
-            RawstdUUID version_id;
-            if (rawstor_target_version_id(*it, id_string, sizeof(id_string)) <
-                    0 ||
-                rawstd_uuid_from_string(&version_id, id_string) < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        co_await with_slot(
+            client->_queue, client->_server.locations(),
+            [&](rawstor::Slot& slot) -> rawstd::Task<void> {
+                auto versions =
+                    co_await slot.list_versions(uuid, payload.offset);
+                for (const auto& version : versions) {
+                    RawstorFrameVersionEntry entry{};
+                    memcpy(
+                        entry.version_id, version.bytes,
+                        sizeof(entry.version_id)
+                    );
+                    size_t offset = data.size();
+                    data.resize(offset + sizeof(entry));
+                    memcpy(data.data() + offset, &entry, sizeof(entry));
+                }
             }
-            memcpy(
-                entry.version_id, version_id.bytes, sizeof(entry.version_id)
-            );
-            size_t off = data.size();
-            data.resize(off + sizeof(entry));
-            memcpy(data.data() + off, &entry, sizeof(entry));
-        }
-    } catch (const std::system_error& e) {
-        result = -e.code().value();
+        );
+    } catch (const std::system_error& error) {
+        result = -error.code().value();
     }
-    rawstor_string_list_delete(versions);
 
     bool send_failed = false;
     try {
@@ -1368,7 +1206,14 @@ rawstd::DetachedTask Client::_set_config(
             try {
                 co_await slot->set_config(
                     uuid, payload.chunk_offset, payload.member_index, config,
-                    payload.flags
+                    payload.flags,
+                    payload.state == 0
+                        ? std::nullopt
+                        : std::optional<RawstorObjectSyncStateValue>(
+                              static_cast<RawstorObjectSyncStateValue>(
+                                  payload.state
+                              )
+                          )
                 );
             } catch (...) {
                 error = std::current_exception();
@@ -1541,15 +1386,12 @@ Client::_info(std::weak_ptr<Client> weak, RawstorFrameHead head) {
     RawstorLocationInfo info{};
     int result = 0;
     try {
-        std::string location = rawstd::URI::uris(client->_server.locations());
-        rawstd::CallbackAwaitable<void> awaiter;
-        int res = rawstor_location_info(
-            client->_queue, location.c_str(), &info, result_trampoline, &awaiter
+        co_await with_slot(
+            client->_queue, client->_server.locations(),
+            [&](rawstor::Slot& slot) -> rawstd::Task<void> {
+                info = co_await slot.info();
+            }
         );
-        if (res < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-        co_await awaiter;
     } catch (const std::system_error& e) {
         result = -e.code().value();
     }
@@ -2051,34 +1893,6 @@ rawstd::DetachedTask Client::_write_zeroes(
     if (send_failed) {
         co_await client->_server.del_client(client->_fd);
     }
-}
-
-std::vector<rawstd::URI> Client::_targets(
-    const RawstdUUID& uuid, uint64_t offset, const RawstdUUID& version_id
-) {
-    RawstdUUIDString uuid_string;
-    rawstd_uuid_to_string(&uuid, &uuid_string);
-
-    // Self-describing (TargetPath's own doc comment, target.hpp): the
-    // offset segment is always stated explicitly here, even 0, since
-    // this is an internal builder, not something a caller types by hand;
-    // hex, like every offset segment parse_target_path() accepts.
-    std::ostringstream offset_oss;
-    offset_oss << std::hex << offset;
-    std::string child = std::string(uuid_string) + "/" + offset_oss.str();
-    if (!rawstd_uuid_is_nil(&version_id)) {
-        RawstdUUIDString version_string;
-        rawstd_uuid_to_string(&version_id, &version_string);
-        child += "/" + std::string(version_string);
-    }
-
-    std::vector<rawstd::URI> ret;
-    ret.reserve(_server.locations().size());
-    for (const auto& location : _server.locations()) {
-        ret.emplace_back(location, child);
-    }
-
-    return ret;
 }
 
 rawstd::Task<void> Client::_send_response(
