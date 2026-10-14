@@ -144,6 +144,13 @@ Server::Server(
 }
 
 Server::~Server() {
+    _stop = true;
+    for (const auto& [fd, client] : _clients) {
+        // End network waits while admitted storage operations drain.
+        if (::shutdown(fd, SHUT_RDWR) == -1 && errno != ENOTCONN) {
+            rawstd_warning("Failed to shut down client: %s\n", strerror(errno));
+        }
+    }
     _clients.clear();
 
     // _wake_fd itself needs no cleanup here: Server never owns it, see
@@ -265,6 +272,11 @@ rawstd::DetachedTask Server::_accept_task() {
                     rawstd_error("%s\n", e.what());
                 }
                 break;
+            }
+
+            if (_stop) {
+                ::close(fd);
+                continue;
             }
 
             try {

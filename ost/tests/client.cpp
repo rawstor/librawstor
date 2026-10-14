@@ -19,6 +19,9 @@ void send_all(int fd, const void* buf, size_t size) {
     size_t sent = 0;
     while (sent < size) {
         ssize_t res = ::send(fd, p + sent, size - sent, 0);
+        if (res == -1 && errno == EINTR) {
+            continue;
+        }
         if (res == -1) {
             RAWSTD_THROW_ERRNO();
         }
@@ -31,6 +34,9 @@ void recv_all(int fd, void* buf, size_t size) {
     size_t got = 0;
     while (got < size) {
         ssize_t res = ::recv(fd, p + got, size - got, 0);
+        if (res == -1 && errno == EINTR) {
+            continue;
+        }
         if (res == -1) {
             RAWSTD_THROW_ERRNO();
         }

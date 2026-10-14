@@ -1426,9 +1426,36 @@ rawstd::Task<void> Target::create_version(rawio::Queue& queue) const {
     // leave versions behind that nobody knows about. The URI that
     // failed is not rolled back, since it may name a pre-existing
     // version this call didn't create.
+    std::vector<rawstd::URI> members;
+    for (const auto& uris : chunk_uris_by_offset(_uris)) {
+        bool skip_last = false;
+        if (uris.size() > 1) {
+            std::vector<rawstd::URI> locations;
+            for (const auto& uri : uris) {
+                locations.push_back(strip_path(uri));
+            }
+            auto metadata = co_await resolve_meta(
+                queue, std::move(locations), uuid_from_target(uris.front()),
+                extract_offset(uris.front()), RawstdUUID{}
+            );
+            auto answer = std::find_if(
+                metadata.begin(), metadata.end(), [](const auto& meta) {
+                    return meta.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE;
+                }
+            );
+            skip_last = metadata.size() == uris.size() &&
+                        metadata.back().state ==
+                            RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
+                        answer != metadata.end() &&
+                        answer->spec.width % 2 == 0 &&
+                        uris.size() == answer->spec.width + 1;
+        }
+        members.insert(members.end(), uris.begin(), uris.end() - skip_last);
+    }
+
     std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(_uris.size());
-    for (const auto& uri : _uris) {
+    tasks.reserve(members.size());
+    for (const auto& uri : members) {
         tasks.push_back(create_version_one(queue, uri, _version_id));
     }
 
@@ -1436,10 +1463,10 @@ rawstd::Task<void> Target::create_version(rawio::Queue& queue) const {
     // only recorded here; rolling back happens just below.
     std::vector<rawstd::URI> created;
     std::exception_ptr eptr;
-    for (size_t i = 0; i < _uris.size(); ++i) {
+    for (size_t i = 0; i < members.size(); ++i) {
         try {
             co_await tasks[i];
-            created.push_back(_uris[i]);
+            created.push_back(members[i]);
         } catch (...) {
             if (!eptr) {
                 eptr = std::current_exception();

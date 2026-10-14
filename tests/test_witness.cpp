@@ -4,6 +4,8 @@
 #include "object.hpp"
 #include "object_env.hpp"
 #include "opts.h"
+#include "server.hpp"
+#include "session.hpp"
 #include "slot.hpp"
 #include "target.hpp"
 #include "tmp_dir.hpp"
@@ -1070,4 +1072,47 @@ TEST_F(WitnessTest, witness_reports_spec_when_data_members_are_unavailable) {
     EXPECT_EQ(reported.size, spec.size);
     EXPECT_EQ(reported.width, spec.width);
     refused();
+}
+
+TEST_F(WitnessTest, snapshot_skips_unreachable_trailing_witness) {
+    create();
+    HiddenLocation offline(w);
+    rawstor::tests::Server first(29633, 256), second(29634, 256);
+    RawstorFrameMetaPayload meta{};
+    meta.size = spec.size;
+    meta.width = 2;
+    meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    meta.member_role = RAWSTOR_MEMBER_DATA;
+    for (auto* server : {&first, &second}) {
+        {
+            rawstor::tests::Session session(*server);
+            session.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta);
+            server->wait_close("META peer closed");
+        }
+        {
+            rawstor::tests::Session session(*server);
+            session.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta);
+            server->read(
+                "CREATE_VERSION", sizeof(RawstorFrameBasic),
+                [](const void* data) {
+                    const auto* frame =
+                        static_cast<const RawstorFrameBasic*>(data);
+                    EXPECT_EQ(frame->head.cmd, RAWSTOR_CMD_CREATE_VERSION);
+                }
+            );
+            RawstorFrameResponse response{};
+            response.head.magic = RAWSTOR_MAGIC;
+            response.head.cmd = RAWSTOR_CMD_CREATE_VERSION;
+            response.head.cid = 1;
+            server->write("CREATE_VERSION reply", &response, sizeof(response));
+            server->wait_close("snapshot peer closed");
+        }
+    }
+    std::string suffix = "/" + id_string(id) + "/0/" + id_string(new_id());
+    rawstor::Target snapshot(
+        {rawstd::URI("ost://127.0.0.1:29633" + suffix),
+         rawstd::URI("ost://127.0.0.1:29634" + suffix),
+         rawstd::URI(witness + suffix)}
+    );
+    EXPECT_NO_THROW(run(*queue, snapshot.create_version(*queue)));
 }

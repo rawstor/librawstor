@@ -11,10 +11,13 @@
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
+#include <rawstd/pipe.hpp>
 #include <rawstd/socket.h>
 #include <rawstd/uuid.h>
 
+#include <netinet/in.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include <gtest/gtest.h>
 
@@ -25,6 +28,7 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <future>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1080,4 +1084,100 @@ TEST(OstClientTest, resync_write_preserves_exact_client_ranges) {
     client.send_write_zeroes(0, 2048, false, false, RAWSTOR_FLAG_RESYNC);
     expect_response(RAWSTOR_CMD_WRITE_ZEROES, -ESTALE);
     EXPECT_EQ(read_all(2048), expected);
+}
+
+TEST(
+    OstClientTest,
+    shutdown_disconnects_idle_and_partial_requests_and_persists_lost
+) {
+    for (bool partial_request : {false, true}) {
+        SCOPED_TRACE(partial_request);
+        rawstor::ostserver::tests::TmpDir dir;
+        int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+        sockaddr_in address{};
+        socklen_t length = sizeof(address);
+        ASSERT_EQ(
+            getsockname(
+                listen_fd, reinterpret_cast<sockaddr*>(&address), &length
+            ),
+            0
+        );
+        rawstd::Pipe wake(rawstd::Pipe::Mode::NonBlocking);
+        std::promise<void> finished;
+        auto done = finished.get_future();
+        std::jthread worker([&] {
+            try {
+                {
+                    rawstor::ostserver::Server server(
+                        256, listen_fd, dir.uri().c_str(), wake.read_fd()
+                    );
+                    server.loop();
+                }
+                finished.set_value();
+            } catch (...) {
+                finished.set_exception(std::current_exception());
+            }
+        });
+        struct StopServer {
+            int wake_fd;
+            int listen_fd;
+            std::jthread& worker;
+            ~StopServer() {
+                char byte = 0;
+                ssize_t ignored = ::write(wake_fd, &byte, 1);
+                (void)ignored;
+                if (worker.joinable()) {
+                    worker.join();
+                }
+                ::close(listen_fd);
+            }
+        } stop{wake.write_fd(), listen_fd, worker};
+        int fd = socket(AF_INET, SOCK_STREAM, 0);
+        ASSERT_GE(fd, 0);
+        rawstor::ostserver::tests::Client client(fd);
+        struct ShutdownPeer {
+            int fd;
+            ~ShutdownPeer() { shutdown(fd, SHUT_RDWR); }
+        } shutdown_peer{fd};
+        ASSERT_EQ(
+            connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)),
+            0
+        );
+        timeval timeout{5, 0};
+        ASSERT_EQ(
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)),
+            0
+        );
+        RawstdUUID id;
+        ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+        client.send_allocate(id, 4096, 1);
+        ASSERT_EQ(client.recv_response().body.res, 0);
+        client.send_set_object(id);
+        ASSERT_EQ(client.recv_response().body.res, 0);
+        const std::string data = "written before shutdown";
+        client.send_write(0, data.data(), data.size(), false);
+        ASSERT_EQ(
+            client.recv_response().body.res, static_cast<int32_t>(data.size())
+        );
+        if (partial_request) {
+            RawstorFrameBasic frame{};
+            frame.head.magic = RAWSTOR_MAGIC;
+            frame.head.cmd = RAWSTOR_CMD_SET_OBJECT;
+            const size_t bytes = sizeof(frame.head) + 1;
+            ASSERT_EQ(send(fd, &frame, bytes, 0), static_cast<ssize_t>(bytes));
+        }
+        char byte = 0;
+        ASSERT_EQ(::write(wake.write_fd(), &byte, 1), 1);
+        auto status = done.wait_for(std::chrono::seconds(5));
+        EXPECT_EQ(status, std::future_status::ready);
+        if (status != std::future_status::ready) {
+            shutdown(fd, SHUT_RDWR);
+        }
+        worker.join();
+        EXPECT_NO_THROW(done.get());
+        rawstor::ostserver::tests::Queue queue;
+        EXPECT_EQ(
+            stored_state(queue, dir.uri(), id), RAWSTOR_OBJECT_SYNC_STATE_LOST
+        );
+    }
 }
