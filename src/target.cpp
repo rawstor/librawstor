@@ -569,15 +569,6 @@ rawstd::Task<std::vector<RawstorObjectMeta>> resolve_meta(
         }
     }
 
-    auto answer =
-        std::find_if(ret.begin(), ret.end(), [](const RawstorObjectMeta& meta) {
-            return meta.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE;
-        });
-    if (answer != ret.end() && answer->spec.width % 2 == 0 &&
-        ret.size() == answer->spec.width + 1 &&
-        ret.back().state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
-        ret.back().member_role = RAWSTOR_MEMBER_WITNESS;
-    }
     co_return ret;
 }
 

@@ -856,10 +856,12 @@ witness when the chunk has `width + 1`
 locations and `width` is even and at least two. With `width` locations, all
 members store data. Each member reports its own type
 through `META.member_role`, and an available member's reported role is
-preserved. For a complete target, an unavailable last member's role is
-inferred from the data width reported by an available member: an even
-`width` with `width + 1` locations declares a witness. This inference does
-not depend on the recorded configuration. No extra position field is stored.
+preserved. Unavailable members appear as zero-filled `UNREACHABLE` entries
+in target metadata. When opening a chunk, the expected role of an unavailable
+last member is inferred from the data width reported by an available member:
+an even `width` with `width + 1` locations declares a witness. This inference
+guides recovery and does not depend on the recorded configuration. No extra
+position field is stored.
 One witness per chunk is supported, only alongside an even number of data
 members (2, 4, 6, ...). Odd data-member counts are rejected with `EINVAL`.
 The ordinary create path creates it with the other members; `width` counts

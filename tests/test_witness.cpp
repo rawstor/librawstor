@@ -853,7 +853,7 @@ TEST_F(WitnessTest, native_witness_update_preserves_register_ballots) {
     EXPECT_EQ(metadata.promised.proposer, next.proposer);
 }
 
-TEST_F(WitnessTest, missing_witness_type_is_recovered_from_surviving_metadata) {
+TEST_F(WitnessTest, missing_witness_is_recreated_with_its_expected_role) {
     create();
     auto slot =
         run(*queue, rawstor::Slot::create(*queue, rawstd::URI(witness)));
@@ -861,7 +861,7 @@ TEST_F(WitnessTest, missing_witness_type_is_recovered_from_surviving_metadata) {
     run(*queue, slot->close());
     auto metadata = metas();
     EXPECT_EQ(metadata[2].state, RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE);
-    EXPECT_EQ(metadata[2].member_role, RAWSTOR_MEMBER_WITNESS);
+    EXPECT_EQ(metadata[2].spec.width, 0u);
     auto object = run(*queue, target->open(*queue, 0));
     write(*object);
     metadata = metas();
