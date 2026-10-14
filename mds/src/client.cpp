@@ -1,4 +1,3 @@
-#include "config.hpp"
 #include "witness.hpp"
 #include <mds/client.hpp>
 
@@ -36,9 +35,7 @@ std::optional<RawstorObjectSyncStateValue> decode_config_state(uint8_t value) {
     if (value == 0) {
         return std::nullopt;
     }
-    auto state = static_cast<RawstorObjectSyncStateValue>(value);
-    rawstor::validate_config_update(0, state);
-    return state;
+    return static_cast<RawstorObjectSyncStateValue>(value);
 }
 
 int recv_trampoline(ssize_t result, void* data) {
