@@ -28,7 +28,7 @@ namespace blk {
 class Backend : public rawstor::Backend {
 private:
     // Versioned native metadata includes the logical member size.
-    static constexpr unsigned int META_FORMAT_VERSION = 2;
+    static constexpr unsigned int META_FORMAT_VERSION = 1;
 
     rawstd::Task<void> _bind_object(
         const RawstdUUID& id, uint64_t offset, int flags,
@@ -153,7 +153,7 @@ protected:
     // (the latter stamped at create and never changed again) as a compact
     // colon-separated string of hex fields, the roles one digit per member
     // (enum RawstorObjectMemberRole), "-" when none are recorded, and a ballot
-    // as "counter.proposer", e.g. "version=2:state=1:epoch=0:sync_id=0:
+    // as "counter.proposer", e.g. "version=1:state=1:epoch=0:sync_id=0:
     // h0=0:h1=0:h2=0:h3=0:resync_owner=0:promised=0.0:accepted=0.0:
     // roles=-:member_role=0:width=0:chunk_size=0:size=0" -- shared by every
     // blk-backed subclass's own native per-copy metadata storage:

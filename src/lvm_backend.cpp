@@ -57,7 +57,7 @@ const char* const lvm_config =
 
 // Prefix of the LVM tag this backend stores native per-copy mirror
 // metadata under (see blk::Backend::meta_encode()) -- e.g.
-// "rawstor.meta=version=2:state=0:epoch=0:...".
+// "rawstor.meta=version=1:state=0:epoch=0:...".
 const char* const rawstor_tag_prefix = "rawstor.meta=";
 
 // Suffix a staging LV carries between lvcreate and the lvrename that
