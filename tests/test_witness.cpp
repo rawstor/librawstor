@@ -979,12 +979,18 @@ TEST_F(WitnessTest, mds_dispatches_object_and_member_responses_on_one_backend) {
     run(*queue, backend->close());
 }
 
-TEST_F(WitnessTest, snapshot_removal_preserves_file_witness) {
+TEST_F(WitnessTest, snapshot_operations_preserve_file_witness) {
     create();
     auto version = new_id();
     rawstor::Target snapshot({rawstd::URI(
         witness + "/" + id_string(id) + "/0/" + id_string(version)
     )});
+    auto slot =
+        run(*queue, rawstor::Slot::create(*queue, rawstd::URI(witness)));
+    run(*queue, slot->create_version(id, 0, version));
+    run(*queue, slot->create_version(id, 0, version));
+    EXPECT_TRUE(run(*queue, slot->list_versions(id, 0)).empty());
+    run(*queue, slot->close());
     run(*queue, snapshot.remove(*queue));
     run(*queue, snapshot.remove(*queue));
     auto records = metas();
@@ -993,13 +999,18 @@ TEST_F(WitnessTest, snapshot_removal_preserves_file_witness) {
     EXPECT_EQ(records.back().state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 }
 
-TEST_F(WitnessTest, snapshot_removal_preserves_mds_witness) {
+TEST_F(WitnessTest, snapshot_operations_preserve_mds_witness) {
     rawstor::tests::ObjectEnv servers(29629, 29630);
     create(servers.location());
     auto version = new_id();
     rawstor::Target snapshot({rawstd::URI(
         witness + "/" + id_string(id) + "/0/" + id_string(version)
     )});
+    auto slot =
+        run(*queue, rawstor::Slot::create(*queue, rawstd::URI(witness)));
+    run(*queue, slot->create_version(id, 0, version));
+    run(*queue, slot->create_version(id, 0, version));
+    run(*queue, slot->close());
     run(*queue, snapshot.remove(*queue));
     run(*queue, snapshot.remove(*queue));
     auto records = metas();
@@ -1008,13 +1019,19 @@ TEST_F(WitnessTest, snapshot_removal_preserves_mds_witness) {
     EXPECT_EQ(records.back().state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 }
 
-TEST_F(WitnessTest, snapshot_removal_preserves_ost_witness) {
+TEST_F(WitnessTest, snapshot_operations_preserve_ost_witness) {
     rawstor::tests::ObjectEnv servers(29631, 29632);
     create("ost://127.0.0.1:29632");
     auto version = new_id();
     rawstor::Target snapshot({rawstd::URI(
         witness + "/" + id_string(id) + "/0/" + id_string(version)
     )});
+    auto slot =
+        run(*queue, rawstor::Slot::create(*queue, rawstd::URI(witness)));
+    run(*queue, slot->create_version(id, 0, version));
+    run(*queue, slot->create_version(id, 0, version));
+    EXPECT_TRUE(run(*queue, slot->list_versions(id, 0)).empty());
+    run(*queue, slot->close());
     run(*queue, snapshot.remove(*queue));
     run(*queue, snapshot.remove(*queue));
     auto records = metas();

@@ -1428,27 +1428,7 @@ rawstd::Task<void> Target::create_version(rawio::Queue& queue) const {
     // version this call didn't create.
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(_uris.size());
-    std::vector<rawstd::URI> data_uris;
-    for (const auto& uris : chunk_uris_by_offset(_uris)) {
-        auto metadata = co_await resolve_meta(
-            queue,
-            [&]() {
-                std::vector<rawstd::URI> locations;
-                for (const auto& uri : uris) {
-                    locations.push_back(strip_path(uri));
-                }
-                return locations;
-            }(),
-            uuid_from_target(uris.front()), extract_offset(uris.front()),
-            RawstdUUID{}
-        );
-        for (size_t i = 0; i < uris.size(); ++i) {
-            if (metadata[i].member_role != RAWSTOR_MEMBER_WITNESS) {
-                data_uris.push_back(uris[i]);
-            }
-        }
-    }
-    for (const auto& uri : data_uris) {
+    for (const auto& uri : _uris) {
         tasks.push_back(create_version_one(queue, uri, _version_id));
     }
 
@@ -1456,10 +1436,10 @@ rawstd::Task<void> Target::create_version(rawio::Queue& queue) const {
     // only recorded here; rolling back happens just below.
     std::vector<rawstd::URI> created;
     std::exception_ptr eptr;
-    for (size_t i = 0; i < data_uris.size(); ++i) {
+    for (size_t i = 0; i < _uris.size(); ++i) {
         try {
             co_await tasks[i];
-            created.push_back(data_uris[i]);
+            created.push_back(_uris[i]);
         } catch (...) {
             if (!eptr) {
                 eptr = std::current_exception();

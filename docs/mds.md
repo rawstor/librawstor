@@ -893,7 +893,8 @@ property. All BLK members persist the requested logical size in native
 metadata (format version 1), independently of file length, LV extents or
 zvol allocation. MDS witness records retain the same declared size. Witnesses
 can answer spec queries when data members are unavailable, but receive no
-data I/O and never participate in resync or snapshot CoW. DATA opens validate
+data I/O and never participate in resync or snapshot CoW. Creating or removing
+a witness snapshot through Slot is a no-op. DATA opens validate
 physical capacity separately from the logical size returned by META. An OST hosting a witness must have
 one underlying location. MDS discovers witness records from metadata and
 forwards their member operations through the same shared protocol; its

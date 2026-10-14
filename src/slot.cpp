@@ -1093,6 +1093,19 @@ rawstd::Task<void> Slot::list_chunks(
     }
 }
 
+rawstd::Task<void> Slot::_create_version(
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& version_id
+) {
+    auto backend = _get_backend();
+    auto records = co_await backend->meta(id, offset, RawstdUUID{});
+    if (records.size() == 1 &&
+        records.front().member_role == RAWSTOR_MEMBER_WITNESS) {
+        co_return;
+    }
+    co_await backend->create_version(idempotency_key, id, offset, version_id);
+}
+
 rawstd::Task<void> Slot::create_version(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
@@ -1103,7 +1116,7 @@ rawstd::Task<void> Slot::create_version(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::create_version,
+            func_name, trace_event, &Slot::_create_version,
             new_idempotency_key(), id, offset, version_id
         );
         _finish(t_call);

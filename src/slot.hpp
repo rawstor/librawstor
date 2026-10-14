@@ -44,6 +44,10 @@ private:
     class Admission;
     class Resync;
 
+    rawstd::Task<void> _create_version(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& version_id
+    );
     rawstd::Task<void> _remove_version(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstdUUID& version_id
