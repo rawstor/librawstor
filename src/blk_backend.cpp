@@ -10,13 +10,9 @@
 #include <rawstd/logging.h>
 #include <rawstd/uuid.h>
 
-#include <sys/ioctl.h>
-#include <sys/stat.h>
-
 #include <unistd.h>
 
 #include <algorithm>
-#include <exception>
 #include <stdexcept>
 #include <vector>
 
@@ -29,7 +25,6 @@
 
 #if defined(RAWSTD_ON_LINUX)
 #include <linux/falloc.h>
-#include <linux/fs.h>
 #endif
 
 namespace {
@@ -281,34 +276,6 @@ rawstd::Task<void> Backend::_bind_object(
     int opened = rawstd_uuid_is_nil(&version_id)
                      ? co_await _open_object(id, offset, flags)
                      : co_await _open_version(id, offset, version_id);
-    std::exception_ptr error;
-    try {
-        struct stat st{};
-        if (::fstat(opened, &st) == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-        uint64_t capacity = 0;
-        if (S_ISREG(st.st_mode)) {
-            capacity = static_cast<uint64_t>(st.st_size);
-        } else {
-#if defined(RAWSTD_ON_LINUX)
-            if (ioctl(opened, BLKGETSIZE64, &capacity) == -1) {
-                RAWSTD_THROW_ERRNO();
-            }
-#else
-            RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
-#endif
-        }
-        if (capacity < record.spec.size) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-    } catch (...) {
-        error = std::current_exception();
-    }
-    if (error) {
-        co_await _queue.close(opened);
-        std::rethrow_exception(error);
-    }
     set_fd(opened);
 }
 

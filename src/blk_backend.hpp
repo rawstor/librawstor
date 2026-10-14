@@ -24,7 +24,7 @@ namespace blk {
 // Subclasses open objects through _open_object(), implement backend-specific
 // list/create/remove/info operations, and store metadata through meta() and
 // _write_meta(). Slot coordinates the copy's state and writer sessions;
-// Logical size is stored in metadata; data binds validate physical capacity.
+// Logical size is stored in metadata, independently of physical capacity.
 class Backend : public rawstor::Backend {
 private:
     // Versioned native metadata includes the logical member size.

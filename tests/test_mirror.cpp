@@ -743,7 +743,7 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
     EXPECT_EQ(object_close(queue, member), 0);
 }
 
-TEST(MirrorQuorumTest, physically_short_member_cannot_open_for_data) {
+TEST(MirrorQuorumTest, physical_shrink_does_not_change_logical_size) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000aa");
     RawstorObjectSpec spec{};
@@ -755,8 +755,8 @@ TEST(MirrorQuorumTest, physically_short_member_cannot_open_for_data) {
     ASSERT_EQ(target_meta(queue, members.target(1), &meta), 0);
     EXPECT_EQ(meta.spec.size, spec.size);
     RawstorObject* object = nullptr;
-    EXPECT_EQ(target_open(queue, members.target_all(), &object), -ENOTCONN);
-    EXPECT_EQ(object, nullptr);
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    object_close_clean(queue, object);
 }
 
 TEST(MirrorQuorumTest, physical_growth_does_not_change_logical_size) {

@@ -896,8 +896,8 @@ can answer spec queries when data members are unavailable, but receive no
 data I/O and never participate in resync or snapshot CoW. Creating or removing
 a witness snapshot through Slot is a no-op. Target snapshot creation skips an
 unavailable trailing witness when a reachable member's width confirms its
-expected role; unavailable data members still fail the operation. DATA opens validate
-physical capacity separately from the logical size returned by META. An OST hosting a witness must have
+expected role; unavailable data members still fail the operation. DATA opens
+use the logical size returned by META without comparing physical capacity. An OST hosting a witness must have
 one underlying location. MDS discovers witness records from metadata and
 forwards their member operations through the same shared protocol; its
 ordinary object placement API remains separate.
