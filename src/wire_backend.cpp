@@ -1036,10 +1036,9 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_wire_meta(
             );
         ret.spec.size = payload.size;
         ret.member_role = static_cast<RawstorMemberRole>(payload.member_role);
-        // payload.width is the chunk's own persisted redundancy width
-        // (docs/mds.md, chunk_meta) -- 0 for a plain object that was never
-        // given one (Target::meta()'s own doc comment on the resulting
-        // fallback).
+        if (payload.width == 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
         ret.spec.width = payload.width;
         ret.spec.chunk_size = chunk_shift_to_size(payload.chunk_shift);
         ret.state = static_cast<RawstorObjectSyncStateValue>(payload.state);
@@ -1118,6 +1117,9 @@ rawstd::Task<RawstorObjectSyncReply> Backend::_sync_request(
     co_await *op;
     const RawstorFrameSyncReplyPayload& reply = op->reply();
     const RawstorFrameMetaPayload& wire = reply.meta;
+    if (wire.width == 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
     RawstorObjectMeta meta{};
     meta.spec.size = wire.size;
     meta.spec.width = wire.width;

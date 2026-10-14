@@ -474,8 +474,7 @@ rawstd::Task<std::vector<rawstd::URI>> member_locations_one(
 // that -- no single URI in it is self-aware enough to say otherwise), or
 // whatever the sole backend itself reported for a single-URI chunk (an
 // mds:// object's own configured redundancy, never derivable by
-// counting) -- falling back to 1 only if that answer was itself 0 (a
-// plain, single-URI object that was never given one). `size` is
+// counting). Metadata decoders require a non-zero width. `size` is
 // identical on every copy, so this only needs one to answer: locations
 // are tried in order, first reachable wins -- unlike resolve_meta()
 // below, which queries every one of them instead of stopping at the
@@ -503,10 +502,9 @@ rawstd::Task<RawstorObjectSpec> resolve_spec(
                 RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
             }
             RawstorObjectSpec ret = answered->spec;
-            if (locations.size() > 1 || ret.width == 0) {
+            if (locations.size() > 1) {
                 ret.width = static_cast<unsigned int>(
-                    locations.size() == ret.width + 1 && ret.width != 0 &&
-                            ret.width % 2 == 0
+                    locations.size() == ret.width + 1 && ret.width % 2 == 0
                         ? ret.width
                         : locations.size()
                 );
@@ -573,8 +571,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> resolve_meta(
 
     for (const auto& answer : ret) {
         if (answer.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
-            answer.spec.width != 0 && answer.spec.width % 2 == 0 &&
-            ret.size() == answer.spec.width + 1 &&
+            answer.spec.width % 2 == 0 && ret.size() == answer.spec.width + 1 &&
             ret.back().state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
             answer.config.nroles == ret.size()) {
             ret.back().member_role = RAWSTOR_MEMBER_WITNESS;

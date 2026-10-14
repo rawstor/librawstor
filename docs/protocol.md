@@ -428,6 +428,8 @@ writing right now (`writers`), and the chunk's configuration as last set on
 it (a [Config](#config--312-bytes), at offset 16), and the copy's
 replica of the register's ballots: the highest it promised and the one
 its Config was accepted under. OST reports the record of its one backend Slot.
+`width` is the non-zero number of data members; witness members are excluded
+from this count. A zero width in received metadata is a protocol error.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7

@@ -568,6 +568,29 @@ TEST(BlkBackendTest, meta_decode_rejects_malformed_string) {
     );
 }
 
+TEST(BlkBackendTest, meta_decode_rejects_invalid_width) {
+    for (unsigned int width : {0u, 256u}) {
+        RawstorObjectSyncStateValue state{};
+        RawstorObjectConfig config{};
+        RawstorObjectBallot promised{};
+        RawstorObjectBallot accepted{};
+        rawstor::blk::Backend::ChunkIdentity identity;
+        std::string encoded =
+            "version=1:state=1:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
+            "resync_owner=0:promised=0.0:accepted=0.0:roles=-:member_role=0:"
+            "width=" +
+            std::to_string(width) + ":chunk_size=0:size=1000";
+        try {
+            MetadataBackend::meta_decode(
+                encoded, &state, &config, &promised, &accepted, &identity
+            );
+            FAIL() << "Accepted invalid width " << width;
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), EPROTO);
+        }
+    }
+}
+
 TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
     /* A record from a format version this build no longer understands (or
      * ever wrote) must not be mistaken for a valid one. */
@@ -580,7 +603,7 @@ TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
         MetadataBackend::meta_decode(
             "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
             "resync_owner=0:promised=0.0:accepted=0.0:roles=-:member_role=0:"
-            "width=0:chunk_size=0:size=0",
+            "width=1:chunk_size=0:size=0",
             &state, &config, &promised, &accepted, &identity
         ),
         std::system_error

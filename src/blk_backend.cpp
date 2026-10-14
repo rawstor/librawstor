@@ -380,7 +380,7 @@ void Backend::meta_decode(
         &width, &identity->chunk_size, &identity->size, &consumed
     );
     if (n != 18 || static_cast<size_t>(consumed) != v.size() ||
-        version != META_FORMAT_VERSION) {
+        version != META_FORMAT_VERSION || width == 0 || width > UINT8_MAX) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
 
