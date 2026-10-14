@@ -173,6 +173,12 @@ Witnesses have no data snapshots. Removing a snapshot from a witness Slot
 succeeds without changing its live metadata record. Target dispatches snapshot removal
 to every member; the Slot handles metadata-only members locally.
 
+Creating a mirrored chunk records the same initial configuration on every
+member: epoch 1, a new sync ID, all roles IN_SYNC, and state CLEAN. Members
+are recorded in location order, so an optional last witness becomes a voter
+only after all data copies have that configuration. Creation rolls back on
+failure. A single-member target keeps its backend's initial CLEAN state.
+
 ### One copy per server
 
 To its clients a `rawstor-ost` is one copy of the chunk, whatever it

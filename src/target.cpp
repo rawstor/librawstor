@@ -264,10 +264,9 @@ rawstd::Task<void> create_one(
     }
 }
 
-rawstd::Task<void> initialize_witness(
+rawstd::Task<void> initialize_members(
     rawio::Queue& queue, const std::vector<rawstd::URI>& members
 ) {
-    const size_t witness = members.size() - 1;
     RawstdUUID generation{};
     if (rawstd_uuid7_init(&generation) != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
@@ -279,31 +278,25 @@ rawstd::Task<void> initialize_witness(
     for (size_t i = 0; i < members.size(); ++i) {
         config.roles[i] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
     }
-    // Publish the CLEAN witness only after all data members durably carry
-    // the initial generation. A failure is rolled back with the creation.
-    for (size_t pass = 0; pass < 2; ++pass) {
-        for (size_t i = 0; i < members.size(); ++i) {
-            if ((i == witness) != (pass == 1)) {
-                continue;
-            }
-            auto slot =
-                co_await rawstor::Slot::create(queue, strip_path(members[i]));
-            std::exception_ptr error;
-            try {
-                co_await slot->set_config(
-                    uuid_from_target(members[i]), extract_offset(members[i]),
-                    static_cast<uint8_t>(i), config, 0,
-                    i == witness
-                        ? std::optional(RAWSTOR_OBJECT_SYNC_STATE_CLEAN)
-                        : std::nullopt
-                );
-            } catch (...) {
-                error = std::current_exception();
-            }
-            co_await slot->close();
-            if (error) {
-                std::rethrow_exception(error);
-            }
+    // Persist one CLEAN generation on all members. A witness is last in
+    // the location list and becomes a voter only after the data members.
+    // A failure is rolled back with the creation.
+    for (size_t i = 0; i < members.size(); ++i) {
+        auto slot =
+            co_await rawstor::Slot::create(queue, strip_path(members[i]));
+        std::exception_ptr error;
+        try {
+            co_await slot->set_config(
+                uuid_from_target(members[i]), extract_offset(members[i]),
+                static_cast<uint8_t>(i), config, 0,
+                RAWSTOR_OBJECT_SYNC_STATE_CLEAN
+            );
+        } catch (...) {
+            error = std::current_exception();
+        }
+        co_await slot->close();
+        if (error) {
+            std::rethrow_exception(error);
         }
     }
 }
@@ -1407,8 +1400,8 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
 
         if (!eptr) {
             try {
-                if (witness) {
-                    co_await initialize_witness(queue, uris);
+                if (uris.size() > 1) {
+                    co_await initialize_members(queue, uris);
                 }
             } catch (...) {
                 eptr = std::current_exception();

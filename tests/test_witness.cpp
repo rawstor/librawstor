@@ -1018,3 +1018,26 @@ TEST_F(WitnessTest, snapshot_removal_preserves_ost_witness) {
     EXPECT_EQ(records.back().member_role, RAWSTOR_MEMBER_WITNESS);
     EXPECT_EQ(records.back().state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 }
+
+TEST_F(WitnessTest, creation_initializes_plain_mirror_configuration) {
+    RawstorObjectSpec data_spec{};
+    data_spec.size = 65536;
+    data_spec.width = 2;
+    rawstor::Target data(
+        {rawstd::URI(a.uri() + "/" + id_string(id)),
+         rawstd::URI(b.uri() + "/" + id_string(id))}
+    );
+    run(*queue, data.create(*queue, data_spec));
+    auto records = run(*queue, data.meta(*queue, 0));
+    ASSERT_EQ(records.size(), 2u);
+    ASSERT_NE(records.front().config.sync_id, 0u);
+    for (const auto& record : records) {
+        EXPECT_EQ(record.member_role, RAWSTOR_MEMBER_DATA);
+        EXPECT_EQ(record.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+        EXPECT_EQ(record.config.epoch, 1u);
+        EXPECT_EQ(record.config.sync_id, records.front().config.sync_id);
+        ASSERT_EQ(record.config.nroles, 2u);
+        EXPECT_EQ(record.config.roles[0], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
+        EXPECT_EQ(record.config.roles[1], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
+    }
+}

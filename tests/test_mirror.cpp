@@ -409,6 +409,8 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
         .failure_domain = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+    RawstorObjectMeta initial{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &initial), 0);
 
     members.drop(2);
 
@@ -428,8 +430,9 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
     EXPECT_EQ(b.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
     EXPECT_NE(a.config.sync_id, 0u);
     EXPECT_EQ(a.config.sync_id, b.config.sync_id);
-    EXPECT_EQ(a.config.epoch, 1u);
-    EXPECT_EQ(b.config.epoch, 1u);
+    EXPECT_NE(a.config.sync_id, initial.config.sync_id);
+    EXPECT_EQ(a.config.epoch, initial.config.epoch + 1);
+    EXPECT_EQ(b.config.epoch, initial.config.epoch + 1);
 
     /* Both survivors carry the data. */
     for (size_t i = 0; i < 2; ++i) {

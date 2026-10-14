@@ -273,6 +273,8 @@ TEST(MultiqueueTest, degraded_first_writes_share_one_sync_set) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000c2");
     ASSERT_EQ(target_create(queue, members.target_all(), spec_n(3)), 0);
+    RawstorObjectMeta initial{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &initial), 0);
     members.drop(2);
 
     RawstorObject* q0 = nullptr;
@@ -294,8 +296,9 @@ TEST(MultiqueueTest, degraded_first_writes_share_one_sync_set) {
     ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
     ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
     EXPECT_EQ(a.config.sync_id, b.config.sync_id);
-    EXPECT_EQ(a.config.epoch, 1u);
-    EXPECT_EQ(b.config.epoch, 1u);
+    EXPECT_NE(a.config.sync_id, initial.config.sync_id);
+    EXPECT_EQ(a.config.epoch, initial.config.epoch + 1);
+    EXPECT_EQ(b.config.epoch, initial.config.epoch + 1);
 
     RawstorObject* again = nullptr;
     ASSERT_EQ(target_open(queue, members.target_all(), &again), 0);
