@@ -79,7 +79,10 @@ transport and member commands from `wire::Backend` (`src/wire_backend.*`).
 The MDS object-command codec (`mds::Client`) uses that same connection and
 CID response dispatcher. MDS overrides whole-object operations to resolve
 its chunk map and route data to the nested object; native witness metadata
-uses the inherited member commands directly. OST data I/O (`READ`, `WRITE`,
+uses the protected nonvirtual wire requests directly. OST implements its
+virtual member operations by forwarding to those same requests. Shared
+`set_config`, `set_state`, and `info` implementations are final in the wire
+base class. OST data I/O (`READ`, `WRITE`,
 `DISCARD`, `WRITE_ZEROES`, `FLUSH`) is implemented in `ost::Backend`
 (`src/ost_backend.cpp`); MDS data I/O routes to its nested object.
 

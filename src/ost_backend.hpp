@@ -8,6 +8,8 @@ namespace ost {
 
 class Backend final : public wire::Backend {
 private:
+    rawstd::Task<void> _connect() override;
+
     rawstd::Task<size_t> _write_zeroes(
         size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch,
         bool resync
@@ -20,6 +22,67 @@ private:
 
 public:
     using wire::Backend::Backend;
+
+    rawstd::Task<void> close() override;
+
+    rawstd::Task<void> list_chunks(
+        RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+        RawstdUUID& token, RawstdUUID version_id = {}
+    ) override;
+
+    rawstd::Task<void> create(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstorObjectSpec& sp,
+        RawstorMemberRole member_role
+    ) override;
+
+    rawstd::Task<void> remove(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
+    ) override;
+
+    rawstd::Task<void> remove_version(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& version_id
+    ) override;
+
+    rawstd::Task<std::vector<RawstdUUID>>
+    list_versions(const RawstdUUID& id, uint64_t offset) override;
+
+    rawstd::Task<std::vector<RawstorObjectMeta>> meta(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+    ) override;
+
+    rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+    ) override;
+
+    rawstd::Task<void> leave() override;
+
+    rawstd::Task<RawstorObjectSyncReply> sync_prepare(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot,
+        const RawstorObjectSyncReply& proposed
+    ) override;
+
+    rawstd::Task<RawstorObjectSyncReply> sync_accept(
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config,
+        const RawstorObjectSyncReply& proposed
+    ) override;
+
+    rawstd::Task<void>
+    set_object(const RawstdUUID& id, uint64_t offset, int flags) override;
+
+    rawstd::Task<void> set_version(
+        const RawstdUUID& object_id, uint64_t offset,
+        const RawstdUUID& version_id
+    ) override;
+
+    rawstd::Task<void> create_version(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& version_id
+    ) override;
 
     rawstd::Task<size_t>
     pread(void* buf, size_t size, uint64_t offset) override;

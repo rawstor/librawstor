@@ -48,6 +48,97 @@ using wire::validate_cmd;
 using wire::validate_response;
 using wire::validate_result;
 
+rawstd::Task<void> Backend::_connect() {
+    return _wire_connect();
+}
+
+rawstd::Task<void> Backend::close() {
+    return _wire_close();
+}
+
+rawstd::Task<void> Backend::list_chunks(
+    RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+    RawstdUUID& token, RawstdUUID version_id
+) {
+    return _wire_list_chunks(id, limit, chunks, token, version_id);
+}
+
+rawstd::Task<void> Backend::create(
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
+    const RawstorObjectSpec& sp, RawstorMemberRole member_role
+) {
+    return _wire_create(idempotency_key, id, offset, sp, member_role);
+}
+
+rawstd::Task<void> Backend::remove(
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
+) {
+    return _wire_remove(idempotency_key, id, offset);
+}
+
+rawstd::Task<void> Backend::remove_version(
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& version_id
+) {
+    return _wire_remove_version(idempotency_key, id, offset, version_id);
+}
+
+rawstd::Task<std::vector<RawstdUUID>>
+Backend::list_versions(const RawstdUUID& id, uint64_t offset) {
+    return _wire_list_versions(id, offset);
+}
+
+rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+) {
+    return _wire_meta(id, offset, version_id);
+}
+
+rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+) {
+    return _wire_resolve_locations(id, offset, version_id);
+}
+
+rawstd::Task<void> Backend::leave() {
+    return _wire_leave();
+}
+
+rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
+    const RawstorObjectSyncReply& proposed
+) {
+    return _wire_sync_prepare(id, offset, ballot, proposed);
+}
+
+rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
+    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+    const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+    const RawstorObjectConfig& config, const RawstorObjectSyncReply& proposed
+) {
+    return _wire_sync_accept(
+        id, offset, member_index, ballot, next, config, proposed
+    );
+}
+
+rawstd::Task<void>
+Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
+    return _wire_set_object(id, offset, flags);
+}
+
+rawstd::Task<void> Backend::set_version(
+    const RawstdUUID& object_id, uint64_t offset, const RawstdUUID& version_id
+) {
+    return _wire_set_version(object_id, offset, version_id);
+}
+
+rawstd::Task<void> Backend::create_version(
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& version_id
+) {
+    return _wire_create_version(idempotency_key, id, offset, version_id);
+}
+
 class BackendOpRead final : public BackendOp {
 private:
     void* _buf;

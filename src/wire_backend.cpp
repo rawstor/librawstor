@@ -260,7 +260,7 @@ public:
 // carry no hash and have either no response body or a body of some
 // number of T's, per response.body.res. Routed through the same
 // _recv_pump demultiplex mechanism as every other op, now that the pump
-// starts in Backend::_connect() instead of after the first request
+// starts in Backend::_wire_connect() instead of after the first request
 // round-trips. `val`/`version_id` are never both meaningful for the
 // same command (protocol.h's own doc comment on
 // RawstorFrameBasicPayload) but both live in this one op regardless,
@@ -579,7 +579,7 @@ Backend::~Backend() {
     }
 }
 
-rawstd::Task<void> Backend::_connect() {
+rawstd::Task<void> Backend::_wire_connect() {
     // Every failure below -- including a malformed location, which can't
     // be fixed by retrying but is otherwise indistinguishable here from a
     // transient one -- means "couldn't establish this backend"; all of
@@ -719,7 +719,7 @@ rawstd::Task<void> Backend::_ensure_large_receive_ring() {
     }
 }
 
-rawstd::Task<void> Backend::close() {
+rawstd::Task<void> Backend::_wire_close() {
     // Anything still in _ops at this point was never told this backend
     // is going away otherwise. _recv_pump()'s own catch block below only
     // reaches _fail_in_flight() for a genuine framing/transport error it
@@ -837,7 +837,7 @@ rawstd::Task<std::vector<unsigned char>> Backend::exchange(
     co_return op->take_response_data();
 }
 
-rawstd::Task<void> Backend::list_chunks(
+rawstd::Task<void> Backend::_wire_list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
     RawstdUUID& token, RawstdUUID version_id
 ) {
@@ -854,7 +854,7 @@ rawstd::Task<void> Backend::list_chunks(
     chunks.clear();
     token = {};
 
-    // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc
+    // Filtered by a non-nil `id` (Backend::_wire_list_chunks()'s own doc
     // comment) without a wire command of its own: LIST resumes strictly
     // after its token in rawstd_uuid_cmp()'s own bytewise order, so a
     // one-id page whose token is one less than `id` (its 16 bytes read as
@@ -944,7 +944,7 @@ rawstd::Task<void> Backend::list_chunks(
 // sp is forwarded on the wire unchanged (see BackendOpAllocate); the
 // The server preserves the requested member role and placement identity;
 // one connection addresses one data or metadata-only member.
-rawstd::Task<void> Backend::create(
+rawstd::Task<void> Backend::_wire_create(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
     const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
@@ -971,8 +971,9 @@ rawstd::Task<void> Backend::create(
     co_await *op;
 }
 
-rawstd::Task<void>
-Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<void> Backend::_wire_remove(
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset
+) {
     try {
         co_await _basic_request(RAWSTOR_CMD_RELEASE, "remove", id, offset);
     } catch (const std::system_error&) {
@@ -983,7 +984,7 @@ Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
     co_return;
 }
 
-rawstd::Task<void> Backend::remove_version(
+rawstd::Task<void> Backend::_wire_remove_version(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
     const RawstdUUID& version_id
 ) {
@@ -999,7 +1000,7 @@ rawstd::Task<void> Backend::remove_version(
     co_return;
 }
 
-rawstd::Task<void> Backend::create_version(
+rawstd::Task<void> Backend::_wire_create_version(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
     const RawstdUUID& version_id
 ) {
@@ -1016,7 +1017,7 @@ rawstd::Task<void> Backend::create_version(
     co_return;
 }
 
-rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
+rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_wire_meta(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
     rawstd_debug("%s: Reading object metadata...\n", str().c_str());
@@ -1066,7 +1067,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
 }
 
 rawstd::Task<std::vector<RawstdUUID>>
-Backend::list_versions(const RawstdUUID& id, uint64_t offset) {
+Backend::_wire_list_versions(const RawstdUUID& id, uint64_t offset) {
     std::vector<char> response = co_await _basic_request(
         RAWSTOR_CMD_LIST_VERSIONS, "list_versions", id, offset
     );
@@ -1085,8 +1086,9 @@ Backend::list_versions(const RawstdUUID& id, uint64_t offset) {
     co_return ret;
 }
 
-rawstd::Task<std::vector<rawstd::URI>>
-Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
+rawstd::Task<std::vector<rawstd::URI>> Backend::_wire_resolve_locations(
+    const RawstdUUID&, uint64_t, const RawstdUUID&
+) {
     co_return std::vector<rawstd::URI>{location()};
 }
 
@@ -1137,7 +1139,7 @@ rawstd::Task<RawstorObjectSyncReply> Backend::_sync_request(
     co_return RawstorObjectSyncReply{reply.ok != 0, meta};
 }
 
-rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
+rawstd::Task<RawstorObjectSyncReply> Backend::_wire_sync_prepare(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
     const RawstorObjectSyncReply&
 ) {
@@ -1150,7 +1152,7 @@ rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
     co_return co_await _sync_request(request, "sync_prepare");
 }
 
-rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
+rawstd::Task<RawstorObjectSyncReply> Backend::_wire_sync_accept(
     const RawstdUUID& id, uint64_t offset, uint8_t member_index,
     const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
     const RawstorObjectConfig& config, const RawstorObjectSyncReply&
@@ -1175,7 +1177,7 @@ rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
     co_return co_await _sync_request(request, "sync_accept");
 }
 
-rawstd::Task<void> Backend::leave() {
+rawstd::Task<void> Backend::_wire_leave() {
     RawstdUUID unused_id = {};
     co_await _basic_request(RAWSTOR_CMD_LEAVE, "leave", unused_id, 0);
 }
@@ -1249,7 +1251,7 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
 }
 
 rawstd::Task<void>
-Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
+Backend::_wire_set_object(const RawstdUUID& id, uint64_t offset, int flags) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
@@ -1264,7 +1266,7 @@ Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
     );
 }
 
-rawstd::Task<void> Backend::set_version(
+rawstd::Task<void> Backend::_wire_set_version(
     const RawstdUUID& object_id, uint64_t offset, const RawstdUUID& version_id
 ) {
     if (_read_event == nullptr) {
@@ -1280,7 +1282,7 @@ rawstd::Task<void> Backend::set_version(
     );
 }
 
-// See ost_backend.hpp's doc comment on why `weak`, not a strong
+// See wire_backend.hpp for the lifetime of `weak` versus a strong
 // shared_ptr/`this`-capturing member coroutine.
 rawstd::DetachedTask Backend::_recv_pump(
     std::weak_ptr<Backend> weak, rawio::RecvStream stream,

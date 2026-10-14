@@ -57,8 +57,6 @@ protected:
     uint16_t _next_cid() noexcept { return _cid_counter++; }
     void _add_op(const std::shared_ptr<BackendOp>& op);
 
-    rawstd::Task<void> _connect() override;
-
 private:
     // The cid-dispatched counterpart of the old basic_request_async():
     // sends a RawstorFrameBasic-shaped request (remove/meta/info/
@@ -107,6 +105,71 @@ private:
     static void
     _recv_pump_failed(const std::weak_ptr<Backend>& weak, int error);
 
+protected:
+    // Native member requests and transport lifecycle shared by OST and MDS.
+    rawstd::Task<void> _wire_connect();
+
+    rawstd::Task<void> _wire_close();
+
+    rawstd::Task<void> _wire_list_chunks(
+        RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+        RawstdUUID& token, RawstdUUID version_id = {}
+    );
+
+    rawstd::Task<void> _wire_create(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstorObjectSpec& sp,
+        RawstorMemberRole member_role
+    );
+
+    rawstd::Task<void> _wire_remove(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
+    );
+
+    rawstd::Task<void> _wire_remove_version(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& version_id
+    );
+
+    rawstd::Task<std::vector<RawstdUUID>>
+    _wire_list_versions(const RawstdUUID& id, uint64_t offset);
+
+    rawstd::Task<std::vector<RawstorObjectMeta>> _wire_meta(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+    );
+
+    rawstd::Task<std::vector<rawstd::URI>> _wire_resolve_locations(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+    );
+
+    rawstd::Task<void> _wire_leave();
+
+    rawstd::Task<RawstorObjectSyncReply> _wire_sync_prepare(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot,
+        const RawstorObjectSyncReply& proposed
+    );
+
+    rawstd::Task<RawstorObjectSyncReply> _wire_sync_accept(
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config,
+        const RawstorObjectSyncReply& proposed
+    );
+
+    rawstd::Task<void>
+    _wire_set_object(const RawstdUUID& id, uint64_t offset, int flags);
+
+    rawstd::Task<void> _wire_set_version(
+        const RawstdUUID& object_id, uint64_t offset,
+        const RawstdUUID& version_id
+    );
+
+    rawstd::Task<void> _wire_create_version(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& version_id
+    );
+
 public:
     // Encoded object commands use the same CID dispatcher as member requests.
     // max_size bounds the response body before allocation.
@@ -118,96 +181,19 @@ public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
     ~Backend();
 
-    rawstd::Task<void> close() override;
-
-    rawstd::Task<void> list_chunks(
-        RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID version_id = {}
-    ) override;
-
-    rawstd::Task<void> create(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
-    ) override;
-
-    // Both relayed over the wire as a RAWSTOR_CMD_RELEASE request, nil vs.
-    // non-nil `version_id` (protocol.h widened this command's own payload for
-    // exactly this, same as SET_OBJECT/OBJ_OPEN's own nil-means-live
-    // convention) -- the split here mirrors Backend::remove()/
-    // remove_version()'s own C++-level distinction, not a second wire
-    // command.
-    rawstd::Task<void> remove(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
-    ) override;
-
-    rawstd::Task<void> remove_version(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& version_id
-    ) override;
-
-    rawstd::Task<std::vector<RawstdUUID>>
-    list_versions(const RawstdUUID& id, uint64_t offset) override;
-
-    rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
-    ) override;
-
-    // Trivial (Backend::resolve_locations()'s own doc comment): this is a
-    // plain, single-copy backend, already the one real member of whatever
-    // offset it's asked about.
-    rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
-    ) override;
-
     // The destination's Slot owns the copy state.
     rawstd::Task<void> set_state(
         const RawstdUUID& id, uint64_t offset,
         RawstorObjectSyncStateValue expected, RawstorObjectSyncStateValue state
-    ) override;
+    ) final;
 
     rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags,
         std::optional<RawstorObjectSyncStateValue> state = std::nullopt
-    ) override;
+    ) final;
 
-    rawstd::Task<void> leave() override;
-
-    rawstd::Task<RawstorObjectSyncReply> sync_prepare(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectBallot& ballot,
-        const RawstorObjectSyncReply& proposed
-    ) override;
-
-    rawstd::Task<RawstorObjectSyncReply> sync_accept(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config,
-        const RawstorObjectSyncReply& proposed
-    ) override;
-
-    rawstd::Task<RawstorLocationInfo> info() override;
-
-    rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t offset, int flags) override;
-
-    // Both relayed over the wire as a RAWSTOR_CMD_SET_OBJECT request,
-    // nil vs. non-nil version_id (protocol.h's own doc comment) -- the
-    // split here mirrors Backend::remove()/remove_version()'s own
-    // C++-level distinction, not a second wire command.
-    rawstd::Task<void> set_version(
-        const RawstdUUID& object_id, uint64_t offset,
-        const RawstdUUID& version_id
-    ) override;
-
-    // Relays RAWSTOR_CMD_CREATE_VERSION over the wire -- the remote rawstor-ost
-    // forwards to its own local backend the same way (docs/mds.md,
-    // "Versions").
-    rawstd::Task<void> create_version(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& version_id
-    ) override;
+    rawstd::Task<RawstorLocationInfo> info() final;
 };
 
 } // namespace wire
