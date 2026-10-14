@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <optional>
 #include <system_error>
 #include <vector>
 
@@ -30,6 +31,15 @@ using rawstor::mdsserver::VersionMember;
 // The most objects one LIST page carries; a request asking for more (or
 // for no particular number, 0) gets this many.
 const unsigned int list_limit = 1024;
+
+std::optional<RawstorObjectSyncStateValue> decode_config_state(uint8_t value) {
+    if (value == 0) {
+        return std::nullopt;
+    }
+    auto state = static_cast<RawstorObjectSyncStateValue>(value);
+    rawstor::validate_config_update(0, state);
+    return state;
+}
 
 int recv_trampoline(ssize_t result, void* data) {
     size_t value = result < 0 ? 0 : static_cast<size_t>(result);
@@ -364,7 +374,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
             store.set_config(
                 uuid_of(payload.object_id), payload.chunk_offset,
                 decode_config(payload.config), payload.flags,
-                rawstor::decode_config_state(payload.state)
+                decode_config_state(payload.state)
             );
         } catch (const std::system_error& e) {
             res = -e.code().value();

@@ -17,14 +17,5 @@ inline void validate_config_update(
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 }
-inline std::optional<RawstorObjectSyncStateValue>
-decode_config_state(uint8_t value) {
-    if (value == 0) {
-        return std::nullopt;
-    }
-    auto state = static_cast<RawstorObjectSyncStateValue>(value);
-    validate_config_update(0, state);
-    return state;
-}
 } // namespace rawstor
 #endif
