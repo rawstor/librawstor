@@ -87,7 +87,7 @@ WireMap decode_object_map(const std::vector<unsigned char>& data) {
 namespace rawstor {
 namespace mds {
 
-Client::Client(remote::Backend& transport) : _transport(transport) {
+Client::Client(wire::Backend& transport) : _transport(transport) {
 }
 
 rawstd::Task<std::vector<unsigned char>> Client::_exchange(

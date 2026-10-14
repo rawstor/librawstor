@@ -1,4 +1,4 @@
-#include "remote_backend.hpp"
+#include "wire_backend.hpp"
 #include "config.hpp"
 
 #include "opts.h"
@@ -151,7 +151,7 @@ uint64_t hash(const iovec* iov, unsigned int niov) {
 } // namespace
 
 namespace rawstor {
-namespace remote {
+namespace wire {
 
 class BackendOp {
 private:
@@ -195,7 +195,7 @@ protected:
     // Slot::_backends and its _ops member has been destroyed). This
     // keeps the Backend itself alive for as long as any BackendOp -- in
     // _ops or floating in a pending completion closure -- still needs it.
-    std::shared_ptr<rawstor::remote::Backend> _backend;
+    std::shared_ptr<rawstor::wire::Backend> _backend;
     RawstorFrameResponse _response;
 
     inline void _dispatch(size_t result, int error) {
@@ -249,7 +249,7 @@ protected:
 
 public:
     BackendOp(
-        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         const rawstd::TraceEvent& trace_event, const char* op_name,
         size_t op_size, uint64_t op_offset
     ) :
@@ -318,7 +318,7 @@ private:
 
 public:
     BackendOpRead(
-        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         void* buf, size_t size, uint64_t offset,
         const rawstd::TraceEvent& trace_event
     ) :
@@ -400,7 +400,7 @@ private:
 
 public:
     BackendOpReadV(
-        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         const rawstd::TraceEvent& trace_event
     ) :
@@ -480,7 +480,7 @@ private:
 
 public:
     BackendOpWrite(
-        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         const void* buf, size_t size, uint64_t offset, bool sync,
         const rawstd::TraceEvent& trace_event, uint64_t epoch, bool resync
     ) :
@@ -558,7 +558,7 @@ private:
 
 public:
     BackendOpWriteV(
-        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync, const rawstd::TraceEvent& trace_event, uint64_t epoch
     ) :
@@ -635,7 +635,7 @@ protected:
 
 public:
     BackendOpNoPayloadIO(
-        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         RawstorCommandType cmd, const char* op_name, size_t size,
         uint64_t offset, uint8_t flags, const rawstd::TraceEvent& trace_event,
         uint64_t epoch
@@ -687,7 +687,7 @@ public:
 class BackendOpDiscard final : public BackendOpNoPayloadIO {
 public:
     BackendOpDiscard(
-        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         size_t size, uint64_t offset, const rawstd::TraceEvent& trace_event,
         uint64_t epoch
     ) :
@@ -700,7 +700,7 @@ public:
 class BackendOpWriteZeroes final : public BackendOpNoPayloadIO {
 public:
     BackendOpWriteZeroes(
-        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         size_t size, uint64_t offset, bool unmap, bool sync,
         const rawstd::TraceEvent& trace_event, uint64_t epoch, bool resync
     ) :
@@ -719,7 +719,7 @@ private:
 
 public:
     BackendOpFlush(
-        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         const rawstd::TraceEvent& trace_event, uint64_t epoch
     ) :
         BackendOp(backend, cid, trace_event, "flush", 0, 0),
@@ -771,7 +771,7 @@ private:
 
 public:
     BackendOpSetConfig(
-        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         const RawstdUUID& id, uint64_t chunk_offset, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags,
         const rawstd::TraceEvent& trace_event,
@@ -837,7 +837,7 @@ private:
 
 public:
     BackendOpSync(
-        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         const RawstorFrameSyncPropose& request, const char* op_name,
         const rawstd::TraceEvent& trace_event
     ) :
@@ -899,7 +899,7 @@ private:
 
 public:
     BackendOpAllocate(
-        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         const RawstdUUID& id, uint64_t chunk_offset,
         const RawstorObjectSpec& sp, RawstorMemberRole member_role,
         const rawstd::TraceEvent& trace_event
@@ -973,7 +973,7 @@ private:
 
 public:
     BackendOpBasic(
-        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
         uint64_t offset, uint64_t val, const RawstdUUID& version_id,
         const rawstd::TraceEvent& trace_event
@@ -1125,7 +1125,7 @@ private:
 
 public:
     BackendOpList(
-        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         const RawstdUUID& token, unsigned int limit,
         const rawstd::TraceEvent& trace_event
     ) :
@@ -2352,5 +2352,5 @@ rawstd::Task<void> Backend::flush(uint64_t epoch) {
     co_await *op;
 }
 
-} // namespace remote
+} // namespace wire
 } // namespace rawstor

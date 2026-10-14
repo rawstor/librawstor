@@ -75,7 +75,7 @@ flowchart TB
 ```
 
 The client-side `mds::Backend` and `ost::Backend` inherit their shared network
-transport and member commands from `remote::Backend` (`src/remote_backend.*`).
+transport and member commands from `wire::Backend` (`src/wire_backend.*`).
 The MDS object-command codec (`mds::Client`) uses that same connection and
 CID response dispatcher. MDS overrides whole-object operations to resolve
 its chunk map and route data to the nested object; native witness metadata

@@ -180,7 +180,7 @@ namespace rawstor {
 namespace mds {
 
 Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
-    remote::Backend(p, queue, location),
+    wire::Backend(p, queue, location),
     _client(*this),
     _left(false) {
 }
@@ -188,7 +188,7 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
 rawstd::Task<std::optional<RawstorObjectMeta>>
 Backend::_witness_meta(const RawstdUUID& id, uint64_t offset) {
     try {
-        auto records = co_await remote::Backend::meta(id, offset, RawstdUUID{});
+        auto records = co_await wire::Backend::meta(id, offset, RawstdUUID{});
         if (records.size() != 1 ||
             records.front().member_role != RAWSTOR_MEMBER_WITNESS) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
@@ -203,8 +203,8 @@ Backend::_witness_meta(const RawstdUUID& id, uint64_t offset) {
 }
 
 rawstd::Task<void> Backend::_connect() {
-    co_await remote::Backend::_connect();
-    co_await remote::Backend::set_object({}, 0, 0);
+    co_await wire::Backend::_connect();
+    co_await wire::Backend::set_object({}, 0, 0);
 }
 
 // LIST reports registered objects at offset 0 and native members at their
@@ -216,7 +216,7 @@ rawstd::Task<void> Backend::list_chunks(
 ) {
     chunks.clear();
     if (rawstd_uuid_is_nil(&id)) {
-        co_await remote::Backend::list_chunks(
+        co_await wire::Backend::list_chunks(
             {}, limit, chunks, token, version_id
         );
         for (auto& group : chunks) {
@@ -227,7 +227,7 @@ rawstd::Task<void> Backend::list_chunks(
         co_return;
     }
     if (rawstd_uuid_is_nil(&version_id)) {
-        co_await remote::Backend::list_chunks(
+        co_await wire::Backend::list_chunks(
             id, limit, chunks, token, version_id
         );
         if (!chunks.empty() &&
@@ -263,7 +263,7 @@ rawstd::Task<void> Backend::create(
     const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
     if (member_role == RAWSTOR_MEMBER_WITNESS) {
-        co_await remote::Backend::create(
+        co_await wire::Backend::create(
             idempotency_key, id, offset, sp, member_role
         );
         co_return;
@@ -325,7 +325,7 @@ rawstd::Task<void> Backend::remove(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
 ) {
     if (co_await _witness_meta(id, offset)) {
-        co_await remote::Backend::remove(idempotency_key, id, offset);
+        co_await wire::Backend::remove(idempotency_key, id, offset);
         co_return;
     }
     /*
@@ -653,7 +653,7 @@ rawstd::Task<void> Backend::close() {
         co_await _object->close(_left);
         _object.reset();
     }
-    co_await remote::Backend::close();
+    co_await wire::Backend::close();
 }
 
 rawstd::Task<void> Backend::leave() {

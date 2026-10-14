@@ -17,7 +17,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Version target (`.../<uuid>/<version_uuid>`), read-only open | ✅ | `src/target.cpp` |
 | `mds://` object-level version | ✅ | `src/mds_backend.cpp` |
 | Per-slot native CoW version: `zfs://` | ✅ | `src/zfs_backend.cpp` |
-| Per-slot native CoW version: `ost://` (relayed to the server's backend) | ✅ | `src/remote_backend.cpp` |
+| Per-slot native CoW version: `ost://` (relayed to the server's backend) | ✅ | `src/wire_backend.cpp` |
 | Per-slot native CoW version: `lvm://` | ❌ | `-ENOTSUP` (waits for an lvm-thin backend) |
 | Per-slot native CoW version: `file://` | ❌ | `-ENOTSUP` by design (no CoW) |
 

@@ -3,7 +3,7 @@
 
 #include "mds_client.hpp"
 #include "object.hpp"
-#include "remote_backend.hpp"
+#include "wire_backend.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -41,7 +41,7 @@ namespace mds {
  * this produces (`_object` below) is what every data-path method
  * delegates to.
  */
-class Backend final : public remote::Backend {
+class Backend final : public wire::Backend {
 private:
     mds::Client _client;
     rawstd::Task<std::optional<RawstorObjectMeta>>

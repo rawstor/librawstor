@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_MDS_CLIENT_HPP
 #define RAWSTOR_MDS_CLIENT_HPP
 
-#include "remote_backend.hpp"
+#include "wire_backend.hpp"
 
 #include <rawstd/coro.hpp>
 #include <rawstd/uri.hpp>
@@ -55,7 +55,7 @@ struct WireVersionMember {
  */
 class Client final {
 private:
-    remote::Backend& _transport;
+    wire::Backend& _transport;
 
     // `max_size` bounds the response body before it sizes an allocation.
     rawstd::Task<std::vector<unsigned char>> _exchange(
@@ -64,7 +64,7 @@ private:
     );
 
 public:
-    explicit Client(remote::Backend& transport);
+    explicit Client(wire::Backend& transport);
     Client(const Client&) = delete;
     Client(Client&&) = delete;
 

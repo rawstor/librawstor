@@ -739,7 +739,7 @@ TEST(ObjectResizeTest, retried_after_lost_reply_materializes_new_chunks) {
             run(*queue,
                 rawstor::Backend::create(*queue, rawstd::URI(env.location())));
         auto transport =
-            std::dynamic_pointer_cast<rawstor::remote::Backend>(backend);
+            std::dynamic_pointer_cast<rawstor::wire::Backend>(backend);
         ASSERT_NE(transport, nullptr);
         rawstor::mds::Client client(*transport);
         run(*queue, client.resize(idempotency_key, id, new_size));

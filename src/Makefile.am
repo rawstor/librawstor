@@ -60,8 +60,8 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         object.hpp \
                         opts.c \
                         opts.h \
-                        remote_backend.cpp \
-                        remote_backend.hpp \
+                        wire_backend.cpp \
+                        wire_backend.hpp \
                         ost_backend.hpp \
                         rawstor.cpp \
                         slot.cpp \

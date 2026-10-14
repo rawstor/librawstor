@@ -1,5 +1,5 @@
-#ifndef RAWSTOR_REMOTE_BACKEND_HPP
-#define RAWSTOR_REMOTE_BACKEND_HPP
+#ifndef RAWSTOR_WIRE_BACKEND_HPP
+#define RAWSTOR_WIRE_BACKEND_HPP
 
 #include <optional>
 
@@ -25,7 +25,7 @@
 #include <cstddef>
 
 namespace rawstor {
-namespace remote {
+namespace wire {
 
 class BackendOp;
 
@@ -251,7 +251,7 @@ public:
     rawstd::Task<void> flush(uint64_t epoch) override;
 };
 
-} // namespace remote
+} // namespace wire
 } // namespace rawstor
 
-#endif // RAWSTOR_REMOTE_BACKEND_HPP
+#endif // RAWSTOR_WIRE_BACKEND_HPP
