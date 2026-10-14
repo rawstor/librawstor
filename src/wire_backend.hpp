@@ -185,15 +185,15 @@ public:
     rawstd::Task<void> set_state(
         const RawstdUUID& id, uint64_t offset,
         RawstorObjectSyncStateValue expected, RawstorObjectSyncStateValue state
-    ) final;
+    ) override final;
 
     rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags,
         std::optional<RawstorObjectSyncStateValue> state = std::nullopt
-    ) final;
+    ) override final;
 
-    rawstd::Task<RawstorLocationInfo> info() final;
+    rawstd::Task<RawstorLocationInfo> info() override final;
 };
 
 } // namespace wire
