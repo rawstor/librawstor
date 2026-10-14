@@ -12,8 +12,8 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Data: `READ` `WRITE` `DISCARD` `ALLOCATE` `RELEASE` `FLUSH` `WRITE_ZEROES` | ✅ | OST server + `src/ost_backend.cpp` (I/O), `src/wire_backend.cpp` (member lifecycle) |
 | Metadata: `META` `SET_CONFIG` `LEAVE` `CREATE_VERSION` `LIST_VERSIONS` | ✅ | OST server + `src/wire_backend.cpp` |
 | `LIST`, `LOCATION_INFO` | ✅ | OST and MDS servers, both clients |
-| Object: `OBJ_CREATE` `OBJ_OPEN` `OBJ_RESIZE` `OBJ_REMOVE` | ✅ | MDS server + `src/mds_client.cpp` |
-| Object versions: `OBJ_COMMIT_VERSION` `OBJ_REMOVE_VERSION` `OBJ_LIST_VERSIONS` | ✅ | MDS server + `src/mds_client.cpp` |
+| Object: `OBJ_CREATE` `OBJ_OPEN` `OBJ_RESIZE` `OBJ_REMOVE` | ✅ | MDS server + `src/mds_backend.cpp` |
+| Object versions: `OBJ_COMMIT_VERSION` `OBJ_REMOVE_VERSION` `OBJ_LIST_VERSIONS` | ✅ | MDS server + `src/mds_backend.cpp` |
 | `idempotency_key` on mutating `OBJ_*` | ✅ | `mds/src/store.cpp` (`applied_mutations`) |
 | `-ENOSYS` for commands outside a server's role | ✅ | `ost/src/client.cpp`, `mds/src/client.cpp` |
 | Protocol version + feature bits in the `SET_OBJECT` handshake | ❌ | planned in [MDS design](mds.md) |

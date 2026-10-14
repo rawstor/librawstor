@@ -1,7 +1,6 @@
 #ifndef RAWSTOR_MDS_BACKEND_HPP
 #define RAWSTOR_MDS_BACKEND_HPP
 
-#include "mds_client.hpp"
 #include "object.hpp"
 #include "wire_backend.hpp"
 
@@ -16,11 +15,41 @@
 
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include <cstdint>
+
 namespace rawstor {
 namespace mds {
+
+struct WireSlot {
+    uint8_t slot_index;
+    RawstdUUID ost_id;
+    std::string location; /* location URI; empty = unresolved */
+};
+
+struct WireMap {
+    RawstdUUID id;
+    uint64_t logical_size;
+    uint64_t chunk_size;
+    RawstorFrameObjPolicy policy;
+    uint64_t map_epoch;
+    std::vector<std::vector<WireSlot>> chunks;
+};
+
+/* What OBJ_RESIZE did: the new map_epoch and the chunk count it grew from. */
+struct WireResized {
+    uint64_t map_epoch;
+    uint64_t old_nchunks;
+};
+
+/* One chunk copy holding a version. */
+struct WireVersionMember {
+    uint64_t logical_index;
+    RawstdUUID ost_id;
+};
 
 /*
  * mds:// object storage backend.
@@ -43,7 +72,46 @@ namespace mds {
  */
 class Backend final : public wire::Backend {
 private:
-    mds::Client _client;
+    // OBJ commands share the member transport and preserve caller mutation IDs.
+    rawstd::Task<uint64_t> _obj_create(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t logical_size, uint64_t chunk_size,
+        const RawstorFrameObjPolicy& policy
+    );
+
+    rawstd::Task<WireMap>
+    _obj_open(const RawstdUUID& id, const RawstdUUID& version_id);
+
+    rawstd::Task<WireResized> _obj_resize(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t new_size
+    );
+
+    /* Returns the map the object had, for the fan-out destroy. */
+    rawstd::Task<WireMap>
+    _obj_remove(const RawstdUUID& idempotency_key, const RawstdUUID& id);
+
+    /*
+     * Registers the version; version_id is the caller's own already-
+     * generated version id (like every object id). Returns the bumped
+     * map_epoch.
+     */
+    rawstd::Task<uint64_t> _obj_commit_version(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        const RawstdUUID& version_id,
+        const std::vector<WireVersionMember>& members
+    );
+
+    /* Every version registered for `id`, in no particular order. */
+    rawstd::Task<std::vector<RawstdUUID>>
+    _obj_list_versions(const RawstdUUID& id);
+
+    /* Unregisters and returns the member set for the fan-out destroy. */
+    rawstd::Task<std::vector<WireVersionMember>> _obj_remove_version(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        const RawstdUUID& version_id
+    );
+
     rawstd::Task<std::optional<RawstorObjectMeta>>
     _witness_meta(const RawstdUUID& id, uint64_t offset);
     std::unique_ptr<Object> _object;

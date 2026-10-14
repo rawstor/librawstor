@@ -10,7 +10,7 @@ numbers its stages separately.
 |---|---|---|---|
 | `rawstor-mds` server, `-w/--workers` threads | 1 | ✅ | `mds/src/main.cpp`, `mds/src/server.cpp` |
 | SQLite store (WAL, `synchronous=FULL`) | 1 | ✅ | `mds/src/store.cpp` |
-| `OBJ_CREATE` / `OBJ_OPEN` / `OBJ_RESIZE` / `OBJ_REMOVE` | 1 | ✅ | `mds/src/client.cpp`, `src/mds_client.cpp` |
+| `OBJ_CREATE` / `OBJ_OPEN` / `OBJ_RESIZE` / `OBJ_REMOVE` | 1 | ✅ | `mds/src/client.cpp`, `src/mds_backend.cpp` |
 | Explicit chunk map, client-side routing by chunk | 1 | ✅ | `src/mds_backend.cpp`, `src/object.cpp` |
 | Weighted HRW placement, `failure_domain`, `stripe_width` | 1 | ✅ | `mds/src/placement.cpp` |
 | Unsatisfiable topology hard-fails | 1 | ✅ | `mds/src/placement.cpp` |
@@ -76,8 +76,8 @@ flowchart TB
 
 The client-side `mds::Backend` and `ost::Backend` inherit their shared network
 transport and member commands from `wire::Backend` (`src/wire_backend.*`).
-The MDS object-command codec (`mds::Client`) uses that same connection and
-CID response dispatcher. MDS overrides whole-object operations to resolve
+MDS encodes object commands and decodes their responses directly in
+`mds::Backend`, using that same connection and CID response dispatcher. MDS overrides whole-object operations to resolve
 its chunk map and route data to the nested object; native witness metadata
 uses the protected nonvirtual wire requests directly. OST implements its
 virtual member operations by forwarding to those same requests. Shared

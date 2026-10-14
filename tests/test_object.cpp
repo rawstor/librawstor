@@ -7,11 +7,11 @@
 // path needs a live zfs pool and isn't reachable from a portable test
 // (see object_env.hpp's own doc comment).
 #include "backend.hpp"
-#include "mds_client.hpp"
 #include "object.hpp"
 #include "object_env.hpp"
 #include "rawio_sync.hpp"
 #include "target.hpp"
+#include "wire_backend.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -21,6 +21,8 @@
 #include <rawstor/list.h>
 #include <rawstor/location.h>
 #include <rawstor/target.h>
+
+#include <cstring>
 
 #include <gtest/gtest.h>
 
@@ -715,7 +717,7 @@ TEST(ObjectCreateTest, size_not_chunk_multiple_is_einval) {
 // (docs/mds.md, "Idempotent mutations"): the MDS has already grown the map,
 // so the retry must still materialize the new chunks it reserved --
 // not see a map that already has them and create none. The "lost" first
-// attempt is an OBJ_RESIZE sent straight through an mds::Client, whose
+// attempt is an OBJ_RESIZE sent through the wire transport, whose
 // reply is simply dropped.
 TEST(ObjectResizeTest, retried_after_lost_reply_materializes_new_chunks) {
     rawstor::tests::ObjectEnv env(8800, 8801);
@@ -741,8 +743,29 @@ TEST(ObjectResizeTest, retried_after_lost_reply_materializes_new_chunks) {
         auto transport =
             std::dynamic_pointer_cast<rawstor::wire::Backend>(backend);
         ASSERT_NE(transport, nullptr);
-        rawstor::mds::Client client(*transport);
-        run(*queue, client.resize(idempotency_key, id, new_size));
+        RawstorFrameObjOp request{
+            .head =
+                {.magic = RAWSTOR_MAGIC,
+                 .cmd = RAWSTOR_CMD_OBJ_RESIZE,
+                 .cid = 0},
+            .payload = {
+                .id = {},
+                .idempotency_key = {},
+                .version_id = {},
+                .val = new_size
+            },
+        };
+        memcpy(request.payload.id, id.bytes, sizeof(request.payload.id));
+        memcpy(
+            request.payload.idempotency_key, idempotency_key.bytes,
+            sizeof(request.payload.idempotency_key)
+        );
+        auto response =
+            run(*queue, transport->exchange(
+                            &request, sizeof(request), RAWSTOR_CMD_OBJ_RESIZE,
+                            sizeof(RawstorFrameObjResizedPayload)
+                        ));
+        ASSERT_EQ(response.size(), sizeof(RawstorFrameObjResizedPayload));
         run(*queue, backend->close());
     }
 
