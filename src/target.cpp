@@ -511,7 +511,7 @@ rawstd::Task<RawstorObjectSpec> resolve_spec(
             }
             if (locations.size() > 1 || ret.width == 0) {
                 ret.width = static_cast<unsigned int>(
-                    locations.size() == ret.width + 1 && ret.width >= 2 &&
+                    locations.size() == ret.width + 1 && ret.width != 0 &&
                             ret.width % 2 == 0
                         ? ret.width
                         : locations.size()
@@ -579,7 +579,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> resolve_meta(
 
     for (const auto& answer : ret) {
         if (answer.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
-            answer.spec.width >= 2 && answer.spec.width % 2 == 0 &&
+            answer.spec.width != 0 && answer.spec.width % 2 == 0 &&
             ret.size() == answer.spec.width + 1 &&
             ret.back().state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
             answer.config.nroles == ret.size()) {
@@ -1275,8 +1275,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     // each), as Chunk::create() checks at open: none is created that could
     // not be opened.
     for (const std::vector<rawstd::URI>& uris : chunks) {
-        if (uris.size() == sp.width + 1 &&
-            (sp.width < 2 || sp.width % 2 != 0)) {
+        if (uris.size() == sp.width + 1 && sp.width % 2 != 0) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
         if (uris.size() > RAWSTOR_OBJECT_MAX_WIDTH) {
