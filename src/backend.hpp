@@ -57,10 +57,6 @@ public:
     static rawstd::Task<std::shared_ptr<Backend>>
     create(rawio::Queue& queue, const rawstd::URI& location);
 
-    // Connect to the shared member protocol, including MDS metadata members.
-    static rawstd::Task<std::shared_ptr<Backend>>
-    create_member(rawio::Queue& queue, const rawstd::URI& location);
-
     Backend(Private, rawio::Queue& queue, const rawstd::URI& location);
     Backend(const Backend&) = delete;
     Backend(Backend&&) noexcept = delete;

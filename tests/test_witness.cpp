@@ -948,3 +948,29 @@ TEST_F(WitnessTest, plain_mds_witness_listing_preserves_all_chunk_offsets) {
     );
     run(*queue, object->close(true));
 }
+
+TEST_F(WitnessTest, mds_dispatches_object_and_member_responses_on_one_backend) {
+    rawstor::tests::ObjectEnv servers(29627, 29628);
+    create(servers.location());
+    auto object_id = new_id();
+    rawstor::Target data(
+        {rawstd::URI(servers.location() + "/" + id_string(object_id))}
+    );
+    RawstorObjectSpec data_spec{};
+    data_spec.size = 65536;
+    data_spec.chunk_size = 65536;
+    data_spec.width = 1;
+    run(*queue, data.create(*queue, data_spec));
+    auto backend =
+        run(*queue,
+            rawstor::Backend::create(*queue, rawstd::URI(servers.location())));
+    auto versions = backend->list_versions(object_id, 0);
+    auto metadata = backend->meta(id, 0);
+    auto info = backend->info();
+    EXPECT_TRUE(run(*queue, std::move(versions)).empty());
+    auto records = run(*queue, std::move(metadata));
+    ASSERT_EQ(records.size(), 1u);
+    EXPECT_EQ(records.front().member_role, RAWSTOR_MEMBER_WITNESS);
+    run(*queue, std::move(info));
+    run(*queue, backend->close());
+}

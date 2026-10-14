@@ -1,9 +1,9 @@
 #ifndef RAWSTOR_MDS_BACKEND_HPP
 #define RAWSTOR_MDS_BACKEND_HPP
 
-#include "backend.hpp"
 #include "mds_client.hpp"
 #include "object.hpp"
+#include "remote_backend.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -41,11 +41,9 @@ namespace mds {
  * this produces (`_object` below) is what every data-path method
  * delegates to.
  */
-class Backend final : public rawstor::Backend {
+class Backend final : public remote::Backend {
 private:
     mds::Client _client;
-    std::shared_ptr<rawstor::Backend> _members;
-    rawstd::Task<std::shared_ptr<rawstor::Backend>> _member_transport();
     rawstd::Task<std::optional<RawstorObjectMeta>>
     _witness_meta(const RawstdUUID& id, uint64_t offset);
     std::unique_ptr<Object> _object;
@@ -160,19 +158,6 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) override;
 
-    // The destination's Slot owns the copy state.
-    rawstd::Task<void> set_state(
-        const RawstdUUID& id, uint64_t offset,
-        RawstorObjectSyncStateValue expected, RawstorObjectSyncStateValue state
-    ) override;
-
-    // Unsupported: configuration requests must address a specific real copy.
-    rawstd::Task<void> set_config(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-        const RawstorObjectConfig& config, unsigned int flags,
-        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
-    ) override;
-
     // MDS holds no copy of its own: register requests fail with ENOSYS.
 
     rawstd::Task<RawstorObjectSyncReply> sync_prepare(
@@ -186,8 +171,6 @@ public:
         const RawstorObjectConfig& config,
         const RawstorObjectSyncReply& proposed
     ) override;
-
-    rawstd::Task<RawstorLocationInfo> info() override;
 
     // Fetches the object's current (live) WireMap and opens the nested
     // multi-chunk Object it describes (see this class's own doc comment),

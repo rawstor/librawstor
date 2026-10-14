@@ -1,17 +1,6 @@
 #include "mds_client.hpp"
 
-#include <rawio/awaitable.hpp>
-
 #include <rawstd/gpp.hpp>
-#include <rawstd/socket.h>
-
-#include <arpa/inet.h>
-
-#include <sys/socket.h>
-
-#include <unistd.h>
-
-#include <utility>
 
 #include <cerrno>
 #include <cstring>
@@ -21,30 +10,6 @@ namespace {
 using rawstor::mds::WireMap;
 using rawstor::mds::WireSlot;
 using rawstor::mds::WireVersionMember;
-
-rawstd::Task<void>
-recv_all(rawio::Queue& queue, int fd, void* buf, size_t size) {
-    uint8_t* p = static_cast<uint8_t*>(buf);
-    size_t got = 0;
-    while (got < size) {
-        size_t n = co_await queue.recv(fd, p + got, size - got, 0);
-        if (n == 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(ECONNRESET);
-        }
-        got += n;
-    }
-}
-
-rawstd::Task<void>
-send_all(rawio::Queue& queue, int fd, const void* buf, size_t size) {
-    const uint8_t* p = static_cast<const uint8_t*>(buf);
-    size_t sent = 0;
-    while (sent < size) {
-        size_t n =
-            co_await queue.send(fd, p + sent, size - sent, RAWSTD_MSG_NOSIGNAL);
-        sent += n;
-    }
-}
 
 void uuid_to_bytes(const RawstdUUID& id, uint8_t out[16]) {
     memcpy(out, id.bytes, 16);
@@ -122,124 +87,13 @@ WireMap decode_object_map(const std::vector<unsigned char>& data) {
 namespace rawstor {
 namespace mds {
 
-Client::Client(rawio::Queue& queue, const rawstd::URI& location) :
-    _queue(queue),
-    _location(location),
-    _fd(-1),
-    _cid_counter(0) {
-}
-
-Client::Client(Client&& other) noexcept :
-    _queue(other._queue),
-    _location(other._location),
-    _fd(std::exchange(other._fd, -1)),
-    _cid_counter(other._cid_counter) {
-}
-
-Client::~Client() {
-    if (_fd != -1) {
-        ::close(_fd);
-    }
-}
-
-rawstd::Task<void> Client::connect() {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd == -1) {
-        RAWSTD_THROW_ERRNO();
-    }
-
-    std::exception_ptr connect_error;
-    try {
-        rawio::Queue::setup_fd(fd);
-
-        sockaddr_in servaddr = {};
-        servaddr.sin_family = AF_INET;
-        servaddr.sin_port = htons(_location.port());
-
-        int res = inet_pton(
-            AF_INET, _location.hostname().c_str(), &servaddr.sin_addr
-        );
-        if (res == 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        } else if (res == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-
-        co_await _queue.connect(
-            fd, reinterpret_cast<sockaddr*>(&servaddr), sizeof(servaddr)
-        );
-    } catch (...) {
-        connect_error = std::current_exception();
-    }
-
-    if (connect_error) {
-        try {
-            co_await _queue.close(fd);
-        } catch (...) {
-        }
-        std::rethrow_exception(connect_error);
-    }
-
-    _fd = fd;
-
-    // SET_OBJECT handshake: null binding (a control connection, per
-    // docs/mds.md). SET_OBJECT rides RawstorFrameBasicPayload on the
-    // wire (shared with every other server role, protocol.h), even
-    // though an MDS control connection never actually binds an object.
-    RawstorFrameBasic request{
-        .head =
-            {
-                .magic = RAWSTOR_MAGIC,
-                .cmd = RAWSTOR_CMD_SET_OBJECT,
-                .cid = _cid_counter++,
-            },
-        .payload = {.object_id = {}, .offset = 0, .version_id = {}, .val = 0},
-    };
-    co_await _exchange(&request, sizeof(request), RAWSTOR_CMD_SET_OBJECT, 0);
+Client::Client(remote::Backend& transport) : _transport(transport) {
 }
 
 rawstd::Task<std::vector<unsigned char>> Client::_exchange(
     const void* request, size_t size, RawstorCommandType cmd, size_t max_size
 ) {
-    co_await send_all(_queue, _fd, request, size);
-
-    RawstorFrameResponse response;
-    co_await recv_all(_queue, _fd, &response, sizeof(response));
-    if (response.head.magic != RAWSTOR_MAGIC || response.head.cmd != cmd) {
-        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-    }
-    if (response.body.res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-response.body.res);
-    }
-    if (static_cast<size_t>(response.body.res) > max_size) {
-        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-    }
-
-    std::vector<unsigned char> data(response.body.res);
-    if (!data.empty()) {
-        co_await recv_all(_queue, _fd, data.data(), data.size());
-    }
-    co_return data;
-}
-
-rawstd::Task<RawstorLocationInfo> Client::info() {
-    RawstorFrameBasic request{
-        .head =
-            {.magic = RAWSTOR_MAGIC,
-             .cmd = RAWSTOR_CMD_LOCATION_INFO,
-             .cid = _cid_counter++},
-        .payload = {},
-    };
-    auto data = co_await _exchange(
-        &request, sizeof(request), RAWSTOR_CMD_LOCATION_INFO,
-        sizeof(RawstorLocationInfo)
-    );
-    if (data.size() != sizeof(RawstorLocationInfo)) {
-        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-    }
-    RawstorLocationInfo info;
-    memcpy(&info, data.data(), sizeof(info));
-    co_return info;
+    co_return co_await _transport.exchange(request, size, cmd, max_size);
 }
 
 rawstd::Task<uint64_t> Client::create(
@@ -252,7 +106,7 @@ rawstd::Task<uint64_t> Client::create(
             {
                 .magic = RAWSTOR_MAGIC,
                 .cmd = RAWSTOR_CMD_OBJ_CREATE,
-                .cid = _cid_counter++,
+                .cid = 0,
             },
         .payload = {},
     };
@@ -284,7 +138,7 @@ Client::open(const RawstdUUID& id, const RawstdUUID& version_id) {
             {
                 .magic = RAWSTOR_MAGIC,
                 .cmd = RAWSTOR_CMD_OBJ_OPEN,
-                .cid = _cid_counter++,
+                .cid = 0,
             },
         .payload = {.object_id = {}, .offset = 0, .version_id = {}, .val = 0},
     };
@@ -304,7 +158,7 @@ rawstd::Task<WireResized> Client::resize(
             {
                 .magic = RAWSTOR_MAGIC,
                 .cmd = RAWSTOR_CMD_OBJ_RESIZE,
-                .cid = _cid_counter++,
+                .cid = 0,
             },
         .payload = {
             .id = {}, .idempotency_key = {}, .version_id = {}, .val = new_size
@@ -334,7 +188,7 @@ Client::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
             {
                 .magic = RAWSTOR_MAGIC,
                 .cmd = RAWSTOR_CMD_OBJ_REMOVE,
-                .cid = _cid_counter++,
+                .cid = 0,
             },
         .payload = {
             .id = {}, .idempotency_key = {}, .version_id = {}, .val = 0
@@ -361,7 +215,7 @@ rawstd::Task<uint64_t> Client::commit_version(
     RawstorFrameHead head{
         .magic = RAWSTOR_MAGIC,
         .cmd = RAWSTOR_CMD_OBJ_COMMIT_VERSION,
-        .cid = _cid_counter++,
+        .cid = 0,
     };
 
     std::vector<unsigned char> request(sizeof(head) + sizeof(payload));
@@ -395,7 +249,7 @@ Client::list_versions(const RawstdUUID& id) {
             {
                 .magic = RAWSTOR_MAGIC,
                 .cmd = RAWSTOR_CMD_OBJ_LIST_VERSIONS,
-                .cid = _cid_counter++,
+                .cid = 0,
             },
         .payload = {.object_id = {}, .offset = 0, .version_id = {}, .val = 0},
     };
@@ -426,7 +280,7 @@ rawstd::Task<std::vector<WireVersionMember>> Client::remove_version(
             {
                 .magic = RAWSTOR_MAGIC,
                 .cmd = RAWSTOR_CMD_OBJ_REMOVE_VERSION,
-                .cid = _cid_counter++,
+                .cid = 0,
             },
         .payload = {
             .id = {}, .idempotency_key = {}, .version_id = {}, .val = 0

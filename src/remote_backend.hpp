@@ -1,0 +1,257 @@
+#ifndef RAWSTOR_REMOTE_BACKEND_HPP
+#define RAWSTOR_REMOTE_BACKEND_HPP
+
+#include <optional>
+
+#include "backend.hpp"
+
+#include <rawio/queue.hpp>
+#include <rawio/stream.hpp>
+
+#include <rawstd/coro.hpp>
+#include <rawstd/logging.hpp>
+#include <rawstd/ringbuf.hpp>
+#include <rawstd/uri.hpp>
+
+#include <rawstor/location.h>
+#include <rawstor/object.h>
+#include <rawstor/protocol.h>
+
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include <cstddef>
+
+namespace rawstor {
+namespace remote {
+
+class BackendOp;
+
+// Shared TCP transport and member protocol for OST and MDS backends.
+class Backend : public rawstor::Backend {
+    friend class BackendOp;
+
+private:
+    rawstd::Task<size_t> _write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch,
+        bool resync
+    );
+
+    rawstd::Task<size_t> _pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync,
+        uint64_t epoch, bool resync
+    );
+
+    uint16_t _cid_counter;
+
+    rawio::Event* _read_event;
+    std::unordered_map<uint16_t, std::shared_ptr<BackendOp>> _ops;
+
+    // Running for as long as _recv_pump() is: begun by _connect() when it
+    // launches the pump, ended by the pump itself on its way out. close()
+    // settles on it after cancelling the pump's own recv registration --
+    // that cancel only resolves once the cancel request itself is
+    // processed, not once the pump has actually seen its registration's
+    // final ECANCELED completion and returned, and a pump still suspended
+    // on that when the queue goes away is never freed.
+    rawstd::Gate _pump;
+    rawstd::Gate _receive_resize;
+    bool _large_receive_ring = false;
+
+    void _start_receive_ring();
+    rawstd::Task<void> _ensure_large_receive_ring();
+
+protected:
+    rawstd::Task<void> _connect() override;
+
+private:
+    // The cid-dispatched counterpart of the old basic_request_async():
+    // sends a RawstorFrameBasic-shaped request (remove/meta/info/
+    // set_object/set_version/create_version all share this shape; LIST
+    // has its own dedicated shape instead, see BackendOpList in the .cpp)
+    // and awaits its response through the same _ops demultiplex mechanism
+    // as every other op -- requires _recv_pump to already be running,
+    // i.e. _connect() to have completed. `val`/`version_id` are never
+    // both meaningful for the same command (protocol.h's own doc comment
+    // on RawstorFrameBasicPayload); a caller that only needs one
+    // leaves the other at its default (0/nil).
+    template <typename T = char>
+    rawstd::Task<std::vector<T>> _basic_request(
+        RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
+        uint64_t offset, uint64_t val = 0, const RawstdUUID& version_id = {}
+    );
+    // SYNC_PREPARE/SYNC_ACCEPT: sends `request` and returns the member's
+    // reply.
+    rawstd::Task<RawstorObjectSyncReply>
+    _sync_request(const RawstorFrameSyncPropose& request, const char* op_name);
+    void _fail_in_flight(int error);
+    // Returns nullptr, rather than throwing, for an unregistered cid: a
+    // response can legitimately race with Slot::_op() already having
+    // failed and retried that same op on a different backend (e.g. after a
+    // send-side error on this connection), in which case the cid was
+    // already unregistered and the response is stale, not a corrupted
+    // stream.
+    BackendOp* _find_op(uint16_t cid);
+    void _add_op(const std::shared_ptr<BackendOp>& op);
+    void _remove_op(uint16_t cid);
+
+    // Pulls the shared response stream forever, demultiplexing each
+    // delivery by cid into whichever BackendOp is waiting for it -- the
+    // coroutine-era replacement for set_object()'s old recv_multishot
+    // callback. A free-standing detached loop keyed off a weak_ptr, not a
+    // member coroutine capturing `this`/a strong shared_ptr, for the same
+    // reason the old callback captured a weak_ptr: it must not keep this
+    // Backend alive purely because its own recv registration exists (see
+    // the .cpp for the full reentrant-teardown reasoning).
+    static rawstd::DetachedTask _recv_pump(
+        std::weak_ptr<Backend> weak, rawio::RecvStream stream,
+        rawstd::TraceEvent trace_event
+    );
+    // _recv_pump()'s own way out on a stream it can no longer trust: fails
+    // everything still in flight with `error`, if the backend is still
+    // around.
+    static void
+    _recv_pump_failed(const std::weak_ptr<Backend>& weak, int error);
+
+public:
+    // Encoded object commands use the same CID dispatcher as member requests.
+    // max_size bounds the response body before allocation.
+    rawstd::Task<std::vector<unsigned char>> exchange(
+        const void* request, size_t size, RawstorCommandType cmd,
+        size_t max_size
+    );
+
+    Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
+    ~Backend();
+
+    rawstd::Task<void> close() override;
+
+    rawstd::Task<void> list_chunks(
+        RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
+        RawstdUUID& token, RawstdUUID version_id = {}
+    ) override;
+
+    rawstd::Task<void> create(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstorObjectSpec& sp,
+        RawstorMemberRole member_role
+    ) override;
+
+    // Both relayed over the wire as a RAWSTOR_CMD_RELEASE request, nil vs.
+    // non-nil `version_id` (protocol.h widened this command's own payload for
+    // exactly this, same as SET_OBJECT/OBJ_OPEN's own nil-means-live
+    // convention) -- the split here mirrors Backend::remove()/
+    // remove_version()'s own C++-level distinction, not a second wire
+    // command.
+    rawstd::Task<void> remove(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
+    ) override;
+
+    rawstd::Task<void> remove_version(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& version_id
+    ) override;
+
+    rawstd::Task<std::vector<RawstdUUID>>
+    list_versions(const RawstdUUID& id, uint64_t offset) override;
+
+    rawstd::Task<std::vector<RawstorObjectMeta>> meta(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+    ) override;
+
+    // Trivial (Backend::resolve_locations()'s own doc comment): this is a
+    // plain, single-copy backend, already the one real member of whatever
+    // offset it's asked about.
+    rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+    ) override;
+
+    // The destination's Slot owns the copy state.
+    rawstd::Task<void> set_state(
+        const RawstdUUID& id, uint64_t offset,
+        RawstorObjectSyncStateValue expected, RawstorObjectSyncStateValue state
+    ) override;
+
+    rawstd::Task<void> set_config(
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstorObjectConfig& config, unsigned int flags,
+        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
+    ) override;
+
+    rawstd::Task<void> leave() override;
+
+    rawstd::Task<RawstorObjectSyncReply> sync_prepare(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot,
+        const RawstorObjectSyncReply& proposed
+    ) override;
+
+    rawstd::Task<RawstorObjectSyncReply> sync_accept(
+        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config,
+        const RawstorObjectSyncReply& proposed
+    ) override;
+
+    rawstd::Task<RawstorLocationInfo> info() override;
+
+    rawstd::Task<void>
+    set_object(const RawstdUUID& id, uint64_t offset, int flags) override;
+
+    // Both relayed over the wire as a RAWSTOR_CMD_SET_OBJECT request,
+    // nil vs. non-nil version_id (protocol.h's own doc comment) -- the
+    // split here mirrors Backend::remove()/remove_version()'s own
+    // C++-level distinction, not a second wire command.
+    rawstd::Task<void> set_version(
+        const RawstdUUID& object_id, uint64_t offset,
+        const RawstdUUID& version_id
+    ) override;
+
+    // Relays RAWSTOR_CMD_CREATE_VERSION over the wire -- the remote rawstor-ost
+    // forwards to its own local backend the same way (docs/mds.md,
+    // "Versions").
+    rawstd::Task<void> create_version(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& version_id
+    ) override;
+
+    rawstd::Task<size_t>
+    pread(void* buf, size_t size, uint64_t offset) override;
+
+    rawstd::Task<size_t> preadv(
+        iovec* iov, unsigned int niov, size_t size, uint64_t offset
+    ) override;
+
+    rawstd::Task<size_t> pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+    ) override;
+
+    rawstd::Task<size_t> resync_pwrite(
+        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
+    ) override;
+
+    rawstd::Task<size_t> pwritev(
+        const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
+        bool sync, uint64_t epoch
+    ) override;
+
+    rawstd::Task<size_t>
+    discard(size_t size, uint64_t offset, uint64_t epoch) override;
+
+    rawstd::Task<size_t> write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+    ) override;
+
+    rawstd::Task<size_t> resync_write_zeroes(
+        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
+    ) override;
+
+    rawstd::Task<void> flush(uint64_t epoch) override;
+};
+
+} // namespace remote
+} // namespace rawstor
+
+#endif // RAWSTOR_REMOTE_BACKEND_HPP

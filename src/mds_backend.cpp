@@ -180,23 +180,15 @@ namespace rawstor {
 namespace mds {
 
 Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
-    rawstor::Backend(p, queue, location),
-    _client(queue, location),
+    remote::Backend(p, queue, location),
+    _client(*this),
     _left(false) {
-}
-
-rawstd::Task<std::shared_ptr<rawstor::Backend>> Backend::_member_transport() {
-    if (!_members) {
-        _members = co_await rawstor::Backend::create_member(_queue, location());
-    }
-    co_return _members;
 }
 
 rawstd::Task<std::optional<RawstorObjectMeta>>
 Backend::_witness_meta(const RawstdUUID& id, uint64_t offset) {
-    auto members = co_await _member_transport();
     try {
-        auto records = co_await members->meta(id, offset, RawstdUUID{});
+        auto records = co_await remote::Backend::meta(id, offset, RawstdUUID{});
         if (records.size() != 1 ||
             records.front().member_role != RAWSTOR_MEMBER_WITNESS) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
@@ -211,7 +203,8 @@ Backend::_witness_meta(const RawstdUUID& id, uint64_t offset) {
 }
 
 rawstd::Task<void> Backend::_connect() {
-    co_await _client.connect();
+    co_await remote::Backend::_connect();
+    co_await remote::Backend::set_object({}, 0, 0);
 }
 
 // LIST reports registered objects at offset 0 and native members at their
@@ -223,8 +216,9 @@ rawstd::Task<void> Backend::list_chunks(
 ) {
     chunks.clear();
     if (rawstd_uuid_is_nil(&id)) {
-        auto members = co_await _member_transport();
-        co_await members->list_chunks({}, limit, chunks, token, version_id);
+        co_await remote::Backend::list_chunks(
+            {}, limit, chunks, token, version_id
+        );
         for (auto& group : chunks) {
             if (!(co_await _witness_meta(group.id, group.offsets.front()))) {
                 group.offsets.clear();
@@ -233,8 +227,9 @@ rawstd::Task<void> Backend::list_chunks(
         co_return;
     }
     if (rawstd_uuid_is_nil(&version_id)) {
-        auto members = co_await _member_transport();
-        co_await members->list_chunks(id, limit, chunks, token, version_id);
+        co_await remote::Backend::list_chunks(
+            id, limit, chunks, token, version_id
+        );
         if (!chunks.empty() &&
             co_await _witness_meta(id, chunks.front().offsets.front())) {
             co_return;
@@ -268,8 +263,9 @@ rawstd::Task<void> Backend::create(
     const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
     if (member_role == RAWSTOR_MEMBER_WITNESS) {
-        auto members = co_await _member_transport();
-        co_await members->create(idempotency_key, id, offset, sp, member_role);
+        co_await remote::Backend::create(
+            idempotency_key, id, offset, sp, member_role
+        );
         co_return;
     }
     // An mds:// object is always chunked: the MDS map is per-chunk, and
@@ -329,8 +325,7 @@ rawstd::Task<void> Backend::remove(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
 ) {
     if (co_await _witness_meta(id, offset)) {
-        auto members = co_await _member_transport();
-        co_await members->remove(idempotency_key, id, offset);
+        co_await remote::Backend::remove(idempotency_key, id, offset);
         co_return;
     }
     /*
@@ -599,24 +594,6 @@ rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
     co_return chunk_locations(map, index);
 }
 
-rawstd::Task<void> Backend::set_state(
-    const RawstdUUID&, uint64_t, RawstorObjectSyncStateValue,
-    RawstorObjectSyncStateValue
-) {
-    co_return;
-}
-
-rawstd::Task<void> Backend::set_config(
-    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-    const RawstorObjectConfig& config, unsigned int flags,
-    std::optional<RawstorObjectSyncStateValue> state
-) {
-    auto members = co_await _member_transport();
-    co_await members->set_config(
-        id, offset, member_index, config, flags, state
-    );
-}
-
 rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
     const RawstdUUID&, uint64_t, const RawstorObjectBallot&,
     const RawstorObjectSyncReply&
@@ -632,10 +609,6 @@ rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
 ) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
     co_return RawstorObjectSyncReply{};
-}
-
-rawstd::Task<RawstorLocationInfo> Backend::info() {
-    co_return co_await _client.info();
 }
 
 rawstd::Task<void> Backend::_set_object(
@@ -680,10 +653,7 @@ rawstd::Task<void> Backend::close() {
         co_await _object->close(_left);
         _object.reset();
     }
-    if (_members) {
-        co_await _members->close();
-        _members.reset();
-    }
+    co_await remote::Backend::close();
 }
 
 rawstd::Task<void> Backend::leave() {

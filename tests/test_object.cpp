@@ -735,9 +735,15 @@ TEST(ObjectResizeTest, retried_after_lost_reply_materializes_new_chunks) {
     uint64_t new_size = 2 * spec.size;
 
     {
-        rawstor::mds::Client client(*queue, rawstd::URI(env.location()));
-        run(*queue, client.connect());
+        auto backend =
+            run(*queue,
+                rawstor::Backend::create(*queue, rawstd::URI(env.location())));
+        auto transport =
+            std::dynamic_pointer_cast<rawstor::remote::Backend>(backend);
+        ASSERT_NE(transport, nullptr);
+        rawstor::mds::Client client(*transport);
         run(*queue, client.resize(idempotency_key, id, new_size));
+        run(*queue, backend->close());
     }
 
     std::shared_ptr<rawstor::Backend> backend =

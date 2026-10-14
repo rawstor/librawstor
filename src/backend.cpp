@@ -72,17 +72,6 @@ Backend::create(rawio::Queue& queue, const rawstd::URI& location) {
     co_return backend;
 }
 
-rawstd::Task<std::shared_ptr<Backend>>
-Backend::create_member(rawio::Queue& queue, const rawstd::URI& location) {
-    if (location.scheme() != "mds") {
-        co_return co_await create(queue, location);
-    }
-    std::shared_ptr<Backend> backend =
-        std::make_shared<rawstor::ost::Backend>(Private(), queue, location);
-    co_await backend->_connect();
-    co_return backend;
-}
-
 rawstd::Task<void>
 Backend::set_version(const RawstdUUID&, uint64_t, const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);

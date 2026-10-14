@@ -1,7 +1,7 @@
 #ifndef RAWSTOR_MDS_CLIENT_HPP
 #define RAWSTOR_MDS_CLIENT_HPP
 
-#include <rawio/queue.hpp>
+#include "remote_backend.hpp"
 
 #include <rawstd/coro.hpp>
 #include <rawstd/uri.hpp>
@@ -47,19 +47,15 @@ struct WireVersionMember {
 
 /*
  * Control-plane client for the object commands of an MDS
- * (docs/mds.md). One connection, plain request/response
- * exchanges (no pipelining: object operations are rare and serialized by
- * the caller). Every mutating call takes the caller's `idempotency_key`, its
+ * (docs/mds.md). Uses the shared remote backend connection and response
+ * dispatcher. Every mutating call takes the caller's `idempotency_key`, its
  * idempotency key: resending a request with the same idempotency_key (e.g.
  * after a lost reply) gets the result of the first one, never a second
  * application (docs/mds.md, "Idempotent mutations").
  */
 class Client final {
 private:
-    rawio::Queue& _queue;
-    rawstd::URI _location; /* mds://host:port */
-    int _fd;
-    uint16_t _cid_counter;
+    remote::Backend& _transport;
 
     // `max_size` bounds the response body before it sizes an allocation.
     rawstd::Task<std::vector<unsigned char>> _exchange(
@@ -68,18 +64,12 @@ private:
     );
 
 public:
-    Client(rawio::Queue& queue, const rawstd::URI& location);
+    explicit Client(remote::Backend& transport);
     Client(const Client&) = delete;
-    Client(Client&& other) noexcept;
-    ~Client();
+    Client(Client&&) = delete;
 
     Client& operator=(const Client&) = delete;
     Client& operator=(Client&&) = delete;
-
-    /* TCP connect + the SET_OBJECT handshake (null binding). */
-    rawstd::Task<void> connect();
-
-    rawstd::Task<RawstorLocationInfo> info();
 
     rawstd::Task<uint64_t> create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,

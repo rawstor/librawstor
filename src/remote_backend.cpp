@@ -1,4 +1,4 @@
-#include "ost_backend.hpp"
+#include "remote_backend.hpp"
 #include "config.hpp"
 
 #include "opts.h"
@@ -151,7 +151,7 @@ uint64_t hash(const iovec* iov, unsigned int niov) {
 } // namespace
 
 namespace rawstor {
-namespace ost {
+namespace remote {
 
 class BackendOp {
 private:
@@ -195,7 +195,7 @@ protected:
     // Slot::_backends and its _ops member has been destroyed). This
     // keeps the Backend itself alive for as long as any BackendOp -- in
     // _ops or floating in a pending completion closure -- still needs it.
-    std::shared_ptr<rawstor::ost::Backend> _backend;
+    std::shared_ptr<rawstor::remote::Backend> _backend;
     RawstorFrameResponse _response;
 
     inline void _dispatch(size_t result, int error) {
@@ -249,7 +249,7 @@ protected:
 
 public:
     BackendOp(
-        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
         const rawstd::TraceEvent& trace_event, const char* op_name,
         size_t op_size, uint64_t op_offset
     ) :
@@ -318,7 +318,7 @@ private:
 
 public:
     BackendOpRead(
-        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
         void* buf, size_t size, uint64_t offset,
         const rawstd::TraceEvent& trace_event
     ) :
@@ -400,7 +400,7 @@ private:
 
 public:
     BackendOpReadV(
-        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
         iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         const rawstd::TraceEvent& trace_event
     ) :
@@ -480,7 +480,7 @@ private:
 
 public:
     BackendOpWrite(
-        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
         const void* buf, size_t size, uint64_t offset, bool sync,
         const rawstd::TraceEvent& trace_event, uint64_t epoch, bool resync
     ) :
@@ -558,7 +558,7 @@ private:
 
 public:
     BackendOpWriteV(
-        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
         const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
         bool sync, const rawstd::TraceEvent& trace_event, uint64_t epoch
     ) :
@@ -635,7 +635,7 @@ protected:
 
 public:
     BackendOpNoPayloadIO(
-        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
         RawstorCommandType cmd, const char* op_name, size_t size,
         uint64_t offset, uint8_t flags, const rawstd::TraceEvent& trace_event,
         uint64_t epoch
@@ -687,7 +687,7 @@ public:
 class BackendOpDiscard final : public BackendOpNoPayloadIO {
 public:
     BackendOpDiscard(
-        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
         size_t size, uint64_t offset, const rawstd::TraceEvent& trace_event,
         uint64_t epoch
     ) :
@@ -700,7 +700,7 @@ public:
 class BackendOpWriteZeroes final : public BackendOpNoPayloadIO {
 public:
     BackendOpWriteZeroes(
-        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
         size_t size, uint64_t offset, bool unmap, bool sync,
         const rawstd::TraceEvent& trace_event, uint64_t epoch, bool resync
     ) :
@@ -719,7 +719,7 @@ private:
 
 public:
     BackendOpFlush(
-        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
         const rawstd::TraceEvent& trace_event, uint64_t epoch
     ) :
         BackendOp(backend, cid, trace_event, "flush", 0, 0),
@@ -771,7 +771,7 @@ private:
 
 public:
     BackendOpSetConfig(
-        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
         const RawstdUUID& id, uint64_t chunk_offset, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags,
         const rawstd::TraceEvent& trace_event,
@@ -837,7 +837,7 @@ private:
 
 public:
     BackendOpSync(
-        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
         const RawstorFrameSyncPropose& request, const char* op_name,
         const rawstd::TraceEvent& trace_event
     ) :
@@ -899,7 +899,7 @@ private:
 
 public:
     BackendOpAllocate(
-        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
         const RawstdUUID& id, uint64_t chunk_offset,
         const RawstorObjectSpec& sp, RawstorMemberRole member_role,
         const rawstd::TraceEvent& trace_event
@@ -973,7 +973,7 @@ private:
 
 public:
     BackendOpBasic(
-        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
         RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
         uint64_t offset, uint64_t val, const RawstdUUID& version_id,
         const rawstd::TraceEvent& trace_event
@@ -1047,6 +1047,73 @@ public:
     std::vector<T> take_response_data() { return std::move(_response_data); }
 };
 
+class BackendOpExchange final : public BackendOp {
+private:
+    RawstorCommandType _cmd;
+    std::vector<unsigned char> _request;
+    size_t _max_size;
+    std::vector<unsigned char> _response_data;
+
+public:
+    BackendOpExchange(
+        const std::shared_ptr<Backend>& backend, uint16_t cid,
+        const void* request, size_t size, RawstorCommandType cmd,
+        size_t max_size, const rawstd::TraceEvent& trace_event
+    ) :
+        BackendOp(backend, cid, trace_event, "exchange", 0, 0),
+        _cmd(cmd),
+        _request(size),
+        _max_size(max_size) {
+        memcpy(_request.data(), request, size);
+        RawstorFrameHead head;
+        memcpy(&head, _request.data(), sizeof(head));
+        head.cid = cid;
+        memcpy(_request.data(), &head, sizeof(head));
+    }
+    const void* request_data() const noexcept { return _request.data(); }
+    size_t request_size() const noexcept override { return _request.size(); }
+
+    size_t
+    response_head_cb(const RawstorFrameResponse* response, int error) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        if (!error) {
+            error = validate_response(response);
+        }
+
+        if (!error) {
+            error = validate_cmd(response->head.cmd, _cmd);
+        }
+
+        if (!error && response->body.res > 0) {
+            // A malformed body size means we can no longer trust where
+            // the next frame starts either -- letting this throw (per
+            // response_head_cb()'s documented contract) fails every op
+            // still in flight on this backend instead of silently
+            // desyncing the stream.
+            if (static_cast<size_t>(response->body.res) > _max_size) {
+                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            }
+            return static_cast<size_t>(response->body.res);
+        }
+
+        _dispatch(0, error);
+        return 0;
+    }
+
+    void response_body_cb(
+        const iovec* iov, unsigned int niov, size_t result
+    ) override {
+        _response_data.resize(result);
+        rawstd_iovec_to_buf(iov, niov, 0, _response_data.data(), result);
+        _dispatch(result, 0);
+    }
+
+    std::vector<unsigned char> take_response_data() {
+        return std::move(_response_data);
+    }
+};
+
 // LIST's own request/response shape (RawstorFrameList/
 // RawstorFrameListEntry, protocol.h's own doc comment on why it isn't
 // just another BackendOpBasic<T>) -- otherwise the same terminal shape as
@@ -1058,7 +1125,7 @@ private:
 
 public:
     BackendOpList(
-        const std::shared_ptr<rawstor::ost::Backend>& backend, uint16_t cid,
+        const std::shared_ptr<rawstor::remote::Backend>& backend, uint16_t cid,
         const RawstdUUID& token, unsigned int limit,
         const rawstd::TraceEvent& trace_event
     ) :
@@ -1411,7 +1478,8 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
     RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
     uint64_t offset, uint64_t val, const RawstdUUID& version_id
 ) {
-    if (cmd == RAWSTOR_CMD_SET_OBJECT || cmd == RAWSTOR_CMD_LIST_VERSIONS) {
+    if ((cmd == RAWSTOR_CMD_SET_OBJECT && !rawstd_uuid_is_nil(&id)) ||
+        cmd == RAWSTOR_CMD_LIST_VERSIONS) {
         co_await _ensure_large_receive_ring();
     }
     co_await _receive_resize.settle();
@@ -1435,6 +1503,34 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
         op->request_cb(e.code().value());
     }
 
+    co_await *op;
+    co_return op->take_response_data();
+}
+
+rawstd::Task<std::vector<unsigned char>> Backend::exchange(
+    const void* request, size_t size, RawstorCommandType cmd, size_t max_size
+) {
+    if (size < sizeof(RawstorFrameHead)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    if (max_size > 8 * 4096) {
+        co_await _ensure_large_receive_ring();
+    }
+    co_await _receive_resize.settle();
+    auto trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", "exchange");
+    auto op = std::make_shared<BackendOpExchange>(
+        std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
+        request, size, cmd, max_size, trace_event
+    );
+    _add_op(op);
+    try {
+        size_t result = co_await _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        );
+        op->request_cb(validate_result(op->request_size(), result));
+    } catch (const std::system_error& e) {
+        op->request_cb(e.code().value());
+    }
     co_await *op;
     co_return op->take_response_data();
 }
@@ -1825,16 +1921,20 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
 
     RawstorLocationInfo ret = {};
     try {
-        RawstdUUID unused_id = {};
-        std::vector<char> response = co_await _basic_request(
-            RAWSTOR_CMD_LOCATION_INFO, "info", unused_id, 0, 0
+        RawstorFrameBasic request{
+            .head =
+                {.magic = RAWSTOR_MAGIC,
+                 .cmd = RAWSTOR_CMD_LOCATION_INFO,
+                 .cid = 0},
+            .payload = {},
+        };
+        auto response = co_await exchange(
+            &request, sizeof(request), RAWSTOR_CMD_LOCATION_INFO, sizeof(ret)
         );
         if (response.size() != sizeof(ret)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
-        ret = *static_cast<RawstorLocationInfo*>(
-            static_cast<void*>(response.data())
-        );
+        memcpy(&ret, response.data(), sizeof(ret));
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -2252,5 +2352,5 @@ rawstd::Task<void> Backend::flush(uint64_t epoch) {
     co_await *op;
 }
 
-} // namespace ost
+} // namespace remote
 } // namespace rawstor
