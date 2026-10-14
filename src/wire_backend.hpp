@@ -34,16 +34,6 @@ class Backend : public rawstor::Backend {
     friend class BackendOp;
 
 private:
-    rawstd::Task<size_t> _write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch,
-        bool resync
-    );
-
-    rawstd::Task<size_t> _pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync,
-        uint64_t epoch, bool resync
-    );
-
     uint16_t _cid_counter;
 
     rawio::Event* _read_event;
@@ -64,6 +54,9 @@ private:
     rawstd::Task<void> _ensure_large_receive_ring();
 
 protected:
+    uint16_t _next_cid() noexcept { return _cid_counter++; }
+    void _add_op(const std::shared_ptr<BackendOp>& op);
+
     rawstd::Task<void> _connect() override;
 
 private:
@@ -94,7 +87,6 @@ private:
     // already unregistered and the response is stale, not a corrupted
     // stream.
     BackendOp* _find_op(uint16_t cid);
-    void _add_op(const std::shared_ptr<BackendOp>& op);
     void _remove_op(uint16_t cid);
 
     // Pulls the shared response stream forever, demultiplexing each
@@ -216,39 +208,6 @@ public:
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstdUUID& version_id
     ) override;
-
-    rawstd::Task<size_t>
-    pread(void* buf, size_t size, uint64_t offset) override;
-
-    rawstd::Task<size_t> preadv(
-        iovec* iov, unsigned int niov, size_t size, uint64_t offset
-    ) override;
-
-    rawstd::Task<size_t> pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
-    ) override;
-
-    rawstd::Task<size_t> resync_pwrite(
-        const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
-    ) override;
-
-    rawstd::Task<size_t> pwritev(
-        const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
-        bool sync, uint64_t epoch
-    ) override;
-
-    rawstd::Task<size_t>
-    discard(size_t size, uint64_t offset, uint64_t epoch) override;
-
-    rawstd::Task<size_t> write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
-    ) override;
-
-    rawstd::Task<size_t> resync_write_zeroes(
-        size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
-    ) override;
-
-    rawstd::Task<void> flush(uint64_t epoch) override;
 };
 
 } // namespace wire
