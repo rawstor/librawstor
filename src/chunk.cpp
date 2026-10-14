@@ -930,19 +930,21 @@ rawstd::Task<void> recreate_missing(
     const RawstdUUID& version_id,
     std::vector<std::unique_ptr<rawstor::Slot>>& slots,
     std::vector<RawstorObjectMeta>& metas, std::vector<bool>& opened,
-    const std::vector<bool>& missing, const std::vector<bool>& witnesses
+    const std::vector<bool>& missing, bool has_witness
 ) {
     if ((flags & RAWSTOR_READONLY) != 0 || !rawstd_uuid_is_nil(&version_id)) {
         co_return;
     }
+
+    const size_t data_members = locations.size() - has_witness;
 
     // The largest surviving copy's size, not just the first's: a smaller
     // one is itself F11-stale (_reconcile_sync_set()'s own comment), and
     // a recreated copy sized off it would be too.
     const RawstorObjectMeta* survivor = nullptr;
     uint64_t size = 0;
-    for (size_t i = 0; i < locations.size(); ++i) {
-        if (!opened[i] || witnesses[i]) {
+    for (size_t i = 0; i < data_members; ++i) {
+        if (!opened[i]) {
             continue;
         }
         if (survivor == nullptr) {
@@ -956,28 +958,21 @@ rawstd::Task<void> recreate_missing(
     }
 
     size_t survivors = 0;
-    size_t data_members = 0;
-    for (size_t i = 0; i < locations.size(); ++i) {
-        if (!witnesses[i]) {
-            ++data_members;
-            survivors += opened[i];
-        }
+    for (size_t i = 0; i < data_members; ++i) {
+        survivors += opened[i];
     }
     bool witness_quorum = false;
-    for (size_t wi = 0; wi < locations.size(); ++wi) {
-        if (!opened[wi] || !witnesses[wi]) {
-            continue;
-        }
+    if (has_witness && opened.back()) {
+        const size_t wi = data_members;
         size_t approved = 0;
-        for (size_t di = 0; di < locations.size(); ++di) {
-            if (opened[di] && !witnesses[di] &&
-                witness_approves(
-                    metas[wi], metas[di], di, locations.size(), wi
-                )) {
+        for (size_t di = 0; di < data_members; ++di) {
+            if (opened[di] && witness_approves(
+                                  metas[wi], metas[di], di, locations.size(), wi
+                              )) {
                 ++approved;
             }
         }
-        witness_quorum |= (approved + 1) * 2 > locations.size();
+        witness_quorum = (approved + 1) * 2 > locations.size();
     }
     if (survivors * 2 <= data_members && !witness_quorum) {
         rawstd_error(
@@ -995,8 +990,8 @@ rawstd::Task<void> recreate_missing(
     sp.width = survivor->spec.width;
     sp.chunk_size = survivor->spec.chunk_size;
 
-    for (size_t i = 0; i < locations.size(); ++i) {
-        if (!missing[i] || witnesses[i]) {
+    for (size_t i = 0; i < data_members; ++i) {
+        if (!missing[i]) {
             continue;
         }
         rawstd_warning(
@@ -1202,13 +1197,12 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         }
     }
     if (witness_member &&
-        (locations.size() < 3 || (locations.size() - 1) % 2 != 0)) {
+        (witness_member != locations.size() || locations.size() < 3 ||
+         (locations.size() - 1) % 2 != 0)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    std::vector<bool> witnesses(locations.size(), false);
-    if (witness_member) {
-        witnesses[witness_member - 1] = true;
-    }
+    const bool has_witness = witness_member != 0;
+    const size_t data_members = locations.size() - has_witness;
     std::vector<std::optional<rawstd::Task<RawstorObjectMeta>>> open_tasks(
         slots.size()
     );
@@ -1216,7 +1210,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         if (!slots[i]) {
             continue;
         }
-        if (witnesses[i]) {
+        if (i == data_members) {
             if (rawstd_uuid_is_nil(&version_id)) {
                 open_tasks[i] = inspect_member(*slots[i], id, offset);
             }
@@ -1267,7 +1261,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
 
     co_await recreate_missing(
         queue, locations, id, offset, flags, version_id, slots, metas, opened,
-        missing, witnesses
+        missing, has_witness
     );
 
     // Members are assembled only now, with connect/open all already
@@ -1292,10 +1286,10 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         members.push_back(
             Member{
                 std::move(slots[i]), locations[i], metas[i], opened[i], false,
-                witnesses[i], missing[i] && opened[i]
+                i == data_members, missing[i] && opened[i]
             }
         );
-        if (opened[i] && !witnesses[i]) {
+        if (opened[i] && i < data_members) {
             ++reachable;
             if (!got_spec) {
                 spec = metas[i].spec;
