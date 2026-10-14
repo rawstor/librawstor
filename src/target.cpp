@@ -1775,27 +1775,7 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
     // Slot::remove()/remove_version() accordingly -- this method itself
     // stays a single entry point regardless, since the identity being
     // removed is already fully described by the target string.
-    std::vector<rawstd::URI> members;
-    if (rawstd_uuid_is_nil(&_version_id)) {
-        members = _uris;
-    } else {
-        for (const auto& uris : chunk_uris_by_offset(_uris)) {
-            std::vector<rawstd::URI> locations;
-            for (const auto& uri : uris) {
-                locations.push_back(strip_path(uri));
-            }
-            auto metadata = co_await resolve_meta(
-                queue, locations, uuid_from_target(uris.front()),
-                extract_offset(uris.front()), RawstdUUID{}
-            );
-            for (size_t i = 0; i < uris.size(); ++i) {
-                if (metadata[i].member_role != RAWSTOR_MEMBER_WITNESS) {
-                    members.push_back(uris[i]);
-                }
-            }
-        }
-    }
-    co_await remove_many(queue, members);
+    co_await remove_many(queue, _uris);
 }
 
 rawstd::Task<void>

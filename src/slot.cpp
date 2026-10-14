@@ -1171,6 +1171,19 @@ rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t offset) {
     }
 }
 
+rawstd::Task<void> Slot::_remove_version(
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& version_id
+) {
+    auto backend = _get_backend();
+    auto records = co_await backend->meta(id, offset, RawstdUUID{});
+    if (records.size() == 1 &&
+        records.front().member_role == RAWSTOR_MEMBER_WITNESS) {
+        co_return;
+    }
+    co_await backend->remove_version(idempotency_key, id, offset, version_id);
+}
+
 rawstd::Task<void> Slot::remove_version(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
@@ -1181,7 +1194,7 @@ rawstd::Task<void> Slot::remove_version(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::remove_version,
+            func_name, trace_event, &Slot::_remove_version,
             new_idempotency_key(), id, offset, version_id
         );
         _finish(t_call);

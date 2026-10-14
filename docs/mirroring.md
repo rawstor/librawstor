@@ -169,6 +169,10 @@ The state, the session count and the record lock live in the process that
 opens the copy (`Slot::CopyState`, shared by all its sessions to that copy):
 a copy is a member of whichever process stores it.
 
+Witnesses have no data snapshots. Removing a snapshot from a witness Slot
+succeeds without changing its live metadata record. Target dispatches snapshot removal
+to every member; the Slot handles metadata-only members locally.
+
 ### One copy per server
 
 To its clients a `rawstor-ost` is one copy of the chunk, whatever it

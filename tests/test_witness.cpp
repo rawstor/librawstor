@@ -974,3 +974,47 @@ TEST_F(WitnessTest, mds_dispatches_object_and_member_responses_on_one_backend) {
     run(*queue, std::move(info));
     run(*queue, backend->close());
 }
+
+TEST_F(WitnessTest, snapshot_removal_preserves_file_witness) {
+    create();
+    auto version = new_id();
+    rawstor::Target snapshot({rawstd::URI(
+        witness + "/" + id_string(id) + "/0/" + id_string(version)
+    )});
+    run(*queue, snapshot.remove(*queue));
+    run(*queue, snapshot.remove(*queue));
+    auto records = metas();
+    ASSERT_EQ(records.size(), 3u);
+    EXPECT_EQ(records.back().member_role, RAWSTOR_MEMBER_WITNESS);
+    EXPECT_EQ(records.back().state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+}
+
+TEST_F(WitnessTest, snapshot_removal_preserves_mds_witness) {
+    rawstor::tests::ObjectEnv servers(29629, 29630);
+    create(servers.location());
+    auto version = new_id();
+    rawstor::Target snapshot({rawstd::URI(
+        witness + "/" + id_string(id) + "/0/" + id_string(version)
+    )});
+    run(*queue, snapshot.remove(*queue));
+    run(*queue, snapshot.remove(*queue));
+    auto records = metas();
+    ASSERT_EQ(records.size(), 3u);
+    EXPECT_EQ(records.back().member_role, RAWSTOR_MEMBER_WITNESS);
+    EXPECT_EQ(records.back().state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+}
+
+TEST_F(WitnessTest, snapshot_removal_preserves_ost_witness) {
+    rawstor::tests::ObjectEnv servers(29631, 29632);
+    create("ost://127.0.0.1:29632");
+    auto version = new_id();
+    rawstor::Target snapshot({rawstd::URI(
+        witness + "/" + id_string(id) + "/0/" + id_string(version)
+    )});
+    run(*queue, snapshot.remove(*queue));
+    run(*queue, snapshot.remove(*queue));
+    auto records = metas();
+    ASSERT_EQ(records.size(), 3u);
+    EXPECT_EQ(records.back().member_role, RAWSTOR_MEMBER_WITNESS);
+    EXPECT_EQ(records.back().state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+}

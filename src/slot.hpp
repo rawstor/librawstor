@@ -44,6 +44,10 @@ private:
     class Admission;
     class Resync;
 
+    rawstd::Task<void> _remove_version(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& version_id
+    );
     rawstd::Task<void> _set_config(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags,
@@ -203,6 +207,7 @@ public:
     rawstd::Task<std::vector<RawstdUUID>>
     list_versions(const RawstdUUID& id, uint64_t offset);
 
+    // Witnesses have no snapshots; deleting one preserves the live record.
     rawstd::Task<void> remove_version(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
     );
