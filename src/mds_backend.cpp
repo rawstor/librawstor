@@ -226,8 +226,9 @@ rawstd::Task<void> Backend::list_chunks(
         auto members = co_await _member_transport();
         co_await members->list_chunks({}, limit, chunks, token, version_id);
         for (auto& group : chunks) {
-            group.opaque =
-                !(co_await _witness_meta(group.id, group.offsets.front()));
+            if (!(co_await _witness_meta(group.id, group.offsets.front()))) {
+                group.offsets.clear();
+            }
         }
         co_return;
     }

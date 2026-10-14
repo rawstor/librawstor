@@ -398,7 +398,7 @@ rawstd::Task<void> Location::list(
                 targets_map[group.id];
             RawstdUUIDString uuid_string;
             rawstd_uuid_to_string(&group.id, &uuid_string);
-            if (group.opaque) {
+            if (group.offsets.empty()) {
                 entries.emplace_back(0, rawstd::URI(location, uuid_string));
                 continue;
             }

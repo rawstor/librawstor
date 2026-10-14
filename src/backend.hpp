@@ -24,13 +24,11 @@ namespace rawstor {
 // chunks of the same multi-chunk object (docs/concepts.md), or, for an
 // mds:// volume specifically, every one of its own chunks (mds::Backend's
 // own chunk_slot_target(), docs/mds.md's "Chunk identity": obj_id =
-// volume_id). `offsets` is never empty: an id with nothing to report
-// isn't an entry at all.
+// volume_id). Empty offsets address the object as a whole; {0} addresses
+// its chunk at offset zero. An absent object has no entry.
 struct ChunkGroup {
     RawstdUUID id;
     std::vector<uint64_t> offsets;
-    bool opaque =
-        false; // One URI addresses the whole object, not physical chunks.
 };
 
 class Backend : public std::enable_shared_from_this<Backend> {
@@ -94,7 +92,8 @@ public:
     ) = 0;
 
     // `chunks`: overwritten with this page's own ChunkGroups, one per id,
-    // each carrying every offset this backend holds for that id
+    // each addressing a whole object with empty offsets, or carrying every
+    // physical offset this backend holds for that id
     // (ascending, including every chunk of an mds:// volume, now that
     // they all share their volume's own id -- ChunkGroup's own doc
     // comment) -- the caller (Location::list()) combines each one with

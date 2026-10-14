@@ -892,6 +892,17 @@ TEST_F(WitnessTest, mds_lists_objects_and_witnesses_with_one_cursor) {
         ASSERT_EQ(listed.size(), 1u);
         auto metadata = run(*queue, listed.front().meta(*queue, 0));
         ASSERT_EQ(metadata.size(), 1u);
+        ASSERT_EQ(listed.front().uris().size(), 1u);
+        if (metadata.front().member_role == RAWSTOR_MEMBER_WITNESS) {
+            EXPECT_EQ(
+                listed.front().uris().front().str(),
+                servers.location() + "/" + id_string(id) + "/0"
+            );
+        } else {
+            EXPECT_EQ(
+                listed.front().uris().front().str(), data.uris().front().str()
+            );
+        }
         witnesses += metadata.front().member_role == RAWSTOR_MEMBER_WITNESS;
         objects += metadata.front().member_role == RAWSTOR_MEMBER_DATA;
         if (rawstor_pagination_token_empty(&token)) {

@@ -1106,7 +1106,10 @@ Witness metadata uses the existing 360-byte Meta record: state encodes
 survivors in member order.
 `SET_CONFIG` atomically persists state plus
 configuration using the existing SetConfig request layout. Ordinary `LIST`
-reports both registered objects and native witness records on MDS. No data
+reports both registered objects and native witness records on MDS. Internally,
+a listing group with empty offsets addresses a whole object; `{0}` addresses
+one physical chunk at offset zero. MDS converts registered-object rows to
+empty offsets and preserves all offsets of native witness records. No data
 I/O or CoW operation is issued to a witness.
 
 Protocol version/feature negotiation and an I/O `map_epoch` fence are
