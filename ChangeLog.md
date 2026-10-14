@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rawstor-vhost`'s `--num-queues`: it now serves as many virtqueues as the front-end sets up (QEMU's own `num-queues=`), so QEMU no longer fails to start a guest with more vCPUs than `--num-queues` (default `4`).
 
 ### Fixed
+- OST shutdown waits for active requests and member-state persistence before destroying its I/O queue.
 - Multi-chunk `mds://` objects accept I/O beyond the first chunk while retaining object bounds checks.
 - Resync preserves partial-sector client writes and clears `LOST` only after flushing the restored copy.
 - With the `poll()` backend (`--without-liburing`, always on macOS), the next request after one that had exhausted its retries hung forever instead of reconnecting.

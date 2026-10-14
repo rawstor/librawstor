@@ -96,15 +96,6 @@ void check_copy_range(uint64_t offset, size_t size, uint64_t capacity) {
     }
 }
 
-// Own the Slot until its pending I/O and departure have completed.
-rawstd::DetachedTask abandon_slot(std::shared_ptr<rawstor::Slot> slot) {
-    try {
-        co_await slot->close();
-    } catch (const std::exception& e) {
-        rawstd_error("Failed to close slot after disconnect: %s\n", e.what());
-    }
-}
-
 rawstd::Task<void> co_leave_slot(std::shared_ptr<rawstor::Slot> slot) {
     std::exception_ptr error;
     try {
@@ -341,6 +332,7 @@ Client::Client(Private, RawIOQueue* queue, Server& server, int fd) :
     _fd(fd),
     _recv_event(nullptr),
     _slot(nullptr) {
+    ++_server._live_clients;
 }
 
 Client::~Client() noexcept {
@@ -350,7 +342,7 @@ Client::~Client() noexcept {
     // work; a caller that awaited close() before letting this Client be
     // destroyed finds nothing left to do here at all.
     if (_slot) {
-        abandon_slot(std::move(_slot));
+        _server._abandon_slot(std::move(_slot));
     }
     if (_recv_event != nullptr) {
         int res = rawio_cancel(_queue, _recv_event);
@@ -365,6 +357,7 @@ Client::~Client() noexcept {
     if (_fd != -1) {
         ::close(_fd);
     }
+    --_server._live_clients;
 }
 
 rawstd::Task<void> Client::close() {

@@ -297,6 +297,8 @@ are indexed by: the copy takes its own role from it.
 set: the server closes it cleanly, and a copy with no session open for
 writing left marks itself `CLEAN`. A session that wrote and ends any other
 way -- disconnect, a new `SET_OBJECT` -- leaves a `DIRTY` copy `LOST`.
+OST shutdown drains active requests and slot departures before destroying
+the I/O queue, allowing the final consistency state to reach storage.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
