@@ -1100,7 +1100,7 @@ rawstd::Task<void> Slot::_create_version(
     auto backend = _get_backend();
     auto records = co_await backend->meta(id, offset, RawstdUUID{});
     if (records.size() == 1 &&
-        records.front().member_role == RAWSTOR_MEMBER_META) {
+        records.front().member_role == RAWSTOR_MEMBER_WITNESS) {
         co_return;
     }
     co_await backend->create_version(idempotency_key, id, offset, version_id);
@@ -1191,7 +1191,7 @@ rawstd::Task<void> Slot::_remove_version(
     auto backend = _get_backend();
     auto records = co_await backend->meta(id, offset, RawstdUUID{});
     if (records.size() == 1 &&
-        records.front().member_role == RAWSTOR_MEMBER_META) {
+        records.front().member_role == RAWSTOR_MEMBER_WITNESS) {
         co_return;
     }
     co_await backend->remove_version(idempotency_key, id, offset, version_id);
@@ -1333,7 +1333,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // all -- it talks to meta()/chunks()/resolve_locations() directly on
     // a Slot that was never open()ed -- so a witness stays fully
     // queryable; only a real data open is refused.
-    if (answer->member_role == RAWSTOR_MEMBER_META) {
+    if (answer->member_role == RAWSTOR_MEMBER_WITNESS) {
         RawstdUUIDString id_string;
         rawstd_uuid_to_string(&id, &id_string);
         rawstd_error(

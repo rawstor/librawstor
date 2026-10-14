@@ -315,7 +315,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
         try {
-            if (payload.member_role != RAWSTOR_MEMBER_META ||
+            if (payload.member_role != RAWSTOR_MEMBER_WITNESS ||
                 payload.chunk_shift >= 64) {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }

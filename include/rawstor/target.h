@@ -22,7 +22,7 @@ extern "C" {
 /** Chunk member roles (docs/mds.md, chunk_meta.member_role). */
 enum RawstorMemberRole {
     RAWSTOR_MEMBER_DATA = 1,
-    RAWSTOR_MEMBER_META = 2, /**< Metadata-only quorum member. */
+    RAWSTOR_MEMBER_WITNESS = 2, /**< Metadata-only quorum member. */
 };
 
 /**

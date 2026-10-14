@@ -316,7 +316,7 @@ rawstd::Task<void> Backend::create(
         // A witness keeps an empty data file for namespace enumeration.
         // Its declared logical size is stored in the companion metadata.
         // Data binding rejects metadata-only members by their role.
-        if (member_role != RAWSTOR_MEMBER_META) {
+        if (member_role != RAWSTOR_MEMBER_WITNESS) {
             // fallocate() actually reserves real blocks -- this file backs a
             // virtio-blk-style virtual disk, so a write into unallocated
             // territory otherwise depends on the filesystem's own delayed

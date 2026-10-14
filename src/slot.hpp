@@ -260,7 +260,7 @@ public:
     // to give anyway). `flags` (RAWSTOR_READONLY or 0) goes to
     // Backend::set_object() (a non-nil `version_id` binds via
     // set_version() instead, read-only by nature). Throws ENOTSUP if
-    // that answer's own member_role is RAWSTOR_MEMBER_META -- a
+    // that answer's own member_role is RAWSTOR_MEMBER_WITNESS -- a
     // witness holds no data and is never a valid target for real I/O
     // (docs/mds.md, "Witness"); its own .cpp doc comment on
     // why this is the one place that needs to check.

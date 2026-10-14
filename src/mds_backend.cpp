@@ -476,7 +476,7 @@ Backend::_witness_meta(const RawstdUUID& id, uint64_t offset) {
     try {
         auto records = co_await _wire_meta(id, offset, RawstdUUID{});
         if (records.size() != 1 ||
-            records.front().member_role != RAWSTOR_MEMBER_META) {
+            records.front().member_role != RAWSTOR_MEMBER_WITNESS) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
         co_return records.front();
@@ -544,7 +544,7 @@ rawstd::Task<void> Backend::create(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
     const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
-    if (member_role == RAWSTOR_MEMBER_META) {
+    if (member_role == RAWSTOR_MEMBER_WITNESS) {
         co_await _wire_create(idempotency_key, id, offset, sp, member_role);
         co_return;
     }

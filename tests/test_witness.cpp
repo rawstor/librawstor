@@ -146,7 +146,7 @@ TEST_F(WitnessTest, metadata_only_creation_and_clean_close) {
     seed();
     auto metadata = metas();
     ASSERT_EQ(metadata.size(), 3u);
-    EXPECT_EQ(metadata[2].member_role, RAWSTOR_MEMBER_META);
+    EXPECT_EQ(metadata[2].member_role, RAWSTOR_MEMBER_WITNESS);
     EXPECT_EQ(metadata[2].spec.size, spec.size);
     EXPECT_EQ(metadata[2].spec.width, 2u);
     EXPECT_EQ(run(*queue, target->spec(*queue)).width, 2u);
@@ -298,7 +298,7 @@ TEST_F(WitnessTest, mds_stores_witness_and_votes) {
         auto object = run(*queue, target->open(*queue, 0));
         write(*object);
         run(*queue, object->close(true));
-        EXPECT_EQ(metas()[2].member_role, RAWSTOR_MEMBER_META);
+        EXPECT_EQ(metas()[2].member_role, RAWSTOR_MEMBER_WITNESS);
     }
     run(*queue, target->remove(*queue));
 }
@@ -460,7 +460,7 @@ TEST_F(WitnessTest, last_location_is_witness_and_preserves_data_quorum) {
     create();
     EXPECT_EQ(metas()[0].member_role, RAWSTOR_MEMBER_DATA);
     EXPECT_EQ(metas()[1].member_role, RAWSTOR_MEMBER_DATA);
-    EXPECT_EQ(metas()[2].member_role, RAWSTOR_MEMBER_META);
+    EXPECT_EQ(metas()[2].member_role, RAWSTOR_MEMBER_WITNESS);
     EXPECT_EQ(run(*queue, target->spec(*queue)).size, spec.size);
     seed();
     HiddenLocation offline(b);
@@ -550,7 +550,7 @@ TEST_F(WitnessTest, listing_keeps_data_and_witness_records_in_shared_store) {
     for (const auto& entry : listed) {
         auto metadata = run(*queue, entry.meta(*queue, 0));
         ASSERT_EQ(metadata.size(), 1u);
-        witnesses += metadata.front().member_role == RAWSTOR_MEMBER_META;
+        witnesses += metadata.front().member_role == RAWSTOR_MEMBER_WITNESS;
         data_members += metadata.front().member_role == RAWSTOR_MEMBER_DATA;
     }
     EXPECT_EQ(witnesses, 1u);
@@ -868,7 +868,7 @@ TEST_F(WitnessTest, missing_witness_is_recreated_with_its_expected_role) {
     auto object = run(*queue, target->open(*queue, 0));
     write(*object);
     metadata = metas();
-    EXPECT_EQ(metadata[2].member_role, RAWSTOR_MEMBER_META);
+    EXPECT_EQ(metadata[2].member_role, RAWSTOR_MEMBER_WITNESS);
     EXPECT_EQ(metadata[2].spec.size, spec.size);
     run(*queue, object->close(true));
 }
@@ -898,7 +898,7 @@ TEST_F(WitnessTest, mds_lists_objects_and_witnesses_with_one_cursor) {
         auto metadata = run(*queue, listed.front().meta(*queue, 0));
         ASSERT_EQ(metadata.size(), 1u);
         ASSERT_EQ(listed.front().uris().size(), 1u);
-        if (metadata.front().member_role == RAWSTOR_MEMBER_META) {
+        if (metadata.front().member_role == RAWSTOR_MEMBER_WITNESS) {
             EXPECT_EQ(
                 listed.front().uris().front().str(),
                 servers.location() + "/" + id_string(id) + "/0"
@@ -908,7 +908,7 @@ TEST_F(WitnessTest, mds_lists_objects_and_witnesses_with_one_cursor) {
                 listed.front().uris().front().str(), data.uris().front().str()
             );
         }
-        witnesses += metadata.front().member_role == RAWSTOR_MEMBER_META;
+        witnesses += metadata.front().member_role == RAWSTOR_MEMBER_WITNESS;
         objects += metadata.front().member_role == RAWSTOR_MEMBER_DATA;
         if (rawstor_pagination_token_empty(&token)) {
             break;
@@ -977,7 +977,7 @@ TEST_F(WitnessTest, mds_dispatches_object_and_member_responses_on_one_backend) {
     EXPECT_TRUE(run(*queue, std::move(versions)).empty());
     auto records = run(*queue, std::move(metadata));
     ASSERT_EQ(records.size(), 1u);
-    EXPECT_EQ(records.front().member_role, RAWSTOR_MEMBER_META);
+    EXPECT_EQ(records.front().member_role, RAWSTOR_MEMBER_WITNESS);
     run(*queue, std::move(info));
     run(*queue, backend->close());
 }
@@ -998,7 +998,7 @@ TEST_F(WitnessTest, snapshot_operations_preserve_file_witness) {
     run(*queue, snapshot.remove(*queue));
     auto records = metas();
     ASSERT_EQ(records.size(), 3u);
-    EXPECT_EQ(records.back().member_role, RAWSTOR_MEMBER_META);
+    EXPECT_EQ(records.back().member_role, RAWSTOR_MEMBER_WITNESS);
     EXPECT_EQ(records.back().state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 }
 
@@ -1018,7 +1018,7 @@ TEST_F(WitnessTest, snapshot_operations_preserve_mds_witness) {
     run(*queue, snapshot.remove(*queue));
     auto records = metas();
     ASSERT_EQ(records.size(), 3u);
-    EXPECT_EQ(records.back().member_role, RAWSTOR_MEMBER_META);
+    EXPECT_EQ(records.back().member_role, RAWSTOR_MEMBER_WITNESS);
     EXPECT_EQ(records.back().state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 }
 
@@ -1039,7 +1039,7 @@ TEST_F(WitnessTest, snapshot_operations_preserve_ost_witness) {
     run(*queue, snapshot.remove(*queue));
     auto records = metas();
     ASSERT_EQ(records.size(), 3u);
-    EXPECT_EQ(records.back().member_role, RAWSTOR_MEMBER_META);
+    EXPECT_EQ(records.back().member_role, RAWSTOR_MEMBER_WITNESS);
     EXPECT_EQ(records.back().state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 }
 

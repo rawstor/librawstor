@@ -252,7 +252,7 @@ chunk_meta {
   version                  // version_id this slot belongs to; nil = live
   redundancy               // mirror{R} | ec{k,m} — how to decode
   slot_index
-  member_role              // DATA = 1 | META = 2 — witness records are metadata-only
+  member_role              // DATA = 1 | WITNESS = 2 — witness records are metadata-only
                            // and are excluded from the map reconstruct
   created_at, project_id
   // per-slot consistency (exists today, per mirroring.md)
@@ -928,7 +928,7 @@ is the third vote that restores auto-start with one OST down. Implementation:
 any server speaking the witness subset (`ALLOCATE`/`META`/`SET_CONFIG`/`RELEASE`) — a plain OST, an
 OST doubling as partial MDS, or the MDS itself. The member appears in the
 target list like any other member; data I/O and resync skip it. Its stored
-record carries `member_role = META` (see `chunk_meta`), so the
+record carries `member_role = WITNESS` (see `chunk_meta`), so the
 reconstruct scan (`LIST` + per-object `META`) never mistakes the witness
 host for a data slot.
 
@@ -1056,7 +1056,7 @@ witness tables being the reason `synchronous=FULL` is non-negotiable.
 rebuild the map:
   get the OST roster from topology (v1: static config)
   for each OST: LIST -> physical ids, then per id: META -> chunk_meta
-  drop member_role = META records (metadata-only, not slots)
+  drop member_role = WITNESS records (metadata-only, not slots)
   group by (id, version): nil version -> live chunk_map,
                                  version = version_id -> version view
   within each group: order by logical_index
@@ -1070,7 +1070,7 @@ flowchart TB
         direction LR
         L["LIST: physical ids"] --> Me["META per id: chunk_meta"]
     end
-    Scan --> W{"member_role<br/>= META?"}
+    Scan --> W{"member_role<br/>= WITNESS?"}
     W -- yes --> Drop["dropped: metadata only, not a slot"]
     W -- no --> G["group by (id, version)"]
     G -- "nil version" --> Live["live chunk_map<br/>ordered by logical_index"]

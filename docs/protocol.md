@@ -433,7 +433,7 @@ replica of the register's ballots: the highest it promised and the one
 its Config was accepted under. OST reports the record of its one backend Slot.
 `width` is the non-zero number of data members; witness members are excluded
 from this count. A zero width in received metadata is a protocol error.
-Member roles are `DATA = 1` and `META = 2` (metadata-only witnesses); zero
+Member roles are `DATA = 1` and `WITNESS = 2` (metadata-only witnesses); zero
 is reserved for an unknown role in an unavailable member's local placeholder.
 
 ```text

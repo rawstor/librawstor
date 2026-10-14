@@ -441,7 +441,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     accepted = {0x56, 0x78};
 
     rawstor::blk::Backend::ChunkIdentity identity{};
-    identity.member_role = RAWSTOR_MEMBER_META;
+    identity.member_role = RAWSTOR_MEMBER_WITNESS;
     identity.width = 3;
     identity.chunk_size = 0x1000;
     identity.size = 0x123456789abcdef0ull;
@@ -503,7 +503,7 @@ TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
         r = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     }
     rawstor::blk::Backend::ChunkIdentity identity{
-        RAWSTOR_MEMBER_META, 255, ~0ull, ~0ull
+        RAWSTOR_MEMBER_WITNESS, 255, ~0ull, ~0ull
     };
 
     std::string encoded = MetadataBackend::meta_encode(
@@ -635,7 +635,7 @@ TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
 
 // A witness (docs/mds.md, "Witness (stage 3)") isn't reachable through
 // any public API yet -- no placement code anywhere ever passes
-// RAWSTOR_MEMBER_META to Slot::create()/Backend::create() -- so this
+// RAWSTOR_MEMBER_WITNESS to Slot::create()/Backend::create() -- so this
 // goes straight to Slot::create() itself, the same way Target::create()'s
 // own create_one() (target.cpp) would if a witness-attach path existed.
 TEST(BlkBackendTest, witness_member_holds_no_data_and_refuses_real_io) {
@@ -656,7 +656,7 @@ TEST(BlkBackendTest, witness_member_holds_no_data_and_refuses_real_io) {
 
     std::unique_ptr<rawstor::Slot> slot =
         run(*queue, rawstor::Slot::create(*queue, location));
-    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_META));
+    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_WITNESS));
 
     // Holds no data: its own "data" file exists (still enumerable --
     // e.g. rawstor-mds's reconstruct scan, which tells it apart from a
