@@ -885,6 +885,10 @@ coordination between independently attached writers is multiattach stage 2
 and is not implemented by this feature.
 
 `Backend::set_config()` atomically stores the record's state and configuration.
+Chunk uses the same member configuration/state update path for DATA and
+witness members. The caller decides whether quorum permits recreating a
+missing member. The member role selects
+the allocation type; it does not select a separate state-write operation.
 The OST transports it using `SET_CONFIG`; MDS commits it in SQLite WAL with
 `synchronous=FULL`. The block backends use their existing metadata format:
 file witnesses keep an empty data file plus metadata, LVM witnesses use a

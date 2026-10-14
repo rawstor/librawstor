@@ -1446,54 +1446,50 @@ bool Chunk::_has_witness() const noexcept {
     return _data_count() != _members.size();
 }
 
-rawstd::Task<void> Chunk::_write_witness(
-    RawstorObjectSyncStateValue state, RawstorObjectConfig config, bool required
+rawstd::Task<void> Chunk::_set_member_config(
+    size_t index, RawstorObjectConfig config, unsigned int flags,
+    std::optional<RawstorObjectSyncStateValue> state, bool recreate_missing
 ) {
-    for (size_t index = 0; index < _members.size(); ++index) {
-        auto& m = _members[index];
-        if (!m.witness) {
-            continue;
+    auto& member = _members[index];
+    try {
+        if (!member.slot) {
+            member.slot = co_await Slot::create(_queue, member.location);
         }
-        std::exception_ptr error;
+        bool missing = false;
         try {
-            if (!m.slot) {
-                m.slot = co_await Slot::create(_queue, m.location);
+            co_await member.slot->set_config(
+                _id, _offset, static_cast<uint8_t>(index), config, flags, state
+            );
+        } catch (const std::system_error& e) {
+            if (e.code().value() != ENOENT || !recreate_missing) {
+                throw;
             }
-            bool missing = false;
-            try {
-                co_await m.slot->set_config(
-                    _id, _offset, static_cast<uint8_t>(index), config, 0, state
-                );
-            } catch (const std::system_error& e) {
-                if (e.code().value() != ENOENT || required) {
-                    throw;
-                }
-                missing = true;
-            }
-            if (missing) {
-                co_await m.slot->create(
-                    _id, _offset, _spec, RAWSTOR_MEMBER_WITNESS
-                );
-                co_await m.slot->set_config(
-                    _id, _offset, static_cast<uint8_t>(index), config, 0, state
-                );
-            }
-            m.reachable = true;
-            m.meta.member_role = RAWSTOR_MEMBER_WITNESS;
-            m.meta.state = state;
-            m.meta.config = config;
-        } catch (...) {
-            m.reachable = false;
-            error = std::current_exception();
+            missing = true;
         }
-        if (error) {
-            if (required) {
-                std::rethrow_exception(error);
-            }
-            rawstd_warning(
-                "Witness configuration update failed; member excluded\n"
+        if (missing) {
+            co_await member.slot->create(
+                _id, _offset, _spec,
+                member.witness ? RAWSTOR_MEMBER_WITNESS : RAWSTOR_MEMBER_DATA
+            );
+            co_await member.slot->set_config(
+                _id, _offset, static_cast<uint8_t>(index), config, flags, state
             );
         }
+        member.reachable = true;
+        member.meta.member_role =
+            member.witness ? RAWSTOR_MEMBER_WITNESS : RAWSTOR_MEMBER_DATA;
+        member.meta.config = config;
+        if (state) {
+            member.meta.state = *state;
+        }
+    } catch (const std::system_error& e) {
+        if (e.code().value() != ENOSYS || _has_witness()) {
+            member.reachable = false;
+        }
+        throw;
+    } catch (...) {
+        member.reachable = false;
+        throw;
     }
 }
 
@@ -2037,17 +2033,20 @@ rawstd::Task<void> Chunk::_record_witness(bool bump, size_t joining) {
             bool required = (targets.size() + joining) * 2 <= _data_count();
             std::exception_ptr error;
             try {
-                co_await _write_witness(
-                    RAWSTOR_OBJECT_SYNC_STATE_DIRTY, config, required
+                co_await _set_member_config(
+                    _members.size() - 1, config, 0,
+                    RAWSTOR_OBJECT_SYNC_STATE_DIRTY, !required
                 );
             } catch (...) {
-                error = std::current_exception();
+                if (required) {
+                    error = std::current_exception();
+                } else {
+                    rawstd_warning(
+                        "Member configuration update failed; member excluded\n"
+                    );
+                }
             }
-            bool valid = true;
-            for (const auto& member : _members) {
-                valid &= !member.witness || member.reachable;
-            }
-            if (!valid) {
+            if (!_members.back().reachable) {
                 std::lock_guard<std::mutex> guard(c.mutex());
                 c.witness_vote_locked(false);
                 if (error) {
@@ -2087,7 +2086,7 @@ rawstd::Task<void> Chunk::_set_config_one(
         co_return;
     }
     try {
-        co_await _members[idx].slot->set_config(_id, _offset, idx, config, 0);
+        co_await _set_member_config(idx, config);
     } catch (const std::system_error& e) {
         int error = e.code().value();
         if (error == ENOSYS && !_has_witness()) {
@@ -2466,7 +2465,7 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
 
         int error = 0;
         try {
-            co_await _members[idx].slot->set_config(_id, _offset, idx, m, 0);
+            co_await _set_member_config(idx, m);
         } catch (const std::system_error& e) {
             error = e.code().value();
         }
@@ -2827,9 +2826,7 @@ rawstd::Task<void> Chunk::_resync_finish(uint64_t generation) {
 
     int error = 0;
     try {
-        co_await _members[idx].slot->set_config(
-            _id, _offset, idx, m, RAWSTOR_CONFIG_CLEAR_LOST
-        );
+        co_await _set_member_config(idx, m, RAWSTOR_CONFIG_CLEAR_LOST);
     } catch (const std::system_error& e) {
         error = e.code().value();
     }
@@ -3531,8 +3528,9 @@ rawstd::Task<void> Chunk::close(bool clean) {
                         std::lock_guard<std::mutex> guard(c.mutex());
                         config = c.configuration_locked();
                     }
-                    co_await _write_witness(
-                        RAWSTOR_OBJECT_SYNC_STATE_CLEAN, config
+                    co_await _set_member_config(
+                        _members.size() - 1, config, 0,
+                        RAWSTOR_OBJECT_SYNC_STATE_CLEAN, true
                     );
                 }
             }

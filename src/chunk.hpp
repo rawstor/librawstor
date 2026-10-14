@@ -94,9 +94,10 @@ private:
 
     size_t _data_count() const noexcept;
     bool _has_witness() const noexcept;
-    rawstd::Task<void> _write_witness(
-        RawstorObjectSyncStateValue state, RawstorObjectConfig config,
-        bool required = false
+    rawstd::Task<void> _set_member_config(
+        size_t index, RawstorObjectConfig config, unsigned int flags = 0,
+        std::optional<RawstorObjectSyncStateValue> state = std::nullopt,
+        bool recreate_missing = false
     );
     rawstd::Task<void> _record_witness(bool bump, size_t joining);
 
