@@ -855,11 +855,11 @@ The URI contains only the address. Creation makes the last location a
 witness when the chunk has `width + 1`
 locations and `width` is even and at least two. With `width` locations, all
 members store data. Each member reports its own type
-through `META.member_role`. For a complete target, the last member's role
-also follows from the data width reported by an available member: an even
-`width` with `width + 1` locations declares a witness, regardless of the last
-member's availability or the recorded configuration. No extra position
-field is stored.
+through `META.member_role`, and an available member's reported role is
+preserved. For a complete target, an unavailable last member's role is
+inferred from the data width reported by an available member: an even
+`width` with `width + 1` locations declares a witness. This inference does
+not depend on the recorded configuration. No extra position field is stored.
 One witness per chunk is supported, only alongside an even number of data
 members (2, 4, 6, ...). Odd data-member counts are rejected with `EINVAL`.
 The ordinary create path creates it with the other members; `width` counts
