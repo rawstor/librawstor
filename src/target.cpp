@@ -265,8 +265,9 @@ rawstd::Task<void> create_one(
 }
 
 rawstd::Task<void> initialize_witness(
-    rawio::Queue& queue, const std::vector<rawstd::URI>& members, size_t witness
+    rawio::Queue& queue, const std::vector<rawstd::URI>& members
 ) {
+    const size_t witness = members.size() - 1;
     RawstdUUID generation{};
     if (rawstd_uuid7_init(&generation) != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
@@ -1407,7 +1408,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
         if (!eptr) {
             try {
                 if (witness) {
-                    co_await initialize_witness(queue, uris, uris.size() - 1);
+                    co_await initialize_witness(queue, uris);
                 }
             } catch (...) {
                 eptr = std::current_exception();
