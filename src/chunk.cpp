@@ -1190,13 +1190,11 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
             witness_member = i + 1;
         }
     }
-    if (!witness_member && !metas.empty() &&
-        metas.back().state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+    if (!witness_member) {
         for (const auto& meta : metas) {
             if (meta.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
                 meta.spec.width % 2 == 0 &&
-                locations.size() == meta.spec.width + 1 &&
-                meta.config.nroles == locations.size()) {
+                locations.size() == meta.spec.width + 1) {
                 witness_member = locations.size();
                 break;
             }
