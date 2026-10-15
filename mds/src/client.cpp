@@ -317,7 +317,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
             RawstorObjectSpec spec{};
             RawstorMemberRole role{};
             if (int error =
-                    rawstor_frame_allocate_decode(&spec, &role, &payload)) {
+                    rawstor_frame_allocate_decode(&payload, &spec, &role)) {
                 RAWSTD_THROW_SYSTEM_ERROR(error);
             }
             if (role != RAWSTOR_MEMBER_WITNESS) {
@@ -372,7 +372,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         try {
             RawstorObjectConfig config{};
             if (int error =
-                    rawstor_frame_config_decode(&config, &payload.config)) {
+                    rawstor_frame_config_decode(&payload.config, &config)) {
                 RAWSTD_THROW_SYSTEM_ERROR(error);
             }
             store.set_config(

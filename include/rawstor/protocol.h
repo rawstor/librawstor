@@ -607,7 +607,7 @@ static inline int rawstor_frame_config_encode(
 }
 
 static inline int rawstor_frame_config_decode(
-    struct RawstorObjectConfig* out, const struct RawstorFrameConfig* in
+    const struct RawstorFrameConfig* in, struct RawstorObjectConfig* out
 ) {
     memset(out, 0, sizeof(*out));
     out->epoch = in->epoch;
@@ -650,7 +650,7 @@ static inline int rawstor_frame_meta_encode(
 }
 
 static inline int rawstor_frame_meta_decode(
-    struct RawstorObjectMeta* out, const struct RawstorFrameMetaPayload* in
+    const struct RawstorFrameMetaPayload* in, struct RawstorObjectMeta* out
 ) {
     memset(out, 0, sizeof(*out));
     out->member_role = (enum RawstorMemberRole)in->member_role;
@@ -667,7 +667,7 @@ static inline int rawstor_frame_meta_decode(
         in->chunk_shift == 0 ? 0 : UINT64_C(1) << in->chunk_shift;
     out->promised = in->promised;
     out->accepted = in->accepted;
-    return rawstor_frame_config_decode(&out->config, &in->config);
+    return rawstor_frame_config_decode(&in->config, &out->config);
 }
 
 /* Allocation conversion includes spec and member role. The encoder preserves
@@ -692,8 +692,8 @@ static inline int rawstor_frame_allocate_encode(
     return 0;
 }
 static inline int rawstor_frame_allocate_decode(
-    struct RawstorObjectSpec* out, enum RawstorMemberRole* role,
-    const struct RawstorFrameAllocatePayload* in
+    const struct RawstorFrameAllocatePayload* in, struct RawstorObjectSpec* out,
+    enum RawstorMemberRole* role
 ) {
     if (in->chunk_shift >= 64) {
         return EPROTO;

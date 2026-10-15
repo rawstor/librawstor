@@ -1001,7 +1001,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_wire_meta(
             *static_cast<const RawstorFrameMetaPayload*>(
                 static_cast<const void*>(response.data())
             );
-        if (int error = rawstor_frame_meta_decode(&ret, &payload)) {
+        if (int error = rawstor_frame_meta_decode(&payload, &ret)) {
             RAWSTD_THROW_SYSTEM_ERROR(error);
         }
     } catch (const std::system_error&) {
@@ -1067,7 +1067,7 @@ rawstd::Task<bool> Backend::_sync_request(
 
     co_await *op;
     const RawstorFrameSyncReplyPayload& reply = op->reply();
-    if (int error = rawstor_frame_meta_decode(&meta, &reply.meta)) {
+    if (int error = rawstor_frame_meta_decode(&reply.meta, &meta)) {
         RAWSTD_THROW_SYSTEM_ERROR(error);
     }
     co_return reply.ok != 0;

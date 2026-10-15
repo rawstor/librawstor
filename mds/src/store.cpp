@@ -538,7 +538,7 @@ ObjectStore::witness_meta(const RawstdUUID& id, uint64_t offset) {
     RawstorFrameMetaPayload record{};
     memcpy(&record, bytes.data(), sizeof(record));
     RawstorObjectMeta meta{};
-    if (int error = rawstor_frame_meta_decode(&meta, &record)) {
+    if (int error = rawstor_frame_meta_decode(&record, &meta)) {
         RAWSTD_THROW_SYSTEM_ERROR(error);
     }
     return meta;
@@ -571,7 +571,7 @@ void ObjectStore::set_config(
     RawstorFrameMetaPayload record{};
     memcpy(&record, bytes.data(), sizeof(record));
     RawstorObjectMeta meta{};
-    if (int error = rawstor_frame_meta_decode(&meta, &record)) {
+    if (int error = rawstor_frame_meta_decode(&record, &meta)) {
         RAWSTD_THROW_SYSTEM_ERROR(error);
     }
     if (state) {

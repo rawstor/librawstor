@@ -683,7 +683,7 @@ TEST(ProtocolTest, metadata_round_trip_preserves_members_and_register) {
         RawstorFrameMetaPayload wire{};
         ASSERT_EQ(rawstor_frame_meta_encode(&wire, &input), 0);
         RawstorObjectMeta output{};
-        ASSERT_EQ(rawstor_frame_meta_decode(&output, &wire), 0);
+        ASSERT_EQ(rawstor_frame_meta_decode(&wire, &output), 0);
         EXPECT_EQ(output.spec.size, input.spec.size);
         EXPECT_EQ(output.spec.width, input.spec.width);
         EXPECT_EQ(output.spec.chunk_size, input.spec.chunk_size);
@@ -715,14 +715,14 @@ TEST(ProtocolTest, conversion_rejects_unrepresentable_metadata) {
     meta.spec.chunk_size = 4096;
     ASSERT_EQ(rawstor_frame_meta_encode(&wire, &meta), 0);
     wire.chunk_shift = 64;
-    EXPECT_EQ(rawstor_frame_meta_decode(&meta, &wire), EPROTO);
+    EXPECT_EQ(rawstor_frame_meta_decode(&wire, &meta), EPROTO);
     wire.chunk_shift = 12;
     wire.member_role = 0;
-    EXPECT_EQ(rawstor_frame_meta_decode(&meta, &wire), EPROTO);
+    EXPECT_EQ(rawstor_frame_meta_decode(&wire, &meta), EPROTO);
     wire.member_role = RAWSTOR_MEMBER_DATA;
     wire.config.nroles = 1;
     wire.config.roles[0] = RAWSTOR_OBJECT_MEMBER_EXCLUDED + 1;
-    EXPECT_EQ(rawstor_frame_meta_decode(&meta, &wire), EINVAL);
+    EXPECT_EQ(rawstor_frame_meta_decode(&wire, &meta), EINVAL);
 }
 
 TEST(ProtocolTest, config_encoding_clears_unused_roles) {
@@ -757,7 +757,7 @@ TEST(ProtocolTest, allocation_preserves_identity_and_placement) {
     EXPECT_EQ(wire.chunk_offset, 4096u);
     RawstorObjectSpec output{};
     RawstorMemberRole role{};
-    ASSERT_EQ(rawstor_frame_allocate_decode(&output, &role, &wire), 0);
+    ASSERT_EQ(rawstor_frame_allocate_decode(&wire, &output, &role), 0);
     EXPECT_EQ(output.size, input.size);
     EXPECT_EQ(output.width, input.width);
     EXPECT_EQ(output.chunk_size, input.chunk_size);

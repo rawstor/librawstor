@@ -871,7 +871,7 @@ rawstd::DetachedTask Client::_allocate(
     try {
         RawstorObjectSpec spec{};
         RawstorMemberRole role{};
-        if (int error = rawstor_frame_allocate_decode(&spec, &role, &payload)) {
+        if (int error = rawstor_frame_allocate_decode(&payload, &spec, &role)) {
             RAWSTD_THROW_SYSTEM_ERROR(error);
         }
         co_await with_slot(
@@ -1134,7 +1134,7 @@ rawstd::DetachedTask Client::_set_config(
     } else {
         try {
             if (int error =
-                    rawstor_frame_config_decode(&config, &payload.config)) {
+                    rawstor_frame_config_decode(&payload.config, &config)) {
                 RAWSTD_THROW_SYSTEM_ERROR(error);
             }
             rawio::Queue& queue = *static_cast<rawio::Queue*>(client->_queue);
@@ -1203,7 +1203,7 @@ rawstd::DetachedTask Client::_sync(
     } else {
         try {
             if (int error =
-                    rawstor_frame_config_decode(&config, &payload.config)) {
+                    rawstor_frame_config_decode(&payload.config, &config)) {
                 RAWSTD_THROW_SYSTEM_ERROR(error);
             }
             rawio::Queue& queue = *static_cast<rawio::Queue*>(client->_queue);
