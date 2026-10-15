@@ -27,15 +27,5 @@ inline bool member_has_config(
            memcmp(member.config.roles, config.roles, config.nroles) == 0;
 }
 
-inline bool member_matches_config(
-    const RawstorObjectMeta& member, const RawstorObjectConfig& config,
-    size_t index, size_t members
-) noexcept {
-    return member_has_config(member, config, members) &&
-           (config.nroles == 0 ||
-            (index < members &&
-             config.roles[index] == RAWSTOR_OBJECT_MEMBER_IN_SYNC));
-}
-
 } // namespace rawstor
 #endif

@@ -52,6 +52,16 @@
 
 namespace {
 
+bool member_matches_config(
+    const RawstorObjectMeta& member, const RawstorObjectConfig& config,
+    size_t index, size_t members
+) noexcept {
+    return rawstor::member_has_config(member, config, members) &&
+           (config.nroles == 0 ||
+            (index < members &&
+             config.roles[index] == RAWSTOR_OBJECT_MEMBER_IN_SYNC));
+}
+
 void validate_not_empty(const std::vector<rawstd::URI>& uris) {
     if (!uris.empty()) {
         return;
