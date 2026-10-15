@@ -1313,12 +1313,16 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // (zero-filled) member.
     std::vector<RawstorObjectMeta> metas =
         co_await meta(id, offset, version_id);
-    const RawstorObjectMeta* answer = &metas.front();
+    const RawstorObjectMeta* answer = nullptr;
     for (const RawstorObjectMeta& m : metas) {
         if (m.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             answer = &m;
             break;
         }
+    }
+
+    if (answer == nullptr) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
 
     // A witness holds no data and is never a valid target for real I/O

@@ -1,3 +1,4 @@
+#include "backend.hpp"
 #include "object.hpp"
 #include "object_env.hpp"
 #include "opts.h"
@@ -101,6 +102,35 @@ void write_one(rawio::Queue& queue, rawstor::Object& object) {
 }
 
 } // namespace
+
+TEST(MemberStateTest, unreachable_metadata_cannot_be_opened_for_io) {
+    auto queue = rawio::Queue::create(64);
+    rawstor::tests::TmpDir dir;
+    const auto id = new_id();
+    const rawstd::URI location(dir.uri());
+    auto slot = run(*queue, rawstor::Slot::create(*queue, location));
+    RawstorObjectSpec spec{};
+    spec.size = 4096;
+    spec.width = 1;
+    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_DATA));
+    auto backend = run(*queue, rawstor::Backend::create(*queue, location));
+    run(*queue, backend->set_state(
+                    id, 0, RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+                    RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE
+                ));
+    run(*queue, backend->close());
+    EXPECT_EQ(
+        run(*queue, slot->meta(id, 0)).front().state,
+        RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE
+    );
+    try {
+        run(*queue, slot->open(id, 0, 0, RawstdUUID{}));
+        FAIL() << "Unreachable member opened for I/O";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOTCONN);
+    }
+    run(*queue, slot->close());
+}
 
 TEST(MemberStateTest, first_write_dirties_and_clean_close_cleans) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);

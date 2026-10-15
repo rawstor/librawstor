@@ -1566,7 +1566,6 @@ void Chunk::_reconcile_sync_set() {
         const Member& member = _members[i];
         const RawstorObjectConfig& own = member.meta.config;
         if (!member.reachable || member.recreated ||
-            !member_state(member.meta.state) ||
             (newest != 0 && own.sync_id == 0) ||
             (own.nroles != 0 && own.nroles != _members.size()) ||
             (current && own.sync_id == current->sync_id &&

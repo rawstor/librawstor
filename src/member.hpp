@@ -13,17 +13,11 @@ has_witness(const RawstorObjectSpec& spec, size_t members) noexcept {
     return members == spec.width + 1;
 }
 
-inline bool member_state(RawstorObjectSyncStateValue state) {
-    return state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN ||
-           state == RAWSTOR_OBJECT_SYNC_STATE_DIRTY ||
-           state == RAWSTOR_OBJECT_SYNC_STATE_LOST;
-}
 inline bool member_has_config(
     const RawstorObjectMeta& member, const RawstorObjectConfig& config,
     size_t members
 ) noexcept {
-    return member_state(member.state) &&
-           member.config.sync_id == config.sync_id &&
+    return member.config.sync_id == config.sync_id &&
            member.config.epoch == config.epoch &&
            member.config.resync_owner == config.resync_owner &&
            member.config.nroles == config.nroles &&
@@ -49,8 +43,7 @@ inline RawstorFrameMetaPayload
 encode_member_meta(const RawstorObjectMeta& meta) {
     if ((meta.member_role != RAWSTOR_MEMBER_DATA &&
          meta.member_role != RAWSTOR_MEMBER_WITNESS) ||
-        !member_state(meta.state) || meta.spec.width == 0 ||
-        meta.spec.width > UINT8_MAX ||
+        meta.spec.width == 0 || meta.spec.width > UINT8_MAX ||
         (meta.spec.chunk_size != 0 &&
          (meta.spec.chunk_size & (meta.spec.chunk_size - 1)) != 0)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -104,7 +97,7 @@ inline RawstorObjectMeta decode_member_meta(const RawstorFrameMetaPayload& in) {
     out.state = static_cast<RawstorObjectSyncStateValue>(in.state);
     if ((out.member_role != RAWSTOR_MEMBER_DATA &&
          out.member_role != RAWSTOR_MEMBER_WITNESS) ||
-        !member_state(out.state) || in.chunk_shift >= 64 || in.width == 0) {
+        in.chunk_shift >= 64 || in.width == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
     out.writers = in.writers;
