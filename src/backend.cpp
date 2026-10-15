@@ -22,6 +22,18 @@
 
 namespace rawstor {
 
+void Backend::validate_config_update(
+    unsigned int flags, std::optional<RawstorObjectSyncStateValue> state
+) {
+    if ((flags & ~RAWSTOR_CONFIG_CLEAR_LOST) != 0 ||
+        (state && (flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) ||
+        (state && *state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN &&
+         *state != RAWSTOR_OBJECT_SYNC_STATE_DIRTY &&
+         *state != RAWSTOR_OBJECT_SYNC_STATE_LOST)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+}
+
 Backend::Backend(Private, rawio::Queue& queue, const rawstd::URI& location) :
     _location(location),
     _fd(-1),

@@ -1,5 +1,4 @@
 #include "chunk.hpp"
-#include "config.hpp"
 #include <rawstor/object.h>
 
 #include "config.h"

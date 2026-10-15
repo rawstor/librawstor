@@ -37,6 +37,10 @@ private:
     int _fd;
 
 protected:
+    static void validate_config_update(
+        unsigned int flags, std::optional<RawstorObjectSyncStateValue> state
+    );
+
     struct Private {
         explicit Private() = default;
     };

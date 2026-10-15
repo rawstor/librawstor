@@ -1,5 +1,4 @@
 #include "slot.hpp"
-#include "config.hpp"
 
 #include "backend.hpp"
 #include "opts.h"
@@ -1849,7 +1848,13 @@ rawstd::Task<void> Slot::_set_config(
     const RawstorObjectConfig& config, unsigned int flags,
     std::optional<RawstorObjectSyncStateValue> state
 ) {
-    validate_config_update(flags, state);
+    if ((flags & ~RAWSTOR_CONFIG_CLEAR_LOST) != 0 ||
+        (state && (flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) ||
+        (state && *state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN &&
+         *state != RAWSTOR_OBJECT_SYNC_STATE_DIRTY &&
+         *state != RAWSTOR_OBJECT_SYNC_STATE_LOST)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     if (member_index >= RAWSTOR_OBJECT_MAX_WIDTH) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }

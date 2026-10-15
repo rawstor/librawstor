@@ -1,4 +1,3 @@
-#include "config.hpp"
 #include "member.hpp"
 #include <mds/store.hpp>
 
@@ -542,7 +541,13 @@ void ObjectStore::set_config(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
     unsigned int flags, std::optional<RawstorObjectSyncStateValue> state
 ) {
-    rawstor::validate_config_update(flags, state);
+    if ((flags & ~RAWSTOR_CONFIG_CLEAR_LOST) != 0 ||
+        (state && (flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) ||
+        (state && *state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN &&
+         *state != RAWSTOR_OBJECT_SYNC_STATE_DIRTY &&
+         *state != RAWSTOR_OBJECT_SYNC_STATE_LOST)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     std::lock_guard<std::mutex> guard(_mutex);
     Transaction tx(_db);
     Stmt stmt(

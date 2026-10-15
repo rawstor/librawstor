@@ -1,5 +1,4 @@
 #include "target.hpp"
-#include "config.hpp"
 
 #include "chunk.hpp"
 #include "location.hpp"

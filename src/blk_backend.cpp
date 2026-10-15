@@ -1,5 +1,4 @@
 #include "blk_backend.hpp"
-#include "config.hpp"
 
 #include "opts.h"
 
