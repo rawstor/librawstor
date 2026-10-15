@@ -2,7 +2,6 @@
 
 #include <ost/server.hpp>
 
-#include "member.hpp"
 #include "slot.hpp"
 
 #include <rawio/queue.hpp>
@@ -1060,7 +1059,40 @@ rawstd::DetachedTask Client::_meta(
                 RAWSTOR_CMD_META, head.cid, result, 0
             );
         } else {
-            auto body_out = encode_member_meta(meta);
+            if ((meta.member_role != RAWSTOR_MEMBER_DATA &&
+                 meta.member_role != RAWSTOR_MEMBER_WITNESS) ||
+                meta.spec.width == 0 || meta.spec.width > UINT8_MAX ||
+                (meta.spec.chunk_size != 0 &&
+                 (meta.spec.chunk_size & (meta.spec.chunk_size - 1)) != 0)) {
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
+            for (size_t i = 0; i < meta.config.nroles; ++i) {
+                if (meta.config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
+                    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+                }
+            }
+            RawstorFrameMetaPayload body_out{};
+            body_out.size = meta.spec.size;
+            body_out.width = static_cast<uint8_t>(meta.spec.width);
+            body_out.chunk_shift = meta.spec.chunk_size == 0
+                                       ? 0
+                                       : __builtin_ctzll(meta.spec.chunk_size);
+            body_out.member_role = static_cast<uint8_t>(meta.member_role);
+            body_out.writers = meta.writers;
+            body_out.state = meta.state;
+            body_out.config.epoch = meta.config.epoch;
+            body_out.config.sync_id = meta.config.sync_id;
+            memcpy(
+                body_out.config.sync_id_history, meta.config.sync_id_history,
+                sizeof(body_out.config.sync_id_history)
+            );
+            body_out.config.resync_owner = meta.config.resync_owner;
+            body_out.promised = {meta.promised.counter, meta.promised.proposer};
+            body_out.accepted = {meta.accepted.counter, meta.accepted.proposer};
+            body_out.config.nroles = meta.config.nroles;
+            memcpy(
+                body_out.config.roles, meta.config.roles, meta.config.nroles
+            );
             std::vector<unsigned char> data(sizeof(body_out));
             memcpy(data.data(), &body_out, sizeof(body_out));
             co_await client->_send_response(
@@ -1272,7 +1304,51 @@ rawstd::DetachedTask Client::_sync(
         } else {
             RawstorFrameSyncReplyPayload body_out{};
             body_out.ok = reply.ok != 0 ? 1 : 0;
-            body_out.meta = encode_member_meta(reply.meta);
+            if ((reply.meta.member_role != RAWSTOR_MEMBER_DATA &&
+                 reply.meta.member_role != RAWSTOR_MEMBER_WITNESS) ||
+                reply.meta.spec.width == 0 ||
+                reply.meta.spec.width > UINT8_MAX ||
+                (reply.meta.spec.chunk_size != 0 &&
+                 (reply.meta.spec.chunk_size &
+                  (reply.meta.spec.chunk_size - 1)) != 0)) {
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
+            for (size_t i = 0; i < reply.meta.config.nroles; ++i) {
+                if (reply.meta.config.roles[i] >
+                    RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
+                    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+                }
+            }
+
+            body_out.meta.size = reply.meta.spec.size;
+            body_out.meta.width = static_cast<uint8_t>(reply.meta.spec.width);
+            body_out.meta.chunk_shift =
+                reply.meta.spec.chunk_size == 0
+                    ? 0
+                    : __builtin_ctzll(reply.meta.spec.chunk_size);
+            body_out.meta.member_role =
+                static_cast<uint8_t>(reply.meta.member_role);
+            body_out.meta.writers = reply.meta.writers;
+            body_out.meta.state = reply.meta.state;
+            body_out.meta.config.epoch = reply.meta.config.epoch;
+            body_out.meta.config.sync_id = reply.meta.config.sync_id;
+            memcpy(
+                body_out.meta.config.sync_id_history,
+                reply.meta.config.sync_id_history,
+                sizeof(body_out.meta.config.sync_id_history)
+            );
+            body_out.meta.config.resync_owner = reply.meta.config.resync_owner;
+            body_out.meta.promised = {
+                reply.meta.promised.counter, reply.meta.promised.proposer
+            };
+            body_out.meta.accepted = {
+                reply.meta.accepted.counter, reply.meta.accepted.proposer
+            };
+            body_out.meta.config.nroles = reply.meta.config.nroles;
+            memcpy(
+                body_out.meta.config.roles, reply.meta.config.roles,
+                reply.meta.config.nroles
+            );
             std::vector<unsigned char> data(sizeof(body_out));
             memcpy(data.data(), &body_out, sizeof(body_out));
             co_await client->_send_response(

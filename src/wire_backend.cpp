@@ -1,5 +1,4 @@
 #include "wire_backend.hpp"
-#include "member.hpp"
 #include "wire_backend_op.hpp"
 
 #include "opts.h"
@@ -1021,7 +1020,34 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_wire_meta(
             *static_cast<const RawstorFrameMetaPayload*>(
                 static_cast<const void*>(response.data())
             );
-        ret = decode_member_meta(payload);
+        ret.member_role = static_cast<RawstorMemberRole>(payload.member_role);
+        ret.state = static_cast<RawstorObjectSyncStateValue>(payload.state);
+        if ((ret.member_role != RAWSTOR_MEMBER_DATA &&
+             ret.member_role != RAWSTOR_MEMBER_WITNESS) ||
+            payload.chunk_shift >= 64 || payload.width == 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        ret.writers = payload.writers;
+        ret.spec.size = payload.size;
+        ret.spec.width = payload.width;
+        ret.spec.chunk_size =
+            payload.chunk_shift == 0 ? 0 : uint64_t{1} << payload.chunk_shift;
+        ret.config.epoch = payload.config.epoch;
+        ret.config.sync_id = payload.config.sync_id;
+        memcpy(
+            ret.config.sync_id_history, payload.config.sync_id_history,
+            sizeof(ret.config.sync_id_history)
+        );
+        ret.config.resync_owner = payload.config.resync_owner;
+        ret.config.nroles = payload.config.nroles;
+        for (size_t i = 0; i < payload.config.nroles; ++i) {
+            if (payload.config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
+            ret.config.roles[i] = payload.config.roles[i];
+        }
+        ret.promised = {payload.promised.counter, payload.promised.proposer};
+        ret.accepted = {payload.accepted.counter, payload.accepted.proposer};
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -1085,7 +1111,35 @@ rawstd::Task<RawstorObjectSyncReply> Backend::_sync_request(
     co_await *op;
     const RawstorFrameSyncReplyPayload& reply = op->reply();
     const RawstorFrameMetaPayload& wire = reply.meta;
-    auto meta = decode_member_meta(wire);
+    RawstorObjectMeta meta{};
+    meta.member_role = static_cast<RawstorMemberRole>(wire.member_role);
+    meta.state = static_cast<RawstorObjectSyncStateValue>(wire.state);
+    if ((meta.member_role != RAWSTOR_MEMBER_DATA &&
+         meta.member_role != RAWSTOR_MEMBER_WITNESS) ||
+        wire.chunk_shift >= 64 || wire.width == 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+    meta.writers = wire.writers;
+    meta.spec.size = wire.size;
+    meta.spec.width = wire.width;
+    meta.spec.chunk_size =
+        wire.chunk_shift == 0 ? 0 : uint64_t{1} << wire.chunk_shift;
+    meta.config.epoch = wire.config.epoch;
+    meta.config.sync_id = wire.config.sync_id;
+    memcpy(
+        meta.config.sync_id_history, wire.config.sync_id_history,
+        sizeof(meta.config.sync_id_history)
+    );
+    meta.config.resync_owner = wire.config.resync_owner;
+    meta.config.nroles = wire.config.nroles;
+    for (size_t i = 0; i < wire.config.nroles; ++i) {
+        if (wire.config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        meta.config.roles[i] = wire.config.roles[i];
+    }
+    meta.promised = {wire.promised.counter, wire.promised.proposer};
+    meta.accepted = {wire.accepted.counter, wire.accepted.proposer};
     co_return RawstorObjectSyncReply{reply.ok != 0, meta};
 }
 
