@@ -3,6 +3,7 @@
 
 #include "chunk.hpp"
 #include "location.hpp"
+#include "member.hpp"
 #include "object.hpp"
 #include "opts.h"
 #include "slot.hpp"
@@ -503,7 +504,8 @@ rawstd::Task<RawstorObjectSpec> resolve_spec(
             RawstorObjectSpec ret = answered->spec;
             if (locations.size() > 1) {
                 ret.width = static_cast<unsigned int>(
-                    locations.size() == ret.width + 1 && ret.width % 2 == 0
+                    rawstor::has_witness(ret, locations.size()) &&
+                            ret.width % 2 == 0
                         ? ret.width
                         : locations.size()
                 );
@@ -1257,7 +1259,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     // each), as Chunk::create() checks at open: none is created that could
     // not be opened.
     for (const std::vector<rawstd::URI>& uris : chunks) {
-        if (uris.size() == sp.width + 1 && sp.width % 2 != 0) {
+        if (rawstor::has_witness(sp, uris.size()) && sp.width % 2 != 0) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
         if (uris.size() > RAWSTOR_OBJECT_MAX_WIDTH) {
@@ -1322,7 +1324,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
         // (the size check above), starting at its own offset
         // (extract_offset(), already stamped on its own URIs).
         RawstorObjectSpec chunk_sp = sp;
-        bool witness = uris.size() == sp.width + 1;
+        const bool has_witness = rawstor::has_witness(sp, uris.size());
         if (chunks.size() > 1) {
             uint64_t offset = extract_offset(uris.front());
             if (offset >= sp.size) {
@@ -1349,7 +1351,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
         std::vector<rawstd::Task<void>> tasks;
         tasks.reserve(uris.size());
         for (size_t index = 0; index < uris.size(); ++index) {
-            RawstorMemberRole role = witness && index + 1 == uris.size()
+            RawstorMemberRole role = has_witness && index + 1 == uris.size()
                                          ? RAWSTOR_MEMBER_WITNESS
                                          : RAWSTOR_MEMBER_DATA;
             tasks.push_back(create_one(queue, uris[index], chunk_sp, role));
@@ -1447,7 +1449,7 @@ rawstd::Task<void> Target::create_version(rawio::Queue& queue) const {
                             RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
                         answer != metadata.end() &&
                         answer->spec.width % 2 == 0 &&
-                        uris.size() == answer->spec.width + 1;
+                        rawstor::has_witness(answer->spec, uris.size());
         }
         members.insert(members.end(), uris.begin(), uris.end() - skip_last);
     }

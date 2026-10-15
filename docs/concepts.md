@@ -387,10 +387,9 @@ directly (a single entry, 0, for a plain, non-`mds://` target).
 ### Witness members
 
 Witnesses use ordinary backend addresses. With `width + 1` locations and an
-even data width, creation makes the last location a witness; subsequent opens discover the member
-through `META.member_role`. An offline witness is identified by the last
-extra location beyond the surviving copies' data width. `width` counts
-only data copies;
+even data width, the last location is a witness, whether reachable or not.
+Opening checks each available member's `META.member_role` against its expected
+position; it does not search for a witness by role. `width` counts only data copies;
 `config.nroles` counts all members. One witness is supported only with an
 even number of data members. It participates in synchronous membership
 barriers and quorum; data I/O and the data-copy phase of resync skip it. Keep the complete target

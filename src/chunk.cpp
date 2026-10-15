@@ -867,13 +867,11 @@ rawstd::Task<void> recreate_missing(
     const RawstdUUID& version_id,
     std::vector<std::unique_ptr<rawstor::Slot>>& slots,
     std::vector<RawstorObjectMeta>& metas, std::vector<bool>& opened,
-    const std::vector<bool>& missing, bool has_witness
+    const std::vector<bool>& missing
 ) {
     if ((flags & RAWSTOR_READONLY) != 0 || !rawstd_uuid_is_nil(&version_id)) {
         co_return;
     }
-
-    const size_t data_members = locations.size() - has_witness;
 
     // The largest surviving copy's size, not just the first's: a smaller
     // one is itself F11-stale (_reconcile_sync_set()'s own comment), and
@@ -931,7 +929,8 @@ rawstd::Task<void> recreate_missing(
         bool failed = false;
         try {
             slot = co_await Slot::create(queue, locations[i]);
-            const bool data = i < data_members;
+            const bool data = !rawstor::has_witness(sp, locations.size()) ||
+                              i + 1 < locations.size();
             co_await slot->create(
                 id, offset, sp,
                 data ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS
@@ -1093,7 +1092,6 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
             inspections[i] = inspect_member(*slots[i], id, offset);
         }
     }
-    unsigned int witness_member = 0;
     for (size_t i = 0; i < inspections.size(); ++i) {
         if (!inspections[i]) {
             continue;
@@ -1106,32 +1104,27 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
             }
         }
     }
-    for (size_t i = 0; i < metas.size(); ++i) {
-        if (metas[i].state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
-            metas[i].member_role == RAWSTOR_MEMBER_WITNESS) {
-            if (witness_member && witness_member != i + 1) {
-                RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
-            }
-            witness_member = i + 1;
-        }
-    }
-    if (!witness_member && !metas.empty() &&
-        metas.back().state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
-        for (const auto& meta : metas) {
-            if (meta.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
-                meta.spec.width % 2 == 0 &&
-                locations.size() == meta.spec.width + 1) {
-                witness_member = locations.size();
-                break;
-            }
-        }
-    }
-    if (witness_member &&
-        (witness_member != locations.size() || locations.size() < 3 ||
-         (locations.size() - 1) % 2 != 0)) {
+    const auto answer =
+        std::find_if(metas.begin(), metas.end(), [](const auto& meta) {
+            return meta.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE;
+        });
+    const bool has_witness =
+        answer != metas.end() &&
+        rawstor::has_witness(answer->spec, locations.size());
+    if (has_witness && answer->spec.width % 2 != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    const bool has_witness = witness_member != 0;
+    for (size_t i = 0; i < metas.size(); ++i) {
+        if (metas[i].state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+            continue;
+        }
+        const auto expected = has_witness && i + 1 == metas.size()
+                                  ? RAWSTOR_MEMBER_WITNESS
+                                  : RAWSTOR_MEMBER_DATA;
+        if (metas[i].member_role != expected) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
+        }
+    }
     const size_t data_members = locations.size() - has_witness;
     std::vector<std::optional<rawstd::Task<RawstorObjectMeta>>> open_tasks(
         slots.size()
@@ -1189,7 +1182,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
 
     co_await recreate_missing(
         queue, locations, id, offset, flags, version_id, slots, metas, opened,
-        missing, has_witness
+        missing
     );
 
     // Members are assembled only now, with connect/open all already

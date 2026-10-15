@@ -155,6 +155,26 @@ TEST_F(WitnessTest, metadata_only_creation_and_clean_close) {
     EXPECT_NE(metadata[2].config.sync_id, 0u);
 }
 
+TEST_F(WitnessTest, rejects_member_role_inconsistent_with_location_order) {
+    for (size_t index = 0; index < 3; ++index) {
+        SCOPED_TRACE(index);
+        id = new_id();
+        create();
+        const std::vector<std::string> locations{a.uri(), b.uri(), w.uri()};
+        auto slot =
+            run(*queue,
+                rawstor::Slot::create(*queue, rawstd::URI(locations[index])));
+        run(*queue, slot->remove(id, 0));
+        run(*queue,
+            slot->create(
+                id, 0, spec,
+                index == 2 ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS
+            ));
+        run(*queue, slot->close());
+        EXPECT_THROW(run(*queue, target->open(*queue, 0)), std::system_error);
+    }
+}
+
 TEST_F(WitnessTest, clean_witness_allows_one_data_member_down) {
     create();
     seed();
