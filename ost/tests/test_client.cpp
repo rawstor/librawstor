@@ -11,10 +11,13 @@
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
+#include <rawstd/pipe.hpp>
 #include <rawstd/socket.h>
 #include <rawstd/uuid.h>
 
+#include <netinet/in.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include <gtest/gtest.h>
 
@@ -25,6 +28,7 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <future>
 #include <string>
 #include <thread>
 #include <vector>
@@ -743,73 +747,61 @@ TEST(OstClientTest, leave_cleans_and_a_dropped_writer_loses) {
 }
 
 // Direct construction can bypass the CLI's one-location constraint.
-// Such a server must reject data sessions instead of opening a nested mirror.
-TEST(OstClientTest, several_locations_refuse_data_sessions) {
+// One server represents one member backed by one Slot.
+TEST(OstClientTest, several_locations_are_rejected) {
     rawstor::ostserver::tests::TmpDir a;
     rawstor::ostserver::tests::TmpDir b;
     std::string locations = a.uri() + "," + b.uri();
     int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
-    rawstor::ostserver::Server server(256, listen_fd, locations.c_str());
+    try {
+        rawstor::ostserver::Server server(256, listen_fd, locations.c_str());
+        ADD_FAILURE() << "server accepted multiple locations";
+    } catch (const std::system_error& error) {
+        EXPECT_EQ(error.code().value(), EINVAL);
+    }
+    ::close(listen_fd);
+}
+
+TEST(OstClientTest, set_config_forwards_explicit_state_to_slot) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
     rawstor::ostserver::tests::Queue queue;
     auto [raw_client, client_fd] = connect_client(server, queue);
     ClientCleanup server_client(std::move(raw_client), queue);
     rawstor::ostserver::tests::Client client(client_fd);
-
     RawstdUUID id;
     ASSERT_EQ(rawstd_uuid7_init(&id), 0);
-    auto expect_response = [&](RawstorCommandType cmd, int32_t res) {
+    auto expect_response = [&](RawstorCommandType cmd, int32_t result) {
         ASSERT_TRUE(pump_until(queue, [&] {
             return client.bytes_available() >= sizeof(RawstorFrameResponse);
         }));
-        RawstorFrameResponse response = client.recv_response();
+        auto response = client.recv_response();
         EXPECT_EQ(response.head.cmd, cmd);
-        EXPECT_EQ(response.body.res, res);
+        EXPECT_EQ(response.body.res, result);
     };
-
     client.send_allocate(id, 4096, 2);
     expect_response(RAWSTOR_CMD_ALLOCATE, 0);
-
     RawstorFrameSetConfig set{};
     std::memcpy(set.payload.object_id, id.bytes, sizeof(id.bytes));
     set.payload.config.epoch = 3;
-    set.payload.config.sync_id = 0x33;
+    set.payload.state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
     client.send_set_config(set);
-    expect_response(RAWSTOR_CMD_SET_CONFIG, -ENOSYS);
-
-    RawstorFrameSyncPropose prepare{};
-    prepare.head.cmd = RAWSTOR_CMD_SYNC_PREPARE;
-    std::memcpy(prepare.payload.object_id, id.bytes, sizeof(id.bytes));
-    prepare.payload.ballot = {1, 1};
-    client.send_sync(prepare);
-    expect_response(RAWSTOR_CMD_SYNC_PREPARE, -ENOSYS);
-
-    // The failed open leaves the connection without a data session.
-    client.send_set_object(id);
-    expect_response(RAWSTOR_CMD_SET_OBJECT, -EOPNOTSUPP);
-    std::string ping = "ping";
-    client.send_write_at_epoch(0, ping.data(), ping.size(), 1);
-    expect_response(RAWSTOR_CMD_WRITE, -EBADF);
-    client.send_write_at_epoch(
-        0, ping.data(), ping.size(), 0, RAWSTOR_FLAG_RESYNC
-    );
-    expect_response(RAWSTOR_CMD_WRITE, -EBADF);
-    // A session cannot open a nested mirror, including for unstamped writes.
-    client.send_write_at_epoch(0, ping.data(), ping.size(), 0);
-    expect_response(RAWSTOR_CMD_WRITE, -EBADF);
-
+    expect_response(RAWSTOR_CMD_SET_CONFIG, 0);
+    set.payload.config.epoch = 4;
+    set.payload.state = 4;
+    client.send_set_config(set);
+    expect_response(RAWSTOR_CMD_SET_CONFIG, -EINVAL);
     client.send_meta(id, 0);
     RawstorFrameMetaPayload meta{};
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >=
                sizeof(RawstorFrameResponse) + sizeof(meta);
     }));
-    RawstorFrameResponse response = client.recv_response(&meta, sizeof(meta));
-    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_META);
+    auto response = client.recv_response(&meta, sizeof(meta));
     EXPECT_EQ(response.body.res, static_cast<int32_t>(sizeof(meta)));
-    EXPECT_EQ(meta.size, 4096u);
-    EXPECT_EQ(meta.config.epoch, 0u);
-    EXPECT_EQ(meta.config.sync_id, 0u);
-    EXPECT_EQ(meta.config.nroles, 0);
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+    EXPECT_EQ(meta.config.epoch, 3u);
 }
 
 namespace {
@@ -1092,4 +1084,100 @@ TEST(OstClientTest, resync_write_preserves_exact_client_ranges) {
     client.send_write_zeroes(0, 2048, false, false, RAWSTOR_FLAG_RESYNC);
     expect_response(RAWSTOR_CMD_WRITE_ZEROES, -ESTALE);
     EXPECT_EQ(read_all(2048), expected);
+}
+
+TEST(
+    OstClientTest,
+    shutdown_disconnects_idle_and_partial_requests_and_persists_lost
+) {
+    for (bool partial_request : {false, true}) {
+        SCOPED_TRACE(partial_request);
+        rawstor::ostserver::tests::TmpDir dir;
+        int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+        sockaddr_in address{};
+        socklen_t length = sizeof(address);
+        ASSERT_EQ(
+            getsockname(
+                listen_fd, reinterpret_cast<sockaddr*>(&address), &length
+            ),
+            0
+        );
+        rawstd::Pipe wake(rawstd::Pipe::Mode::NonBlocking);
+        std::promise<void> finished;
+        auto done = finished.get_future();
+        std::jthread worker([&] {
+            try {
+                {
+                    rawstor::ostserver::Server server(
+                        256, listen_fd, dir.uri().c_str(), wake.read_fd()
+                    );
+                    server.loop();
+                }
+                finished.set_value();
+            } catch (...) {
+                finished.set_exception(std::current_exception());
+            }
+        });
+        struct StopServer {
+            int wake_fd;
+            int listen_fd;
+            std::jthread& worker;
+            ~StopServer() {
+                char byte = 0;
+                ssize_t ignored = ::write(wake_fd, &byte, 1);
+                (void)ignored;
+                if (worker.joinable()) {
+                    worker.join();
+                }
+                ::close(listen_fd);
+            }
+        } stop{wake.write_fd(), listen_fd, worker};
+        int fd = socket(AF_INET, SOCK_STREAM, 0);
+        ASSERT_GE(fd, 0);
+        rawstor::ostserver::tests::Client client(fd);
+        struct ShutdownPeer {
+            int fd;
+            ~ShutdownPeer() { shutdown(fd, SHUT_RDWR); }
+        } shutdown_peer{fd};
+        ASSERT_EQ(
+            connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)),
+            0
+        );
+        timeval timeout{5, 0};
+        ASSERT_EQ(
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)),
+            0
+        );
+        RawstdUUID id;
+        ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+        client.send_allocate(id, 4096, 1);
+        ASSERT_EQ(client.recv_response().body.res, 0);
+        client.send_set_object(id);
+        ASSERT_EQ(client.recv_response().body.res, 0);
+        const std::string data = "written before shutdown";
+        client.send_write(0, data.data(), data.size(), false);
+        ASSERT_EQ(
+            client.recv_response().body.res, static_cast<int32_t>(data.size())
+        );
+        if (partial_request) {
+            RawstorFrameBasic frame{};
+            frame.head.magic = RAWSTOR_MAGIC;
+            frame.head.cmd = RAWSTOR_CMD_SET_OBJECT;
+            const size_t bytes = sizeof(frame.head) + 1;
+            ASSERT_EQ(send(fd, &frame, bytes, 0), static_cast<ssize_t>(bytes));
+        }
+        char byte = 0;
+        ASSERT_EQ(::write(wake.write_fd(), &byte, 1), 1);
+        auto status = done.wait_for(std::chrono::seconds(5));
+        EXPECT_EQ(status, std::future_status::ready);
+        if (status != std::future_status::ready) {
+            shutdown(fd, SHUT_RDWR);
+        }
+        worker.join();
+        EXPECT_NO_THROW(done.get());
+        rawstor::ostserver::tests::Queue queue;
+        EXPECT_EQ(
+            stored_state(queue, dir.uri(), id), RAWSTOR_OBJECT_SYNC_STATE_LOST
+        );
+    }
 }

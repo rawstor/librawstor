@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -79,15 +80,16 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
     };
     run(*queue, target.create(*queue, spec));
 
-    RawstorObjectSyncReply reply =
-        run(*queue, target.sync_prepare(*queue, 0, 0, {4, 1}));
-    EXPECT_TRUE(reply.ok);
-    EXPECT_EQ(reply.meta.promised.counter, 4u);
+    RawstorObjectMeta reply{};
+    bool accepted =
+        run(*queue, target.sync_prepare(*queue, 0, 0, {4, 1}, reply));
+    EXPECT_TRUE(accepted);
+    EXPECT_EQ(reply.promised.counter, 4u);
 
-    reply = run(*queue, target.sync_prepare(*queue, 0, 0, {3, 9}));
-    EXPECT_FALSE(reply.ok);
-    EXPECT_EQ(reply.meta.promised.counter, 4u);
-    EXPECT_EQ(reply.meta.promised.proposer, 1u);
+    accepted = run(*queue, target.sync_prepare(*queue, 0, 0, {3, 9}, reply));
+    EXPECT_FALSE(accepted);
+    EXPECT_EQ(reply.promised.counter, 4u);
+    EXPECT_EQ(reply.promised.proposer, 1u);
 
     RawstorObjectConfig config{};
     config.epoch = 9;
@@ -96,9 +98,10 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
     config.nroles = 2;
     config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
     config.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
-    reply =
-        run(*queue, target.sync_accept(*queue, 0, 0, {4, 1}, {5, 1}, config));
-    EXPECT_TRUE(reply.ok);
+    accepted =
+        run(*queue,
+            target.sync_accept(*queue, 0, 0, {4, 1}, {5, 1}, config, reply));
+    EXPECT_TRUE(accepted);
 
     // What the member persisted, read back the ordinary way.
     RawstorObjectMeta meta = run(*queue, target.meta(*queue, 0)).front();
@@ -119,7 +122,7 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
     EXPECT_EQ(meta.config.epoch, 10u);
     EXPECT_EQ(meta.promised.counter, 5u);
     EXPECT_EQ(meta.accepted.counter, 4u);
-    EXPECT_FALSE(run(*queue, target.sync_prepare(*queue, 0, 0, {4, 9})).ok);
+    EXPECT_FALSE(run(*queue, target.sync_prepare(*queue, 0, 0, {4, 9}, reply)));
 }
 
 // An ost:// member: the request goes out as SYNC_ACCEPT with every field
@@ -139,6 +142,7 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     rawstor::tests::Session session(server);
 
     RawstorFrameMetaPayload meta{};
+    meta.member_role = RAWSTOR_MEMBER_DATA;
     meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     meta.width = 3;
     session.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta);
@@ -160,8 +164,9 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     config.resync_owner = 0x77;
     config.nroles = 3;
     config.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
-    rawstd::Task<RawstorObjectSyncReply> task =
-        target.sync_accept(*queue, 0, 1, {5, 0x77}, {6, 0x77}, config);
+    RawstorObjectMeta reply{};
+    rawstd::Task<bool> task =
+        target.sync_accept(*queue, 0, 1, {5, 0x77}, {6, 0x77}, config, reply);
 
     for (int i = 0; i < 5000 && !got; ++i) {
         try {
@@ -192,6 +197,8 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     };
     out.response.body.res = static_cast<int32_t>(sizeof(out.reply));
     out.reply.ok = 0;
+    out.reply.meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    out.reply.meta.member_role = RAWSTOR_MEMBER_DATA;
     out.reply.meta.width = 3;
     out.reply.meta.writers = 4;
     out.reply.meta.config.epoch = 8;
@@ -201,12 +208,97 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     out.reply.meta.accepted = {8, 0x11};
     server.write("SYNC_ACCEPT >>>", &out, sizeof(out));
 
-    RawstorObjectSyncReply reply = run(*queue, std::move(task));
-    EXPECT_FALSE(reply.ok);
-    EXPECT_EQ(reply.meta.config.epoch, 8u);
-    EXPECT_EQ(reply.meta.writers, 4u);
-    EXPECT_EQ(reply.meta.promised.counter, 9u);
-    EXPECT_EQ(reply.meta.accepted.proposer, 0x11u);
-    ASSERT_EQ(reply.meta.config.nroles, 3);
-    EXPECT_EQ(reply.meta.config.roles[0], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
+    bool accepted = run(*queue, std::move(task));
+    EXPECT_FALSE(accepted);
+    EXPECT_EQ(reply.config.epoch, 8u);
+    EXPECT_EQ(reply.writers, 4u);
+    EXPECT_EQ(reply.promised.counter, 9u);
+    EXPECT_EQ(reply.accepted.proposer, 0x11u);
+    ASSERT_EQ(reply.config.nroles, 3);
+    EXPECT_EQ(reply.config.roles[0], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
+}
+
+TEST(RegisterTest, c_api_reports_acceptance_refusal_and_errors_in_result) {
+    rawstor::tests::TmpDir dir;
+    auto queue = rawio::Queue::create(64);
+    RawstdUUID id = new_id();
+    std::string uri = dir.uri() + "/" + id_string(id);
+    rawstor::Target target({rawstd::URI(uri)});
+    RawstorObjectSpec spec{
+        .size = 4096,
+        .width = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0
+    };
+    run(*queue, target.create(*queue, spec));
+    RawstorObjectMeta meta{};
+    std::optional<ssize_t> result;
+    auto cb = [](ssize_t value, void* data) {
+        *static_cast<std::optional<ssize_t>*>(data) = value;
+        return 0;
+    };
+    auto wait = [&] {
+        while (!result) {
+            queue->wait_timeout(rawstor_opts_tcp_user_timeout());
+        }
+        ssize_t value = *result;
+        result.reset();
+        return value;
+    };
+    RawstorObjectBallot ballot{4, 1};
+    ASSERT_EQ(
+        rawstor_target_sync_prepare(
+            queue.get(), uri.c_str(), 0, 0, &ballot, &meta, cb, &result
+        ),
+        0
+    );
+    EXPECT_EQ(wait(), 1);
+    EXPECT_EQ(meta.promised.counter, 4u);
+    ballot = {3, 9};
+    ASSERT_EQ(
+        rawstor_target_sync_prepare(
+            queue.get(), uri.c_str(), 0, 0, &ballot, &meta, cb, &result
+        ),
+        0
+    );
+    EXPECT_EQ(wait(), 0);
+    EXPECT_EQ(meta.promised.counter, 4u);
+    EXPECT_EQ(meta.promised.proposer, 1u);
+
+    ballot = {4, 1};
+    RawstorObjectBallot next{5, 1};
+    RawstorObjectConfig config{};
+    config.epoch = 9;
+    config.sync_id = 42;
+    ASSERT_EQ(
+        rawstor_target_sync_accept(
+            queue.get(), uri.c_str(), 0, 0, &ballot, &next, &config, &meta, cb,
+            &result
+        ),
+        0
+    );
+    EXPECT_EQ(wait(), 1);
+    EXPECT_EQ(meta.config.epoch, 9u);
+    EXPECT_EQ(meta.config.sync_id, 42u);
+    EXPECT_EQ(meta.accepted.counter, 4u);
+    ASSERT_EQ(
+        rawstor_target_sync_accept(
+            queue.get(), uri.c_str(), 0, 0, &ballot, &next, &config, &meta, cb,
+            &result
+        ),
+        0
+    );
+    EXPECT_EQ(wait(), 0);
+    EXPECT_EQ(meta.promised.counter, 5u);
+    EXPECT_EQ(meta.config.sync_id, 42u);
+
+    std::string missing = dir.uri() + "/" + id_string(new_id());
+    ASSERT_EQ(
+        rawstor_target_sync_prepare(
+            queue.get(), missing.c_str(), 0, 0, &ballot, &meta, cb, &result
+        ),
+        0
+    );
+    EXPECT_EQ(wait(), -ENOENT);
 }

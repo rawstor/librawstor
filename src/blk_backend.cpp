@@ -9,13 +9,9 @@
 #include <rawstd/logging.h>
 #include <rawstd/uuid.h>
 
-#include <sys/ioctl.h>
-#include <sys/stat.h>
-
 #include <unistd.h>
 
 #include <algorithm>
-#include <exception>
 #include <stdexcept>
 #include <vector>
 
@@ -28,7 +24,6 @@
 
 #if defined(RAWSTD_ON_LINUX)
 #include <linux/falloc.h>
-#include <linux/fs.h>
 #endif
 
 namespace {
@@ -183,7 +178,7 @@ Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
-    set_fd(co_await _open_object(id, offset, flags));
+    co_await _bind_object(id, offset, flags, RawstdUUID{});
 }
 
 rawstd::Task<void> Backend::set_state(
@@ -202,8 +197,15 @@ rawstd::Task<void> Backend::set_state(
 
 rawstd::Task<void> Backend::set_config(
     const RawstdUUID& id, uint64_t offset, uint8_t,
-    const RawstorObjectConfig& config, unsigned int
+    const RawstorObjectConfig& config, unsigned int flags,
+    std::optional<RawstorObjectSyncStateValue> state
 ) {
+    _validate_config_update(flags, state);
+    for (size_t i = 0; i < config.nroles; ++i) {
+        if (config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
     RawstorObjectMeta meta{};
     meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     try {
@@ -214,73 +216,64 @@ rawstd::Task<void> Backend::set_config(
         }
     }
     meta.config = config;
+    if (state) {
+        meta.state = *state;
+    }
     co_await _write_meta(
         id, offset, meta.state, meta.config, meta.promised, meta.accepted
     );
 }
 
-rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
+rawstd::Task<bool> Backend::sync_prepare(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot&,
-    const RawstorObjectSyncReply& proposed
+    bool proposed, RawstorObjectMeta& meta
 ) {
-    if (proposed.ok) {
+    if (proposed) {
         co_await _write_meta(
-            id, offset, proposed.meta.state, proposed.meta.config,
-            proposed.meta.promised, proposed.meta.accepted
+            id, offset, meta.state, meta.config, meta.promised, meta.accepted
         );
     }
     co_return proposed;
 }
 
-rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
+rawstd::Task<bool> Backend::sync_accept(
     const RawstdUUID& id, uint64_t offset, uint8_t, const RawstorObjectBallot&,
-    const RawstorObjectBallot&, const RawstorObjectConfig&,
-    const RawstorObjectSyncReply& proposed
+    const RawstorObjectBallot&, const RawstorObjectConfig&, bool proposed,
+    RawstorObjectMeta& meta
 ) {
-    if (proposed.ok) {
+    if (proposed) {
         co_await _write_meta(
-            id, offset, proposed.meta.state, proposed.meta.config,
-            proposed.meta.promised, proposed.meta.accepted
+            id, offset, meta.state, meta.config, meta.promised, meta.accepted
         );
     }
     co_return proposed;
 }
 
 rawstd::Task<void> Backend::set_version(
-    const RawstdUUID& object_id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+) {
+    co_await _bind_object(id, offset, RAWSTOR_READONLY, version_id);
+}
+
+rawstd::Task<void> Backend::_bind_object(
+    const RawstdUUID& id, uint64_t offset, int flags,
+    const RawstdUUID& version_id
 ) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
-
-    int fd = co_await _open_version(object_id, offset, version_id);
-    set_fd(fd);
-}
-
-rawstd::Task<uint64_t> Backend::_blk_size(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
-) {
-#if defined(RAWSTD_ON_LINUX)
-    int f = rawstd_uuid_is_nil(&version_id)
-                ? co_await _open_object(id, offset, 0)
-                : co_await _open_version(id, offset, version_id);
-
-    uint64_t size = 0;
-    if (ioctl(f, BLKGETSIZE64, &size) == -1) {
-        int error = errno;
-        ::close(f);
-        errno = error;
-        RAWSTD_THROW_ERRNO();
+    auto records = co_await meta(id, offset, version_id);
+    if (records.size() != 1) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
-
-    co_await _queue.close(f);
-    co_return size;
-#else
-    (void)id;
-    (void)offset;
-    (void)version_id;
-    RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
-#endif
+    const auto& record = records.front();
+    if (record.member_role == RAWSTOR_MEMBER_WITNESS) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
+    int opened = rawstd_uuid_is_nil(&version_id)
+                     ? co_await _open_object(id, offset, flags)
+                     : co_await _open_version(id, offset, version_id);
+    set_fd(opened);
 }
 
 std::string Backend::meta_encode(
@@ -303,13 +296,14 @@ std::string Backend::meta_encode(
         "version=%u:state=%u:epoch=%" PRIx64 ":sync_id=%" PRIx64 ":h0=%" PRIx64
         ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64 ":resync_owner=%" PRIx64
         ":promised=%" PRIx64 ".%" PRIx64 ":accepted=%" PRIx64 ".%" PRIx64
-        ":roles=%s:member_role=%u:width=%u:chunk_size=%" PRIx64,
+        ":roles=%s:member_role=%u:width=%u:chunk_size=%" PRIx64
+        ":size=%" PRIx64,
         META_FORMAT_VERSION, (unsigned int)state, c.epoch, c.sync_id,
         c.sync_id_history[0], c.sync_id_history[1], c.sync_id_history[2],
         c.sync_id_history[3], c.resync_owner, promised.counter,
         promised.proposer, accepted.counter, accepted.proposer, roles.c_str(),
         (unsigned int)identity.member_role, (unsigned int)identity.width,
-        identity.chunk_size
+        identity.chunk_size, identity.size
     );
     if (n < 0 || static_cast<size_t>(n) >= sizeof(buf)) {
         RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
@@ -341,15 +335,20 @@ void Backend::meta_decode(
         "version=%u:state=%u:epoch=%" SCNx64 ":sync_id=%" SCNx64 ":h0=%" SCNx64
         ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64 ":resync_owner=%" SCNx64
         ":promised=%" SCNx64 ".%" SCNx64 ":accepted=%" SCNx64 ".%" SCNx64
-        ":roles=%256[0-9-]:member_role=%u:width=%u:chunk_size=%" SCNx64 "%n",
+        ":roles=%256[0-9-]:member_role=%u:width=%u:chunk_size=%" SCNx64
+        ":size=%" SCNx64 "%n",
         &version, &parsed_state, &c.epoch, &c.sync_id, &c.sync_id_history[0],
         &c.sync_id_history[1], &c.sync_id_history[2], &c.sync_id_history[3],
         &c.resync_owner, &(*promised).counter, &(*promised).proposer,
         &(*accepted).counter, &(*accepted).proposer, roles, &member_role,
-        &width, &identity->chunk_size, &consumed
+        &width, &identity->chunk_size, &identity->size, &consumed
     );
-    if (n != 17 || static_cast<size_t>(consumed) != v.size() ||
-        version != META_FORMAT_VERSION) {
+    if (n != 18 || static_cast<size_t>(consumed) != v.size() ||
+        version != META_FORMAT_VERSION ||
+        parsed_state > RAWSTOR_OBJECT_SYNC_STATE_LOST || width == 0 ||
+        width > UINT8_MAX ||
+        (member_role != RAWSTOR_MEMBER_DATA &&
+         member_role != RAWSTOR_MEMBER_WITNESS)) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
 
@@ -378,9 +377,12 @@ rawstd::Task<size_t> Backend::pread(void* buf, size_t size, uint64_t offset) {
         size, offset
     );
 
-    co_return co_await _queue.pread(
-        fd(), buf, size, static_cast<off_t>(offset)
-    );
+    size_t result =
+        co_await _queue.pread(fd(), buf, size, static_cast<off_t>(offset));
+    if (result != size) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    co_return result;
 }
 
 rawstd::Task<size_t>
@@ -390,9 +392,12 @@ Backend::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
         size, offset
     );
 
-    co_return co_await _queue.preadv(
-        fd(), iov, niov, static_cast<off_t>(offset)
-    );
+    size_t result =
+        co_await _queue.preadv(fd(), iov, niov, static_cast<off_t>(offset));
+    if (result != size) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    co_return result;
 }
 
 rawstd::Task<size_t> Backend::pwrite(

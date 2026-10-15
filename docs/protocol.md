@@ -1,5 +1,20 @@
 # Rawstor wire protocol
 
+## Native conversions
+
+`<rawstor/protocol.h>` provides C-compatible `static inline` conversions in
+both directions: `rawstor_frame_{config,meta,allocate}_{encode,decode}`
+for configuration, metadata and allocation. Encode writes a wire
+record; decode writes the corresponding native rawstor structure. The first
+argument is always the `RawstorFrame*` record (destination for encode, source
+for decode). Fallible conversions return zero on success or a positive errno
+value; output is unspecified on failure. Ballots use `RawstorObjectBallot`
+directly, with a compile-time wire-size check in the same header. These functions
+check representation. Unknown metadata sync-state bytes are rejected with
+`EPROTO`; `UNREACHABLE` (0) remains a valid decoded state. Slot and backends
+validate state transitions. The allocation encoder preserves
+`object_id` and `chunk_offset`, which the caller sets separately.
+
 ## Status
 
 Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
@@ -9,11 +24,11 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Frame head, `rstr` magic, `cid` pipelining | ✅ | `include/rawstor/protocol.h` |
 | Response `hash` (xxh3 with libxxhash) | ✅ | `librawstd/src/hash.c` |
 | Session: `SET_OBJECT` | ✅ | OST `ost/src/client.cpp`, MDS `mds/src/client.cpp` |
-| Data: `READ` `WRITE` `DISCARD` `ALLOCATE` `RELEASE` `FLUSH` `WRITE_ZEROES` | ✅ | OST server + `src/ost_backend.cpp` |
-| Metadata: `META` `SET_CONFIG` `LEAVE` `CREATE_VERSION` `LIST_VERSIONS` | ✅ | OST server + `src/ost_backend.cpp` |
+| Data: `READ` `WRITE` `DISCARD` `ALLOCATE` `RELEASE` `FLUSH` `WRITE_ZEROES` | ✅ | OST server + `src/ost_backend.cpp` (I/O), `src/wire_backend.cpp` (member lifecycle) |
+| Metadata: `META` `SET_CONFIG` `LEAVE` `CREATE_VERSION` `LIST_VERSIONS` | ✅ | OST server + `src/wire_backend.cpp` |
 | `LIST`, `LOCATION_INFO` | ✅ | OST and MDS servers, both clients |
-| Object: `OBJ_CREATE` `OBJ_OPEN` `OBJ_RESIZE` `OBJ_REMOVE` | ✅ | MDS server + `src/mds_client.cpp` |
-| Object versions: `OBJ_COMMIT_VERSION` `OBJ_REMOVE_VERSION` `OBJ_LIST_VERSIONS` | ✅ | MDS server + `src/mds_client.cpp` |
+| Object: `OBJ_CREATE` `OBJ_OPEN` `OBJ_RESIZE` `OBJ_REMOVE` | ✅ | MDS server + `src/mds_backend.cpp` |
+| Object versions: `OBJ_COMMIT_VERSION` `OBJ_REMOVE_VERSION` `OBJ_LIST_VERSIONS` | ✅ | MDS server + `src/mds_backend.cpp` |
 | `idempotency_key` on mutating `OBJ_*` | ✅ | `mds/src/store.cpp` (`applied_mutations`) |
 | `-ENOSYS` for commands outside a server's role | ✅ | `ost/src/client.cpp`, `mds/src/client.cpp` |
 | Protocol version + feature bits in the `SET_OBJECT` handshake | ❌ | planned in [MDS design](mds.md) |
@@ -79,14 +94,14 @@ keep `0x0b`/`0x0c`.
 | `0x01` | `READ` | OST | IO | data (`res` bytes) |
 | `0x02` | `WRITE` | OST | IO (`flags`: `SYNC`, `RESYNC`), then `len` bytes of data | — |
 | `0x03` | `DISCARD` | OST | IO | — |
-| `0x04` | `ALLOCATE` | OST | Allocate | — |
-| `0x05` | `RELEASE` | OST | Basic (non-nil `version_id`: that version only) | — |
+| `0x04` | `ALLOCATE` | OST / MDS (witness only) | Allocate | — |
+| `0x05` | `RELEASE` | OST / MDS (witness only) | Basic (non-nil `version_id`: that version only) | — |
 | `0x06` | `LIST` | OST, MDS | List | List rows |
 | `0x08` | `LOCATION_INFO` | OST / MDS | Basic (unused) | `RawstorLocationInfo` |
 | `0x09` | `FLUSH` | OST | Basic (`val` = epoch) | — |
 | `0x0a` | `WRITE_ZEROES` | OST | IO (`flags`: `SYNC`, `UNMAP`, `RESYNC`) | — |
-| `0x0b` | `SET_CONFIG` | OST | SetConfig | — |
-| `0x0c` | `META` | OST | Basic (`offset` = chunk offset, `version_id`, nil = live) | Meta |
+| `0x0b` | `SET_CONFIG` | OST / MDS (witness only) | SetConfig | — |
+| `0x0c` | `META` | OST / MDS (witness only) | Basic (`offset` = chunk offset, `version_id`, nil = live) | Meta |
 | `0x0d` | `CREATE_VERSION` | OST | Basic (`version_id` = new version) | — |
 | `0x0e` | `LIST_VERSIONS` | OST | Basic (`offset` = chunk offset) | Version rows |
 | `0x0f` | `LEAVE` | OST | Basic (unused) | — |
@@ -279,13 +294,15 @@ A ballot of the configuration register (`RawstorObjectBallot`):
 16
 ```
 
-### SetConfig — 338 bytes
+### SetConfig — 339 bytes
 
-Records the chunk's configuration on one copy (`SET_CONFIG`). The copy's
-own state is not set: the copy keeps it ([mirroring](mirroring.md#dirty-clean-and-lost)),
-but for `flags` bit 0, `RAWSTOR_CONFIG_CLEAR_LOST`, which turns a `LOST`
-copy `CLEAN` (no session open for writing) or `DIRTY`. A server with
-several locations keeps no record of the copy it is and answers `-ENOSYS`
+Records the chunk's configuration on one copy (`SET_CONFIG`). The separate
+`state` byte contains a `RawstorObjectSyncStateValue`: `CLEAN = 1`,
+`DIRTY = 2`, or `LOST = 3`, persisted atomically with configuration. Zero
+means preserve the current state. `flags` contains only bit 0,
+`RAWSTOR_CONFIG_CLEAR_LOST`, which turns a `LOST` copy `CLEAN` (no writer
+sessions) or `DIRTY`. Explicit state and CLEAR_LOST cannot be combined;
+invalid states or unknown flag bits return `-EINVAL`. OST accepts one backend location
 ([mirroring](mirroring.md#one-copy-per-server)). The copy's ballots stay
 as they are: only the register's own requests change them. `member_index` is
 the copy's position among the chunk's members, which the Config's roles
@@ -295,6 +312,9 @@ are indexed by: the copy takes its own role from it.
 set: the server closes it cleanly, and a copy with no session open for
 writing left marks itself `CLEAN`. A session that wrote and ends any other
 way -- disconnect, a new `SET_OBJECT` -- leaves a `DIRTY` copy `LOST`.
+OST shutdown stops socket reception, including incomplete requests, then
+drains admitted requests and slot departures before destroying the I/O queue,
+allowing the final consistency state to reach storage.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -309,11 +329,10 @@ way -- disconnect, a new `SET_OBJECT` -- leaves a `DIRTY` copy `LOST`.
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  24  Config (312 bytes)
-     +----------+--------------+
-336  |  flags   | member_index |
-     |          |              |
-     +----------+--------------+
-338
+     +----------+--------------+----------+
+336  |  flags   | member_index |  state   |
+     +----------+--------------+----------+
+339
 ```
 
 ### SyncPropose — 369 bytes
@@ -326,8 +345,7 @@ register's value -- the Config -- under `ballot`, and to promise `next` on
 success (zero for none). Each successful accept is one vote; the client
 must obtain a majority of register acceptors. With two data copies, the
 witness supplies the third vote (multi-attach Stage 2 follows witness
-support). `member_index` is as for SetConfig and indexes data members. A
-server with several locations answers `-ENOSYS`.
+support). `member_index` is as for SetConfig and indexes data members. OST accepts one backend location.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -427,8 +445,11 @@ state (`CLEAN`, `DIRTY`, `LOST`), how many sessions have it open for
 writing right now (`writers`), and the chunk's configuration as last set on
 it (a [Config](#config--312-bytes), at offset 16), and the copy's
 replica of the register's ballots: the highest it promised and the one
-its Config was accepted under. A server with several locations reports a
-zero Config and zero ballots.
+its Config was accepted under. OST reports the record of its one backend Slot.
+`width` is the non-zero number of data members; witness members are excluded
+from this count. A zero width in received metadata is a protocol error.
+Member roles are `DATA = 1` and `WITNESS = 2` (metadata-only witnesses); zero
+is reserved for an unknown role in an unavailable member's local placeholder.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -446,6 +467,13 @@ zero Config and zero ballots.
 ```
 
 ### SyncReply — 361 bytes
+
+The C API writes the member's record into `RawstorObjectMeta* meta` and
+reports acceptance through the callback's `ssize_t result`: 1 for acceptance,
+0 for refusal, or negative errno on failure. Metadata is available for both
+nonnegative results. Internally, register methods return `bool` and fill a
+`RawstorObjectMeta&` output argument.
+
 
 `SYNC_PREPARE`/`SYNC_ACCEPT`'s reply, sent whether the member promised or
 accepted (`ok` = 1) or refused (`ok` = 0): its whole record, a
@@ -678,3 +706,33 @@ ObjVersionMember — 24 bytes:
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
 ```
+
+## Witness member operations
+
+URI schemes do not encode member roles. `META.member_role` identifies the
+addressed member. If the last member is unavailable, its role follows from
+the complete target and data width. A quorum always uses the complete
+address count.
+
+Both OST and MDS accept `ALLOCATE` with `member_role = 2` to create a
+metadata-only member, `META` to read it and `RELEASE` to remove it.
+The common `SET_CONFIG` request atomically records state and configuration
+with its separate optional `state` field. Zero preserves the existing state.
+The update is serialized with member state transitions and persisted before
+the empty success response. `config.roles` records all members in
+the target's stable order; the witness entry is IN_SYNC after a successful
+configuration update, or EXCLUDED when the data quorum continues without it.
+MDS accepts these operations independently of its `OBJ_*` map registry.
+`width` is data-copy redundancy; the configuration role array includes the
+witness. One witness per chunk is allowed only with an even data-member count.
+
+A manual branch resolution records EXCLUDED for every non-winner through
+`SET_CONFIG`, regardless of its member type. LOST describes unclean departure
+and follows the same reconciliation rules as DIRTY for both DATA and WITNESS.
+Witnesses do not accept data I/O or object versions.
+
+Ordinary `LIST` reports every registered MDS object and native witness member,
+using `RawstorFrameListEntry` rows plus the final pagination cursor row.
+Registered objects appear at offset zero; witness records carry their real
+chunk offsets. Limits count IDs, and all offsets of an ID stay on one page.
+Member metadata determines the type of each listed address.

@@ -122,7 +122,7 @@ ssize_t target_set_config(
 ) {
     return rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
         return rawstor_target_set_member_config(
-            queue, target.c_str(), 0, 0, &sync_state, 0, cb, data
+            queue, target.c_str(), 0, 0, &sync_state, 0, nullptr, cb, data
         );
     });
 }
@@ -285,7 +285,8 @@ void object_write_single(
  * not completion of the background resync on the client.
  */
 bool wait_member_config_synced(
-    Queue& queue, const std::string& fresh, const std::string& behind
+    Queue& queue, const std::string& fresh, const std::string& behind,
+    size_t member_index = 1
 ) {
     for (int i = 0; i < 3000; ++i) {
         rawio_wait_timeout(queue, 10);
@@ -301,6 +302,9 @@ bool wait_member_config_synced(
         // Config publication precedes clearing LOST. Wait for both
         // externally visible steps before treating the rejoin as complete.
         if (!any_syncing(b.config) &&
+            (b.config.nroles == 0 ||
+             (member_index < b.config.nroles &&
+              b.config.roles[member_index] == RAWSTOR_OBJECT_MEMBER_IN_SYNC)) &&
             b.state != RAWSTOR_OBJECT_SYNC_STATE_LOST &&
             a.config.sync_id != 0 && b.config.sync_id == a.config.sync_id) {
             return true;
@@ -409,6 +413,8 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
         .failure_domain = 0,
     };
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+    RawstorObjectMeta initial{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &initial), 0);
 
     members.drop(2);
 
@@ -428,8 +434,9 @@ TEST(MirrorQuorumTest, degraded_open_with_quorum_n3) {
     EXPECT_EQ(b.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
     EXPECT_NE(a.config.sync_id, 0u);
     EXPECT_EQ(a.config.sync_id, b.config.sync_id);
-    EXPECT_EQ(a.config.epoch, 1u);
-    EXPECT_EQ(b.config.epoch, 1u);
+    EXPECT_NE(a.config.sync_id, initial.config.sync_id);
+    EXPECT_EQ(a.config.epoch, initial.config.epoch + 1);
+    EXPECT_EQ(b.config.epoch, initial.config.epoch + 1);
 
     /* Both survivors carry the data. */
     for (size_t i = 0; i < 2; ++i) {
@@ -502,13 +509,13 @@ TEST(MirrorQuorumTest, stale_arm_resynced) {
 // members' Slots it was issued on. The interrupted copy stays untrusted
 // and a later open resyncs it to the end.
 TEST(MirrorResyncTest, close_during_resync) {
-    Members members(2, "00000000-0000-7000-8000-0000000000a9");
+    Members members(3, "00000000-0000-7000-8000-0000000000a9");
 
     {
         Queue queue(16);
         RawstorObjectSpec spec{
             .size = 256ull << 20,
-            .width = 2,
+            .width = 3,
             .chunk_size = 0,
             .stripe_width = 0,
             .failure_domain = 0,
@@ -520,6 +527,7 @@ TEST(MirrorResyncTest, close_during_resync) {
         fresh.sync_id = 0x1111111111111111ull;
         fresh.sync_id_history[0] = 0x2222222222222222ull;
         ASSERT_EQ(target_set_config(queue, members.target(0), fresh), 0);
+        ASSERT_EQ(target_set_config(queue, members.target(2), fresh), 0);
 
         RawstorObjectConfig stale{};
         stale.epoch = 1;
@@ -529,6 +537,9 @@ TEST(MirrorResyncTest, close_during_resync) {
         std::string ping = "ping";
         object_write_single(
             queue, members.target(0), ping.data(), ping.size(), 0
+        );
+        object_write_single(
+            queue, members.target(2), ping.data(), ping.size(), 0
         );
     }
 
@@ -689,11 +700,11 @@ TEST(MirrorQuorumTest, all_dirty_same_sync_id_opens) {
 
 TEST(MirrorQuorumTest, syncing_arm_resynced) {
     Queue queue(16);
-    Members members(2, "00000000-0000-7000-8000-0000000000a5");
+    Members members(3, "00000000-0000-7000-8000-0000000000a5");
 
     RawstorObjectSpec spec{
         .size = 1ull << 20,
-        .width = 2,
+        .width = 3,
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
@@ -705,16 +716,19 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
     established.sync_id = 0x5555555555555555ull;
     ASSERT_EQ(target_set_config(queue, members.target(0), established), 0);
     ASSERT_EQ(target_set_config(queue, members.target(1), established), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(2), established), 0);
 
     /* An interrupted resync left the member's role syncing: untrusted. */
     RawstorObjectConfig syncing = established;
-    syncing.nroles = 2;
+    syncing.nroles = 3;
     syncing.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
     syncing.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+    syncing.roles[2] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
     ASSERT_EQ(target_set_config(queue, members.target(1), syncing), 0);
 
     std::string ping = "ping";
     object_write_single(queue, members.target(0), ping.data(), ping.size(), 0);
+    object_write_single(queue, members.target(2), ping.data(), ping.size(), 0);
 
     RawstorObject* object = nullptr;
     ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
@@ -740,75 +754,56 @@ TEST(MirrorQuorumTest, syncing_arm_resynced) {
     EXPECT_EQ(object_close(queue, member), 0);
 }
 
-TEST(MirrorQuorumTest, size_mismatch_smaller_member_excluded_and_resynced) {
+TEST(MirrorQuorumTest, physical_shrink_does_not_change_logical_size) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000aa");
-
-    RawstorObjectSpec spec{
-        .size = 1ull << 20,
-        .width = 2,
-        .chunk_size = 0,
-        .stripe_width = 0,
-        .failure_domain = 0,
-    };
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    spec.width = 2;
     ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
-
-    /* An established sync set on both members: a freshly created (sync_id
-     * 0) pair wouldn't exercise wait_member_config_synced()'s own sync_id check
-     * below, and F11 exclusion is meant to apply on top of an otherwise
-     * ordinary in-sync mirror, not only to never-opened copies. */
-    RawstorObjectConfig established{};
-    established.epoch = 1;
-    established.sync_id = 0xaaaaaaaaaaaaaaaaull;
-    ASSERT_EQ(target_set_config(queue, members.target(0), established), 0);
-    ASSERT_EQ(target_set_config(queue, members.target(1), established), 0);
-
-    /* Distinct content on the full-size member only, so a successful
-     * online resync back onto member1 is observable below. */
-    std::string ping = "ping";
-    object_write_single(queue, members.target(0), ping.data(), ping.size(), 0);
-
-    /* member1's copy is short of the mirror's logical size -- e.g. a
-     * block-device member whose extent/volblocksize rounding went the
-     * other way, or a truncated/partial copy (docs/mirroring.md, F11:
-     * "Physical < logical -> the copy is invalid (treat as F10)"). */
-    fs::resize_file(members.dat(1), (1ull << 20) - 4096);
-
+    fs::resize_file(members.dat(1), spec.size - 4096);
+    RawstorObjectMeta meta{};
+    ASSERT_EQ(target_meta(queue, members.target(1), &meta), 0);
+    EXPECT_EQ(meta.spec.size, spec.size);
     RawstorObject* object = nullptr;
     ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
-
-    /* The short member is excluded at open (not silently adopted as a
-     * smaller logical size) and resynced online. Excluded by size alone,
-     * it still carries the set's sync_id: the resync is done once its
-     * rejoin has moved the set to a new one. */
-    bool rejoined = false;
-    for (int i = 0; i < 3000 && !rejoined; ++i) {
-        rawio_wait_timeout(queue, 10);
-        RawstorObjectMeta a{};
-        rejoined = target_meta(queue, members.target(0), &a) == 0 &&
-                   a.config.sync_id != established.sync_id;
-    }
-    EXPECT_TRUE(rejoined);
-    EXPECT_TRUE(
-        wait_member_config_synced(queue, members.target(0), members.target(1))
-    );
-
     object_close_clean(queue, object);
+}
 
-    RawstorObjectMeta a{};
-    RawstorObjectMeta b{};
-    ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
-    ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
-    EXPECT_EQ(a.config.sync_id, b.config.sync_id);
-    EXPECT_EQ(a.spec.size, spec.size);
-    EXPECT_EQ(b.spec.size, spec.size);
+TEST(MirrorQuorumTest, truncated_first_member_reads_from_surviving_copy) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000af");
+    RawstorObjectSpec spec{};
+    spec.size = 8192;
+    spec.width = 2;
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    object_write(queue, object, "tail", 4, 8188, 0);
+    object_close_clean(queue, object);
+    fs::resize_file(members.dat(0), 4096);
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    char data[4]{};
+    object_read(queue, object, data, sizeof(data), 8188);
+    EXPECT_EQ(std::string(data, sizeof(data)), "tail");
+    object_close_clean(queue, object);
+}
 
-    RawstorObject* member = nullptr;
-    ASSERT_EQ(target_open(queue, members.target(1), &member), 0);
-    std::string data(4, '\0');
-    object_read(queue, member, data.data(), data.size(), 0);
-    EXPECT_EQ(data, "ping");
-    EXPECT_EQ(object_close(queue, member), 0);
+TEST(MirrorQuorumTest, physical_growth_does_not_change_logical_size) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000ae");
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    spec.width = 2;
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+    fs::resize_file(members.dat(1), 2 * spec.size);
+    RawstorObjectMeta meta{};
+    ASSERT_EQ(target_meta(queue, members.target(1), &meta), 0);
+    EXPECT_EQ(meta.spec.size, spec.size);
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    object_write(queue, object, "x", 1, spec.size, EINVAL);
+    object_close_clean(queue, object);
 }
 
 // A write that starts while the rejoining member is getting its final
@@ -829,11 +824,11 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
     } opts;
 
     Queue queue(16);
-    Members members(2, "00000000-0000-7000-8000-0000000000ab");
+    Members members(3, "00000000-0000-7000-8000-0000000000ab");
     // Small enough for the test server to take the copy in one read.
     RawstorObjectSpec spec{
         .size = 4096,
-        .width = 2,
+        .width = 3,
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
@@ -844,6 +839,7 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
     fresh.sync_id = 0x1111111111111111ull;
     fresh.sync_id_history[0] = 0x2222222222222222ull;
     ASSERT_EQ(target_set_config(queue, members.target(0), fresh), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(2), fresh), 0);
 
     // The second member is a scripted OST holding a stale copy.
     rawstor::tests::Server server(8812, 256);
@@ -851,7 +847,7 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
         .size = spec.size,
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
-        .width = 2,
+        .width = 3,
         .member_role = RAWSTOR_MEMBER_DATA,
         .writers = 0,
         .config =
@@ -869,8 +865,9 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
     std::atomic<bool> syncing_sent(false);
     std::atomic<bool> final_state_sent(false);
     auto s = std::make_unique<rawstor::tests::Session>(server);
-    s->cmd_set_object(RAWSTOR_MAGIC, 0, 0);
-    s->cmd_meta(RAWSTOR_MAGIC, 1, 0, stale);
+    s->cmd_meta(RAWSTOR_MAGIC, 0, 0, stale);
+    s->cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+    s->cmd_meta(RAWSTOR_MAGIC, 2, 0, stale);
     // The SYNCING mark, answered once the object is dirty (below).
     server.read(
         "SYNCING SET_CONFIG <<<", sizeof(RawstorFrameSetConfig),
@@ -879,7 +876,8 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
 
     std::string target =
         members.target(0) +
-        ",ost://127.0.0.1:8812/00000000-0000-7000-8000-0000000000ab";
+        ",ost://127.0.0.1:8812/00000000-0000-7000-8000-0000000000ab," +
+        members.target(2);
     RawstorObject* object = nullptr;
     ASSERT_EQ(target_open(queue, target, &object), 0);
     for (int i = 0; i < 1000 && !syncing_sent; ++i) {
@@ -888,25 +886,33 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
     ASSERT_TRUE(syncing_sent);
 
     // Dirty the object before the resync proper starts: this write goes
-    // to the first member only, and the write below then needs no dirty
+    // to the two current members, and the write below then needs no dirty
     // barrier, so the identity the member gets stays current.
     std::string first(4096, 'F');
     object_write(queue, object, first.data(), first.size(), 0, 0);
 
-    s->cmd_set_state_response(RAWSTOR_MAGIC, 2, 0);
-    s->cmd_write(RAWSTOR_MAGIC, 3, spec.size); // the copy
-    s->cmd_flush(RAWSTOR_MAGIC, 4, 0);         // durable before clearing LOST
+    s->cmd_set_state_response(RAWSTOR_MAGIC, 3, 0);
+    s->cmd_write(RAWSTOR_MAGIC, 4, spec.size); // the copy
+    s->cmd_flush(RAWSTOR_MAGIC, 5, 0);         // durable before clearing LOST
+    RawstorFrameMetaPayload final_meta = stale;
+    final_meta.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
     // The final state, answered only once the client's write is in.
     server.read(
         "final SET_CONFIG <<<", sizeof(RawstorFrameSetConfig),
-        [&final_state_sent](const void*) { final_state_sent = true; }
+        [&final_state_sent, &final_meta](const void* data) {
+            final_meta.config =
+                static_cast<const RawstorFrameSetConfig*>(data)->payload.config;
+            final_state_sent = true;
+        }
     );
     s->cmd_write_request(4096);
-    s->cmd_set_state_response(RAWSTOR_MAGIC, 5, 0);
+    s->cmd_set_state_response(RAWSTOR_MAGIC, 6, 0);
     for (int i = 0; i < 1000 && !final_state_sent; ++i) {
         rawio_wait_timeout(queue, 10);
     }
     ASSERT_TRUE(final_state_sent);
+    s->cmd_meta(RAWSTOR_MAGIC, 8, 0, final_meta);
+    s->cmd_set_state(RAWSTOR_MAGIC, 9, 0);
 
     testing::internal::CaptureStderr();
     bool written = false;
@@ -930,7 +936,7 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
         rawio_wait_timeout(queue, 10);
     }
     EXPECT_FALSE(written);
-    s->cmd_write_response(RAWSTOR_MAGIC, 6, 2048);
+    s->cmd_write_response(RAWSTOR_MAGIC, 7, 2048);
     for (int i = 0; i < 1000 && !written; ++i) {
         rawio_wait_timeout(queue, 10);
     }
@@ -941,18 +947,18 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
     EXPECT_NE(log.find("Mirror member degraded", rejoined), std::string::npos)
         << log;
 
-    // The member is out of the set: the close touches only the first one.
+    // The member is out of the set: the close touches only the current members.
     object_close_clean(queue, object);
 }
 
 TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     Queue queue(16);
-    Members members(2, "00000000-0000-7000-8000-0000000000a7");
+    Members members(3, "00000000-0000-7000-8000-0000000000a7");
 
     const uint64_t size = 8ull << 20;
     RawstorObjectSpec spec{
         .size = size,
-        .width = 2,
+        .width = 3,
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
@@ -964,6 +970,7 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     fresh.sync_id = 0x1111111111111111ull;
     fresh.sync_id_history[0] = 0x2222222222222222ull;
     ASSERT_EQ(target_set_config(queue, members.target(0), fresh), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(2), fresh), 0);
 
     RawstorObjectConfig stale{};
     stale.epoch = 1;
@@ -994,6 +1001,9 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
         std::string block(4096, 'S');
         object_write_single(
             queue, members.target(0), block.data(), block.size(), off
+        );
+        object_write_single(
+            queue, members.target(2), block.data(), block.size(), off
         );
     }
 
@@ -1053,16 +1063,16 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     /* The member is reprovisioned empty; the probe picks it up and resyncs. */
     RawstorObjectSpec member_spec{
         .size = 1ull << 20,
-        .width = 1,
+        .width = 3,
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
     };
     ASSERT_EQ(target_create(queue, members.target(2), member_spec), 0);
 
-    EXPECT_TRUE(
-        wait_member_config_synced(queue, members.target(0), members.target(2))
-    );
+    EXPECT_TRUE(wait_member_config_synced(
+        queue, members.target(0), members.target(2), 2
+    ));
 
     object_close_clean(queue, object);
 
@@ -1107,9 +1117,9 @@ TEST(MirrorQuorumTest, missing_copy_recreated_and_resynced) {
 
     RawstorObject* object = nullptr;
     ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
-    EXPECT_TRUE(
-        wait_member_config_synced(queue, members.target(0), members.target(2))
-    );
+    EXPECT_TRUE(wait_member_config_synced(
+        queue, members.target(0), members.target(2), 2
+    ));
     object_close_clean(queue, object);
 
     RawstorObjectMeta a{};
@@ -1185,6 +1195,16 @@ TEST(MirrorQuorumTest, two_way_missing_copy_recreated_by_hand) {
     EXPECT_FALSE(fs::exists(members.dat(1)));
 
     ASSERT_EQ(target_create(queue, members.target(1), spec), 0);
+
+    // An operator must choose the survivor and record that choice on
+    // both members before automatic recovery may use the new copy.
+    RawstorObjectMeta survivor{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &survivor), 0);
+    auto resolved = survivor.config;
+    ++resolved.epoch;
+    resolved.roles[1] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    ASSERT_EQ(target_set_config(queue, members.target(0), resolved), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(1), resolved), 0);
 
     ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
     EXPECT_TRUE(
@@ -1296,11 +1316,11 @@ TEST(MirrorQuorumTest, clean_close_stable_identity) {
  */
 TEST(MirrorQuorumTest, stale_member_bumps_identity_on_rejoin_only) {
     Queue queue(16);
-    Members members(2, "00000000-0000-7000-8000-0000000000af");
+    Members members(3, "00000000-0000-7000-8000-0000000000af");
 
     RawstorObjectSpec spec{
         .size = 1ull << 20,
-        .width = 2,
+        .width = 3,
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,
@@ -1312,6 +1332,7 @@ TEST(MirrorQuorumTest, stale_member_bumps_identity_on_rejoin_only) {
     fresh.sync_id = 0x1111111111111111ull;
     fresh.sync_id_history[0] = 0x2222222222222222ull;
     ASSERT_EQ(target_set_config(queue, members.target(0), fresh), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(2), fresh), 0);
 
     RawstorObjectConfig stale{};
     stale.epoch = 1;
@@ -1469,11 +1490,10 @@ TEST(MirrorOstTest, read_failover_and_repair) {
 }
 
 /*
- * Degrade & continue: a write fails on one member, the survivor durably
- * records the exclusion (SET_SYNC_STATE) and the write is acknowledged; the
- * next write goes to the survivor only.
+ * Losing one of two members freezes writes without acknowledging the
+ * partial write; a subsequent write fails without touching the wire.
  */
-TEST(MirrorOstTest, degrade_and_continue) {
+TEST(MirrorOstTest, two_members_freeze_below_majority) {
     Queue queue(16);
     rawstor::tests::Server server1(8753, 256);
     rawstor::tests::Server server2(8754, 256);
@@ -1516,25 +1536,17 @@ TEST(MirrorOstTest, degrade_and_continue) {
         s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
         s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
         s.cmd_write(RAWSTOR_MAGIC, 3, 4);
-        /* Degrade barrier: the exclusion is recorded on the survivor. */
+        /* The failed write was not acknowledged. Close records an
+         * unclean departure on the survivor. */
         s.cmd_set_state(RAWSTOR_MAGIC, 4, 0);
-        /* Subsequent writes go to the survivor only. */
-        s.cmd_write(RAWSTOR_MAGIC, 5, 4);
-        /*
-         * object_close() below is a clean close (see Chunk::close()'s own
-         * doc comment): flush, then a LEAVE on the sole survivor, which
-         * marks itself CLEAN.
-         */
-        s.cmd_flush(RAWSTOR_MAGIC, 6, 0);
-        s.cmd_leave(RAWSTOR_MAGIC, 7, 0);
     }
 
     RawstorObject* object = nullptr;
     ASSERT_EQ(target_open(queue, target, &object), 0);
 
     std::string ping = "ping";
-    object_write(queue, object, ping.data(), ping.size(), 0, 0);
-    object_write(queue, object, ping.data(), ping.size(), 8, 0);
+    object_write(queue, object, ping.data(), ping.size(), 0, EIO);
+    object_write(queue, object, ping.data(), ping.size(), 8, EIO);
 
     EXPECT_EQ(object_close(queue, object), 0);
 }
@@ -1683,12 +1695,9 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
         s.cmd_write(RAWSTOR_MAGIC, 3, 4);
         s.cmd_read(RAWSTOR_MAGIC, 4, "ping", 4);
-        /* The degrade barrier bumps epoch/sync_id on the survivor -- member0
-         * is excluded durably even though it never lost this read. */
-        s.cmd_set_state(RAWSTOR_MAGIC, 5, 0);
-        /* Chunk::close(): flush, then a LEAVE on the sole survivor. */
-        s.cmd_flush(RAWSTOR_MAGIC, 6, 0);
-        s.cmd_leave(RAWSTOR_MAGIC, 7, 0);
+        /* A single survivor cannot record a majority transition. */
+        s.cmd_flush(RAWSTOR_MAGIC, 5, 0);
+        s.cmd_set_state(RAWSTOR_MAGIC, 6, 0);
     }
 
     RawstorObject* object = nullptr;
@@ -1709,7 +1718,7 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
     // RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL's reconnect probe (200ms under
     // this suite, tests/main.cpp) to race in and reconnect the now-STALE
     // member0, which nothing here has scripted for.
-    EXPECT_EQ(object_close(queue, object), 0);
+    EXPECT_EQ(object_close(queue, object), -EIO);
 }
 
 } // unnamed namespace

@@ -2,6 +2,8 @@
 
 #include <ost/client.hpp>
 
+#include "slot.hpp"
+
 #include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
@@ -131,6 +133,10 @@ Server::Server(
     _locations(rawstd::URI::uriv(location)),
     _accept_event(nullptr) {
 
+    if (_locations.size() != 1) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     int res = rawio_queue_create(queue_size, &_queue);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -138,6 +144,13 @@ Server::Server(
 }
 
 Server::~Server() {
+    _stop = true;
+    for (const auto& [fd, client] : _clients) {
+        // End network waits while admitted storage operations drain.
+        if (::shutdown(fd, SHUT_RDWR) == -1 && errno != ENOTCONN) {
+            rawstd_warning("Failed to shut down client: %s\n", strerror(errno));
+        }
+    }
     _clients.clear();
 
     // _wake_fd itself needs no cleanup here: Server never owns it, see
@@ -150,7 +163,31 @@ Server::~Server() {
         }
     }
 
+    // Slot departure persists the final member state before the queue dies.
+    // In-flight requests can release their Client and start a departure
+    // while this pump is running.
+    while (_live_clients != 0 || _departures != 0) {
+        int res = rawio_wait(_queue);
+        if (res < 0 && res != -EINTR) {
+            rawstd_warning("Failed to drain clients: %s\n", strerror(-res));
+            break;
+        }
+    }
+
     rawio_queue_delete(_queue);
+}
+
+rawstd::DetachedTask Server::_abandon_slot(std::shared_ptr<Slot> slot) {
+    ++_departures;
+    struct DepartureEnd {
+        unsigned int& count;
+        ~DepartureEnd() { --count; }
+    } departure_end{_departures};
+    try {
+        co_await slot->close();
+    } catch (const std::exception& e) {
+        rawstd_error("Failed to close slot after disconnect: %s\n", e.what());
+    }
 }
 
 rawstd::Task<void> Server::_add_client(int fd) {
@@ -235,6 +272,11 @@ rawstd::DetachedTask Server::_accept_task() {
                     rawstd_error("%s\n", e.what());
                 }
                 break;
+            }
+
+            if (_stop) {
+                ::close(fd);
+                continue;
             }
 
             try {

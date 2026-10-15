@@ -21,8 +21,8 @@ extern "C" {
 
 /** Chunk member roles (docs/mds.md, chunk_meta.member_role). */
 enum RawstorMemberRole {
-    RAWSTOR_MEMBER_DATA = 0,
-    RAWSTOR_MEMBER_WITNESS = 1, /**< Metadata-only quorum member; stage 3. */
+    RAWSTOR_MEMBER_DATA = 1,
+    RAWSTOR_MEMBER_WITNESS = 2, /**< Metadata-only quorum member. */
 };
 
 /**
@@ -36,13 +36,11 @@ enum RawstorMemberRole {
  *
  * When used with rawstor_target_create(), the size field must be set to the
  * desired size of the object to be created; width is mandatory too, and
- * never defaulted or derived: for a comma-separated target string with more
- * than one URI, it must equal that count exactly (@c -EINVAL otherwise,
- * including when left at 0); for a single-URI target it's the caller's own
- * chosen redundancy -- 1 for an ordinary single-copy object, or an mds://
- * object's own real width -- but it must be stated (0 is refused, never
- * silently treated as 1). chunk_size, when nonzero, must be a power of
- * two and size a multiple of it (@c -EINVAL otherwise): every chunk is
+ * never defaulted or derived: it specifies data-copy redundancy, independent
+ * of the physical URI count (a relay can itself contain several copies).
+ * Use 1 for an ordinary single-copy object or the desired data redundancy
+ * for an mds:// object. Zero is refused. chunk_size, when nonzero, must be a
+ * power of two and size a multiple of it (@c -EINVAL otherwise): every chunk is
  * exactly chunk_size. It is mandatory for an mds:// object, and for a
  * target string naming more than one chunk's own uris (see
  * docs/concepts.md); 0 means one chunk spans the whole object, which then
@@ -50,7 +48,7 @@ enum RawstorMemberRole {
  *
  * When used with rawstor_target_spec(), the fields are filled with the
  * actual shape of the existing object: its size in bytes, the number of
- * copies configured for it -- the number of URIs in the target string
+ * data copies configured for it -- the number of data URIs in the target string
  * for a plain target, or an mds:// object's own configured redundancy
  * (never derivable by counting URIs, since an mds:// target is always a
  * single URI) -- and the per-chunk share it was created with (0 for the
@@ -59,14 +57,18 @@ enum RawstorMemberRole {
  * chunking policy, persisted identically on every chunk at create()
  * time, so any one of them answers it correctly.
  *
+ * When a chunk has width + 1 locations, the last is a metadata-only witness.
+ * At most one witness per chunk is supported, only with an even number of
+ * data members; ordinary mds:// placement does not automatically attach one.
+ *
  * @see rawstor_target_spec
  * @see rawstor_target_create
  */
 
 struct RawstorObjectSpec {
     uint64_t size;      /**< Size of the object in bytes. */
-    unsigned int width; /**< Copies per chunk: the number of URIs in a plain
-                              target, or an mds:// object's own configured
+    unsigned int width; /**< Data copies per chunk: the number of data URIs in a
+                           plain target, or an mds:// object's own configured
                               redundancy. Mandatory at create() time -- see
                               rawstor_target_create()'s own doc comment. */
 
@@ -102,9 +104,13 @@ struct RawstorObjectSpec {
  *               that writer's unacknowledged writes. It stays LOST until
  *               cleared explicitly (RAWSTOR_CONFIG_CLEAR_LOST).
  *
- * The copy keeps its state itself, from the sessions it serves
+ * Witness members use the same states for their durable metadata record;
+ * LOST invalidates their vote. They have no data writer sessions.
+ *
+ * The data copy keeps its state itself, from the sessions it serves
  * (docs/mirroring.md, "DIRTY, CLEAN and LOST"): it is read in
- * RawstorObjectMeta, never written by a caller.
+ * RawstorObjectMeta. Explicit metadata transitions use
+ * the optional RawstorObjectSyncStateValue argument for any member.
  */
 enum RawstorObjectSyncStateValue {
     RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE = 0,
@@ -116,7 +122,7 @@ enum RawstorObjectSyncStateValue {
 /** Number of ancestor sync ids kept in RawstorObjectConfig. */
 #define RAWSTOR_OBJECT_SYNC_ID_HISTORY 4
 
-/** Most members a chunk can have: RawstorObjectSpec.width fits a byte. */
+/** Most members a chunk can have: the role count fits a byte. */
 #define RAWSTOR_OBJECT_MAX_WIDTH 255
 
 /**
@@ -391,6 +397,8 @@ int rawstor_target_meta(
  *                      call is being queued -- need not stay valid until
  *                      @p cb runs.
  * @param flags         RAWSTOR_CONFIG_* flags, 0 for none.
+ * @param state         Optional state to record with config; NULL preserves it.
+ *                      Read while queuing. Cannot be combined with CLEAR_LOST.
  * @param cb            Callback invoked on completion.
  *                      - @p result is zero on success, or a negative
  *                        errno on failure (@c -EINVAL for invalid target
@@ -414,22 +422,9 @@ int rawstor_target_meta(
 int rawstor_target_set_member_config(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
     const struct RawstorObjectConfig* config, unsigned int flags,
+    const enum RawstorObjectSyncStateValue* state,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
-
-/**
- * @brief A member's reply to a request of the chunk's configuration
- *        register.
- *
- * `ok` is nonzero if the member promised (rawstor_target_sync_prepare())
- * or accepted (rawstor_target_sync_accept()); `meta` is its whole record
- * either way, so a refused request still shows the actual value
- * (docs/caspaxos.md).
- */
-struct RawstorObjectSyncReply {
-    int ok;
-    struct RawstorObjectMeta meta;
-};
 
 /**
  * @brief Asynchronously ask one member of a chunk to promise a ballot
@@ -440,10 +435,11 @@ struct RawstorObjectSyncReply {
  * (@p target, @p offset, @p member_index). The member promises @p ballot if
  * it is above both the ballot it promised and the ballot its
  * configuration was accepted under, persists that, and replies with its
- * whole record in @p reply either way.
+ * whole record in @p meta either way.
  *
- * @param reply  Filled before @p cb runs with a zero result. Must remain
- *               valid until then.
+ * @param meta Filled before @p cb runs with a nonnegative result. Must remain
+ *             valid until then. The callback receives 1 for acceptance, 0 for
+ *             refusal, or negative errno on failure.
  *
  * @return 0 if the request was queued; negative errno on immediate
  *         failure (in which case @p cb is never invoked). A member that
@@ -452,9 +448,8 @@ struct RawstorObjectSyncReply {
  */
 int rawstor_target_sync_prepare(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
-    const struct RawstorObjectBallot* ballot,
-    struct RawstorObjectSyncReply* reply, int (*cb)(ssize_t result, void* data),
-    void* data
+    const struct RawstorObjectBallot* ballot, struct RawstorObjectMeta* meta,
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -465,9 +460,13 @@ int rawstor_target_sync_prepare(
  * above the ballot its configuration was accepted under: it then records
  * @p config as accepted under @p ballot, and promises @p next if that is
  * above @p ballot. It persists that and replies with its whole record in
- * @p reply either way. Acceptance on this member is one vote; the caller
+ * @p meta either way. Acceptance on this member is one vote; the caller
  * must obtain a majority of the configuration register's acceptors. For
  * two data copies, a witness supplies the third vote.
+ *
+ * @param meta Filled before @p cb runs with a nonnegative result. Must remain
+ *             valid until then. The callback receives 1 for acceptance, 0 for
+ *             refusal, or negative errno on failure.
  *
  * @return 0 if the request was queued; negative errno on immediate
  *         failure (in which case @p cb is never invoked).
@@ -476,9 +475,8 @@ int rawstor_target_sync_accept(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
     const struct RawstorObjectBallot* ballot,
     const struct RawstorObjectBallot* next,
-    const struct RawstorObjectConfig* config,
-    struct RawstorObjectSyncReply* reply, int (*cb)(ssize_t result, void* data),
-    void* data
+    const struct RawstorObjectConfig* config, struct RawstorObjectMeta* meta,
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**

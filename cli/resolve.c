@@ -116,6 +116,10 @@ static int resolve_chunk(
             );
             return EX_USAGE;
         }
+        if (metas[winners[i]].member_role == RAWSTOR_MEMBER_WITNESS) {
+            fprintf(stderr, "A witness cannot be a data winner\n");
+            return EX_USAGE;
+        }
         if (metas[winners[i]].state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             fprintf(
                 stderr,
@@ -186,6 +190,35 @@ static int resolve_chunk(
                                   : RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     }
 
+    /* Exclude non-winners before establishing the operator's new branch.
+     * Failure aborts: an old vote must not endorse an excluded member
+     * after the operator's chosen winner is lost. */
+    for (ssize_t i = 0; i < result; ++i) {
+        if (is_winner(winners, num_winners, (size_t)i)) {
+            continue;
+        }
+        RawstorCliOp member_op;
+        res = rawstor_cli_op_init(&member_op);
+        if (res < 0) {
+            return rawstd_exitcode_for_errno(-res);
+        }
+        enum RawstorObjectSyncStateValue member_state =
+            RAWSTOR_OBJECT_SYNC_STATE_LOST;
+        int sres = rawstor_target_set_member_config(
+            member_op.queue, target, offset, (size_t)i, &new_config, 0,
+            &member_state, rawstor_cli_op_cb, &member_op
+        );
+        ssize_t sresult = rawstor_cli_op_wait(&member_op, sres);
+        rawstor_cli_op_destroy(&member_op);
+        if (sresult < 0) {
+            fprintf(
+                stderr, "Cannot exclude member before resolve: %s\n",
+                strerror((int)-sresult)
+            );
+            return rawstd_exitcode_for_errno((int)-sresult);
+        }
+    }
+
     /* Every winner gets the exact same new identity, written one at a
      * time (rawstor_target_set_member_config() only ever points at a
      * single member) -- as many as already succeeded stay written even
@@ -201,7 +234,7 @@ static int resolve_chunk(
         }
         int sres = rawstor_target_set_member_config(
             set_op.queue, target, offset, winners[i], &new_config,
-            RAWSTOR_CONFIG_CLEAR_LOST, rawstor_cli_op_cb, &set_op
+            RAWSTOR_CONFIG_CLEAR_LOST, NULL, rawstor_cli_op_cb, &set_op
         );
         ssize_t sresult = rawstor_cli_op_wait(&set_op, sres);
         rawstor_cli_op_destroy(&set_op);

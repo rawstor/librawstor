@@ -83,7 +83,7 @@ ssize_t target_set_config(
 ) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
         return rawstor_target_set_member_config(
-            &queue, target.c_str(), 0, 0, &sync_state, 0, cb, data
+            &queue, target.c_str(), 0, 0, &sync_state, 0, nullptr, cb, data
         );
     });
 }

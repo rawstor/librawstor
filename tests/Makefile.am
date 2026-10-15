@@ -50,7 +50,8 @@ AM_CXXFLAGS += -pthread \
 AM_LDFLAGS += -pthread
 test_all_SOURCES += object_env.cpp \
                     object_env.hpp \
-                    test_object.cpp
+                    test_object.cpp \
+                    test_witness.cpp
 test_all_LDADD += $(top_builddir)/ost/src/libost.la \
                   $(top_builddir)/mds/src/libmds.la \
                   $(top_builddir)/mds/src/libmdsstore.la \

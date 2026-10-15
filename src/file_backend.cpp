@@ -313,18 +313,9 @@ rawstd::Task<void> Backend::create(
 
     std::exception_ptr create_error;
     try {
-        // A witness holds no data (docs/mds.md, "Witness (stage 3)") --
-        // skips the whole real-storage dance below entirely, leaving
-        // `target_path` at the 0 bytes O_CREAT just gave it. This still
-        // needs to be a real (if empty) file rather than none at all:
-        // meta() below stat()s it for spec.size, and list_chunks()
-        // checks its own existence to enumerate this id/offset at all
-        // (both stay correct -- a witness's own logical size is 0, and
-        // it's still meant to be enumerable, just distinguishable from a
-        // data chunk once its own meta's member_role is read back).
-        // Slot::open() is what actually refuses real I/O against it
-        // (its own doc comment) -- this is just what makes that refusal
-        // free of cost rather than merely free of use.
+        // A witness keeps an empty data file for namespace enumeration.
+        // Its declared logical size is stored in the companion metadata.
+        // Data binding rejects metadata-only members by their role.
         if (member_role != RAWSTOR_MEMBER_WITNESS) {
             // fallocate() actually reserves real blocks -- this file backs a
             // virtio-blk-style virtual disk, so a write into unallocated
@@ -431,6 +422,7 @@ rawstd::Task<void> Backend::create(
             identity.member_role = member_role;
             identity.width = static_cast<uint8_t>(sp.width);
             identity.chunk_size = sp.chunk_size;
+            identity.size = sp.size;
 
             // meta_encode()'s own (shorter, variable-length) return value
             // is NUL-padded out to a fixed META_MAX_SIZE bytes here,
@@ -536,6 +528,11 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     }
     std::string location_path = get_location_path(location());
 
+    std::error_code location_error;
+    if (!std::filesystem::is_directory(location_path, location_error)) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+    }
+
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
@@ -580,7 +577,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     }
 
     RawstorObjectMeta ret{};
-    ret.spec.size = static_cast<uint64_t>(st.st_size);
+    ret.spec.size = identity.size;
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
@@ -626,24 +623,17 @@ rawstd::Task<void> Backend::_write_meta(
             rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
-        // identity is stamped once at create() and never changed again --
-        // preserve it across this rewrite. A record meta_decode() can't
-        // parse (an earlier format version) has no identity to preserve;
-        // it degenerates to the all-zero default, same as
-        // lvm::Backend::_write_meta()'s own equivalent fallback.
+        // Preserve the logical size and placement identity across rewrites.
+        // An unreadable record cannot supply those fields and is rejected.
         RawstorObjectSyncStateValue old_record_state{};
         RawstorObjectConfig old_record_config{};
         RawstorObjectBallot old_record_promised{};
         RawstorObjectBallot old_record_accepted{};
         ChunkIdentity identity{};
-        try {
-            meta_decode(
-                std::string(disk.data()), &old_record_state, &old_record_config,
-                &old_record_promised, &old_record_accepted, &identity
-            );
-        } catch (const std::system_error&) {
-            identity = ChunkIdentity{};
-        }
+        meta_decode(
+            std::string(disk.data()), &old_record_state, &old_record_config,
+            &old_record_promised, &old_record_accepted, &identity
+        );
 
         // See create()'s own comment: NUL-padded out to a fixed
         // META_MAX_SIZE bytes so this file's own byte length stays fixed

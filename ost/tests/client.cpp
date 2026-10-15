@@ -1,5 +1,7 @@
 #include "client.hpp"
 
+#include <rawstor/target.h>
+
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
 
@@ -19,6 +21,9 @@ void send_all(int fd, const void* buf, size_t size) {
     size_t sent = 0;
     while (sent < size) {
         ssize_t res = ::send(fd, p + sent, size - sent, 0);
+        if (res == -1 && errno == EINTR) {
+            continue;
+        }
         if (res == -1) {
             RAWSTD_THROW_ERRNO();
         }
@@ -31,6 +36,9 @@ void recv_all(int fd, void* buf, size_t size) {
     size_t got = 0;
     while (got < size) {
         ssize_t res = ::recv(fd, p + got, size - got, 0);
+        if (res == -1 && errno == EINTR) {
+            continue;
+        }
         if (res == -1) {
             RAWSTD_THROW_ERRNO();
         }
@@ -74,7 +82,7 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
             .chunk_shift = 0,
             .failure_domain = 0,
             .width = static_cast<uint8_t>(width),
-            .member_role = 0, /* RAWSTOR_MEMBER_DATA, <rawstor/target.h> */
+            .member_role = RAWSTOR_MEMBER_DATA,
         },
     };
     std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));

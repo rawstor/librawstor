@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <optional>
 #include <system_error>
 #include <vector>
 
@@ -28,6 +29,13 @@ using rawstor::mdsserver::VersionMember;
 // The most objects one LIST page carries; a request asking for more (or
 // for no particular number, 0) gets this many.
 const unsigned int list_limit = 1024;
+
+std::optional<RawstorObjectSyncStateValue> decode_config_state(uint8_t value) {
+    if (value == 0) {
+        return std::nullopt;
+    }
+    return static_cast<RawstorObjectSyncStateValue>(value);
+}
 
 int recv_trampoline(ssize_t result, void* data) {
     size_t value = result < 0 ? 0 : static_cast<size_t>(result);
@@ -301,6 +309,82 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         }
         break;
     }
+    case RAWSTOR_CMD_ALLOCATE: {
+        RawstorFrameAllocatePayload payload{};
+        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        int32_t res = 0;
+        try {
+            RawstorObjectSpec spec{};
+            RawstorMemberRole role{};
+            if (int error =
+                    rawstor_frame_allocate_decode(&payload, &spec, &role)) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+            if (role != RAWSTOR_MEMBER_WITNESS) {
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
+            store.create_witness(
+                uuid_of(payload.object_id), payload.chunk_offset, spec
+            );
+        } catch (const std::system_error& e) {
+            res = -e.code().value();
+        }
+        co_await client->_send_response(head.cmd, head.cid, res);
+        break;
+    }
+    case RAWSTOR_CMD_META:
+    case RAWSTOR_CMD_RELEASE: {
+        RawstorFrameBasicPayload payload{};
+        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        int32_t res = 0;
+        RawstorFrameMetaPayload out{};
+        try {
+            RawstdUUID version = uuid_of(payload.version_id);
+            if (!rawstd_uuid_is_nil(&version)) {
+                RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+            }
+            if (head.cmd == RAWSTOR_CMD_META) {
+                const auto meta = store.witness_meta(
+                    uuid_of(payload.object_id), payload.offset
+                );
+                if (int error = rawstor_frame_meta_encode(&out, &meta)) {
+                    RAWSTD_THROW_SYSTEM_ERROR(error);
+                }
+                res = sizeof(out);
+            } else {
+                store.remove_witness(
+                    uuid_of(payload.object_id), payload.offset
+                );
+            }
+        } catch (const std::system_error& e) {
+            res = -e.code().value();
+        }
+        co_await client->_send_response(
+            head.cmd, head.cid, res, res > 0 ? &out : nullptr,
+            res > 0 ? sizeof(out) : 0
+        );
+        break;
+    }
+    case RAWSTOR_CMD_SET_CONFIG: {
+        RawstorFrameSetConfigPayload payload{};
+        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        int32_t res = 0;
+        try {
+            RawstorObjectConfig config{};
+            if (int error =
+                    rawstor_frame_config_decode(&payload.config, &config)) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+            store.set_config(
+                uuid_of(payload.object_id), payload.chunk_offset, config,
+                payload.flags, decode_config_state(payload.state)
+            );
+        } catch (const std::system_error& e) {
+            res = -e.code().value();
+        }
+        co_await client->_send_response(head.cmd, head.cid, res);
+        break;
+    }
     case RAWSTOR_CMD_OBJ_CREATE: {
         RawstorFrameObjCreatePayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
@@ -359,44 +443,32 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         break;
     }
     case RAWSTOR_CMD_LIST: {
-        // The same LIST an OST answers (protocol.h, RawstorFrameListEntry):
-        // one row per object (chunk_offset 0 -- an mds:// object is
-        // addressed whole), then the resume cursor row, the last id
-        // returned while any are left, nil once none are.
-        RawstorFrameListPayload payload;
+        RawstorFrameListPayload payload{};
         co_await recv_all(queue, fd, &payload, sizeof(payload));
+        auto token = uuid_of(payload.token_id);
         unsigned int limit = payload.limit == 0 || payload.limit > list_limit
                                  ? list_limit
                                  : payload.limit;
         int32_t res = 0;
-        std::vector<unsigned char> data;
+        std::vector<RawstorFrameListEntry> entries;
         try {
-            bool more = false;
-            std::vector<RawstdUUID> ids =
-                store.list_objects(uuid_of(payload.token_id), limit, &more);
-            std::vector<RawstorFrameListEntry> entries(ids.size() + 1);
-            for (size_t i = 0; i < ids.size(); ++i) {
-                memcpy(entries[i].id, ids[i].bytes, sizeof(entries[i].id));
-            }
-            if (more) {
+            auto records = store.list_chunks(token, limit);
+            entries.resize(records.size() + 1);
+            for (size_t i = 0; i < records.size(); ++i) {
                 memcpy(
-                    entries.back().id, ids.back().bytes,
-                    sizeof(entries.back().id)
+                    entries[i].id, records[i].id.bytes, sizeof(entries[i].id)
                 );
+                entries[i].chunk_offset = records[i].offset;
             }
-            data.resize(entries.size() * sizeof(RawstorFrameListEntry));
-            memcpy(data.data(), entries.data(), data.size());
+            memcpy(entries.back().id, token.bytes, sizeof(entries.back().id));
+            res = entries.size() * sizeof(RawstorFrameListEntry);
         } catch (const std::system_error& e) {
             res = -e.code().value();
         }
-        if (res < 0) {
-            co_await client->_send_response(head.cmd, head.cid, res);
-        } else {
-            co_await client->_send_response(
-                head.cmd, head.cid, static_cast<int32_t>(data.size()),
-                data.data(), data.size()
-            );
-        }
+        co_await client->_send_response(
+            head.cmd, head.cid, res, res > 0 ? entries.data() : nullptr,
+            res > 0 ? static_cast<size_t>(res) : 0
+        );
         break;
     }
     case RAWSTOR_CMD_OBJ_LIST_VERSIONS: {

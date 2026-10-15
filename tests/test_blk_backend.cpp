@@ -444,6 +444,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     identity.member_role = RAWSTOR_MEMBER_WITNESS;
     identity.width = 3;
     identity.chunk_size = 0x1000;
+    identity.size = 0x123456789abcdef0ull;
 
     std::string encoded = MetadataBackend::meta_encode(
         state, config, promised, accepted, identity
@@ -477,6 +478,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     EXPECT_EQ(decoded_identity.member_role, identity.member_role);
     EXPECT_EQ(decoded_identity.width, identity.width);
     EXPECT_EQ(decoded_identity.chunk_size, identity.chunk_size);
+    EXPECT_EQ(decoded_identity.size, identity.size);
 }
 
 // The widest record -- every field at its widest, every member's role --
@@ -501,7 +503,7 @@ TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
         r = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     }
     rawstor::blk::Backend::ChunkIdentity identity{
-        RAWSTOR_MEMBER_WITNESS, 255, ~0ull
+        RAWSTOR_MEMBER_WITNESS, 255, ~0ull, ~0ull
     };
 
     std::string encoded = MetadataBackend::meta_encode(
@@ -566,6 +568,52 @@ TEST(BlkBackendTest, meta_decode_rejects_malformed_string) {
     );
 }
 
+TEST(BlkBackendTest, meta_decode_rejects_invalid_width) {
+    for (unsigned int width : {0u, 256u}) {
+        RawstorObjectSyncStateValue state{};
+        RawstorObjectConfig config{};
+        RawstorObjectBallot promised{};
+        RawstorObjectBallot accepted{};
+        rawstor::blk::Backend::ChunkIdentity identity;
+        std::string encoded =
+            "version=1:state=1:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
+            "resync_owner=0:promised=0.0:accepted=0.0:roles=-:member_role=1:"
+            "width=" +
+            std::to_string(width) + ":chunk_size=0:size=1000";
+        try {
+            MetadataBackend::meta_decode(
+                encoded, &state, &config, &promised, &accepted, &identity
+            );
+            FAIL() << "Accepted invalid width " << width;
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), EPROTO);
+        }
+    }
+}
+
+TEST(BlkBackendTest, meta_decode_rejects_unknown_member_role) {
+    for (unsigned int role : {0u, 3u}) {
+        RawstorObjectSyncStateValue state{};
+        RawstorObjectConfig config{};
+        RawstorObjectBallot promised{}, accepted{};
+        rawstor::blk::Backend::ChunkIdentity identity{};
+        identity.member_role = static_cast<RawstorMemberRole>(role);
+        identity.width = 1;
+        auto encoded = MetadataBackend::meta_encode(
+            RAWSTOR_OBJECT_SYNC_STATE_CLEAN, config, promised, accepted,
+            identity
+        );
+        try {
+            MetadataBackend::meta_decode(
+                encoded, &state, &config, &promised, &accepted, &identity
+            );
+            FAIL() << "Accepted unknown member role " << role;
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), EPROTO);
+        }
+    }
+}
+
 TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
     /* A record from a format version this build no longer understands (or
      * ever wrote) must not be mistaken for a valid one. */
@@ -577,8 +625,8 @@ TEST(BlkBackendTest, meta_decode_rejects_wrong_version) {
     EXPECT_THROW(
         MetadataBackend::meta_decode(
             "version=999:state=0:epoch=0:sync_id=0:h0=0:h1=0:h2=0:h3=0:"
-            "resync_owner=0:promised=0.0:accepted=0.0:roles=-:member_role=0:"
-            "width=0:chunk_size=0",
+            "resync_owner=0:promised=0.0:accepted=0.0:roles=-:member_role=1:"
+            "width=1:chunk_size=0:size=0",
             &state, &config, &promised, &accepted, &identity
         ),
         std::system_error
@@ -711,4 +759,37 @@ TEST(ChunkF10Test, missing_copy_recreated_over_ost) {
         run(*queue, rawstor::Target({ost_uri}).meta(*queue, 0));
     ASSERT_EQ(metas.size(), 1u);
     EXPECT_EQ(metas.front().spec.size, spec.size);
+}
+
+TEST(BlkBackendTest, truncated_data_fails_scalar_and_vectored_reads) {
+    rawstor::tests::TmpDir dir;
+    auto queue = rawio::Queue::create(64);
+    rawstor::Location location({rawstd::URI(dir.uri())});
+    RawstorObjectSpec spec{
+        .size = 8192,
+        .width = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0
+    };
+    auto target = run(*queue, location.create(*queue, spec));
+    auto object = run(*queue, target.open(*queue, RAWSTOR_READONLY));
+    for (const auto& entry :
+         std::filesystem::recursive_directory_iterator(dir.path())) {
+        if (entry.path().filename() == "data") {
+            std::filesystem::resize_file(entry.path(), 4096);
+        }
+    }
+    char first[16]{}, second[16]{};
+    iovec iov[]{{first, sizeof(first)}, {second, sizeof(second)}};
+    EXPECT_THROW(
+        run(*queue, object->pread(first, sizeof(first), 4096)),
+        std::system_error
+    );
+    EXPECT_THROW(
+        run(*queue,
+            object->preadv(iov, 2, sizeof(first) + sizeof(second), 4080)),
+        std::system_error
+    );
+    run(*queue, object->close(true));
 }

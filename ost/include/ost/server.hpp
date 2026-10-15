@@ -12,12 +12,21 @@
 #include <vector>
 
 namespace rawstor {
+
+class Slot;
+
 namespace ostserver {
 
 class Client;
 
 class Server final {
 private:
+    friend class Client;
+
+    unsigned int _live_clients = 0;
+    unsigned int _departures = 0;
+    rawstd::DetachedTask _abandon_slot(std::shared_ptr<Slot> slot);
+
     RawIOQueue* _queue;
     int _fd;
     int _wake_fd;

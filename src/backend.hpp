@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_BACKEND_HPP
 #define RAWSTOR_BACKEND_HPP
 
+#include <optional>
+
 #include <rawio/queue.hpp>
 
 #include <rawstd/coro.hpp>
@@ -22,8 +24,8 @@ namespace rawstor {
 // chunks of the same multi-chunk object (docs/concepts.md), or, for an
 // mds:// volume specifically, every one of its own chunks (mds::Backend's
 // own chunk_slot_target(), docs/mds.md's "Chunk identity": obj_id =
-// volume_id). `offsets` is never empty: an id with nothing to report
-// isn't an entry at all.
+// volume_id). Empty offsets address the object as a whole; {0} addresses
+// its chunk at offset zero. An absent object has no entry.
 struct ChunkGroup {
     RawstdUUID id;
     std::vector<uint64_t> offsets;
@@ -35,6 +37,10 @@ private:
     int _fd;
 
 protected:
+    static void _validate_config_update(
+        unsigned int flags, std::optional<RawstorObjectSyncStateValue> state
+    );
+
     struct Private {
         explicit Private() = default;
     };
@@ -86,7 +92,8 @@ public:
     ) = 0;
 
     // `chunks`: overwritten with this page's own ChunkGroups, one per id,
-    // each carrying every offset this backend holds for that id
+    // each addressing a whole object with empty offsets, or carrying every
+    // physical offset this backend holds for that id
     // (ascending, including every chunk of an mds:// volume, now that
     // they all share their volume's own id -- ChunkGroup's own doc
     // comment) -- the caller (Location::list()) combines each one with
@@ -122,12 +129,8 @@ public:
         RawstdUUID& token, RawstdUUID version_id = {}
     ) = 0;
 
-    // `member_role` is the copy being created's own placement identity
-    // (docs/mds.md, chunk_meta) -- not part of `sp` (RawstorObjectSpec's
-    // own doc comment, target.h): every real caller today creates a
-    // RAWSTOR_MEMBER_DATA copy (Target::create()'s own create_one()
-    // hardcodes it), a witness copy being a stage-3 operation on an
-    // already-existing chunk's quorum, never a create() of its own.
+    // Creates one data or metadata-only witness member. member_role is
+    // placement identity, distinct from the chunk-wide specification.
     virtual rawstd::Task<void> create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstorObjectSpec& sp,
@@ -206,12 +209,14 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) = 0;
 
-    // Persists the configuration or forwards the request to the destination.
+    // Persists configuration and any explicit state atomically, or forwards
+    // the request to the destination.
     // Slot serializes it with state transitions and applies CLEAR_LOST via
     // set_state(); transports forward flags to the destination's Slot.
     virtual rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-        const RawstorObjectConfig& config, unsigned int flags
+        const RawstorObjectConfig& config, unsigned int flags,
+        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     ) = 0;
 
     // The two requests of the chunk's configuration register
@@ -221,16 +226,16 @@ public:
     // Acceptance is one vote; the caller establishes the register quorum.
     // `member_index` is as for set_config(). A backend that holds no copy
     // of its own rejects register requests with ENOSYS.
-    virtual rawstd::Task<RawstorObjectSyncReply> sync_prepare(
+    virtual rawstd::Task<bool> sync_prepare(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectBallot& ballot,
-        const RawstorObjectSyncReply& proposed
+        const RawstorObjectBallot& ballot, bool proposed,
+        RawstorObjectMeta& meta
     ) = 0;
-    virtual rawstd::Task<RawstorObjectSyncReply> sync_accept(
+    virtual rawstd::Task<bool> sync_accept(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config,
-        const RawstorObjectSyncReply& proposed
+        const RawstorObjectConfig& config, bool proposed,
+        RawstorObjectMeta& meta
     ) = 0;
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;

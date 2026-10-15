@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_TARGET_HPP
 #define RAWSTOR_TARGET_HPP
 
+#include <optional>
+
 #include "backend.hpp"
 
 #include <rawstor/target.h>
@@ -21,7 +23,7 @@ namespace rawstor {
 // - Physical, with a bound version: `/<uuid>/<offset>/<version_id>`
 //   -- offset always an explicit segment (even "0"), the convention
 //   every internal builder in this codebase uses (mds_backend.cpp's
-//   chunk_slot_target(), ost/src/client.cpp's _targets(), Target's own
+//   chunk_slot_target(), Target's own
 //   synthetic constructor) whenever it addresses one chunk of a larger
 //   object, since a chunk's own offset is a real, meaningful value
 //   there.
@@ -271,21 +273,22 @@ public:
     // the connect. OST forwards this index to its one local copy.
     rawstd::Task<void> set_member_config(
         rawio::Queue& queue, uint64_t offset, size_t member_index,
-        RawstorObjectConfig config, unsigned int flags
+        RawstorObjectConfig config, unsigned int flags,
+        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     ) const;
     // The two requests of the chunk's configuration register
     // (Backend::sync_prepare()/sync_accept()), sent to one member, which
     // is addressed as set_member_config() above addresses it. The request
     // is taken by value: it outlives the caller's arguments, across the
     // connect.
-    rawstd::Task<RawstorObjectSyncReply> sync_prepare(
+    rawstd::Task<bool> sync_prepare(
         rawio::Queue& queue, uint64_t offset, size_t member_index,
-        RawstorObjectBallot ballot
+        RawstorObjectBallot ballot, RawstorObjectMeta& meta
     ) const;
-    rawstd::Task<RawstorObjectSyncReply> sync_accept(
+    rawstd::Task<bool> sync_accept(
         rawio::Queue& queue, uint64_t offset, size_t member_index,
         RawstorObjectBallot ballot, RawstorObjectBallot next,
-        RawstorObjectConfig config
+        RawstorObjectConfig config, RawstorObjectMeta& meta
     ) const;
     // Removes every URI of every chunk concurrently -- unlike create()
     // above, there's no rollback to speak of (removal has nothing to

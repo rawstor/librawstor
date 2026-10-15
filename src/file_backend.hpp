@@ -41,7 +41,7 @@ public:
         const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
     ) override;
 
-    // size comes straight from the object's own "data" file (stat());
+    // logical size comes from the stored metadata;
     // the rest (member_role/width/chunk_size, plus the mirror consistency
     // state) lives in a companion "meta" file next to it, both inside the
     // same "<uuid>/<offset>[/<version_id>]" directory (get_target_dir()'s

@@ -17,7 +17,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Version target (`.../<uuid>/<version_uuid>`), read-only open | ✅ | `src/target.cpp` |
 | `mds://` object-level version | ✅ | `src/mds_backend.cpp` |
 | Per-slot native CoW version: `zfs://` | ✅ | `src/zfs_backend.cpp` |
-| Per-slot native CoW version: `ost://` (relayed to the server's backend) | ✅ | `src/ost_backend.cpp` |
+| Per-slot native CoW version: `ost://` (relayed to the server's backend) | ✅ | `src/wire_backend.cpp` |
 | Per-slot native CoW version: `lvm://` | ❌ | `-ENOTSUP` (waits for an lvm-thin backend) |
 | Per-slot native CoW version: `file://` | ❌ | `-ENOTSUP` by design (no CoW) |
 
@@ -159,7 +159,7 @@ Currently, five URI schemes are supported:
 |--------|-------------|
 | `ost`  | Backend server speaking the OST protocol (see [Protocol](protocol.md)) |
 | `file` | Local filesystem backend (a folder path) |
-| `lvm`  | Local LVM thin pool backend |
+| `lvm`  | Local LVM volume group backend |
 | `zfs`  | Local ZFS pool backend |
 | `mds`  | Metadata server addressing a whole chunked, possibly multi-copy object rather than a single physical store (see [mds.md](mds.md)) |
 
@@ -383,3 +383,14 @@ directly (a single entry, 0, for a plain, non-`mds://` target).
   `TOPOLOGY_PATH`/`topology.conf`, scanned by `rawstor-mds --reconstruct`).
   Reusing it here for this document would make the two docs' shared
   vocabulary actively misleading, so this file keeps its current name.
+
+### Witness members
+
+Witnesses use ordinary backend addresses. With `width + 1` locations and an
+even data width, the last location is a witness, whether reachable or not.
+Opening checks each available member's `META.member_role` against its expected
+position; it does not search for a witness by role. `width` counts only data copies;
+`config.nroles` counts all members. One witness is supported only with an
+even number of data members. It participates in synchronous membership
+barriers and quorum; data I/O and the data-copy phase of resync skip it. Keep the complete target
+and member order. See [Witness](mds.md#witness).

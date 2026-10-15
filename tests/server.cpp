@@ -32,6 +32,7 @@ namespace tests {
 enum CommandType {
     CT_ACCEPT,
     CT_CLOSE,
+    CT_WAIT_CLOSE,
     CT_FORGET,
     CT_READ,
     CT_STOP,
@@ -67,6 +68,12 @@ public:
     CommandClose(const char* name) : Command(name) {}
 
     CommandType type() const noexcept override { return CT_CLOSE; }
+};
+
+class CommandWaitClose final : public Command {
+public:
+    explicit CommandWaitClose(const char* name) : Command(name) {}
+    CommandType type() const noexcept override { return CT_WAIT_CLOSE; }
 };
 
 class CommandForget final : public Command {
@@ -282,6 +289,13 @@ rawstd::Task<void> Server::_run(rawio::Queue& queue) {
         case CT_CLOSE:
             _do_close(queue, command);
             break;
+        case CT_WAIT_CLOSE: {
+            char byte;
+            if (co_await queue.read(_client_fd, &byte, 1) != 0) {
+                throw std::runtime_error("Unexpected data before peer close");
+            }
+            break;
+        }
         case CT_FORGET:
             _do_forget(queue, command);
             break;
@@ -406,6 +420,14 @@ void Server::accept(const char* name) {
 void Server::close(const char* name) {
     std::unique_lock lock(_mutex);
     _commands.push_back(std::make_shared<CommandClose>(name));
+    if (_commands.size() == 1) {
+        _notify();
+    }
+}
+
+void Server::wait_close(const char* name) {
+    std::unique_lock lock(_mutex);
+    _commands.push_back(std::make_shared<CommandWaitClose>(name));
     if (_commands.size() == 1) {
         _notify();
     }

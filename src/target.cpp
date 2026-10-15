@@ -37,6 +37,11 @@
 
 namespace {
 
+// An optional witness occupies the last location beyond the data width.
+bool has_witness(const RawstorObjectSpec& spec, size_t members) noexcept {
+    return members == spec.width + 1;
+}
+
 // Splits a path into '/'-separated segments, dropping the leading empty
 // one the leading '/' itself produces -- "/a/b/c" -> {"a", "b", "c"}.
 std::vector<std::string> path_segments(const std::string& path) {
@@ -177,7 +182,7 @@ chunk_uris_at_offset(const std::vector<rawstd::URI>& uris, uint64_t offset) {
 // unambiguously chunk 0 -- neither needs a backend to confirm it, so
 // `false` covers both without distinguishing them.
 bool is_opaque(const std::vector<rawstd::URI>& uris) {
-    return uris.front().scheme() == "mds";
+    return uris.size() == 1 && uris.front().scheme() == "mds";
 }
 
 // The (stripped) locations resolve_spec()/resolve_meta()/resolve_chunks()
@@ -243,7 +248,8 @@ void validate_same_uuid(
 // and swallowed, best-effort), so this never masks the op's own
 // exception with a second one.
 rawstd::Task<void> create_one(
-    rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectSpec& sp
+    rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectSpec& sp,
+    RawstorMemberRole role = RAWSTOR_MEMBER_DATA
 ) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t offset = extract_offset(target);
@@ -251,17 +257,50 @@ rawstd::Task<void> create_one(
         co_await rawstor::Slot::create(queue, strip_path(target));
     std::exception_ptr error;
     try {
-        // Every target created through this, the ordinary create() path,
-        // is a data copy -- a witness (docs/mds.md, "Witness", stage 3)
-        // is a metadata-only member attached to an already-existing
-        // chunk's own quorum, never something create_one() itself builds.
-        co_await slot->create(id, offset, sp, RAWSTOR_MEMBER_DATA);
+        co_await slot->create(id, offset, sp, role);
     } catch (...) {
         error = std::current_exception();
     }
     co_await slot->close();
     if (error) {
         std::rethrow_exception(error);
+    }
+}
+
+rawstd::Task<void> initialize_members(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& members
+) {
+    RawstdUUID generation{};
+    if (rawstd_uuid7_init(&generation) != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    RawstorObjectConfig config{};
+    config.epoch = 1;
+    memcpy(&config.sync_id, generation.bytes + 8, sizeof(config.sync_id));
+    config.nroles = static_cast<uint8_t>(members.size());
+    for (size_t i = 0; i < members.size(); ++i) {
+        config.roles[i] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    }
+    // Persist one CLEAN generation on all members. A witness is last in
+    // the location list and becomes a voter only after the data members.
+    // A failure is rolled back with the creation.
+    for (size_t i = 0; i < members.size(); ++i) {
+        auto slot =
+            co_await rawstor::Slot::create(queue, strip_path(members[i]));
+        std::exception_ptr error;
+        try {
+            co_await slot->set_config(
+                uuid_from_target(members[i]), extract_offset(members[i]),
+                static_cast<uint8_t>(i), config, 0,
+                RAWSTOR_OBJECT_SYNC_STATE_CLEAN
+            );
+        } catch (...) {
+            error = std::current_exception();
+        }
+        co_await slot->close();
+        if (error) {
+            std::rethrow_exception(error);
+        }
     }
 }
 
@@ -438,8 +477,7 @@ rawstd::Task<std::vector<rawstd::URI>> member_locations_one(
 // that -- no single URI in it is self-aware enough to say otherwise), or
 // whatever the sole backend itself reported for a single-URI chunk (an
 // mds:// object's own configured redundancy, never derivable by
-// counting) -- falling back to 1 only if that answer was itself 0 (a
-// plain, single-URI object that was never given one). `size` is
+// counting). Metadata decoders require a non-zero width. `size` is
 // identical on every copy, so this only needs one to answer: locations
 // are tried in order, first reachable wins -- unlike resolve_meta()
 // below, which queries every one of them instead of stopping at the
@@ -467,8 +505,12 @@ rawstd::Task<RawstorObjectSpec> resolve_spec(
                 RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
             }
             RawstorObjectSpec ret = answered->spec;
-            if (locations.size() > 1 || ret.width == 0) {
-                ret.width = static_cast<unsigned int>(locations.size());
+            if (locations.size() > 1) {
+                ret.width = static_cast<unsigned int>(
+                    has_witness(ret, locations.size()) && ret.width % 2 == 0
+                        ? ret.width
+                        : locations.size()
+                );
             }
             co_return ret;
         } catch (const std::system_error& e) {
@@ -525,7 +567,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> resolve_meta(
             ret.insert(ret.end(), ms.begin(), ms.end());
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unreachable: %s\n", e.what());
-            ret.push_back(RawstorObjectMeta{});
+            RawstorObjectMeta missing{};
+            ret.push_back(missing);
         }
     }
 
@@ -937,12 +980,13 @@ rawstd::DetachedTask launch_versions_op_coro(
 rawstd::DetachedTask launch_set_member_config_op_coro(
     rawstor::Target t, rawio::Queue* queue, uint64_t offset,
     size_t member_index, RawstorObjectConfig config, unsigned int flags,
+    std::optional<RawstorObjectSyncStateValue> state,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     try {
         co_await t.set_member_config(
-            *queue, offset, member_index, config, flags
+            *queue, offset, member_index, config, flags, state
         );
     } catch (const std::system_error& e) {
         result = -e.code().value();
@@ -961,16 +1005,13 @@ rawstd::DetachedTask launch_set_member_config_op_coro(
     }
 }
 
-// Same shape as launch_set_member_config_op_coro() above, for
-// Target::sync_prepare()/sync_accept(): `reply` is filled before `cb`
-// runs with a zero result.
+// Delivers acceptance as 1 or 0; failures are negative errno values.
 rawstd::DetachedTask launch_sync_op_coro(
-    rawstd::Task<RawstorObjectSyncReply> op, RawstorObjectSyncReply* reply,
-    int (*cb)(ssize_t result, void* data), void* data
+    rawstd::Task<bool> op, int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     try {
-        *reply = co_await op;
+        result = co_await op ? 1 : 0;
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -990,20 +1031,22 @@ rawstd::DetachedTask launch_sync_op_coro(
 
 // Runs one register request against `t`, which lives in this frame for
 // the request's whole life.
-rawstd::Task<RawstorObjectSyncReply> sync_prepare_coro(
+rawstd::Task<bool> sync_prepare_coro(
     rawstor::Target t, rawio::Queue* queue, uint64_t offset,
-    size_t member_index, RawstorObjectBallot ballot
+    size_t member_index, RawstorObjectBallot ballot, RawstorObjectMeta& meta
 ) {
-    co_return co_await t.sync_prepare(*queue, offset, member_index, ballot);
+    co_return co_await t.sync_prepare(
+        *queue, offset, member_index, ballot, meta
+    );
 }
 
-rawstd::Task<RawstorObjectSyncReply> sync_accept_coro(
+rawstd::Task<bool> sync_accept_coro(
     rawstor::Target t, rawio::Queue* queue, uint64_t offset,
     size_t member_index, RawstorObjectBallot ballot, RawstorObjectBallot next,
-    RawstorObjectConfig config
+    RawstorObjectConfig config, RawstorObjectMeta& meta
 ) {
     co_return co_await t.sync_accept(
-        *queue, offset, member_index, ballot, next, config
+        *queue, offset, member_index, ballot, next, config, meta
     );
 }
 
@@ -1201,10 +1244,10 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     // No implicit width, ever: the caller must always state it, checked
     // before any I/O at all. It is the object's redundancy policy,
     // persisted verbatim on every copy, and need not equal a chunk's own
-    // URI count: e.g. rawstor-ost relaying one copy of an object onto
-    // several local locations stamps each of them with the object's own
-    // width. Every persisted/wire width and failure_domain is a uint8_t, so
-    // anything wider is rejected rather than silently truncated.
+    // URI count: a target may address one data member of a wider object,
+    // and its stored width is that object's policy. Every persisted/wire width
+    // and failure_domain is a uint8_t, so anything wider is rejected rather
+    // than silently truncated.
     if (sp.width == 0) {
         rawstd_error("Spec width must be set (0 is not a valid width)\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -1217,6 +1260,9 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     // each), as Chunk::create() checks at open: none is created that could
     // not be opened.
     for (const std::vector<rawstd::URI>& uris : chunks) {
+        if (has_witness(sp, uris.size()) && sp.width % 2 != 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
         if (uris.size() > RAWSTOR_OBJECT_MAX_WIDTH) {
             rawstd_error(
                 "Too many uris: %zu, at most %d\n", uris.size(),
@@ -1279,6 +1325,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
         // (the size check above), starting at its own offset
         // (extract_offset(), already stamped on its own URIs).
         RawstorObjectSpec chunk_sp = sp;
+        const bool witness = has_witness(sp, uris.size());
         if (chunks.size() > 1) {
             uint64_t offset = extract_offset(uris.front());
             if (offset >= sp.size) {
@@ -1304,8 +1351,11 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
         // whole-batch result.
         std::vector<rawstd::Task<void>> tasks;
         tasks.reserve(uris.size());
-        for (const auto& target : uris) {
-            tasks.push_back(create_one(queue, target, chunk_sp));
+        for (size_t index = 0; index < uris.size(); ++index) {
+            RawstorMemberRole role = witness && index + 1 == uris.size()
+                                         ? RAWSTOR_MEMBER_WITNESS
+                                         : RAWSTOR_MEMBER_DATA;
+            tasks.push_back(create_one(queue, uris[index], chunk_sp, role));
         }
 
         // co_await isn't allowed inside a catch block, so the failure is
@@ -1332,6 +1382,15 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
             }
         }
 
+        if (!eptr) {
+            try {
+                if (uris.size() > 1) {
+                    co_await initialize_members(queue, uris);
+                }
+            } catch (...) {
+                eptr = std::current_exception();
+            }
+        }
         if (eptr) {
             // A later chunk's own mirrors were never even attempted --
             // nothing of theirs to roll back.
@@ -1369,9 +1428,36 @@ rawstd::Task<void> Target::create_version(rawio::Queue& queue) const {
     // leave versions behind that nobody knows about. The URI that
     // failed is not rolled back, since it may name a pre-existing
     // version this call didn't create.
+    std::vector<rawstd::URI> members;
+    for (const auto& uris : chunk_uris_by_offset(_uris)) {
+        bool skip_last = false;
+        if (uris.size() > 1) {
+            std::vector<rawstd::URI> locations;
+            for (const auto& uri : uris) {
+                locations.push_back(strip_path(uri));
+            }
+            auto metadata = co_await resolve_meta(
+                queue, std::move(locations), uuid_from_target(uris.front()),
+                extract_offset(uris.front()), RawstdUUID{}
+            );
+            auto answer = std::find_if(
+                metadata.begin(), metadata.end(), [](const auto& meta) {
+                    return meta.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE;
+                }
+            );
+            skip_last = metadata.size() == uris.size() &&
+                        metadata.back().state ==
+                            RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE &&
+                        answer != metadata.end() &&
+                        answer->spec.width % 2 == 0 &&
+                        has_witness(answer->spec, uris.size());
+        }
+        members.insert(members.end(), uris.begin(), uris.end() - skip_last);
+    }
+
     std::vector<rawstd::Task<void>> tasks;
-    tasks.reserve(_uris.size());
-    for (const auto& uri : _uris) {
+    tasks.reserve(members.size());
+    for (const auto& uri : members) {
         tasks.push_back(create_version_one(queue, uri, _version_id));
     }
 
@@ -1379,10 +1465,10 @@ rawstd::Task<void> Target::create_version(rawio::Queue& queue) const {
     // only recorded here; rolling back happens just below.
     std::vector<rawstd::URI> created;
     std::exception_ptr eptr;
-    for (size_t i = 0; i < _uris.size(); ++i) {
+    for (size_t i = 0; i < members.size(); ++i) {
         try {
             co_await tasks[i];
-            created.push_back(_uris[i]);
+            created.push_back(members[i]);
         } catch (...) {
             if (!eptr) {
                 eptr = std::current_exception();
@@ -1583,7 +1669,8 @@ rawstd::Task<rawstd::URI> Target::_member_location(
 
 rawstd::Task<void> Target::set_member_config(
     rawio::Queue& queue, uint64_t offset, size_t member_index,
-    RawstorObjectConfig config, unsigned int flags
+    RawstorObjectConfig config, unsigned int flags,
+    std::optional<RawstorObjectSyncStateValue> state
 ) const {
     rawstd::URI location =
         co_await _member_location(queue, offset, member_index);
@@ -1594,7 +1681,7 @@ rawstd::Task<void> Target::set_member_config(
     std::exception_ptr error;
     try {
         co_await slot->set_config(
-            id, offset, static_cast<uint8_t>(member_index), config, flags
+            id, offset, static_cast<uint8_t>(member_index), config, flags, state
         );
     } catch (...) {
         error = std::current_exception();
@@ -1605,9 +1692,9 @@ rawstd::Task<void> Target::set_member_config(
     }
 }
 
-rawstd::Task<RawstorObjectSyncReply> Target::sync_prepare(
+rawstd::Task<bool> Target::sync_prepare(
     rawio::Queue& queue, uint64_t offset, size_t member_index,
-    RawstorObjectBallot ballot
+    RawstorObjectBallot ballot, RawstorObjectMeta& meta
 ) const {
     rawstd::URI location =
         co_await _member_location(queue, offset, member_index);
@@ -1615,10 +1702,10 @@ rawstd::Task<RawstorObjectSyncReply> Target::sync_prepare(
 
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location);
-    RawstorObjectSyncReply reply{};
+    bool accepted = false;
     std::exception_ptr error;
     try {
-        reply = co_await slot->sync_prepare(id, offset, ballot);
+        accepted = co_await slot->sync_prepare(id, offset, ballot, meta);
     } catch (...) {
         error = std::current_exception();
     }
@@ -1626,13 +1713,13 @@ rawstd::Task<RawstorObjectSyncReply> Target::sync_prepare(
     if (error) {
         std::rethrow_exception(error);
     }
-    co_return reply;
+    co_return accepted;
 }
 
-rawstd::Task<RawstorObjectSyncReply> Target::sync_accept(
+rawstd::Task<bool> Target::sync_accept(
     rawio::Queue& queue, uint64_t offset, size_t member_index,
     RawstorObjectBallot ballot, RawstorObjectBallot next,
-    RawstorObjectConfig config
+    RawstorObjectConfig config, RawstorObjectMeta& meta
 ) const {
     rawstd::URI location =
         co_await _member_location(queue, offset, member_index);
@@ -1640,11 +1727,12 @@ rawstd::Task<RawstorObjectSyncReply> Target::sync_accept(
 
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location);
-    RawstorObjectSyncReply reply{};
+    bool accepted = false;
     std::exception_ptr error;
     try {
-        reply = co_await slot->sync_accept(
-            id, offset, static_cast<uint8_t>(member_index), ballot, next, config
+        accepted = co_await slot->sync_accept(
+            id, offset, static_cast<uint8_t>(member_index), ballot, next,
+            config, meta
         );
     } catch (...) {
         error = std::current_exception();
@@ -1653,7 +1741,7 @@ rawstd::Task<RawstorObjectSyncReply> Target::sync_accept(
     if (error) {
         std::rethrow_exception(error);
     }
-    co_return reply;
+    co_return accepted;
 }
 
 rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
@@ -1958,13 +2046,15 @@ int rawstor_target_meta(
 int rawstor_target_set_member_config(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
     const RawstorObjectConfig* config, unsigned int flags,
+    const RawstorObjectSyncStateValue* state,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
         launch_set_member_config_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), offset,
-            member_index, *config, flags, cb, data
+            member_index, *config, flags,
+            state ? std::optional(*state) : std::nullopt, cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;
@@ -2250,7 +2340,7 @@ int rawstor_target_version_id(
 
 int rawstor_target_sync_prepare(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
-    const RawstorObjectBallot* ballot, RawstorObjectSyncReply* reply,
+    const RawstorObjectBallot* ballot, RawstorObjectMeta* meta,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
@@ -2258,9 +2348,9 @@ int rawstor_target_sync_prepare(
         launch_sync_op_coro(
             sync_prepare_coro(
                 std::move(t), static_cast<rawio::Queue*>(queue), offset,
-                member_index, *ballot
+                member_index, *ballot, *meta
             ),
-            reply, cb, data
+            cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;
@@ -2280,7 +2370,7 @@ int rawstor_target_sync_prepare(
 int rawstor_target_sync_accept(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
     const RawstorObjectBallot* ballot, const RawstorObjectBallot* next,
-    const RawstorObjectConfig* config, RawstorObjectSyncReply* reply,
+    const RawstorObjectConfig* config, RawstorObjectMeta* meta,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
@@ -2288,9 +2378,9 @@ int rawstor_target_sync_accept(
         launch_sync_op_coro(
             sync_accept_coro(
                 std::move(t), static_cast<rawio::Queue*>(queue), offset,
-                member_index, *ballot, *next, *config
+                member_index, *ballot, *next, *config, *meta
             ),
-            reply, cb, data
+            cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;

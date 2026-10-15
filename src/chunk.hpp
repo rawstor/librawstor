@@ -63,6 +63,8 @@ private:
         // member back; reset once it is reachable again, so each outage
         // is reported once rather than on every probe tick.
         bool probe_announced;
+        bool witness;
+        bool recreated;
     };
 
     rawio::Queue& _queue;
@@ -89,6 +91,11 @@ private:
     // barrier, no read-repair, no reconnect probe/resync -- every write
     // fails with EROFS instead.
     bool _readonly;
+
+    rawstd::Task<void> _set_member_config(
+        size_t index, RawstorObjectConfig config, unsigned int flags = 0,
+        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
+    );
 
     std::shared_ptr<MirrorControl> _control;
 
@@ -248,11 +255,8 @@ private:
     // `m`'s own chunk, as a target URI (location/id/offset), for logs.
     std::string _member_str(const Member& m) const;
 
-    // Below-quorum writes freeze for N >= 3 only: with N = 2 a single
-    // survivor may continue, because auto-open requires both members, so the
-    // abandoned peer can never auto-start alone (docs/mirroring.md,
-    // quorum rules).
-    bool _below_write_quorum(size_t survivors) const noexcept;
+    // Every voting member participates in the same strict majority.
+    bool _below_write_quorum(size_t votes) const noexcept;
 
     // Metadata comparison at open (docs/mirroring.md, "Comparison rules"):
     // excludes SYNCING/stale members, picks the newest sync_id, refuses a
@@ -423,9 +427,9 @@ public:
     // the constructor's own job from there: width == 1 trusts its one
     // member outright; width >= 2 runs _reconcile_sync_set() (which may
     // refuse the open -- see its own comment on why that's safe to let
-    // unwind through here). This factory's own overall spec (handed to
-    // the constructor) is whichever reachable member's own META answered
-    // first. Only once construction succeeds does it start the object's
+    // unwind through here). Conflicting specs require a majority that agrees
+    // on both spec and configuration; its spec is passed to the constructor.
+    // Only once construction succeeds does it start the object's
     // own background maintenance (the reconnect probe, an online resync
     // if one is already due). `flags` is RAWSTOR_READONLY or 0
     // (<rawstor/target.h>): READONLY drops the quorum requirement (any

@@ -112,7 +112,7 @@ exits with `EX_CONFIG` (78), which the shipped systemd units do not restart.
 
 ## rawstor-ost – OST Protocol Server
 
-`rawstor-ost` implements the **OST protocol** (see [Protocol](https://github.com/rawstor/librawstor/blob/main/docs/protocol.md)), handling network connections and providing access to data stored in **locations** (as defined in the [Concepts](https://github.com/rawstor/librawstor/blob/main/docs/concepts.md) documentation).
+`rawstor-ost` implements the **OST protocol** (see [Protocol](https://github.com/rawstor/librawstor/blob/main/docs/protocol.md)), handling network connections and providing access to data stored in one backend **location** (as defined in the [Concepts](https://github.com/rawstor/librawstor/blob/main/docs/concepts.md) documentation).
 
 - `file://` scheme → serves data directly from the local filesystem.
 - `ost://` scheme → acts as a proxy to an underlying OST backend.
@@ -475,6 +475,28 @@ vduse`), and attaching it to the vDPA bus requires the `vdpa` tool
 (`iproute2`) and `CAP_NET_ADMIN` -- neither is something `rawstor-vduse`
 itself does; both are external, one-time-per-device administrative steps.
 
+## Witness members
+
+A witness stores consistency metadata and supplies a safe degraded-open vote
+for an even number of data copies; it never stores or serves their data. Declare it explicitly:
+
+```sh
+rawstor create --size=1G --mirrors=2 \
+  'ost://10.0.0.11:9090,ost://10.0.0.12:9090,mds://10.0.0.13:9091'
+```
+
+One witness is supported only with an even number of data copies. Both
+open and write quorums count it after a synchronous configuration barrier:
+1 of 2 data copies plus witness, or 2 of 4 plus witness, can continue.
+`--mirrors` counts data copies. Keep the complete target and member order.
+URI schemes remain `ost://`, `mds://`, `file://`, `lvm://` or `zfs://`.
+With one more location than `--mirrors`, the last is the witness; the stored
+`META.member_role` identifies its type at subsequent opens. MDS stores its witness records durably in SQLite;
+ordinary `mds://` placement does not automatically attach a witness.
+`rawstor show -v` reports its member role and record state. See
+[Witness](docs/mds.md#witness) for voting and failure rules. Interprocess
+mirror coordination is multiattach stage 2 and is not implemented here.
+
 ## rawstor-mds – Metadata Server
 
 `rawstor-mds` is the metadata server behind `mds://<host>:<port>/<uuid>`
@@ -497,7 +519,7 @@ the placed OSTs directly once it has resolved an object's own chunk map.
 | `-h, --help` | Show help message and exit. |
 | `-b, --bind ADDR` | Bind address in `<ip>:<port>` format (e.g., `127.0.0.1:7776`). |
 | `-d, --db PATH` | SQLite database file holding the chunk map (created if missing). |
-| `-t, --topology PATH` | Static topology config file: one `<uuid> <location> <weight> [[[<dc>/]<row>/]<rack>/]<server>` line per OST (failure domains from the root down; only `<server>` is required), `<location>` being a single location URI (`ost://host:port`; a client-local one such as `file://` only makes sense on a single host; to put several stores under one entry, list a `rawstor-ost` serving them all) (see [MDS design](https://github.com/rawstor/librawstor/blob/main/docs/mds.md)). |
+| `-t, --topology PATH` | Static topology config file: one `<uuid> <location> <weight> [[[<dc>/]<row>/]<rack>/]<server>` line per OST (failure domains from the root down; only `<server>` is required), `<location>` being a single location URI (`ost://host:port`; a client-local one such as `file://` only makes sense on a single host; each `rawstor-ost` serves one backend location) (see [MDS design](https://github.com/rawstor/librawstor/blob/main/docs/mds.md)). |
 | `--queue-size SIZE` | RawIO queue (`io_uring`) depth. Default: `4096`. |
 | `-w, --workers N` | Number of worker threads, each with its own client connections and I/O queue, all accepting on the same listening socket and sharing one database (default: `4`). |
 | `-r, --reconstruct` | Rebuild the chunk map from a LIST+META scan of every OST in the topology before serving -- for recovering from a lost or corrupted database. |

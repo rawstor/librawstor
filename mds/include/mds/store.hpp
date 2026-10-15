@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_MDS_STORE_HPP
 #define RAWSTOR_MDS_STORE_HPP
 
+#include <optional>
+
 #include "placement.hpp"
 #include "topology.hpp"
 
@@ -19,6 +21,11 @@ struct sqlite3;
 
 namespace rawstor {
 namespace mdsserver {
+
+struct ChunkEntry {
+    RawstdUUID id;
+    uint64_t offset;
+};
 
 struct ObjectDescriptor {
     RawstdUUID id;
@@ -105,6 +112,20 @@ public:
     ObjectStore& operator=(const ObjectStore&) = delete;
     ObjectStore& operator=(ObjectStore&&) = delete;
 
+    void create_witness(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& spec
+    );
+    RawstorObjectMeta witness_meta(const RawstdUUID& id, uint64_t offset);
+    void set_config(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectConfig& config, unsigned int flags,
+        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
+    );
+    void remove_witness(const RawstdUUID& id, uint64_t offset);
+
+    /* One page of ids and all their offsets; token is nil on the last page. */
+    std::vector<ChunkEntry> list_chunks(RawstdUUID& token, unsigned int limit);
+
     std::shared_ptr<const Topology> topology();
 
     /* Last successful space samples for the current topology, including
@@ -183,14 +204,6 @@ public:
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         const RawstdUUID& version_id, const std::vector<VersionMember>& members
     );
-
-    /*
-     * One page of every object's id, ascending, strictly after `after`
-     * (nil: from the start), at most `limit` of them. `*more` says whether
-     * any are left past the page.
-     */
-    std::vector<RawstdUUID>
-    list_objects(const RawstdUUID& after, unsigned int limit, bool* more);
 
     /*
      * Every version registered for `id`, oldest first (version ids are

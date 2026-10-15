@@ -15,7 +15,7 @@ numbers its stages separately.
 | `rawstor_target_meta()` / `rawstor_target_set_member_config()` | 1 | ✅ | `include/rawstor/target.h` |
 | Quorum at open (> N/2), split-brain detection | 2 | ✅ | `src/chunk.cpp` |
 | Degraded open, F10 recreate of a missing copy | 2 | ✅ | `src/chunk.cpp` |
-| Degrade & continue (F1), write freeze below quorum for N ≥ 3 | 2 | ✅ | `src/chunk.cpp` |
+| Degrade & continue (F1), write freeze below quorum | 2 | ✅ | `src/chunk.cpp` |
 | Read failover and read-repair (F2) | 2 | ✅ | `src/chunk.cpp` |
 | Copies keep their own `DIRTY`/`CLEAN`/`LOST`; clean close with `LEAVE`; `rawstor_object_abandon()` | 2 | ✅ | `src/slot.cpp`, `src/blk_backend.cpp`, `src/chunk.cpp` |
 | Every member's role in each record; syncing is a role, not a state | 2 | ✅ | `src/chunk.cpp` |
@@ -28,7 +28,7 @@ numbers its stages separately.
 | `rawstor resolve TARGET --winner=N [--offset]` | — | ✅ | `cli/resolve.c` |
 | Force-open below quorum (CLI / opts) | — | ❌ | — |
 | Persistent write-intent bitmap (resumable resync, cheaper F5) | 4 | ❌ | — |
-| MDS witness in quorum | 4 | ❌ | designed in [MDS design](mds.md#witness-stage-3) |
+| Metadata-only witness on MDS, OST or local backend | 4 | ✅ | [Witness](mds.md#witness), `Backend::set_config()`, `src/chunk.cpp` |
 | Stored checksums / scrub | 4 | ❌ | — |
 | Fastest-mirror read selection | 4 | ❌ | — |
 
@@ -36,7 +36,7 @@ numbers its stages separately.
 
 A comma-separated target list (see [Concepts](concepts.md)) makes the client keep N identical copies of a chunk on different backends -- each copy is a **slot**, addressed by one URI in the list. A plain (non-`mds://`) target is the degenerate single-chunk case: the whole object it addresses **is** that one chunk, so everything below applies to it directly; an `mds://` object's own chunks (`docs/mds.md`) each get this same treatment independently, possibly with different widths. This document defines the failure model for N-way mirroring: what can fail, how the client reacts, and how byte-for-byte identity of the copies is restored afterwards. Erasure coding is out of scope.
 
-Status: stages 1-3 are implemented (per-copy metadata, quorum open, degrade & continue, read failover/repair, clean close, online resync with automatic rejoin through a periodic reconnect probe) for all backends, including `lvm://`/`zfs://` (native ZFS user properties / LVM tags — see below). Not yet implemented: a persistent write-intent bitmap (a crashed resync restarts from scratch and an unclean shutdown costs a full resync), stored checksums/scrub, the MDS witness.
+Status: stages 1-3 are implemented (per-copy metadata, quorum open, degrade & continue, read failover/repair, clean close, online resync with automatic rejoin through a periodic reconnect probe) for all backends, including `lvm://`/`zfs://` (native ZFS user properties / LVM tags — see below). Not yet implemented: a persistent write-intent bitmap (a crashed resync restarts from scratch and an unclean shutdown costs a full resync), stored checksums/scrub. Witness members and their degraded-open voting rules are implemented; interprocess mirror coordination is deferred to multiattach stage 2.
 
 Error codes: open without quorum (including the case where every mirror is unreachable, F3) fails with `-ENOTCONN`; split brain (or no trusted member) fails with `-ENOTRECOVERABLE`; a write that loses its write quorum, or every member, on an already-open chunk fails with `-EIO`.
 
@@ -134,8 +134,10 @@ syncing is mid-resync, and an open treats it as stale (F8).
 
 ### DIRTY, CLEAN and LOST
 
-The copy keeps its `state` by itself, from the sessions it serves; the
-writer never sets it.
+Data I/O changes the copy's `state` from the sessions it serves. Explicit
+metadata transitions use `SET_CONFIG` with an optional
+`RawstorObjectSyncStateValue` for data and witness members alike; omitting
+state preserves it.
 
 - **`DIRTY`**: before the first write into a `CLEAN` copy the copy marks
   itself `DIRTY` (fsync), under its record lock. Later writes see a cached
@@ -158,6 +160,9 @@ writer never sets it.
   consistent by hand).
 - A session that never wrote leaves the state as it is, cleanly or not.
 
+The chunk records `CLEAN` only after every intended `LEAVE` succeeds. A failed
+departure records `LOST` on the surviving members before closing their Slots.
+
 The chunk's `close()` sends `LEAVE` to every in-sync member only when its
 flush succeeded, none of its writes failed outright and every exclusion is
 recorded; otherwise it closes without one, and the members it wrote go
@@ -167,21 +172,29 @@ The state, the session count and the record lock live in the process that
 opens the copy (`Slot::CopyState`, shared by all its sessions to that copy):
 a copy is a member of whichever process stores it.
 
+Witnesses have no data snapshots. Removing a snapshot from a witness Slot
+succeeds without changing its live metadata record. Target dispatches snapshot removal
+to every member; the Slot handles metadata-only members locally.
+
+Creating a mirrored chunk records the same initial configuration on every
+member: epoch 1, a new sync ID, all roles IN_SYNC, and state CLEAN. Members
+are recorded in location order, so an optional last witness becomes a voter
+only after all data copies have that configuration. Creation rolls back on
+failure. A single-member target keeps its backend's initial CLEAN state.
+
 ### One copy per server
 
 To its clients a `rawstor-ost` is one copy of the chunk, whatever it
 stores it on: the client counts it as one member, with one position in
 `roles`, and never sees what is beneath.
 
-- **One location** (the usual setup): the location's record is the copy's
-  record. `SET_CONFIG`, `LEAVE` and `META` act on it.
-- **Several locations**: the server cannot open a data session for a
-  nested mirror; `SET_OBJECT` returns `-EOPNOTSUPP`. Its session owns one
-  Slot, and the client-side Chunk coordinates mirroring across servers.
-  `SET_CONFIG`, `SYNC_PREPARE` and `SYNC_ACCEPT` require one location too;
-  with several locations they return `-ENOSYS`.
+A server accepts exactly one backend location and operates on it through
+`Slot`. Its location's record is the copy's record: `SET_CONFIG`, `LEAVE`,
+`META` and the register requests act on that member. A list of locations
+is rejected at startup with `EINVAL`; the client-side `Chunk` coordinates
+mirroring across servers.
 
-At the API level (`include/rawstor/target.h`) this record is split by cost and mutability: `RawstorObjectSpec` (`size`, `width`) is the cheap, always-fail-over-safe half read by `rawstor_target_spec()`; the copy's own `state` and session count plus `RawstorObjectConfig` (`epoch`/`sync_id`/`sync_id_history`/`roles`) are the mirror consistency half, read via `rawstor_target_meta()` (which returns them all, composed as `RawstorObjectMeta{spec, member_role, state, writers, config}`, one entry per URI of the one chunk named by its own explicit `offset` parameter — unlike `spec()`'s single-answer fail-over, so a caller can see every copy of that chunk's own state; a URI that doesn't answer gets a zero-filled entry, see its own doc comment). The writer, `rawstor_target_set_member_config()`, sets the configuration -- never the copy's own state -- on one real member of one chunk at a time (its own `offset` and `member_index` parameters, the same order `meta()` reports that chunk's own members in), and is part of the public API too, but is a sharp tool: it exists for `rawstor-ost` (to apply an incoming `SET_CONFIG` wire command to its location), this project's own tests, and future tooling that already understands this model (e.g. `rawstor resolve`'s own split-brain recovery flow) — setting mirror consistency state by hand can desynchronize a target's copies in ways the library's own quorum/reconciliation logic isn't designed to recover from automatically, so it isn't meant for routine application use. On an `mds://` object target (docs/mds.md) — which has many chunks, each with its own slots, not addressable through any flat per-URI `_uris` list at all — both calls resolve `offset` to that object's own real chunk via a live MDS round trip first (`-ENOENT` if the object has no chunk there), then operate on that chunk's own real members exactly as for a plain target: the real per-chunk DIRTY/CLEAN state lives one level down, but is fully reachable through the object-level target, not synthesized.
+At the API level (`include/rawstor/target.h`) this record is split by cost and mutability: `RawstorObjectSpec` (`size`, `width`) is the cheap, always-fail-over-safe half read by `rawstor_target_spec()`; the copy's own `state` and session count plus `RawstorObjectConfig` (`epoch`/`sync_id`/`sync_id_history`/`roles`) are the mirror consistency half, read via `rawstor_target_meta()` (which returns them all, composed as `RawstorObjectMeta{spec, member_role, state, writers, config}`, one entry per URI of the one chunk named by its own explicit `offset` parameter — unlike `spec()`'s single-answer fail-over, so a caller can see every copy of that chunk's own state; a URI that doesn't answer gets a zero-filled entry, see its own doc comment). The writer, `rawstor_target_set_member_config()`, sets the configuration and optional state atomically on one real member of one chunk at a time (its own `offset` and `member_index` parameters, the same order `meta()` reports that chunk's own members in), and is part of the public API too, but is a sharp tool: it exists for this project's own tests and tooling that already understands this model (e.g. `rawstor resolve`'s own split-brain recovery flow) — setting mirror consistency state by hand can desynchronize a target's copies in ways the library's own quorum/reconciliation logic isn't designed to recover from automatically, so it isn't meant for routine application use. On an `mds://` object target (docs/mds.md) — which has many chunks, each with its own slots, not addressable through any flat per-URI `_uris` list at all — both calls resolve `offset` to that object's own real chunk via a live MDS round trip first (`-ENOENT` if the object has no chunk there), then operate on that chunk's own real members exactly as for a plain target: the real per-chunk DIRTY/CLEAN state lives one level down, but is fully reachable through the object-level target, not synthesized.
 
 ### Comparison rules (at open)
 
@@ -249,12 +262,10 @@ to history) exactly when that membership changes, in either direction:
   the current `sync_id` (F11). The new `sync_id` is recorded by the dirty
   gate, before the first write is acknowledged.
 - **A copy rejoins** (F7): once its resync is done, the IN-SYNC copies move
-  to a new `sync_id` first, then the rejoining copy adopts it. Interrupted
-  in between, the copy is still syncing on its old record — stale either
-  way. Data-only quorum would be safe without this bump (the copies are
-  identical), but a record naming the old membership — such as a witness
-  record whose update failed (see [MDS design](mds.md#witness-stage-3)) —
-  must never match a copy of the new one.
+  to a new `sync_id` first, then the rejoining member adopts it. Interrupted
+  in between, the member is still syncing on its old record. A record
+  naming the old membership must never match the new composition; this
+  applies to DATA and WITNESS alike.
 
 Everything else keeps the identity:
 
@@ -282,26 +293,22 @@ Metadata transitions (marking `DIRTY`, epoch/`sync_id` bump, resync completion) 
 
 ## Quorum: excluding split brain by construction
 
+The same rules apply to DATA and WITNESS members. N is the total number of members.
+
 Key invariant: **every acknowledged write exists on a set of copies that intersects any future auto-start set.** Therefore the newest `sync_id` is always visible at auto-start, and two disjoint write histories cannot be created through automatic paths.
 
 - **Auto-start (open) requires strictly more than N/2 reachable mirrors** (N=2 → both). Within the reachable majority, the copy with the newest `sync_id` is authoritative (majority intersection guarantees it is present); stale copies get an online resync.
 - **Below quorum: manual approval only** (force-open via CLI/opts — not yet implemented). There is deliberately no "clean exception": `CLEAN` only means "I was closed correctly" — a copy cannot know locally that it did not miss anything while offline. Alternating offline periods of `CLEAN` copies would produce split brain.
-- **Runtime (chunk already open):**
-  - N ≥ 3: degrade & continue while more than N/2 mirrors survive; at ≤ N/2 survivors **writes freeze** (policy: error to the caller or block until quorum returns). Otherwise "wrote on minority {A}, later auto-started on majority {B,C}" would orphan acknowledged data.
-  - N = 2: **continuing on a single survivor is allowed.** This is safe against split brain because auto-start requires both mirrors, and the abandoned peer remains `DIRTY`/ancestor and can never auto-start alone. It is not free of risk, though: while degraded, every acknowledged write lives on that one survivor only — see *Known limitation: two mirrors, one survivor*.
-- **What counts toward a quorum.** The open quorum counts every
-  reachable real copy, STALE ones included: the last acknowledged write
-  set was itself a majority (or, for N = 2, is guaranteed to be among the
-  reachable copies), so any reachable majority contains its newest
-  `sync_id`, and the comparison rules pick it out. An unreachable copy
-  doesn't count, and neither does a blank copy recreated at this very open
-  (F10): it holds none of the acknowledged writes, so letting it make up
-  the majority would break the intersection — a survivor that fell behind
-  could then be opened as authoritative. The runtime write quorum
-  (N ≥ 3) counts only IN-SYNC copies: a STALE or resyncing copy doesn't
-  hold the writes it would be vouching for.
+- **Runtime (chunk already open):** continue while more than N/2 members remain IN_SYNC; at or below N/2, writes freeze with EIO. Two data copies without a witness therefore require both copies throughout the writable session.
+- **What counts toward a quorum.** Opening counts reachable, existing members, including nonempty stale ones: every acknowledged write set was a majority, so any reachable majority intersects it. The history comparison identifies the newest generation and requires an authoritative data source. Unreachable members and blank records do not count. Runtime writes count only IN_SYNC members with the recorded configuration; stale or syncing members cannot vote until their rejoin completes.
 - **`sync_id_history` stays as defense in depth**: it catches consequences of a wrong manual force-open, an OST restored from backup, or bugs.
-- **Roadmap — MDS as witness.** A future MDS participates in quorum as a metadata-only member (stores `sync_id`/`epoch`, no data). This restores auto-start for 2 data mirrors with one OST down (2 of 3 votes). Not part of v1, but quorum rules and the metadata format are designed so a witness member fits without schema changes (quorum counts all members, including metadata-only ones).
+- **Witness members.** An explicitly declared metadata-only member can
+  participate in the same synchronous membership barriers and quorum,
+  only for an even number of data copies. With N data copies and one witness,
+  both writable open and runtime writes require a majority of N+1 members:
+  N/2 matching data copies plus witness, or N/2+1 data copies alone. A failed
+  witness update excludes its vote; writes below quorum freeze. See
+  [Witness](mds.md#witness). Reads and data writes use only DATA members. All members use the same rejoin transitions; a witness needs no data copy during resync.
 
 The open decision, put together:
 
@@ -349,11 +356,9 @@ sequenceDiagram
     end
     A-->>C: ok
     B--xC: error (F1)
-    Note over C: suspend acks
-    C->>A: epoch+1, new sync_id, old one to history (fsync)
-    Note over C: B is STALE, excluded from I/O
-    C-->>App: ack (resume acks)
-    Note over B,C: B returns later: online resync (F7)
+    Note over C: one of two members remains: no majority
+    C-->>App: EIO; writes frozen
+    Note over B,C: restore quorum before reopening
 ```
 
 ---
@@ -391,8 +396,7 @@ naming other locations while the chunk is open fails with `-EINVAL`.
 - **A member being excluded (`LEAVING`)** serves no I/O from the moment it
   fails. A write that skipped it, through any open, is acknowledged only
   once its exclusion is recorded on the survivors (F1).
-- **N = 2 keeps continuing on one survivor**: the process is one writer,
-  so *Quorum* applies as it is.
+- **All member counts use the same majority rule**, including two data copies without a witness.
 
 ---
 
@@ -400,7 +404,7 @@ naming other locations while the chunk is open fails with `-EINVAL`.
 
 | # | Case | Detection | Reaction | Identity recovery |
 |---|------|-----------|----------|-------------------|
-| F1 | Write failure on one mirror M (network / EIO / timeout, per-connection retries exhausted) | error from the connection layer | If survivors > N/2 (or N=2 with 1 survivor): **suspend acks** → on survivors: `epoch`+1, new `sync_id`, old one pushed to history, fsync → mark M STALE in memory, exclude from I/O → resume acks. If survivors ≤ N/2 with N ≥ 3 — **freeze writes** (see quorum). Log + degradation event | Online resync when M returns (F7) |
+| F1 | Write failure on one mirror M (network / EIO / timeout, per-connection retries exhausted) | error from the connection layer | If survivors > N/2: **suspend acks** → on survivors: `epoch`+1, new `sync_id`, old one pushed to history, fsync → mark M STALE in memory, exclude from I/O → resume acks. If survivors ≤ N/2 — **freeze writes** (see quorum). Log + degradation event | Online resync when M returns (F7) |
 | F2 | Read failure / transport hash mismatch on a mirror | error / EPROTO in the read path | Retry the read from another IN-SYNC mirror, return the data. **Read-repair**: rewrite the region on the failing mirror; if the repair write fails → degrade as in F1 | Pointwise via read-repair; on degradation — F7 |
 | F3 | All mirrors failed | all connections dead | At open: refused with `ENOTCONN` (degenerate case of F4's below-quorum refusal). On an already-open chunk: `EIO` to the caller on the next write, chunk unavailable. Periodic reconnect attempts | — (no copy available) |
 | F4 | OST unreachable at open | connect failure | Reachable > N/2 → degraded open on the majority (it is guaranteed to contain the newest `sync_id`); on survivors `epoch`+1 / new `sync_id` **before the first write ack**. Reachable ≤ N/2 (N=2 with one down falls here) → **auto-start refused**, manual force-open only (not yet implemented) | F7 when it returns |
@@ -409,8 +413,8 @@ naming other locations while the chunk is open fails with `-EINVAL`.
 | F7 | A stale mirror returns (rejoin) | reconnect probe + `sync_id`/`epoch` comparison: ancestor → stale | Record the copy's role as syncing (fsync), start an **online resync** (algorithm below) without stopping client I/O | On completion: the IN-SYNC copies move to a new `sync_id`/`epoch` (fsync), then the copy adopts it, state `DIRTY` if the chunk is (fsync) → mirror is IN-SYNC, reads allowed |
 | F8 | Client/OST crash during resync | the copy is left with role syncing / an old `sync_id` | Copy is untrusted | Resync from scratch (v1; resumable with the persistent bitmap in v2) |
 | F9 | Split brain (disjoint write histories) | different `sync_id`s, neither in the other's history | **Excluded in automatic paths by the quorum rules.** Can only arise from a wrong manual force-open, an OST restored from backup, or a bug → then: open refused with a clear error, no automatic winner | Operator: `rawstor resolve TARGET --winner=N` (`rawstor show -v`'s own `slot[N]` index) → winner gets a new `sync_id`, the loser gets a full resync |
-| F10 | Chunk copy missing on one OST (disk lost, OST reprovisioned) | ENOENT when opening the copy (a `file://` location whose directory is gone altogether is unreachable instead, ENOTCONN -- e.g. an unmounted disk) | At open, recreate that copy blank (ALLOCATE, sized off a surviving copy's own META) and treat it as stale. Only when the surviving copies alone are a majority (> N/2): a blank copy never counts toward the quorum, or a survivor that fell behind could be opened as authoritative. So N=2 with one copy missing is not healed automatically: the open fails the quorum check, and the copy is recreated by hand (`rawstor create` on its location) once the survivor is known to be current. Every copy missing is never recreated (nothing vouches the chunk held no data) and the open fails ENOENT. Not on a read-only open or a version | Full online resync (F7) |
-| F11 | Copy size mismatch (mixed file/blkdev backends round up to extent/volblocksize — see `src/blk_backend.hpp`) | spec comparison at open | The logical chunk size lives in metadata and is the same everywhere; physical ≥ logical is fine. Physical < logical → the copy is invalid (treat as F10) | — |
+| F10 | Chunk copy missing on one OST (disk lost, OST reprovisioned) | ENOENT when opening the copy (a `file://` location whose directory is gone altogether is unreachable instead, ENOTCONN -- e.g. an unmounted disk) | At open, recreate that copy blank (ALLOCATE, sized off a surviving copy's own META) and treat it as stale. Only when the surviving copies alone are a majority (> N/2): a blank copy never counts toward the quorum, or a survivor that fell behind could be opened as authoritative. So N=2 with one copy missing is not healed automatically: the open fails the quorum check, and the operator recreates it (`rawstor create` on its location) and records the chosen winner with `rawstor resolve` before reopening. Every copy missing is never recreated (nothing vouches the chunk held no data) and the open fails ENOENT. Not on a read-only open or a version | Full online resync for DATA; metadata rejoin with no data copy for WITNESS (F7) |
+| F11 | Copy size mismatch (mixed file/blkdev backends round up to extent/volblocksize — see `src/blk_backend.hpp`) | logical spec comparison at open | If reachable metadata disagrees on logical size, width or chunk size, the same strict majority must agree on both spec and configuration. Other shapes are stale and cannot vote, serve I/O or rejoin until their spec matches. Without an agreeing majority, open fails before any replacement is allocated. Physical allocation does not determine the logical size and is not checked at open; short DATA reads fail with EIO | — |
 | F12 | Silent on-disk corruption (bit rot) | the transport hash does **not** catch it (the server hashes already-rotten data). `zfs://` catches it by itself; `file://` has nothing | v1: documented limitation; a scrub tool (chunk-wise comparison of copies) detects divergence under `CLEAN` metadata but cannot tell which copy is right | v1: operator decision. Long term (v3): stored per-chunk checksums |
 
 ---
@@ -470,33 +474,17 @@ round trip): if an OST crash (losing acknowledged writes from page cache)
 is followed by a client crash *before* the F1/F6 barrier lands, the next
 open sees all copies `DIRTY` in the same sync set (F5) and the
 deterministic winner may be the member that lost data. Closing this window
-requires synchronous writes or a witness; it is accepted for now and
+requires synchronous durable data writes; it is accepted for now and
 bounded by the barrier latency.
 
-### Known limitation: two mirrors, one survivor
+### Two data copies and a witness
 
-A 2-way mirror keeps accepting writes on a single survivor when the other
-copy fails mid-session (F1), favoring availability: a single OST outage
-doesn't stall the guest. The price is that, until the failed copy is back
-and resynced, acknowledged writes have no redundancy. If the survivor is
-then lost as well — its disk replaced or pool recreated before the
-resync — those writes are gone:
-
-1. Copies A and B are in sync; B fails mid-session. A moves to a new
-   `sync_id` and keeps acknowledging writes; B stays `DIRTY` on the old
-   one.
-2. A's copy is lost (ENOENT) before B is resynced.
-3. B comes back, but it only holds the data from before step 1.
-
-Nothing can recover those writes, but the loss is never silent: B alone is
-not a majority, and a copy recreated in A's place never counts toward the
-quorum (F10), so the open is refused rather than served off B as if it were
-current. An operator who accepts B's content recreates A's copy by hand,
-and the next open resyncs it from B.
-
-Avoiding the window takes a third vote: three data copies (N = 3 freezes
-writes below a majority instead of continuing on one copy) or, for two data
-copies, a witness (*Roadmap — MDS as witness* above).
+Two data copies without a witness freeze writes when either member fails.
+Adding a witness provides three votes, so a data copy and the witness can
+continue together. The witness records membership and generation but holds
+no data: acknowledged degraded writes still have only one data copy until
+the failed DATA member returns and resyncs. A third DATA copy provides both
+a vote and another copy of the contents.
 
 ---
 
@@ -509,7 +497,7 @@ copies, a witness (*Roadmap — MDS as witness* above).
   - `FLUSH` — fdatasync of object data; needed for clean close and so that `rawstor-vhost`/QEMU can forward guest flushes.
   - An old server receiving an unknown opcode must answer `-ENOSYS`. There is no wire version field — acceptable before 1.0.
 - **`src/file_backend.cpp`** — versioned `.spec` format; fsync of metadata.
-- **`src/lvm_backend.cpp`/`src/zfs_backend.cpp`** — a raw block device has no `.spec` file and a reserved header/footer region is incompatible with objects already created (data occupies the device from byte 0). Metadata instead uses each backend's own native, transactional storage: a ZFS user property (`rawstor:meta`, set/read via `zfs set`/`zfs get`) or an LVM tag (`rawstor.meta=...`, via `lvchange --addtag`/`--deltag` and `lvs -o lv_tags`), encoded as a compact colon-separated hex string (`meta_encode()`/`meta_decode()` in `src/blk_backend.{hpp,cpp}`). Both mechanisms share the device/dataset's own failure domain and are set in the same command as creation, so there is never a window where the volume exists without one. A volume with no recorded value (created before this existed, or by something else) is **not** trusted as legacy-CLEAN the way an old `.spec` record is — it fails `meta()`, which the caller already treats as case F10 (untrusted member, needs a resync).
+- **`src/lvm_backend.cpp`/`src/zfs_backend.cpp`** — a raw block device has no `.spec` file and a reserved header/footer region is incompatible with objects already created (data occupies the device from byte 0). Logical size and copy metadata use each backend's own native, transactional storage: a ZFS user property (`rawstor:meta`, set/read via `zfs set`/`zfs get`) or an LVM tag (`rawstor.meta=...`, via `lvchange --addtag`/`--deltag` and `lvs -o lv_tags`), encoded as a compact colon-separated hex string (`meta_encode()`/`meta_decode()` in `src/blk_backend.{hpp,cpp}`). The logical size is persisted at creation and is independent of physical allocation; witnesses retain it too. Both mechanisms share the device/dataset's own failure domain and are set in the same command as creation, so there is never a window where the volume exists without one. A volume with no recorded value (created before this existed, or by something else) is **not** trusted as legacy-CLEAN the way an old `.spec` record is — it fails `meta()`, which the caller already treats as case F10 (untrusted member, needs a resync).
 - **`ost/session.cpp`** — handlers for the new opcodes.
 - **`src/chunk.cpp`** — per-mirror state machine (IN-SYNC/LEAVING/STALE/SYNCING per member, recorded as every member's role, in the chunk's `MirrorControl` shared by the opens of one process, *Writers*), quorum checks at open, degraded open, the degradation procedure (F1: suspend acks → bump survivors' metadata → resume), read failover + read-repair, the resync engine (bitmap + sweeper + per-chunk locks), reconnect probes for STALE mirrors. Cross-mirror logic lives in `Chunk`; `Slot` keeps only per-location retry/reopen.
 - **`cli/`** — `rawstor show -v` prints one `chunk[OFFSET]` block per chunk (`rawstor_target_spec()`'s own size/chunk_size say how many), each with a `mirror[N]` per copy of that chunk and its own state; `rawstor resolve TARGET --winner=N[,N...] [--offset OFFSET]` declares one or more mirrors of the targeted chunk(s) jointly authoritative after split brain (F9) -- every chunk in the object if `--offset` is omitted -- writing them all the same new dominant `sync_id`, one member at a time via `rawstor_target_set_member_config()` with `RAWSTOR_CONFIG_CLEAR_LOST`, so every mirror of that chunk NOT listed gets a full resync on the next open. Still missing: `rawstor-cli force-open` / an opts flag (below-quorum start, explicit manual approval).
@@ -519,4 +507,4 @@ copies, a witness (*Roadmap — MDS as witness* above).
 1. Metadata + new opcodes + the fsync protocol for metadata.
 2. Quorum rules at open + degrade & continue / write freeze + read failover and read-repair.
 3. Online resync.
-4. (v2+) persistent write-intent bitmap, MDS witness in quorum, stored checksums / scrub, fastest-mirror read selection.
+4. Witness members are implemented; v2+ work includes persistent write-intent bitmap, stored checksums / scrub, fastest-mirror read selection.

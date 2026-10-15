@@ -392,7 +392,7 @@ rawstd::Task<void> Backend::create(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
     const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
-    if (sp.size == 0) {
+    if (sp.size == 0 && member_role != RAWSTOR_MEMBER_WITNESS) {
         rawstd_error("lvm: object size must be positive\n");
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -447,7 +447,10 @@ rawstd::Task<void> Backend::create(
 
     // lvcreate rounds the size up to the VG extent size itself.
     char size_buf[32];
-    snprintf(size_buf, sizeof(size_buf), "%" PRIu64 "b", sp.size);
+    snprintf(
+        size_buf, sizeof(size_buf), "%" PRIu64 "b",
+        member_role == RAWSTOR_MEMBER_WITNESS ? uint64_t{1} : sp.size
+    );
 
     // A fresh copy starts with sync_id 0: it has never been part of an
     // established sync set (docs/mirroring.md). Set on the staging LV
@@ -462,6 +465,7 @@ rawstd::Task<void> Backend::create(
     identity.member_role = member_role;
     identity.width = static_cast<uint8_t>(sp.width);
     identity.chunk_size = sp.chunk_size;
+    identity.size = sp.size;
     std::string tag = std::string(rawstor_tag_prefix) +
                       meta_encode(state, config, promised, accepted, identity);
 
@@ -516,7 +520,9 @@ rawstd::Task<void> Backend::create(
 
         std::exception_ptr zero_eptr;
         try {
-            co_await _zero_fill(fd, 0, sp.size, /*unmap=*/false);
+            if (member_role != RAWSTOR_MEMBER_WITNESS) {
+                co_await _zero_fill(fd, 0, sp.size, /*unmap=*/false);
+            }
         } catch (...) {
             zero_eptr = std::current_exception();
         }
@@ -702,12 +708,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
 
-    // The tag never carries size (see meta_encode()): merge in the LV's
-    // real, current size (_blk_size(), blk_backend.cpp) rather than trust
-    // a value that could go stale if the LV were ever resized outside
-    // rawstor.
     RawstorObjectMeta ret{};
-    ret.spec.size = co_await _blk_size(id, offset, version_id);
+    ret.spec.size = identity.size;
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
@@ -734,24 +736,17 @@ rawstd::Task<void> Backend::_write_meta(
     std::string tags = co_await _lv_tags(path);
     std::string old_tag = find_tag(tags, rawstor_tag_prefix);
 
-    // The placement identity is immutable once stamped at create() --
-    // carry the existing tag's through unchanged rather than clobber it
-    // with a zeroed one. An empty/unrecorded old_tag (an LV created
-    // before this feature, or by something else) has no identity to
-    // preserve; it degenerates to the all-zero default.
+    // Preserve the declared logical size and placement identity.
+    // Missing or unreadable metadata is rejected instead of zeroing it.
     Backend::ChunkIdentity identity;
     RawstorObjectSyncStateValue old_record_state{};
     RawstorObjectConfig old_record_config{};
     RawstorObjectBallot old_record_promised{};
     RawstorObjectBallot old_record_accepted{};
-    try {
-        meta_decode(
-            old_tag, &old_record_state, &old_record_config,
-            &old_record_promised, &old_record_accepted, &identity
-        );
-    } catch (const std::system_error&) {
-        identity = Backend::ChunkIdentity{};
-    }
+    meta_decode(
+        old_tag, &old_record_state, &old_record_config, &old_record_promised,
+        &old_record_accepted, &identity
+    );
 
     std::string new_tag =
         std::string(rawstor_tag_prefix) +

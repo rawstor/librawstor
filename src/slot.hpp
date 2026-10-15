@@ -44,23 +44,35 @@ private:
     class Admission;
     class Resync;
 
+    rawstd::Task<void> _create_version(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& version_id
+    );
+    rawstd::Task<void> _remove_version(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& version_id
+    );
     rawstd::Task<void> _set_config(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-        const RawstorObjectConfig& config, unsigned int flags
+        const RawstorObjectConfig& config, unsigned int flags,
+        std::optional<RawstorObjectSyncStateValue> state
     );
-    rawstd::Task<RawstorObjectSyncReply> _sync_prepare(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+    rawstd::Task<bool> _sync_prepare(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot, RawstorObjectMeta& meta
     );
-    rawstd::Task<RawstorObjectSyncReply> _sync_accept(
+    rawstd::Task<bool> _sync_accept(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config
+        const RawstorObjectConfig& config, RawstorObjectMeta& meta
     );
 
     // Set by open() (see its own doc comment) -- unset means this
     // Slot is only ever used for metadata (list/create/remove/
     // meta/info), which needs no SET_OBJECT step of its own.
     std::optional<RawstdUUID> _id;
+    // A successful DATA open makes the durability barrier need no META lookup.
+    bool _data_bound = false;
     // The chunk offset/version open() bound _id to -- 0/0 (whole object,
     // live) unless open() was called otherwise (docs/mds.md, "Chunk
     // identity"/"Versions"). Meaningless while _id is unset; carried
@@ -200,6 +212,7 @@ public:
     rawstd::Task<std::vector<RawstdUUID>>
     list_versions(const RawstdUUID& id, uint64_t offset);
 
+    // Witnesses have no snapshots; deleting one preserves the live record.
     rawstd::Task<void> remove_version(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
     );
@@ -214,17 +227,19 @@ public:
 
     rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-        const RawstorObjectConfig& config, unsigned int flags
+        const RawstorObjectConfig& config, unsigned int flags,
+        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     );
 
-    rawstd::Task<RawstorObjectSyncReply> sync_prepare(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+    rawstd::Task<bool> sync_prepare(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot, RawstorObjectMeta& meta
     );
 
-    rawstd::Task<RawstorObjectSyncReply> sync_accept(
+    rawstd::Task<bool> sync_accept(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config
+        const RawstorObjectConfig& config, RawstorObjectMeta& meta
     );
 
     // The writer's clean departure from this member's session
@@ -249,7 +264,7 @@ public:
     // set_version() instead, read-only by nature). Throws ENOTSUP if
     // that answer's own member_role is RAWSTOR_MEMBER_WITNESS -- a
     // witness holds no data and is never a valid target for real I/O
-    // (docs/mds.md, "Witness (stage 3)"); its own .cpp doc comment on
+    // (docs/mds.md, "Witness"); its own .cpp doc comment on
     // why this is the one place that needs to check.
     rawstd::Task<RawstorObjectMeta> open(
         const RawstdUUID& id, uint64_t offset, int flags,

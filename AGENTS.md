@@ -31,6 +31,14 @@ The two headline consumers are:
   `include/rawstor/protocol.h` is authoritative (every wire struct's size
   is static_asserted there); `docs/protocol.md` describes the same
   layouts and must be kept in sync with it.
+- **Witness**: a metadata-only chunk member, hosted on OST, MDS (SQLite),
+  file, LVM or ZFS. Ordinary URIs contain only addresses; META reports the
+  member role for validation; a witness is always the last extra location
+  beyond spec.width, regardless of availability. `Backend::set_config()`
+  durably updates its record; `Chunk` includes it in synchronous membership
+  barriers and quorum only with an even data-member count, and skips data I/O. See
+  `docs/mds.md#witness`. Interprocess mirror coordination is multiattach
+  stage 2, outside this implementation.
 - **RawIO**: `librawio`'s internal async I/O abstraction (`rawio::Queue`),
   with two interchangeable backends selected at `configure` time:
   `rawio::uring` (io_uring, default, requires liburing >= 2.3) and

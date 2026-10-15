@@ -66,6 +66,8 @@ public:
     void accept(const char* name);
 
     void close(const char* name);
+    // Wait for the peer to close after receiving the scripted response.
+    void wait_close(const char* name);
     // Like close(), but drops this end's own bookkeeping of the
     // connection (so a later accept() is free to track a new one)
     // without actually closing the fd or sending anything on the wire --

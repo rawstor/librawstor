@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_BLK_BACKEND_HPP
 #define RAWSTOR_BLK_BACKEND_HPP
 
+#include <optional>
+
 #include "backend.hpp"
 
 #include <rawio/queue.hpp>
@@ -22,19 +24,16 @@ namespace blk {
 // Subclasses open objects through _open_object(), implement backend-specific
 // list/create/remove/info operations, and store metadata through meta() and
 // _write_meta(). Slot coordinates the copy's state and writer sessions;
-// _blk_size() provides the size of objects backed by real block devices.
+// Logical size is stored in metadata, independently of physical capacity.
 class Backend : public rawstor::Backend {
 private:
-    // Bumped whenever meta_encode()'s own field set changes -- carried as
-    // this format's own leading field (see meta_encode()'s own doc
-    // comment below) rather than left for a caller to track separately,
-    // so every subclass rejects a record from an incompatible version
-    // the same way. Private: only meta_encode()/meta_decode()'s own
-    // implementation ever needs it. Still 1 despite the member_role/
-    // width/chunk_size fields added below -- this whole format is itself
-    // part of the unreleased 0.3.0 line (no live installation has ever
-    // written one), so there's nothing to stay compatible with yet.
+    // Versioned native metadata includes the logical member size.
     static constexpr unsigned int META_FORMAT_VERSION = 1;
+
+    rawstd::Task<void> _bind_object(
+        const RawstdUUID& id, uint64_t offset, int flags,
+        const RawstdUUID& version_id
+    );
 
     // Writes dispatched to the io queue whose completion hasn't arrived
     // yet -- see pwrite()/pwritev()'s use of it against
@@ -75,19 +74,20 @@ private:
     void _throttle_release() noexcept;
 
 public:
-    // A chunk's own placement identity (docs/mds.md, chunk_meta), minus
-    // size and mutable copy metadata: stamped at create, immutable afterwards,
-    // persisted alongside the copy metadata by meta_encode()/meta_decode()
-    // below. _write_meta() must read the existing record and carry this
-    // part through unchanged rather than reset it, since it never
-    // receives this identity itself. chunk_size here is always the full
-    // byte value -- RawstorFrameAllocatePayload's own chunk_shift is
-    // only a wire-transfer encoding (its own doc comment on why), already
-    // converted back to bytes before reaching this local record.
+    // A chunk's own logical size and placement identity (docs/mds.md,
+    // chunk_meta), separate from mutable copy metadata: stamped at create,
+    // immutable afterwards, persisted alongside the copy metadata by
+    // meta_encode()/meta_decode() below. _write_meta() must read the existing
+    // record and carry this part through unchanged rather than reset it, since
+    // it never receives this identity itself. chunk_size here is always the
+    // full byte value -- RawstorFrameAllocatePayload's own chunk_shift is only
+    // a wire-transfer encoding (its own doc comment on why), already converted
+    // back to bytes before reaching this local record.
     struct ChunkIdentity {
         RawstorMemberRole member_role;
         uint8_t width;
         uint64_t chunk_size;
+        uint64_t size;
     };
 
 protected:
@@ -133,19 +133,6 @@ protected:
     // retryable EIO.
     rawstd::Task<bool> _exists(const std::string& path);
 
-    // Real, current size of the block device `id`/`offset` (or its
-    // `version_id` version, when non-nil) maps to (BLKGETSIZE64) --
-    // shared by lvm::Backend/zfs::Backend's own meta()
-    // below: their own native tag/property storage never carries size
-    // (see meta_encode()'s own doc comment), so this is always the
-    // up-to-date source of truth for it, even if the device were ever
-    // resized outside rawstor. file::Backend needs no equivalent -- its
-    // own meta() already gets size straight from its data file's own
-    // stat().
-    rawstd::Task<uint64_t> _blk_size(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
-    );
-
     // Upper bound on meta_encode()'s own return value, comfortably
     // covering every field at its widest (a full 16 hex digits for each
     // uint64_t one). Protected (not private): file::Backend, the only
@@ -168,12 +155,12 @@ protected:
     // (enum RawstorObjectMemberRole), "-" when none are recorded, and a ballot
     // as "counter.proposer", e.g. "version=1:state=1:epoch=0:sync_id=0:
     // h0=0:h1=0:h2=0:h3=0:resync_owner=0:promised=0.0:accepted=0.0:
-    // roles=-:member_role=0:width=0:chunk_size=0" -- shared by every blk-backed
-    // subclass's own native per-copy metadata storage: lvm::Backend's LVM
-    // tag, zfs::Backend's ZFS user property, and file::Backend's own
-    // on-disk .meta file (NUL-padded out to META_MAX_SIZE bytes -- see
-    // its own doc comment for why). Only characters valid in all three
-    // are used (no comma, no whitespace).
+    // roles=-:member_role=1:width=0:chunk_size=0:size=0" -- shared by every
+    // blk-backed subclass's own native per-copy metadata storage:
+    // lvm::Backend's LVM tag, zfs::Backend's ZFS user property, and
+    // file::Backend's own on-disk .meta file (NUL-padded out to META_MAX_SIZE
+    // bytes -- see its own doc comment for why). Only characters valid in all
+    // three are used (no comma, no whitespace).
     //
     // meta_decode() reverses meta_encode(), throwing EPROTO if value is
     // not a well-formed encoding of the current META_FORMAT_VERSION
@@ -214,20 +201,21 @@ public:
 
     rawstd::Task<void> set_config(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-        const RawstorObjectConfig& config, unsigned int flags
+        const RawstorObjectConfig& config, unsigned int flags,
+        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     ) override final;
 
-    rawstd::Task<RawstorObjectSyncReply> sync_prepare(
+    rawstd::Task<bool> sync_prepare(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectBallot& ballot,
-        const RawstorObjectSyncReply& proposed
+        const RawstorObjectBallot& ballot, bool proposed,
+        RawstorObjectMeta& meta
     ) override final;
 
-    rawstd::Task<RawstorObjectSyncReply> sync_accept(
+    rawstd::Task<bool> sync_accept(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config,
-        const RawstorObjectSyncReply& proposed
+        const RawstorObjectConfig& config, bool proposed,
+        RawstorObjectMeta& meta
     ) override final;
 
     rawstd::Task<size_t>

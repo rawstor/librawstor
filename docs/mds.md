@@ -10,7 +10,7 @@ numbers its stages separately.
 |---|---|---|---|
 | `rawstor-mds` server, `-w/--workers` threads | 1 | ✅ | `mds/src/main.cpp`, `mds/src/server.cpp` |
 | SQLite store (WAL, `synchronous=FULL`) | 1 | ✅ | `mds/src/store.cpp` |
-| `OBJ_CREATE` / `OBJ_OPEN` / `OBJ_RESIZE` / `OBJ_REMOVE` | 1 | ✅ | `mds/src/client.cpp`, `src/mds_client.cpp` |
+| `OBJ_CREATE` / `OBJ_OPEN` / `OBJ_RESIZE` / `OBJ_REMOVE` | 1 | ✅ | `mds/src/client.cpp`, `src/mds_backend.cpp` |
 | Explicit chunk map, client-side routing by chunk | 1 | ✅ | `src/mds_backend.cpp`, `src/object.cpp` |
 | Weighted HRW placement, `failure_domain`, `stripe_width` | 1 | ✅ | `mds/src/placement.cpp` |
 | Unsatisfiable topology hard-fails | 1 | ✅ | `mds/src/placement.cpp` |
@@ -35,8 +35,8 @@ numbers its stages separately.
 | Backend health / `LOCATION_INFO` collector | — | ✅ | `mds/src/monitor.cpp`, `mds/src/opts.cpp` |
 | Protocol version + feature bits in `SET_OBJECT` | — | ❌ | — |
 | Unified response frame `{res, len, hash}` | — | ❌ | — |
-| Witness: `member_role` field in metadata | 3 | 🟡 | reserved in `include/rawstor/protocol.h` |
-| Witness: record kinds, voting rules, async updates, re-attach | 3 | ❌ | — |
+| Witness: metadata-only members and quorum | 3 | ✅ | `src/chunk.cpp`, `Backend::set_config()`, SQLite witness records |
+| Witness: durable states, voting rules, synchronous barriers, re-attach | 3 | ✅ | `src/chunk.cpp` |
 | MDS replication (primary + log) | v2+ | ❌ | — |
 | EC policy | v2+ | ❌ | — |
 | Stored checksums / scrub, version redundancy repair | v2+ | ❌ | — |
@@ -74,6 +74,18 @@ flowchart TB
     MDS -. "reconstruct: LIST + META" .-> OSTs
 ```
 
+The client-side `mds::Backend` and `ost::Backend` inherit their shared network
+transport and member commands from `wire::Backend` (`src/wire_backend.*`).
+MDS encodes object commands and decodes their responses directly in
+`mds::Backend`, using that same connection and CID response dispatcher. MDS overrides whole-object operations to resolve
+its chunk map and route data to the nested object; native witness metadata
+uses the protected nonvirtual wire requests directly. OST implements its
+virtual member operations by forwarding to those same requests. Shared
+`set_config`, `set_state`, and `info` implementations are final in the wire
+base class. OST data I/O (`READ`, `WRITE`,
+`DISCARD`, `WRITE_ZEROES`, `FLUSH`) is implemented in `ost::Backend`
+(`src/ost_backend.cpp`); MDS data I/O routes to its nested object.
+
 ## Requirements, in priority order
 
 0. **Allocation and tracking** — answer "which OST hosts which part of which
@@ -100,9 +112,10 @@ redesign.
   `openObject`, but it is recoverable, so v1 runs a single instance.
 - **MDS is off the hot path — including the moment of a disk failure.** The
   map is read once at object open and cached; degrade decisions during I/O are
-  made and recorded by the client on the surviving data members only, exactly
-  as mirroring does today. The witness is written synchronously only at
-  non-hot moments (open / clean close / resync completion); see *Witness*.
+  made and recorded by the client on surviving members through synchronous
+  configuration barriers, including the witness when declared. The witness
+  is updated on first write, degradation, resync completion and clean close;
+  see *Witness*.
 - **Redundancy is the client's responsibility** (per `architecture.md`). MDS and
   placement only produce *slots*; the client decides what goes in them
   (mirror copies or erasure-coding shards) and does the encode/decode.
@@ -158,7 +171,7 @@ in four places and spent on one addition:
 
 | Draft decision | Verdict | Why |
 |---|---|---|
-| Separate MDS wire protocol, distinct magic `rsmd` | **Changed: single protocol with OST** | An OST doubles as a partial MDS (the witness subset — `META`/`SET_STATE` — already exists on OSTs today); one framing/parsing stack; misconnection safety comes from `-ENOSYS` on unknown opcodes instead of a magic mismatch |
+| Separate MDS wire protocol, distinct magic `rsmd` | **Changed: single protocol with OST** | An OST doubles as a partial MDS (the witness subset — `META`/`SET_CONFIG` — already exists on OSTs today); one framing/parsing stack; misconnection safety comes from `-ENOSYS` on unknown opcodes instead of a magic mismatch |
 | Explicit stored map (not CRUSH-computed) | Keep | ≤ 1024 entries/TiB; placement function stays the generator |
 | Weighted rendezvous (HRW) placement | Keep | deterministic, minimal reshuffle, stateless, O(N) fine at this scale |
 | Hand-rolled packed structs, count prefixes, `format_version` | Keep | codebase idiom, no new dependency |
@@ -239,7 +252,7 @@ chunk_meta {
   version                  // version_id this slot belongs to; nil = live
   redundancy               // mirror{R} | ec{k,m} — how to decode
   slot_index
-  member_role              // data | witness — witness records are metadata-only
+  member_role              // DATA = 1 | WITNESS = 2 — witness records are metadata-only
                            // and are excluded from the map reconstruct
   created_at, project_id
   // per-slot consistency (exists today, per mirroring.md)
@@ -287,10 +300,10 @@ versions[version_id] = {                   // version_id: UUID, client-generated
   view: { logical_index -> version }     // cache over OST-side versions
 }
 
-witness[id or (id, logical_index)] = {  // stage 3, not implemented yet
-  state,                                 // CLEAN | DIRTY_OPEN | DIRTY_DEGRADED
+witness[id, chunk_offset] = {
+  state,                                 // CLEAN | DIRTY | LOST
   sync_id, sync_id_history[4], mirror_epoch,
-  survivors[]                            // only for DIRTY_DEGRADED
+  roles[]                                // data and witness member roles
 }
 ```
 
@@ -335,7 +348,7 @@ classDiagram
       created_at
     }
     class witness {
-      <<stage 3, not implemented yet>>
+      <<metadata-only member>>
       state
       sync_id, sync_id_history
       mirror_epoch
@@ -352,9 +365,8 @@ Two classes of state, by recoverability:
 
 - `object_descriptor` / `chunk_map` / `versions` — an **index**; DR = rebuild
   by OST scan (below).
-- `witness` records (stage 3, not implemented yet; the SQLite store has no
-  witness table) — **not** rebuildable by scan (they *are* the extra vote).
-  Losing them degrades availability (auto-start falls back to plain N=2
+- `witness` records (SQLite `witnesses` table) — **not** rebuildable by scan (they *are* the extra vote).
+  Losing them degrades availability (auto-start requires a data majority
   rules), never correctness; re-attach is defined in *Witness*.
 
 The topology (OST roster, failure domains, weights, `ost_id -> location`) is
@@ -384,7 +396,7 @@ not move the topology into the MDS database.
 | `version(id, version_id)` | version -- `version_id` is client-generated, like `id` itself | no |
 | `updatePlacement(id, index, slots)` | rebalance/recovery | rare |
 | `removeObject(id)` | delete | no |
-| witness get/put | open (incl. witness-assisted degraded open) / clean close / resync-complete; async after degrade | no (see Witness) |
+| witness get/put | metadata at open, record before first write (incl. witness-assisted degraded open) / clean close / resync-complete / synchronous degrade | no (see Witness) |
 
 Refines `getObj / getObjPart / getFreeOst` from `architecture.md`; `getFreeOst`
 is subsumed by the placement function + topology (the client never picks OSTs
@@ -458,15 +470,15 @@ reserved ranges per role:
 ```
 0x00    session:         SET_OBJECT                    // handshake, every role
 0x01..  data:            READ, WRITE, DISCARD, ALLOCATE, RELEASE, FLUSH
-0x20..  shared metadata: META, SET_STATE               // the witness subset
 0x40..  object (MDS):    OBJ_CREATE, OBJ_OPEN, OBJ_RESIZE, OBJ_REMOVE,
                          OBJ_COMMIT_VERSION, OBJ_REMOVE_VERSION,
                          OBJ_LIST_VERSIONS
 ```
 
 - `SET_OBJECT` is the mandatory first command on **every** connection and
-  carries the handshake: **protocol version + feature bits** (added now,
-  while breaking is free) plus the object binding. On control connections
+  uses `RawstorFrameBasicPayload` for the object/chunk/version binding and
+  open flags. Protocol version and feature bits are not implemented.
+  On control connections
   (object commands only) the binding is null — which is why it sits in its
   own *session* group, implemented by every role, not in the data group.
 - A server answers `-ENOSYS` to any opcode outside its role — the existing
@@ -478,12 +490,14 @@ Role matrix:
 | Opcode group | OST | OST as partial MDS | full MDS |
 |---|---|---|---|
 | session (`SET_OBJECT`) | yes | yes | yes |
-| data (`READ`,`WRITE`,`DISCARD`,`ALLOCATE`,`RELEASE`,`FLUSH`) | yes | yes | no (`-ENOSYS`) |
-| per-object/chunk metadata (`META`, `SET_STATE`) — the **witness subset** | yes (today) | yes | yes |
-| reconstruct/scrub scan (`LIST` + per-object `META`/`SET_STATE`) | yes | yes | yes (serves its own index) |
+| data (`READ`,`WRITE`,`DISCARD`,`FLUSH`) | yes | yes | no (`-ENOSYS`) |
+| member lifecycle (`ALLOCATE`,`RELEASE`) | yes | yes | witness members only |
+| member metadata (`META`, `SET_CONFIG`) | yes | yes | witness members only |
+| member listing (`LIST` + `META`) | yes | yes | yes |
+| reconstruct scan (`LIST` + member `META`) | yes | yes | `LIST` serves registered objects and native witnesses |
 | object commands (`CMD_OBJ_*`) | no | optional | yes |
 
-Consequence for stage 3: **a witness needs no new server.** A metadata-only
+Consequence: **a witness needs no new server.** A metadata-only
 member on a plain `rawstor-ost` already speaks the witness subset.
 
 Example `CMD_OBJ_OPEN`:
@@ -833,135 +847,165 @@ reconstruct scan (below).
   process; a vhost/QEMU flush hook is future work. Version redundancy
   status surfacing is still TODO.
 
-## Witness (stage 3)
+## Witness
+
+Witness members use ordinary backend URIs: `ost://host:port`,
+`mds://host:port`, `file:///path`, `lvm://vg` or `zfs://pool/rawstor`.
+The URI contains only the address. Creation makes the last location a
+witness when the chunk has `width + 1`
+locations and `width` is even and at least two. With `width` locations, all
+members store data. The same width-and-count rule determines the last
+member's expected role during opening and recovery, regardless of its
+availability. Available `META.member_role` values are checked against this
+layout, rather than used to find a witness. Unavailable members appear as
+zero-filled `UNREACHABLE` entries in target metadata. The layout does not
+depend on the recorded configuration, and no extra position field is stored.
+One witness per chunk is supported, only alongside an even number of data
+members (2, 4, 6, ...). Odd data-member counts are rejected with `EINVAL`.
+The ordinary create path creates it with the other members; `width` counts
+only data copies, while `config.nroles` includes the witness. MDS witness records are independent of the object map:
+a witness can serve an explicitly addressed chunk without an MDS object
+registration. An `mds://` object's placement does not automatically add one.
+
+For example, create a two-copy object with a witness on MDS:
+
+```sh
+rawstor create -s 1G -m 2 'ost://10.0.0.11:9090,ost://10.0.0.12:9090,mds://10.0.0.13:9091'
+```
+
+The mirroring model supports several writer queues within one process (see
+[Model and assumptions](mirroring.md#model-and-assumptions)); this feature
+does not add writer exclusion or distributed mirror synchronization.
+
+Use the returned complete target, including the witness, for subsequent
+opens. Member ordering and the member set must stay fixed. Interprocess
+coordination between independently attached writers is multiattach stage 2
+and is not implemented by this feature.
+
+`Backend::set_config()` atomically stores the record's state and configuration.
+Chunk uses the same member configuration/state update path for DATA and
+witness members. The caller decides whether quorum permits recreating a
+missing member. The member role selects
+the allocation type; it does not select a separate state-write operation.
+After recreation, Chunk re-reads META to obtain the persisted member record.
+The OST transports it using `SET_CONFIG`; MDS commits it in SQLite WAL with
+`synchronous=FULL`. The block backends use their existing metadata format:
+file witnesses keep an empty data file plus metadata, LVM witnesses use a
+minimum-size LV and its tag, and ZFS witnesses use a minimum-size zvol and its
+property. All BLK members persist the requested logical size in native
+metadata (format version 1), independently of file length, LV extents or
+zvol allocation. MDS witness records retain the same declared size. Witnesses
+can answer spec queries when data members are unavailable, but receive no
+data I/O and never participate in resync or snapshot CoW. Creating or removing
+a witness snapshot through Slot is a no-op. Target snapshot creation skips an
+unavailable trailing witness when a reachable member's width confirms its
+expected role; unavailable data members still fail the operation. DATA opens
+use the logical size returned by META without comparing physical capacity. An OST hosting a witness must have
+one underlying location. MDS discovers witness records from metadata and
+forwards their member operations through the same shared protocol; its
+ordinary object placement API remains separate.
 
 This stage is implemented before [multi-attach Stage 2](multiattach.md#implementation-stages).
-The recovery rules below describe the single-writer client. To support
+The recovery rules below describe shared in-process writer control. To support
 writers on different processes and machines, the witness must also be a
 durable CASPaxos acceptor for each chunk's configuration register, storing
 `promised`, `accepted` and the accepted configuration. It confirms
 `SYNC_PREPARE` / `SYNC_ACCEPT` only after persisting the transition.
 Two data copies and their witness then provide three register votes; any
-two form a majority. The witness is omitted from data I/O and from the
-configuration's data-member `roles` and `member_index` numbering.
+two form a majority. The witness is omitted from data I/O; its role remains in the complete
+configuration and target member numbering.
 
 In multi-attach Stage 2, excluding a failed data member needs this register
-quorum before writes resume under the new epoch. The asynchronous witness
-updates and the failure-hot-path requirement below apply to single-writer
-recovery; they cannot supply CASPaxos votes for multi-attach transitions.
+quorum before writes resume under the new epoch. The synchronous witness updates below provide in-process recovery;
+they do not supply CASPaxos votes for multi-attach transitions.
 
 A witness is a **metadata-only member** of a chunk's quorum: it
 stores the consistency tuple (`state`-like record, `sync_id`,
 `sync_id_history`, `mirror_epoch`) and holds no data. For N=2 data mirrors it
 is the third vote that restores auto-start with one OST down. Implementation:
-any server speaking the witness subset (`META`/`SET_STATE`) — a plain OST, an
+any server speaking the witness subset (`ALLOCATE`/`META`/`SET_CONFIG`/`RELEASE`) — a plain OST, an
 OST doubling as partial MDS, or the MDS itself. The member appears in the
-target list like any other member; data I/O and resync skip it. Its stored
-record carries `member_role = witness` (see `chunk_meta`), so the
+target list like any other member; data I/O and the data-copy phase of resync skip it. Its stored
+record carries `member_role = WITNESS` (see `chunk_meta`), so the
 reconstruct scan (`LIST` + per-object `META`) never mistakes the witness
 host for a data slot.
 
-**Hard requirement: the witness is not on the failure hot path.** When a data
-member dies mid-session, the client records the new generation on the
-surviving data members only — exactly today's degrade barrier, no witness
-round-trip before acks resume. The witness copy of that update is
-**asynchronous, best-effort** (retried opportunistically for the rest of the
-session).
+### Membership barriers
 
-### When the witness is written synchronously
+The witness participates in the same synchronous configuration barriers as
+other members. Every member stores `epoch`, `sync_id`, history and the
+complete role array. IN_SYNC, SYNCING and EXCLUDED determine membership;
+CLEAN, DIRTY and LOST describe the stored state. LOST remains sticky through
+ordinary barriers and clean departure; resync or explicit CLEAR_LOST clears it.
+LOST is treated as DIRTY
+when reconciling a generation for either member type. It does not by itself
+exclude a vote. A witness has no data writer sessions.
 
-Only at non-hot moments, where a round-trip is already acceptable:
-
-| Moment | Witness record written |
+| Moment | Durable record before dependent acknowledgements |
 |---|---|
-| open with write intent | `DIRTY_OPEN { sync_id }` (same barrier that marks data copies DIRTY) |
-| witness-assisted degraded open | `DIRTY_DEGRADED { new sync_id, survivors }` — **before the first write ack** |
-| resync completion / `resolve` | new `sync_id`, record kind back to `DIRTY_OPEN` — the session is still open (same barrier that promotes the SYNCING copy) |
-| clean close | `CLEAN { final sync_id }` |
+| creation | identical initial CLEAN generation on all members |
+| first write / read-repair | DIRTY state and consistent configuration on all voters |
+| runtime degradation | new generation and surviving composition on all remaining voters |
+| resync completion | configuration promoting the rejoined member, with DIRTY state |
+| last writer's clean close | CLEAN state after data writes have been flushed |
+| unclean close | LOST state on remaining members |
 
-If a synchronous witness write fails, the session continues (the witness is
-never required for a session that has a data quorum) — the record is simply
-out of date and the witness abstains later; the client keeps retrying in the
-background.
+Configuration updates may run in parallel. The synchronous barrier waits
+for all updates, excludes failed members, records the resulting composition
+on survivors, and checks the majority. Ordinary data writes between barriers
+issue no witness operation. A failed update has the same effect for DATA and
+WITNESS: the member loses its vote until it rejoins. Writes below majority
+freeze. Missing members may be recreated only with a surviving majority.
+
+Rejoin uses the same STALE → SYNCING → IN_SYNC transitions for both member
+types. DATA members receive a full data copy and concurrent client writes;
+a witness has no data regions to copy, but still completes the configuration
+barriers before becoming a voter.
 
 ### Voting rule
 
-The witness's vote counts **only when its record is provably consistent**:
+With N data members and one witness, a quorum is strictly more than
+(N + 1) / 2 members. Every current voter must match the recorded configuration:
+`epoch`, `sync_id`, history, resync owner and role array, with its own role
+IN_SYNC. CLEAN, DIRTY and LOST follow the same reconciliation rules for both
+member types. A missing, empty, excluded or mismatching member cannot vote;
+a blank member recreated during this open must first complete its rejoin.
 
-1. **`CLEAN` witness**: approves auto-start of a `CLEAN` data member with the
-   **same `sync_id`** — `{arm, W}` is a quorum. This is the headline case:
-   object closed cleanly, one OST died between sessions.
-2. **`DIRTY_DEGRADED { survivors }` witness** (the async degrade update did
-   land, or a witness-assisted degraded open wrote it): approves auto-start
-   **only of the single recorded survivor** (`|survivors| = 1`) whose
-   `sync_id` matches. Rationale: once the surviving set is a single member, no
-   further generation bump can happen away from it (a lone survivor has no one
-   left to exclude; with N≥3, ≤N/2 survivors freeze writes), and resync
-   completion — the only other bump — writes the witness synchronously.
-3. **Anything else — the witness abstains**: `DIRTY_OPEN`,
-   `DIRTY_DEGRADED` with `|survivors| > 1`, a `sync_id` it cannot relate, or
-   no record at all. Auto-start then falls back to the plain data-only quorum
-   rules of `mirroring.md`. Abstention is a pure availability cost, never a
-   correctness one.
-
-Independently of voting, a witness that knows a **newer** `sync_id` than a
-reachable arm vetoes that arm (ancestry via `sync_id_history` — which is why
-the witness record carries the history): the arm is stale, and the client gets
-a precise error ("newest data is on X, which is down") instead of a wrong
-start.
-
-### Counterexamples that shaped the rules
-
-These are the automatic-path holes each rule exists to close (N=2, members
-A, B, witness W, generations S1 → S2):
-
-- **(i) Why the open-time write is synchronous.** Suppose it weren't: clean
-  state S1 everywhere, session opens (W untouched, still `CLEAN S1`), B dies,
-  degrade puts S2 on A, client crashes, A's host dies too. Auto-start sees
-  `{B: DIRTY S1, W: CLEAN S1}` — a match; rule 1 would approve B, orphaning
-  acknowledged S2 writes on A. **Split brain.** With the synchronous
-  `DIRTY_OPEN` mark, W abstains and the start is refused — correct, the only
-  current data is on A.
-- **(ii) Why a witness-assisted degraded open bumps the generation on W
-  synchronously.** `{A, W}` start on S1, bump to S2 recorded on A only; if W
-  keeps `CLEAN S1`, then after this client is gone, `{B, W}` matches on S1 and
-  starts the old branch — two divergent histories from one witness. Writing
-  `DIRTY_DEGRADED {S2, survivors={A}}` on W before the first ack closes it
-  (this is an open, not a failure moment — the hot-path requirement is
-  respected).
-- **(iii) Why `DIRTY_OPEN` never approves.** After a crash everything is
-  `DIRTY` at S1 — indistinguishable, from `{B, W}` alone, from "degrade of B
-  happened and the async update never landed". Approving B in the first case
-  would be fine; in the second it is split brain. The witness cannot tell them
-  apart, so it must abstain: after a crash, auto-start needs the full data
-  quorum (both arms), exactly like plain N=2 — no regression.
-- **(iv) Why `DIRTY_DEGRADED` approves only a lone survivor.** With N=3 and a
-  landed update `{S2, survivors={A,C}}`, a later degrade among the survivors
-  (C excluded, S3 on A, async update lost again) leaves C matching the
-  witness's S2 — approving C would orphan S3. `|survivors| = 1` removes the
-  possibility by construction.
-
-### Failure/decision table (N=2 + W)
-
-| Situation at open | Records seen | Outcome |
+| Data copies | Minimum data copies with a valid witness | Minimum without witness |
 |---|---|---|
-| Clean shutdown, B down | A `CLEAN S1`, W `CLEAN S1` | rule 1: start on `{A,W}`, bump S2 on A **and** W (rule ii) |
-| Clean shutdown, A and B down | W only | refuse — a witness holds no data |
-| Crash, no degrade | A,B,W all `DIRTY S1` | W abstains (rule iii); need both arms; F5 winner rules apply |
-| Crash after degrade of B, A up | A `DIRTY S2`, B `DIRTY S1`, W stale | data-only quorum `{A,B}`: ancestry picks A, resync B — witness not needed |
-| Crash after degrade of B, A down, async update **not** landed | B `DIRTY S1`, W `DIRTY_OPEN S1` | W abstains → refuse. Correct: acknowledged S2 exists only on A |
-| Same, async update **landed** | B `DIRTY S1`, W `DIRTY_DEGRADED {S2, {A}}` | W vetoes B (ancestor) with a precise error; if A is reachable instead: rule 2 approves A |
-| W restored from backup / reprovisioned empty | arm `CLEAN S1`, W old or empty | mismatch / no record → abstain; client re-attaches W (rewrites the record) at the next open/close it performs with a valid quorum |
-| W down entirely | — | plain N=2 semantics for the session; sync witness writes fail soft |
+| 2 | 1 | 2 |
+| 4 | 2 | 3 |
+| 6 | 3 | 4 |
 
-Runtime behavior is unchanged from `mirroring.md`: N=2 may still continue on a
-single survivor after a mid-session member loss (the abandoned arm is
-`DIRTY`/ancestor, and per the table above no witness state can auto-start it
-alone), and the degrade barrier still touches only the survivors.
+These thresholds apply to writable opening and runtime writes. Opening can
+include reachable nonempty stale records in its availability majority, then compares
+histories to select the newest generation and an authoritative DATA source.
+Runtime votes count only IN_SYNC members. Read-only opening retains relaxed
+inspection semantics and performs no membership updates.
+
+The metadata vote establishes which generation is current; it cannot replace
+a data copy or recover data lost by every authoritative copy. The data
+durability and flush contract still applies. Writer queues share MirrorControl
+and its transition lock within one process; multiattach stage 2 across
+processes is not implemented.
+
+History comparison includes every member. After A and W record S2, stale B
+at S1 cannot start with W if A is unavailable: the newest generation has no
+DATA source. A witness with four data copies can vote alongside two matching
+DATA members; a later membership change updates all survivors synchronously
+before acknowledging another write.
+
+Metadata durability assumes acknowledged records are never rolled back.
+When replacing an MDS database from backup, discard backed-up witness
+records, reconstruct the object map, and re-attach empty witnesses through a
+data majority. Reconstructing a current database preserves its witnesses.
+`rawstor resolve` records EXCLUDED for every non-winner before establishing
+the operator's new generation, and aborts if an exclusion cannot be persisted.
+Only DATA members can be selected as content winners.
 
 ### Witness in the chunked world
 
-Witness records are per `(id, logical_index)` — chunks degrade
+Witness records are per `(id, chunk_offset)` — chunks degrade
 independently in general. With `stripe_width K=1` (all chunks on the same
 OSTs) member loss degrades every chunk identically; the record may be stored
 once per object with the index dimension collapsed (an optimization of the
@@ -994,7 +1038,7 @@ binary.
 |---|---|
 | PostgreSQL | **Rejected.** An external server and its operational surface for kilobytes of state; breaks "MDS = one binary"; v2 replication must follow the epoch model anyway, not a DBMS's |
 | Own format (append-log + version, or per-object files à la `.spec`) | Viable, zero dependencies, codebase style — but the fsync-ordering / torn-write / atomic-rename protocol must be designed and proven by us, and every schema change is manual |
-| **SQLite** (WAL mode; `synchronous=FULL` for witness and map mutations) | **Chosen.** Crash-safety and transactional atomicity by construction rather than by our own proof; trivial schema migrations; ubiquitous, dependency-wise in the same class as liburing/xxhash. Mutations are rare — they run on a worker thread reporting back to the I/O queue, the same pattern as the `file://` control plane |
+| **SQLite** (WAL mode; `synchronous=FULL` for witness and map mutations) | **Chosen.** Crash-safety and transactional atomicity by construction rather than by our own proof; trivial schema migrations; ubiquitous, dependency-wise in the same class as liburing/xxhash. Mutations are rare and synchronous under the shared store mutex on the MDS worker handling the request |
 
 The asymmetry of the two state classes (map = recoverable cache, witness =
 authoritative votes) does not force a hybrid: SQLite serves both, with the
@@ -1006,7 +1050,7 @@ witness tables being the reason `synchronous=FULL` is non-negotiable.
 rebuild the map:
   get the OST roster from topology (v1: static config)
   for each OST: LIST -> physical ids, then per id: META -> chunk_meta
-  drop member_role = witness records (metadata-only, not slots)
+  drop member_role = WITNESS records (metadata-only, not slots)
   group by (id, version): nil version -> live chunk_map,
                                  version = version_id -> version view
   within each group: order by logical_index
@@ -1020,7 +1064,7 @@ flowchart TB
         direction LR
         L["LIST: physical ids"] --> Me["META per id: chunk_meta"]
     end
-    Scan --> W{"member_role<br/>= witness?"}
+    Scan --> W{"member_role<br/>= WITNESS?"}
     W -- yes --> Drop["dropped: metadata only, not a slot"]
     W -- no --> G["group by (id, version)"]
     G -- "nil version" --> Live["live chunk_map<br/>ordered by logical_index"]
@@ -1037,7 +1081,7 @@ round-trip savings badly enough to justify a second code path.
 
 This same scan doubles as a scrub / consistency check. Witness records are
 **not** reconstructed (see the two state classes); after a from-scratch
-rebuild every witness abstains until clients re-attach records in the course
+database replacement every lost witness abstains until clients re-attach records in the course
 of normal opens/closes.
 
 **v1 notes (shipped as `rawstor-mds --reconstruct`, scan before serving):**
@@ -1070,25 +1114,30 @@ of normal opens/closes.
   same `LIST` + per-object `META` scan from its own index (the scrub
   comparison) is not implemented yet.
 
-## Protocol deltas (to `protocol.md`)
+## Implemented protocol and deferred extensions
 
-- New MDS opcodes `CMD_OBJ_*` (same `rstr` command space; `-ENOSYS` outside a
-  server's role); opcodes regrouped into reserved ranges per role.
-- Unified response frame `{res, len, hash}` + body for **all** commands
-  (breaking change, free pre-install; resolves the `protocol.h` TODO).
-- `SET_OBJECT` handshake gains protocol version + feature bits.
-- `+uint64_t map_epoch` in the IO frame — epoch-fence.
-- `SET_OBJECT`: rides its own `version_id[16]` field (nil = live), not `val`;
-  `obj_id` = `id`.
-- Semantics: IO `offset` = logical object offset (OST resolves to a local slot).
-- Witness subset = existing `META` / `SET_STATE`; the meta body is extended
-  directly with the record kind (`DIRTY_OPEN` / `DIRTY_DEGRADED`) and
-  `survivors[]` — no parallel opcodes, no legacy meta-body acceptance.
-- Dropped in stage 1 (no live installations): `.spec` v0 acceptance/migration
-  and the client-side tolerance of `-ENOSYS` from `SET_STATE` (a member that
-  cannot record metadata must degrade, not silently weaken the barrier).
-  `sync_id == 0` stays: it is the blank-copy marker, not a compat shim (see
-  *Compatibility stance*).
+The authoritative layouts are in `include/rawstor/protocol.h` and
+[Protocol](protocol.md). The current protocol has one `rstr` command space,
+a response head plus `{hash, res}` body (`res` is the following payload's
+length), and a Basic `SET_OBJECT` handshake with object/chunk/version and
+open flags. I/O offsets are local to the chunk bound by that handshake.
+
+Witness metadata uses the existing 360-byte Meta record: state encodes
+`CLEAN` / `DIRTY` / `LOST`, and `config.roles` identifies
+survivors in member order.
+`SET_CONFIG` atomically persists state plus
+configuration using the existing SetConfig request layout. Ordinary `LIST`
+reports both registered objects and native witness records on MDS. Internally,
+a listing group with empty offsets addresses a whole object; `{0}` addresses
+one physical chunk at offset zero. MDS converts registered-object rows to
+empty offsets and preserves all offsets of native witness records. No data
+I/O or CoW operation is issued to a witness.
+
+Protocol version/feature negotiation and an I/O `map_epoch` fence are
+future extensions. The current client still tolerates `-ENOSYS` from
+configuration-only `SET_CONFIG`; state updates require support for
+the optional state field.
+Interprocess mirror coordination remains multiattach stage 2.
 
 ## Implementation stages
 
@@ -1098,8 +1147,8 @@ of normal opens/closes.
 2. **Versions**: `CMD_OBJ_COMMIT_VERSION/REMOVE_VERSION/LIST_VERSIONS`, client-generated UUID
    `version`/`version_id` in chunk identity, member-set registry, deletion,
    `-ENOTSUP` on `file://`.
-3. **Witness**: metadata-only member in the target list, witness record kinds
-   + voting rules in the client quorum logic, async post-degrade updates,
+3. **Witness**: metadata-only member in the target list, durable member states
+   + voting rules in the client quorum logic, synchronous membership barriers,
    re-attach.
 4. **v2+**: MDS replication (primary + log), EC policy, persistent
    write-intent bitmap interplay, version redundancy repair, stored
@@ -1116,10 +1165,7 @@ of normal opens/closes.
 - **MGS as a service** — v1 uses a static topology config; whether a dynamic
   MGS role (roster + topology + MDS address) is ever needed, and how refresh
   works, is deferred.
-- **Witness records at N≥3 with `|survivors| > 1`** — the witness abstains
-  today (rule 3); a finer rule would need the degrade chain recorded on the
-  witness synchronously, which conflicts with the hot-path requirement.
-  Revisit only if N≥3 witness-assisted starts turn out to matter.
+
 
 ## Backend health and location information
 
