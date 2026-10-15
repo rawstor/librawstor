@@ -281,14 +281,14 @@ public:
     // is addressed as set_member_config() above addresses it. The request
     // is taken by value: it outlives the caller's arguments, across the
     // connect.
-    rawstd::Task<RawstorObjectSyncReply> sync_prepare(
+    rawstd::Task<bool> sync_prepare(
         rawio::Queue& queue, uint64_t offset, size_t member_index,
-        RawstorObjectBallot ballot
+        RawstorObjectBallot ballot, RawstorObjectMeta& meta
     ) const;
-    rawstd::Task<RawstorObjectSyncReply> sync_accept(
+    rawstd::Task<bool> sync_accept(
         rawio::Queue& queue, uint64_t offset, size_t member_index,
         RawstorObjectBallot ballot, RawstorObjectBallot next,
-        RawstorObjectConfig config
+        RawstorObjectConfig config, RawstorObjectMeta& meta
     ) const;
     // Removes every URI of every chunk concurrently -- unlike create()
     // above, there's no rollback to speak of (removal has nothing to

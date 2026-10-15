@@ -1002,16 +1002,13 @@ rawstd::DetachedTask launch_set_member_config_op_coro(
     }
 }
 
-// Same shape as launch_set_member_config_op_coro() above, for
-// Target::sync_prepare()/sync_accept(): `reply` is filled before `cb`
-// runs with a zero result.
+// Delivers acceptance as 1 or 0; failures are negative errno values.
 rawstd::DetachedTask launch_sync_op_coro(
-    rawstd::Task<RawstorObjectSyncReply> op, RawstorObjectSyncReply* reply,
-    int (*cb)(ssize_t result, void* data), void* data
+    rawstd::Task<bool> op, int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     try {
-        *reply = co_await op;
+        result = co_await op ? 1 : 0;
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -1031,20 +1028,22 @@ rawstd::DetachedTask launch_sync_op_coro(
 
 // Runs one register request against `t`, which lives in this frame for
 // the request's whole life.
-rawstd::Task<RawstorObjectSyncReply> sync_prepare_coro(
+rawstd::Task<bool> sync_prepare_coro(
     rawstor::Target t, rawio::Queue* queue, uint64_t offset,
-    size_t member_index, RawstorObjectBallot ballot
+    size_t member_index, RawstorObjectBallot ballot, RawstorObjectMeta& meta
 ) {
-    co_return co_await t.sync_prepare(*queue, offset, member_index, ballot);
+    co_return co_await t.sync_prepare(
+        *queue, offset, member_index, ballot, meta
+    );
 }
 
-rawstd::Task<RawstorObjectSyncReply> sync_accept_coro(
+rawstd::Task<bool> sync_accept_coro(
     rawstor::Target t, rawio::Queue* queue, uint64_t offset,
     size_t member_index, RawstorObjectBallot ballot, RawstorObjectBallot next,
-    RawstorObjectConfig config
+    RawstorObjectConfig config, RawstorObjectMeta& meta
 ) {
     co_return co_await t.sync_accept(
-        *queue, offset, member_index, ballot, next, config
+        *queue, offset, member_index, ballot, next, config, meta
     );
 }
 
@@ -1690,9 +1689,9 @@ rawstd::Task<void> Target::set_member_config(
     }
 }
 
-rawstd::Task<RawstorObjectSyncReply> Target::sync_prepare(
+rawstd::Task<bool> Target::sync_prepare(
     rawio::Queue& queue, uint64_t offset, size_t member_index,
-    RawstorObjectBallot ballot
+    RawstorObjectBallot ballot, RawstorObjectMeta& meta
 ) const {
     rawstd::URI location =
         co_await _member_location(queue, offset, member_index);
@@ -1700,10 +1699,10 @@ rawstd::Task<RawstorObjectSyncReply> Target::sync_prepare(
 
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location);
-    RawstorObjectSyncReply reply{};
+    bool accepted = false;
     std::exception_ptr error;
     try {
-        reply = co_await slot->sync_prepare(id, offset, ballot);
+        accepted = co_await slot->sync_prepare(id, offset, ballot, meta);
     } catch (...) {
         error = std::current_exception();
     }
@@ -1711,13 +1710,13 @@ rawstd::Task<RawstorObjectSyncReply> Target::sync_prepare(
     if (error) {
         std::rethrow_exception(error);
     }
-    co_return reply;
+    co_return accepted;
 }
 
-rawstd::Task<RawstorObjectSyncReply> Target::sync_accept(
+rawstd::Task<bool> Target::sync_accept(
     rawio::Queue& queue, uint64_t offset, size_t member_index,
     RawstorObjectBallot ballot, RawstorObjectBallot next,
-    RawstorObjectConfig config
+    RawstorObjectConfig config, RawstorObjectMeta& meta
 ) const {
     rawstd::URI location =
         co_await _member_location(queue, offset, member_index);
@@ -1725,11 +1724,12 @@ rawstd::Task<RawstorObjectSyncReply> Target::sync_accept(
 
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location);
-    RawstorObjectSyncReply reply{};
+    bool accepted = false;
     std::exception_ptr error;
     try {
-        reply = co_await slot->sync_accept(
-            id, offset, static_cast<uint8_t>(member_index), ballot, next, config
+        accepted = co_await slot->sync_accept(
+            id, offset, static_cast<uint8_t>(member_index), ballot, next,
+            config, meta
         );
     } catch (...) {
         error = std::current_exception();
@@ -1738,7 +1738,7 @@ rawstd::Task<RawstorObjectSyncReply> Target::sync_accept(
     if (error) {
         std::rethrow_exception(error);
     }
-    co_return reply;
+    co_return accepted;
 }
 
 rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
@@ -2337,7 +2337,7 @@ int rawstor_target_version_id(
 
 int rawstor_target_sync_prepare(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
-    const RawstorObjectBallot* ballot, RawstorObjectSyncReply* reply,
+    const RawstorObjectBallot* ballot, RawstorObjectMeta* meta,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
@@ -2345,9 +2345,9 @@ int rawstor_target_sync_prepare(
         launch_sync_op_coro(
             sync_prepare_coro(
                 std::move(t), static_cast<rawio::Queue*>(queue), offset,
-                member_index, *ballot
+                member_index, *ballot, *meta
             ),
-            reply, cb, data
+            cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;
@@ -2367,7 +2367,7 @@ int rawstor_target_sync_prepare(
 int rawstor_target_sync_accept(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
     const RawstorObjectBallot* ballot, const RawstorObjectBallot* next,
-    const RawstorObjectConfig* config, RawstorObjectSyncReply* reply,
+    const RawstorObjectConfig* config, RawstorObjectMeta* meta,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
@@ -2375,9 +2375,9 @@ int rawstor_target_sync_accept(
         launch_sync_op_coro(
             sync_accept_coro(
                 std::move(t), static_cast<rawio::Queue*>(queue), offset,
-                member_index, *ballot, *next, *config
+                member_index, *ballot, *next, *config, *meta
             ),
-            reply, cb, data
+            cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;

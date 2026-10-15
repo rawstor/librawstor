@@ -224,28 +224,26 @@ rawstd::Task<void> Backend::set_config(
     );
 }
 
-rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
+rawstd::Task<bool> Backend::sync_prepare(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot&,
-    const RawstorObjectSyncReply& proposed
+    bool proposed, RawstorObjectMeta& meta
 ) {
-    if (proposed.ok) {
+    if (proposed) {
         co_await _write_meta(
-            id, offset, proposed.meta.state, proposed.meta.config,
-            proposed.meta.promised, proposed.meta.accepted
+            id, offset, meta.state, meta.config, meta.promised, meta.accepted
         );
     }
     co_return proposed;
 }
 
-rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
+rawstd::Task<bool> Backend::sync_accept(
     const RawstdUUID& id, uint64_t offset, uint8_t, const RawstorObjectBallot&,
-    const RawstorObjectBallot&, const RawstorObjectConfig&,
-    const RawstorObjectSyncReply& proposed
+    const RawstorObjectBallot&, const RawstorObjectConfig&, bool proposed,
+    RawstorObjectMeta& meta
 ) {
-    if (proposed.ok) {
+    if (proposed) {
         co_await _write_meta(
-            id, offset, proposed.meta.state, proposed.meta.config,
-            proposed.meta.promised, proposed.meta.accepted
+            id, offset, meta.state, meta.config, meta.promised, meta.accepted
         );
     }
     co_return proposed;

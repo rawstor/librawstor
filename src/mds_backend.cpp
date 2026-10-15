@@ -872,21 +872,21 @@ rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
     co_return chunk_locations(map, index);
 }
 
-rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
-    const RawstdUUID&, uint64_t, const RawstorObjectBallot&,
-    const RawstorObjectSyncReply&
+rawstd::Task<bool> Backend::sync_prepare(
+    const RawstdUUID&, uint64_t, const RawstorObjectBallot&, bool,
+    RawstorObjectMeta&
 ) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
-    co_return RawstorObjectSyncReply{};
+    co_return false;
 }
 
-rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
+rawstd::Task<bool> Backend::sync_accept(
     const RawstdUUID&, uint64_t, uint8_t, const RawstorObjectBallot&,
-    const RawstorObjectBallot&, const RawstorObjectConfig&,
-    const RawstorObjectSyncReply&
+    const RawstorObjectBallot&, const RawstorObjectConfig&, bool,
+    RawstorObjectMeta&
 ) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
-    co_return RawstorObjectSyncReply{};
+    co_return false;
 }
 
 rawstd::Task<void> Backend::_set_object(

@@ -104,20 +104,20 @@ rawstd::Task<void> Backend::leave() {
     return _wire_leave();
 }
 
-rawstd::Task<RawstorObjectSyncReply> Backend::sync_prepare(
+rawstd::Task<bool> Backend::sync_prepare(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
-    const RawstorObjectSyncReply& proposed
+    bool proposed, RawstorObjectMeta& meta
 ) {
-    return _wire_sync_prepare(id, offset, ballot, proposed);
+    return _wire_sync_prepare(id, offset, ballot, proposed, meta);
 }
 
-rawstd::Task<RawstorObjectSyncReply> Backend::sync_accept(
+rawstd::Task<bool> Backend::sync_accept(
     const RawstdUUID& id, uint64_t offset, uint8_t member_index,
     const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-    const RawstorObjectConfig& config, const RawstorObjectSyncReply& proposed
+    const RawstorObjectConfig& config, bool proposed, RawstorObjectMeta& meta
 ) {
     return _wire_sync_accept(
-        id, offset, member_index, ballot, next, config, proposed
+        id, offset, member_index, ballot, next, config, proposed, meta
     );
 }
 

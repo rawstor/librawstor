@@ -712,23 +712,6 @@ static inline int rawstor_frame_allocate_decode(
     return 0;
 }
 
-static inline int rawstor_frame_sync_reply_encode(
-    struct RawstorFrameSyncReplyPayload* out,
-    const struct RawstorObjectSyncReply* in
-) {
-    memset(out, 0, sizeof(*out));
-    out->ok = in->ok != 0;
-    return rawstor_frame_meta_encode(&out->meta, &in->meta);
-}
-static inline int rawstor_frame_sync_reply_decode(
-    struct RawstorObjectSyncReply* out,
-    const struct RawstorFrameSyncReplyPayload* in
-) {
-    memset(out, 0, sizeof(*out));
-    out->ok = in->ok != 0;
-    return rawstor_frame_meta_decode(&out->meta, &in->meta);
-}
-
 /* Every wire struct's exact size, checked at compile time. */
 #ifdef __cplusplus
 #define RAWSTOR_PROTOCOL_ASSERT_SIZE(type, size)                               \

@@ -1196,7 +1196,8 @@ rawstd::DetachedTask Client::_sync(
 
     // One copy, as for SET_CONFIG (_set_config()).
     int result = 0;
-    RawstorObjectSyncReply reply{};
+    RawstorObjectMeta meta{};
+    bool accepted = false;
     if (locations.size() != 1) {
         result = -ENOSYS;
     } else {
@@ -1211,13 +1212,13 @@ rawstd::DetachedTask Client::_sync(
             std::exception_ptr error;
             try {
                 if (head.cmd == RAWSTOR_CMD_SYNC_PREPARE) {
-                    reply = co_await slot->sync_prepare(
-                        uuid, payload.chunk_offset, ballot
+                    accepted = co_await slot->sync_prepare(
+                        uuid, payload.chunk_offset, ballot, meta
                     );
                 } else {
-                    reply = co_await slot->sync_accept(
+                    accepted = co_await slot->sync_accept(
                         uuid, payload.chunk_offset, payload.member_index,
-                        ballot, next, config
+                        ballot, next, config, meta
                     );
                 }
             } catch (...) {
@@ -1238,8 +1239,8 @@ rawstd::DetachedTask Client::_sync(
             co_await client->_send_response(head.cmd, head.cid, result, 0);
         } else {
             RawstorFrameSyncReplyPayload body_out{};
-            if (int error =
-                    rawstor_frame_sync_reply_encode(&body_out, &reply)) {
+            body_out.ok = accepted;
+            if (int error = rawstor_frame_meta_encode(&body_out.meta, &meta)) {
                 RAWSTD_THROW_SYSTEM_ERROR(error);
             }
             std::vector<unsigned char> data(sizeof(body_out));

@@ -75,8 +75,10 @@ private:
     );
     // SYNC_PREPARE/SYNC_ACCEPT: sends `request` and returns the member's
     // reply.
-    rawstd::Task<RawstorObjectSyncReply>
-    _sync_request(const RawstorFrameSyncPropose& request, const char* op_name);
+    rawstd::Task<bool> _sync_request(
+        const RawstorFrameSyncPropose& request, const char* op_name,
+        RawstorObjectMeta& meta
+    );
     void _fail_in_flight(int error);
     // Returns nullptr, rather than throwing, for an unregistered cid: a
     // response can legitimately race with Slot::_op() already having
@@ -144,17 +146,17 @@ protected:
 
     rawstd::Task<void> _wire_leave();
 
-    rawstd::Task<RawstorObjectSyncReply> _wire_sync_prepare(
+    rawstd::Task<bool> _wire_sync_prepare(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectBallot& ballot,
-        const RawstorObjectSyncReply& proposed
+        const RawstorObjectBallot& ballot, bool proposed,
+        RawstorObjectMeta& meta
     );
 
-    rawstd::Task<RawstorObjectSyncReply> _wire_sync_accept(
+    rawstd::Task<bool> _wire_sync_accept(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config,
-        const RawstorObjectSyncReply& proposed
+        const RawstorObjectConfig& config, bool proposed,
+        RawstorObjectMeta& meta
     );
 
     rawstd::Task<void>

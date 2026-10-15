@@ -57,13 +57,14 @@ private:
         const RawstorObjectConfig& config, unsigned int flags,
         std::optional<RawstorObjectSyncStateValue> state
     );
-    rawstd::Task<RawstorObjectSyncReply> _sync_prepare(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+    rawstd::Task<bool> _sync_prepare(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot, RawstorObjectMeta& meta
     );
-    rawstd::Task<RawstorObjectSyncReply> _sync_accept(
+    rawstd::Task<bool> _sync_accept(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config
+        const RawstorObjectConfig& config, RawstorObjectMeta& meta
     );
 
     // Set by open() (see its own doc comment) -- unset means this
@@ -230,14 +231,15 @@ public:
         std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     );
 
-    rawstd::Task<RawstorObjectSyncReply> sync_prepare(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot
+    rawstd::Task<bool> sync_prepare(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot, RawstorObjectMeta& meta
     );
 
-    rawstd::Task<RawstorObjectSyncReply> sync_accept(
+    rawstd::Task<bool> sync_accept(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config
+        const RawstorObjectConfig& config, RawstorObjectMeta& meta
     );
 
     // The writer's clean departure from this member's session

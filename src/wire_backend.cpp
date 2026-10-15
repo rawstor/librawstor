@@ -1041,8 +1041,9 @@ rawstd::Task<std::vector<rawstd::URI>> Backend::_wire_resolve_locations(
     co_return std::vector<rawstd::URI>{location()};
 }
 
-rawstd::Task<RawstorObjectSyncReply> Backend::_sync_request(
-    const RawstorFrameSyncPropose& request, const char* op_name
+rawstd::Task<bool> Backend::_sync_request(
+    const RawstorFrameSyncPropose& request, const char* op_name,
+    RawstorObjectMeta& meta
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", op_name);
 
@@ -1066,16 +1067,15 @@ rawstd::Task<RawstorObjectSyncReply> Backend::_sync_request(
 
     co_await *op;
     const RawstorFrameSyncReplyPayload& reply = op->reply();
-    RawstorObjectSyncReply ret{};
-    if (int error = rawstor_frame_sync_reply_decode(&ret, &reply)) {
+    if (int error = rawstor_frame_meta_decode(&meta, &reply.meta)) {
         RAWSTD_THROW_SYSTEM_ERROR(error);
     }
-    co_return ret;
+    co_return reply.ok != 0;
 }
 
-rawstd::Task<RawstorObjectSyncReply> Backend::_wire_sync_prepare(
+rawstd::Task<bool> Backend::_wire_sync_prepare(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
-    const RawstorObjectSyncReply&
+    bool, RawstorObjectMeta& meta
 ) {
     RawstorFrameSyncPropose request{};
     request.head.magic = RAWSTOR_MAGIC;
@@ -1083,13 +1083,13 @@ rawstd::Task<RawstorObjectSyncReply> Backend::_wire_sync_prepare(
     memcpy(request.payload.object_id, id.bytes, sizeof(id.bytes));
     request.payload.chunk_offset = offset;
     request.payload.ballot = ballot;
-    co_return co_await _sync_request(request, "sync_prepare");
+    co_return co_await _sync_request(request, "sync_prepare", meta);
 }
 
-rawstd::Task<RawstorObjectSyncReply> Backend::_wire_sync_accept(
+rawstd::Task<bool> Backend::_wire_sync_accept(
     const RawstdUUID& id, uint64_t offset, uint8_t member_index,
     const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-    const RawstorObjectConfig& config, const RawstorObjectSyncReply&
+    const RawstorObjectConfig& config, bool, RawstorObjectMeta& meta
 ) {
     RawstorFrameSyncPropose request{};
     request.head.magic = RAWSTOR_MAGIC;
@@ -1103,7 +1103,7 @@ rawstd::Task<RawstorObjectSyncReply> Backend::_wire_sync_accept(
         RAWSTD_THROW_SYSTEM_ERROR(error);
     }
     request.payload.member_index = member_index;
-    co_return co_await _sync_request(request, "sync_accept");
+    co_return co_await _sync_request(request, "sync_accept", meta);
 }
 
 rawstd::Task<void> Backend::_wire_leave() {

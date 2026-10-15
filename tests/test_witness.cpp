@@ -904,11 +904,11 @@ TEST_F(WitnessTest, native_witness_update_preserves_register_ballots) {
     auto slot =
         run(*queue, rawstor::Slot::create(*queue, rawstd::URI(witness)));
     RawstorObjectBallot ballot{1, 42}, next{2, 42};
-    auto prepared = run(*queue, slot->sync_prepare(id, 0, ballot));
-    ASSERT_TRUE(prepared.ok);
-    auto accepted =
-        run(*queue, slot->sync_accept(id, 0, 2, ballot, next, config));
-    ASSERT_TRUE(accepted.ok);
+    RawstorObjectMeta meta{};
+    ASSERT_TRUE(run(*queue, slot->sync_prepare(id, 0, ballot, meta)));
+    ASSERT_TRUE(
+        run(*queue, slot->sync_accept(id, 0, 2, ballot, next, config, meta))
+    );
     run(*queue,
         slot->set_config(id, 0, 2, config, 0, RAWSTOR_OBJECT_SYNC_STATE_DIRTY));
     run(*queue, slot->close());

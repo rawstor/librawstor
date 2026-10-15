@@ -226,16 +226,16 @@ public:
     // Acceptance is one vote; the caller establishes the register quorum.
     // `member_index` is as for set_config(). A backend that holds no copy
     // of its own rejects register requests with ENOSYS.
-    virtual rawstd::Task<RawstorObjectSyncReply> sync_prepare(
+    virtual rawstd::Task<bool> sync_prepare(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectBallot& ballot,
-        const RawstorObjectSyncReply& proposed
+        const RawstorObjectBallot& ballot, bool proposed,
+        RawstorObjectMeta& meta
     ) = 0;
-    virtual rawstd::Task<RawstorObjectSyncReply> sync_accept(
+    virtual rawstd::Task<bool> sync_accept(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config,
-        const RawstorObjectSyncReply& proposed
+        const RawstorObjectConfig& config, bool proposed,
+        RawstorObjectMeta& meta
     ) = 0;
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;

@@ -427,20 +427,6 @@ int rawstor_target_set_member_config(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief A member's reply to a request of the chunk's configuration
- *        register.
- *
- * `ok` is nonzero if the member promised (rawstor_target_sync_prepare())
- * or accepted (rawstor_target_sync_accept()); `meta` is its whole record
- * either way, so a refused request still shows the actual value
- * (docs/caspaxos.md).
- */
-struct RawstorObjectSyncReply {
-    int ok;
-    struct RawstorObjectMeta meta;
-};
-
-/**
  * @brief Asynchronously ask one member of a chunk to promise a ballot
  *        (phase 1 of the chunk's configuration register,
  *        docs/multiattach.md, "The register").
@@ -449,10 +435,11 @@ struct RawstorObjectSyncReply {
  * (@p target, @p offset, @p member_index). The member promises @p ballot if
  * it is above both the ballot it promised and the ballot its
  * configuration was accepted under, persists that, and replies with its
- * whole record in @p reply either way.
+ * whole record in @p meta either way.
  *
- * @param reply  Filled before @p cb runs with a zero result. Must remain
- *               valid until then.
+ * @param meta Filled before @p cb runs with a nonnegative result. Must remain
+ *             valid until then. The callback receives 1 for acceptance, 0 for
+ *             refusal, or negative errno on failure.
  *
  * @return 0 if the request was queued; negative errno on immediate
  *         failure (in which case @p cb is never invoked). A member that
@@ -461,9 +448,8 @@ struct RawstorObjectSyncReply {
  */
 int rawstor_target_sync_prepare(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
-    const struct RawstorObjectBallot* ballot,
-    struct RawstorObjectSyncReply* reply, int (*cb)(ssize_t result, void* data),
-    void* data
+    const struct RawstorObjectBallot* ballot, struct RawstorObjectMeta* meta,
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -474,9 +460,13 @@ int rawstor_target_sync_prepare(
  * above the ballot its configuration was accepted under: it then records
  * @p config as accepted under @p ballot, and promises @p next if that is
  * above @p ballot. It persists that and replies with its whole record in
- * @p reply either way. Acceptance on this member is one vote; the caller
+ * @p meta either way. Acceptance on this member is one vote; the caller
  * must obtain a majority of the configuration register's acceptors. For
  * two data copies, a witness supplies the third vote.
+ *
+ * @param meta Filled before @p cb runs with a nonnegative result. Must remain
+ *             valid until then. The callback receives 1 for acceptance, 0 for
+ *             refusal, or negative errno on failure.
  *
  * @return 0 if the request was queued; negative errno on immediate
  *         failure (in which case @p cb is never invoked).
@@ -485,9 +475,8 @@ int rawstor_target_sync_accept(
     RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
     const struct RawstorObjectBallot* ballot,
     const struct RawstorObjectBallot* next,
-    const struct RawstorObjectConfig* config,
-    struct RawstorObjectSyncReply* reply, int (*cb)(ssize_t result, void* data),
-    void* data
+    const struct RawstorObjectConfig* config, struct RawstorObjectMeta* meta,
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**

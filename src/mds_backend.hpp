@@ -228,16 +228,16 @@ public:
 
     // MDS holds no copy of its own: register requests fail with ENOSYS.
 
-    rawstd::Task<RawstorObjectSyncReply> sync_prepare(
+    rawstd::Task<bool> sync_prepare(
         const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectBallot& ballot,
-        const RawstorObjectSyncReply& proposed
+        const RawstorObjectBallot& ballot, bool proposed,
+        RawstorObjectMeta& meta
     ) override;
-    rawstd::Task<RawstorObjectSyncReply> sync_accept(
+    rawstd::Task<bool> sync_accept(
         const RawstdUUID& id, uint64_t offset, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
-        const RawstorObjectConfig& config,
-        const RawstorObjectSyncReply& proposed
+        const RawstorObjectConfig& config, bool proposed,
+        RawstorObjectMeta& meta
     ) override;
 
     // Fetches the object's current (live) WireMap and opens the nested

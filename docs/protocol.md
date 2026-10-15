@@ -3,8 +3,8 @@
 ## Native conversions
 
 `<rawstor/protocol.h>` provides C-compatible `static inline` conversions in
-both directions: `rawstor_frame_{config,meta,allocate,sync_reply}_{encode,decode}`
-for configuration, metadata, allocation and sync replies. Encode writes a wire
+both directions: `rawstor_frame_{config,meta,allocate}_{encode,decode}`
+for configuration, metadata and allocation. Encode writes a wire
 record; decode writes the corresponding native rawstor structure. Fallible conversions
 return zero on success or a positive errno value; output is unspecified on
 failure. Ballots use `RawstorObjectBallot` directly, with a compile-time wire-size
@@ -464,6 +464,13 @@ is reserved for an unknown role in an unavailable member's local placeholder.
 ```
 
 ### SyncReply — 361 bytes
+
+The C API writes the member's record into `RawstorObjectMeta* meta` and
+reports acceptance through the callback's `ssize_t result`: 1 for acceptance,
+0 for refusal, or negative errno on failure. Metadata is available for both
+nonnegative results. Internally, register methods return `bool` and fill a
+`RawstorObjectMeta&` output argument.
+
 
 `SYNC_PREPARE`/`SYNC_ACCEPT`'s reply, sent whether the member promised or
 accepted (`ok` = 1) or refused (`ok` = 0): its whole record, a
