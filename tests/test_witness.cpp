@@ -1537,8 +1537,10 @@ TEST_F(WitnessTest, repaired_spec_rejoins_through_the_probe) {
     EXPECT_EQ(records[0].config.roles[2], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
     EXPECT_EQ(records[2].spec.size, wrong.size);
     EXPECT_EQ(records[2].config.sync_id, config.sync_id);
+    // The probe owns recreation while this mirror is open. Removing the
+    // divergent copy lets it allocate the canonical shape without racing
+    // a second creator in this test.
     run(*queue, slot->remove(id, 0));
-    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_WITNESS));
     bool rejoined = false;
     for (size_t i = 0; i < 5000 && !rejoined; ++i) {
         run(*queue, pause(*queue));
@@ -1550,6 +1552,9 @@ TEST_F(WitnessTest, repaired_spec_rejoins_through_the_probe) {
     }
     EXPECT_TRUE(rejoined);
     EXPECT_EQ(records[2].spec.size, spec.size);
+    EXPECT_EQ(records[2].spec.width, spec.width);
+    EXPECT_EQ(records[2].spec.chunk_size, spec.chunk_size);
+    EXPECT_EQ(records[2].member_role, RAWSTOR_MEMBER_WITNESS);
     run(*queue, object->close(true));
     run(*queue, slot->close());
 }
