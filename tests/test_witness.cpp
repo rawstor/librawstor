@@ -1236,3 +1236,81 @@ TEST_F(WitnessTest, snapshot_skips_unreachable_trailing_witness) {
     );
     EXPECT_NO_THROW(run(*queue, snapshot.create_version(*queue)));
 }
+
+TEST_F(WitnessTest, conflicting_member_shapes_never_allocate_replacements) {
+    for (size_t index : {0u, 2u}) {
+        SCOPED_TRACE(index);
+        id = new_id();
+        create();
+        auto config = metas()[0].config;
+        const std::string location = index == 0 ? a.uri() : w.uri();
+        auto slot =
+            run(*queue, rawstor::Slot::create(*queue, rawstd::URI(location)));
+        run(*queue, slot->remove(id, 0));
+        auto oversized = spec;
+        oversized.size *= 2;
+        run(*queue,
+            slot->create(
+                id, 0, oversized,
+                index == 0 ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS
+            ));
+        run(*queue, slot->set_config(id, 0, index, config, 0));
+        run(*queue, slot->close());
+        refused();
+        auto missing =
+            run(*queue, rawstor::Slot::create(*queue, rawstd::URI(b.uri())));
+        run(*queue, missing->remove(id, 0));
+        refused();
+        EXPECT_THROW(
+            run(*queue, target->open(*queue, RAWSTOR_READONLY)),
+            std::system_error
+        );
+        try {
+            run(*queue, missing->meta(id, 0));
+            FAIL() << "conflicting metadata allocated a replacement";
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), ENOENT);
+        }
+        run(*queue, missing->close());
+    }
+}
+
+TEST_F(WitnessTest, failed_leave_persists_lost_on_surviving_members) {
+    create();
+    auto metadata = metas();
+    rawstor::tests::Server server(29641, 256);
+    auto session = std::make_unique<rawstor::tests::Session>(server);
+    RawstorFrameMetaPayload reply{};
+    ASSERT_EQ(rawstor_frame_meta_encode(&reply, &metadata.back()), 0);
+    session->cmd_meta(RAWSTOR_MAGIC, 0, 0, reply);
+    session->cmd_meta(RAWSTOR_MAGIC, 1, 0, reply);
+    session->cmd_set_state(RAWSTOR_MAGIC, 2, 0);
+    session->cmd_leave(RAWSTOR_MAGIC, 3, -EIO);
+    std::atomic<unsigned int> final_state{
+        RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE
+    };
+    server.read(
+        "departure state", sizeof(RawstorFrameSetConfig),
+        [&](const void* data) {
+            final_state =
+                static_cast<const RawstorFrameSetConfig*>(data)->payload.state;
+        }
+    );
+    session->cmd_set_state_response(RAWSTOR_MAGIC, 4, 0);
+    rawstor::Target mirrored(
+        {rawstd::URI(a.uri() + "/" + id_string(id)),
+         rawstd::URI(b.uri() + "/" + id_string(id)),
+         rawstd::URI("ost://127.0.0.1:29641/" + id_string(id))}
+    );
+    auto object = run(*queue, mirrored.open(*queue, 0));
+    write(*object);
+    run(*queue, object->close(true));
+    EXPECT_EQ(final_state.load(), RAWSTOR_OBJECT_SYNC_STATE_LOST);
+    for (const auto& location : {a.uri(), b.uri()}) {
+        rawstor::Target data({rawstd::URI(location + "/" + id_string(id))});
+        EXPECT_EQ(
+            run(*queue, data.meta(*queue, 0)).front().state,
+            RAWSTOR_OBJECT_SYNC_STATE_LOST
+        );
+    }
+}

@@ -1315,6 +1315,10 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
         co_await meta(id, offset, version_id);
     const RawstorObjectMeta* answer = nullptr;
     for (const RawstorObjectMeta& m : metas) {
+        if (m.state < RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE ||
+            m.state > RAWSTOR_OBJECT_SYNC_STATE_LOST) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
         if (m.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             answer = &m;
             break;
@@ -1824,8 +1828,8 @@ rawstd::Task<void> Slot::leave() {
 // backend is not a writer session of this Slot and holds no record lock.
 rawstd::Task<void> Slot::_flush_copy(const RawstdUUID& id, uint64_t offset) {
     std::shared_ptr<Backend> be = _get_backend();
-    if (_id && rawstd_uuid_cmp(&*_id, &id) == 0 && _offset == offset &&
-        rawstd_uuid_is_nil(&_version_id)) {
+    if (!_left && _id && rawstd_uuid_cmp(&*_id, &id) == 0 &&
+        _offset == offset && rawstd_uuid_is_nil(&_version_id)) {
         co_await be->flush(0);
         co_return;
     }

@@ -765,3 +765,43 @@ TEST(ProtocolTest, allocation_preserves_identity_and_placement) {
     EXPECT_EQ(output.failure_domain, input.failure_domain);
     EXPECT_EQ(role, RAWSTOR_MEMBER_WITNESS);
 }
+
+TEST(ProtocolTest, rejects_unknown_sync_states_but_preserves_unreachable) {
+    RawstorFrameMetaPayload wire{};
+    wire.member_role = RAWSTOR_MEMBER_DATA;
+    wire.width = 1;
+    RawstorObjectMeta meta{};
+    for (unsigned int state = 0; state <= UINT8_MAX; ++state) {
+        wire.state = static_cast<RawstorSyncStateType>(state);
+        int result = rawstor_frame_meta_decode(&wire, &meta);
+        EXPECT_EQ(result, state <= RAWSTOR_OBJECT_SYNC_STATE_LOST ? 0 : EPROTO);
+        if (result == 0) {
+            EXPECT_EQ(static_cast<unsigned int>(meta.state), state);
+        }
+    }
+}
+
+TEST(MemberStateTest, unknown_persisted_state_is_rejected_for_io) {
+    auto queue = rawio::Queue::create(64);
+    rawstor::tests::TmpDir dir;
+    const auto id = new_id();
+    const rawstd::URI location(dir.uri());
+    auto slot = run(*queue, rawstor::Slot::create(*queue, location));
+    RawstorObjectSpec spec{};
+    spec.size = 4096;
+    spec.width = 1;
+    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_DATA));
+    auto backend = run(*queue, rawstor::Backend::create(*queue, location));
+    run(*queue, backend->set_state(
+                    id, 0, RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+                    static_cast<RawstorObjectSyncStateValue>(255)
+                ));
+    run(*queue, backend->close());
+    try {
+        run(*queue, slot->open(id, 0, 0, RawstdUUID{}));
+        FAIL() << "Unknown sync state opened for I/O";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EPROTO);
+    }
+    run(*queue, slot->close());
+}

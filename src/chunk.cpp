@@ -56,6 +56,13 @@ bool has_witness(const RawstorObjectSpec& spec, size_t members) noexcept {
     return members == spec.width + 1;
 }
 
+bool same_spec(
+    const RawstorObjectSpec& a, const RawstorObjectSpec& b
+) noexcept {
+    return a.size == b.size && a.width == b.width &&
+           a.chunk_size == b.chunk_size;
+}
+
 bool member_has_config(
     const RawstorObjectMeta& member, const RawstorObjectConfig& config,
     size_t members
@@ -902,44 +909,36 @@ rawstd::Task<void> recreate_missing(
         co_return;
     }
 
-    // The largest surviving copy's size, not just the first's: a smaller
-    // one is itself F11-stale (_reconcile_sync_set()'s own comment), and
-    // a recreated copy sized off it would be too.
+    // Persisted shape must agree before any replacement is allocated.
+    // Every member, including metadata-only members, reports the same spec.
     const RawstorObjectMeta* survivor = nullptr;
-    uint64_t size = 0;
-    for (size_t i = 0; i < locations.size(); ++i) {
+    for (size_t i = 0; i < metas.size(); ++i) {
         if (!opened[i]) {
             continue;
         }
-        if (survivor == nullptr) {
-            survivor = &metas[i];
+        if (survivor && !same_spec(survivor->spec, metas[i].spec)) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
         }
-        size = std::max(size, metas[i].spec.size);
+        survivor = &metas[i];
     }
-    if (survivor == nullptr ||
+    if (!survivor ||
         std::find(missing.begin(), missing.end(), true) == missing.end()) {
         co_return;
     }
-
-    size_t survivors = 0;
-    for (size_t i = 0; i < locations.size(); ++i) {
-        if (opened[i] && member_matches_config(
+    size_t votes = 0;
+    for (size_t i = 0; i < metas.size(); ++i) {
+        votes +=
+            opened[i] && member_matches_config(
                              metas[i], survivor->config, i, locations.size()
-                         )) {
-            ++survivors;
-        }
+                         );
     }
-    if (survivors * 2 <= locations.size()) {
+    if (votes * 2 <= locations.size()) {
         rawstd_error(
-            "Missing member not recreated: surviving votes are below quorum\n"
+            "Missing member not recreated: surviving records lack quorum\n"
         );
         co_return;
     }
-
-    RawstorObjectSpec sp{};
-    sp.size = size;
-    sp.width = survivor->spec.width;
-    sp.chunk_size = survivor->spec.chunk_size;
+    RawstorObjectSpec sp = survivor->spec;
 
     for (size_t i = 0; i < locations.size(); ++i) {
         if (!missing[i]) {
@@ -1441,29 +1440,17 @@ void Chunk::_reconcile_sync_set() {
                        : MemberState::STALE;
     }
 
-    /*
-     * F11: the logical size is the same everywhere; a smaller reported
-     * size than the rest of the reachable set means this member does not
-     * describe the full object. Exclude it until it rejoins with the
-     * current logical size.
-     */
-    uint64_t max_reachable_size = 0;
+    // A conflicting shape is not evidence of a larger logical object.
+    // Refuse it before allowing any member to vote or scheduling a resync.
+    const RawstorObjectSpec* shape = nullptr;
     for (const Member& m : _members) {
-        if (m.reachable && m.meta.spec.size > max_reachable_size) {
-            max_reachable_size = m.meta.spec.size;
+        if (!m.reachable || m.recreated) {
+            continue;
         }
-    }
-    for (size_t i = 0; i < _members.size(); ++i) {
-        const Member& m = _members[i];
-        if (m.reachable && m.meta.spec.size < max_reachable_size) {
-            rawstd_warning(
-                "Mirror member size %llu below the mirror set's %llu; "
-                "excluding as stale\n",
-                (unsigned long long)m.meta.spec.size,
-                (unsigned long long)max_reachable_size
-            );
-            state[i] = MemberState::STALE;
+        if (shape && !same_spec(*shape, m.meta.spec)) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
         }
+        shape = &m.meta.spec;
     }
 
     for (size_t i = 0; i < _members.size(); ++i) {
@@ -1553,7 +1540,7 @@ void Chunk::_reconcile_sync_set() {
         }
         /*
          * All surviving IN_SYNC members report the same logical size by
-         * now (undersized copies were excluded above as F11-stale); take
+         * now (all reachable members agreed on their persisted shape); take
          * the minimum only as a defensive fallback.
          */
         if (size == 0 || m.meta.spec.size < size) {
@@ -1616,10 +1603,9 @@ void Chunk::_reconcile_sync_set() {
      * moves it too, _resync_finish()). A member whose own record already
      * proves it stale -- an ancestor or blank sync_id, or SYNCING -- was
      * excluded by an earlier change, and reopening without it changes
-     * nothing. One that is unreachable (its copy may still carry the
-     * current sync_id) or excluded by size alone (F11) would read as
-     * in-sync at the next open: its exclusion is recorded by the dirty
-     * gate, with a new sync_id, before the first write.
+     * nothing. An unreachable member's copy may still carry the current
+     * sync_id and read as in-sync at the next open: the dirty gate records
+     * its exclusion with a new sync_id before the first write.
      */
     size_t unrecorded_stale = 0;
     for (size_t i = 0; i < _members.size(); ++i) {
@@ -3307,6 +3293,14 @@ rawstd::Task<void> Chunk::close(bool clean) {
             leaving.push_back(_members[i].slot.get());
         }
     }
+    try {
+        co_await rawstd::gather(leaving.size(), [&](size_t i) {
+            return leaving[i]->leave();
+        });
+    } catch (const std::exception& e) {
+        leave = false;
+        rawstd_warning("Chunk::close(): leave failed: %s\n", e.what());
+    }
     bool last_user;
     bool lost_writer;
     RawstorObjectConfig config;
@@ -3330,25 +3324,12 @@ rawstd::Task<void> Chunk::close(bool clean) {
                 } catch (const std::exception& e) {
                     leave = false;
                     state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
-                    leaving.clear();
                     rawstd_warning(
                         "Member departure update failed: %s\n", e.what()
                     );
                 }
             }
         }
-    }
-    try {
-        co_await rawstd::gather(leaving.size(), [&](size_t i) {
-            return leaving[i]->leave();
-        });
-    } catch (const std::exception& e) {
-        if (c.dirty() &&
-            (_writes_issued != 0 || _write_failed || flush_failed)) {
-            std::lock_guard<std::mutex> guard(c.mutex());
-            c.record_departure_locked(false);
-        }
-        rawstd_warning("Chunk::close(): leave failed: %s\n", e.what());
     }
     c.release();
     _unlock();

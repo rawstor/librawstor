@@ -770,6 +770,25 @@ TEST(MirrorQuorumTest, physical_shrink_does_not_change_logical_size) {
     object_close_clean(queue, object);
 }
 
+TEST(MirrorQuorumTest, truncated_first_member_reads_from_surviving_copy) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000af");
+    RawstorObjectSpec spec{};
+    spec.size = 8192;
+    spec.width = 2;
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    object_write(queue, object, "tail", 4, 8188, 0);
+    object_close_clean(queue, object);
+    fs::resize_file(members.dat(0), 4096);
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    char data[4]{};
+    object_read(queue, object, data, sizeof(data), 8188);
+    EXPECT_EQ(std::string(data, sizeof(data)), "tail");
+    object_close_clean(queue, object);
+}
+
 TEST(MirrorQuorumTest, physical_growth_does_not_change_logical_size) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000ae");

@@ -760,3 +760,36 @@ TEST(ChunkF10Test, missing_copy_recreated_over_ost) {
     ASSERT_EQ(metas.size(), 1u);
     EXPECT_EQ(metas.front().spec.size, spec.size);
 }
+
+TEST(BlkBackendTest, truncated_data_fails_scalar_and_vectored_reads) {
+    rawstor::tests::TmpDir dir;
+    auto queue = rawio::Queue::create(64);
+    rawstor::Location location({rawstd::URI(dir.uri())});
+    RawstorObjectSpec spec{
+        .size = 8192,
+        .width = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0
+    };
+    auto target = run(*queue, location.create(*queue, spec));
+    auto object = run(*queue, target.open(*queue, RAWSTOR_READONLY));
+    for (const auto& entry :
+         std::filesystem::recursive_directory_iterator(dir.path())) {
+        if (entry.path().filename() == "data") {
+            std::filesystem::resize_file(entry.path(), 4096);
+        }
+    }
+    char first[16]{}, second[16]{};
+    iovec iov[]{{first, sizeof(first)}, {second, sizeof(second)}};
+    EXPECT_THROW(
+        run(*queue, object->pread(first, sizeof(first), 4096)),
+        std::system_error
+    );
+    EXPECT_THROW(
+        run(*queue,
+            object->preadv(iov, 2, sizeof(first) + sizeof(second), 4080)),
+        std::system_error
+    );
+    run(*queue, object->close(true));
+}

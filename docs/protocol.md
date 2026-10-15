@@ -8,9 +8,11 @@ for configuration, metadata and allocation. Encode writes a wire
 record; decode writes the corresponding native rawstor structure. The first
 argument is always the `RawstorFrame*` record (destination for encode, source
 for decode). Fallible conversions return zero on success or a positive errno
-value; output is unspecified on failure. Ballots use `RawstorObjectBallot` directly, with a compile-time wire-size
-check in the same header. These functions check representation;
-Slot and backends validate state transitions. The allocation encoder preserves
+value; output is unspecified on failure. Ballots use `RawstorObjectBallot`
+directly, with a compile-time wire-size check in the same header. These functions
+check representation. Unknown metadata sync-state bytes are rejected with
+`EPROTO`; `UNREACHABLE` (0) remains a valid decoded state. Slot and backends
+validate state transitions. The allocation encoder preserves
 `object_id` and `chunk_offset`, which the caller sets separately.
 
 ## Status

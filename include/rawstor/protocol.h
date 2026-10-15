@@ -652,6 +652,9 @@ static inline int rawstor_frame_meta_encode(
 static inline int rawstor_frame_meta_decode(
     const struct RawstorFrameMetaPayload* in, struct RawstorObjectMeta* out
 ) {
+    if (in->state > RAWSTOR_OBJECT_SYNC_STATE_LOST) {
+        return EPROTO;
+    }
     memset(out, 0, sizeof(*out));
     out->member_role = (enum RawstorMemberRole)in->member_role;
     out->state = (enum RawstorObjectSyncStateValue)in->state;

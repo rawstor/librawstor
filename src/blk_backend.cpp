@@ -344,7 +344,9 @@ void Backend::meta_decode(
         &width, &identity->chunk_size, &identity->size, &consumed
     );
     if (n != 18 || static_cast<size_t>(consumed) != v.size() ||
-        version != META_FORMAT_VERSION || width == 0 || width > UINT8_MAX ||
+        version != META_FORMAT_VERSION ||
+        parsed_state > RAWSTOR_OBJECT_SYNC_STATE_LOST || width == 0 ||
+        width > UINT8_MAX ||
         (member_role != RAWSTOR_MEMBER_DATA &&
          member_role != RAWSTOR_MEMBER_WITNESS)) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
@@ -375,9 +377,12 @@ rawstd::Task<size_t> Backend::pread(void* buf, size_t size, uint64_t offset) {
         size, offset
     );
 
-    co_return co_await _queue.pread(
-        fd(), buf, size, static_cast<off_t>(offset)
-    );
+    size_t result =
+        co_await _queue.pread(fd(), buf, size, static_cast<off_t>(offset));
+    if (result != size) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    co_return result;
 }
 
 rawstd::Task<size_t>
@@ -387,9 +392,12 @@ Backend::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
         size, offset
     );
 
-    co_return co_await _queue.preadv(
-        fd(), iov, niov, static_cast<off_t>(offset)
-    );
+    size_t result =
+        co_await _queue.preadv(fd(), iov, niov, static_cast<off_t>(offset));
+    if (result != size) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    co_return result;
 }
 
 rawstd::Task<size_t> Backend::pwrite(
