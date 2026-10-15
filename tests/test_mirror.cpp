@@ -1063,7 +1063,7 @@ TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     /* The member is reprovisioned empty; the probe picks it up and resyncs. */
     RawstorObjectSpec member_spec{
         .size = 1ull << 20,
-        .width = 1,
+        .width = 3,
         .chunk_size = 0,
         .stripe_width = 0,
         .failure_domain = 0,

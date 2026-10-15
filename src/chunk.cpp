@@ -89,6 +89,45 @@ bool member_matches_config(
              config.roles[index] == RAWSTOR_OBJECT_MEMBER_IN_SYNC));
 }
 
+// Matching geometry alone does not authorize a record: when shapes conflict,
+// the same majority must agree on configuration and membership eligibility.
+// Consistent shapes still use the ordinary generation reconciliation rules.
+const RawstorObjectMeta* select_member_spec(
+    const std::vector<RawstorObjectMeta>& metas,
+    const std::vector<bool>& available
+) {
+    const RawstorObjectMeta* first = nullptr;
+    bool conflict = false;
+    for (size_t i = 0; i < metas.size(); ++i) {
+        if (!available[i]) {
+            continue;
+        }
+        if (!first) {
+            first = &metas[i];
+        }
+        conflict |= !same_spec(first->spec, metas[i].spec);
+    }
+    for (size_t i = 0; i < metas.size(); ++i) {
+        if (!available[i]) {
+            continue;
+        }
+        size_t votes = 0;
+        for (size_t j = 0; j < metas.size(); ++j) {
+            votes += available[j] && same_spec(metas[j].spec, metas[i].spec) &&
+                     member_matches_config(
+                         metas[j], metas[i].config, j, metas.size()
+                     );
+        }
+        if (votes * 2 > metas.size()) {
+            return &metas[i];
+        }
+    }
+    if (!conflict) {
+        return first;
+    }
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
+}
+
 void validate_not_empty(const std::vector<rawstd::URI>& uris) {
     if (!uris.empty()) {
         return;
@@ -909,28 +948,17 @@ rawstd::Task<void> recreate_missing(
         co_return;
     }
 
-    // Persisted shape must agree before any replacement is allocated.
-    // Every member, including metadata-only members, reports the same spec.
-    const RawstorObjectMeta* survivor = nullptr;
-    for (size_t i = 0; i < metas.size(); ++i) {
-        if (!opened[i]) {
-            continue;
-        }
-        if (survivor && !same_spec(survivor->spec, metas[i].spec)) {
-            RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
-        }
-        survivor = &metas[i];
-    }
+    const auto* survivor = select_member_spec(metas, opened);
     if (!survivor ||
         std::find(missing.begin(), missing.end(), true) == missing.end()) {
         co_return;
     }
     size_t votes = 0;
     for (size_t i = 0; i < metas.size(); ++i) {
-        votes +=
-            opened[i] && member_matches_config(
-                             metas[i], survivor->config, i, locations.size()
-                         );
+        votes += opened[i] && same_spec(metas[i].spec, survivor->spec) &&
+                 member_matches_config(
+                     metas[i], survivor->config, i, locations.size()
+                 );
     }
     if (votes * 2 <= locations.size()) {
         rawstd_error(
@@ -1132,12 +1160,12 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
             }
         }
     }
-    const auto answer =
-        std::find_if(metas.begin(), metas.end(), [](const auto& meta) {
-            return meta.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE;
-        });
-    const bool witness =
-        answer != metas.end() && has_witness(answer->spec, locations.size());
+    std::vector<bool> inspected(metas.size());
+    for (size_t i = 0; i < metas.size(); ++i) {
+        inspected[i] = metas[i].state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE;
+    }
+    const auto* answer = select_member_spec(metas, inspected);
+    const bool witness = answer && has_witness(answer->spec, locations.size());
     if (witness && answer->spec.width % 2 != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -1212,37 +1240,31 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         missing
     );
 
+    const auto* agreed = select_member_spec(metas, opened);
+
     // Members are assembled only now, with connect/open all already
     // settled -- one slot per location (the only member identity this
     // codebase knows today; see Backend::meta()'s own doc comment
     // (backend.hpp) on why that isn't necessarily the whole story
     // forever). Slot indices must stay stable from here on (the
     // reconnect probe addresses members by index): no reallocation
-    // after handing it to Chunk below. This
-    // factory's own overall spec (handed to Chunk's own constructor
-    // below) is whichever reachable member's own META answered first, in
-    // `locations`' own order -- every member of the same chunk agrees on
-    // it by construction (docs/mds.md, chunk_meta), so there's no
-    // separate spec-fetch round trip to run first; metas[] already has
-    // it.
+    // after handing it to Chunk below. The agreed metadata supplies the
+    // canonical spec. A member with a different spec remains outside the
+    // set and must report the canonical shape before its probe can rejoin.
     std::vector<Member> members;
     members.reserve(locations.size());
     reachable = 0;
-    RawstorObjectSpec spec{};
-    bool got_spec = false;
+    RawstorObjectSpec spec = agreed ? agreed->spec : RawstorObjectSpec{};
     for (size_t i = 0; i < locations.size(); ++i) {
         members.push_back(
             Member{
-                std::move(slots[i]), locations[i], metas[i], opened[i], false,
-                i == data_members, missing[i] && opened[i]
+                std::move(slots[i]), locations[i], metas[i],
+                opened[i] && agreed && same_spec(metas[i].spec, agreed->spec),
+                false, i == data_members, missing[i] && opened[i]
             }
         );
-        if (opened[i] && i < data_members) {
+        if (members.back().reachable && i < data_members) {
             ++reachable;
-            if (!got_spec) {
-                spec = metas[i].spec;
-                got_spec = true;
-            }
         }
     }
 
@@ -1438,19 +1460,6 @@ void Chunk::_reconcile_sync_set() {
         state[i] = (_members[i].reachable && !_members[i].recreated)
                        ? MemberState::IN_SYNC
                        : MemberState::STALE;
-    }
-
-    // A conflicting shape is not evidence of a larger logical object.
-    // Refuse it before allowing any member to vote or scheduling a resync.
-    const RawstorObjectSpec* shape = nullptr;
-    for (const Member& m : _members) {
-        if (!m.reachable || m.recreated) {
-            continue;
-        }
-        if (shape && !same_spec(*shape, m.meta.spec)) {
-            RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
-        }
-        shape = &m.meta.spec;
     }
 
     for (size_t i = 0; i < _members.size(); ++i) {
@@ -2212,7 +2221,8 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
             }
             for (size_t i = 0; i < _members.size(); ++i) {
                 if (_state(i) == MemberState::STALE && _members[i].slot &&
-                    _members[i].reachable) {
+                    _members[i].reachable &&
+                    same_spec(_members[i].meta.spec, _spec)) {
                     return i;
                 }
             }
@@ -2321,6 +2331,9 @@ rawstd::Task<void> Chunk::_resync_attach(uint64_t generation, size_t idx) {
             member.meta = co_await open_member(
                 *slot, _id, _offset, 0, RawstdUUID{}, !member.witness
             );
+            if (!same_spec(member.meta.spec, _spec)) {
+                RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
+            }
         } catch (const std::system_error& e) {
             error = e.code().value();
         } catch (const std::exception& e) {
@@ -2610,6 +2623,9 @@ rawstd::Task<void> Chunk::_resync_finish(uint64_t generation) {
     int error = 0;
     try {
         co_await _set_member_config(idx, m, RAWSTOR_CONFIG_CLEAR_LOST);
+        if (!same_spec(_members[idx].meta.spec, _spec)) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
+        }
         co_await _set_member_config(idx, m, 0, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     } catch (const std::system_error& e) {
         error = e.code().value();
@@ -2810,6 +2826,9 @@ rawstd::DetachedTask Chunk::_probe_tick() {
             meta = co_await open_member(
                 *slot, id, offset, 0, RawstdUUID{}, data_io
             );
+        }
+        if (!same_spec(meta.spec, spec)) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
         }
         if (!alive.expired() && !_closing) {
             _members[idx].meta = meta;

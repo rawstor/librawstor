@@ -1237,7 +1237,7 @@ TEST_F(WitnessTest, snapshot_skips_unreachable_trailing_witness) {
     EXPECT_NO_THROW(run(*queue, snapshot.create_version(*queue)));
 }
 
-TEST_F(WitnessTest, conflicting_member_shapes_never_allocate_replacements) {
+TEST_F(WitnessTest, conflicting_member_shapes_require_an_agreeing_quorum) {
     for (size_t index : {0u, 2u}) {
         SCOPED_TRACE(index);
         id = new_id();
@@ -1256,7 +1256,18 @@ TEST_F(WitnessTest, conflicting_member_shapes_never_allocate_replacements) {
             ));
         run(*queue, slot->set_config(id, 0, index, config, 0));
         run(*queue, slot->close());
-        refused();
+        auto object = run(*queue, target->open(*queue, 0));
+        write(*object, "surviving quorum");
+        char byte{};
+        EXPECT_THROW(
+            run(*queue, object->pread(&byte, 1, spec.size)), std::system_error
+        );
+        run(*queue, object->close(true));
+        auto records = metas();
+        EXPECT_EQ(
+            records[1].config.roles[index], RAWSTOR_OBJECT_MEMBER_EXCLUDED
+        );
+        EXPECT_EQ(records[index].spec.size, oversized.size);
         auto missing =
             run(*queue, rawstor::Slot::create(*queue, rawstd::URI(b.uri())));
         run(*queue, missing->remove(id, 0));
@@ -1313,4 +1324,272 @@ TEST_F(WitnessTest, failed_leave_persists_lost_on_surviving_members) {
             RAWSTOR_OBJECT_SYNC_STATE_LOST
         );
     }
+}
+
+TEST_F(WitnessTest, data_only_mirror_uses_the_matching_quorum) {
+    spec.size = 65536;
+    spec.width = 3;
+    target = std::make_unique<rawstor::Target>(std::vector<rawstd::URI>{
+        rawstd::URI(a.uri() + "/" + id_string(id)),
+        rawstd::URI(b.uri() + "/" + id_string(id)),
+        rawstd::URI(w.uri() + "/" + id_string(id))
+    });
+    run(*queue, target->create(*queue, spec));
+    seed();
+    auto config = metas()[0].config;
+    auto divergent =
+        run(*queue, rawstor::Slot::create(*queue, rawstd::URI(a.uri())));
+    run(*queue, divergent->remove(id, 0));
+    auto wrong = spec;
+    wrong.size *= 2;
+    run(*queue, divergent->create(id, 0, wrong, RAWSTOR_MEMBER_DATA));
+    run(*queue, divergent->set_config(id, 0, 0, config, 0));
+    for (int flags : {RAWSTOR_READONLY, 0}) {
+        auto object = run(*queue, target->open(*queue, flags));
+        std::string value(5, '\0');
+        EXPECT_EQ(
+            run(*queue, object->pread(value.data(), value.size(), 0)),
+            value.size()
+        );
+        EXPECT_EQ(value, "hello");
+        char byte{};
+        EXPECT_THROW(
+            run(*queue, object->pread(&byte, 1, spec.size)), std::system_error
+        );
+        if (flags == 0) {
+            write(*object, "hello again");
+        }
+        run(*queue, object->close(true));
+    }
+    auto record = run(*queue, divergent->meta(id, 0)).front();
+    EXPECT_EQ(record.spec.size, wrong.size);
+    EXPECT_EQ(record.config.sync_id, config.sync_id);
+    EXPECT_EQ(metas()[1].config.roles[0], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
+    run(*queue, divergent->close());
+}
+
+TEST_F(WitnessTest, divergent_spec_fields_do_not_override_the_quorum) {
+    for (size_t field : {0u, 1u, 2u}) {
+        SCOPED_TRACE(field);
+        id = new_id();
+        create();
+        auto config = metas()[0].config;
+        auto wrong = spec;
+        if (field == 0) {
+            wrong.size /= 2;
+        }
+        if (field == 1) {
+            wrong.width = 3;
+        }
+        if (field == 2) {
+            wrong.chunk_size = 4096;
+        }
+        auto slot =
+            run(*queue, rawstor::Slot::create(*queue, rawstd::URI(a.uri())));
+        run(*queue, slot->remove(id, 0));
+        run(*queue, slot->create(id, 0, wrong, RAWSTOR_MEMBER_DATA));
+        run(*queue, slot->set_config(id, 0, 0, config, 0));
+        auto object = run(*queue, target->open(*queue, 0));
+        std::string tail = "tail";
+        EXPECT_EQ(
+            run(*queue,
+                object->pwrite(
+                    tail.data(), tail.size(), spec.size - tail.size(), false
+                )),
+            tail.size()
+        );
+        run(*queue, object->close(true));
+        EXPECT_EQ(metas()[1].config.roles[0], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
+        EXPECT_EQ(
+            run(*queue, slot->meta(id, 0)).front().config.sync_id,
+            config.sync_id
+        );
+        run(*queue, slot->close());
+    }
+}
+
+TEST_F(WitnessTest, replacements_use_the_quorum_spec_with_a_divergent_member) {
+    for (size_t index : {0u, 4u}) {
+        SCOPED_TRACE(index);
+        id = new_id();
+        rawstor::tests::TmpDir c, d;
+        create_four(c.uri(), d.uri());
+        auto config = metas()[0].config;
+        auto divergent =
+            run(*queue, rawstor::Slot::create(
+                            *queue, rawstd::URI(index == 0 ? a.uri() : w.uri())
+                        ));
+        run(*queue, divergent->remove(id, 0));
+        auto wrong = spec;
+        wrong.size *= 2;
+        run(*queue,
+            divergent->create(
+                id, 0, wrong,
+                index == 0 ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS
+            ));
+        run(*queue, divergent->set_config(id, 0, index, config, 0));
+        auto missing =
+            run(*queue, rawstor::Slot::create(*queue, rawstd::URI(b.uri())));
+        run(*queue, missing->remove(id, 0));
+        auto object = run(*queue, target->open(*queue, 0));
+        EXPECT_EQ(
+            run(*queue, missing->meta(id, 0)).front().spec.size, spec.size
+        );
+        write(*object);
+        run(*queue, object->close(true));
+        auto records = metas();
+        EXPECT_EQ(records[index].spec.size, wrong.size);
+        EXPECT_EQ(records[index].config.sync_id, config.sync_id);
+        EXPECT_EQ(records[1].spec.size, spec.size);
+        EXPECT_EQ(
+            records[index == 0 ? 2 : 0].config.roles[index],
+            RAWSTOR_OBJECT_MEMBER_EXCLUDED
+        );
+        run(*queue, missing->close());
+        run(*queue, divergent->close());
+    }
+}
+
+TEST_F(WitnessTest, spec_and_configuration_must_have_the_same_quorum) {
+    rawstor::tests::TmpDir c, d;
+    create_four(c.uri(), d.uri());
+    auto config = metas()[0].config;
+    auto other = config;
+    ++other.epoch;
+    const std::vector<std::string> locations{
+        a.uri(), b.uri(), c.uri(), d.uri(), w.uri()
+    };
+    for (size_t index = 2; index < locations.size(); ++index) {
+        auto slot =
+            run(*queue,
+                rawstor::Slot::create(*queue, rawstd::URI(locations[index])));
+        if (index >= 3) {
+            run(*queue, slot->remove(id, 0));
+            auto wrong = spec;
+            wrong.size *= 2;
+            run(*queue,
+                slot->create(
+                    id, 0, wrong,
+                    index == 4 ? RAWSTOR_MEMBER_WITNESS : RAWSTOR_MEMBER_DATA
+                ));
+        }
+        run(*queue, slot->set_config(id, 0, index, other, 0));
+        run(*queue, slot->close());
+    }
+    refused();
+    EXPECT_THROW(
+        run(*queue, target->open(*queue, RAWSTOR_READONLY)), std::system_error
+    );
+}
+
+TEST_F(WitnessTest, excluded_member_does_not_supply_a_spec_vote) {
+    rawstor::tests::TmpDir c, d;
+    create_four(c.uri(), d.uri());
+    auto config = metas()[0].config;
+    config.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    const std::vector<std::string> locations{
+        a.uri(), b.uri(), c.uri(), d.uri(), w.uri()
+    };
+    for (size_t index = 0; index < locations.size(); ++index) {
+        auto slot =
+            run(*queue,
+                rawstor::Slot::create(*queue, rawstd::URI(locations[index])));
+        if (index >= 3) {
+            run(*queue, slot->remove(id, 0));
+            auto wrong = spec;
+            wrong.size *= 2;
+            run(*queue,
+                slot->create(
+                    id, 0, wrong,
+                    index == 4 ? RAWSTOR_MEMBER_WITNESS : RAWSTOR_MEMBER_DATA
+                ));
+        }
+        run(*queue, slot->set_config(id, 0, index, config, 0));
+        run(*queue, slot->close());
+    }
+    refused();
+}
+
+TEST_F(WitnessTest, repaired_spec_rejoins_through_the_probe) {
+    struct ProbeOpts {
+        ProbeOpts() {
+            RawstorOpts opts{};
+            opts.mirror_probe_interval = 1;
+            rawstor_opts_initialize(&opts);
+        }
+        ~ProbeOpts() { rawstor_opts_initialize(nullptr); }
+    } opts;
+    create();
+    auto config = metas()[0].config;
+    auto slot =
+        run(*queue, rawstor::Slot::create(*queue, rawstd::URI(w.uri())));
+    run(*queue, slot->remove(id, 0));
+    auto wrong = spec;
+    wrong.size *= 2;
+    run(*queue, slot->create(id, 0, wrong, RAWSTOR_MEMBER_WITNESS));
+    run(*queue, slot->set_config(id, 0, 2, config, 0));
+    auto object = run(*queue, target->open(*queue, 0));
+    write(*object);
+    for (size_t i = 0; i < 30; ++i) {
+        run(*queue, pause(*queue));
+    }
+    auto records = metas();
+    EXPECT_EQ(records[0].config.roles[2], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
+    EXPECT_EQ(records[2].spec.size, wrong.size);
+    EXPECT_EQ(records[2].config.sync_id, config.sync_id);
+    run(*queue, slot->remove(id, 0));
+    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_WITNESS));
+    bool rejoined = false;
+    for (size_t i = 0; i < 5000 && !rejoined; ++i) {
+        run(*queue, pause(*queue));
+        records = metas();
+        rejoined =
+            records[0].config.nroles == 3 &&
+            records[0].config.roles[2] == RAWSTOR_OBJECT_MEMBER_IN_SYNC &&
+            records[2].config.sync_id == records[0].config.sync_id;
+    }
+    EXPECT_TRUE(rejoined);
+    EXPECT_EQ(records[2].spec.size, spec.size);
+    run(*queue, object->close(true));
+    run(*queue, slot->close());
+}
+
+TEST_F(WitnessTest, resync_commit_rechecks_the_returned_spec) {
+    create();
+    auto metadata = metas();
+    RawstorFrameMetaPayload stale{};
+    ASSERT_EQ(rawstor_frame_meta_encode(&stale, &metadata.back()), 0);
+    stale.config = {};
+    rawstor::tests::Server server(29642, 256);
+    auto session = std::make_unique<rawstor::tests::Session>(server);
+    session->cmd_meta(RAWSTOR_MAGIC, 0, 0, stale);
+    session->cmd_meta(RAWSTOR_MAGIC, 1, 0, stale);
+    session->cmd_set_state(RAWSTOR_MAGIC, 2, 0); // SYNCING
+    session->cmd_meta(
+        RAWSTOR_MAGIC, 3, 0, stale
+    ); // role lookup before CLEAR_LOST
+    session->cmd_set_state(RAWSTOR_MAGIC, 4, 0); // CLEAR_LOST
+    auto changed = stale;
+    changed.size *= 2;
+    session->cmd_meta(
+        RAWSTOR_MAGIC, 5, 0, changed
+    ); // refreshed metadata at commit
+    rawstor::Target mirrored(
+        {rawstd::URI(a.uri() + "/" + id_string(id)),
+         rawstd::URI(b.uri() + "/" + id_string(id)),
+         rawstd::URI("ost://127.0.0.1:29642/" + id_string(id))}
+    );
+    rawstor::Target data({rawstd::URI(a.uri() + "/" + id_string(id))});
+    auto object = run(*queue, mirrored.open(*queue, 0));
+    bool excluded = false;
+    for (size_t i = 0; i < 5000 && !excluded; ++i) {
+        run(*queue, pause(*queue));
+        auto record = run(*queue, data.meta(*queue, 0)).front();
+        excluded = record.config.sync_id != metadata[0].config.sync_id &&
+                   record.config.nroles == 3 &&
+                   record.config.roles[2] == RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    }
+    EXPECT_TRUE(excluded);
+    write(*object, "still writable");
+    run(*queue, object->close(true));
 }

@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Persist LOST after failed mirror departure, reject conflicting member geometry and unknown metadata states, and fail short DATA reads instead of returning incomplete data.
+- Persist LOST after failed mirror departure, select conflicting member geometry only with an agreeing configuration quorum, reject unknown metadata states, and fail short DATA reads instead of returning incomplete data.
 - OST shutdown terminates incomplete network requests before draining storage operations; snapshot creation skips an unavailable trailing witness without ignoring unavailable data members.
 - Multi-chunk `mds://` objects accept I/O beyond the first chunk while retaining object bounds checks.
 - Resync preserves partial-sector client writes and clears `LOST` only after flushing the restored copy.

@@ -427,9 +427,9 @@ public:
     // the constructor's own job from there: width == 1 trusts its one
     // member outright; width >= 2 runs _reconcile_sync_set() (which may
     // refuse the open -- see its own comment on why that's safe to let
-    // unwind through here). This factory's own overall spec (handed to
-    // the constructor) is whichever reachable member's own META answered
-    // first. Only once construction succeeds does it start the object's
+    // unwind through here). Conflicting specs require a majority that agrees
+    // on both spec and configuration; its spec is passed to the constructor.
+    // Only once construction succeeds does it start the object's
     // own background maintenance (the reconnect probe, an online resync
     // if one is already due). `flags` is RAWSTOR_READONLY or 0
     // (<rawstor/target.h>): READONLY drops the quorum requirement (any
