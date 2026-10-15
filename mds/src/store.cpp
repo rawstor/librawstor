@@ -507,37 +507,10 @@ void ObjectStore::create_witness(
     meta.spec = spec;
     meta.member_role = RAWSTOR_MEMBER_WITNESS;
     meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    if ((meta.member_role != RAWSTOR_MEMBER_DATA &&
-         meta.member_role != RAWSTOR_MEMBER_WITNESS) ||
-        meta.spec.width == 0 || meta.spec.width > UINT8_MAX ||
-        (meta.spec.chunk_size != 0 &&
-         (meta.spec.chunk_size & (meta.spec.chunk_size - 1)) != 0)) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    for (size_t i = 0; i < meta.config.nroles; ++i) {
-        if (meta.config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-    }
     RawstorFrameMetaPayload record{};
-    record.size = meta.spec.size;
-    record.width = static_cast<uint8_t>(meta.spec.width);
-    record.chunk_shift =
-        meta.spec.chunk_size == 0 ? 0 : __builtin_ctzll(meta.spec.chunk_size);
-    record.member_role = static_cast<uint8_t>(meta.member_role);
-    record.writers = meta.writers;
-    record.state = meta.state;
-    record.config.epoch = meta.config.epoch;
-    record.config.sync_id = meta.config.sync_id;
-    memcpy(
-        record.config.sync_id_history, meta.config.sync_id_history,
-        sizeof(record.config.sync_id_history)
-    );
-    record.config.resync_owner = meta.config.resync_owner;
-    record.promised = {meta.promised.counter, meta.promised.proposer};
-    record.accepted = {meta.accepted.counter, meta.accepted.proposer};
-    record.config.nroles = meta.config.nroles;
-    memcpy(record.config.roles, meta.config.roles, meta.config.nroles);
+    if (int error = rawstor_frame_meta_encode(&record, &meta)) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
+    }
     std::lock_guard<std::mutex> guard(_mutex);
     Stmt stmt(
         _db, "INSERT INTO witnesses(id,chunk_offset,record) VALUES(?,?,?)"
@@ -565,34 +538,9 @@ ObjectStore::witness_meta(const RawstdUUID& id, uint64_t offset) {
     RawstorFrameMetaPayload record{};
     memcpy(&record, bytes.data(), sizeof(record));
     RawstorObjectMeta meta{};
-    meta.member_role = static_cast<RawstorMemberRole>(record.member_role);
-    meta.state = static_cast<RawstorObjectSyncStateValue>(record.state);
-    if ((meta.member_role != RAWSTOR_MEMBER_DATA &&
-         meta.member_role != RAWSTOR_MEMBER_WITNESS) ||
-        record.chunk_shift >= 64 || record.width == 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    if (int error = rawstor_frame_meta_decode(&meta, &record)) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
     }
-    meta.writers = record.writers;
-    meta.spec.size = record.size;
-    meta.spec.width = record.width;
-    meta.spec.chunk_size =
-        record.chunk_shift == 0 ? 0 : uint64_t{1} << record.chunk_shift;
-    meta.config.epoch = record.config.epoch;
-    meta.config.sync_id = record.config.sync_id;
-    memcpy(
-        meta.config.sync_id_history, record.config.sync_id_history,
-        sizeof(meta.config.sync_id_history)
-    );
-    meta.config.resync_owner = record.config.resync_owner;
-    meta.config.nroles = record.config.nroles;
-    for (size_t i = 0; i < record.config.nroles; ++i) {
-        if (record.config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-        meta.config.roles[i] = record.config.roles[i];
-    }
-    meta.promised = {record.promised.counter, record.promised.proposer};
-    meta.accepted = {record.accepted.counter, record.accepted.proposer};
     return meta;
 }
 
@@ -623,34 +571,9 @@ void ObjectStore::set_config(
     RawstorFrameMetaPayload record{};
     memcpy(&record, bytes.data(), sizeof(record));
     RawstorObjectMeta meta{};
-    meta.member_role = static_cast<RawstorMemberRole>(record.member_role);
-    meta.state = static_cast<RawstorObjectSyncStateValue>(record.state);
-    if ((meta.member_role != RAWSTOR_MEMBER_DATA &&
-         meta.member_role != RAWSTOR_MEMBER_WITNESS) ||
-        record.chunk_shift >= 64 || record.width == 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    if (int error = rawstor_frame_meta_decode(&meta, &record)) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
     }
-    meta.writers = record.writers;
-    meta.spec.size = record.size;
-    meta.spec.width = record.width;
-    meta.spec.chunk_size =
-        record.chunk_shift == 0 ? 0 : uint64_t{1} << record.chunk_shift;
-    meta.config.epoch = record.config.epoch;
-    meta.config.sync_id = record.config.sync_id;
-    memcpy(
-        meta.config.sync_id_history, record.config.sync_id_history,
-        sizeof(meta.config.sync_id_history)
-    );
-    meta.config.resync_owner = record.config.resync_owner;
-    meta.config.nroles = record.config.nroles;
-    for (size_t i = 0; i < record.config.nroles; ++i) {
-        if (record.config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-        meta.config.roles[i] = record.config.roles[i];
-    }
-    meta.promised = {record.promised.counter, record.promised.proposer};
-    meta.accepted = {record.accepted.counter, record.accepted.proposer};
     if (state) {
         meta.state = *state;
     } else if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 &&
@@ -658,37 +581,9 @@ void ObjectStore::set_config(
         meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     }
     meta.config = config;
-    if ((meta.member_role != RAWSTOR_MEMBER_DATA &&
-         meta.member_role != RAWSTOR_MEMBER_WITNESS) ||
-        meta.spec.width == 0 || meta.spec.width > UINT8_MAX ||
-        (meta.spec.chunk_size != 0 &&
-         (meta.spec.chunk_size & (meta.spec.chunk_size - 1)) != 0)) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    if (int error = rawstor_frame_meta_encode(&record, &meta)) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
     }
-    for (size_t i = 0; i < meta.config.nroles; ++i) {
-        if (meta.config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-    }
-
-    record.size = meta.spec.size;
-    record.width = static_cast<uint8_t>(meta.spec.width);
-    record.chunk_shift =
-        meta.spec.chunk_size == 0 ? 0 : __builtin_ctzll(meta.spec.chunk_size);
-    record.member_role = static_cast<uint8_t>(meta.member_role);
-    record.writers = meta.writers;
-    record.state = meta.state;
-    record.config.epoch = meta.config.epoch;
-    record.config.sync_id = meta.config.sync_id;
-    memcpy(
-        record.config.sync_id_history, meta.config.sync_id_history,
-        sizeof(record.config.sync_id_history)
-    );
-    record.config.resync_owner = meta.config.resync_owner;
-    record.promised = {meta.promised.counter, meta.promised.proposer};
-    record.accepted = {meta.accepted.counter, meta.accepted.proposer};
-    record.config.nroles = meta.config.nroles;
-    memcpy(record.config.roles, meta.config.roles, meta.config.nroles);
     Stmt update(
         _db, "UPDATE witnesses SET record=? WHERE id=? AND chunk_offset=?"
     );

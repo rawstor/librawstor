@@ -38,18 +38,6 @@
 #include <cstdlib>
 #include <cstring>
 
-namespace {
-
-// RawstorFrameAllocatePayload::chunk_shift's own doc comment on why a
-// shift, not the full value -- `chunk_size` is always a power of two
-// (RawstorObjectSpec's own doc comment, target.h), 0 meaning no chunking.
-uint8_t chunk_size_to_shift(uint64_t chunk_size) noexcept {
-    return chunk_size == 0 ? 0
-                           : static_cast<uint8_t>(__builtin_ctzll(chunk_size));
-}
-
-} // namespace
-
 namespace rawstor {
 namespace wire {
 
@@ -77,15 +65,11 @@ public:
             sizeof(_request.payload.object_id)
         );
         _request.payload.chunk_offset = chunk_offset;
-        _request.payload.config.epoch = config.epoch;
-        _request.payload.config.sync_id = config.sync_id;
-        memcpy(
-            _request.payload.config.sync_id_history, config.sync_id_history,
-            sizeof(_request.payload.config.sync_id_history)
-        );
-        _request.payload.config.resync_owner = config.resync_owner;
-        _request.payload.config.nroles = config.nroles;
-        memcpy(_request.payload.config.roles, config.roles, config.nroles);
+        if (int error = rawstor_frame_config_encode(
+                &_request.payload.config, &config
+            )) {
+            RAWSTD_THROW_SYSTEM_ERROR(error);
+        }
         _request.payload.flags = static_cast<uint8_t>(flags);
         _request.payload.member_index = member_index;
         _request.payload.state = state ? static_cast<uint8_t>(*state) : 0;
@@ -200,17 +184,14 @@ public:
                     .cmd = RAWSTOR_CMD_ALLOCATE,
                     .cid = cid,
                 },
-            .payload = {
-                .object_id = {},
-                .chunk_offset = chunk_offset,
-                .size = sp.size,
-                .stripe_width = sp.stripe_width,
-                .chunk_shift = chunk_size_to_shift(sp.chunk_size),
-                .failure_domain = (uint8_t)sp.failure_domain,
-                .width = (uint8_t)sp.width,
-                .member_role = (uint8_t)member_role,
-            },
+            .payload = {},
         }) {
+        _request.payload.chunk_offset = chunk_offset;
+        if (int error = rawstor_frame_allocate_encode(
+                &_request.payload, &sp, member_role
+            )) {
+            RAWSTD_THROW_SYSTEM_ERROR(error);
+        }
         memcpy(
             _request.payload.object_id, id.bytes,
             sizeof(_request.payload.object_id)
@@ -1020,34 +1001,9 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_wire_meta(
             *static_cast<const RawstorFrameMetaPayload*>(
                 static_cast<const void*>(response.data())
             );
-        ret.member_role = static_cast<RawstorMemberRole>(payload.member_role);
-        ret.state = static_cast<RawstorObjectSyncStateValue>(payload.state);
-        if ((ret.member_role != RAWSTOR_MEMBER_DATA &&
-             ret.member_role != RAWSTOR_MEMBER_WITNESS) ||
-            payload.chunk_shift >= 64 || payload.width == 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        if (int error = rawstor_frame_meta_decode(&ret, &payload)) {
+            RAWSTD_THROW_SYSTEM_ERROR(error);
         }
-        ret.writers = payload.writers;
-        ret.spec.size = payload.size;
-        ret.spec.width = payload.width;
-        ret.spec.chunk_size =
-            payload.chunk_shift == 0 ? 0 : uint64_t{1} << payload.chunk_shift;
-        ret.config.epoch = payload.config.epoch;
-        ret.config.sync_id = payload.config.sync_id;
-        memcpy(
-            ret.config.sync_id_history, payload.config.sync_id_history,
-            sizeof(ret.config.sync_id_history)
-        );
-        ret.config.resync_owner = payload.config.resync_owner;
-        ret.config.nroles = payload.config.nroles;
-        for (size_t i = 0; i < payload.config.nroles; ++i) {
-            if (payload.config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
-                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-            }
-            ret.config.roles[i] = payload.config.roles[i];
-        }
-        ret.promised = {payload.promised.counter, payload.promised.proposer};
-        ret.accepted = {payload.accepted.counter, payload.accepted.proposer};
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -1110,37 +1066,11 @@ rawstd::Task<RawstorObjectSyncReply> Backend::_sync_request(
 
     co_await *op;
     const RawstorFrameSyncReplyPayload& reply = op->reply();
-    const RawstorFrameMetaPayload& wire = reply.meta;
-    RawstorObjectMeta meta{};
-    meta.member_role = static_cast<RawstorMemberRole>(wire.member_role);
-    meta.state = static_cast<RawstorObjectSyncStateValue>(wire.state);
-    if ((meta.member_role != RAWSTOR_MEMBER_DATA &&
-         meta.member_role != RAWSTOR_MEMBER_WITNESS) ||
-        wire.chunk_shift >= 64 || wire.width == 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    RawstorObjectSyncReply ret{};
+    if (int error = rawstor_frame_sync_reply_decode(&ret, &reply)) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
     }
-    meta.writers = wire.writers;
-    meta.spec.size = wire.size;
-    meta.spec.width = wire.width;
-    meta.spec.chunk_size =
-        wire.chunk_shift == 0 ? 0 : uint64_t{1} << wire.chunk_shift;
-    meta.config.epoch = wire.config.epoch;
-    meta.config.sync_id = wire.config.sync_id;
-    memcpy(
-        meta.config.sync_id_history, wire.config.sync_id_history,
-        sizeof(meta.config.sync_id_history)
-    );
-    meta.config.resync_owner = wire.config.resync_owner;
-    meta.config.nroles = wire.config.nroles;
-    for (size_t i = 0; i < wire.config.nroles; ++i) {
-        if (wire.config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-        meta.config.roles[i] = wire.config.roles[i];
-    }
-    meta.promised = {wire.promised.counter, wire.promised.proposer};
-    meta.accepted = {wire.accepted.counter, wire.accepted.proposer};
-    co_return RawstorObjectSyncReply{reply.ok != 0, meta};
+    co_return ret;
 }
 
 rawstd::Task<RawstorObjectSyncReply> Backend::_wire_sync_prepare(
@@ -1152,7 +1082,7 @@ rawstd::Task<RawstorObjectSyncReply> Backend::_wire_sync_prepare(
     request.head.cmd = RAWSTOR_CMD_SYNC_PREPARE;
     memcpy(request.payload.object_id, id.bytes, sizeof(id.bytes));
     request.payload.chunk_offset = offset;
-    request.payload.ballot = {ballot.counter, ballot.proposer};
+    rawstor_frame_ballot_encode(&request.payload.ballot, &ballot);
     co_return co_await _sync_request(request, "sync_prepare");
 }
 
@@ -1166,17 +1096,12 @@ rawstd::Task<RawstorObjectSyncReply> Backend::_wire_sync_accept(
     request.head.cmd = RAWSTOR_CMD_SYNC_ACCEPT;
     memcpy(request.payload.object_id, id.bytes, sizeof(id.bytes));
     request.payload.chunk_offset = offset;
-    request.payload.ballot = {ballot.counter, ballot.proposer};
-    request.payload.next = {next.counter, next.proposer};
-    request.payload.config.epoch = config.epoch;
-    request.payload.config.sync_id = config.sync_id;
-    memcpy(
-        request.payload.config.sync_id_history, config.sync_id_history,
-        sizeof(request.payload.config.sync_id_history)
-    );
-    request.payload.config.resync_owner = config.resync_owner;
-    request.payload.config.nroles = config.nroles;
-    memcpy(request.payload.config.roles, config.roles, config.nroles);
+    rawstor_frame_ballot_encode(&request.payload.ballot, &ballot);
+    rawstor_frame_ballot_encode(&request.payload.next, &next);
+    if (int error =
+            rawstor_frame_config_encode(&request.payload.config, &config)) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
+    }
     request.payload.member_index = member_index;
     co_return co_await _sync_request(request, "sync_accept");
 }

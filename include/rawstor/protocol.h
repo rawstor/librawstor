@@ -7,9 +7,13 @@
 #ifndef RAWSTOR_PROTOCOL_H
 #define RAWSTOR_PROTOCOL_H
 
+#include <rawstor/target.h>
+
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -582,6 +586,167 @@ struct RawstorFrameObjVersionMemberPayload {
 struct RawstorFrameObjVersionCommittedPayload {
     uint64_t map_epoch;
 } RAWSTOR_PACKED;
+
+/* Conversions copy between wire records and native structures. Fallible
+ * conversions return zero on success or a positive errno value; the output
+ * is unspecified on failure. They validate representation, not transitions.
+ * Configuration encoders zero unused roles.
+ */
+static inline void rawstor_frame_ballot_encode(
+    struct RawstorFrameBallot* out, const struct RawstorObjectBallot* in
+) {
+    out->counter = in->counter;
+    out->proposer = in->proposer;
+}
+static inline void rawstor_frame_ballot_decode(
+    struct RawstorObjectBallot* out, const struct RawstorFrameBallot* in
+) {
+    out->counter = in->counter;
+    out->proposer = in->proposer;
+}
+
+static inline int rawstor_frame_config_encode(
+    struct RawstorFrameConfig* out, const struct RawstorObjectConfig* in
+) {
+    for (size_t i = 0; i < in->nroles; ++i) {
+        if (in->roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
+            return EINVAL;
+        }
+    }
+    memset(out, 0, sizeof(*out));
+    out->epoch = in->epoch;
+    out->sync_id = in->sync_id;
+    memcpy(
+        out->sync_id_history, in->sync_id_history, sizeof(out->sync_id_history)
+    );
+    out->resync_owner = in->resync_owner;
+    out->nroles = in->nroles;
+    memcpy(out->roles, in->roles, in->nroles);
+    return 0;
+}
+
+static inline int rawstor_frame_config_decode(
+    struct RawstorObjectConfig* out, const struct RawstorFrameConfig* in
+) {
+    memset(out, 0, sizeof(*out));
+    out->epoch = in->epoch;
+    out->sync_id = in->sync_id;
+    memcpy(
+        out->sync_id_history, in->sync_id_history, sizeof(out->sync_id_history)
+    );
+    out->resync_owner = in->resync_owner;
+    out->nroles = in->nroles;
+    for (size_t i = 0; i < in->nroles; ++i) {
+        if (in->roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
+            return EINVAL;
+        }
+        out->roles[i] = in->roles[i];
+    }
+    return 0;
+}
+
+static inline int rawstor_frame_meta_encode(
+    struct RawstorFrameMetaPayload* out, const struct RawstorObjectMeta* in
+) {
+    if ((in->member_role != RAWSTOR_MEMBER_DATA &&
+         in->member_role != RAWSTOR_MEMBER_WITNESS) ||
+        in->spec.width == 0 || in->spec.width > UINT8_MAX ||
+        (in->spec.chunk_size != 0 &&
+         (in->spec.chunk_size & (in->spec.chunk_size - 1)) != 0)) {
+        return EINVAL;
+    }
+    memset(out, 0, sizeof(*out));
+    out->size = in->spec.size;
+    out->width = (uint8_t)in->spec.width;
+    out->chunk_shift =
+        in->spec.chunk_size == 0 ? 0 : __builtin_ctzll(in->spec.chunk_size);
+    out->member_role = (uint8_t)in->member_role;
+    out->writers = in->writers;
+    out->state = in->state;
+    rawstor_frame_ballot_encode(&out->promised, &in->promised);
+    rawstor_frame_ballot_encode(&out->accepted, &in->accepted);
+    return rawstor_frame_config_encode(&out->config, &in->config);
+}
+
+static inline int rawstor_frame_meta_decode(
+    struct RawstorObjectMeta* out, const struct RawstorFrameMetaPayload* in
+) {
+    memset(out, 0, sizeof(*out));
+    out->member_role = (enum RawstorMemberRole)in->member_role;
+    out->state = (enum RawstorObjectSyncStateValue)in->state;
+    if ((out->member_role != RAWSTOR_MEMBER_DATA &&
+         out->member_role != RAWSTOR_MEMBER_WITNESS) ||
+        in->chunk_shift >= 64 || in->width == 0) {
+        return EPROTO;
+    }
+    out->writers = in->writers;
+    out->spec.size = in->size;
+    out->spec.width = in->width;
+    out->spec.chunk_size =
+        in->chunk_shift == 0 ? 0 : UINT64_C(1) << in->chunk_shift;
+    rawstor_frame_ballot_decode(&out->promised, &in->promised);
+    rawstor_frame_ballot_decode(&out->accepted, &in->accepted);
+    return rawstor_frame_config_decode(&out->config, &in->config);
+}
+
+/* Allocation conversion includes spec and member role. The encoder preserves
+ * object_id and chunk_offset, which the caller supplies separately. */
+static inline int rawstor_frame_allocate_encode(
+    struct RawstorFrameAllocatePayload* out, const struct RawstorObjectSpec* in,
+    enum RawstorMemberRole role
+) {
+    if (in->width == 0 || in->width > UINT8_MAX ||
+        (role != RAWSTOR_MEMBER_DATA && role != RAWSTOR_MEMBER_WITNESS) ||
+        (in->chunk_size != 0 && (in->chunk_size & (in->chunk_size - 1)) != 0) ||
+        in->failure_domain > UINT8_MAX) {
+        return EINVAL;
+    }
+    out->size = in->size;
+    out->width = (uint8_t)in->width;
+    out->chunk_shift =
+        in->chunk_size == 0 ? 0 : __builtin_ctzll(in->chunk_size);
+    out->stripe_width = in->stripe_width;
+    out->failure_domain = (uint8_t)in->failure_domain;
+    out->member_role = (uint8_t)role;
+    return 0;
+}
+static inline int rawstor_frame_allocate_decode(
+    struct RawstorObjectSpec* out, enum RawstorMemberRole* role,
+    const struct RawstorFrameAllocatePayload* in
+) {
+    if (in->chunk_shift >= 64) {
+        return EPROTO;
+    }
+    if (in->width == 0 || (in->member_role != RAWSTOR_MEMBER_DATA &&
+                           in->member_role != RAWSTOR_MEMBER_WITNESS)) {
+        return EINVAL;
+    }
+    memset(out, 0, sizeof(*out));
+    out->size = in->size;
+    out->width = in->width;
+    out->chunk_size = in->chunk_shift == 0 ? 0 : UINT64_C(1) << in->chunk_shift;
+    out->stripe_width = in->stripe_width;
+    out->failure_domain = in->failure_domain;
+    *role = (enum RawstorMemberRole)in->member_role;
+    return 0;
+}
+
+static inline int rawstor_frame_sync_reply_encode(
+    struct RawstorFrameSyncReplyPayload* out,
+    const struct RawstorObjectSyncReply* in
+) {
+    memset(out, 0, sizeof(*out));
+    out->ok = in->ok != 0;
+    return rawstor_frame_meta_encode(&out->meta, &in->meta);
+}
+static inline int rawstor_frame_sync_reply_decode(
+    struct RawstorObjectSyncReply* out,
+    const struct RawstorFrameSyncReplyPayload* in
+) {
+    memset(out, 0, sizeof(*out));
+    out->ok = in->ok != 0;
+    return rawstor_frame_meta_decode(&out->meta, &in->meta);
+}
 
 /* Every wire struct's exact size, checked at compile time. */
 #ifdef __cplusplus

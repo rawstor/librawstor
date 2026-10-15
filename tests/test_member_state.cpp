@@ -11,6 +11,7 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <rawstor/protocol.h>
 #include <rawstor/target.h>
 
 #include <gtest/gtest.h>
@@ -656,4 +657,111 @@ TEST(
     EXPECT_EQ(actual, "BBBR");
     run(*queue, slot->leave());
     run(*queue, slot->close());
+}
+
+TEST(ProtocolTest, metadata_round_trip_preserves_members_and_register) {
+    for (auto role : {RAWSTOR_MEMBER_DATA, RAWSTOR_MEMBER_WITNESS}) {
+        RawstorObjectMeta input{};
+        input.spec = {
+            .size = UINT64_C(1) << 63,
+            .width = 254,
+            .chunk_size = UINT64_C(1) << 63,
+            .stripe_width = 0,
+            .failure_domain = 0
+        };
+        input.member_role = role;
+        input.state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
+        input.writers = 3;
+        input.config.epoch = 23;
+        input.config.sync_id = 42;
+        input.config.sync_id_history[3] = 19;
+        input.config.resync_owner = 11;
+        input.config.nroles = 255;
+        input.config.roles[254] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+        input.promised = {5, 7};
+        input.accepted = {3, 9};
+        RawstorFrameMetaPayload wire{};
+        ASSERT_EQ(rawstor_frame_meta_encode(&wire, &input), 0);
+        RawstorObjectMeta output{};
+        ASSERT_EQ(rawstor_frame_meta_decode(&output, &wire), 0);
+        EXPECT_EQ(output.spec.size, input.spec.size);
+        EXPECT_EQ(output.spec.width, input.spec.width);
+        EXPECT_EQ(output.spec.chunk_size, input.spec.chunk_size);
+        EXPECT_EQ(output.member_role, role);
+        EXPECT_EQ(output.state, input.state);
+        EXPECT_EQ(output.writers, input.writers);
+        EXPECT_EQ(output.config.epoch, input.config.epoch);
+        EXPECT_EQ(output.config.sync_id, input.config.sync_id);
+        EXPECT_EQ(output.config.sync_id_history[3], 19u);
+        EXPECT_EQ(output.config.resync_owner, 11u);
+        EXPECT_EQ(output.config.nroles, 255);
+        EXPECT_EQ(output.config.roles[254], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
+        EXPECT_EQ(output.promised.counter, 5u);
+        EXPECT_EQ(output.promised.proposer, 7u);
+        EXPECT_EQ(output.accepted.counter, 3u);
+        EXPECT_EQ(output.accepted.proposer, 9u);
+    }
+}
+
+TEST(ProtocolTest, conversion_rejects_unrepresentable_metadata) {
+    RawstorObjectMeta meta{};
+    meta.member_role = RAWSTOR_MEMBER_DATA;
+    meta.spec.width = 256;
+    RawstorFrameMetaPayload wire{};
+    EXPECT_EQ(rawstor_frame_meta_encode(&wire, &meta), EINVAL);
+    meta.spec.width = 2;
+    meta.spec.chunk_size = 3;
+    EXPECT_EQ(rawstor_frame_meta_encode(&wire, &meta), EINVAL);
+    meta.spec.chunk_size = 4096;
+    ASSERT_EQ(rawstor_frame_meta_encode(&wire, &meta), 0);
+    wire.chunk_shift = 64;
+    EXPECT_EQ(rawstor_frame_meta_decode(&meta, &wire), EPROTO);
+    wire.chunk_shift = 12;
+    wire.member_role = 0;
+    EXPECT_EQ(rawstor_frame_meta_decode(&meta, &wire), EPROTO);
+    wire.member_role = RAWSTOR_MEMBER_DATA;
+    wire.config.nroles = 1;
+    wire.config.roles[0] = RAWSTOR_OBJECT_MEMBER_EXCLUDED + 1;
+    EXPECT_EQ(rawstor_frame_meta_decode(&meta, &wire), EINVAL);
+}
+
+TEST(ProtocolTest, config_encoding_clears_unused_roles) {
+    RawstorObjectConfig config{};
+    config.nroles = 1;
+    config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    RawstorFrameConfig wire;
+    memset(&wire, 0xff, sizeof(wire));
+    ASSERT_EQ(rawstor_frame_config_encode(&wire, &config), 0);
+    EXPECT_EQ(wire.roles[0], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
+    EXPECT_EQ(wire.roles[1], 0);
+    EXPECT_EQ(wire.roles[254], 0);
+    config.roles[0] = RAWSTOR_OBJECT_MEMBER_EXCLUDED + 1;
+    EXPECT_EQ(rawstor_frame_config_encode(&wire, &config), EINVAL);
+}
+
+TEST(ProtocolTest, allocation_preserves_identity_and_placement) {
+    RawstorObjectSpec input{
+        .size = 16384,
+        .width = 2,
+        .chunk_size = 4096,
+        .stripe_width = 3,
+        .failure_domain = RAWSTOR_OBJ_DOMAIN_SERVER
+    };
+    RawstorFrameAllocatePayload wire{};
+    wire.object_id[0] = 17;
+    wire.chunk_offset = 4096;
+    ASSERT_EQ(
+        rawstor_frame_allocate_encode(&wire, &input, RAWSTOR_MEMBER_WITNESS), 0
+    );
+    EXPECT_EQ(wire.object_id[0], 17);
+    EXPECT_EQ(wire.chunk_offset, 4096u);
+    RawstorObjectSpec output{};
+    RawstorMemberRole role{};
+    ASSERT_EQ(rawstor_frame_allocate_decode(&output, &role, &wire), 0);
+    EXPECT_EQ(output.size, input.size);
+    EXPECT_EQ(output.width, input.width);
+    EXPECT_EQ(output.chunk_size, input.chunk_size);
+    EXPECT_EQ(output.stripe_width, input.stripe_width);
+    EXPECT_EQ(output.failure_domain, input.failure_domain);
+    EXPECT_EQ(role, RAWSTOR_MEMBER_WITNESS);
 }

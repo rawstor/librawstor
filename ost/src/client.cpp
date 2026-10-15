@@ -46,19 +46,6 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
     return EIO;
 }
 
-// chunk_shift comes straight off the wire, from a peer this end doesn't
-// control -- 1ull << chunk_shift is undefined behavior once chunk_shift
-// reaches 64, so that (and anything past it, since chunk_shift's own
-// uint8_t range goes to 255) is rejected outright rather than silently
-// misinterpreted.
-uint64_t chunk_shift_to_size(uint8_t chunk_shift) {
-    if (chunk_shift >= 64) {
-        rawstd_error("Invalid chunk_shift: %u\n", chunk_shift);
-        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-    }
-    return chunk_shift == 0 ? 0 : (1ull << chunk_shift);
-}
-
 template <typename F>
 rawstd::Task<void> with_slot(
     RawIOQueue* queue, const std::vector<rawstd::URI>& locations, F operation
@@ -882,27 +869,15 @@ rawstd::DetachedTask Client::_allocate(
 
     int result = 0;
     try {
-        RawstorObjectSpec spec{
-            .size = payload.size,
-            .width = payload.width,
-            .chunk_size = chunk_shift_to_size(payload.chunk_shift),
-            .stripe_width = payload.stripe_width,
-            .failure_domain = payload.failure_domain,
-        };
-        if (spec.width == 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-        if (payload.member_role != RAWSTOR_MEMBER_DATA &&
-            payload.member_role != RAWSTOR_MEMBER_WITNESS) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        RawstorObjectSpec spec{};
+        RawstorMemberRole role{};
+        if (int error = rawstor_frame_allocate_decode(&spec, &role, &payload)) {
+            RAWSTD_THROW_SYSTEM_ERROR(error);
         }
         co_await with_slot(
             client->_queue, client->_server.locations(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
-                co_await slot.create(
-                    uuid, payload.chunk_offset, spec,
-                    static_cast<RawstorMemberRole>(payload.member_role)
-                );
+                co_await slot.create(uuid, payload.chunk_offset, spec, role);
             }
         );
     } catch (const std::system_error& error) {
@@ -1059,40 +1034,10 @@ rawstd::DetachedTask Client::_meta(
                 RAWSTOR_CMD_META, head.cid, result, 0
             );
         } else {
-            if ((meta.member_role != RAWSTOR_MEMBER_DATA &&
-                 meta.member_role != RAWSTOR_MEMBER_WITNESS) ||
-                meta.spec.width == 0 || meta.spec.width > UINT8_MAX ||
-                (meta.spec.chunk_size != 0 &&
-                 (meta.spec.chunk_size & (meta.spec.chunk_size - 1)) != 0)) {
-                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-            }
-            for (size_t i = 0; i < meta.config.nroles; ++i) {
-                if (meta.config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
-                    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-                }
-            }
             RawstorFrameMetaPayload body_out{};
-            body_out.size = meta.spec.size;
-            body_out.width = static_cast<uint8_t>(meta.spec.width);
-            body_out.chunk_shift = meta.spec.chunk_size == 0
-                                       ? 0
-                                       : __builtin_ctzll(meta.spec.chunk_size);
-            body_out.member_role = static_cast<uint8_t>(meta.member_role);
-            body_out.writers = meta.writers;
-            body_out.state = meta.state;
-            body_out.config.epoch = meta.config.epoch;
-            body_out.config.sync_id = meta.config.sync_id;
-            memcpy(
-                body_out.config.sync_id_history, meta.config.sync_id_history,
-                sizeof(body_out.config.sync_id_history)
-            );
-            body_out.config.resync_owner = meta.config.resync_owner;
-            body_out.promised = {meta.promised.counter, meta.promised.proposer};
-            body_out.accepted = {meta.accepted.counter, meta.accepted.proposer};
-            body_out.config.nroles = meta.config.nroles;
-            memcpy(
-                body_out.config.roles, meta.config.roles, meta.config.nroles
-            );
+            if (int error = rawstor_frame_meta_encode(&body_out, &meta)) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
             std::vector<unsigned char> data(sizeof(body_out));
             memcpy(data.data(), &body_out, sizeof(body_out));
             co_await client->_send_response(
@@ -1180,15 +1125,6 @@ rawstd::DetachedTask Client::_set_config(
     const auto locations = client->_server.locations();
 
     RawstorObjectConfig config{};
-    config.epoch = payload.config.epoch;
-    config.sync_id = payload.config.sync_id;
-    memcpy(
-        config.sync_id_history, payload.config.sync_id_history,
-        sizeof(config.sync_id_history)
-    );
-    config.resync_owner = payload.config.resync_owner;
-    config.nroles = payload.config.nroles;
-    memcpy(config.roles, payload.config.roles, config.nroles);
 
     // The server's one copy is addressed locally at index 0; the request's
     // member_index selects its role in the client's configuration.
@@ -1197,6 +1133,10 @@ rawstd::DetachedTask Client::_set_config(
         result = -ENOSYS;
     } else {
         try {
+            if (int error =
+                    rawstor_frame_config_decode(&config, &payload.config)) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
             rawio::Queue& queue = *static_cast<rawio::Queue*>(client->_queue);
             std::unique_ptr<rawstor::Slot> slot;
             slot = co_await rawstor::Slot::create(queue, locations.front());
@@ -1250,18 +1190,11 @@ rawstd::DetachedTask Client::_sync(
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
     const auto locations = client->_server.locations();
 
-    RawstorObjectBallot ballot{payload.ballot.counter, payload.ballot.proposer};
-    RawstorObjectBallot next{payload.next.counter, payload.next.proposer};
+    RawstorObjectBallot ballot{};
+    rawstor_frame_ballot_decode(&ballot, &payload.ballot);
+    RawstorObjectBallot next{};
+    rawstor_frame_ballot_decode(&next, &payload.next);
     RawstorObjectConfig config{};
-    config.epoch = payload.config.epoch;
-    config.sync_id = payload.config.sync_id;
-    memcpy(
-        config.sync_id_history, payload.config.sync_id_history,
-        sizeof(config.sync_id_history)
-    );
-    config.resync_owner = payload.config.resync_owner;
-    config.nroles = payload.config.nroles;
-    memcpy(config.roles, payload.config.roles, config.nroles);
 
     // One copy, as for SET_CONFIG (_set_config()).
     int result = 0;
@@ -1270,6 +1203,10 @@ rawstd::DetachedTask Client::_sync(
         result = -ENOSYS;
     } else {
         try {
+            if (int error =
+                    rawstor_frame_config_decode(&config, &payload.config)) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
             rawio::Queue& queue = *static_cast<rawio::Queue*>(client->_queue);
             std::unique_ptr<rawstor::Slot> slot;
             slot = co_await rawstor::Slot::create(queue, locations.front());
@@ -1303,52 +1240,10 @@ rawstd::DetachedTask Client::_sync(
             co_await client->_send_response(head.cmd, head.cid, result, 0);
         } else {
             RawstorFrameSyncReplyPayload body_out{};
-            body_out.ok = reply.ok != 0 ? 1 : 0;
-            if ((reply.meta.member_role != RAWSTOR_MEMBER_DATA &&
-                 reply.meta.member_role != RAWSTOR_MEMBER_WITNESS) ||
-                reply.meta.spec.width == 0 ||
-                reply.meta.spec.width > UINT8_MAX ||
-                (reply.meta.spec.chunk_size != 0 &&
-                 (reply.meta.spec.chunk_size &
-                  (reply.meta.spec.chunk_size - 1)) != 0)) {
-                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            if (int error =
+                    rawstor_frame_sync_reply_encode(&body_out, &reply)) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
             }
-            for (size_t i = 0; i < reply.meta.config.nroles; ++i) {
-                if (reply.meta.config.roles[i] >
-                    RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
-                    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-                }
-            }
-
-            body_out.meta.size = reply.meta.spec.size;
-            body_out.meta.width = static_cast<uint8_t>(reply.meta.spec.width);
-            body_out.meta.chunk_shift =
-                reply.meta.spec.chunk_size == 0
-                    ? 0
-                    : __builtin_ctzll(reply.meta.spec.chunk_size);
-            body_out.meta.member_role =
-                static_cast<uint8_t>(reply.meta.member_role);
-            body_out.meta.writers = reply.meta.writers;
-            body_out.meta.state = reply.meta.state;
-            body_out.meta.config.epoch = reply.meta.config.epoch;
-            body_out.meta.config.sync_id = reply.meta.config.sync_id;
-            memcpy(
-                body_out.meta.config.sync_id_history,
-                reply.meta.config.sync_id_history,
-                sizeof(body_out.meta.config.sync_id_history)
-            );
-            body_out.meta.config.resync_owner = reply.meta.config.resync_owner;
-            body_out.meta.promised = {
-                reply.meta.promised.counter, reply.meta.promised.proposer
-            };
-            body_out.meta.accepted = {
-                reply.meta.accepted.counter, reply.meta.accepted.proposer
-            };
-            body_out.meta.config.nroles = reply.meta.config.nroles;
-            memcpy(
-                body_out.meta.config.roles, reply.meta.config.roles,
-                reply.meta.config.nroles
-            );
             std::vector<unsigned char> data(sizeof(body_out));
             memcpy(data.data(), &body_out, sizeof(body_out));
             co_await client->_send_response(

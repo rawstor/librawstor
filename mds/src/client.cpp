@@ -314,16 +314,15 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
         try {
-            if (payload.member_role != RAWSTOR_MEMBER_WITNESS ||
-                payload.chunk_shift >= 64) {
+            RawstorObjectSpec spec{};
+            RawstorMemberRole role{};
+            if (int error =
+                    rawstor_frame_allocate_decode(&spec, &role, &payload)) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+            if (role != RAWSTOR_MEMBER_WITNESS) {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
-            RawstorObjectSpec spec{};
-            spec.size = payload.size;
-            spec.width = payload.width;
-            spec.chunk_size = payload.chunk_shift == 0
-                                  ? 0
-                                  : uint64_t{1} << payload.chunk_shift;
             store.create_witness(
                 uuid_of(payload.object_id), payload.chunk_offset, spec
             );
@@ -348,39 +347,9 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                 const auto meta = store.witness_meta(
                     uuid_of(payload.object_id), payload.offset
                 );
-                if ((meta.member_role != RAWSTOR_MEMBER_DATA &&
-                     meta.member_role != RAWSTOR_MEMBER_WITNESS) ||
-                    meta.spec.width == 0 || meta.spec.width > UINT8_MAX ||
-                    (meta.spec.chunk_size != 0 &&
-                     (meta.spec.chunk_size & (meta.spec.chunk_size - 1)) !=
-                         0)) {
-                    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+                if (int error = rawstor_frame_meta_encode(&out, &meta)) {
+                    RAWSTD_THROW_SYSTEM_ERROR(error);
                 }
-                for (size_t i = 0; i < meta.config.nroles; ++i) {
-                    if (meta.config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
-                        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-                    }
-                }
-
-                out.size = meta.spec.size;
-                out.width = static_cast<uint8_t>(meta.spec.width);
-                out.chunk_shift = meta.spec.chunk_size == 0
-                                      ? 0
-                                      : __builtin_ctzll(meta.spec.chunk_size);
-                out.member_role = static_cast<uint8_t>(meta.member_role);
-                out.writers = meta.writers;
-                out.state = meta.state;
-                out.config.epoch = meta.config.epoch;
-                out.config.sync_id = meta.config.sync_id;
-                memcpy(
-                    out.config.sync_id_history, meta.config.sync_id_history,
-                    sizeof(out.config.sync_id_history)
-                );
-                out.config.resync_owner = meta.config.resync_owner;
-                out.promised = {meta.promised.counter, meta.promised.proposer};
-                out.accepted = {meta.accepted.counter, meta.accepted.proposer};
-                out.config.nroles = meta.config.nroles;
-                memcpy(out.config.roles, meta.config.roles, meta.config.nroles);
                 res = sizeof(out);
             } else {
                 store.remove_witness(
@@ -402,19 +371,9 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         int32_t res = 0;
         try {
             RawstorObjectConfig config{};
-            config.epoch = payload.config.epoch;
-            config.sync_id = payload.config.sync_id;
-            memcpy(
-                config.sync_id_history, payload.config.sync_id_history,
-                sizeof(config.sync_id_history)
-            );
-            config.resync_owner = payload.config.resync_owner;
-            config.nroles = payload.config.nroles;
-            for (size_t i = 0; i < payload.config.nroles; ++i) {
-                if (payload.config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
-                    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-                }
-                config.roles[i] = payload.config.roles[i];
+            if (int error =
+                    rawstor_frame_config_decode(&config, &payload.config)) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
             }
             store.set_config(
                 uuid_of(payload.object_id), payload.chunk_offset, config,
