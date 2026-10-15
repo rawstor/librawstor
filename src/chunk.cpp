@@ -4,7 +4,6 @@
 #include "config.h"
 #include "file_backend.hpp"
 #include "location.hpp"
-#include "member.hpp"
 #include "opts.h"
 #include "ost_backend.hpp"
 #include "slot.hpp"
@@ -51,6 +50,11 @@
 #include <unordered_map>
 
 namespace {
+
+// An optional witness occupies the last location beyond the data width.
+bool has_witness(const RawstorObjectSpec& spec, size_t members) noexcept {
+    return members == spec.width + 1;
+}
 
 bool member_has_config(
     const RawstorObjectMeta& member, const RawstorObjectConfig& config,
@@ -954,8 +958,8 @@ rawstd::Task<void> recreate_missing(
         bool failed = false;
         try {
             slot = co_await Slot::create(queue, locations[i]);
-            const bool data = !rawstor::has_witness(sp, locations.size()) ||
-                              i + 1 < locations.size();
+            const bool data =
+                !has_witness(sp, locations.size()) || i + 1 < locations.size();
             co_await slot->create(
                 id, offset, sp,
                 data ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS
@@ -1133,24 +1137,23 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         std::find_if(metas.begin(), metas.end(), [](const auto& meta) {
             return meta.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE;
         });
-    const bool has_witness =
-        answer != metas.end() &&
-        rawstor::has_witness(answer->spec, locations.size());
-    if (has_witness && answer->spec.width % 2 != 0) {
+    const bool witness =
+        answer != metas.end() && has_witness(answer->spec, locations.size());
+    if (witness && answer->spec.width % 2 != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     for (size_t i = 0; i < metas.size(); ++i) {
         if (metas[i].state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             continue;
         }
-        const auto expected = has_witness && i + 1 == metas.size()
+        const auto expected = witness && i + 1 == metas.size()
                                   ? RAWSTOR_MEMBER_WITNESS
                                   : RAWSTOR_MEMBER_DATA;
         if (metas[i].member_role != expected) {
             RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
         }
     }
-    const size_t data_members = locations.size() - has_witness;
+    const size_t data_members = locations.size() - witness;
     std::vector<std::optional<rawstd::Task<RawstorObjectMeta>>> open_tasks(
         slots.size()
     );

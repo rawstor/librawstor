@@ -39,7 +39,6 @@ librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/list.h \
 librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         backend.cpp \
                         backend.hpp \
-                        member.hpp \
                         blk_backend.cpp \
                         blk_backend.hpp \
                         chunk.cpp \
