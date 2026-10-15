@@ -3,7 +3,6 @@
 #include "opts.h"
 #include "slot.hpp"
 #include "target.hpp"
-#include "witness.hpp"
 
 #include <rawstor/list.h>
 

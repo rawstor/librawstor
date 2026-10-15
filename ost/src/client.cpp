@@ -2,8 +2,8 @@
 
 #include <ost/server.hpp>
 
+#include "member.hpp"
 #include "slot.hpp"
-#include "witness.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -45,14 +45,6 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
     );
 
     return EIO;
-}
-
-// RawstorFrameAllocatePayload::chunk_shift's own doc comment on why a
-// shift, not the full value -- `chunk_size` is always a power of two
-// (RawstorObjectSpec's own doc comment, target.h), 0 meaning no chunking.
-uint8_t chunk_size_to_shift(uint64_t chunk_size) noexcept {
-    return chunk_size == 0 ? 0
-                           : static_cast<uint8_t>(__builtin_ctzll(chunk_size));
 }
 
 // chunk_shift comes straight off the wire, from a peer this end doesn't
@@ -1068,26 +1060,7 @@ rawstd::DetachedTask Client::_meta(
                 RAWSTOR_CMD_META, head.cid, result, 0
             );
         } else {
-            RawstorFrameMetaPayload body_out{};
-            body_out.size = meta.spec.size;
-            body_out.state = static_cast<RawstorSyncStateType>(meta.state);
-            body_out.chunk_shift = chunk_size_to_shift(meta.spec.chunk_size);
-            body_out.width = static_cast<uint8_t>(meta.spec.width);
-            body_out.member_role = static_cast<uint8_t>(meta.member_role);
-            body_out.writers = meta.writers;
-            body_out.config.epoch = meta.config.epoch;
-            body_out.config.sync_id = meta.config.sync_id;
-            memcpy(
-                body_out.config.sync_id_history, meta.config.sync_id_history,
-                sizeof(body_out.config.sync_id_history)
-            );
-            body_out.config.resync_owner = meta.config.resync_owner;
-            body_out.config.nroles = meta.config.nroles;
-            memcpy(
-                body_out.config.roles, meta.config.roles, meta.config.nroles
-            );
-            body_out.promised = {meta.promised.counter, meta.promised.proposer};
-            body_out.accepted = {meta.accepted.counter, meta.accepted.proposer};
+            auto body_out = encode_member_meta(meta);
             std::vector<unsigned char> data(sizeof(body_out));
             memcpy(data.data(), &body_out, sizeof(body_out));
             co_await client->_send_response(
@@ -1299,25 +1272,7 @@ rawstd::DetachedTask Client::_sync(
         } else {
             RawstorFrameSyncReplyPayload body_out{};
             body_out.ok = reply.ok != 0 ? 1 : 0;
-            const RawstorObjectMeta& meta = reply.meta;
-            RawstorFrameMetaPayload& wire = body_out.meta;
-            wire.size = meta.spec.size;
-            wire.state = static_cast<RawstorSyncStateType>(meta.state);
-            wire.chunk_shift = chunk_size_to_shift(meta.spec.chunk_size);
-            wire.width = static_cast<uint8_t>(meta.spec.width);
-            wire.member_role = static_cast<uint8_t>(meta.member_role);
-            wire.writers = meta.writers;
-            wire.config.epoch = meta.config.epoch;
-            wire.config.sync_id = meta.config.sync_id;
-            memcpy(
-                wire.config.sync_id_history, meta.config.sync_id_history,
-                sizeof(wire.config.sync_id_history)
-            );
-            wire.config.resync_owner = meta.config.resync_owner;
-            wire.config.nroles = meta.config.nroles;
-            memcpy(wire.config.roles, meta.config.roles, meta.config.nroles);
-            wire.promised = {meta.promised.counter, meta.promised.proposer};
-            wire.accepted = {meta.accepted.counter, meta.accepted.proposer};
+            body_out.meta = encode_member_meta(reply.meta);
             std::vector<unsigned char> data(sizeof(body_out));
             memcpy(data.data(), &body_out, sizeof(body_out));
             co_await client->_send_response(

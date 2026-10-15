@@ -1,4 +1,4 @@
-#include "witness.hpp"
+#include "member.hpp"
 #include <mds/client.hpp>
 
 #include <mds/server.hpp>
@@ -346,7 +346,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                 RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
             }
             if (head.cmd == RAWSTOR_CMD_META) {
-                out = encode_witness(store.witness_meta(
+                out = encode_member_meta(store.witness_meta(
                     uuid_of(payload.object_id), payload.offset
                 ));
                 res = sizeof(out);

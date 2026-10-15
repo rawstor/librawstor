@@ -92,14 +92,10 @@ private:
     // fails with EROFS instead.
     bool _readonly;
 
-    size_t _data_count() const noexcept;
-    bool _has_witness() const noexcept;
     rawstd::Task<void> _set_member_config(
         size_t index, RawstorObjectConfig config, unsigned int flags = 0,
-        std::optional<RawstorObjectSyncStateValue> state = std::nullopt,
-        bool recreate_missing = false
+        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     );
-    rawstd::Task<void> _record_witness(bool bump, size_t joining);
 
     std::shared_ptr<MirrorControl> _control;
 
@@ -259,12 +255,8 @@ private:
     // `m`'s own chunk, as a target URI (location/id/offset), for logs.
     std::string _member_str(const Member& m) const;
 
-    // A witness requires a majority of all members. Without one,
-    // below-quorum writes freeze for N >= 3 only: with N = 2 a single
-    // survivor may continue, because auto-open requires both members, so the
-    // abandoned peer can never auto-start alone (docs/mirroring.md,
-    // quorum rules).
-    bool _below_write_quorum(size_t survivors) const noexcept;
+    // Every voting member participates in the same strict majority.
+    bool _below_write_quorum(size_t votes) const noexcept;
 
     // Metadata comparison at open (docs/mirroring.md, "Comparison rules"):
     // excludes SYNCING/stale members, picks the newest sync_id, refuses a

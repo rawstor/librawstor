@@ -1,5 +1,6 @@
 #include "wire_backend.hpp"
 #include "config.hpp"
+#include "member.hpp"
 #include "wire_backend_op.hpp"
 
 #include "opts.h"
@@ -47,19 +48,6 @@ namespace {
 uint8_t chunk_size_to_shift(uint64_t chunk_size) noexcept {
     return chunk_size == 0 ? 0
                            : static_cast<uint8_t>(__builtin_ctzll(chunk_size));
-}
-
-// chunk_shift comes straight off the wire, from a peer this end doesn't
-// control -- 1ull << chunk_shift is undefined behavior once chunk_shift
-// reaches 64, so that (and anything past it, since chunk_shift's own
-// uint8_t range goes to 255) is rejected outright rather than silently
-// misinterpreted.
-uint64_t chunk_shift_to_size(uint8_t chunk_shift) {
-    if (chunk_shift >= 64) {
-        rawstd_error("Invalid chunk_shift: %u\n", chunk_shift);
-        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-    }
-    return chunk_shift == 0 ? 0 : (1ull << chunk_shift);
 }
 
 } // namespace
@@ -1034,28 +1022,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_wire_meta(
             *static_cast<const RawstorFrameMetaPayload*>(
                 static_cast<const void*>(response.data())
             );
-        ret.spec.size = payload.size;
-        ret.member_role = static_cast<RawstorMemberRole>(payload.member_role);
-        if (payload.width == 0 ||
-            (payload.member_role != RAWSTOR_MEMBER_DATA &&
-             payload.member_role != RAWSTOR_MEMBER_WITNESS)) {
-            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-        }
-        ret.spec.width = payload.width;
-        ret.spec.chunk_size = chunk_shift_to_size(payload.chunk_shift);
-        ret.state = static_cast<RawstorObjectSyncStateValue>(payload.state);
-        ret.writers = payload.writers;
-        ret.config.epoch = payload.config.epoch;
-        ret.config.sync_id = payload.config.sync_id;
-        memcpy(
-            ret.config.sync_id_history, payload.config.sync_id_history,
-            sizeof(ret.config.sync_id_history)
-        );
-        ret.config.resync_owner = payload.config.resync_owner;
-        ret.config.nroles = payload.config.nroles;
-        memcpy(ret.config.roles, payload.config.roles, ret.config.nroles);
-        ret.promised = {payload.promised.counter, payload.promised.proposer};
-        ret.accepted = {payload.accepted.counter, payload.accepted.proposer};
+        ret = decode_member_meta(payload);
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -1119,28 +1086,7 @@ rawstd::Task<RawstorObjectSyncReply> Backend::_sync_request(
     co_await *op;
     const RawstorFrameSyncReplyPayload& reply = op->reply();
     const RawstorFrameMetaPayload& wire = reply.meta;
-    if (wire.width == 0 || (wire.member_role != RAWSTOR_MEMBER_DATA &&
-                            wire.member_role != RAWSTOR_MEMBER_WITNESS)) {
-        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-    }
-    RawstorObjectMeta meta{};
-    meta.spec.size = wire.size;
-    meta.spec.width = wire.width;
-    meta.spec.chunk_size = chunk_shift_to_size(wire.chunk_shift);
-    meta.member_role = static_cast<RawstorMemberRole>(wire.member_role);
-    meta.state = static_cast<RawstorObjectSyncStateValue>(wire.state);
-    meta.writers = wire.writers;
-    meta.config.epoch = wire.config.epoch;
-    meta.config.sync_id = wire.config.sync_id;
-    memcpy(
-        meta.config.sync_id_history, wire.config.sync_id_history,
-        sizeof(meta.config.sync_id_history)
-    );
-    meta.config.resync_owner = wire.config.resync_owner;
-    meta.config.nroles = wire.config.nroles;
-    memcpy(meta.config.roles, wire.config.roles, meta.config.nroles);
-    meta.promised = {wire.promised.counter, wire.promised.proposer};
-    meta.accepted = {wire.accepted.counter, wire.accepted.proposer};
+    auto meta = decode_member_meta(wire);
     co_return RawstorObjectSyncReply{reply.ok != 0, meta};
 }
 

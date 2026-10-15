@@ -1,54 +1,52 @@
-#ifndef RAWSTOR_WITNESS_HPP
-#define RAWSTOR_WITNESS_HPP
+#ifndef RAWSTOR_MEMBER_HPP
+#define RAWSTOR_MEMBER_HPP
 
 #include <cstring>
 #include <rawstd/gpp.hpp>
-#include <rawstd/uri.hpp>
 #include <rawstor/protocol.h>
 #include <rawstor/target.h>
 
 namespace rawstor {
-inline bool witness_state(RawstorObjectSyncStateValue state) {
+inline bool member_state(RawstorObjectSyncStateValue state) {
     return state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN ||
            state == RAWSTOR_OBJECT_SYNC_STATE_DIRTY ||
            state == RAWSTOR_OBJECT_SYNC_STATE_LOST;
 }
-inline bool witness_approves(
-    const RawstorObjectMeta& witness, const RawstorObjectMeta& data,
-    size_t index, size_t members, size_t witness_index
+inline bool member_has_config(
+    const RawstorObjectMeta& member, const RawstorObjectConfig& config,
+    size_t members
 ) noexcept {
-    const auto& config = witness.config;
-    if (witness.member_role != RAWSTOR_MEMBER_WITNESS ||
-        data.member_role != RAWSTOR_MEMBER_DATA || config.sync_id == 0 ||
-        config.sync_id != data.config.sync_id || config.nroles != members ||
-        data.config.nroles != members || index >= config.nroles ||
-        witness_index >= config.nroles ||
-        config.roles[witness_index] != RAWSTOR_OBJECT_MEMBER_IN_SYNC ||
-        config.roles[index] != RAWSTOR_OBJECT_MEMBER_IN_SYNC ||
-        data.config.roles[index] != RAWSTOR_OBJECT_MEMBER_IN_SYNC ||
-        config.epoch != data.config.epoch ||
-        config.resync_owner != data.config.resync_owner ||
-        memcmp(
-            config.sync_id_history, data.config.sync_id_history,
-            sizeof(config.sync_id_history)
-        ) != 0 ||
-        memcmp(config.roles, data.config.roles, members) != 0) {
-        return false;
-    }
-    for (size_t i = 0; i < config.nroles; ++i) {
-        if (config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
-            return false;
-        }
-    }
-    if (witness.state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN) {
-        return data.state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    }
-    return witness.state == RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
+    return member_state(member.state) &&
+           member.config.sync_id == config.sync_id &&
+           member.config.epoch == config.epoch &&
+           member.config.resync_owner == config.resync_owner &&
+           member.config.nroles == config.nroles &&
+           (config.nroles == 0 || config.nroles == members) &&
+           memcmp(
+               member.config.sync_id_history, config.sync_id_history,
+               sizeof(config.sync_id_history)
+           ) == 0 &&
+           memcmp(member.config.roles, config.roles, config.nroles) == 0;
 }
 
-inline RawstorFrameMetaPayload encode_witness(const RawstorObjectMeta& meta) {
-    if (meta.member_role != RAWSTOR_MEMBER_WITNESS ||
-        !witness_state(meta.state)) {
+inline bool member_matches_config(
+    const RawstorObjectMeta& member, const RawstorObjectConfig& config,
+    size_t index, size_t members
+) noexcept {
+    return member_has_config(member, config, members) &&
+           (config.nroles == 0 ||
+            (index < members &&
+             config.roles[index] == RAWSTOR_OBJECT_MEMBER_IN_SYNC));
+}
+
+inline RawstorFrameMetaPayload
+encode_member_meta(const RawstorObjectMeta& meta) {
+    if ((meta.member_role != RAWSTOR_MEMBER_DATA &&
+         meta.member_role != RAWSTOR_MEMBER_WITNESS) ||
+        !member_state(meta.state) || meta.spec.width == 0 ||
+        meta.spec.width > UINT8_MAX ||
+        (meta.spec.chunk_size != 0 &&
+         (meta.spec.chunk_size & (meta.spec.chunk_size - 1)) != 0)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     for (size_t i = 0; i < meta.config.nroles; ++i) {
@@ -61,7 +59,8 @@ inline RawstorFrameMetaPayload encode_witness(const RawstorObjectMeta& meta) {
     out.width = static_cast<uint8_t>(meta.spec.width);
     out.chunk_shift =
         meta.spec.chunk_size == 0 ? 0 : __builtin_ctzll(meta.spec.chunk_size);
-    out.member_role = RAWSTOR_MEMBER_WITNESS;
+    out.member_role = static_cast<uint8_t>(meta.member_role);
+    out.writers = meta.writers;
     out.state = meta.state;
     out.config.epoch = meta.config.epoch;
     out.config.sync_id = meta.config.sync_id;
@@ -93,14 +92,16 @@ inline RawstorObjectConfig decode_config(const RawstorFrameConfig& in) {
     }
     return out;
 }
-inline RawstorObjectMeta decode_witness(const RawstorFrameMetaPayload& in) {
+inline RawstorObjectMeta decode_member_meta(const RawstorFrameMetaPayload& in) {
     RawstorObjectMeta out{};
     out.member_role = static_cast<RawstorMemberRole>(in.member_role);
     out.state = static_cast<RawstorObjectSyncStateValue>(in.state);
-    if (out.member_role != RAWSTOR_MEMBER_WITNESS ||
-        !witness_state(out.state) || in.chunk_shift >= 64 || in.width == 0) {
+    if ((out.member_role != RAWSTOR_MEMBER_DATA &&
+         out.member_role != RAWSTOR_MEMBER_WITNESS) ||
+        !member_state(out.state) || in.chunk_shift >= 64 || in.width == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
+    out.writers = in.writers;
     out.spec.size = in.size;
     out.spec.width = in.width;
     out.spec.chunk_size =

@@ -393,5 +393,5 @@ extra location beyond the surviving copies' data width. `width` counts
 only data copies;
 `config.nroles` counts all members. One witness is supported only with an
 even number of data members. It participates in synchronous membership
-barriers and quorum; data I/O and resync skip it. Keep the complete target
+barriers and quorum; data I/O and the data-copy phase of resync skip it. Keep the complete target
 and member order. See [Witness](mds.md#witness).

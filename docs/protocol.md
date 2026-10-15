@@ -704,8 +704,9 @@ MDS accepts these operations independently of its `OBJ_*` map registry.
 `width` is data-copy redundancy; the configuration role array includes the
 witness. One witness per chunk is allowed only with an even data-member count.
 
-A manual branch resolution explicitly sets the witness to LOST through
-`SET_CONFIG`, invalidating its vote until a trustworthy record is established.
+A manual branch resolution records EXCLUDED for every non-winner through
+`SET_CONFIG`, regardless of its member type. LOST describes unclean departure
+and follows the same reconciliation rules as DIRTY for both DATA and WITNESS.
 Witnesses do not accept data I/O or object versions.
 
 Ordinary `LIST` reports every registered MDS object and native witness member,

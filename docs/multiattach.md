@@ -29,7 +29,7 @@ separately.
 | `SET_CONFIG` and `rawstor_target_set_member_config()` retired | 2 | ❌ | [Retiring `SET_CONFIG`](#retiring-set_config) |
 | The client keeps the register value once per chunk, not per member | 2 | ❌ | [The register](#the-register-caspaxos) |
 | OST serves one backend Slot; mirroring is coordinated by the client | 1 | ✅ | [Mirroring](mirroring.md#one-copy-per-server) |
-| Witness participation in the configuration register for N = 2 | Before 2 | ❌ | Prerequisite for multi-attach Stage 2; [MDS design](mds.md#witness-stage-3) |
+| Witness participation in the configuration register for N = 2 | Before 2 | ❌ | Prerequisite for multi-attach Stage 2; [MDS design](mds.md#witness) |
 
 Stage 1 introduces the public ABI, wire layouts and data-member behavior
 needed by multi-attach while the client still operates as one writer
@@ -304,9 +304,9 @@ With stage 2, a writer that gets `-ESTALE` reads the register from a
 majority (`META`), adopts the configuration -- exclusions, a syncing member
 to duplicate onto, a rejoined member -- and retries the write. A decided
 transition is accepted by a majority, and every write needs every member
-its writer believes in-sync; for N ≥ 3 those always intersect, so a writer
+its writer believes in-sync; both sets are majorities and therefore intersect, so a writer
 can never acknowledge a write against an outdated configuration (A3).
-With N = 2, see below.
+For two data copies, see below.
 
 ## Resync across processes
 
@@ -385,12 +385,13 @@ public ABI or wire request.
 
 This is Stage 2 behavior, after witness support is implemented. Stage 1
 retains the single-writer client's current `SET_CONFIG` transitions and
-the existing two-copy degraded behavior described in
-[Mirroring](mirroring.md#known-limitation-two-mirrors-one-survivor).
-The witness design in [MDS](mds.md#witness-stage-3) describes single-writer
+the strict majority rule described in
+[Mirroring](mirroring.md#two-data-copies-and-a-witness).
+The witness design in [MDS](mds.md#witness) describes single-writer
 recovery; before Stage 2 it must also provide durable CASPaxos acceptor
 state and synchronous prepare/accept votes for configuration transitions.
-Its asynchronous single-writer updates do not satisfy that requirement.
+Its synchronous SET_CONFIG barriers do not supply the prepare/accept votes
+required by Stage 2.
 
 ---
 
@@ -426,7 +427,7 @@ refer to [Mirroring](mirroring.md#failure-cases).
 |---|---|---|---|
 | A writer loses one member (N ≥ 3) | Its writes to it fail | ✅ F1: exclude, continue on the majority | The exclusion is a transition: one writer decides, the others get `-ESTALE` at their next write to the survivors and adopt it |
 | Partition {X, A} \| {Y, B, C} (N = 3) | X reaches a minority, Y a majority | — | Y excludes A (majority B, C → epoch e+1) and goes on. X cannot reach a majority to exclude B and C: its writes freeze (`EIO`), unacknowledged. Its writes may still land on A at epoch e -- A is excluded, they are resynced away. X's reads from A are stale until it learns of the exclusion (allowed, *Requirements*). After the heal X gets `-ESTALE` from B and C and adopts |
-| Partition {X, A} \| {Y, B} (N = 2) | Neither side has a majority | — (one writer: continue on one survivor as in [Mirroring](mirroring.md#known-limitation-two-mirrors-one-survivor)) | Only a side with a data acceptor and W can decide exclusion; without a register quorum, transitions freeze |
+| Partition {X, A} \| {Y, B} (N = 2) | Neither side has a majority | ✅ Writes freeze below a member majority; A and W can continue together | Only a side with a data acceptor and W can decide exclusion; without a register quorum, transitions freeze |
 | Asymmetric: X reaches A, B, C; Y only C (N = 3) | Y's writes to A and B fail | — | Y cannot exclude A and B (no majority): it freezes. Its failed writes may have landed on C only: those regions differ on C until written again -- when Y gives up, its sessions drop and C goes `LOST`, so the divergence is resynced away. X goes on |
 | Only the server side of a session hangs (no FIN) | The member keeps counting the session | — | The writer count may stay high; it does not gate register votes. TCP keepalive / reconnect bound how long |
 | A reply is lost | The proposer cannot tell whether its request took effect | ✅ (acceptor side: every reply is the record, repeated requests are refused or idempotent) | The proposer retries with a higher ballot; step 2 finds its own change already in the value and adopts it |
@@ -486,7 +487,7 @@ record or frames, so both change in place. Details in
    the current chunk epoch on its writes, `SET_CONFIG` for its transitions.
 
    **Prerequisite before Stage 2: witness support.** ❌ Implement the
-   witness planned in [MDS](mds.md#witness-stage-3), including durable
+   witness planned in [MDS](mds.md#witness), including durable
    CASPaxos votes for the chunk configuration register. Two data copies
    plus the witness form three acceptors; no single-copy override. Witness
    development precedes multi-attach Stage 2, rather than following it.

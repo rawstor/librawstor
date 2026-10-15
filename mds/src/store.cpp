@@ -1,5 +1,5 @@
 #include "config.hpp"
-#include "witness.hpp"
+#include "member.hpp"
 #include <mds/store.hpp>
 
 #include <rawstd/gpp.hpp>
@@ -508,7 +508,7 @@ void ObjectStore::create_witness(
     meta.spec = spec;
     meta.member_role = RAWSTOR_MEMBER_WITNESS;
     meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    auto record = encode_witness(meta);
+    auto record = encode_member_meta(meta);
     std::lock_guard<std::mutex> guard(_mutex);
     Stmt stmt(
         _db, "INSERT INTO witnesses(id,chunk_offset,record) VALUES(?,?,?)"
@@ -535,7 +535,7 @@ ObjectStore::witness_meta(const RawstdUUID& id, uint64_t offset) {
     }
     RawstorFrameMetaPayload record{};
     memcpy(&record, bytes.data(), sizeof(record));
-    return decode_witness(record);
+    return decode_member_meta(record);
 }
 
 void ObjectStore::set_config(
@@ -558,7 +558,7 @@ void ObjectStore::set_config(
     }
     RawstorFrameMetaPayload record{};
     memcpy(&record, bytes.data(), sizeof(record));
-    auto meta = decode_witness(record);
+    auto meta = decode_member_meta(record);
     if (state) {
         meta.state = *state;
     } else if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 &&
@@ -566,7 +566,7 @@ void ObjectStore::set_config(
         meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     }
     meta.config = config;
-    record = encode_witness(meta);
+    record = encode_member_meta(meta);
     Stmt update(
         _db, "UPDATE witnesses SET record=? WHERE id=? AND chunk_offset=?"
     );

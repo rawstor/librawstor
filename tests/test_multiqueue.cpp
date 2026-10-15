@@ -465,11 +465,11 @@ TEST(MultiqueueTest, degraded_open_recorded_by_adopting_writer) {
  * rejoins byte-identical to the in-sync copy.
  */
 TEST(MultiqueueTest, resync_while_queues_write) {
-    Members members(2, "00000000-0000-7000-8000-0000000000c7");
+    Members members(3, "00000000-0000-7000-8000-0000000000c7");
     const size_t size = 16ull << 20;
     {
         Queue queue(16);
-        RawstorObjectSpec spec = spec_n(2);
+        RawstorObjectSpec spec = spec_n(3);
         spec.size = size;
         ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
 
@@ -479,15 +479,16 @@ TEST(MultiqueueTest, resync_while_queues_write) {
         fresh.sync_id = 0x1111111111111111ull;
         fresh.sync_id_history[0] = 0x2222222222222222ull;
         ASSERT_EQ(target_set_config(queue, members.target(0), fresh), 0);
+        ASSERT_EQ(target_set_config(queue, members.target(2), fresh), 0);
         RawstorObjectConfig stale{};
         stale.epoch = 1;
         stale.sync_id = 0x2222222222222222ull;
         ASSERT_EQ(target_set_config(queue, members.target(1), stale), 0);
 
-        for (size_t i = 0; i < 2; ++i) {
+        for (size_t i = 0; i < 3; ++i) {
             RawstorObject* member = nullptr;
             ASSERT_EQ(target_open(queue, members.target(i), &member), 0);
-            std::string garbage(1 << 20, static_cast<char>('0' + i));
+            std::string garbage(1 << 20, i == 1 ? '1' : '0');
             for (uint64_t off = 0; off < size; off += garbage.size()) {
                 ASSERT_EQ(
                     object_write(

@@ -15,7 +15,7 @@ numbers its stages separately.
 | `rawstor_target_meta()` / `rawstor_target_set_member_config()` | 1 | ✅ | `include/rawstor/target.h` |
 | Quorum at open (> N/2), split-brain detection | 2 | ✅ | `src/chunk.cpp` |
 | Degraded open, F10 recreate of a missing copy | 2 | ✅ | `src/chunk.cpp` |
-| Degrade & continue (F1), write freeze below quorum for N ≥ 3 | 2 | ✅ | `src/chunk.cpp` |
+| Degrade & continue (F1), write freeze below quorum | 2 | ✅ | `src/chunk.cpp` |
 | Read failover and read-repair (F2) | 2 | ✅ | `src/chunk.cpp` |
 | Copies keep their own `DIRTY`/`CLEAN`/`LOST`; clean close with `LEAVE`; `rawstor_object_abandon()` | 2 | ✅ | `src/slot.cpp`, `src/blk_backend.cpp`, `src/chunk.cpp` |
 | Every member's role in each record; syncing is a role, not a state | 2 | ✅ | `src/chunk.cpp` |
@@ -259,12 +259,10 @@ to history) exactly when that membership changes, in either direction:
   the current `sync_id` (F11). The new `sync_id` is recorded by the dirty
   gate, before the first write is acknowledged.
 - **A copy rejoins** (F7): once its resync is done, the IN-SYNC copies move
-  to a new `sync_id` first, then the rejoining copy adopts it. Interrupted
-  in between, the copy is still syncing on its old record — stale either
-  way. Data-only quorum would be safe without this bump (the copies are
-  identical), but a record naming the old membership — such as a witness
-  record whose update failed (see [MDS design](mds.md#witness)) —
-  must never match a copy of the new one.
+  to a new `sync_id` first, then the rejoining member adopts it. Interrupted
+  in between, the member is still syncing on its old record. A record
+  naming the old membership must never match the new composition; this
+  applies to DATA and WITNESS alike.
 
 Everything else keeps the identity:
 
@@ -292,26 +290,14 @@ Metadata transitions (marking `DIRTY`, epoch/`sync_id` bump, resync completion) 
 
 ## Quorum: excluding split brain by construction
 
-The following data-only rules apply when no witness is declared.
+The same rules apply to DATA and WITNESS members. N is the total number of members.
 
 Key invariant: **every acknowledged write exists on a set of copies that intersects any future auto-start set.** Therefore the newest `sync_id` is always visible at auto-start, and two disjoint write histories cannot be created through automatic paths.
 
 - **Auto-start (open) requires strictly more than N/2 reachable mirrors** (N=2 → both). Within the reachable majority, the copy with the newest `sync_id` is authoritative (majority intersection guarantees it is present); stale copies get an online resync.
 - **Below quorum: manual approval only** (force-open via CLI/opts — not yet implemented). There is deliberately no "clean exception": `CLEAN` only means "I was closed correctly" — a copy cannot know locally that it did not miss anything while offline. Alternating offline periods of `CLEAN` copies would produce split brain.
-- **Runtime (chunk already open):**
-  - N ≥ 3: degrade & continue while more than N/2 mirrors survive; at ≤ N/2 survivors **writes freeze** (policy: error to the caller or block until quorum returns). Otherwise "wrote on minority {A}, later auto-started on majority {B,C}" would orphan acknowledged data.
-  - N = 2: **continuing on a single survivor is allowed.** This is safe against split brain because auto-start requires both mirrors, and the abandoned peer remains `DIRTY`/ancestor and can never auto-start alone. It is not free of risk, though: while degraded, every acknowledged write lives on that one survivor only — see *Known limitation: two mirrors, one survivor*.
-- **What counts toward a quorum.** The open quorum counts every
-  reachable real copy, STALE ones included: the last acknowledged write
-  set was itself a majority (or, for N = 2, is guaranteed to be among the
-  reachable copies), so any reachable majority contains its newest
-  `sync_id`, and the comparison rules pick it out. An unreachable copy
-  doesn't count, and neither does a blank copy recreated at this very open
-  (F10): it holds none of the acknowledged writes, so letting it make up
-  the majority would break the intersection — a survivor that fell behind
-  could then be opened as authoritative. The runtime write quorum
-  (N ≥ 3) counts only IN-SYNC copies: a STALE or resyncing copy doesn't
-  hold the writes it would be vouching for.
+- **Runtime (chunk already open):** continue while more than N/2 members remain IN_SYNC; at or below N/2, writes freeze with EIO. Two data copies without a witness therefore require both copies throughout the writable session.
+- **What counts toward a quorum.** Opening counts reachable, existing members, including nonempty stale ones: every acknowledged write set was a majority, so any reachable majority intersects it. The history comparison identifies the newest generation and requires an authoritative data source. Unreachable members and blank records do not count. Runtime writes count only IN_SYNC members with the recorded configuration; stale or syncing members cannot vote until their rejoin completes.
 - **`sync_id_history` stays as defense in depth**: it catches consequences of a wrong manual force-open, an OST restored from backup, or bugs.
 - **Witness members.** An explicitly declared metadata-only member can
   participate in the same synchronous membership barriers and quorum,
@@ -319,7 +305,7 @@ Key invariant: **every acknowledged write exists on a set of copies that interse
   both writable open and runtime writes require a majority of N+1 members:
   N/2 matching data copies plus witness, or N/2+1 data copies alone. A failed
   witness update excludes its vote; writes below quorum freeze. See
-  [Witness](mds.md#witness). Reads, data writes and resync use only data copies.
+  [Witness](mds.md#witness). Reads and data writes use only DATA members. All members use the same rejoin transitions; a witness needs no data copy during resync.
 
 The open decision, put together:
 
@@ -367,11 +353,9 @@ sequenceDiagram
     end
     A-->>C: ok
     B--xC: error (F1)
-    Note over C: suspend acks
-    C->>A: epoch+1, new sync_id, old one to history (fsync)
-    Note over C: B is STALE, excluded from I/O
-    C-->>App: ack (resume acks)
-    Note over B,C: B returns later: online resync (F7)
+    Note over C: one of two members remains: no majority
+    C-->>App: EIO; writes frozen
+    Note over B,C: restore quorum before reopening
 ```
 
 ---
@@ -409,8 +393,7 @@ naming other locations while the chunk is open fails with `-EINVAL`.
 - **A member being excluded (`LEAVING`)** serves no I/O from the moment it
   fails. A write that skipped it, through any open, is acknowledged only
   once its exclusion is recorded on the survivors (F1).
-- **N = 2 keeps continuing on one survivor**: the process is one writer,
-  so *Quorum* applies as it is.
+- **All member counts use the same majority rule**, including two data copies without a witness.
 
 ---
 
@@ -418,7 +401,7 @@ naming other locations while the chunk is open fails with `-EINVAL`.
 
 | # | Case | Detection | Reaction | Identity recovery |
 |---|------|-----------|----------|-------------------|
-| F1 | Write failure on one mirror M (network / EIO / timeout, per-connection retries exhausted) | error from the connection layer | If survivors > N/2 (or N=2 with 1 survivor): **suspend acks** → on survivors: `epoch`+1, new `sync_id`, old one pushed to history, fsync → mark M STALE in memory, exclude from I/O → resume acks. If survivors ≤ N/2 with N ≥ 3 — **freeze writes** (see quorum). Log + degradation event | Online resync when M returns (F7) |
+| F1 | Write failure on one mirror M (network / EIO / timeout, per-connection retries exhausted) | error from the connection layer | If survivors > N/2: **suspend acks** → on survivors: `epoch`+1, new `sync_id`, old one pushed to history, fsync → mark M STALE in memory, exclude from I/O → resume acks. If survivors ≤ N/2 — **freeze writes** (see quorum). Log + degradation event | Online resync when M returns (F7) |
 | F2 | Read failure / transport hash mismatch on a mirror | error / EPROTO in the read path | Retry the read from another IN-SYNC mirror, return the data. **Read-repair**: rewrite the region on the failing mirror; if the repair write fails → degrade as in F1 | Pointwise via read-repair; on degradation — F7 |
 | F3 | All mirrors failed | all connections dead | At open: refused with `ENOTCONN` (degenerate case of F4's below-quorum refusal). On an already-open chunk: `EIO` to the caller on the next write, chunk unavailable. Periodic reconnect attempts | — (no copy available) |
 | F4 | OST unreachable at open | connect failure | Reachable > N/2 → degraded open on the majority (it is guaranteed to contain the newest `sync_id`); on survivors `epoch`+1 / new `sync_id` **before the first write ack**. Reachable ≤ N/2 (N=2 with one down falls here) → **auto-start refused**, manual force-open only (not yet implemented) | F7 when it returns |
@@ -427,7 +410,7 @@ naming other locations while the chunk is open fails with `-EINVAL`.
 | F7 | A stale mirror returns (rejoin) | reconnect probe + `sync_id`/`epoch` comparison: ancestor → stale | Record the copy's role as syncing (fsync), start an **online resync** (algorithm below) without stopping client I/O | On completion: the IN-SYNC copies move to a new `sync_id`/`epoch` (fsync), then the copy adopts it, state `DIRTY` if the chunk is (fsync) → mirror is IN-SYNC, reads allowed |
 | F8 | Client/OST crash during resync | the copy is left with role syncing / an old `sync_id` | Copy is untrusted | Resync from scratch (v1; resumable with the persistent bitmap in v2) |
 | F9 | Split brain (disjoint write histories) | different `sync_id`s, neither in the other's history | **Excluded in automatic paths by the quorum rules.** Can only arise from a wrong manual force-open, an OST restored from backup, or a bug → then: open refused with a clear error, no automatic winner | Operator: `rawstor resolve TARGET --winner=N` (`rawstor show -v`'s own `slot[N]` index) → winner gets a new `sync_id`, the loser gets a full resync |
-| F10 | Chunk copy missing on one OST (disk lost, OST reprovisioned) | ENOENT when opening the copy (a `file://` location whose directory is gone altogether is unreachable instead, ENOTCONN -- e.g. an unmounted disk) | At open, recreate that copy blank (ALLOCATE, sized off a surviving copy's own META) and treat it as stale. Only when the surviving copies alone are a majority (> N/2): a blank copy never counts toward the quorum, or a survivor that fell behind could be opened as authoritative. So N=2 with one copy missing is not healed automatically: the open fails the quorum check, and the copy is recreated by hand (`rawstor create` on its location) once the survivor is known to be current. Every copy missing is never recreated (nothing vouches the chunk held no data) and the open fails ENOENT. Not on a read-only open or a version | Full online resync (F7) |
+| F10 | Chunk copy missing on one OST (disk lost, OST reprovisioned) | ENOENT when opening the copy (a `file://` location whose directory is gone altogether is unreachable instead, ENOTCONN -- e.g. an unmounted disk) | At open, recreate that copy blank (ALLOCATE, sized off a surviving copy's own META) and treat it as stale. Only when the surviving copies alone are a majority (> N/2): a blank copy never counts toward the quorum, or a survivor that fell behind could be opened as authoritative. So N=2 with one copy missing is not healed automatically: the open fails the quorum check, and the operator recreates it (`rawstor create` on its location) and records the chosen winner with `rawstor resolve` before reopening. Every copy missing is never recreated (nothing vouches the chunk held no data) and the open fails ENOENT. Not on a read-only open or a version | Full online resync for DATA; metadata rejoin with no data copy for WITNESS (F7) |
 | F11 | Copy size mismatch (mixed file/blkdev backends round up to extent/volblocksize — see `src/blk_backend.hpp`) | logical spec comparison at open | The logical chunk size lives in metadata and is the same everywhere; physical allocation does not determine the logical size and is not checked at open | — |
 | F12 | Silent on-disk corruption (bit rot) | the transport hash does **not** catch it (the server hashes already-rotten data). `zfs://` catches it by itself; `file://` has nothing | v1: documented limitation; a scrub tool (chunk-wise comparison of copies) detects divergence under `CLEAN` metadata but cannot tell which copy is right | v1: operator decision. Long term (v3): stored per-chunk checksums |
 
@@ -491,31 +474,14 @@ deterministic winner may be the member that lost data. Closing this window
 requires synchronous durable data writes; it is accepted for now and
 bounded by the barrier latency.
 
-### Known limitation: two mirrors, one survivor
+### Two data copies and a witness
 
-A 2-way mirror keeps accepting writes on a single survivor when the other
-copy fails mid-session (F1), favoring availability: a single OST outage
-doesn't stall the guest. The price is that, until the failed copy is back
-and resynced, acknowledged writes have no redundancy. If the survivor is
-then lost as well — its disk replaced or pool recreated before the
-resync — those writes are gone:
-
-1. Copies A and B are in sync; B fails mid-session. A moves to a new
-   `sync_id` and keeps acknowledging writes; B stays `DIRTY` on the old
-   one.
-2. A's copy is lost (ENOENT) before B is resynced.
-3. B comes back, but it only holds the data from before step 1.
-
-Nothing can recover those writes, but the loss is never silent: B alone is
-not a majority, and a copy recreated in A's place never counts toward the
-quorum (F10), so the open is refused rather than served off B as if it were
-current. An operator who accepts B's content recreates A's copy by hand,
-and the next open resyncs it from B.
-
-A third data copy retains data redundancy after one member fails, and
-N = 3 freezes writes below a data majority. A metadata-only witness improves
-degraded-start availability for two data copies, but cannot recover their
-contents if both data copies are lost.
+Two data copies without a witness freeze writes when either member fails.
+Adding a witness provides three votes, so a data copy and the witness can
+continue together. The witness records membership and generation but holds
+no data: acknowledged degraded writes still have only one data copy until
+the failed DATA member returns and resyncs. A third DATA copy provides both
+a vote and another copy of the contents.
 
 ---
 

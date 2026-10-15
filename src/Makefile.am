@@ -40,7 +40,7 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         backend.cpp \
                         backend.hpp \
                         config.hpp \
-                        witness.hpp \
+                        member.hpp \
                         blk_backend.cpp \
                         blk_backend.hpp \
                         chunk.cpp \

@@ -6,7 +6,6 @@
 #include "object.hpp"
 #include "opts.h"
 #include "slot.hpp"
-#include "witness.hpp"
 
 #include <rawstor/list.h>
 #include <rawstor/target.h>

@@ -193,6 +193,7 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     };
     out.response.body.res = static_cast<int32_t>(sizeof(out.reply));
     out.reply.ok = 0;
+    out.reply.meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     out.reply.meta.member_role = RAWSTOR_MEMBER_DATA;
     out.reply.meta.width = 3;
     out.reply.meta.writers = 4;

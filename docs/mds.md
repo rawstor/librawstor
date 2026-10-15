@@ -366,7 +366,7 @@ Two classes of state, by recoverability:
 - `object_descriptor` / `chunk_map` / `versions` — an **index**; DR = rebuild
   by OST scan (below).
 - `witness` records (SQLite `witnesses` table) — **not** rebuildable by scan (they *are* the extra vote).
-  Losing them degrades availability (auto-start falls back to plain N=2
+  Losing them degrades availability (auto-start requires a data majority
   rules), never correctness; re-attach is defined in *Witness*.
 
 The topology (OST roster, failure domains, weights, `ost_id -> location`) is
@@ -927,7 +927,7 @@ stores the consistency tuple (`state`-like record, `sync_id`,
 is the third vote that restores auto-start with one OST down. Implementation:
 any server speaking the witness subset (`ALLOCATE`/`META`/`SET_CONFIG`/`RELEASE`) — a plain OST, an
 OST doubling as partial MDS, or the MDS itself. The member appears in the
-target list like any other member; data I/O and resync skip it. Its stored
+target list like any other member; data I/O and the data-copy phase of resync skip it. Its stored
 record carries `member_role = WITNESS` (see `chunk_meta`), so the
 reconstruct scan (`LIST` + per-object `META`) never mistakes the witness
 host for a data slot.
@@ -935,47 +935,43 @@ host for a data slot.
 ### Membership barriers
 
 The witness participates in the same synchronous configuration barriers as
-other members. It stores `epoch`, `sync_id`, history and the complete role
-array; its own role is IN_SYNC when it records the candidate configuration,
-or EXCLUDED when it cannot do so. It uses CLEAN, DIRTY and LOST states:
-CLEAN follows successful data-member departure only when those data records
-are actually CLEAN (LOST is sticky until explicitly cleared); DIRTY records a writable
-configuration, and LOST invalidates its vote. It has no data writer sessions.
+other members. Every member stores `epoch`, `sync_id`, history and the
+complete role array. IN_SYNC, SYNCING and EXCLUDED determine membership;
+CLEAN, DIRTY and LOST describe the stored state. LOST remains sticky through
+ordinary barriers and clean departure; resync or explicit CLEAR_LOST clears it.
+LOST is treated as DIRTY
+when reconciling a generation for either member type. It does not by itself
+exclude a vote. A witness has no data writer sessions.
 
 | Moment | Durable record before dependent acknowledgements |
 |---|---|
-| creation | initial generation on all data members, then CLEAN witness |
-| first write / read-repair | DIRTY witness and consistent member configuration |
-| runtime degradation | new generation and surviving composition on data members and witness |
-| resync completion | configuration including the promoted data member and DIRTY witness |
-| clean close | data members depart and close cleanly, then CLEAN witness |
+| creation | identical initial CLEAN generation on all members |
+| first write / read-repair | DIRTY state and consistent configuration on all voters |
+| runtime degradation | new generation and surviving composition on all remaining voters |
+| resync completion | configuration promoting the rejoined member, with DIRTY state |
+| last writer's clean close | CLEAN state after data writes have been flushed |
+| unclean close | LOST state on remaining members |
 
-Configuration updates to data members may run in parallel. The barrier waits
-for data updates and the witness update, excludes failed members, records the
-resulting composition on successful members, and checks the write quorum.
-No witness operation is issued for ordinary data writes between barriers.
-If the witness update fails, a data majority can continue with the witness
-excluded. Half the data copies cannot continue without its durable vote;
-the write fails and writes freeze. An empty witness can be re-created only
-through a data majority.
+Configuration updates may run in parallel. The synchronous barrier waits
+for all updates, excludes failed members, records the resulting composition
+on survivors, and checks the majority. Ordinary data writes between barriers
+issue no witness operation. A failed update has the same effect for DATA and
+WITNESS: the member loses its vote until it rejoins. Writes below majority
+freeze. Missing members may be recreated only with a surviving majority.
 
-A witness-assisted degraded open records a fresh generation before its first
-write. If a transition is interrupted, mismatching configurations cannot
-combine to supply a witness-assisted quorum. A reachable data majority can
-reconcile generations through the usual history rules. Failed transitions
-may reduce availability; they cannot justify an acknowledgement without a
-write quorum.
+Rejoin uses the same STALE → SYNCING → IN_SYNC transitions for both member
+types. DATA members receive a full data copy and concurrent client writes;
+a witness has no data regions to copy, but still completes the configuration
+barriers before becoming a voter.
 
 ### Voting rule
 
 With N data members and one witness, a quorum is strictly more than
-(N + 1) / 2 members. The witness is accepted at open only together with enough
-actual data copies that match its entire configuration: `epoch`, `sync_id`,
-history and role array. Those data members and the witness itself must be
-recorded IN_SYNC. A CLEAN witness additionally requires CLEAN data members;
-a DIRTY witness can endorse matching data members after an unclean close.
-LOST, an empty record, a missing member or a mismatching configuration cannot
-supply a witness vote. A blank copy recreated during this open cannot vote.
+(N + 1) / 2 members. Every current voter must match the recorded configuration:
+`epoch`, `sync_id`, history, resync owner and role array, with its own role
+IN_SYNC. CLEAN, DIRTY and LOST follow the same reconciliation rules for both
+member types. A missing, empty, excluded or mismatching member cannot vote;
+a blank member recreated during this open must first complete its rejoin.
 
 | Data copies | Minimum data copies with a valid witness | Minimum without witness |
 |---|---|---|
@@ -983,31 +979,31 @@ supply a witness vote. A blank copy recreated during this open cannot vote.
 | 4 | 2 | 3 |
 | 6 | 3 | 4 |
 
-These thresholds apply to both automatic writable opening and runtime writes.
-Runtime data votes count only IN_SYNC members. A data-only open majority may
-also include stale real copies: it contains the newest generation, and
-reconciliation chooses the actual data source. Read-only opening retains the
-existing relaxed inspection semantics and never updates witnesses.
+These thresholds apply to writable opening and runtime writes. Opening can
+include reachable nonempty stale records in its availability majority, then compares
+histories to select the newest generation and an authoritative DATA source.
+Runtime votes count only IN_SYNC members. Read-only opening retains relaxed
+inspection semantics and performs no membership updates.
 
 The metadata vote establishes which generation is current; it cannot replace
-a data copy or recover data lost by every authoritative copy. The existing
-data durability and flush contract still applies. Writer queues share MirrorControl and its transition lock within one
-process; multiattach stage 2 across processes is not implemented.
+a data copy or recover data lost by every authoritative copy. The data
+durability and flush contract still applies. Writer queues share MirrorControl
+and its transition lock within one process; multiattach stage 2 across
+processes is not implemented.
 
-Independently of voting, a witness carrying a newer generation vetoes
-ancestor data copies through `sync_id_history`. For example, after A and W
-record S2, stale B at S1 cannot start with W, even if A is unavailable.
-For four copies, W may endorse two matching survivors, but a later transition
-must synchronously update W before acknowledging writes on another set.
+History comparison includes every member. After A and W record S2, stale B
+at S1 cannot start with W if A is unavailable: the newest generation has no
+DATA source. A witness with four data copies can vote alongside two matching
+DATA members; a later membership change updates all survivors synchronously
+before acknowledging another write.
 
-Witness durability assumes acknowledged metadata is never rolled back.
+Metadata durability assumes acknowledged records are never rolled back.
 When replacing an MDS database from backup, discard backed-up witness
 records, reconstruct the object map, and re-attach empty witnesses through a
 data majority. Reconstructing a current database preserves its witnesses.
-Missing data members can be recreated through an established quorum and then
-resynced; they contribute no vote until they hold the data.
-`rawstor resolve` invalidates witnesses to LOST before changing data winners
-and aborts if that invalidation cannot be persisted.
+`rawstor resolve` records EXCLUDED for every non-winner before establishing
+the operator's new generation, and aborts if an exclusion cannot be persisted.
+Only DATA members can be selected as content winners.
 
 ### Witness in the chunked world
 
@@ -1171,10 +1167,7 @@ Interprocess mirror coordination remains multiattach stage 2.
 - **MGS as a service** — v1 uses a static topology config; whether a dynamic
   MGS role (roster + topology + MDS address) is ever needed, and how refresh
   works, is deferred.
-- **Witness records at N≥3 with `|survivors| > 1`** — the witness abstains
-  today (rule 3); a finer rule would need the degrade chain recorded on the
-  witness synchronously, which conflicts with the hot-path requirement.
-  Revisit only if N≥3 witness-assisted starts turn out to matter.
+
 
 ## Backend health and location information
 
