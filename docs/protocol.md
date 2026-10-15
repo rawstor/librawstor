@@ -4,10 +4,11 @@
 
 `<rawstor/protocol.h>` provides C-compatible `static inline` conversions in
 both directions: `rawstor_frame_{config,meta,allocate,sync_reply}_{encode,decode}`
-and `rawstor_frame_ballot_{encode,decode}`. Encode writes a wire record;
-decode writes the corresponding native rawstor structure. Fallible conversions
+for configuration, metadata, allocation and sync replies. Encode writes a wire
+record; decode writes the corresponding native rawstor structure. Fallible conversions
 return zero on success or a positive errno value; output is unspecified on
-failure. Ballot conversions cannot fail. These functions check representation;
+failure. Ballots use `RawstorObjectBallot` directly, with a compile-time wire-size
+check in the same header. These functions check representation;
 Slot and backends validate state transitions. The allocation encoder preserves
 `object_id` and `chunk_offset`, which the caller sets separately.
 

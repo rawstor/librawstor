@@ -1190,10 +1190,8 @@ rawstd::DetachedTask Client::_sync(
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
     const auto locations = client->_server.locations();
 
-    RawstorObjectBallot ballot{};
-    rawstor_frame_ballot_decode(&ballot, &payload.ballot);
-    RawstorObjectBallot next{};
-    rawstor_frame_ballot_decode(&next, &payload.next);
+    const RawstorObjectBallot ballot = payload.ballot;
+    const RawstorObjectBallot next = payload.next;
     RawstorObjectConfig config{};
 
     // One copy, as for SET_CONFIG (_set_config()).

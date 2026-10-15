@@ -1082,7 +1082,7 @@ rawstd::Task<RawstorObjectSyncReply> Backend::_wire_sync_prepare(
     request.head.cmd = RAWSTOR_CMD_SYNC_PREPARE;
     memcpy(request.payload.object_id, id.bytes, sizeof(id.bytes));
     request.payload.chunk_offset = offset;
-    rawstor_frame_ballot_encode(&request.payload.ballot, &ballot);
+    request.payload.ballot = ballot;
     co_return co_await _sync_request(request, "sync_prepare");
 }
 
@@ -1096,8 +1096,8 @@ rawstd::Task<RawstorObjectSyncReply> Backend::_wire_sync_accept(
     request.head.cmd = RAWSTOR_CMD_SYNC_ACCEPT;
     memcpy(request.payload.object_id, id.bytes, sizeof(id.bytes));
     request.payload.chunk_offset = offset;
-    rawstor_frame_ballot_encode(&request.payload.ballot, &ballot);
-    rawstor_frame_ballot_encode(&request.payload.next, &next);
+    request.payload.ballot = ballot;
+    request.payload.next = next;
     if (int error =
             rawstor_frame_config_encode(&request.payload.config, &config)) {
         RAWSTD_THROW_SYSTEM_ERROR(error);

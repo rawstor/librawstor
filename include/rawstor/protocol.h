@@ -267,12 +267,6 @@ struct RawstorFrameIO {
     struct RawstorFrameIOPayload payload;
 } RAWSTOR_PACKED;
 
-/* A ballot of the configuration register: ordered by counter, then proposer. */
-struct RawstorFrameBallot {
-    uint64_t counter;
-    uint64_t proposer;
-} RAWSTOR_PACKED;
-
 /*
  * The chunk's configuration (struct RawstorObjectConfig, <rawstor/
  * target.h>): its sync set, the resync owner and every member's role,
@@ -393,8 +387,8 @@ struct RawstorFrameMetaPayload {
     uint32_t writers;
     struct RawstorFrameConfig config;
     /* The copy's replica of the register: its ballots. */
-    struct RawstorFrameBallot promised;
-    struct RawstorFrameBallot accepted;
+    struct RawstorObjectBallot promised;
+    struct RawstorObjectBallot accepted;
 } RAWSTOR_PACKED;
 
 /*
@@ -409,8 +403,8 @@ struct RawstorFrameMetaPayload {
 struct RawstorFrameSyncProposePayload {
     uint8_t object_id[16];
     uint64_t chunk_offset;
-    struct RawstorFrameBallot ballot;
-    struct RawstorFrameBallot next;
+    struct RawstorObjectBallot ballot;
+    struct RawstorObjectBallot next;
     struct RawstorFrameConfig config;
     uint8_t member_index;
 } RAWSTOR_PACKED;
@@ -592,19 +586,6 @@ struct RawstorFrameObjVersionCommittedPayload {
  * is unspecified on failure. They validate representation, not transitions.
  * Configuration encoders zero unused roles.
  */
-static inline void rawstor_frame_ballot_encode(
-    struct RawstorFrameBallot* out, const struct RawstorObjectBallot* in
-) {
-    out->counter = in->counter;
-    out->proposer = in->proposer;
-}
-static inline void rawstor_frame_ballot_decode(
-    struct RawstorObjectBallot* out, const struct RawstorFrameBallot* in
-) {
-    out->counter = in->counter;
-    out->proposer = in->proposer;
-}
-
 static inline int rawstor_frame_config_encode(
     struct RawstorFrameConfig* out, const struct RawstorObjectConfig* in
 ) {
@@ -663,8 +644,8 @@ static inline int rawstor_frame_meta_encode(
     out->member_role = (uint8_t)in->member_role;
     out->writers = in->writers;
     out->state = in->state;
-    rawstor_frame_ballot_encode(&out->promised, &in->promised);
-    rawstor_frame_ballot_encode(&out->accepted, &in->accepted);
+    out->promised = in->promised;
+    out->accepted = in->accepted;
     return rawstor_frame_config_encode(&out->config, &in->config);
 }
 
@@ -684,8 +665,8 @@ static inline int rawstor_frame_meta_decode(
     out->spec.width = in->width;
     out->spec.chunk_size =
         in->chunk_shift == 0 ? 0 : UINT64_C(1) << in->chunk_shift;
-    rawstor_frame_ballot_decode(&out->promised, &in->promised);
-    rawstor_frame_ballot_decode(&out->accepted, &in->accepted);
+    out->promised = in->promised;
+    out->accepted = in->accepted;
     return rawstor_frame_config_decode(&out->config, &in->config);
 }
 
@@ -763,7 +744,7 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 20);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 24);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameVersionEntry, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 29);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBallot, 16);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorObjectBallot, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameConfig, 312);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetConfigPayload, 339);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncProposePayload, 369);
