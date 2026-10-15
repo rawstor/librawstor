@@ -200,7 +200,7 @@ rawstd::Task<void> Backend::set_config(
     const RawstorObjectConfig& config, unsigned int flags,
     std::optional<RawstorObjectSyncStateValue> state
 ) {
-    validate_config_update(flags, state);
+    _validate_config_update(flags, state);
     for (size_t i = 0; i < config.nroles; ++i) {
         if (config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);

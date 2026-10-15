@@ -22,7 +22,7 @@
 
 namespace rawstor {
 
-void Backend::validate_config_update(
+void Backend::_validate_config_update(
     unsigned int flags, std::optional<RawstorObjectSyncStateValue> state
 ) {
     if ((flags & ~RAWSTOR_CONFIG_CLEAR_LOST) != 0 ||

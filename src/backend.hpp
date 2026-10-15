@@ -37,7 +37,7 @@ private:
     int _fd;
 
 protected:
-    static void validate_config_update(
+    static void _validate_config_update(
         unsigned int flags, std::optional<RawstorObjectSyncStateValue> state
     );
 

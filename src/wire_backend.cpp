@@ -1144,7 +1144,7 @@ rawstd::Task<void> Backend::set_config(
     const RawstorObjectConfig& config, unsigned int flags,
     std::optional<RawstorObjectSyncStateValue> state
 ) {
-    validate_config_update(flags, state);
+    _validate_config_update(flags, state);
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpSetConfig> op =
