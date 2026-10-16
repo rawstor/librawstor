@@ -159,12 +159,21 @@ protected:
         RawstorObjectMeta& meta
     );
 
-    rawstd::Task<void>
-    _wire_set_object(const RawstdUUID& id, uint64_t offset, int flags);
+    rawstd::Task<void> _wire_set_object(
+        const RawstdUUID& session_id, const RawstdUUID& id, uint64_t offset,
+        int flags
+    );
+
+    // SET_OBJECT's own request (RawstorFrameSetObject): a version binds a
+    // read-only open, nil `version_id` the live object.
+    rawstd::Task<void> _send_set_object(
+        const RawstdUUID& session_id, const RawstdUUID& id, uint64_t offset,
+        int flags, const RawstdUUID& version_id
+    );
 
     rawstd::Task<void> _wire_set_version(
-        const RawstdUUID& object_id, uint64_t offset,
-        const RawstdUUID& version_id
+        const RawstdUUID& session_id, const RawstdUUID& object_id,
+        uint64_t offset, const RawstdUUID& version_id
     );
 
     rawstd::Task<void> _wire_create_version(

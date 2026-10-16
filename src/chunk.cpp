@@ -995,7 +995,7 @@ rawstd::Task<RawstorObjectMeta> open_member(
     Slot& slot, const RawstdUUID& id, uint64_t offset, int flags,
     const RawstdUUID& version_id, bool data_io
 ) {
-    auto meta = data_io ? co_await slot.open(id, offset, flags, version_id)
+    auto meta = data_io ? co_await slot.open({}, id, offset, flags, version_id)
                         : co_await inspect_member(slot, id, offset);
     if (meta.member_role !=
         (data_io ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS)) {

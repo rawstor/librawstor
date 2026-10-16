@@ -328,7 +328,7 @@ TEST(ObjectCloseTest, mds_backend_io_after_close_is_enotconn) {
     std::shared_ptr<rawstor::Backend> backend =
         run(*queue,
             rawstor::Backend::create(*queue, rawstd::URI(env.location())));
-    run(*queue, backend->set_object(id, 0, 0));
+    run(*queue, backend->set_object({}, id, 0, 0));
     run(*queue, backend->close());
 
     auto expect_enotconn = [&](auto task) {

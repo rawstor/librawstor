@@ -253,8 +253,15 @@ public:
     // or 0 (<rawstor/target.h>): READONLY opens the object read-only all
     // the way down to the final open (blk-backed: O_RDONLY; ost://: the
     // server's own rawstor_target_open() does the same).
-    virtual rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t offset, int flags) = 0;
+    //
+    // `session_id` identifies the client session this open serves. A
+    // transport that has sessions sends it, so a replacement connection of
+    // the same session can take over the registration of the one it
+    // replaces; storage backends ignore it.
+    virtual rawstd::Task<void> set_object(
+        const RawstdUUID& session_id, const RawstdUUID& id, uint64_t offset,
+        int flags
+    ) = 0;
 
     // Same as set_object() above, but binds one previously created
     // version of `object_id`/`offset` (`version_id`, never nil -- see
@@ -265,8 +272,8 @@ public:
     // capable of it (currently zfs::Backend only), mds::Backend overrides
     // it with its own MDS-orchestrated fan-out (see mds_backend.cpp).
     virtual rawstd::Task<void> set_version(
-        const RawstdUUID& object_id, uint64_t offset,
-        const RawstdUUID& version_id
+        const RawstdUUID& session_id, const RawstdUUID& object_id,
+        uint64_t offset, const RawstdUUID& version_id
     );
 
     // Native CoW version of the live version as `version_id` (never nil --

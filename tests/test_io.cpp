@@ -1085,7 +1085,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     // comment above), matching
     // Session::cmd_set_object_response()/cmd_meta_response()'s own wire shape.
     server.read(
-        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameBasic),
+        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameSetObject),
         [](const void*) {}
     );
     RawstorFrameResponse set_object_response = {
@@ -1157,7 +1157,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
             server.forget("SESSION (forgotten, connection left for the OS)");
             server.accept("SESSION <<< (retry target)");
             server.read(
-                "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameBasic),
+                "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameSetObject),
                 [](const void*) {}
             );
             RawstorFrameResponse retry_set_object_response = {
@@ -1327,7 +1327,7 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
     // comment above), matching
     // Session::cmd_set_object_response()/cmd_meta_response()'s own wire shape.
     server.read(
-        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameBasic),
+        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameSetObject),
         [](const void*) {}
     );
     RawstorFrameResponse set_object_response = {
@@ -1380,8 +1380,8 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
 
                     server.accept("SESSION <<< (retry target)");
                     server.read(
-                        "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameBasic),
-                        [](const void*) {}
+                        "RAWSTOR_CMD_SET_OBJECT <<<",
+                        sizeof(RawstorFrameSetObject), [](const void*) {}
                     );
                     RawstorFrameResponse retry_set_object_response = {
                         .head{

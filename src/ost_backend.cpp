@@ -121,15 +121,18 @@ rawstd::Task<bool> Backend::sync_accept(
     );
 }
 
-rawstd::Task<void>
-Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
-    return _wire_set_object(id, offset, flags);
+rawstd::Task<void> Backend::set_object(
+    const RawstdUUID& session_id, const RawstdUUID& id, uint64_t offset,
+    int flags
+) {
+    return _wire_set_object(session_id, id, offset, flags);
 }
 
 rawstd::Task<void> Backend::set_version(
-    const RawstdUUID& object_id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& session_id, const RawstdUUID& object_id, uint64_t offset,
+    const RawstdUUID& version_id
 ) {
-    return _wire_set_version(object_id, offset, version_id);
+    return _wire_set_version(session_id, object_id, offset, version_id);
 }
 
 rawstd::Task<void> Backend::create_version(

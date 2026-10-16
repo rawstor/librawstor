@@ -283,9 +283,9 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         // The mandatory handshake; MDS control connections bind no
         // object (docs/mds.md, "Wire protocol") -- just drain
         // the fixed payload and ack. SET_OBJECT rides
-        // RawstorFrameBasicPayload on the wire (shared with every
+        // RawstorFrameSetObjectPayload on the wire (shared with every
         // other server role, protocol.h).
-        RawstorFrameBasicPayload payload;
+        RawstorFrameSetObjectPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         co_await client->_send_response(head.cmd, head.cid, 0);
         break;

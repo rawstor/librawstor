@@ -186,12 +186,13 @@ public:
 
     rawstd::Task<void> leave() override final;
 
-    rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t offset, int flags) override final;
+    rawstd::Task<void> set_object(
+        const RawstdUUID&, const RawstdUUID& id, uint64_t offset, int flags
+    ) override final;
 
     rawstd::Task<void> set_version(
-        const RawstdUUID& object_id, uint64_t offset,
-        const RawstdUUID& version_id
+        const RawstdUUID& session_id, const RawstdUUID& object_id,
+        uint64_t offset, const RawstdUUID& version_id
     ) override final;
 
     rawstd::Task<void> set_state(

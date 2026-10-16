@@ -27,6 +27,7 @@
 #include <system_error>
 #include <tuple>
 #include <type_traits>
+#include <vector>
 
 #include <cerrno>
 #include <cinttypes>
@@ -135,13 +136,14 @@ bool is_permanent_backend_error(int error) {
 // _reconnect() below, both of which rebind to whichever
 // `id`/`offset`/`version_id` this Slot itself was last opened with.
 rawstd::Task<void> set_object_or_version(
-    rawstor::Backend& backend, const RawstdUUID& id, uint64_t offset, int flags,
+    const RawstdUUID& session_id, rawstor::Backend& backend,
+    const RawstdUUID& id, uint64_t offset, int flags,
     const RawstdUUID& version_id
 ) {
     if (rawstd_uuid_is_nil(&version_id)) {
-        co_await backend.set_object(id, offset, flags);
+        co_await backend.set_object(session_id, id, offset, flags);
     } else {
-        co_await backend.set_version(id, offset, version_id);
+        co_await backend.set_version(session_id, id, offset, version_id);
     }
 }
 
@@ -230,6 +232,9 @@ struct Slot::CopyState {
     // departure that finds none left can mark the copy CLEAN without
     // racing a write.
     std::atomic<uint32_t> writers{0};
+    // The sessions counted in `writers`. Changed only with `record` held,
+    // and by a Slot's destructor.
+    std::vector<Slot*> sessions;
     // The record is known not to be CLEAN: a write needs no DIRTY mark of
     // its own. Read without the lock, set and cleared with it held.
     std::atomic<bool> dirty{false};
@@ -600,6 +605,7 @@ Slot::Slot(Private, rawio::Queue& queue, std::shared_ptr<Backend> backend) :
     _offset(0),
     _flags(0),
     _version_id{},
+    _session_id{},
     _backend(std::move(backend)),
     _reconnecting(false),
     _transparent_retry(true) {
@@ -635,6 +641,7 @@ void Slot::_check_write() const {
 Slot::~Slot() {
     if (_member) {
         --_member->writers;
+        std::erase(_member->sessions, this);
     }
 }
 
@@ -684,7 +691,19 @@ rawstd::Task<void> Slot::_depart(std::shared_ptr<Backend> be) {
     co_await member->record.lock(_queue);
     RecordLockGuard guard{member->record};
     uint32_t remaining = --member->writers;
-    if (!(_left ? remaining == 0 : _wrote)) {
+    std::erase(member->sessions, this);
+    if (!_left && _wrote) {
+        // The session ended without a LEAVE. Another one of the same writer
+        // is open on the copy: it takes over what this one wrote, and
+        // answers for it when it departs.
+        for (Slot* other : member->sessions) {
+            if (rawstd_uuid_cmp(&other->_session_id, &_session_id) == 0) {
+                other->_wrote = true;
+                co_return;
+            }
+        }
+    }
+    if (!(_left ? remaining == 0 : _wrote.load())) {
         co_return;
     }
     if (_left &&
@@ -1000,7 +1019,8 @@ rawstd::Task<void> Slot::_reconnect(std::shared_ptr<Backend> be) {
                     std::exception_ptr set_eptr;
                     try {
                         co_await set_object_or_version(
-                            *backend, *_id, _offset, _flags, _version_id
+                            _session_id, *backend, *_id, _offset, _flags,
+                            _version_id
                         );
                         // The result is unused -- this is purely to keep
                         // the same SET_OBJECT+META wire round trip every
@@ -1253,8 +1273,8 @@ rawstd::Task<RawstorLocationInfo> Slot::info() {
 }
 
 rawstd::Task<RawstorObjectMeta> Slot::open(
-    const RawstdUUID& id, uint64_t offset, int flags,
-    const RawstdUUID& version_id
+    const RawstdUUID& session_id, const RawstdUUID& id, uint64_t offset,
+    int flags, const RawstdUUID& version_id
 ) {
     if ((flags & ~(RAWSTOR_READONLY | RAWSTOR_FORCE)) != 0 ||
         (!rawstd_uuid_is_nil(&version_id) && !(flags & RAWSTOR_READONLY))) {
@@ -1268,6 +1288,13 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     _offset = offset;
     _flags = flags;
     _version_id = version_id;
+    _session_id = session_id;
+    if (rawstd_uuid_is_nil(&_session_id)) {
+        int res = rawstd_uuid7_init(&_session_id);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+    }
 
     std::shared_ptr<Backend> be = _get_backend();
 
@@ -1276,7 +1303,9 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // handler.
     bool failed = false;
     try {
-        co_await set_object_or_version(*be, id, offset, flags, version_id);
+        co_await set_object_or_version(
+            _session_id, *be, id, offset, flags, version_id
+        );
     } catch (const std::system_error& e) {
         // The copy itself is missing (docs/mirroring.md, case F10), not a
         // connectivity problem: reconnecting won't bring it back, so it
@@ -1300,6 +1329,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
         co_await member->record.lock(_queue);
         RecordLockGuard guard{member->record};
         ++member->writers;
+        member->sessions.push_back(this);
         _member = std::move(member);
     }
 
@@ -1837,7 +1867,7 @@ rawstd::Task<void> Slot::_flush_copy(const RawstdUUID& id, uint64_t offset) {
         co_await Backend::create(_queue, be->location());
     std::exception_ptr error;
     try {
-        co_await copy->set_object(id, offset, 0);
+        co_await copy->set_object({}, id, offset, 0);
         co_await copy->flush(0);
         co_await copy->leave();
     } catch (...) {

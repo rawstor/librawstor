@@ -90,7 +90,7 @@ keep `0x0b`/`0x0c`.
 
 | cmd | name | role | request payload | response payload |
 |---|---|---|---|---|
-| `0x00` | `SET_OBJECT` | all | Basic (`val` = open flags, e.g. `RAWSTOR_READONLY`) | — |
+| `0x00` | `SET_OBJECT` | all | SetObject (`val` = open flags, e.g. `RAWSTOR_READONLY`) | — |
 | `0x01` | `READ` | OST | IO | data (`res` bytes) |
 | `0x02` | `WRITE` | OST | IO (`flags`: `SYNC`, `RESYNC`), then `len` bytes of data | — |
 | `0x03` | `DISCARD` | OST | IO | — |
@@ -160,12 +160,12 @@ follows right after.
 
 ### Basic — 48 bytes
 
-Shared by every command that only names an object: `SET_OBJECT`, `RELEASE`,
-`CREATE_VERSION`, `META`, `LOCATION_INFO`, `FLUSH` and the MDS's `OBJ_OPEN`. `offset` is the chunk offset of
-the object `object_id` names (0 for a plain object); `version_id` binds
-a version for `SET_OBJECT`, `RELEASE`, `CREATE_VERSION`, `META` and `OBJ_OPEN`
-(nil = live); `val` is command-specific: `FLUSH` carries the writer's
-epoch in it, as IO does.
+Shared by every command that only names an object: `RELEASE`,
+`CREATE_VERSION`, `META`, `LOCATION_INFO`, `FLUSH` and the MDS's `OBJ_OPEN`.
+`offset` is the chunk offset of the object `object_id` names (0 for a plain
+object); `version_id` binds a version for `RELEASE`, `CREATE_VERSION`, `META`
+and `OBJ_OPEN` (nil = live); `val` is command-specific: `FLUSH` carries the
+writer's epoch in it, as IO does.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -186,6 +186,43 @@ epoch in it, as IO does.
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  40  |                                     uint64_t val                                      |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+```
+
+### SetObject — 64 bytes
+
+`SET_OBJECT`: names the session the connection serves, then the copy to bind
+(Basic's `object_id`, `offset`, `version_id`, `val`). `session_id` identifies
+the client session (never nil). `val` is the open flags (`RAWSTOR_READONLY` or
+0); `version_id` binds a version (nil = live), which is always opened
+read-only.
+
+```text
+     +0         +1         +2         +3         +4         +5         +6         +7
+     +---------------------------------------------------------------------------------------+
+  0  |                                                                                       |
+     |                                 uint8_t session_id[16]                                |
+     |                                                                                       |
+  8  |                                                                                       |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+ 16  |                                                                                       |
+     |                                 uint8_t object_id[16]                                 |
+     |                                                                                       |
+ 24  |                                                                                       |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+ 32  |                                    uint64_t offset                                    |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+ 40  |                                                                                       |
+     |                                uint8_t version_id[16]                                 |
+     |                                                                                       |
+ 48  |                                                                                       |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+ 56  |                                     uint64_t val                                      |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
 ```
@@ -312,6 +349,13 @@ are indexed by: the copy takes its own role from it.
 set: the server closes it cleanly, and a copy with no session open for
 writing left marks itself `CLEAN`. A session that wrote and ends any other
 way -- disconnect, a new `SET_OBJECT` -- leaves a `DIRTY` copy `LOST`.
+
+`SET_OBJECT` names the connection's session in `session_id`: the identity of
+the client session, which the client keeps when it replaces a broken
+connection. If another connection with the same session id is open on the
+copy when the departed one ends without `LEAVE`, it takes over what the
+departed one wrote instead of leaving the copy `LOST` and answers for it in
+turn.
 OST shutdown stops socket reception, including incomplete requests, then
 drains admitted requests and slot departures before destroying the I/O queue,
 allowing the final consistency state to reach storage.

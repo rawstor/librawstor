@@ -14,6 +14,7 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <type_traits>
@@ -33,7 +34,7 @@ private:
     std::shared_ptr<CopyState>
     _copy_state(const RawstdUUID& id, uint64_t offset) const;
     std::shared_ptr<CopyState> _member;
-    bool _wrote;
+    std::atomic<bool> _wrote;
     bool _left;
     rawstd::Gate _dirty_gate;
 
@@ -92,6 +93,8 @@ private:
     void _check_write() const;
     rawstd::Task<void> _flush_copy(const RawstdUUID& id, uint64_t offset);
     RawstdUUID _version_id;
+    // Set by open(); kept across _reconnect().
+    RawstdUUID _session_id;
 
     std::shared_ptr<Backend> _backend;
 
@@ -266,9 +269,17 @@ public:
     // witness holds no data and is never a valid target for real I/O
     // (docs/mds.md, "Witness"); its own .cpp doc comment on
     // why this is the one place that needs to check.
+    //
+    // `session_id` identifies the session this open serves: nil
+    // makes open() generate one. It is kept across _reconnect(), and a
+    // session that wrote and departs without leave() while another Slot of
+    // the same copy holds the same id hands its writes over to that one
+    // instead of leaving the copy LOST -- the replacement of a dropped
+    // connection takes over the writes the dropped one may have left
+    // unacknowledged, and replays them itself.
     rawstd::Task<RawstorObjectMeta> open(
-        const RawstdUUID& id, uint64_t offset, int flags,
-        const RawstdUUID& version_id
+        const RawstdUUID& session_id, const RawstdUUID& id, uint64_t offset,
+        int flags, const RawstdUUID& version_id
     );
 
     // Stops new data I/O and drains outstanding operations before departure.

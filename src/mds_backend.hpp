@@ -244,16 +244,17 @@ public:
     // multi-chunk Object it describes (see this class's own doc comment),
     // via _set_object() above. `offset` is always 0, same reason as
     // resize() above.
-    rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t offset, int flags) override;
+    rawstd::Task<void> set_object(
+        const RawstdUUID&, const RawstdUUID& id, uint64_t offset, int flags
+    ) override;
 
     // Same as set_object() above, for one previously committed version:
     // `version_id` is folded into every chunk slot's own URI (its own
     // trailing path segment, chunk_slot_target()'s own convention in
     // mds_backend.cpp), not passed down any other way.
     rawstd::Task<void> set_version(
-        const RawstdUUID& object_id, uint64_t offset,
-        const RawstdUUID& version_id
+        const RawstdUUID& session_id, const RawstdUUID& object_id,
+        uint64_t offset, const RawstdUUID& version_id
     ) override;
 
     rawstd::Task<void> close() override;

@@ -747,6 +747,113 @@ TEST(OstClientTest, leave_cleans_and_a_dropped_writer_loses) {
     );
 }
 
+namespace {
+
+// A writer's first connection wrote and drops without a LEAVE while a
+// second one, opened with `second_writer`, is open on the copy.
+// Returns the copy's state once the first one is gone; if `leave` is set,
+// the second one then departs cleanly.
+RawstorObjectSyncStateValue drop_first_writer(
+    RawIOQueue* queue, rawstor::ostserver::Server& server,
+    const std::string& location, const RawstdUUID& first_writer,
+    const RawstdUUID& second_writer, bool leave
+) {
+    RawstdUUID id;
+    EXPECT_EQ(rawstd_uuid7_init(&id), 0);
+
+    auto [raw_second, second_fd] = connect_client(server, queue);
+    ClientCleanup second_cleanup(std::move(raw_second), queue);
+    rawstor::ostserver::tests::Client second(second_fd);
+    {
+        auto [raw_first, first_fd] = connect_client(server, queue);
+        ClientCleanup first_cleanup(std::move(raw_first), queue);
+        rawstor::ostserver::tests::Client first(first_fd);
+
+        first.send_allocate(id, 4096, 1);
+        EXPECT_TRUE(pump_until(queue, [&] {
+            return first.bytes_available() >= sizeof(RawstorFrameResponse);
+        }));
+        EXPECT_EQ(first.recv_response().body.res, 0);
+
+        first.send_set_object(id, 0, first_writer);
+        EXPECT_TRUE(pump_until(queue, [&] {
+            return first.bytes_available() >= sizeof(RawstorFrameResponse);
+        }));
+        EXPECT_EQ(first.recv_response().body.res, 0);
+        write_and_wait(first, queue);
+
+        second.send_set_object(id, 0, second_writer);
+        EXPECT_TRUE(pump_until(queue, [&] {
+            return second.bytes_available() >= sizeof(RawstorFrameResponse);
+        }));
+        EXPECT_EQ(second.recv_response().body.res, 0);
+    }
+    RawstorObjectSyncStateValue state = stored_state(queue, location, id);
+    if (leave) {
+        second.send_leave();
+        EXPECT_TRUE(pump_until(queue, [&] {
+            return second.bytes_available() >= sizeof(RawstorFrameResponse);
+        }));
+        EXPECT_EQ(second.recv_response().body.res, 0);
+        EXPECT_EQ(
+            stored_state(queue, location, id), RAWSTOR_OBJECT_SYNC_STATE_CLEAN
+        );
+    }
+    return state;
+}
+
+} // namespace
+
+// A writer whose connection dropped and was replaced by another one of the
+// same session id (a client reconnecting after a short write) does not
+// leave the copy LOST: the replacement answers for what the dropped one
+// wrote, and its own LEAVE closes the copy CLEAN.
+TEST(OstClientTest, replacement_connection_takes_over_a_dropped_writer) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+    rawstor::ostserver::tests::Queue queue;
+
+    RawstdUUID writer;
+    ASSERT_EQ(rawstd_uuid7_init(&writer), 0);
+    EXPECT_EQ(
+        drop_first_writer(queue, server, dir.uri(), writer, writer, true),
+        RAWSTOR_OBJECT_SYNC_STATE_DIRTY
+    );
+}
+
+// Another writer does not take over.
+TEST(OstClientTest, another_writer_does_not_take_over_a_dropped_one) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+    rawstor::ostserver::tests::Queue queue;
+
+    RawstdUUID first;
+    RawstdUUID second;
+    ASSERT_EQ(rawstd_uuid7_init(&first), 0);
+    ASSERT_EQ(rawstd_uuid7_init(&second), 0);
+    EXPECT_EQ(
+        drop_first_writer(queue, server, dir.uri(), first, second, false),
+        RAWSTOR_OBJECT_SYNC_STATE_LOST
+    );
+}
+
+// Neither do anonymous ones.
+TEST(OstClientTest, anonymous_writers_do_not_take_over) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+    rawstor::ostserver::tests::Queue queue;
+
+    EXPECT_EQ(
+        drop_first_writer(
+            queue, server, dir.uri(), RawstdUUID{}, RawstdUUID{}, false
+        ),
+        RAWSTOR_OBJECT_SYNC_STATE_LOST
+    );
+}
+
 // Direct construction can bypass the CLI's one-location constraint.
 // One server represents one member backed by one Slot.
 TEST(OstClientTest, several_locations_are_rejected) {
@@ -1161,7 +1268,7 @@ TEST(
             client.recv_response().body.res, static_cast<int32_t>(data.size())
         );
         if (partial_request) {
-            RawstorFrameBasic frame{};
+            RawstorFrameSetObject frame{};
             frame.head.magic = RAWSTOR_MAGIC;
             frame.head.cmd = RAWSTOR_CMD_SET_OBJECT;
             const size_t bytes = sizeof(frame.head) + 1;

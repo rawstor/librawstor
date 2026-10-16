@@ -112,7 +112,7 @@ private:
     _info(std::weak_ptr<Client> weak, RawstorFrameHead head);
     static rawstd::DetachedTask _set_object(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
-        RawstorFrameBasicPayload payload
+        RawstorFrameSetObjectPayload payload
     );
     static rawstd::DetachedTask _read(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
