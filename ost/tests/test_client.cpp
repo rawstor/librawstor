@@ -565,6 +565,7 @@ TEST(OstClientTest, list_reports_every_chunk_offset) {
     std::memcpy(row_id.bytes, entries[0].id, sizeof(row_id.bytes));
     EXPECT_EQ(rawstd_uuid_cmp(&row_id, &id), 0);
     EXPECT_EQ(entries[0].chunk_offset, 0u);
+    EXPECT_EQ(entries[0].type, RAWSTOR_LIST_ENTRY_CHUNK);
 
     std::memcpy(row_id.bytes, entries[1].id, sizeof(row_id.bytes));
     EXPECT_EQ(rawstd_uuid_cmp(&row_id, &id), 0);

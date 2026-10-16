@@ -399,11 +399,13 @@ chunk's placement identity, stored with it.
 
 ## Response payloads
 
-### List rows — 24 bytes each
+### List rows — 32 bytes each
 
 One row per (id, chunk offset); an id with several chunks spans consecutive
-rows. The MDS answers one row per `mds://` object, chunk offset 0 (the
-object is addressed whole). The **last** row is always the resume cursor for the next page (a nil id
+rows. `type` says what the row addresses: `CHUNK` (1) is one chunk stored at
+`chunk_offset`; `OBJECT` (2) is a whole object addressed by id alone, with
+`chunk_offset` 0. The MDS answers one `OBJECT` row per `mds://` object and one
+`CHUNK` row per witness member. `reserved` is all 0. The **last** row is always the resume cursor for the next page (a nil id
 once nothing is left), never a result. An empty payload means the far end is
 already exhausted.
 
@@ -418,6 +420,9 @@ already exhausted.
      +---------------------------------------------------------------------------------------+
  16  |                                 uint64_t chunk_offset                                 |
      |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+ 24  | uint8_t  |                            uint8_t reserved[7]                             |
+     |   type   |                                                                            |
      +---------------------------------------------------------------------------------------+
 ```
 
@@ -733,6 +738,7 @@ Witnesses do not accept data I/O or object versions.
 
 Ordinary `LIST` reports every registered MDS object and native witness member,
 using `RawstorFrameListEntry` rows plus the final pagination cursor row.
-Registered objects appear at offset zero; witness records carry their real
-chunk offsets. Limits count IDs, and all offsets of an ID stay on one page.
-Member metadata determines the type of each listed address.
+Registered objects are `OBJECT` rows at offset zero; witness records are
+`CHUNK` rows carrying their real chunk offsets. Limits count IDs, and all
+offsets of an ID stay on one page. The row type alone says which kind of
+address was listed.

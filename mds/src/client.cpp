@@ -459,6 +459,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                     entries[i].id, records[i].id.bytes, sizeof(entries[i].id)
                 );
                 entries[i].chunk_offset = records[i].offset;
+                entries[i].type = records[i].type;
             }
             memcpy(entries.back().id, token.bytes, sizeof(entries.back().id));
             res = entries.size() * sizeof(RawstorFrameListEntry);

@@ -9,6 +9,7 @@
 #include <rawstd/uuid.h>
 
 #include <rawstor/location.h>
+#include <rawstor/protocol.h>
 #include <rawstor/target.h>
 
 #include <cstdint>
@@ -25,6 +26,7 @@ namespace mdsserver {
 struct ChunkEntry {
     RawstdUUID id;
     uint64_t offset;
+    RawstorListEntryType type;
 };
 
 struct ObjectDescriptor {

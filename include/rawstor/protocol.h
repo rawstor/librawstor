@@ -216,10 +216,24 @@ struct RawstorFrameList {
  * real row returned (see rawstor::Location::list()'s own doc comment).
  * An empty response body (no rows at all, not even a cursor) means the
  * far end is already exhausted.
+ *
+ * `type` says what the row addresses, so the receiving end never has to
+ * probe the far end to find out: RAWSTOR_LIST_ENTRY_CHUNK is one chunk
+ * stored at `chunk_offset`; RAWSTOR_LIST_ENTRY_OBJECT is a whole object
+ * addressed by id alone (an mds:// object, whose chunks are placed by its
+ * map), with `chunk_offset` 0. `reserved` is all 0. The resume cursor row
+ * has type 0 and is not interpreted as a result.
  */
+enum RawstorListEntryType {
+    RAWSTOR_LIST_ENTRY_CHUNK = 1,
+    RAWSTOR_LIST_ENTRY_OBJECT = 2,
+};
+
 struct RawstorFrameListEntry {
     uint8_t id[16];
     uint64_t chunk_offset;
+    uint8_t type; /* enum RawstorListEntryType */
+    uint8_t reserved[7];
 } RAWSTOR_PACKED;
 
 /* One LIST_VERSIONS / OBJ_LIST_VERSIONS response row. */
@@ -727,7 +741,7 @@ static inline int rawstor_frame_allocate_decode(
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameHead, 8);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBasicPayload, 48);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 20);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 24);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 32);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameVersionEntry, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 29);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorObjectBallot, 16);

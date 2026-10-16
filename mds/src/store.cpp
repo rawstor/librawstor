@@ -608,10 +608,10 @@ ObjectStore::list_chunks(RawstdUUID& token, unsigned int limit) {
     std::lock_guard<std::mutex> guard(_mutex);
     Stmt stmt(
         _db, "WITH entries AS ("
-             "SELECT id,chunk_offset FROM witnesses UNION ALL "
-             "SELECT id,0 FROM objects WHERE NOT EXISTS "
+             "SELECT id,chunk_offset,1 AS type FROM witnesses UNION ALL "
+             "SELECT id,0,2 FROM objects WHERE NOT EXISTS "
              "(SELECT 1 FROM witnesses WHERE witnesses.id=objects.id)) "
-             "SELECT id,chunk_offset FROM entries WHERE id>? "
+             "SELECT id,chunk_offset,type FROM entries WHERE id>? "
              "ORDER BY id,chunk_offset"
     );
     RawstdUUID after = token;
@@ -624,6 +624,7 @@ ObjectStore::list_chunks(RawstdUUID& token, unsigned int limit) {
         ChunkEntry entry{};
         stmt.column_uuid(0, &entry.id);
         entry.offset = stmt.column_int64(1);
+        entry.type = static_cast<RawstorListEntryType>(stmt.column_int64(2));
         if (rawstd_uuid_cmp(&entry.id, &last) != 0) {
             if (limit != 0 && groups == limit) {
                 token = last;

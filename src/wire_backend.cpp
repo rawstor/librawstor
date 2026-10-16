@@ -889,6 +889,14 @@ rawstd::Task<void> Backend::_wire_list_chunks(
         const RawstorFrameListEntry& entry = entries[i];
         RawstdUUID entry_id;
         memcpy(entry_id.bytes, entry.id, sizeof(entry_id.bytes));
+        if (entry.type == RAWSTOR_LIST_ENTRY_OBJECT) {
+            // A whole object is addressed by id alone: no offsets.
+            chunks.push_back(ChunkGroup{entry_id, {}});
+            continue;
+        }
+        if (entry.type != RAWSTOR_LIST_ENTRY_CHUNK) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
         if (!chunks.empty() &&
             rawstd_uuid_cmp(&chunks.back().id, &entry_id) == 0) {
             chunks.back().offsets.push_back(entry.chunk_offset);

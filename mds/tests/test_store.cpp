@@ -452,6 +452,7 @@ TEST_F(ObjectStoreTest, list_objects_pages_by_id) {
     EXPECT_FALSE(rawstd_uuid_is_nil(&token));
     EXPECT_EQ(rawstd_uuid_cmp(&page[0].id, &ids[0]), 0);
     EXPECT_EQ(rawstd_uuid_cmp(&page[1].id, &ids[1]), 0);
+    EXPECT_EQ(page[0].type, RAWSTOR_LIST_ENTRY_OBJECT);
 
     page = store.list_chunks(token, 2);
     ASSERT_EQ(page.size(), 1u);
@@ -840,7 +841,9 @@ TEST_F(
     ASSERT_EQ(entries.size(), 2u);
     EXPECT_EQ(rawstd_uuid_cmp(&entries[0].id, &first), 0);
     EXPECT_EQ(entries[0].offset, 0u);
+    EXPECT_EQ(entries[0].type, RAWSTOR_LIST_ENTRY_CHUNK);
     EXPECT_EQ(entries[1].offset, chunk_size);
+    EXPECT_EQ(entries[1].type, RAWSTOR_LIST_ENTRY_CHUNK);
     EXPECT_EQ(rawstd_uuid_cmp(&token, &first), 0);
     entries = store.list_chunks(token, 1);
     ASSERT_EQ(entries.size(), 1u);
@@ -865,11 +868,14 @@ TEST_F(ObjectStoreTest, list_chunks_merges_objects_and_native_members) {
     ASSERT_EQ(entries.size(), 1u);
     EXPECT_EQ(rawstd_uuid_cmp(&entries[0].id, &object), 0);
     EXPECT_EQ(entries[0].offset, 0u);
+    EXPECT_EQ(entries[0].type, RAWSTOR_LIST_ENTRY_OBJECT);
     EXPECT_EQ(rawstd_uuid_cmp(&token, &object), 0);
     entries = store.list_chunks(token, 1);
     ASSERT_EQ(entries.size(), 2u);
     EXPECT_EQ(rawstd_uuid_cmp(&entries[0].id, &witness), 0);
     EXPECT_EQ(entries[0].offset, 0u);
+    EXPECT_EQ(entries[0].type, RAWSTOR_LIST_ENTRY_CHUNK);
     EXPECT_EQ(entries[1].offset, chunk_size);
+    EXPECT_EQ(entries[1].type, RAWSTOR_LIST_ENTRY_CHUNK);
     EXPECT_TRUE(rawstd_uuid_is_nil(&token));
 }
