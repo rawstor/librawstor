@@ -13,6 +13,7 @@ private:
     std::string _socket_path;
     bool _write_cache_enabled;
     bool _readonly;
+    bool _force;
     /* flock()ed `<socket path>.lock`, held for this Server's whole
      * lifetime: at most one rawstor-vhost serves a given socket path, so
      * whatever socket file it finds there at startup is stale -- see
@@ -32,7 +33,7 @@ public:
     Server(
         unsigned int queue_size, const std::string& target,
         const std::string& socket_path, bool write_cache_enabled, bool readonly,
-        int wake_fd = -1
+        bool force, int wake_fd = -1
     );
     Server(const Server&) = delete;
     Server(Server&&) = delete;

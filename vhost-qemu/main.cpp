@@ -49,6 +49,10 @@ void usage() {
               << "                        "
                  "issuing an explicit flush"
               << std::endl
+              << "  --force               "
+                 "With --readonly, open without requiring a mirror write "
+                 "quorum"
+              << std::endl
               << "  --readonly            "
                  "Export the object read-only (VIRTIO_BLK_F_RO); "
                  "required for a version target"
@@ -78,10 +82,11 @@ void sact_handler(int) {
 
 void server(
     unsigned int queue_size, const std::string& target,
-    const std::string& socket_path, bool write_cache_enabled, bool readonly
+    const std::string& socket_path, bool write_cache_enabled, bool readonly,
+    bool force
 ) {
     rawstor::vhost::Server s(
-        queue_size, target, socket_path, write_cache_enabled, readonly
+        queue_size, target, socket_path, write_cache_enabled, readonly, force
     );
     // Not any earlier: rawstd_info() needs the logging mutex
     // rawstor_initialize() sets up, and that only happens inside Server's
@@ -99,6 +104,7 @@ int main(int argc, char** argv) {
     struct option longopts[] = {
         {"help", no_argument, nullptr, 'h'},
         {"queue-size", required_argument, nullptr, 'q'},
+        {"force", no_argument, nullptr, 'f'},
         {"readonly", no_argument, nullptr, 'r'},
         {"socket-path", required_argument, nullptr, 's'},
         {"target", required_argument, nullptr, 't'},
@@ -112,6 +118,7 @@ int main(int argc, char** argv) {
     const char* target_arg = nullptr;
     const char* write_cache_arg = nullptr;
     bool readonly = false;
+    bool force = false;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, nullptr);
         if (c == -1) {
@@ -125,6 +132,10 @@ int main(int argc, char** argv) {
 
         case 'q':
             queue_size_arg = optarg;
+            break;
+
+        case 'f':
+            force = true;
             break;
 
         case 'r':
@@ -224,7 +235,7 @@ int main(int argc, char** argv) {
     try {
         server(
             queue_size, target_arg, socket_path_arg, write_cache_enabled,
-            readonly
+            readonly, force
         );
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;

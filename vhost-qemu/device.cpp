@@ -749,13 +749,15 @@ int result_cb(ssize_t result, void* data) {
     return 0;
 }
 
-RawstorObject*
-open_object(RawIOQueue* queue, const std::string& target, bool readonly) {
+RawstorObject* open_object(
+    RawIOQueue* queue, const std::string& target, bool readonly, bool force
+) {
     RawstorObject* object = nullptr;
     Result result;
     int res = rawstor_target_open(
-        queue, target.c_str(), readonly ? RAWSTOR_READONLY : 0, &object,
-        result_cb, &result
+        queue, target.c_str(),
+        (readonly ? RAWSTOR_READONLY : 0) | (force ? RAWSTOR_FORCE : 0),
+        &object, result_cb, &result
     );
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -843,7 +845,7 @@ std::unordered_map<int, Device*> Device::_devices;
 
 Device::Device(
     unsigned int queue_size, const std::string& target, int fd,
-    bool write_cache_enabled, bool readonly
+    bool write_cache_enabled, bool readonly, bool force
 ) :
     _queue(nullptr),
     _target(target),
@@ -883,7 +885,7 @@ Device::Device(
     try {
         _spec = spec_object(_queue, target);
 
-        _object = open_object(_queue, target, readonly);
+        _object = open_object(_queue, target, readonly, force);
 
         _blk_config->capacity = _spec.size >> VIRTIO_BLK_SECTOR_BITS;
 

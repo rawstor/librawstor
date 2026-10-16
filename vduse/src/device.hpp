@@ -86,6 +86,7 @@ private:
     std::vector<std::unique_ptr<IovaRegion>> _regions;
     unsigned int _queue_size;
     bool _readonly;
+    bool _force;
     mutable std::shared_mutex _vqs_mutex;
     std::vector<std::unique_ptr<VirtQueue>> _vqs;
     /* Which virtqueues _enable_queue() has handed a kick_fd to and not
@@ -167,7 +168,7 @@ public:
     Device(
         unsigned int queue_size, unsigned int num_queues,
         const std::string& target, bool write_cache_enabled, bool readonly,
-        int wake_fd = -1
+        bool force, int wake_fd = -1
     );
     Device(const Device&) = delete;
     Device(Device&&) = delete;

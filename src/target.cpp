@@ -1801,7 +1801,7 @@ Target::resize(rawio::Queue& queue, uint64_t new_size) const {
 // every Chunk::create() below.
 rawstd::Task<std::unique_ptr<Object>>
 Target::open(rawio::Queue& queue, int flags) const {
-    if ((flags & ~RAWSTOR_READONLY) != 0) {
+    if ((flags & ~(RAWSTOR_READONLY | RAWSTOR_FORCE)) != 0) {
         rawstd_error("Unknown open flags: %x\n", flags);
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }

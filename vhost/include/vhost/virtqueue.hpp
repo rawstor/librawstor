@@ -253,7 +253,7 @@ private:
      * down. `ready` is fulfilled (or given the startup exception) once
      * _queue/_object are usable, before the reactor loop is entered. */
     void _run(
-        std::string target, unsigned int queue_size, bool readonly,
+        std::string target, unsigned int queue_size, bool readonly, bool force,
         std::promise<void> ready
     );
 
@@ -353,8 +353,10 @@ public:
      * which case the worker thread has already exited and this
      * VirtQueue is back to its not-started state (running() is false).
      */
-    void
-    start(const std::string& target, unsigned int queue_size, bool readonly);
+    void start(
+        const std::string& target, unsigned int queue_size, bool readonly,
+        bool force = false
+    );
 
     inline bool running() const noexcept { return _thread.joinable(); }
 

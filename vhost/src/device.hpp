@@ -85,6 +85,7 @@ private:
     std::vector<std::unique_ptr<DevRegion>> _regions;
     unsigned int _queue_size;
     bool _readonly;
+    bool _force;
     mutable std::shared_mutex _vqs_mutex;
     std::vector<std::unique_ptr<VirtQueue>> _vqs;
     int _backend_fd;
@@ -147,7 +148,7 @@ public:
      */
     Device(
         unsigned int queue_size, const std::string& target, int fd,
-        bool write_cache_enabled, bool readonly, int wake_fd = -1
+        bool write_cache_enabled, bool readonly, bool force, int wake_fd = -1
     );
 
     Device(const Device&) = delete;

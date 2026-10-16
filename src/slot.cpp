@@ -1256,7 +1256,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     const RawstdUUID& id, uint64_t offset, int flags,
     const RawstdUUID& version_id
 ) {
-    if ((flags & ~RAWSTOR_READONLY) != 0 ||
+    if ((flags & ~(RAWSTOR_READONLY | RAWSTOR_FORCE)) != 0 ||
         (!rawstd_uuid_is_nil(&version_id) && !(flags & RAWSTOR_READONLY))) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }

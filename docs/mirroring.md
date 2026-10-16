@@ -26,7 +26,8 @@ numbers its stages separately.
 | Several writer processes (multi-attach) | — | 🟡 | [Multi-attach](multiattach.md): stage 1 (protocol, member side) done, stage 2 (several processes) not |
 | `rawstor show -v` per-chunk / per-mirror state | — | ✅ | `cli/show.c` |
 | `rawstor resolve TARGET --winner=N [--offset]` | — | ✅ | `cli/resolve.c` |
-| Force-open below quorum (CLI / opts) | — | ❌ | — |
+| Force-open below quorum, read-only (`RAWSTOR_FORCE \| RAWSTOR_READONLY`; `--force` with `--readonly` in the exporters) | 2 | ✅ | `src/chunk.cpp` |
+| Force-open below quorum for writing (CLI / opts) | — | ❌ | — |
 | Heal of copies a vanished writer may have left different (F5) | 3 | ✅ | `src/chunk.cpp` (`_heal_maybe_start()`) |
 | Persistent write-intent bitmap (resumable resync, cheaper heal) | 4 | ❌ | — |
 | OST start identity in `META`: the heal never takes an OST-restarted copy as its reference ([known limitation](#known-limitation-the-degrade-barrier-window)) | 4 | ❌ | — |
@@ -301,7 +302,7 @@ The same rules apply to DATA and WITNESS members. N is the total number of membe
 Key invariant: **every acknowledged write exists on a set of copies that intersects any future auto-start set.** Therefore the newest `sync_id` is always visible at auto-start, and two disjoint write histories cannot be created through automatic paths.
 
 - **Auto-start (open) requires strictly more than N/2 reachable mirrors** (N=2 → both). Within the reachable majority, the copy with the newest `sync_id` is authoritative (majority intersection guarantees it is present); stale copies get an online resync.
-- **Below quorum: manual approval only** (force-open via CLI/opts — not yet implemented). There is deliberately no "clean exception": `CLEAN` only means "I was closed correctly" — a copy cannot know locally that it did not miss anything while offline. Alternating offline periods of `CLEAN` copies would produce split brain.
+- **Below quorum: manual approval only.** A read-only open needs the same quorum as a writable one; only `RAWSTOR_FORCE | RAWSTOR_READONLY` opens below it, reading from the reachable members as they are (no state recorded, no read-repair or resync). `RAWSTOR_FORCE` alone does not open a writable object without quorum; a force-open for writing is not implemented. There is deliberately no "clean exception": `CLEAN` only means "I was closed correctly" — a copy cannot know locally that it did not miss anything while offline. Alternating offline periods of `CLEAN` copies would produce split brain.
 - **Runtime (chunk already open):** continue while more than N/2 members remain IN_SYNC; at or below N/2, writes freeze with EIO. Two data copies without a witness therefore require both copies throughout the writable session.
 - **What counts toward a quorum.** Opening counts reachable, existing members, including nonempty stale ones: every acknowledged write set was a majority, so any reachable majority intersects it. The history comparison identifies the newest generation and requires an authoritative data source. Unreachable members and blank records do not count. Runtime writes count only IN_SYNC members with the recorded configuration; stale or syncing members cannot vote until their rejoin completes.
 - **`sync_id_history` stays as defense in depth**: it catches consequences of a wrong manual force-open, an OST restored from backup, or bugs.

@@ -368,9 +368,31 @@ TEST(MirrorQuorumTest, all_mirrors_down_at_open_refused) {
     EXPECT_EQ(object, nullptr);
 }
 
-// RAWSTOR_READONLY drops the quorum requirement: one reachable member of
-// two is enough to read from, but nothing may write.
-TEST(MirrorQuorumTest, readonly_open_without_quorum_n2) {
+// RAWSTOR_READONLY alone needs the same quorum as a writable open, and
+// RAWSTOR_FORCE without it never lifts the requirement for a writable one.
+TEST(MirrorQuorumTest, readonly_or_force_alone_needs_quorum_n2) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000b1");
+
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    spec.width = 2;
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    members.drop(1);
+
+    for (int flags : {RAWSTOR_READONLY, RAWSTOR_FORCE}) {
+        RawstorObject* object = nullptr;
+        EXPECT_EQ(
+            target_open(queue, members.target_all(), &object, flags), -ENOTCONN
+        );
+        EXPECT_EQ(object, nullptr);
+    }
+}
+
+// RAWSTOR_FORCE | RAWSTOR_READONLY drops the quorum requirement: one
+// reachable member of two is enough to read from, but nothing may write.
+TEST(MirrorQuorumTest, force_readonly_open_without_quorum_n2) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000b0");
 
@@ -389,7 +411,11 @@ TEST(MirrorQuorumTest, readonly_open_without_quorum_n2) {
 
     RawstorObject* object = nullptr;
     ASSERT_EQ(
-        target_open(queue, members.target_all(), &object, RAWSTOR_READONLY), 0
+        target_open(
+            queue, members.target_all(), &object,
+            RAWSTOR_FORCE | RAWSTOR_READONLY
+        ),
+        0
     );
 
     std::string data(4, '\0');
@@ -1470,7 +1496,11 @@ TEST(MirrorQuorumTest, readonly_open_does_not_recreate_missing_copy) {
 
     RawstorObject* object = nullptr;
     ASSERT_EQ(
-        target_open(queue, members.target_all(), &object, RAWSTOR_READONLY), 0
+        target_open(
+            queue, members.target_all(), &object,
+            RAWSTOR_FORCE | RAWSTOR_READONLY
+        ),
+        0
     );
     EXPECT_EQ(object_close(queue, object), 0);
     EXPECT_FALSE(fs::exists(members.dat(1)));
