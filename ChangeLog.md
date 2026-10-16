@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rawstor show` omits the member role when it is not defined.
 - `rawstor show -v` prints ancestor and current sync ids on one line, oldest first.
 - Native witnesses on MDS use `ost://` URIs; `mds://` URIs resolve logical objects and chunks.
 - `rawstor show -v` prints each chunk's physical target URI for recovery commands.
