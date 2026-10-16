@@ -29,6 +29,7 @@ numbers its stages separately.
 | Force-open below quorum (CLI / opts) | — | ❌ | — |
 | Heal of copies a vanished writer may have left different (F5) | 3 | ✅ | `src/chunk.cpp` (`_heal_maybe_start()`) |
 | Persistent write-intent bitmap (resumable resync, cheaper heal) | 4 | ❌ | — |
+| OST start identity in `META`: the heal never takes an OST-restarted copy as its reference ([known limitation](#known-limitation-the-degrade-barrier-window)) | 4 | ❌ | — |
 | Metadata-only witness on MDS, OST or local backend | 4 | ✅ | [Witness](mds.md#witness), `Backend::set_config()`, `src/chunk.cpp` |
 | Stored checksums / scrub | 4 | ❌ | — |
 | Fastest-mirror read selection | 4 | ❌ | — |
@@ -37,7 +38,7 @@ numbers its stages separately.
 
 A comma-separated target list (see [Concepts](concepts.md)) makes the client keep N identical copies of a chunk on different backends -- each copy is a **slot**, addressed by one URI in the list. A plain (non-`mds://`) target is the degenerate single-chunk case: the whole object it addresses **is** that one chunk, so everything below applies to it directly; an `mds://` object's own chunks (`docs/mds.md`) each get this same treatment independently, possibly with different widths. This document defines the failure model for N-way mirroring: what can fail, how the client reacts, and how byte-for-byte identity of the copies is restored afterwards. Erasure coding is out of scope.
 
-Status: stages 1-3 are implemented (per-copy metadata, quorum open, degrade & continue, read failover/repair, clean close, online resync with automatic rejoin through a periodic reconnect probe) for all backends, including `lvm://`/`zfs://` (native ZFS user properties / LVM tags — see below). Not yet implemented: a persistent write-intent bitmap (a crashed resync restarts from scratch and an unclean shutdown costs a full heal), stored checksums/scrub. Witness members and their degraded-open voting rules are implemented; interprocess mirror coordination is deferred to multiattach stage 2.
+Status: stages 1-3 are implemented (per-copy metadata, quorum open, degrade & continue, read failover/repair, clean close, online resync with automatic rejoin through a periodic reconnect probe) for all backends, including `lvm://`/`zfs://` (native ZFS user properties / LVM tags — see below). Not yet implemented: a persistent write-intent bitmap (a crashed resync restarts from scratch and an unclean shutdown costs a full heal), an OST start identity so the heal can tell an OST restart from a client crash (until then it may overwrite the one copy that kept acknowledged writes, see *Known limitation*), stored checksums/scrub. Witness members and their degraded-open voting rules are implemented; interprocess mirror coordination is deferred to multiattach stage 2.
 
 Error codes: open without quorum (including the case where every mirror is unreachable, F3) fails with `-ENOTCONN`; split brain (or no trusted member) fails with `-ENOTRECOVERABLE`; a write that loses its write quorum, or every member, on an already-open chunk fails with `-EIO`.
 
@@ -410,7 +411,7 @@ naming other locations while the chunk is open fails with `-EINVAL`.
 | F2 | Read failure / transport hash mismatch on a mirror | error / EPROTO in the read path | Retry the read from another IN-SYNC mirror, return the data. **Read-repair**: rewrite the region on the failing mirror; if the repair write fails → degrade as in F1 | Pointwise via read-repair; on degradation — F7 |
 | F3 | All mirrors failed | all connections dead | At open: refused with `ENOTCONN` (degenerate case of F4's below-quorum refusal). On an already-open chunk: `EIO` to the caller on the next write, chunk unavailable. Periodic reconnect attempts | — (no copy available) |
 | F4 | OST unreachable at open | connect failure | Reachable > N/2 → degraded open on the majority (it is guaranteed to contain the newest `sync_id`); on survivors `epoch`+1 / new `sync_id` **before the first write ack**. Reachable ≤ N/2 (N=2 with one down falls here) → **auto-start refused**, manual force-open only (not yet implemented) | F7 when it returns |
-| F5 | Client crash with writes in flight | at next open: all copies `DIRTY` or `LOST` with the same `sync_id` (`LOST` when the client reached them through `rawstor-ost`, which saw its sessions drop without `LEAVE`) | All copies are "valid" (they diverge only in unacknowledged regions) and stay in the set, voting and taking every write: writes go on at once. Reference: the first `CLEAN` copy, else the first copy in the target list; reads are served from it until the heal is done | Heal: a background sweep overwrites every other not-`CLEAN` data copy with the reference's content, one copy at a time, region by region, mutually exclusive with client writes (a full copy -- the main argument for a persistent bitmap in v2). The `LOST` marks are cleared once every copy is equal; an interrupted heal (close, crash) leaves them, and the next open starts it again. Not run while another session is open for writing on any copy |
+| F5 | Client crash with writes in flight | at next open: all copies `DIRTY` or `LOST` with the same `sync_id` (`LOST` when the client reached them through `rawstor-ost`, which saw its sessions drop without `LEAVE`) | All copies are "valid" (they diverge only in unacknowledged regions) and stay in the set, voting and taking every write: writes go on at once. Reference: the first `CLEAN` copy, else the first copy in the target list (it may be the copy that lost acknowledged writes in the degrade-barrier window, see *Known limitation*); reads are served from it until the heal is done | Heal: a background sweep overwrites every other not-`CLEAN` data copy with the reference's content, one copy at a time, region by region, mutually exclusive with client writes (a full copy -- the main argument for a persistent bitmap in v2). The `LOST` marks are cleared once every copy is equal; an interrupted heal (close, crash) leaves them, and the next open starts it again. Not run while another session is open for writing on any copy |
 | F6 | OST crash/restart → acknowledged writes lost from page cache (data is not fsynced) | **not detectable from metadata** (the copy looks up to date) | **Conservative rule: any session loss to a mirror while the chunk is open `DIRTY` ⇒ that mirror is STALE (run the F1 procedure), even if it reconnects immediately.** We cannot know what it lost, so we do not trust it | Full resync (F7) overwrites whatever was lost |
 | F7 | A stale mirror returns (rejoin) | reconnect probe + `sync_id`/`epoch` comparison: ancestor → stale | Record the copy's role as syncing (fsync), start an **online resync** (algorithm below) without stopping client I/O | On completion: the IN-SYNC copies move to a new `sync_id`/`epoch` (fsync), then the copy adopts it, state `DIRTY` if the chunk is (fsync) → mirror is IN-SYNC, reads allowed |
 | F8 | Client/OST crash during resync | the copy is left with role syncing / an old `sync_id` | Copy is untrusted | Resync from scratch (v1; resumable with the persistent bitmap in v2) |
@@ -479,6 +480,26 @@ reference may be the member that lost data. Closing this window
 requires synchronous durable data writes; it is accepted for now and
 bounded by the barrier latency.
 
+The F5 heal turns that window from an ambiguity into a loss. When no copy
+is `CLEAN` -- which is every restart after a crash -- the first copy is the
+reference and the heal overwrites the others with it. If the reference is
+the one that lost acknowledged writes, the heal destroys the only copy that
+still held them. Metadata cannot tell this case from an ordinary client
+crash: both leave the copies `DIRTY` or `LOST` in one sync set. Refusing
+to heal when no copy is `CLEAN` would stop the heal in the one case it
+exists for, so it runs, and this stays an accepted risk until the
+following is done.
+
+Planned (stage 4, *OST start identity*): every OST reports a start
+identity in `META`, a value fixed for one run of the server, and a copy
+records the identity of the run that marked it `DIRTY`. At open, a copy
+whose OST has been restarted since that mark is the suspect: it may have
+lost acknowledged writes from the page cache, so it is never the heal's
+reference, and when every copy is suspect the heal does not run and the
+operator resolves the chunk (`rawstor resolve`). A backend that reports
+no identity is never suspect. This needs a new `META` field and a field in the copy's
+record, so it is a wire and format change.
+
 ### Two data copies and a witness
 
 Two data copies without a witness freeze writes when either member fails.
@@ -509,4 +530,4 @@ a vote and another copy of the contents.
 1. Metadata + new opcodes + the fsync protocol for metadata.
 2. Quorum rules at open + degrade & continue / write freeze + read failover and read-repair.
 3. Online resync.
-4. Witness members are implemented; v2+ work includes persistent write-intent bitmap, stored checksums / scrub, fastest-mirror read selection.
+4. Witness members are implemented; v2+ work includes persistent write-intent bitmap, OST start identity, stored checksums / scrub, fastest-mirror read selection.
