@@ -980,8 +980,9 @@ a blank member recreated during this open must first complete its rejoin.
 These thresholds apply to writable opening and runtime writes. Opening can
 include reachable nonempty stale records in its availability majority, then compares
 histories to select the newest generation and an authoritative DATA source.
-Runtime votes count only IN_SYNC members. Read-only opening retains relaxed
-inspection semantics and performs no membership updates.
+Runtime votes count only IN_SYNC members. A read-only open needs the same
+quorum and performs no membership updates; with `RAWSTOR_FORCE` it retains
+relaxed inspection semantics and reads from whatever members are reachable.
 
 The metadata vote establishes which generation is current; it cannot replace
 a data copy or recover data lost by every authoritative copy. The data

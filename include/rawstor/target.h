@@ -598,6 +598,9 @@ int rawstor_target_remove(
 /** rawstor_target_open() flag: open read-only (see its own doc comment). */
 #define RAWSTOR_READONLY 1
 
+/** rawstor_target_open() flag: skip the quorum check (see its doc comment). */
+#define RAWSTOR_FORCE 2
+
 /**
  * @brief Asynchronously open an existing object for reading and/or writing.
  *
@@ -623,14 +626,18 @@ int rawstor_target_remove(
  *                - "file:///var/rawstor/019cbfad-a389-7d42-a0f6-c29993ac8c00"
  *                - "ost://host1:9090/abc,ost://host2:9090/abc"  (mirroring)
  *                - "file:///data/abc,ost://host1:9090/abc"      (locality)
- * @param flags   Open flags: 0, or RAWSTOR_READONLY. A @p target that
- *                names a bound version (see
- *                rawstor_target_version_id()) can only be opened with
- *                RAWSTOR_READONLY (@c -EINVAL otherwise). RAWSTOR_READONLY
- *                also lets a mirrored object open without a write quorum
- *                (reachable members are read from as-is: no mirror
- *                state is recorded, no read-repair or resync runs), and
- *                every write to the resulting handle fails with @c -EROFS.
+ * @param flags   Open flags: 0, or a combination of RAWSTOR_READONLY and
+ *                RAWSTOR_FORCE. A @p target that names a bound version
+ *                (see rawstor_target_version_id()) can only be opened
+ *                with RAWSTOR_READONLY (@c -EINVAL otherwise).
+ *                RAWSTOR_READONLY makes every write to the resulting
+ *                handle fail with @c -EROFS and records nothing (no
+ *                mirror state, read-repair or resync), but a mirrored
+ *                object still needs the same quorum as a writable open.
+ *                RAWSTOR_FORCE | RAWSTOR_READONLY lifts that requirement:
+ *                any reachable members are read from as-is. RAWSTOR_FORCE
+ *                alone changes nothing -- a writable open never goes
+ *                ahead without a quorum.
  * @param object  Out-parameter written exactly once, immediately before
  *                @p cb is invoked: the opaque handle on success, or NULL on
  *                error. The caller must not modify the pointed-to memory

@@ -209,7 +209,7 @@ write, create, remove, or create a version of. For a single-URI target, the form
 is `<scheme>://<endpoint>/<uuid>`. For multiple URIs (mirroring), the
 UUID is appended to each one: `<scheme1>://<endpoint1>/<uuid>,<scheme2>://<endpoint2>/<uuid>,...`
 
-A target that names one version of an object appends the version's UUID: `<scheme>://<endpoint>/<uuid>/<version_uuid>` (on every URI of a multiple target). Such a target can only be opened read-only (`RAWSTOR_READONLY`) or removed.
+A target that names one version of an object appends the version's UUID: `<scheme>://<endpoint>/<uuid>/<version_uuid>` (on every URI of a multiple target). Such a target can only be opened read-only (`RAWSTOR_READONLY`, which still needs the quorum of a writable open unless combined with `RAWSTOR_FORCE`) or removed.
 
 Where:
 - `<scheme>` and `<endpoint>` are the same as for location.

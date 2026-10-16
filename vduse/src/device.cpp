@@ -198,7 +198,7 @@ namespace vduse {
 
 Device::Device(
     unsigned int queue_size, unsigned int num_queues, const std::string& target,
-    bool write_cache_enabled, bool readonly, int wake_fd
+    bool write_cache_enabled, bool readonly, bool force, int wake_fd
 ) :
     _ctrl_fd(-1),
     _fd(-1),
@@ -207,6 +207,7 @@ Device::Device(
     _target(target),
     _queue_size(queue_size),
     _readonly(readonly),
+    _force(force),
     _vqs(num_queues),
     _vqs_enabled(num_queues, false),
     _reattached(false),
@@ -629,7 +630,7 @@ VirtQueue& Device::_vq(size_t index) {
     // not-started state and simply destroyed, the slot left empty.
     auto vq = std::make_unique<VirtQueue>();
     vq->attach(*this, index);
-    vq->start(_target, _queue_size, _readonly);
+    vq->start(_target, _queue_size, _readonly, _force);
     rawstd_info("vduse: started vq[%zu]\n", index);
 
     std::unique_lock lock(_vqs_mutex);

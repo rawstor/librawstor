@@ -167,13 +167,14 @@ namespace vhost {
 Server::Server(
     unsigned int queue_size, const std::string& target,
     const std::string& socket_path, bool write_cache_enabled, bool readonly,
-    int wake_fd
+    bool force, int wake_fd
 ) :
     _queue_size(queue_size),
     _target(target),
     _socket_path(socket_path),
     _write_cache_enabled(write_cache_enabled),
     _readonly(readonly),
+    _force(force),
     _lock_fd(lock_socket_path(_socket_path)),
     _fd(-1),
     _wake_fd(wake_fd) {
@@ -227,7 +228,8 @@ void Server::loop() {
     rawstd_info("Client connected: fd=%d\n", fd);
 
     Device device(
-        _queue_size, _target, fd, _write_cache_enabled, _readonly, _wake_fd
+        _queue_size, _target, fd, _write_cache_enabled, _readonly, _force,
+        _wake_fd
     );
     device.loop();
 }

@@ -824,8 +824,8 @@ void Chunk::_disable_retry() noexcept {
 // is safe to let unwind through a throwing constructor.
 Chunk::Chunk(
     Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
-    bool readonly, RawstorObjectSpec spec, std::vector<Member> members,
-    std::shared_ptr<MirrorControl> control
+    bool readonly, bool force, RawstorObjectSpec spec,
+    std::vector<Member> members, std::shared_ptr<MirrorControl> control
 ) :
     _queue(queue),
     _id(id),
@@ -833,6 +833,7 @@ Chunk::Chunk(
     _spec(spec),
     _members(std::move(members)),
     _readonly(readonly),
+    _skip_quorum(readonly && force),
     _control(std::move(control)),
     _retry_disabled(false),
     _alive(std::make_shared<char>()),
@@ -1093,7 +1094,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     const RawstdUUID& id, uint64_t offset, int flags,
     const RawstdUUID& version_id, std::optional<uint64_t> logical_size
 ) {
-    if ((flags & ~RAWSTOR_READONLY) != 0 ||
+    if ((flags & ~(RAWSTOR_READONLY | RAWSTOR_FORCE)) != 0 ||
         (!rawstd_uuid_is_nil(&version_id) && (flags & RAWSTOR_READONLY) == 0)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -1374,7 +1375,8 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // trusted-member analysis) is the constructor's own job from here.
     std::unique_ptr<Chunk> chunk = std::make_unique<Chunk>(
         Private(), queue, id, offset, (flags & RAWSTOR_READONLY) != 0,
-        std::move(spec), std::move(members), control
+        (flags & RAWSTOR_FORCE) != 0, std::move(spec), std::move(members),
+        control
     );
     open_guard.opened = true;
 
@@ -1671,7 +1673,7 @@ void Chunk::_reconcile_sync_set() {
         }
         ++reachable;
     }
-    if (!_readonly && _below_write_quorum(reachable)) {
+    if (!_skip_quorum && _below_write_quorum(reachable)) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
     if (data_sources == 0) {

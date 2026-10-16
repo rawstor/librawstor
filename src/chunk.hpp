@@ -86,11 +86,14 @@ private:
     RawstorObjectSpec _spec;
     std::vector<Member> _members;
 
-    // Opened RAWSTOR_READONLY (create()'s `flags`): no write quorum is
-    // required, and nothing that would write is ever done -- no DIRTY
-    // barrier, no read-repair, no reconnect probe/resync -- every write
-    // fails with EROFS instead.
+    // Opened RAWSTOR_READONLY (create()'s `flags`): nothing that would
+    // write is ever done -- no DIRTY barrier, no read-repair, no reconnect
+    // probe/resync -- every write fails with EROFS instead.
     bool _readonly;
+
+    // Opened RAWSTOR_FORCE | RAWSTOR_READONLY: the open does not require
+    // the write quorum. RAWSTOR_FORCE without READONLY is not honoured.
+    bool _skip_quorum;
 
     rawstd::Task<void> _set_member_config(
         size_t index, RawstorObjectConfig config, unsigned int flags = 0,
@@ -437,15 +440,15 @@ public:
     // Only once construction succeeds does it start the object's
     // own background maintenance (the reconnect probe, an online resync
     // if one is already due). `flags` is RAWSTOR_READONLY or 0
-    // (<rawstor/target.h>): READONLY drops the quorum requirement (any
-    // one reachable member is enough) and all background maintenance,
-    // and makes every write fail with EROFS. `offset` is 0 for a plain,
-    // non-volume object or a volume's own chunk 0; `version_id` is nil
-    // for the live version, or a version id previously registered via
-    // Target::create_version() (docs/mds.md, "Versions") -- only ever
-    // opened with READONLY (Target::open()'s own check).
-    // logical_size describes an opaque backend's whole resource; otherwise
-    // the I/O range is the physical chunk size reported by its members.
+    // (<rawstor/target.h>): READONLY drops all background maintenance and
+    // makes every write fail with EROFS; only READONLY together with FORCE
+    // drops the quorum requirement (any one reachable member is enough).
+    // `offset` is 0 for a plain, non-volume object or a volume's own chunk 0;
+    // `version_id` is nil for the live version, or a version id previously
+    // registered via Target::create_version() (docs/mds.md, "Versions") -- only
+    // ever opened with READONLY (Target::open()'s own check). logical_size
+    // describes an opaque backend's whole resource; otherwise the I/O range is
+    // the physical chunk size reported by its members.
     static rawstd::Task<std::unique_ptr<Chunk>> create(
         rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
         const RawstdUUID& id, uint64_t offset, int flags,
@@ -455,8 +458,8 @@ public:
 
     Chunk(
         Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
-        bool readonly, RawstorObjectSpec spec, std::vector<Member> members,
-        std::shared_ptr<MirrorControl> control
+        bool readonly, bool force, RawstorObjectSpec spec,
+        std::vector<Member> members, std::shared_ptr<MirrorControl> control
     );
     Chunk(const Chunk&) = delete;
     Chunk(Chunk&&) = delete;

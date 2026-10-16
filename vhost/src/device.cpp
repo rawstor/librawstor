@@ -1209,13 +1209,14 @@ namespace vhost {
 
 Device::Device(
     unsigned int queue_size, const std::string& target, int fd,
-    bool write_cache_enabled, bool readonly, int wake_fd
+    bool write_cache_enabled, bool readonly, bool force, int wake_fd
 ) :
     _fd(fd),
     _queue(nullptr),
     _target(target),
     _queue_size(queue_size),
     _readonly(readonly),
+    _force(force),
     _vqs(MAX_QUEUES),
     _backend_fd(-1),
     _features(
@@ -1435,7 +1436,7 @@ VirtQueue& Device::_vq(size_t index) {
     // not-started state and simply destroyed, the slot left empty.
     auto vq = std::make_unique<VirtQueue>();
     vq->attach(*this, index);
-    vq->start(_target, _queue_size, _readonly);
+    vq->start(_target, _queue_size, _readonly, _force);
     rawstd_info("Started virtqueue %zu\n", index);
 
     InflightRegion* region = _inflight_region(index);

@@ -24,6 +24,12 @@ OBJECT_MEMBER_IN_SYNC = 1
 OBJECT_MEMBER_SYNCING = 2
 OBJECT_MEMBER_EXCLUDED = 3
 
+# rawstor_target_open() flags: RAWSTOR_READONLY/RAWSTOR_FORCE
+# (<rawstor/target.h>). READONLY still needs the mirror quorum; only
+# FORCE | READONLY opens without it.
+READONLY = 1
+FORCE = 2
+
 # Target.set_member_config() flags: RAWSTOR_CONFIG_* (<rawstor/target.h>).
 CONFIG_CLEAR_LOST = 1
 

@@ -238,6 +238,17 @@ TEST_F(WitnessTest, empty_witness_abstains_and_data_quorum_reattaches) {
     }
     auto object = run(*queue, target->open(*queue, 0));
     write(*object);
+    bool rejoined = false;
+    for (unsigned i = 0; i < 2000; ++i) {
+        auto metadata = metas();
+        if (metadata[2].config.sync_id == metadata[0].config.sync_id &&
+            metadata[2].config.roles[2] == RAWSTOR_OBJECT_MEMBER_IN_SYNC) {
+            rejoined = true;
+            break;
+        }
+        run(*queue, pause(*queue));
+    }
+    ASSERT_TRUE(rejoined);
     run(*queue, object->close(true));
     EXPECT_EQ(metas()[2].config.sync_id, metas()[0].config.sync_id);
 }

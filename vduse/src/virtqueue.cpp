@@ -161,7 +161,8 @@ VirtQueue::~VirtQueue() {
 }
 
 void VirtQueue::start(
-    const std::string& target, unsigned int queue_size, bool readonly
+    const std::string& target, unsigned int queue_size, bool readonly,
+    bool force
 ) {
     _wake_pipe.emplace(rawstd::Pipe::Mode::NonBlocking);
 
@@ -181,7 +182,8 @@ void VirtQueue::start(
     pthread_sigmask(SIG_BLOCK, &all_signals, &old_mask);
 
     _thread = std::thread(
-        &VirtQueue::_run, this, target, queue_size, readonly, std::move(ready)
+        &VirtQueue::_run, this, target, queue_size, readonly, force,
+        std::move(ready)
     );
 
     pthread_sigmask(SIG_SETMASK, &old_mask, nullptr);
