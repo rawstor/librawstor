@@ -391,8 +391,10 @@ private:
     RawstorObjectConfig _config{};
     size_t _unrecorded_stale = 0;
     // Members whose copy a vanished writer may have left different from
-    // the front-most one: healed from it, in the set all along.
+    // the reference copy: healed from it, in the set all along. Reads are
+    // served from the reference first until they are.
     std::vector<bool> _unhealed;
+    std::atomic<size_t> _reference{static_cast<size_t>(-1)};
     std::unique_ptr<MirrorResync> _resync;
     uint64_t _resync_generation = 0;
     uint64_t _resync_committed = 0;
@@ -517,15 +519,31 @@ public:
         _unrecorded_stale = unrecorded_stale;
         _valid = true;
     }
-    void set_unhealed_locked(const std::vector<size_t>& members) {
+    void
+    set_unhealed_locked(const std::vector<size_t>& members, size_t reference) {
         _unhealed.assign(_states.size(), false);
         for (size_t member : members) {
             _unhealed[member] = true;
         }
+        _reference.store(
+            members.empty() ? static_cast<size_t>(-1) : reference,
+            std::memory_order_release
+        );
+    }
+    // The copy the healing members are made equal to, or -1 when nothing
+    // is left to heal.
+    size_t reference() const noexcept {
+        return _reference.load(std::memory_order_acquire);
     }
     // The first member still to heal that is in the set, or `none`.
     // Members that left the set are not healed: their rejoin copies them.
+    // Nothing is healed once the reference has left the set.
     size_t next_unhealed_locked(size_t none) noexcept {
+        size_t ref = reference();
+        if (ref != static_cast<size_t>(-1) &&
+            state(ref) != MemberState::IN_SYNC) {
+            _unhealed.assign(_states.size(), false);
+        }
         for (size_t i = 0; i < _unhealed.size(); ++i) {
             if (_unhealed[i] && state(i) != MemberState::IN_SYNC) {
                 _unhealed[i] = false;
@@ -534,6 +552,7 @@ public:
                 return i;
             }
         }
+        _reference.store(static_cast<size_t>(-1), std::memory_order_release);
         return none;
     }
     bool unhealed() {
@@ -1503,8 +1522,9 @@ bool Chunk::_below_write_quorum(size_t votes) const noexcept {
  * - disjoint histories mean split brain: unreachable through automatic
  *   paths, so refuse the open.
  * - all copies DIRTY with the same sync_id (client crash, case F5): they
- *   diverge only in unacknowledged regions; the front-most in-sync member
- *   wins because reads are served from it.
+ *   diverge only in unacknowledged regions and all stay in the set; the
+ *   first CLEAN one (else the first) is the reference the others are
+ *   healed from, and reads are served from it meanwhile.
  */
 void Chunk::_reconcile_sync_set() {
     std::vector<MemberState> state(_members.size());
@@ -1683,27 +1703,36 @@ void Chunk::_reconcile_sync_set() {
 
     /*
      * A writer vanished (case F5): the in-sync data members may differ in
-     * its unacknowledged regions. The front-most one is what reads are
-     * served from; every other one that is not CLEAN is healed from it
-     * while it stays in the set. Not while another session is open for
-     * writing on any member (a writable open counts itself in `writers`):
-     * the records are then not a verdict about a vanished writer.
+     * its unacknowledged regions. The reference is the first CLEAN one (no
+     * writer ever left it half-written), else the first; every other one
+     * that is not CLEAN is healed from it while it stays in the set. Not
+     * while another session is open for writing on any member (a writable
+     * open counts itself in `writers`): the records are then not a verdict
+     * about a vanished writer.
      */
     std::vector<size_t> unhealed;
+    size_t reference = static_cast<size_t>(-1);
     if (!_readonly) {
         bool other_writers = false;
         for (const Member& m : _members) {
             other_writers |= m.reachable && m.meta.writers > 1;
         }
-        bool front = false;
+        auto data = [&](size_t i) {
+            return state[i] == MemberState::IN_SYNC && !_members[i].witness;
+        };
         for (size_t i = 0; !other_writers && i < _members.size(); ++i) {
-            if (state[i] != MemberState::IN_SYNC || _members[i].witness) {
-                continue;
+            if (data(i) &&
+                (reference == static_cast<size_t>(-1) ||
+                 (_members[reference].meta.state !=
+                      RAWSTOR_OBJECT_SYNC_STATE_CLEAN &&
+                  _members[i].meta.state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN))) {
+                reference = i;
             }
-            if (!front) {
-                front = true;
-            } else if (_members[i].meta.state !=
-                       RAWSTOR_OBJECT_SYNC_STATE_CLEAN) {
+        }
+        for (size_t i = 0;
+             reference != static_cast<size_t>(-1) && i < _members.size(); ++i) {
+            if (data(i) && i != reference &&
+                _members[i].meta.state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN) {
                 unhealed.push_back(i);
             }
         }
@@ -1725,7 +1754,7 @@ void Chunk::_reconcile_sync_set() {
     c.initialize_locked(
         state, std::move(records), size, config, unrecorded_stale
     );
-    c.set_unhealed_locked(unhealed);
+    c.set_unhealed_locked(unhealed, reference);
 }
 
 rawstd::Task<void> Chunk::_with_dirty() {
@@ -2566,10 +2595,18 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
                        _members[i].reachable;
             };
             size_t src = _members.size();
-            for (size_t i = 0; i < _members.size(); ++i) {
-                if (source_ok(i)) {
-                    src = i;
-                    break;
+            if (heal) {
+                // Only the reference is a trusted source for a heal.
+                size_t ref = c.reference();
+                if (ref < _members.size() && source_ok(ref)) {
+                    src = ref;
+                }
+            } else {
+                for (size_t i = 0; i < _members.size(); ++i) {
+                    if (source_ok(i)) {
+                        src = i;
+                        break;
+                    }
                 }
             }
             if (src == _members.size()) {
@@ -2767,10 +2804,10 @@ rawstd::Task<void> Chunk::_resync_finish(uint64_t generation) {
 
 /*
  * Starts healing the first member a vanished writer may have left different
- * from the front-most one (case F5), with this Chunk as the owner. The member
+ * from the reference copy (case F5), with this Chunk as the owner. The member
  * is in the set all along: it votes, takes every write, and the sweep only
- * overwrites regions with the front-most member's content. Its LOST mark
- * stays until all of them are healed.
+ * overwrites regions with the reference's content. Its LOST mark stays
+ * until all of them are healed.
  */
 void Chunk::_heal_maybe_start() {
     if (_closing || _readonly || _members.size() == 1) {
@@ -2787,13 +2824,17 @@ void Chunk::_heal_maybe_start() {
         if (idx == _members.size()) {
             return;
         }
-        if (!_members[idx].slot || !_members[idx].reachable) {
+        size_t ref = c.reference();
+        if (!_members[idx].slot || !_members[idx].reachable ||
+            ref >= _members.size() || !_members[ref].slot ||
+            !_members[ref].reachable) {
             return;
         }
         c.start_heal_locked(this, idx);
         generation = c.resync_locked()->generation();
         rawstd_info(
-            "Mirror heal: copying the front-most member onto: %s\n",
+            "Mirror heal: copying %s onto: %s\n",
+            _member_str(_members[ref]).c_str(),
             _member_str(_members[idx]).c_str()
         );
         _resync_attach_locked(generation);
@@ -3081,6 +3122,12 @@ rawstd::Task<size_t> Chunk::_read(
             _members[i].slot) {
             order.push_back(i);
         }
+    }
+    // Until the copies are made equal, the reference is the one to trust.
+    auto reference =
+        std::find(order.begin(), order.end(), _control->reference());
+    if (reference != order.end()) {
+        std::rotate(order.begin(), reference, reference + 1);
     }
 
     std::vector<std::pair<size_t, int>> failures;
