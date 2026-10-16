@@ -191,7 +191,8 @@ still equal mirrors, not a cache in front of a primary store:
   automatically.
 - After a client crash with both copies DIRTY (case F5 in
   [Mirroring](mirroring.md)), the first copy in the list, the local one,
-  wins and the remote copy is resynced from it.
+  is the reference (a copy that is `CLEAN` is preferred to it) and the
+  remote copy is healed from it while the object stays writable.
 
 **Syntax rules:**
 - Do not add spaces between URIs – use a single comma: `uri1,uri2`

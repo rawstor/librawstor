@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A mirrored writable open heals copies a vanished writer may have left different from the first clean (else first) copy in the background while writes go on, and clears their `LOST` mark once they are equal.
 - All members share configuration, state and rejoin rules; writable mirrors require a strict majority even with two data copies and no witness.
 - BLK metadata stores logical size for DATA and WITNESS members independently of physical allocation.
 - OST serves exactly one backend Slot and rejects multiple locations at startup.

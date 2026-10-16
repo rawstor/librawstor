@@ -24,7 +24,7 @@ separately.
 | Every transition through the register | 2 | ❌ | the client uses `SET_CONFIG` |
 | The client stamps writes with its chunk configuration epoch | 1 | ✅ | ordinary Chunk operations supply the current epoch |
 | Adoption of the register value on `-ESTALE` from another writer process | 2 | ❌ | requires witness and the client Proposer |
-| `LOST` at open and at runtime: resync of the losers | 2 | ❌ | open treats `LOST` as `DIRTY` |
+| `LOST` at open and at runtime: resync of the losers | 2 | 🟡 | one process: its open heals the copies in the set and then clears `LOST` ([Mirroring](mirroring.md), F5); several writers: not implemented |
 | Resync across processes (`resync_owner`, sweep with `RESYNC`) | 2 | ❌ | — |
 | `SET_CONFIG` and `rawstor_target_set_member_config()` retired | 2 | ❌ | [Retiring `SET_CONFIG`](#retiring-set_config) |
 | The client keeps the register value once per chunk, not per member | 2 | ❌ | [The register](#the-register-caspaxos) |

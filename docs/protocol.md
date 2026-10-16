@@ -180,7 +180,7 @@ epoch in it, as IO does.
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  24  |                                                                                       |
-     |                                uint8_t version_id[16]                                |
+     |                                uint8_t version_id[16]                                 |
      |                                                                                       |
  32  |                                                                                       |
      |                                                                                       |
@@ -329,9 +329,10 @@ allowing the final consistency state to reach storage.
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  24  Config (312 bytes)
-     +----------+--------------+----------+
-336  |  flags   | member_index |  state   |
-     +----------+--------------+----------+
+     +----------+----------+----------+
+336  |  flags   | member_  |  state   |
+     |          |  index   |          |
+     +----------+----------+----------+
 339
 ```
 
@@ -362,9 +363,10 @@ support). `member_index` is as for SetConfig and indexes data members. OST accep
  24  Ballot ballot (16 bytes)
  40  Ballot next (16 bytes)
  56  Config (312 bytes)
-     +--------------+
-368  | member_index |
-     +--------------+
+     +----------+
+368  | member_  |
+     |  index   |
+     +----------+
 369
 ```
 
@@ -395,6 +397,7 @@ chunk's placement identity, stored with it.
  40  |  chunk_  | failure_ |  width   | member_  |
      |  shift   |  domain  |          |   role   |
      +----------+----------+----------+----------+
+44
 ```
 
 ## Response payloads
@@ -420,10 +423,10 @@ already exhausted.
      +---------------------------------------------------------------------------------------+
  16  |                                 uint64_t chunk_offset                                 |
      |                                                                                       |
-     +---------------------------------------------------------------------------------------+
+     +----------+----------------------------------------------------------------------------+
  24  | uint8_t  |                            uint8_t reserved[7]                             |
      |   type   |                                                                            |
-     +---------------------------------------------------------------------------------------+
+     +----------+----------------------------------------------------------------------------+
 ```
 
 ### Version rows — 16 bytes each
@@ -436,7 +439,7 @@ in no particular order. An empty payload means the object has no versions
      +0         +1         +2         +3         +4         +5         +6         +7
      +---------------------------------------------------------------------------------------+
   0  |                                                                                       |
-     |                                uint8_t version_id[16]                                |
+     |                                uint8_t version_id[16]                                 |
      |                                                                                       |
   8  |                                                                                       |
      |                                                                                       |
@@ -479,17 +482,17 @@ reports acceptance through the callback's `ssize_t result`: 1 for acceptance,
 nonnegative results. Internally, register methods return `bool` and fill a
 `RawstorObjectMeta&` output argument.
 
-
 `SYNC_PREPARE`/`SYNC_ACCEPT`'s reply, sent whether the member promised or
 accepted (`ok` = 1) or refused (`ok` = 0): its whole record, a
 [Meta](#meta--360-bytes), follows at offset 1, so a refused proposer sees
 the actual value.
 
 ```text
-     +0         +1
-     +----------+--------------------------------------
-  0  |    ok    |  Meta (360 bytes)
-     +----------+--------------------------------------
+     +0         +1         +2         +3         +4         +5         +6         +7
+     +----------+----------------------------------------------------------------------------+
+  0  |    ok    |                              Meta (360 bytes)                              |
+     |          |                                                                            |
+     +----------+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~+
 361
 ```
 
@@ -577,7 +580,7 @@ ObjCreated and ObjVersionCommitted are a single `uint64_t map_epoch`.
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  32  |                                                                                       |
-     |                                uint8_t version_id[16]                                |
+     |                                uint8_t version_id[16]                                 |
      |                                                                                       |
  40  |                                                                                       |
      |                                                                                       |
@@ -680,7 +683,7 @@ copies to destroy).
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  16  |                                                                                       |
-     |                                uint8_t version_id[16]                                |
+     |                                uint8_t version_id[16]                                 |
      |                                                                                       |
  24  |                                                                                       |
      |                                                                                       |
