@@ -235,6 +235,9 @@ private:
     std::set<const Chunk*> _pending;
     Phase _phase = Phase::JOINING;
     bool _announced = false;
+    // A heal copies onto a member that stays in the set and takes every
+    // write as usual; it is never SYNCING and its abort excludes nobody.
+    const bool _heal;
 
     void _copied(size_t region) noexcept {
         if (_bits[region]) {
@@ -246,7 +249,7 @@ private:
 public:
     MirrorResync(
         uint64_t generation, const Chunk* owner, size_t member, uint64_t size,
-        size_t chunk
+        size_t chunk, bool heal = false
     ) :
         _generation(generation),
         _owner(owner),
@@ -254,12 +257,14 @@ public:
         _size(size),
         _chunk(chunk),
         _bits((size + chunk - 1) / chunk, true),
-        _remaining(_bits.size()) {}
+        _remaining(_bits.size()),
+        _heal(heal) {}
 
     uint64_t generation() const noexcept { return _generation; }
     size_t member() const noexcept { return _member; }
     bool owned_by(const Chunk* chunk) const noexcept { return _owner == chunk; }
     bool announced() const noexcept { return _announced; }
+    bool heal() const noexcept { return _heal; }
     bool committing() const noexcept { return _phase == Phase::COMMITTING; }
     bool attached(const Chunk* chunk) const noexcept {
         return _attached.count(chunk) != 0;
@@ -385,6 +390,9 @@ private:
     uint64_t _size = 0;
     RawstorObjectConfig _config{};
     size_t _unrecorded_stale = 0;
+    // Members whose copy a vanished writer may have left different from
+    // the front-most one: healed from it, in the set all along.
+    std::vector<bool> _unhealed;
     std::unique_ptr<MirrorResync> _resync;
     uint64_t _resync_generation = 0;
     uint64_t _resync_committed = 0;
@@ -426,7 +434,8 @@ public:
     explicit MirrorControl(const std::vector<rawstd::URI>& locations) :
         _locations(locations),
         _states(locations.size()),
-        _records(locations.size()) {}
+        _records(locations.size()),
+        _unhealed(locations.size(), false) {}
 
     std::mutex& mutex() noexcept { return _mutex; }
     rawstd::Task<void> lock_transition(rawio::Queue& queue) {
@@ -507,6 +516,29 @@ public:
         _config = config;
         _unrecorded_stale = unrecorded_stale;
         _valid = true;
+    }
+    void set_unhealed_locked(const std::vector<size_t>& members) {
+        _unhealed.assign(_states.size(), false);
+        for (size_t member : members) {
+            _unhealed[member] = true;
+        }
+    }
+    // The first member still to heal that is in the set, or `none`.
+    // Members that left the set are not healed: their rejoin copies them.
+    size_t next_unhealed_locked(size_t none) noexcept {
+        for (size_t i = 0; i < _unhealed.size(); ++i) {
+            if (_unhealed[i] && state(i) != MemberState::IN_SYNC) {
+                _unhealed[i] = false;
+            }
+            if (_unhealed[i]) {
+                return i;
+            }
+        }
+        return none;
+    }
+    bool unhealed() {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return next_unhealed_locked(_unhealed.size()) != _unhealed.size();
     }
     void begin_exclusion_locked(size_t member) noexcept {
         _states[member].store(MemberState::LEAVING, std::memory_order_release);
@@ -623,6 +655,25 @@ public:
         }
         return config;
     }
+    void start_heal_locked(const Chunk* owner, size_t member) {
+        assert(
+            can_start_resync_locked() && state(member) == MemberState::IN_SYNC
+        );
+        _resync = std::make_unique<MirrorResync>(
+            ++_resync_generation, owner, member, _size, RESYNC_CHUNK, true
+        );
+    }
+    void announce_heal_locked() {
+        _resync->announce();
+        _resync_changed();
+    }
+    void finish_heal_locked() noexcept {
+        assert(_resync && _resync->heal());
+        _unhealed[_resync->member()] = false;
+        _resync_committed = _resync->generation();
+        _resync.reset();
+        _resync_changed();
+    }
     void discard_unannounced_resync_locked() noexcept {
         assert(_resync && !_resync->announced());
         _resync.reset();
@@ -665,7 +716,7 @@ public:
             _resync->committing()) {
             return false;
         }
-        if (_resync->announced()) {
+        if (_resync->announced() && !_resync->heal()) {
             exclude_locked(_resync->member());
         }
         _resync.reset();
@@ -801,6 +852,7 @@ Chunk::Chunk(
         }
         _probe_setup();
         _resync_maybe_start();
+        _heal_maybe_start();
     }
 }
 
@@ -1325,7 +1377,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         std::lock_guard<std::mutex> guard(control->mutex());
         control->register_chunk_locked(chunk.get());
         MirrorResync* r = control->resync_locked();
-        if (r != nullptr && r->announced()) {
+        if (r != nullptr && r->announced() && !r->attached(chunk.get())) {
             Member& m = chunk->_members[r->member()];
             if (m.slot && m.reachable) {
                 chunk->_resync_attach_locked(r->generation());
@@ -1629,6 +1681,34 @@ void Chunk::_reconcile_sync_set() {
         }
     }
 
+    /*
+     * A writer vanished (case F5): the in-sync data members may differ in
+     * its unacknowledged regions. The front-most one is what reads are
+     * served from; every other one that is not CLEAN is healed from it
+     * while it stays in the set. Not while another session is open for
+     * writing on any member (a writable open counts itself in `writers`):
+     * the records are then not a verdict about a vanished writer.
+     */
+    std::vector<size_t> unhealed;
+    if (!_readonly) {
+        bool other_writers = false;
+        for (const Member& m : _members) {
+            other_writers |= m.reachable && m.meta.writers > 1;
+        }
+        bool front = false;
+        for (size_t i = 0; !other_writers && i < _members.size(); ++i) {
+            if (state[i] != MemberState::IN_SYNC || _members[i].witness) {
+                continue;
+            }
+            if (!front) {
+                front = true;
+            } else if (_members[i].meta.state !=
+                       RAWSTOR_OBJECT_SYNC_STATE_CLEAN) {
+                unhealed.push_back(i);
+            }
+        }
+    }
+
     MirrorControl& c = *_control;
     std::lock_guard<std::mutex> guard(c.mutex());
     std::vector<RawstorObjectConfig> records;
@@ -1645,6 +1725,7 @@ void Chunk::_reconcile_sync_set() {
     c.initialize_locked(
         state, std::move(records), size, config, unrecorded_stale
     );
+    c.set_unhealed_locked(unhealed);
 }
 
 rawstd::Task<void> Chunk::_with_dirty() {
@@ -2159,7 +2240,7 @@ Chunk::_resync_enter(uint64_t offset, size_t size, ResyncTicket& ticket) {
         }
         ticket.tracked = true;
         ticket.generation = r->generation();
-        if (!_members[r->member()].witness) {
+        if (!r->heal() && !_members[r->member()].witness) {
             ticket.syncing = static_cast<ssize_t>(r->member());
         }
         return true;
@@ -2435,9 +2516,12 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
         }
 
         uint64_t size = 0;
+        bool heal = false;
         {
             std::lock_guard<std::mutex> lock(c.mutex());
             size = c.size_locked();
+            MirrorResync* r = c.resync_locked();
+            heal = r != nullptr && r->generation() == generation && r->heal();
         }
 
         std::vector<char> buf(RESYNC_CHUNK);
@@ -2452,6 +2536,11 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
                     return true;
                 }
                 MirrorResync* r = c.resync_locked();
+                if (heal && _state(r->member()) != MemberState::IN_SYNC) {
+                    _resync_abort_locked(generation, "target left the set");
+                    stop = true;
+                    return true;
+                }
                 switch (r->claim_region(k)) {
                 case MirrorResync::Sweep::DONE:
                     done = true;
@@ -2472,7 +2561,7 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
             }
 
             auto source_ok = [&](size_t i) {
-                return !_members[i].witness &&
+                return !(heal && i == idx) && !_members[i].witness &&
                        _state(i) == MemberState::IN_SYNC && _members[i].slot &&
                        _members[i].reachable;
             };
@@ -2543,6 +2632,9 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
 
             if (werror || wresult != len) {
                 _resync_abort(generation, "target write failed");
+                if (heal) {
+                    co_await _degrade({idx});
+                }
                 co_return;
             }
 
@@ -2555,7 +2647,11 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
             c.wake_resync();
         }
 
-        co_await _resync_finish(generation);
+        if (heal) {
+            co_await _heal_finish(generation);
+        } else {
+            co_await _resync_finish(generation);
+        }
     } catch (const std::exception& e) {
         rawstd_error("Mirror resync failed: %s\n", e.what());
         _resync_abort(generation, "internal error");
@@ -2666,6 +2762,111 @@ rawstd::Task<void> Chunk::_resync_finish(uint64_t generation) {
     );
 
     _resync_maybe_start();
+    _heal_maybe_start();
+}
+
+/*
+ * Starts healing the first member a vanished writer may have left different
+ * from the front-most one (case F5), with this Chunk as the owner. The member
+ * is in the set all along: it votes, takes every write, and the sweep only
+ * overwrites regions with the front-most member's content. Its LOST mark
+ * stays until all of them are healed.
+ */
+void Chunk::_heal_maybe_start() {
+    if (_closing || _readonly || _members.size() == 1) {
+        return;
+    }
+    MirrorControl& c = *_control;
+    uint64_t generation = 0;
+    {
+        std::lock_guard<std::mutex> lock(c.mutex());
+        if (!c.can_start_resync_locked()) {
+            return;
+        }
+        size_t idx = c.next_unhealed_locked(_members.size());
+        if (idx == _members.size()) {
+            return;
+        }
+        if (!_members[idx].slot || !_members[idx].reachable) {
+            return;
+        }
+        c.start_heal_locked(this, idx);
+        generation = c.resync_locked()->generation();
+        rawstd_info(
+            "Mirror heal: copying the front-most member onto: %s\n",
+            _member_str(_members[idx]).c_str()
+        );
+        _resync_attach_locked(generation);
+        c.announce_heal_locked();
+    }
+    _resync_run(generation);
+}
+
+/*
+ * Every region of a member is copied. Once all members are healed, the LOST
+ * marks are cleared: the copies are equal again. Without a write yet the
+ * copies are then CLEAN; the first write marks them DIRTY as usual.
+ */
+rawstd::Task<void> Chunk::_heal_finish(uint64_t generation) {
+    MirrorControl& c = *_control;
+
+    co_await _lock();
+
+    bool gone = false;
+    bool all_healed = false;
+    RawstorObjectConfig config;
+    {
+        std::lock_guard<std::mutex> lock(c.mutex());
+        MirrorResync* r = c.resync_locked();
+        gone = r == nullptr || r->generation() != generation;
+        if (!gone) {
+            c.finish_heal_locked();
+            _resync_attached = 0;
+            all_healed =
+                c.next_unhealed_locked(_members.size()) == _members.size();
+            config = c.configuration_locked();
+        }
+    }
+    if (gone) {
+        _unlock();
+        co_return;
+    }
+
+    std::vector<size_t> failed;
+    for (size_t i = 0; all_healed && i < _members.size(); ++i) {
+        Member& m = _members[i];
+        if (_state(i) != MemberState::IN_SYNC || m.witness || !m.slot ||
+            m.meta.state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN) {
+            continue;
+        }
+        try {
+            if (m.meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST) {
+                co_await _set_member_config(
+                    i, config, RAWSTOR_CONFIG_CLEAR_LOST
+                );
+            }
+            if (!c.dirty()) {
+                co_await _set_member_config(
+                    i, config, 0, RAWSTOR_OBJECT_SYNC_STATE_CLEAN
+                );
+            }
+        } catch (const std::system_error& e) {
+            rawstd_error(
+                "Mirror heal: state update failed: %s: %s\n",
+                _member_str(m).c_str(), strerror(e.code().value())
+            );
+            failed.push_back(i);
+        }
+    }
+
+    _unlock();
+
+    if (!failed.empty()) {
+        co_await _degrade(std::move(failed));
+        co_return;
+    }
+
+    _heal_maybe_start();
 }
 
 void Chunk::_resync_abort(uint64_t generation, const char* reason) noexcept {
@@ -2743,6 +2944,7 @@ rawstd::DetachedTask Chunk::_probe_watch(std::weak_ptr<void> alive) {
                 if (alive.expired()) {
                     co_return;
                 }
+                _heal_maybe_start();
                 _probe_tick();
             }
             if (alive.expired() || error != ENOBUFS) {
@@ -3303,7 +3505,7 @@ rawstd::Task<void> Chunk::close(bool clean) {
     MirrorControl& c = *_control;
     co_await _lock();
     bool leave = clean && !flush_failed && !_write_failed && !_any_leaving() &&
-                 c.exclusions_recorded();
+                 c.exclusions_recorded() && !c.unhealed();
     // Only the members in the set: an excluded one's record is rewritten
     // by its next resync anyway.
     std::vector<Slot*> leaving;

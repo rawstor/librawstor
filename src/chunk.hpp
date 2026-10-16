@@ -277,6 +277,11 @@ private:
     // Returns once DIRTY is durably recorded on the in-sync members; the
     // first write (or read-repair) of a mirrored object passes through
     // here before anything is acknowledged.
+    // Heals the in-sync members a vanished writer may have left different
+    // from the front-most one (case F5), one at a time.
+    void _heal_maybe_start();
+    rawstd::Task<void> _heal_finish(uint64_t generation);
+
     rawstd::Task<void> _with_dirty();
     rawstd::Task<void> _run_dirty_barrier();
 

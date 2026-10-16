@@ -102,7 +102,8 @@ struct RawstorObjectSpec {
  * LOST        - DIRTY, and a session that wrote the copy went without a
  *               clean departure: the copy may differ from its mirrors in
  *               that writer's unacknowledged writes. It stays LOST until
- *               cleared explicitly (RAWSTOR_CONFIG_CLEAR_LOST).
+ *               cleared explicitly (RAWSTOR_CONFIG_CLEAR_LOST), which a
+ *               mirrored open does once it has made the copies equal.
  *
  * Witness members use the same states for their durable metadata record;
  * LOST invalidates their vote. They have no data writer sessions.

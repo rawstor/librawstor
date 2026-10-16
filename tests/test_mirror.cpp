@@ -1038,6 +1038,138 @@ TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     EXPECT_EQ(a.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 }
 
+// A writer that vanished leaves the copies LOST and possibly different.
+// The next open keeps both in the set, so writes go on at once, and heals
+// the second copy from the first; LOST goes away only afterwards.
+TEST(MirrorResyncTest, vanished_writer_copies_healed_in_the_set) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000b0");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* writer = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &writer), 0);
+    const std::string acked = "acked";
+    object_write(queue, writer, acked.data(), acked.size(), 0, 0);
+    ASSERT_EQ(
+        rawstor::tests::sync_run(
+            queue,
+            [&](auto cb, void* data) {
+                return rawstor_object_abandon(writer, cb, data);
+            }
+        ),
+        0
+    );
+
+    /* A write the vanished writer left on the second copy only. */
+    const std::string unacked = "unacked";
+    object_write_single(
+        queue, members.target(1), unacked.data(), unacked.size(), 8192
+    );
+    ASSERT_NE(read_file(members.dat(0)), read_file(members.dat(1)));
+    for (size_t i = 0; i < 2; ++i) {
+        RawstorObjectMeta m{};
+        ASSERT_EQ(target_meta(queue, members.target(i), &m), 0);
+        ASSERT_EQ(m.state, RAWSTOR_OBJECT_SYNC_STATE_LOST) << "member " << i;
+    }
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    const std::string next = "next";
+    object_write(queue, object, next.data(), next.size(), 4096, 0);
+
+    bool healed = false;
+    for (int i = 0; i < 3000 && !healed; ++i) {
+        rawio_wait_timeout(queue, 10);
+        healed = true;
+        for (size_t k = 0; k < 2; ++k) {
+            RawstorObjectMeta m{};
+            healed &= target_meta(queue, members.target(k), &m) == 0 &&
+                      m.state != RAWSTOR_OBJECT_SYNC_STATE_LOST;
+        }
+    }
+    ASSERT_TRUE(healed);
+    object_close_clean(queue, object);
+
+    EXPECT_EQ(read_file(members.dat(0)), read_file(members.dat(1)));
+
+    RawstorObjectMeta a{};
+    RawstorObjectMeta b{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
+    ASSERT_EQ(target_meta(queue, members.target(1), &b), 0);
+    EXPECT_EQ(a.config.sync_id, b.config.sync_id);
+    EXPECT_EQ(a.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(b.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+}
+
+// Several copies to heal are healed one after another; LOST goes away
+// only once all of them are equal to the first.
+TEST(MirrorResyncTest, vanished_writer_all_other_copies_healed) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000b1");
+
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* writer = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &writer), 0);
+    const std::string acked = "acked";
+    object_write(queue, writer, acked.data(), acked.size(), 0, 0);
+    ASSERT_EQ(
+        rawstor::tests::sync_run(
+            queue,
+            [&](auto cb, void* data) {
+                return rawstor_object_abandon(writer, cb, data);
+            }
+        ),
+        0
+    );
+
+    for (size_t i = 1; i < 3; ++i) {
+        const std::string unacked = "unacked" + std::to_string(i);
+        object_write_single(
+            queue, members.target(i), unacked.data(), unacked.size(), 4096 * i
+        );
+    }
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+
+    bool healed = false;
+    for (int i = 0; i < 3000 && !healed; ++i) {
+        rawio_wait_timeout(queue, 10);
+        healed = true;
+        for (size_t k = 0; k < 3; ++k) {
+            RawstorObjectMeta m{};
+            healed &= target_meta(queue, members.target(k), &m) == 0 &&
+                      m.state != RAWSTOR_OBJECT_SYNC_STATE_LOST;
+        }
+    }
+    ASSERT_TRUE(healed);
+    object_close_clean(queue, object);
+
+    EXPECT_EQ(read_file(members.dat(0)), read_file(members.dat(1)));
+    EXPECT_EQ(read_file(members.dat(0)), read_file(members.dat(2)));
+    for (size_t k = 0; k < 3; ++k) {
+        RawstorObjectMeta m{};
+        ASSERT_EQ(target_meta(queue, members.target(k), &m), 0);
+        EXPECT_EQ(m.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN) << "member " << k;
+    }
+}
+
 TEST(MirrorResyncTest, probe_rejoins_recreated_arm) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000a8");
