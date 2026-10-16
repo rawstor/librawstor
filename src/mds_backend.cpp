@@ -493,9 +493,10 @@ rawstd::Task<void> Backend::_connect() {
     co_await _wire_set_object({}, 0, 0);
 }
 
-// LIST reports registered objects at offset 0 and native members at their
-// physical chunk offsets. META distinguishes a whole-object map from a
-// metadata-only member; filtered whole-object queries resolve its WireMap.
+// LIST reports registered objects as whole-object rows (no offsets) and
+// native members as chunk rows at their physical chunk offsets; the row
+// type alone tells them apart. Filtered whole-object queries resolve the
+// object's WireMap.
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
     RawstdUUID& token, RawstdUUID version_id
@@ -503,17 +504,11 @@ rawstd::Task<void> Backend::list_chunks(
     chunks.clear();
     if (rawstd_uuid_is_nil(&id)) {
         co_await _wire_list_chunks({}, limit, chunks, token, version_id);
-        for (auto& group : chunks) {
-            if (!(co_await _witness_meta(group.id, group.offsets.front()))) {
-                group.offsets.clear();
-            }
-        }
         co_return;
     }
     if (rawstd_uuid_is_nil(&version_id)) {
         co_await _wire_list_chunks(id, limit, chunks, token, version_id);
-        if (!chunks.empty() &&
-            co_await _witness_meta(id, chunks.front().offsets.front())) {
+        if (!chunks.empty() && !chunks.front().offsets.empty()) {
             co_return;
         }
         chunks.clear();

@@ -823,8 +823,10 @@ rawstd::DetachedTask Client::_list(
             RawstorFrameListEntry entry{};
             memcpy(entry.id, group.id.bytes, sizeof(entry.id));
             if (group.offsets.empty()) {
+                entry.type = RAWSTOR_LIST_ENTRY_OBJECT;
                 entries.push_back(entry);
             } else {
+                entry.type = RAWSTOR_LIST_ENTRY_CHUNK;
                 for (uint64_t offset : group.offsets) {
                     entry.chunk_offset = offset;
                     entries.push_back(entry);
