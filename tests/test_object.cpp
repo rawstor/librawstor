@@ -148,23 +148,23 @@ ssize_t object_resize(
 }
 
 ssize_t target_meta(
-    rawio::Queue& queue, const std::string& target, uint64_t offset,
+    rawio::Queue& queue, const std::string& target, uint64_t index,
     RawstorObjectMeta* metas, size_t count
 ) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
         return rawstor_target_meta(
-            &queue, target.c_str(), offset, metas, count, cb, data
+            &queue, target.c_str(), index, metas, count, cb, data
         );
     });
 }
 
 ssize_t target_set_member_sync_state(
-    rawio::Queue& queue, const std::string& target, uint64_t offset,
+    rawio::Queue& queue, const std::string& target, uint64_t index,
     size_t member_index, const RawstorObjectConfig& sync_state
 ) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
         return rawstor_target_set_member_config(
-            &queue, target.c_str(), offset, member_index, &sync_state, 0,
+            &queue, target.c_str(), index, member_index, &sync_state, 0,
             nullptr, cb, data
         );
     });
@@ -783,11 +783,11 @@ TEST(ObjectResizeTest, retried_after_lost_reply_materializes_new_chunks) {
     EXPECT_EQ(read_spec.size, new_size);
 
     // Every chunk the resize added has its copy on the OST.
-    for (uint64_t offset = spec.size; offset < new_size;
-         offset += spec.chunk_size) {
+    for (uint64_t index = spec.size / spec.chunk_size;
+         index < new_size / spec.chunk_size; ++index) {
         RawstorObjectMeta meta{};
-        ASSERT_EQ(target_meta(*queue, target, offset, &meta, 1), 1) << offset;
-        EXPECT_EQ(meta.spec.size, spec.chunk_size) << offset;
+        ASSERT_EQ(target_meta(*queue, target, index, &meta, 1), 1) << index;
+        EXPECT_EQ(meta.spec.size, spec.chunk_size) << index;
     }
 
     EXPECT_EQ(target_remove(*queue, target), 0);
@@ -813,7 +813,7 @@ TEST(ObjectResizeTest, non_mds_target_returns_enotsup) {
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-// mds::Backend::create() ignores its own chunk_offset parameter and does
+// mds::Backend::create() ignores its own chunk index parameter and does
 // its own placement-driven chunking internally, off spec.size/chunk_size
 // directly, given exactly one whole-object call -- rawstor_location_
 // create() must not also split an mds:// location's own URI into several

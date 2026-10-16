@@ -25,7 +25,7 @@ numbers its stages separately.
 | Several writable opens in one process (multiqueue) | 3 | ✅ | `src/chunk.cpp` (`MirrorControl`), `tests/test_multiqueue.cpp` |
 | Several writer processes (multi-attach) | — | 🟡 | [Multi-attach](multiattach.md): stage 1 (protocol, member side) done, stage 2 (several processes) not |
 | `rawstor show -v` per-chunk / per-mirror state | — | ✅ | `cli/show.c` |
-| `rawstor resolve TARGET --winner=N [--offset]` | — | ✅ | `cli/resolve.c` |
+| `rawstor resolve TARGET --winner=N [--index]` | — | ✅ | `cli/resolve.c` |
 | Force-open below quorum, read-only (`RAWSTOR_FORCE \| RAWSTOR_READONLY`; `--force` with `--readonly` in the exporters) | 2 | ✅ | `src/chunk.cpp` |
 | Force-open below quorum for writing (CLI / opts) | — | ❌ | — |
 | Heal of copies a vanished writer may have left different (F5) | 3 | ✅ | `src/chunk.cpp` (`_heal_maybe_start()`) |
@@ -373,7 +373,7 @@ Every writable open of a chunk gets its own `Chunk` -- its own sessions to
 the copies, on the caller's own thread and `rawio` queue -- but the opens of
 one process are one writer: they share one control state per chunk,
 `MirrorControl`, found in a process-wide registry by object id and chunk
-offset. It is the only place the chunk's state lives: the sync set
+index. It is the only place the chunk's state lives: the sync set
 (`epoch`/`sync_id`/history/size), `DIRTY`, the frozen flag, every member's
 state and record, the exclusions not yet recorded with a new `sync_id`,
 and the running resync. A `Chunk` keeps only its sessions and whether each
@@ -524,7 +524,7 @@ a vote and another copy of the contents.
 - **`src/lvm_backend.cpp`/`src/zfs_backend.cpp`** — a raw block device has no `.spec` file and a reserved header/footer region is incompatible with objects already created (data occupies the device from byte 0). Logical size and copy metadata use each backend's own native, transactional storage: a ZFS user property (`rawstor:meta`, set/read via `zfs set`/`zfs get`) or an LVM tag (`rawstor.meta=...`, via `lvchange --addtag`/`--deltag` and `lvs -o lv_tags`), encoded as a compact colon-separated hex string (`meta_encode()`/`meta_decode()` in `src/blk_backend.{hpp,cpp}`). The logical size is persisted at creation and is independent of physical allocation; witnesses retain it too. Both mechanisms share the device/dataset's own failure domain and are set in the same command as creation, so there is never a window where the volume exists without one. A volume with no recorded value (created before this existed, or by something else) is **not** trusted as legacy-CLEAN the way an old `.spec` record is — it fails `meta()`, which the caller already treats as case F10 (untrusted member, needs a resync).
 - **`ost/session.cpp`** — handlers for the new opcodes.
 - **`src/chunk.cpp`** — per-mirror state machine (IN-SYNC/LEAVING/STALE/SYNCING per member, recorded as every member's role, in the chunk's `MirrorControl` shared by the opens of one process, *Writers*), quorum checks at open, degraded open, the degradation procedure (F1: suspend acks → bump survivors' metadata → resume), read failover + read-repair, the resync engine (bitmap + sweeper + per-chunk locks), reconnect probes for STALE mirrors. Cross-mirror logic lives in `Chunk`; `Slot` keeps only per-location retry/reopen.
-- **`cli/`** — `rawstor show -v` prints one `chunk[OFFSET]` block per chunk (`rawstor_target_spec()`'s own size/chunk_size say how many), each with a `mirror[N]` per copy of that chunk and its own state; `rawstor resolve TARGET --winner=N[,N...] [--offset OFFSET]` declares one or more mirrors of the targeted chunk(s) jointly authoritative after split brain (F9) -- every chunk in the object if `--offset` is omitted -- writing them all the same new dominant `sync_id`, one member at a time via `rawstor_target_set_member_config()` with `RAWSTOR_CONFIG_CLEAR_LOST`, so every mirror of that chunk NOT listed gets a full resync on the next open. Still missing: `rawstor-cli force-open` / an opts flag (below-quorum start, explicit manual approval).
+- **`cli/`** — `rawstor show -v` prints one `chunk[INDEX]` block per chunk (`rawstor_target_spec()`'s own size/chunk_size say how many), each with a `mirror[N]` per copy of that chunk and its own state; `rawstor resolve TARGET --winner=N[,N...] [--index INDEX]` declares one or more mirrors of the targeted chunk(s) jointly authoritative after split brain (F9) -- every chunk in the object if `--index` is omitted -- writing them all the same new dominant `sync_id`, one member at a time via `rawstor_target_set_member_config()` with `RAWSTOR_CONFIG_CLEAR_LOST`, so every mirror of that chunk NOT listed gets a full resync on the next open. Still missing: `rawstor-cli force-open` / an opts flag (below-quorum start, explicit manual approval).
 
 ### Implementation stages
 

@@ -324,7 +324,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
             store.create_witness(
-                uuid_of(payload.object_id), payload.chunk_offset, spec
+                uuid_of(payload.object_id), payload.chunk_index, spec
             );
         } catch (const std::system_error& e) {
             res = -e.code().value();
@@ -345,7 +345,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
             }
             if (head.cmd == RAWSTOR_CMD_META) {
                 const auto meta = store.witness_meta(
-                    uuid_of(payload.object_id), payload.offset
+                    uuid_of(payload.object_id), payload.chunk_index
                 );
                 if (int error = rawstor_frame_meta_encode(&out, &meta)) {
                     RAWSTD_THROW_SYSTEM_ERROR(error);
@@ -353,7 +353,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                 res = sizeof(out);
             } else {
                 store.remove_witness(
-                    uuid_of(payload.object_id), payload.offset
+                    uuid_of(payload.object_id), payload.chunk_index
                 );
             }
         } catch (const std::system_error& e) {
@@ -376,7 +376,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                 RAWSTD_THROW_SYSTEM_ERROR(error);
             }
             store.set_config(
-                uuid_of(payload.object_id), payload.chunk_offset, config,
+                uuid_of(payload.object_id), payload.chunk_index, config,
                 payload.flags, decode_config_state(payload.state)
             );
         } catch (const std::system_error& e) {
@@ -458,7 +458,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                 memcpy(
                     entries[i].id, records[i].id.bytes, sizeof(entries[i].id)
                 );
-                entries[i].chunk_offset = records[i].offset;
+                entries[i].chunk_index = records[i].chunk_index;
                 entries[i].type = records[i].type;
             }
             memcpy(entries.back().id, token.bytes, sizeof(entries.back().id));

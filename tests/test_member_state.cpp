@@ -749,12 +749,12 @@ TEST(ProtocolTest, allocation_preserves_identity_and_placement) {
     };
     RawstorFrameAllocatePayload wire{};
     wire.object_id[0] = 17;
-    wire.chunk_offset = 4096;
+    wire.chunk_index = 4096;
     ASSERT_EQ(
         rawstor_frame_allocate_encode(&wire, &input, RAWSTOR_MEMBER_WITNESS), 0
     );
     EXPECT_EQ(wire.object_id[0], 17);
-    EXPECT_EQ(wire.chunk_offset, 4096u);
+    EXPECT_EQ(wire.chunk_index, 4096u);
     RawstorObjectSpec output{};
     RawstorMemberRole role{};
     ASSERT_EQ(rawstor_frame_allocate_decode(&wire, &output, &role), 0);

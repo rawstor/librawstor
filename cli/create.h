@@ -16,7 +16,7 @@ extern "C" {
 // single-copy object) otherwise. `chunk_size` splits size into
 // ceil(size / chunk_size) chunks -- create-by-location
 // (rawstor_location_create()) does the splitting itself (target.cpp's
-// Location::create()); create-by-target needs a hand-built, multi-offset
+// Location::create()); create-by-target needs a hand-built, multi-chunk
 // TARGET naming them instead. `failure_domain`/`stripe_width` are object
 // policy meaningful only when `target`/`location` is mds:// -- 0 in each
 // means "use the documented default" (see struct RawstorObjectSpec),

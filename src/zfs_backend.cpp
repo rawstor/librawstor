@@ -55,16 +55,13 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
 }
 
 std::string Backend::_dataset(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
 ) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
 
-    // Hex, not decimal -- see parse_target_path()'s own doc comment
-    // (target.cpp) for why every physical, offset-carrying name in this
-    // codebase agrees on one base.
     std::ostringstream oss;
-    oss << _parent_dataset << "/" << uuid_str << ":" << std::hex << offset;
+    oss << _parent_dataset << "/" << uuid_str << ":" << index;
     if (!rawstd_uuid_is_nil(&version_id)) {
         RawstdUUIDString version_str;
         rawstd_uuid_to_string(&version_id, &version_str);
@@ -74,9 +71,9 @@ std::string Backend::_dataset(
 }
 
 std::string Backend::_device_path(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
 ) const {
-    return "/dev/zvol/" + _dataset(id, offset, version_id);
+    return "/dev/zvol/" + _dataset(id, index, version_id);
 }
 
 rawstd::Task<void> Backend::_wait_for_blockdev(
@@ -108,8 +105,8 @@ rawstd::Task<void> Backend::_wait_for_blockdev(
 }
 
 rawstd::Task<int>
-Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
-    std::string path = _device_path(id, offset);
+Backend::_open_object(const RawstdUUID& id, uint64_t index, int flags) {
+    std::string path = _device_path(id, index);
 
     // No O_NONBLOCK: opening a ZFS zvol with it caused cache-miss reads to
     // return -EAGAIN, which io_uring could not properly handle for
@@ -126,9 +123,9 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
 }
 
 rawstd::Task<int> Backend::_open_version(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
 ) {
-    std::string path = _device_path(id, offset, version_id);
+    std::string path = _device_path(id, index, version_id);
 
     // O_RDONLY, not O_RDWR: a version device is read-only at the device
     // level too (docs/mds.md, "Versions"), so a write against one fails
@@ -163,7 +160,7 @@ rawstd::Task<void> Backend::list_chunks(
     chunks.clear();
     token = {};
 
-    // Grouped by id as they're read: every ":<offset>" zvol sharing one
+    // Grouped by id as they're read: every ":<index>" zvol sharing one
     // uuid prefix becomes that uuid's own single ChunkGroup entry.
     auto id_less = [](const RawstdUUID& lhs, const RawstdUUID& rhs) -> bool {
         return rawstd_uuid_cmp(&lhs, &rhs) < 0;
@@ -225,18 +222,18 @@ rawstd::Task<void> Backend::list_chunks(
         // A UUID's own string form is always exactly 36 characters
         // (RawstdUUIDString) -- a fixed prefix, since the UUID itself
         // already embeds dashes (8-4-4-4-12), unlike this backend's own
-        // ":<offset>" suffix. The suffix is mandatory: _dataset() always
+        // ":<index>" suffix. The suffix is mandatory: _dataset() always
         // writes it, so a bare-UUID dataset is not one this backend could
         // open.
         if (name.size() <= 37 || name[36] != ':') {
             continue;
         }
         std::string uuid_part = name.substr(0, 36);
-        // Anything left over after the hex digits is rejected instead of
+        // Anything left over after the decimal digits is rejected instead of
         // silently truncated to whatever prefix strtoull() did parse.
         char* endptr = nullptr;
         errno = 0;
-        uint64_t offset = strtoull(name.c_str() + 37, &endptr, 16);
+        uint64_t index = strtoull(name.c_str() + 37, &endptr, 10);
         if (errno != 0 || endptr == name.c_str() + 37 || *endptr != '\0') {
             errno = 0;
             continue;
@@ -249,14 +246,14 @@ rawstd::Task<void> Backend::list_chunks(
         if (filtered && rawstd_uuid_cmp(&uuid, &id) != 0) {
             continue;
         }
-        grouped[uuid].push_back(offset);
+        grouped[uuid].push_back(index);
     }
 
     std::vector<ChunkGroup> found;
     found.reserve(grouped.size());
-    for (auto& [id, offsets] : grouped) {
-        std::sort(offsets.begin(), offsets.end());
-        found.push_back(ChunkGroup{id, std::move(offsets)});
+    for (auto& [id, indices] : grouped) {
+        std::sort(indices.begin(), indices.end());
+        found.push_back(ChunkGroup{id, std::move(indices)});
     }
 
     found.erase(
@@ -288,7 +285,7 @@ rawstd::Task<void> Backend::list_chunks(
 }
 
 rawstd::Task<void> Backend::create(
-    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID&, const RawstdUUID& id, uint64_t index,
     const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
     // zfs-create(8) rejects volume sizes that are not a multiple of
@@ -314,7 +311,7 @@ rawstd::Task<void> Backend::create(
         );
     }
 
-    std::string device_path = _device_path(id, offset);
+    std::string device_path = _device_path(id, index);
 
     // create() must behave like open(O_EXCL): retrying it against an id
     // a previous, unacknowledged attempt already fully created needs to
@@ -328,7 +325,7 @@ rawstd::Task<void> Backend::create(
         RAWSTD_THROW_SYSTEM_ERROR(EEXIST);
     }
 
-    std::string dataset = _dataset(id, offset);
+    std::string dataset = _dataset(id, index);
 
     char size_buf[32];
     snprintf(size_buf, sizeof(size_buf), "%" PRIu64, size);
@@ -363,7 +360,7 @@ rawstd::Task<void> Backend::create(
     try {
         co_await rawstor::run_command(_queue, std::move(argv));
         co_await _wait_for_blockdev(
-            _device_path(id, offset), /*want_present=*/true
+            _device_path(id, index), /*want_present=*/true
         );
     } catch (const std::system_error& e) {
         rawstd_error(
@@ -376,19 +373,19 @@ rawstd::Task<void> Backend::create(
 }
 
 rawstd::Task<void>
-Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
+Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t index) {
     // Matches file::Backend::remove()'s own convention: a nonexistent
     // zvol is ENOENT specifically (permanent -- never retried by
     // Slot::_with_retry()'s is_permanent_backend_error()), not the
     // generic, retryable EIO "zfs destroy" itself would produce for the
     // same case.
-    std::string device_path = _device_path(id, offset);
+    std::string device_path = _device_path(id, index);
     if (!co_await _exists(device_path)) {
         rawstd_error("zfs: zvol %s does not exist\n", device_path.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
 
-    std::string dataset = _dataset(id, offset);
+    std::string dataset = _dataset(id, index);
 
     rawstd_info("zfs: destroying zvol %s\n", dataset.c_str());
 
@@ -398,7 +395,7 @@ Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
     try {
         co_await rawstor::run_command(_queue, std::move(argv));
         co_await _wait_for_blockdev(
-            _device_path(id, offset), /*want_present=*/false
+            _device_path(id, index), /*want_present=*/false
         );
     } catch (const std::system_error& e) {
         rawstd_error(
@@ -446,12 +443,12 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
 }
 
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
 ) {
     // A version's own dataset (`<zvol>@s<version_id>`) answers the same
     // property query, and its device the same size query, as the live
     // zvol's.
-    std::string dataset = _dataset(id, offset, version_id);
+    std::string dataset = _dataset(id, index, version_id);
 
     std::vector<std::string> argv = {"zfs",  "get",   "-H",
                                      "-o",   "value", rawstor_property,
@@ -505,16 +502,16 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
 // itself took ("<zvol>@s<version_id>", _dataset()'s naming); any other
 // snapshot of it (e.g. one taken by hand) is skipped.
 rawstd::Task<std::vector<RawstdUUID>>
-Backend::list_versions(const RawstdUUID& id, uint64_t offset) {
+Backend::list_versions(const RawstdUUID& id, uint64_t index) {
     // Same ENOENT convention as remove(): a nonexistent zvol is permanent,
     // not the retryable EIO "zfs list" itself would produce.
-    std::string device_path = _device_path(id, offset);
+    std::string device_path = _device_path(id, index);
     if (!co_await _exists(device_path)) {
         rawstd_error("zfs: zvol %s does not exist\n", device_path.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
 
-    std::string dataset = _dataset(id, offset);
+    std::string dataset = _dataset(id, index);
 
     // GCC 13 ICEs when a std::vector<std::string> argument is
     // brace-initialized directly at the call site of a nested coroutine
@@ -557,11 +554,11 @@ Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
 }
 
 rawstd::Task<void> Backend::_write_meta(
-    const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
+    const RawstdUUID& id, uint64_t index, RawstorObjectSyncStateValue state,
     const RawstorObjectConfig& config, const RawstorObjectBallot& promised,
     const RawstorObjectBallot& accepted
 ) {
-    std::string dataset = _dataset(id, offset);
+    std::string dataset = _dataset(id, index);
 
     // Preserve the declared logical size and placement identity.
     // Missing or unreadable metadata is rejected instead of zeroing it.
@@ -602,7 +599,7 @@ rawstd::Task<void> Backend::_write_meta(
 }
 
 rawstd::Task<void> Backend::create_version(
-    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID&, const RawstdUUID& id, uint64_t index,
     const RawstdUUID& version_id
 ) {
     if (rawstd_uuid_is_nil(&version_id)) {
@@ -610,8 +607,8 @@ rawstd::Task<void> Backend::create_version(
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    std::string dataset = _dataset(id, offset);
-    std::string snapshot = _dataset(id, offset, version_id);
+    std::string dataset = _dataset(id, index);
+    std::string snapshot = _dataset(id, index, version_id);
 
     rawstd_info("zfs: creating snapshot %s\n", snapshot.c_str());
 
@@ -645,7 +642,7 @@ rawstd::Task<void> Backend::create_version(
     // unacknowledged attempt already took is EEXIST (permanent, and what
     // a retried object version counts as already taken), not the
     // generic, pointlessly retried error "zfs snapshot" would give.
-    if (co_await _exists(_device_path(id, offset, version_id))) {
+    if (co_await _exists(_device_path(id, index, version_id))) {
         rawstd_error("zfs: snapshot %s already exists\n", snapshot.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(EEXIST);
     }
@@ -663,10 +660,10 @@ rawstd::Task<void> Backend::create_version(
 }
 
 rawstd::Task<void> Backend::remove_version(
-    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID&, const RawstdUUID& id, uint64_t index,
     const RawstdUUID& version_id
 ) {
-    std::string snapshot = _dataset(id, offset, version_id);
+    std::string snapshot = _dataset(id, index, version_id);
 
     // Same ENOENT convention as remove(): a nonexistent version is
     // permanent, not the retryable EIO "zfs destroy" would produce.

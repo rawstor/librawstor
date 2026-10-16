@@ -129,19 +129,19 @@ bool is_permanent_backend_error(int error) {
            error == ESTALE;
 }
 
-// Binds `backend` to `id`/`offset`'s live version, or one previously
+// Binds `backend` to `id`/`index`'s live version, or one previously
 // created version of it if `version_id` isn't nil (Backend::
 // set_object()/set_version()'s own split) -- shared by Slot::open() and
 // _reconnect() below, both of which rebind to whichever
-// `id`/`offset`/`version_id` this Slot itself was last opened with.
+// `id`/`index`/`version_id` this Slot itself was last opened with.
 rawstd::Task<void> set_object_or_version(
-    rawstor::Backend& backend, const RawstdUUID& id, uint64_t offset, int flags,
+    rawstor::Backend& backend, const RawstdUUID& id, uint64_t index, int flags,
     const RawstdUUID& version_id
 ) {
     if (rawstd_uuid_is_nil(&version_id)) {
-        co_await backend.set_object(id, offset, flags);
+        co_await backend.set_object(id, index, flags);
     } else {
-        co_await backend.set_version(id, offset, version_id);
+        co_await backend.set_version(id, index, version_id);
     }
 }
 
@@ -486,7 +486,7 @@ void Slot::CopyState::resync_end(uint64_t offset, uint64_t size) noexcept {
 }
 
 std::shared_ptr<Slot::CopyState>
-Slot::_copy_state(const RawstdUUID& id, uint64_t offset) const {
+Slot::_copy_state(const RawstdUUID& id, uint64_t index) const {
     using Key = std::tuple<std::string, std::string, uint64_t>;
     static std::mutex registry_mu;
     static std::map<Key, std::weak_ptr<CopyState>> registry;
@@ -494,7 +494,7 @@ Slot::_copy_state(const RawstdUUID& id, uint64_t offset) const {
     Key key{
         _get_backend()->location().str(),
         std::string(reinterpret_cast<const char*>(id.bytes), sizeof(id.bytes)),
-        offset
+        index
     };
 
     std::lock_guard<std::mutex> guard(registry_mu);
@@ -597,7 +597,7 @@ Slot::Slot(Private, rawio::Queue& queue, std::shared_ptr<Backend> backend) :
     _wrote(false),
     _left(false),
     _id(std::nullopt),
-    _offset(0),
+    _index(0),
     _flags(0),
     _version_id{},
     _backend(std::move(backend)),
@@ -660,7 +660,7 @@ rawstd::Task<void> Slot::_mark_dirty() {
         ~GateEnd() { gate.end(); }
     } gate_end{_dirty_gate};
     const RawstdUUID id = *_id;
-    const uint64_t offset = _offset;
+    const uint64_t index = _index;
     co_await member->record.lock(_queue);
     RecordLockGuard guard{member->record};
     if (member->dirty.load(std::memory_order_acquire)) {
@@ -668,7 +668,7 @@ rawstd::Task<void> Slot::_mark_dirty() {
     }
     std::shared_ptr<Backend> be = _get_backend();
     co_await be->set_state(
-        id, offset, RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        id, index, RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         RAWSTOR_OBJECT_SYNC_STATE_DIRTY
     );
     member->dirty.store(true, std::memory_order_release);
@@ -680,7 +680,7 @@ rawstd::Task<void> Slot::_depart(std::shared_ptr<Backend> be) {
         co_return;
     }
     const RawstdUUID id = *_id;
-    const uint64_t offset = _offset;
+    const uint64_t index = _index;
     co_await member->record.lock(_queue);
     RecordLockGuard guard{member->record};
     uint32_t remaining = --member->writers;
@@ -696,7 +696,7 @@ rawstd::Task<void> Slot::_depart(std::shared_ptr<Backend> be) {
     const RawstorObjectSyncStateValue state =
         _left ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
               : RAWSTOR_OBJECT_SYNC_STATE_LOST;
-    co_await be->set_state(id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY, state);
+    co_await be->set_state(id, index, RAWSTOR_OBJECT_SYNC_STATE_DIRTY, state);
     member->dirty.store(!_left, std::memory_order_release);
 }
 
@@ -708,11 +708,11 @@ rawstd::Task<void> Slot::_lose_backend(std::shared_ptr<Backend> be) {
     }
     std::shared_ptr<CopyState> member = _member;
     const RawstdUUID id = *_id;
-    const uint64_t offset = _offset;
+    const uint64_t index = _index;
     co_await member->record.lock(_queue);
     RecordLockGuard guard{member->record};
     co_await be->set_state(
-        id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
+        id, index, RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
         RAWSTOR_OBJECT_SYNC_STATE_LOST
     );
     _left = false;
@@ -1000,13 +1000,13 @@ rawstd::Task<void> Slot::_reconnect(std::shared_ptr<Backend> be) {
                     std::exception_ptr set_eptr;
                     try {
                         co_await set_object_or_version(
-                            *backend, *_id, _offset, _flags, _version_id
+                            *backend, *_id, _index, _flags, _version_id
                         );
                         // The result is unused -- this is purely to keep
                         // the same SET_OBJECT+META wire round trip every
                         // set_object() caller gets (see
                         // Backend::set_object()'s own doc comment).
-                        co_await backend->meta(*_id, _offset, _version_id);
+                        co_await backend->meta(*_id, _index, _version_id);
                     } catch (...) {
                         set_eptr = std::current_exception();
                     }
@@ -1093,20 +1093,20 @@ rawstd::Task<void> Slot::list_chunks(
 }
 
 rawstd::Task<void> Slot::_create_version(
-    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
     const RawstdUUID& version_id
 ) {
     auto backend = _get_backend();
-    auto records = co_await backend->meta(id, offset, RawstdUUID{});
+    auto records = co_await backend->meta(id, index, RawstdUUID{});
     if (records.size() == 1 &&
         records.front().member_role == RAWSTOR_MEMBER_WITNESS) {
         co_return;
     }
-    co_await backend->create_version(idempotency_key, id, offset, version_id);
+    co_await backend->create_version(idempotency_key, id, index, version_id);
 }
 
 rawstd::Task<void> Slot::create_version(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -1116,7 +1116,7 @@ rawstd::Task<void> Slot::create_version(
     try {
         co_await _with_retry(
             func_name, trace_event, &Slot::_create_version,
-            new_idempotency_key(), id, offset, version_id
+            new_idempotency_key(), id, index, version_id
         );
         _finish(t_call);
     } catch (...) {
@@ -1126,7 +1126,7 @@ rawstd::Task<void> Slot::create_version(
 }
 
 rawstd::Task<void>
-Slot::resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size) {
+Slot::resize(const RawstdUUID& id, uint64_t index, uint64_t new_size) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -1135,7 +1135,7 @@ Slot::resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size) {
     try {
         co_await _with_retry(
             func_name, trace_event, &Backend::resize, new_idempotency_key(), id,
-            offset, new_size
+            index, new_size
         );
         _finish(t_call);
     } catch (...) {
@@ -1145,7 +1145,7 @@ Slot::resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size) {
 }
 
 rawstd::Task<void> Slot::create(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
+    const RawstdUUID& id, uint64_t index, const RawstorObjectSpec& sp,
     RawstorMemberRole member_role
 ) {
     const char* func_name = __FUNCTION__;
@@ -1156,7 +1156,7 @@ rawstd::Task<void> Slot::create(
     try {
         co_await _with_retry(
             func_name, trace_event, &Backend::create, new_idempotency_key(), id,
-            offset, sp, member_role
+            index, sp, member_role
         );
         _finish(t_call);
     } catch (...) {
@@ -1165,7 +1165,7 @@ rawstd::Task<void> Slot::create(
     }
 }
 
-rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t index) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -1174,7 +1174,7 @@ rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t offset) {
     try {
         co_await _with_retry(
             func_name, trace_event, &Backend::remove, new_idempotency_key(), id,
-            offset
+            index
         );
         _finish(t_call);
     } catch (...) {
@@ -1184,20 +1184,20 @@ rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t offset) {
 }
 
 rawstd::Task<void> Slot::_remove_version(
-    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
     const RawstdUUID& version_id
 ) {
     auto backend = _get_backend();
-    auto records = co_await backend->meta(id, offset, RawstdUUID{});
+    auto records = co_await backend->meta(id, index, RawstdUUID{});
     if (records.size() == 1 &&
         records.front().member_role == RAWSTOR_MEMBER_WITNESS) {
         co_return;
     }
-    co_await backend->remove_version(idempotency_key, id, offset, version_id);
+    co_await backend->remove_version(idempotency_key, id, index, version_id);
 }
 
 rawstd::Task<void> Slot::remove_version(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -1207,7 +1207,7 @@ rawstd::Task<void> Slot::remove_version(
     try {
         co_await _with_retry(
             func_name, trace_event, &Slot::_remove_version,
-            new_idempotency_key(), id, offset, version_id
+            new_idempotency_key(), id, index, version_id
         );
         _finish(t_call);
     } catch (...) {
@@ -1217,7 +1217,7 @@ rawstd::Task<void> Slot::remove_version(
 }
 
 rawstd::Task<std::vector<RawstdUUID>>
-Slot::list_versions(const RawstdUUID& id, uint64_t offset) {
+Slot::list_versions(const RawstdUUID& id, uint64_t index) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -1225,7 +1225,7 @@ Slot::list_versions(const RawstdUUID& id, uint64_t offset) {
 
     try {
         std::vector<RawstdUUID> result = co_await _with_retry(
-            func_name, trace_event, &Backend::list_versions, id, offset
+            func_name, trace_event, &Backend::list_versions, id, index
         );
         _finish(t_call);
         co_return result;
@@ -1253,7 +1253,7 @@ rawstd::Task<RawstorLocationInfo> Slot::info() {
 }
 
 rawstd::Task<RawstorObjectMeta> Slot::open(
-    const RawstdUUID& id, uint64_t offset, int flags,
+    const RawstdUUID& id, uint64_t index, int flags,
     const RawstdUUID& version_id
 ) {
     if ((flags & ~(RAWSTOR_READONLY | RAWSTOR_FORCE)) != 0 ||
@@ -1265,7 +1265,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // itself, using these same members.
     _data_bound = false;
     _id = id;
-    _offset = offset;
+    _index = index;
     _flags = flags;
     _version_id = version_id;
 
@@ -1276,7 +1276,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // handler.
     bool failed = false;
     try {
-        co_await set_object_or_version(*be, id, offset, flags, version_id);
+        co_await set_object_or_version(*be, id, index, flags, version_id);
     } catch (const std::system_error& e) {
         // The copy itself is missing (docs/mirroring.md, case F10), not a
         // connectivity problem: reconnecting won't bring it back, so it
@@ -1296,7 +1296,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     }
 
     if ((flags & RAWSTOR_READONLY) == 0 && rawstd_uuid_is_nil(&version_id)) {
-        std::shared_ptr<CopyState> member = _copy_state(id, offset);
+        std::shared_ptr<CopyState> member = _copy_state(id, index);
         co_await member->record.lock(_queue);
         RecordLockGuard guard{member->record};
         ++member->writers;
@@ -1311,8 +1311,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // location's own answer: one entry for every backend but
     // mds::Backend, whose per-member list may lead with an unreachable
     // (zero-filled) member.
-    std::vector<RawstorObjectMeta> metas =
-        co_await meta(id, offset, version_id);
+    std::vector<RawstorObjectMeta> metas = co_await meta(id, index, version_id);
     const RawstorObjectMeta* answer = nullptr;
     for (const RawstorObjectMeta& m : metas) {
         if (m.state < RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE ||
@@ -1345,8 +1344,8 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
         rawstd_uuid_to_string(&id, &id_string);
         rawstd_error(
             "Refusing to open a witness member for real I/O: id=%s "
-            "offset=%llu\n",
-            id_string, (unsigned long long)offset
+            "index=%llu\n",
+            id_string, (unsigned long long)index
         );
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
@@ -1650,9 +1649,8 @@ rawstd::Task<size_t> Slot::resync_write_zeroes(
     }
 }
 
-rawstd::Task<std::vector<RawstorObjectMeta>> Slot::meta(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
-) {
+rawstd::Task<std::vector<RawstorObjectMeta>>
+Slot::meta(const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -1660,10 +1658,10 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Slot::meta(
 
     try {
         std::vector<RawstorObjectMeta> result = co_await _with_retry(
-            func_name, trace_event, &Backend::meta, id, offset, version_id
+            func_name, trace_event, &Backend::meta, id, index, version_id
         );
         if (rawstd_uuid_is_nil(&version_id)) {
-            std::shared_ptr<CopyState> member = _copy_state(id, offset);
+            std::shared_ptr<CopyState> member = _copy_state(id, index);
             if (member) {
                 for (RawstorObjectMeta& meta : result) {
                     meta.writers =
@@ -1680,7 +1678,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Slot::meta(
 }
 
 rawstd::Task<std::vector<rawstd::URI>> Slot::resolve_locations(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
 ) {
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
@@ -1689,7 +1687,7 @@ rawstd::Task<std::vector<rawstd::URI>> Slot::resolve_locations(
 
     try {
         std::vector<rawstd::URI> result = co_await _with_retry(
-            func_name, trace_event, &Backend::resolve_locations, id, offset,
+            func_name, trace_event, &Backend::resolve_locations, id, index,
             version_id
         );
         _finish(t_call);
@@ -1701,14 +1699,14 @@ rawstd::Task<std::vector<rawstd::URI>> Slot::resolve_locations(
 }
 
 rawstd::Task<bool> Slot::_sync_prepare(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
+    const RawstdUUID& id, uint64_t index, const RawstorObjectBallot& ballot,
     RawstorObjectMeta& meta
 ) {
-    std::shared_ptr<CopyState> member = _copy_state(id, offset);
+    std::shared_ptr<CopyState> member = _copy_state(id, index);
     co_await member->record.lock(_queue);
     RecordLockGuard guard{member->record};
     std::shared_ptr<Backend> be = _get_backend();
-    meta = (co_await be->meta(id, offset, RawstdUUID{})).front();
+    meta = (co_await be->meta(id, index, RawstdUUID{})).front();
     rawstd::caspaxos::Acceptor<RawstorObjectConfig> state{
         ballot_from(meta.promised), ballot_from(meta.accepted), meta.config
     };
@@ -1717,14 +1715,14 @@ rawstd::Task<bool> Slot::_sync_prepare(
         meta.promised = ballot_to(state.promised());
     }
     meta.writers = std::max(meta.writers, member->writers.load());
-    bool accepted = co_await be->sync_prepare(id, offset, ballot, ok, meta);
+    bool accepted = co_await be->sync_prepare(id, index, ballot, ok, meta);
     meta.writers = std::max(meta.writers, member->writers.load());
     member->learn_epoch(meta.config.epoch);
     co_return accepted;
 }
 
 rawstd::Task<bool> Slot::sync_prepare(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
+    const RawstdUUID& id, uint64_t index, const RawstorObjectBallot& ballot,
     RawstorObjectMeta& meta
 ) {
     const char* func_name = __FUNCTION__;
@@ -1734,7 +1732,7 @@ rawstd::Task<bool> Slot::sync_prepare(
 
     try {
         bool result = co_await _with_retry(
-            func_name, trace_event, &Slot::_sync_prepare, id, offset, ballot,
+            func_name, trace_event, &Slot::_sync_prepare, id, index, ballot,
             meta
         );
         _finish(t_call);
@@ -1746,7 +1744,7 @@ rawstd::Task<bool> Slot::sync_prepare(
 }
 
 rawstd::Task<bool> Slot::_sync_accept(
-    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+    const RawstdUUID& id, uint64_t index, uint8_t member_index,
     const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
     const RawstorObjectConfig& config, RawstorObjectMeta& meta
 ) {
@@ -1754,14 +1752,14 @@ rawstd::Task<bool> Slot::_sync_accept(
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    std::shared_ptr<CopyState> member = _copy_state(id, offset);
+    std::shared_ptr<CopyState> member = _copy_state(id, index);
     co_await member->record.lock(_queue);
     RecordLockGuard guard{member->record};
     std::shared_ptr<Backend> be = _get_backend();
     rawstd::caspaxos::Acceptor<RawstorObjectConfig> state{};
     bool ok = false;
     for (bool again = true; again;) {
-        meta = (co_await be->meta(id, offset, RawstdUUID{})).front();
+        meta = (co_await be->meta(id, index, RawstdUUID{})).front();
         meta.writers = std::max(meta.writers, member->writers.load());
         state = {
             ballot_from(meta.promised), ballot_from(meta.accepted), meta.config
@@ -1776,7 +1774,7 @@ rawstd::Task<bool> Slot::_sync_accept(
     }
     meta.writers = std::max(meta.writers, member->writers.load());
     bool accepted = co_await be->sync_accept(
-        id, offset, member_index, ballot, next, config, ok, meta
+        id, index, member_index, ballot, next, config, ok, meta
     );
     if (accepted) {
         member->follow_role(
@@ -1793,7 +1791,7 @@ rawstd::Task<bool> Slot::_sync_accept(
 }
 
 rawstd::Task<bool> Slot::sync_accept(
-    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+    const RawstdUUID& id, uint64_t index, uint8_t member_index,
     const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
     const RawstorObjectConfig& config, RawstorObjectMeta& meta
 ) {
@@ -1804,7 +1802,7 @@ rawstd::Task<bool> Slot::sync_accept(
 
     try {
         bool result = co_await _with_retry(
-            func_name, trace_event, &Slot::_sync_accept, id, offset,
+            func_name, trace_event, &Slot::_sync_accept, id, index,
             member_index, ballot, next, config, meta
         );
         _finish(t_call);
@@ -1826,10 +1824,10 @@ rawstd::Task<void> Slot::leave() {
 
 // Flush the addressed copy even for a metadata-only Slot. The temporary
 // backend is not a writer session of this Slot and holds no record lock.
-rawstd::Task<void> Slot::_flush_copy(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<void> Slot::_flush_copy(const RawstdUUID& id, uint64_t index) {
     std::shared_ptr<Backend> be = _get_backend();
-    if (!_left && _id && rawstd_uuid_cmp(&*_id, &id) == 0 &&
-        _offset == offset && rawstd_uuid_is_nil(&_version_id)) {
+    if (!_left && _id && rawstd_uuid_cmp(&*_id, &id) == 0 && _index == index &&
+        rawstd_uuid_is_nil(&_version_id)) {
         co_await be->flush(0);
         co_return;
     }
@@ -1837,7 +1835,7 @@ rawstd::Task<void> Slot::_flush_copy(const RawstdUUID& id, uint64_t offset) {
         co_await Backend::create(_queue, be->location());
     std::exception_ptr error;
     try {
-        co_await copy->set_object(id, offset, 0);
+        co_await copy->set_object(id, index, 0);
         co_await copy->flush(0);
         co_await copy->leave();
     } catch (...) {
@@ -1850,7 +1848,7 @@ rawstd::Task<void> Slot::_flush_copy(const RawstdUUID& id, uint64_t offset) {
 }
 
 rawstd::Task<void> Slot::_set_config(
-    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+    const RawstdUUID& id, uint64_t index, uint8_t member_index,
     const RawstorObjectConfig& config, unsigned int flags,
     std::optional<RawstorObjectSyncStateValue> state
 ) {
@@ -1865,7 +1863,7 @@ rawstd::Task<void> Slot::_set_config(
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    std::shared_ptr<CopyState> member = _copy_state(id, offset);
+    std::shared_ptr<CopyState> member = _copy_state(id, index);
     co_await member->record.lock(_queue);
     RecordLockGuard guard{member->record};
     co_await member->raise_epoch(_queue, config.epoch);
@@ -1873,19 +1871,19 @@ rawstd::Task<void> Slot::_set_config(
     if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 ||
         state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN) {
         bool data = _data_bound && _id && rawstd_uuid_cmp(&*_id, &id) == 0 &&
-                    _offset == offset && rawstd_uuid_is_nil(&_version_id);
+                    _index == index && rawstd_uuid_is_nil(&_version_id);
         if (!data) {
-            auto metas = co_await be->meta(id, offset, RawstdUUID{});
+            auto metas = co_await be->meta(id, index, RawstdUUID{});
             if (metas.size() != 1) {
                 RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
             }
             data = metas.front().member_role == RAWSTOR_MEMBER_DATA;
         }
         if (data) {
-            co_await _flush_copy(id, offset);
+            co_await _flush_copy(id, index);
         }
     }
-    co_await be->set_config(id, offset, member_index, config, flags, state);
+    co_await be->set_config(id, index, member_index, config, flags, state);
     if (state) {
         member->dirty.store(
             state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN, std::memory_order_release
@@ -1893,7 +1891,7 @@ rawstd::Task<void> Slot::_set_config(
     }
     if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) {
         co_await be->set_state(
-            id, offset, RAWSTOR_OBJECT_SYNC_STATE_LOST,
+            id, index, RAWSTOR_OBJECT_SYNC_STATE_LOST,
             member->writers.load() == 0 ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
                                         : RAWSTOR_OBJECT_SYNC_STATE_DIRTY
         );
@@ -1908,7 +1906,7 @@ rawstd::Task<void> Slot::_set_config(
 }
 
 rawstd::Task<void> Slot::set_config(
-    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+    const RawstdUUID& id, uint64_t index, uint8_t member_index,
     const RawstorObjectConfig& config, unsigned int flags,
     std::optional<RawstorObjectSyncStateValue> state
 ) {
@@ -1919,8 +1917,8 @@ rawstd::Task<void> Slot::set_config(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Slot::_set_config, id, offset,
-            member_index, config, flags, state
+            func_name, trace_event, &Slot::_set_config, id, index, member_index,
+            config, flags, state
         );
         _finish(t_call);
     } catch (...) {

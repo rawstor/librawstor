@@ -25,7 +25,7 @@ namespace mdsserver {
 
 struct ChunkEntry {
     RawstdUUID id;
-    uint64_t offset;
+    uint64_t chunk_index;
     RawstorListEntryType type;
 };
 
@@ -48,14 +48,14 @@ struct ObjectMap {
  * `obj_id` is the whole object's own id for every one of its chunks
  * (docs/mds.md, "Chunk identity": obj_id = id -- the physical
  * resource's own name is self-describing, so nothing here needs a
- * separate id field); `offset` (read back via rawstor_target_chunks(),
+ * separate id field); `chunk_index` (read back via rawstor_target_chunks(),
  * the same suffix chunk_slot_target() stamped on the target LIST
  * returned) disambiguates which of that object's chunks this is.
  */
 struct ScanRecord {
     RawstdUUID ost_id;
     RawstdUUID obj_id;
-    uint64_t offset;
+    uint64_t chunk_index;
     RawstorObjectMeta meta;
 };
 
@@ -115,17 +115,18 @@ public:
     ObjectStore& operator=(ObjectStore&&) = delete;
 
     void create_witness(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& spec
+        const RawstdUUID& id, uint64_t index, const RawstorObjectSpec& spec
     );
-    RawstorObjectMeta witness_meta(const RawstdUUID& id, uint64_t offset);
+    RawstorObjectMeta witness_meta(const RawstdUUID& id, uint64_t index);
     void set_config(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags,
+        const RawstdUUID& id, uint64_t index, const RawstorObjectConfig& config,
+        unsigned int flags,
         std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     );
-    void remove_witness(const RawstdUUID& id, uint64_t offset);
+    void remove_witness(const RawstdUUID& id, uint64_t index);
 
-    /* One page of ids and all their offsets; token is nil on the last page. */
+    /* One page of ids and all their chunk indices; token is nil on the last
+     * page. */
     std::vector<ChunkEntry> list_chunks(RawstdUUID& token, unsigned int limit);
 
     std::shared_ptr<const Topology> topology();

@@ -111,7 +111,7 @@ RawstorFrameObjPolicy policy_of(const RawstorObjectSpec& sp) {
 
 // A chunk slot's own bare location -- no object identity of its own
 // appended yet. Chunk::create()/resolve_meta() (like Target's own direct
-// Slot lookups) take bare locations and the identity (id/offset) as
+// Slot lookups) take bare locations and the identity (id/index) as
 // separate parameters instead of a single identity-bearing URI.
 rawstd::URI slot_location(const WireSlot& slot) {
     if (slot.location.empty()) {
@@ -121,16 +121,16 @@ rawstd::URI slot_location(const WireSlot& slot) {
     return rawstd::URI(slot.location);
 }
 
-// One chunk slot's own target URI: "<uuid>/<offset>[/<version_id>]"
+// One chunk slot's own target URI: "<uuid>/<index>[/<version_id>]"
 // (Target's own doc comment) -- `uuid` is the whole object's own id,
 // unchanged for every one of its chunks (docs/mds.md, "Chunk identity":
 // obj_id = id -- the physical resource's own name is self-describing, so
 // nothing here needs to scramble it into a per-chunk uuid of its own);
-// `offset` (index * chunk_size, the same formula docs/mds.md's own
-// "chunk_offset" uses) is what parse_target_path() reads back on the
+// `index` (decimal, the chunk's position within the object -- docs/mds.md's
+// own "chunk_index") is what parse_target_path() reads back on the
 // far end and disambiguates which of the object's chunks this is -- always
 // stamped, even 0 for chunk 0 (unlike a plain, non-chunked target's own
-// offset segment, which parse_target_path() only ever sees omitted):
+// index segment, which parse_target_path() only ever sees omitted):
 // its presence is what marks this URI as one chunk of a larger object
 // rather than a standalone one. `version_id` is what Target::version_id()
 // reads back, omitted when nil (live). Throws if the MDS could not
@@ -138,14 +138,14 @@ rawstd::URI slot_location(const WireSlot& slot) {
 // under-protected.
 rawstd::URI chunk_slot_target(
     const RawstdUUID& id, uint64_t index, const WireSlot& slot,
-    uint64_t chunk_size, const RawstdUUID& version_id = {}
+    const RawstdUUID& version_id = {}
 ) {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&id, &uuid_string);
 
     std::ostringstream oss;
     oss << slot_location(slot).str() << "/" << uuid_string;
-    oss << "/" << std::hex << (index * chunk_size);
+    oss << "/" << index;
     if (!rawstd_uuid_is_nil(&version_id)) {
         RawstdUUIDString version_string;
         rawstd_uuid_to_string(&version_id, &version_string);
@@ -167,20 +167,14 @@ std::vector<rawstd::URI> chunk_locations(const WireMap& map, uint64_t index) {
     return ret;
 }
 
-// `offset` resolved to its own real chunk index -- shared by meta()/
-// resolve_locations() below. Not landing on a real chunk boundary (including a
-// WireMap whose own chunk_size is somehow 0) is -ENOENT, same as a plain
-// target's own chunk_uris_at_offset() (target.cpp) finding no chunk
-// there.
-uint64_t chunk_index_at(const WireMap& map, uint64_t offset) {
-    if (map.chunk_size == 0 || offset % map.chunk_size != 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
-    }
-    uint64_t index = offset / map.chunk_size;
+// `index` checked against the map's own chunk count -- shared by meta()/
+// resolve_locations() below. An index past the last chunk is -ENOENT, same
+// as a plain target's own chunk_uris_at_index() (target.cpp) finding no
+// chunk there.
+void check_chunk_index(const WireMap& map, uint64_t index) {
     if (index >= map.chunks.size()) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
-    return index;
 }
 
 std::vector<rawstd::URI> chunk_targets(
@@ -189,9 +183,7 @@ std::vector<rawstd::URI> chunk_targets(
     std::vector<rawstd::URI> ret;
     ret.reserve(map.chunks[index].size());
     for (const WireSlot& slot : map.chunks[index]) {
-        ret.push_back(
-            chunk_slot_target(map.id, index, slot, map.chunk_size, version_id)
-        );
+        ret.push_back(chunk_slot_target(map.id, index, slot, version_id));
     }
     return ret;
 }
@@ -202,7 +194,7 @@ RawstorObjectSpec chunk_spec(const WireMap& map) {
     RawstorObjectSpec sp{};
     sp.size = map.chunk_size;
     // The chunk's own placement identity is the target string's own
-    // id/offset segment (chunk_slot_target() above), not a field of the
+    // id/index segment (chunk_slot_target() above), not a field of the
     // spec (RawstorObjectSpec's own doc comment in target.h). member_role
     // itself lives on RawstorObjectMeta, not here (its own doc comment)
     // -- create_one() (target.cpp) always creates RAWSTOR_MEMBER_DATA.
@@ -215,7 +207,7 @@ RawstorObjectSpec chunk_spec(const WireMap& map) {
 
 // The whole object's own spec -- everything Target::create() (target.hpp's
 // own doc comment) needs to derive each chunk's own share of it by
-// itself (chunk_size + this total size + each chunk's own offset
+// itself (chunk_size + this total size + each chunk's own index
 // segment), so create() below only has to build this once instead of one
 // chunk_spec() per chunk. Same fields Backend::meta() below already
 // reports for an open object.
@@ -232,7 +224,7 @@ RawstorObjectSpec object_spec(const WireMap& map) {
 // The internal multi-chunk Target (target.hpp's own doc comment)
 // describing the whole object: every chunk's own URIs, together with
 // every other chunk's -- Target's own constructor sorts them back into
-// chunk groups itself, by each URI's own offset path segment, so nothing
+// chunk groups itself, by each URI's own index path segment, so nothing
 // here needs to mark where one chunk's own group ends and the next
 // begins.
 std::vector<rawstd::URI>
@@ -294,7 +286,9 @@ Backend::_obj_open(const RawstdUUID& id, const RawstdUUID& version_id) {
                 .cmd = RAWSTOR_CMD_OBJ_OPEN,
                 .cid = 0,
             },
-        .payload = {.object_id = {}, .offset = 0, .version_id = {}, .val = 0},
+        .payload = {
+            .object_id = {}, .chunk_index = 0, .version_id = {}, .val = 0
+        },
     };
     uuid_to_bytes(id, request.payload.object_id);
     uuid_to_bytes(version_id, request.payload.version_id);
@@ -407,7 +401,9 @@ Backend::_obj_list_versions(const RawstdUUID& id) {
                 .cmd = RAWSTOR_CMD_OBJ_LIST_VERSIONS,
                 .cid = 0,
             },
-        .payload = {.object_id = {}, .offset = 0, .version_id = {}, .val = 0},
+        .payload = {
+            .object_id = {}, .chunk_index = 0, .version_id = {}, .val = 0
+        },
     };
     uuid_to_bytes(id, request.payload.object_id);
 
@@ -472,9 +468,9 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
 }
 
 rawstd::Task<std::optional<RawstorObjectMeta>>
-Backend::_witness_meta(const RawstdUUID& id, uint64_t offset) {
+Backend::_witness_meta(const RawstdUUID& id, uint64_t index) {
     try {
-        auto records = co_await _wire_meta(id, offset, RawstdUUID{});
+        auto records = co_await _wire_meta(id, index, RawstdUUID{});
         if (records.size() != 1 ||
             records.front().member_role != RAWSTOR_MEMBER_WITNESS) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
@@ -493,8 +489,8 @@ rawstd::Task<void> Backend::_connect() {
     co_await _wire_set_object({}, 0, 0);
 }
 
-// LIST reports registered objects as whole-object rows (no offsets) and
-// native members as chunk rows at their physical chunk offsets; the row
+// LIST reports registered objects as whole-object rows (no indices) and
+// native members as chunk rows at their physical chunk indices; the row
 // type alone tells them apart. Filtered whole-object queries resolve the
 // object's WireMap.
 rawstd::Task<void> Backend::list_chunks(
@@ -508,7 +504,7 @@ rawstd::Task<void> Backend::list_chunks(
     }
     if (rawstd_uuid_is_nil(&version_id)) {
         co_await _wire_list_chunks(id, limit, chunks, token, version_id);
-        if (!chunks.empty() && !chunks.front().offsets.empty()) {
+        if (!chunks.empty() && !chunks.front().indices.empty()) {
             co_return;
         }
         chunks.clear();
@@ -526,21 +522,21 @@ rawstd::Task<void> Backend::list_chunks(
     }
 
     ChunkGroup group{id, {}};
-    group.offsets.reserve(map.chunks.size());
+    group.indices.reserve(map.chunks.size());
     for (uint64_t i = 0; i < map.chunks.size(); ++i) {
-        group.offsets.push_back(i * map.chunk_size);
+        group.indices.push_back(i);
     }
-    if (!group.offsets.empty()) {
+    if (!group.indices.empty()) {
         chunks.push_back(std::move(group));
     }
 }
 
 rawstd::Task<void> Backend::create(
-    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
     const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
     if (member_role == RAWSTOR_MEMBER_WITNESS) {
-        co_await _wire_create(idempotency_key, id, offset, sp, member_role);
+        co_await _wire_create(idempotency_key, id, index, sp, member_role);
         co_return;
     }
     // An mds:// object is always chunked: the MDS map is per-chunk, and
@@ -595,10 +591,10 @@ rawstd::Task<void> Backend::remove_version(
 }
 
 rawstd::Task<void> Backend::remove(
-    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index
 ) {
-    if (co_await _witness_meta(id, offset)) {
-        co_await _wire_remove(idempotency_key, id, offset);
+    if (co_await _witness_meta(id, index)) {
+        co_await _wire_remove(idempotency_key, id, index);
         co_return;
     }
     /*
@@ -706,9 +702,7 @@ rawstd::Task<void> Backend::create_version(
                 continue;
             }
             try {
-                Target t({chunk_slot_target(
-                    map.id, i, slot, map.chunk_size, version_id
-                )});
+                Target t({chunk_slot_target(map.id, i, slot, version_id)});
                 // `t`'s own path already carries version_id -- Target::
                 // create_version()'s own already-bound branch takes it,
                 // never create() (create() is only ever for a fresh
@@ -799,9 +793,9 @@ rawstd::Task<void> Backend::_remove_version(
             continue;
         }
         try {
-            Target t({chunk_slot_target(
-                map.id, m.logical_index, *it, map.chunk_size, version_id
-            )});
+            Target t(
+                {chunk_slot_target(map.id, m.logical_index, *it, version_id)}
+            );
             co_await t.remove(_queue);
         } catch (const std::exception& e) {
             rawstd_error("Version remove: %s\n", e.what());
@@ -813,32 +807,31 @@ rawstd::Task<void> Backend::_remove_version(
     }
 }
 
-// Resolves `offset` to one of this object's own real chunks, then
+// Resolves `index` to one of this object's own real chunks, then
 // queries every one of that chunk's own real member locations
 // concurrently through Target's own resolve_meta() (target.cpp): every
 // location queried, a zero-filled entry for one that doesn't answer. A
 // non-nil `version_id` resolves that version's own map and members.
 // Every location here is already a bare ost:// member, never itself
-// mds://, so there's no further flattening to do. `offset` not landing on a
-// real chunk boundary (including a WireMap whose own chunk_size is somehow 0)
-// is -ENOENT, same as a plain target's own chunk_uris_at_offset() (target.cpp)
-// finding no chunk there. A member persists only its own chunk's shape, not
-// the object's placement policy, so every answering entry gets
+// mds://, so there's no further flattening to do. An `index` past the last
+// chunk is -ENOENT, same as a plain target's own chunk_uris_at_index()
+// (target.cpp) finding no chunk there. A member persists only its own chunk's
+// shape, not the object's placement policy, so every answering entry gets
 // failure_domain/stripe_width from the map -- which is also what
 // rawstor_target_spec() reports, through resolve_spec().
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
 ) {
     if (rawstd_uuid_is_nil(&version_id)) {
-        auto witness = co_await _witness_meta(id, offset);
+        auto witness = co_await _witness_meta(id, index);
         if (witness) {
             co_return std::vector<RawstorObjectMeta>{*witness};
         }
     }
     WireMap map = co_await _obj_open(id, version_id);
-    uint64_t index = chunk_index_at(map, offset);
+    check_chunk_index(map, index);
     std::vector<RawstorObjectMeta> ret = co_await resolve_meta(
-        _queue, chunk_locations(map, index), id, offset, version_id
+        _queue, chunk_locations(map, index), id, index, version_id
     );
     for (RawstorObjectMeta& m : ret) {
         if (m.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
@@ -850,20 +843,20 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
 }
 
 // The MDS's own version registry for the whole object -- a version
-// covers every chunk, so `offset` plays no part.
+// covers every chunk, so `index` plays no part.
 rawstd::Task<std::vector<RawstdUUID>>
 Backend::list_versions(const RawstdUUID& id, uint64_t) {
     co_return co_await _obj_list_versions(id);
 }
 
 rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
 ) {
-    if (rawstd_uuid_is_nil(&version_id) && co_await _witness_meta(id, offset)) {
+    if (rawstd_uuid_is_nil(&version_id) && co_await _witness_meta(id, index)) {
         co_return std::vector<rawstd::URI>{location()};
     }
     WireMap map = co_await _obj_open(id, version_id);
-    uint64_t index = chunk_index_at(map, offset);
+    check_chunk_index(map, index);
     co_return chunk_locations(map, index);
 }
 

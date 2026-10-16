@@ -26,15 +26,14 @@ namespace zfs {
  *
  * Each object is a zvol created under the parent dataset, named after its
  * UUID -- self-describing (docs/mds.md, "Chunk identity"): `id` is the
- * volume's own id for every one of its chunks, `offset` disambiguates
- * which one, as an explicit ":<offset>" dataset-name suffix (0 for a
- * plain object, same as every other chunk; hex, like every other offset
- * this codebase carries in a physical name or a target URI's own path
- * segment). Zvol dataset: <parent_dataset>/<uuid>:<offset>. Device path:
- * /dev/zvol/<parent_dataset>/<uuid>:<offset>.
+ * volume's own id for every one of its chunks, `index` disambiguates
+ * which one, as an explicit ":<index>" dataset-name suffix (0 for a
+ * plain object, same as every other chunk; decimal, like the target
+ * URI's own index path segment). Zvol dataset: <parent_dataset>/<uuid>:<index>.
+ * Device path: /dev/zvol/<parent_dataset>/<uuid>:<index>.
  *
  * A non-nil `version_id` names that version's own native snapshot:
- * <dataset>@s<version_id> / /dev/zvol/.../<uuid>:<offset>@s<version_id> --
+ * <dataset>@s<version_id> / /dev/zvol/.../<uuid>:<index>@s<version_id> --
  * the "@s<id>" name is the version key itself, nothing stored twice.
  *
  * Requires the 'zfs' CLI to be available in PATH and sufficient privileges
@@ -45,21 +44,21 @@ private:
     std::string _parent_dataset;
 
     // A non-nil `version_id` names that version's own native snapshot:
-    // <dataset>@s<version_id> / /dev/zvol/.../<uuid>:<offset>@s<version_id>
+    // <dataset>@s<version_id> / /dev/zvol/.../<uuid>:<index>@s<version_id>
     // -- the "@s<id>" name is the version key itself (docs/mds.md,
     // "Versions"), nothing stored twice.
     std::string _device_path(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id = {}
     ) const;
     std::string _dataset(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id = {}
     ) const;
 
     rawstd::Task<int>
-    _open_object(const RawstdUUID& id, uint64_t offset, int flags) override;
+    _open_object(const RawstdUUID& id, uint64_t index, int flags) override;
 
     rawstd::Task<int> _open_version(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
     ) override;
 
     // Polls for `path`'s existence-as-a-block-device to match
@@ -83,18 +82,17 @@ public:
     ) override;
 
     rawstd::Task<void> create(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        const RawstorObjectSpec& sp, RawstorMemberRole member_role
     ) override;
 
     rawstd::Task<void> remove(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index
     ) override;
 
     rawstd::Task<void> remove_version(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& version_id
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        const RawstdUUID& version_id
     ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;
@@ -102,23 +100,23 @@ public:
     // Native per-copy mirror metadata, stored in the zvol's own
     // "rawstor:meta" user property -- see blk::Backend::meta_encode().
     rawstd::Task<std::vector<RawstdUUID>>
-    list_versions(const RawstdUUID& id, uint64_t offset) override;
+    list_versions(const RawstdUUID& id, uint64_t index) override;
 
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
     ) override;
 
     // Trivial (Backend::resolve_locations()'s own doc comment): this is a
     // plain, single-copy backend, already the one real member of whatever
-    // offset it's asked about.
+    // index it's asked about.
     rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id = {}
     ) override;
 
     rawstd::Task<void> _write_meta(
-        const RawstdUUID& id, uint64_t offset,
-        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config,
-        const RawstorObjectBallot& promised, const RawstorObjectBallot& accepted
+        const RawstdUUID& id, uint64_t index, RawstorObjectSyncStateValue state,
+        const RawstorObjectConfig& config, const RawstorObjectBallot& promised,
+        const RawstorObjectBallot& accepted
     ) override;
 
     // The v1 CoW backend (docs/mds.md, "Versions"): a native
@@ -127,8 +125,8 @@ public:
     // own device node (/dev/zvol/.../<uuid>@s<id>) is openable -- one
     // mechanism, old zvols included, rather than per-version.
     rawstd::Task<void> create_version(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& version_id
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        const RawstdUUID& version_id
     ) override;
 };
 

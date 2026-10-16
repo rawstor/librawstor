@@ -177,12 +177,9 @@ TEST(ListTest, merge_multi_chunk) {
     rawstd::URI location2(dir2.uri());
 
     std::string uuid_string = "00000000-0000-7000-8000-000000000001";
-    uint64_t offset = 1ull << 30;
-    char offset_hex[17];
-    snprintf(offset_hex, sizeof(offset_hex), "%" PRIx64, offset);
 
     rawstd::URI chunk0(rawstd::URI(location1, uuid_string), "0");
-    rawstd::URI chunk1(rawstd::URI(location2, uuid_string), offset_hex);
+    rawstd::URI chunk1(rawstd::URI(location2, uuid_string), "5");
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
     auto create = [&](const rawstd::URI& target,

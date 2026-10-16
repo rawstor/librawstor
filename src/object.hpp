@@ -202,11 +202,10 @@ private:
     // otherwise shadow it within this class's own scope. `locations` is
     // this chunk's own backend locations: nothing requires it to match
     // another chunk's own (Target::open() only requires every chunk to
-    // sit at its expected positional offset, never that they share a
+    // sit at its expected positional index, never that they share a
     // backend), so it's stored here, per chunk, rather than once on
-    // Object. The chunk's own offset (`index * _chunk_size`, `_chunk()`'s
-    // own doc comment) still doesn't need to live here -- that part is
-    // derivable from the index alone.
+    // Object. The chunk's own index (`_chunk()`'s own doc comment) still
+    // doesn't need to live here -- it is this entry's position.
     struct ChunkEntry {
         std::vector<rawstd::URI> locations;
         std::unique_ptr<Chunk> chunk;
@@ -248,7 +247,7 @@ private:
     // pointer, not a reference: rawstd::Task<T> stores T in a
     // std::variant, which requires an object type. A fresh open uses
     // this entry's own `locations`, `_id`/`_version_id`, and
-    // `index * _chunk_size` as this chunk's own offset -- the positional
+    // `index` as this chunk's own index -- the positional
     // addressing scheme Target::open() already validated the target
     // string against before ever constructing this object.
     rawstd::Task<Chunk*> _chunk(uint32_t index);

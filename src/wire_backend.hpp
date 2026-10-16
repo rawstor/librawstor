@@ -71,7 +71,7 @@ private:
     template <typename T = char>
     rawstd::Task<std::vector<T>> _basic_request(
         RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
-        uint64_t offset, uint64_t val = 0, const RawstdUUID& version_id = {}
+        uint64_t index, uint64_t val = 0, const RawstdUUID& version_id = {}
     );
     // SYNC_PREPARE/SYNC_ACCEPT: sends `request` and returns the member's
     // reply.
@@ -119,57 +119,55 @@ protected:
     );
 
     rawstd::Task<void> _wire_create(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        const RawstorObjectSpec& sp, RawstorMemberRole member_role
     );
 
     rawstd::Task<void> _wire_remove(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index
     );
 
     rawstd::Task<void> _wire_remove_version(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& version_id
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        const RawstdUUID& version_id
     );
 
     rawstd::Task<std::vector<RawstdUUID>>
-    _wire_list_versions(const RawstdUUID& id, uint64_t offset);
+    _wire_list_versions(const RawstdUUID& id, uint64_t index);
 
     rawstd::Task<std::vector<RawstorObjectMeta>> _wire_meta(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id = {}
     );
 
     rawstd::Task<std::vector<rawstd::URI>> _wire_resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id = {}
     );
 
     rawstd::Task<void> _wire_leave();
 
     rawstd::Task<bool> _wire_sync_prepare(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectBallot& ballot, bool proposed,
-        RawstorObjectMeta& meta
+        const RawstdUUID& id, uint64_t index, const RawstorObjectBallot& ballot,
+        bool proposed, RawstorObjectMeta& meta
     );
 
     rawstd::Task<bool> _wire_sync_accept(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstdUUID& id, uint64_t index, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
         const RawstorObjectConfig& config, bool proposed,
         RawstorObjectMeta& meta
     );
 
     rawstd::Task<void>
-    _wire_set_object(const RawstdUUID& id, uint64_t offset, int flags);
+    _wire_set_object(const RawstdUUID& id, uint64_t index, int flags);
 
     rawstd::Task<void> _wire_set_version(
-        const RawstdUUID& object_id, uint64_t offset,
+        const RawstdUUID& object_id, uint64_t index,
         const RawstdUUID& version_id
     );
 
     rawstd::Task<void> _wire_create_version(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& version_id
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        const RawstdUUID& version_id
     );
 
 public:
@@ -185,12 +183,12 @@ public:
 
     // The destination's Slot owns the copy state.
     rawstd::Task<void> set_state(
-        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& id, uint64_t index,
         RawstorObjectSyncStateValue expected, RawstorObjectSyncStateValue state
     ) override final;
 
     rawstd::Task<void> set_config(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstdUUID& id, uint64_t index, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags,
         std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     ) override final;

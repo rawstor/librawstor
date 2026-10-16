@@ -25,8 +25,8 @@ using rawstor::mdsserver::PlacementPolicy;
 
 constexpr const char* SCHEMA =
     "CREATE TABLE IF NOT EXISTS witnesses ("
-    " id BLOB NOT NULL, chunk_offset INTEGER NOT NULL, record BLOB NOT NULL,"
-    " PRIMARY KEY(id, chunk_offset)"
+    " id BLOB NOT NULL, chunk_index INTEGER NOT NULL, record BLOB NOT NULL,"
+    " PRIMARY KEY(id, chunk_index)"
     ") WITHOUT ROWID;"
     "CREATE TABLE IF NOT EXISTS backends ("
     " id BLOB PRIMARY KEY, location TEXT NOT NULL, active INTEGER NOT NULL,"
@@ -495,7 +495,7 @@ ObjectDescriptor ObjectStore::_descriptor(const RawstdUUID& id) {
 }
 
 void ObjectStore::create_witness(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& spec
+    const RawstdUUID& id, uint64_t index, const RawstorObjectSpec& spec
 ) {
     if (rawstd_uuid_is_nil(&id) || spec.width == 0 ||
         spec.width > RAWSTOR_OBJECT_MAX_WIDTH ||
@@ -513,21 +513,19 @@ void ObjectStore::create_witness(
     }
     std::lock_guard<std::mutex> guard(_mutex);
     Stmt stmt(
-        _db, "INSERT INTO witnesses(id,chunk_offset,record) VALUES(?,?,?)"
+        _db, "INSERT INTO witnesses(id,chunk_index,record) VALUES(?,?,?)"
     );
     stmt.bind_blob(1, id.bytes, sizeof(id.bytes))
-        .bind_int64(2, offset)
+        .bind_int64(2, index)
         .bind_blob(3, &record, sizeof(record))
         .step();
 }
 
 RawstorObjectMeta
-ObjectStore::witness_meta(const RawstdUUID& id, uint64_t offset) {
+ObjectStore::witness_meta(const RawstdUUID& id, uint64_t index) {
     std::lock_guard<std::mutex> guard(_mutex);
-    Stmt stmt(
-        _db, "SELECT record FROM witnesses WHERE id=? AND chunk_offset=?"
-    );
-    stmt.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, offset);
+    Stmt stmt(_db, "SELECT record FROM witnesses WHERE id=? AND chunk_index=?");
+    stmt.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, index);
     if (!stmt.step()) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
@@ -545,7 +543,7 @@ ObjectStore::witness_meta(const RawstdUUID& id, uint64_t offset) {
 }
 
 void ObjectStore::set_config(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
+    const RawstdUUID& id, uint64_t index, const RawstorObjectConfig& config,
     unsigned int flags, std::optional<RawstorObjectSyncStateValue> state
 ) {
     if ((flags & ~RAWSTOR_CONFIG_CLEAR_LOST) != 0 ||
@@ -557,10 +555,8 @@ void ObjectStore::set_config(
     }
     std::lock_guard<std::mutex> guard(_mutex);
     Transaction tx(_db);
-    Stmt stmt(
-        _db, "SELECT record FROM witnesses WHERE id=? AND chunk_offset=?"
-    );
-    stmt.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, offset);
+    Stmt stmt(_db, "SELECT record FROM witnesses WHERE id=? AND chunk_index=?");
+    stmt.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, index);
     if (!stmt.step()) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
@@ -585,19 +581,19 @@ void ObjectStore::set_config(
         RAWSTD_THROW_SYSTEM_ERROR(error);
     }
     Stmt update(
-        _db, "UPDATE witnesses SET record=? WHERE id=? AND chunk_offset=?"
+        _db, "UPDATE witnesses SET record=? WHERE id=? AND chunk_index=?"
     );
     update.bind_blob(1, &record, sizeof(record))
         .bind_blob(2, id.bytes, sizeof(id.bytes))
-        .bind_int64(3, offset)
+        .bind_int64(3, index)
         .step();
     tx.commit();
 }
 
-void ObjectStore::remove_witness(const RawstdUUID& id, uint64_t offset) {
+void ObjectStore::remove_witness(const RawstdUUID& id, uint64_t index) {
     std::lock_guard<std::mutex> guard(_mutex);
-    Stmt stmt(_db, "DELETE FROM witnesses WHERE id=? AND chunk_offset=?");
-    stmt.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, offset).step();
+    Stmt stmt(_db, "DELETE FROM witnesses WHERE id=? AND chunk_index=?");
+    stmt.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, index).step();
     if (sqlite3_changes(_db) == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
@@ -608,11 +604,11 @@ ObjectStore::list_chunks(RawstdUUID& token, unsigned int limit) {
     std::lock_guard<std::mutex> guard(_mutex);
     Stmt stmt(
         _db, "WITH entries AS ("
-             "SELECT id,chunk_offset,1 AS type FROM witnesses UNION ALL "
+             "SELECT id,chunk_index,1 AS type FROM witnesses UNION ALL "
              "SELECT id,0,2 FROM objects WHERE NOT EXISTS "
              "(SELECT 1 FROM witnesses WHERE witnesses.id=objects.id)) "
-             "SELECT id,chunk_offset,type FROM entries WHERE id>? "
-             "ORDER BY id,chunk_offset"
+             "SELECT id,chunk_index,type FROM entries WHERE id>? "
+             "ORDER BY id,chunk_index"
     );
     RawstdUUID after = token;
     stmt.bind_blob(1, after.bytes, sizeof(after.bytes));
@@ -623,7 +619,7 @@ ObjectStore::list_chunks(RawstdUUID& token, unsigned int limit) {
     while (stmt.step()) {
         ChunkEntry entry{};
         stmt.column_uuid(0, &entry.id);
-        entry.offset = stmt.column_int64(1);
+        entry.chunk_index = stmt.column_int64(1);
         entry.type = static_cast<RawstorListEntryType>(stmt.column_int64(2));
         if (rawstd_uuid_cmp(&entry.id, &last) != 0) {
             if (limit != 0 && groups == limit) {
@@ -639,7 +635,7 @@ ObjectStore::list_chunks(RawstdUUID& token, unsigned int limit) {
         entries.begin(), entries.end(),
         [](const ChunkEntry& a, const ChunkEntry& b) {
             int order = rawstd_uuid_cmp(&a.id, &b.id);
-            return order == 0 ? a.offset < b.offset : order < 0;
+            return order == 0 ? a.chunk_index < b.chunk_index : order < 0;
         }
     );
     return entries;
@@ -1021,11 +1017,9 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
 
-        // logical_index is not carried on the wire -- it's derived from
-        // the chunk's own byte offset (rawstor_target_offset(),
-        // ScanRecord's own doc comment), the inverse of the formula
-        // chunk_slot_target() in mds_backend.cpp stamps the offset with.
-        uint64_t logical_index = r.offset / o.chunk_size;
+        // The chunk's own index (ScanRecord's own doc comment) is its
+        // position in the object's chunk map.
+        uint64_t logical_index = r.chunk_index;
 
         Chunk& c = o.chunks[logical_index];
 

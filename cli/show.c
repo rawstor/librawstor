@@ -72,7 +72,7 @@ static void print_sync_id_history(
 enum { MAX_MIRRORS = 256 };
 
 static int
-show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
+show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t index) {
     struct RawstorObjectMeta metas[MAX_MIRRORS];
     /* op is shared across every chunk in show_meta()'s own loop below --
      * reset before each reuse, same convention as cli/info.c's own
@@ -81,7 +81,7 @@ show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
      * actually waiting for this call's completion. */
     op->done = 0;
     int mres = rawstor_target_meta(
-        op->queue, target, offset, metas, MAX_MIRRORS, rawstor_cli_op_cb, op
+        op->queue, target, index, metas, MAX_MIRRORS, rawstor_cli_op_cb, op
     );
     ssize_t result = rawstor_cli_op_wait(op, mres);
     if (result < 0) {
@@ -93,19 +93,18 @@ show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
     if (result > MAX_MIRRORS) {
         fprintf(
             stderr,
-            "rawstor show -v: chunk[%llx] has %zd mirrors, more "
+            "rawstor show -v: chunk[%llu] has %zd mirrors, more "
             "than this CLI can display (%d)\n",
-            (unsigned long long)offset, result, MAX_MIRRORS
+            (unsigned long long)index, result, MAX_MIRRORS
         );
         return EXIT_FAILURE;
     }
 
-    /* offset, not an index -- the same value `rawstor resolve`'s own
-     * --offset takes, and target's own comma-separated order, not a
-     * value this command has to re-parse target to print. Hex, not
-     * decimal -- same base the offset segment itself uses in a target
-     * string (parse_target_path()'s own doc comment, target.hpp). */
-    printf("chunk[%llx]:\n", (unsigned long long)offset);
+    /* The chunk's own index -- the same value `rawstor resolve`'s own
+     * --index takes, and the same decimal base the index segment itself
+     * uses in a target string (parse_target_path()'s own doc comment,
+     * target.hpp). */
+    printf("chunk[%llu]:\n", (unsigned long long)index);
     for (ssize_t i = 0; i < result; i++) {
         const struct RawstorObjectMeta* meta = &metas[i];
         printf("  mirror[%zd]:\n", i);
@@ -143,8 +142,8 @@ static int show_meta(const char* target) {
         return rawstd_exitcode_for_errno(-res);
     }
 
-    uint64_t* offsets;
-    ssize_t chunk_count = rawstor_cli_op_chunks(&op, target, &offsets);
+    uint64_t* indices;
+    ssize_t chunk_count = rawstor_cli_op_chunks(&op, target, &indices);
     if (chunk_count < 0) {
         fprintf(
             stderr, "rawstor_target_chunks() failed: %s\n",
@@ -156,13 +155,13 @@ static int show_meta(const char* target) {
 
     int ret = EXIT_SUCCESS;
     for (ssize_t i = 0; i < chunk_count; i++) {
-        ret = show_chunk_meta(&op, target, offsets[i]);
+        ret = show_chunk_meta(&op, target, indices[i]);
         if (ret != EXIT_SUCCESS) {
             break;
         }
     }
 
-    free(offsets);
+    free(indices);
     rawstor_cli_op_destroy(&op);
     return ret;
 }

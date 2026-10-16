@@ -75,7 +75,7 @@ static int is_winner(const size_t* winners, size_t num_winners, size_t idx) {
  * target and an mds:// one alike. */
 static int resolve_chunk(
     const char* target, const size_t* winners, size_t num_winners,
-    uint64_t offset
+    uint64_t index
 ) {
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);
@@ -86,7 +86,7 @@ static int resolve_chunk(
 
     struct RawstorObjectMeta metas[MAX_MIRRORS];
     int mres = rawstor_target_meta(
-        op.queue, target, offset, metas, MAX_MIRRORS, rawstor_cli_op_cb, &op
+        op.queue, target, index, metas, MAX_MIRRORS, rawstor_cli_op_cb, &op
     );
     ssize_t result = rawstor_cli_op_wait(&op, mres);
     rawstor_cli_op_destroy(&op);
@@ -101,7 +101,7 @@ static int resolve_chunk(
             stderr,
             "rawstor resolve: chunk[%llx] has %zd mirrors, more "
             "than this CLI can handle (%d)\n",
-            (unsigned long long)offset, result, MAX_MIRRORS
+            (unsigned long long)index, result, MAX_MIRRORS
         );
         return EXIT_FAILURE;
     }
@@ -112,7 +112,7 @@ static int resolve_chunk(
                 stderr,
                 "--winner %zu is out of range (chunk[%llx] has %zd "
                 "mirrors)\n",
-                winners[i], (unsigned long long)offset, result
+                winners[i], (unsigned long long)index, result
             );
             return EX_USAGE;
         }
@@ -125,7 +125,7 @@ static int resolve_chunk(
                 stderr,
                 "chunk[%llx]: mirror[%zu] is unreachable; cannot resolve "
                 "using it as a winner\n",
-                (unsigned long long)offset, winners[i]
+                (unsigned long long)index, winners[i]
             );
             return EXIT_FAILURE;
         }
@@ -171,7 +171,7 @@ static int resolve_chunk(
             "warning: chunk[%llx]: %d other mirror sync_id(s) didn't fit "
             "in the new sync_id_history (capacity %d); those mirrors "
             "will still resync, just not via a recorded ancestry\n",
-            (unsigned long long)offset, dropped, RAWSTOR_OBJECT_SYNC_ID_HISTORY
+            (unsigned long long)index, dropped, RAWSTOR_OBJECT_SYNC_ID_HISTORY
         );
     }
 
@@ -205,7 +205,7 @@ static int resolve_chunk(
         enum RawstorObjectSyncStateValue member_state =
             RAWSTOR_OBJECT_SYNC_STATE_LOST;
         int sres = rawstor_target_set_member_config(
-            member_op.queue, target, offset, (size_t)i, &new_config, 0,
+            member_op.queue, target, index, (size_t)i, &new_config, 0,
             &member_state, rawstor_cli_op_cb, &member_op
         );
         ssize_t sresult = rawstor_cli_op_wait(&member_op, sres);
@@ -233,7 +233,7 @@ static int resolve_chunk(
             return rawstd_exitcode_for_errno(-res);
         }
         int sres = rawstor_target_set_member_config(
-            set_op.queue, target, offset, winners[i], &new_config,
+            set_op.queue, target, index, winners[i], &new_config,
             RAWSTOR_CONFIG_CLEAR_LOST, NULL, rawstor_cli_op_cb, &set_op
         );
         ssize_t sresult = rawstor_cli_op_wait(&set_op, sres);
@@ -243,7 +243,7 @@ static int resolve_chunk(
                 stderr,
                 "chunk[%llx]: mirror[%zu]: "
                 "rawstor_target_set_member_config() failed: %s\n",
-                (unsigned long long)offset, winners[i], strerror((int)-sresult)
+                (unsigned long long)index, winners[i], strerror((int)-sresult)
             );
             return rawstd_exitcode_for_errno((int)-sresult);
         }
@@ -254,7 +254,7 @@ static int resolve_chunk(
         printf(
             "chunk[%llx]: mirror[%zu] is now authoritative: sync_id %llx "
             "-> %llx, epoch %llu -> %llu\n",
-            (unsigned long long)offset, winners[i],
+            (unsigned long long)index, winners[i],
             (unsigned long long)metas[winners[i]].config.sync_id,
             (unsigned long long)new_config.sync_id,
             (unsigned long long)metas[winners[i]].config.epoch,
@@ -264,7 +264,7 @@ static int resolve_chunk(
     printf(
         "chunk[%llx]: every other reachable mirror will resync on the "
         "next open.\n",
-        (unsigned long long)offset
+        (unsigned long long)index
     );
 
     return EXIT_SUCCESS;
@@ -272,7 +272,7 @@ static int resolve_chunk(
 
 int rawstor_cli_resolve(
     const char* target, const size_t* winners, size_t num_winners,
-    int has_offset, uint64_t offset
+    int has_index, uint64_t index
 ) {
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);
@@ -293,8 +293,8 @@ int rawstor_cli_resolve(
         return rawstd_exitcode_for_errno((int)-result);
     }
 
-    if (has_offset) {
-        return resolve_chunk(target, winners, num_winners, offset);
+    if (has_index) {
+        return resolve_chunk(target, winners, num_winners, index);
     }
 
     res = rawstor_cli_op_init(&op);
@@ -302,8 +302,8 @@ int rawstor_cli_resolve(
         fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
         return rawstd_exitcode_for_errno(-res);
     }
-    uint64_t* offsets;
-    ssize_t chunk_count = rawstor_cli_op_chunks(&op, target, &offsets);
+    uint64_t* indices;
+    ssize_t chunk_count = rawstor_cli_op_chunks(&op, target, &indices);
     rawstor_cli_op_destroy(&op);
     if (chunk_count < 0) {
         fprintf(
@@ -315,11 +315,11 @@ int rawstor_cli_resolve(
 
     int ret = EXIT_SUCCESS;
     for (ssize_t i = 0; i < chunk_count; i++) {
-        ret = resolve_chunk(target, winners, num_winners, offsets[i]);
+        ret = resolve_chunk(target, winners, num_winners, indices[i]);
         if (ret != EXIT_SUCCESS) {
             break;
         }
     }
-    free(offsets);
+    free(indices);
     return ret;
 }

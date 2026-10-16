@@ -37,13 +37,13 @@ int rawstor_cli_op_cb(ssize_t result, void* data);
  * `res` unchanged without waiting). */
 ssize_t rawstor_cli_op_wait(RawstorCliOp* op, int res);
 
-/* Every real chunk offset `target` has (rawstor_target_chunks() -- purely
+/* Every real chunk index `target` has (rawstor_target_chunks() -- purely
  * syntactic for an ordinary target, a real MDS round trip for an mds://
- * one), in a malloc()'d array stored into *offsets (NULL when there are
- * none; the caller free()s it). Returns the number of offsets, or a
+ * one), in a malloc()'d array stored into *indices (NULL when there are
+ * none; the caller free()s it). Returns the number of indices, or a
  * negative errno. Reuses `op`, resetting it before each call. */
 ssize_t
-rawstor_cli_op_chunks(RawstorCliOp* op, const char* target, uint64_t** offsets);
+rawstor_cli_op_chunks(RawstorCliOp* op, const char* target, uint64_t** indices);
 
 #ifdef __cplusplus
 }

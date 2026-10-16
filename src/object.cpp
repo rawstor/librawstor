@@ -124,9 +124,8 @@ rawstd::Task<Chunk*> MultiChunkObject::_chunk(uint32_t index) {
     entry.gate.begin();
     std::exception_ptr error;
     try {
-        uint64_t offset = static_cast<uint64_t>(index) * _chunk_size;
         entry.chunk = co_await Chunk::create(
-            _queue, entry.locations, _id, offset, _flags, _version_id
+            _queue, entry.locations, _id, index, _flags, _version_id
         );
     } catch (const std::system_error& e) {
         entry.open_errno = e.code().value();

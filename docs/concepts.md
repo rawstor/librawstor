@@ -12,7 +12,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Mirroring policy (`ost://a,ost://b`) | ✅ | `src/chunk.cpp`, see [Mirroring](mirroring.md) |
 | Data locality (`file://` on the hypervisor + `ost://`) | 🟡 | works as a regular mirror with local reads; no cache / primary-store asymmetry (see *Multiple backends*) |
 | Object / Chunk / Slot runtime model | ✅ | `src/object.cpp`, `src/chunk.cpp`, `src/slot.cpp` |
-| Internal multi-chunk form, chunk offset path segment | ✅ | `src/target.cpp` (`parse_target_path()`) |
+| Internal multi-chunk form, chunk index path segment | ✅ | `src/target.cpp` (`parse_target_path()`) |
 | `rawstor_target_chunks()` | ✅ | `include/rawstor/target.h` |
 | Version target (`.../<uuid>/<version_uuid>`), read-only open | ✅ | `src/target.cpp` |
 | `mds://` object-level version | ✅ | `src/mds_backend.cpp` |
@@ -80,7 +80,7 @@ classDiagram
     }
     class Chunk {
       <<mirror consistency>>
-      offset = index x chunk_size
+      index = position in the object
       state, epoch, sync_id
       +quorum open, degrade, resync()
     }
@@ -242,8 +242,8 @@ internally, a single flat `,`-separated list of every chunk's own URIs,
 one after another, with no second separator marking where one chunk's
 own group ends and the next begins — `Target`'s own constructor sorts
 them back into their chunk groups itself, by each URI's own internal
-offset path segment (a chunk's byte offset within the object, `logical_
-index * chunk_size` — URIs sharing one offset are mirrors of the same
+index path segment (a chunk's position within the object, the logical
+index — URIs sharing one index are mirrors of the same
 chunk, distinct chunks always differ). This form only ever exists inside
 the library (built by the MDS backend from the object's chunk map) — it
 is never part of the target syntax a caller types, appears in the CLI,
@@ -276,11 +276,11 @@ more Slots. Its URI form is exactly a plain target's own: one URI per
 mirror, comma-separated, all sharing the same UUID —
 `ost://h1:p1/<uuid>,ost://h2:p2/<uuid>`. A single-chunk Object's one
 Chunk *is* the target string that opened it; a multi-chunk `mds://`
-object's chunks are each one same-offset group of the internal form
+object's chunks are each one same-index group of the internal form
 above.
 
 An OST session opens a Slot for one copy, using the object UUID, chunk
-offset and version supplied by `SET_OBJECT`. Its I/O offsets are relative
+index and version supplied by `SET_OBJECT`. Its I/O offsets are relative
 to that copy. The Slot enforces the writer's configuration epoch and
 protects client writes during resync; the client-side Chunk coordinates
 the mirror and routes I/O to its Slots.
@@ -314,13 +314,13 @@ independent mechanisms use the same id, at different layers:
   primitive (zfs::Backend today), addressed directly by target/chunk-
   slot URI with the version appended as a trailing path segment, in
   either of two equivalent shapes:
-  - **Logical** — no offset segment, for a plain target (there is no
-    chunk-offset concept to name at that level):
+  - **Logical** — no index segment, for a plain target (there is no
+    chunk-index concept to name at that level):
     `ost://host:port/<uuid>/018f4e2a-3000-7000-8000-000000000001`, or on
     an `mds://` target,
     `mds://host:port/<id>/018f4e2a-3000-7000-8000-000000000001`.
-  - **Physical** — an *explicit* offset segment right before the
-    version (never omitted, even "0" — see "Chunk offset" below for
+  - **Physical** — an *explicit* index segment right before the
+    version (never omitted, even "0" — see "Chunk index" below for
     why), the shape every chunk-of-a-larger-object address always uses:
     `ost://host:port/<uuid>/0/018f4e2a-3000-7000-8000-000000000001`.
 
@@ -328,30 +328,30 @@ independent mechanisms use the same id, at different layers:
   a comma-separated list of its own — it binds whichever single URI it's
   attached to.
 
-## Chunk offset (not for manual entry)
+## Chunk index (not for manual entry)
 
-A chunk's own byte offset within its parent `mds://` object
-(`logical_index * chunk_size`) rides the same URI, as a path segment
-right after the UUID: `ost://host:port/<uuid>/100000` (hexadecimal --
-`0x100000`, 1MiB; optionally followed by a version segment, e.g.
-`ost://host:port/<uuid>/100000/018f4e2a-3000-7000-8000-000000000001`).
-Offset and version are told apart from an arbitrary preceding location
-path by shape alone (a UUID-shaped segment vs. a hexadecimal one):
+A chunk's own index within its parent `mds://` object (its logical
+index, counted from 0) rides the same URI, as a decimal path segment
+right after the UUID: `ost://host:port/<uuid>/16` (optionally followed
+by a version segment, e.g.
+`ost://host:port/<uuid>/16/018f4e2a-3000-7000-8000-000000000001`).
+Index and version are told apart from an arbitrary preceding location
+path by shape alone (a UUID-shaped segment vs. a decimal one):
 `parse_target_path()` (src/target.hpp) reads the identity off the
 *end* of the path. A target binds at most one version, so the trailing
 run of UUID-shaped segments is at most two long (longer is rejected). A
-single trailing UUID preceded by a valid hexadecimal offset (and another
+single trailing UUID preceded by a valid decimal index (and another
 UUID, the id) is the version — the *physical, with a bound version*
 shape above; otherwise the run's first segment is the id and its second
-(if any) the version — the *logical* shape, offset implied 0. A
+(if any) the version — the *logical* shape, index implied 0. A
 location path that itself ends in a UUID-shaped directory is therefore
 ambiguous and not supported. If the last segment isn't UUID-shaped at
-all (no version to find), it must instead be the hexadecimal
-offset itself, with the id right before it — `ost://host:port/<uuid>/
-100000` above, the *physical, live* shape: an explicit offset with no
-version anywhere in the path. A chunk's own offset is always spelled
+all (no version to find), it must instead be the decimal
+index itself, with the id right before it — `ost://host:port/<uuid>/16`
+above, the *physical, live* shape: an explicit index with no
+version anywhere in the path. A chunk's own index is always spelled
 out explicitly (one of the two physical shapes) since it's never
-0-and-absent-by-convention the way a plain target's own implied offset
+0-and-absent-by-convention the way a plain target's own implied index
 is. Like the internal multi-chunk form above, this is built only by
 `mds::Backend` from its own chunk map and never something a caller
 types — `Target`'s own constructor reads it back out to reconstruct
@@ -369,7 +369,7 @@ directly (a single entry, 0, for a plain, non-`mds://` target).
 | **Object** | (none — derived from the target string that opened it) | The open handle `rawstor_object_*()` I/O acts on; routes to the owning Chunk | — |
 | **Chunk** | Same as Target: `uri1,uri2,...` (one UUID per group) | One logical slice of an Object's data; owns mirror consistency | `ost://h1:p1/<uuid>,ost://h2:p2/<uuid>` |
 | **Slot** | A single URI | One physical mirror arm of a Chunk; owns retries/reconnects | `ost://h1:p1/<uuid>` |
-| **Version** | Trailing path segment on a target/chunk-slot URI (logical: right after the id; physical: after an explicit offset), `version_id` a client-generated UUID | A bound, read-only copy | `ost://host:port/<uuid>/018f4e2a-3000-7000-8000-000000000001` |
+| **Version** | Trailing path segment on a target/chunk-slot URI (logical: right after the id; physical: after an explicit index), `version_id` a client-generated UUID | A bound, read-only copy | `ost://host:port/<uuid>/018f4e2a-3000-7000-8000-000000000001` |
 
 ---
 

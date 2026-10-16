@@ -154,24 +154,21 @@ std::string Backend::_device_path_for_name(const std::string& name) const {
     return oss.str();
 }
 
-std::string Backend::_lv_name(const RawstdUUID& id, uint64_t offset) const {
+std::string Backend::_lv_name(const RawstdUUID& id, uint64_t index) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
-    // Hex, not decimal -- see parse_target_path()'s own doc comment
-    // (target.cpp) for why every physical, offset-carrying name in this
-    // codebase agrees on one base.
-    char offset_str[17];
-    snprintf(offset_str, sizeof(offset_str), "%" PRIx64, offset);
-    return std::string(uuid_str) + "-" + offset_str;
+    char index_str[17];
+    snprintf(index_str, sizeof(index_str), "%" PRIu64, index);
+    return std::string(uuid_str) + "-" + index_str;
 }
 
-std::string Backend::_device_path(const RawstdUUID& id, uint64_t offset) const {
-    return _device_path_for_name(_lv_name(id, offset));
+std::string Backend::_device_path(const RawstdUUID& id, uint64_t index) const {
+    return _device_path_for_name(_lv_name(id, index));
 }
 
 rawstd::Task<int>
-Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
-    std::string path = _device_path(id, offset);
+Backend::_open_object(const RawstdUUID& id, uint64_t index, int flags) {
+    std::string path = _device_path(id, index);
 
     // No O_NONBLOCK: io_uring does not need the fd to be non-blocking --
     // it handles blocking operations internally via io_wq worker threads.
@@ -205,7 +202,7 @@ rawstd::Task<void> Backend::list_chunks(
     chunks.clear();
     token = {};
 
-    // Grouped by id as they're read: every "-<offset>" LV sharing one
+    // Grouped by id as they're read: every "-<index>" LV sharing one
     // uuid prefix becomes that uuid's own single ChunkGroup entry.
     auto id_less = [](const RawstdUUID& lhs, const RawstdUUID& rhs) -> bool {
         return rawstd_uuid_cmp(&lhs, &rhs) < 0;
@@ -241,7 +238,7 @@ rawstd::Task<void> Backend::list_chunks(
             // A UUID's own string form is always exactly 36 characters
             // (RawstdUUIDString) -- a fixed prefix, since the UUID itself
             // already embeds dashes (8-4-4-4-12), unlike this backend's
-            // own "-<offset>" suffix, which can't be told apart
+            // own "-<index>" suffix, which can't be told apart
             // from those by splitting on the last '-' alone. The suffix is
             // mandatory: _lv_name() always writes it, so a bare-UUID LV is
             // not one this backend could open.
@@ -249,13 +246,13 @@ rawstd::Task<void> Backend::list_chunks(
                 continue;
             }
             std::string uuid_part = name.substr(0, 36);
-            // Anything left over after the hex digits (an LV name this
+            // Anything left over after the decimal digits (an LV name this
             // backend never creates itself, but lvs -- reports whatever
             // exists in the VG) is rejected rather than silently
             // truncated to whatever prefix strtoull() did parse.
             char* endptr = nullptr;
             errno = 0;
-            uint64_t offset = strtoull(name.c_str() + 37, &endptr, 16);
+            uint64_t index = strtoull(name.c_str() + 37, &endptr, 10);
             if (errno != 0 || endptr == name.c_str() + 37 || *endptr != '\0') {
                 errno = 0;
                 continue;
@@ -268,7 +265,7 @@ rawstd::Task<void> Backend::list_chunks(
             if (filtered && rawstd_uuid_cmp(&uuid, &id) != 0) {
                 continue;
             }
-            grouped[uuid].push_back(offset);
+            grouped[uuid].push_back(index);
         }
     } catch (const std::exception& e) {
         rawstd_error(
@@ -280,9 +277,9 @@ rawstd::Task<void> Backend::list_chunks(
 
     std::vector<ChunkGroup> found;
     found.reserve(grouped.size());
-    for (auto& [id, offsets] : grouped) {
-        std::sort(offsets.begin(), offsets.end());
-        found.push_back(ChunkGroup{id, std::move(offsets)});
+    for (auto& [id, indices] : grouped) {
+        std::sort(indices.begin(), indices.end());
+        found.push_back(ChunkGroup{id, std::move(indices)});
     }
 
     found.erase(
@@ -389,7 +386,7 @@ rawstd::Task<void> Backend::_cleanup_staging_lvs() {
 }
 
 rawstd::Task<void> Backend::create(
-    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID&, const RawstdUUID& id, uint64_t index,
     const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
     if (sp.size == 0 && member_role != RAWSTOR_MEMBER_WITNESS) {
@@ -399,7 +396,7 @@ rawstd::Task<void> Backend::create(
 
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
-    std::string real_name = _lv_name(id, offset);
+    std::string real_name = _lv_name(id, index);
     std::string real_path = _device_path_for_name(real_name);
 
     // create() must behave like open(O_EXCL): retrying it against an id
@@ -569,10 +566,10 @@ rawstd::Task<void> Backend::create(
 }
 
 rawstd::Task<void>
-Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
+Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t index) {
     co_await _cleanup_staging_lvs();
 
-    std::string path = _device_path(id, offset);
+    std::string path = _device_path(id, index);
 
     // Matches file::Backend::remove()'s own convention: a nonexistent LV
     // is ENOENT specifically (permanent -- never retried by
@@ -681,14 +678,14 @@ rawstd::Task<std::string> Backend::_lv_tags(const std::string& path) {
 }
 
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
 ) {
     if (!rawstd_uuid_is_nil(&version_id)) {
         // No versions on this backend (Backend::remove_version()'s own
         // default).
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
-    std::string path = _device_path(id, offset);
+    std::string path = _device_path(id, index);
     std::string tags = co_await _lv_tags(path);
     std::string tag = find_tag(tags, rawstor_tag_prefix);
 
@@ -727,11 +724,11 @@ Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
 }
 
 rawstd::Task<void> Backend::_write_meta(
-    const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
+    const RawstdUUID& id, uint64_t index, RawstorObjectSyncStateValue state,
     const RawstorObjectConfig& config, const RawstorObjectBallot& promised,
     const RawstorObjectBallot& accepted
 ) {
-    std::string path = _device_path(id, offset);
+    std::string path = _device_path(id, index);
 
     std::string tags = co_await _lv_tags(path);
     std::string old_tag = find_tag(tags, rawstor_tag_prefix);

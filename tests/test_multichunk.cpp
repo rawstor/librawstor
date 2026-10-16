@@ -40,29 +40,17 @@ T run(rawio::Queue& q, rawstd::Task<T> t) {
     return t.get();
 }
 
-// A URI's own offset path segment is hex (parse_target_path()'s own doc
-// comment, target.cpp), not decimal.
-std::string hex_offset(uint64_t offset) {
-    char buf[17];
-    snprintf(buf, sizeof(buf), "%" PRIx64, offset);
-    return std::string(buf);
-}
-
 // Builds the URIs of a target naming two chunks' own uris of one object
 // by hand (docs/concepts.md): "<location>/<uuid>/0" and "<location>/
-// <uuid>/<chunk_size in hex>" -- the same flat, offset-sorted URI list
+// <uuid>/1" -- the same flat, index-sorted URI list
 // rawstor-mds itself would build internally, just typed out here
 // instead. Nothing about Target/Object requires an MDS server to exist;
-// chunk_uris_by_offset()/Target::open()'s own multi-chunk machinery only
+// chunk_uris_by_index()/Target::open()'s own multi-chunk machinery only
 // ever looks at the URIs themselves.
-std::vector<rawstd::URI> two_chunk_target(
-    const rawstd::URI& location, const std::string& uuid_string,
-    uint64_t chunk_size
-) {
+std::vector<rawstd::URI>
+two_chunk_target(const rawstd::URI& location, const std::string& uuid_string) {
     rawstd::URI id_uri(location, uuid_string);
-    return {
-        rawstd::URI(id_uri, "0"), rawstd::URI(id_uri, hex_offset(chunk_size))
-    };
+    return {rawstd::URI(id_uri, "0"), rawstd::URI(id_uri, "1")};
 }
 
 } // namespace
@@ -70,7 +58,7 @@ std::vector<rawstd::URI> two_chunk_target(
 // An object spanning two chunks: create() splits its own size at
 // the chunk_size boundary into two full-size chunks, and open() builds a single
 // Object routing reads/writes across both, entirely from the target string's
-// own two offset-tagged URIs -- no chunk-placement service involved.
+// own two index-tagged URIs -- no chunk-placement service involved.
 TEST(MultiChunkTest, create_open_read_write_across_chunk_boundary) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
@@ -84,7 +72,7 @@ TEST(MultiChunkTest, create_open_read_write_across_chunk_boundary) {
     const uint64_t chunk_size = 64 * 1024;
     const uint64_t total_size = 2 * chunk_size;
 
-    rawstor::Target target(two_chunk_target(location, uuid_string, chunk_size));
+    rawstor::Target target(two_chunk_target(location, uuid_string));
 
     RawstorObjectSpec spec{
         .size = total_size,
@@ -97,9 +85,8 @@ TEST(MultiChunkTest, create_open_read_write_across_chunk_boundary) {
 
     // A physical chunk checks its own size, even when its object is larger.
     auto chunk =
-        run(*queue, rawstor::Chunk::create(
-                        *queue, {location}, id, chunk_size, 0, RawstdUUID{}
-                    ));
+        run(*queue,
+            rawstor::Chunk::create(*queue, {location}, id, 1, 0, RawstdUUID{}));
     char bytes[8]{};
     EXPECT_THROW(
         run(*queue, chunk->pread(bytes, sizeof(bytes), chunk_size - 4)),
@@ -175,7 +162,7 @@ TEST(MultiChunkTest, rejects_wrapping_io_range) {
     rawstd_uuid_to_string(&id, &uuid_string);
 
     const uint64_t chunk_size = 64 * 1024;
-    rawstor::Target target(two_chunk_target(location, uuid_string, chunk_size));
+    rawstor::Target target(two_chunk_target(location, uuid_string));
     RawstorObjectSpec spec{
         .size = 2 * chunk_size,
         .width = 1,
@@ -234,7 +221,7 @@ TEST(MultiChunkTest, preadv_pwritev_across_chunk_boundary) {
     const uint64_t chunk_size = 64 * 1024;
     const uint64_t total_size = 2 * chunk_size;
 
-    rawstor::Target target(two_chunk_target(location, uuid_string, chunk_size));
+    rawstor::Target target(two_chunk_target(location, uuid_string));
 
     RawstorObjectSpec spec{
         .size = total_size,
@@ -292,9 +279,9 @@ TEST(MultiChunkTest, preadv_pwritev_across_chunk_boundary) {
 }
 
 // meta()/set_member_sync_state() address the chunk named by their own
-// offset: a nonzero one reaches the second chunk only, and an offset with
+// index: a nonzero one reaches the second chunk only, and an index with
 // no chunk behind it is ENOENT.
-TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_offset) {
+TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_index) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
@@ -305,7 +292,7 @@ TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_offset) {
     rawstd_uuid_to_string(&id, &uuid_string);
 
     const uint64_t chunk_size = 64 * 1024;
-    rawstor::Target target(two_chunk_target(location, uuid_string, chunk_size));
+    rawstor::Target target(two_chunk_target(location, uuid_string));
 
     RawstorObjectSpec spec{
         .size = 2 * chunk_size,
@@ -316,8 +303,7 @@ TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_offset) {
     };
     run(*queue, target.create(*queue, spec));
 
-    std::vector<RawstorObjectMeta> metas =
-        run(*queue, target.meta(*queue, chunk_size));
+    std::vector<RawstorObjectMeta> metas = run(*queue, target.meta(*queue, 1));
     ASSERT_EQ(metas.size(), 1u);
     EXPECT_EQ(metas[0].spec.size, chunk_size);
     EXPECT_EQ(metas[0].spec.chunk_size, chunk_size);
@@ -325,9 +311,9 @@ TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_offset) {
     RawstorObjectConfig config = metas[0].config;
     config.epoch += 1;
     config.sync_id = 0x1234;
-    run(*queue, target.set_member_config(*queue, chunk_size, 0, config, 0));
+    run(*queue, target.set_member_config(*queue, 1, 0, config, 0));
 
-    metas = run(*queue, target.meta(*queue, chunk_size));
+    metas = run(*queue, target.meta(*queue, 1));
     ASSERT_EQ(metas.size(), 1u);
     EXPECT_EQ(metas[0].config.sync_id, 0x1234u);
     EXPECT_EQ(metas[0].config.epoch, config.epoch);
@@ -338,16 +324,15 @@ TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_offset) {
     EXPECT_NE(metas[0].config.sync_id, 0x1234u);
 
     try {
-        run(*queue, target.meta(*queue, 3 * chunk_size));
-        ADD_FAILURE() << "meta() at an offset with no chunk succeeded";
+        run(*queue, target.meta(*queue, 3));
+        ADD_FAILURE() << "meta() at an index with no chunk succeeded";
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), ENOENT);
     }
     try {
-        run(*queue,
-            target.set_member_config(*queue, 3 * chunk_size, 0, config, 0));
+        run(*queue, target.set_member_config(*queue, 3, 0, config, 0));
         ADD_FAILURE()
-            << "set_member_config() at an offset with no chunk succeeded";
+            << "set_member_config() at an index with no chunk succeeded";
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), ENOENT);
     }
@@ -356,8 +341,8 @@ TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_offset) {
 }
 
 // open() checks every chunk of a multi-chunk target sits at its expected
-// position, the last one included: chunks at 0 and 2 * chunk_size would
-// otherwise route logical chunk 1 to the physical chunk at 2 * chunk_size.
+// position, the last one included: chunks at indices 0 and 2 would
+// otherwise route logical chunk 1 to the physical chunk at index 2.
 TEST(MultiChunkTest, open_rejects_misplaced_last_chunk) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location(dir.uri());
@@ -372,8 +357,7 @@ TEST(MultiChunkTest, open_rejects_misplaced_last_chunk) {
     rawstd::URI id_uri(location, uuid_string);
     rawstor::Target target(
         std::vector<rawstd::URI>{
-            rawstd::URI(id_uri, "0"),
-            rawstd::URI(id_uri, hex_offset(2 * chunk_size))
+            rawstd::URI(id_uri, "0"), rawstd::URI(id_uri, "2")
         }
     );
 

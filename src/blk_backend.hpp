@@ -31,7 +31,7 @@ private:
     static constexpr unsigned int META_FORMAT_VERSION = 1;
 
     rawstd::Task<void> _bind_object(
-        const RawstdUUID& id, uint64_t offset, int flags,
+        const RawstdUUID& id, uint64_t index, int flags,
         const RawstdUUID& version_id
     );
 
@@ -91,20 +91,20 @@ public:
     };
 
 protected:
-    // Opens the live version of `id`/`offset` -- every concrete subclass
+    // Opens the live version of `id`/`index` -- every concrete subclass
     // implements this. `flags` is RAWSTOR_READONLY or 0: READONLY opens
     // O_RDONLY instead of O_RDWR.
     virtual rawstd::Task<int>
-    _open_object(const RawstdUUID& id, uint64_t offset, int flags) = 0;
+    _open_object(const RawstdUUID& id, uint64_t index, int flags) = 0;
 
-    // Opens one previously-created version of `id`/`offset`
+    // Opens one previously-created version of `id`/`index`
     // (`version_id`, never nil -- see create_version() below,
     // docs/mds.md "Versions"). Default: ENOTSUP, covering
     // file::Backend and lvm::Backend (no native CoW) without each
     // needing its own override; zfs::Backend overrides this with the
     // real thing.
     virtual rawstd::Task<int> _open_version(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
     );
 
     // A blk-backed backend has no upfront connection step: the fd is
@@ -144,9 +144,9 @@ protected:
     // Durably writes the copy metadata, preserving its ChunkIdentity.
     // Slot holds the copy's record lock while applying metadata requests.
     virtual rawstd::Task<void> _write_meta(
-        const RawstdUUID& id, uint64_t offset,
-        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config,
-        const RawstorObjectBallot& promised, const RawstorObjectBallot& accepted
+        const RawstdUUID& id, uint64_t index, RawstorObjectSyncStateValue state,
+        const RawstorObjectConfig& config, const RawstorObjectBallot& promised,
+        const RawstorObjectBallot& accepted
     ) = 0;
 
     // Encodes/decodes the copy state and configuration plus a ChunkIdentity
@@ -187,32 +187,31 @@ public:
     rawstd::Task<void> leave() override final;
 
     rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t offset, int flags) override final;
+    set_object(const RawstdUUID& id, uint64_t index, int flags) override final;
 
     rawstd::Task<void> set_version(
-        const RawstdUUID& object_id, uint64_t offset,
+        const RawstdUUID& object_id, uint64_t index,
         const RawstdUUID& version_id
     ) override final;
 
     rawstd::Task<void> set_state(
-        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& id, uint64_t index,
         RawstorObjectSyncStateValue expected, RawstorObjectSyncStateValue state
     ) override final;
 
     rawstd::Task<void> set_config(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstdUUID& id, uint64_t index, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags,
         std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     ) override final;
 
     rawstd::Task<bool> sync_prepare(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectBallot& ballot, bool proposed,
-        RawstorObjectMeta& meta
+        const RawstdUUID& id, uint64_t index, const RawstorObjectBallot& ballot,
+        bool proposed, RawstorObjectMeta& meta
     ) override final;
 
     rawstd::Task<bool> sync_accept(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstdUUID& id, uint64_t index, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
         const RawstorObjectConfig& config, bool proposed,
         RawstorObjectMeta& meta

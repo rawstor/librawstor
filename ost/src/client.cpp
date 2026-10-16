@@ -822,13 +822,13 @@ rawstd::DetachedTask Client::_list(
         for (const auto& group : groups) {
             RawstorFrameListEntry entry{};
             memcpy(entry.id, group.id.bytes, sizeof(entry.id));
-            if (group.offsets.empty()) {
+            if (group.indices.empty()) {
                 entry.type = RAWSTOR_LIST_ENTRY_OBJECT;
                 entries.push_back(entry);
             } else {
                 entry.type = RAWSTOR_LIST_ENTRY_CHUNK;
-                for (uint64_t offset : group.offsets) {
-                    entry.chunk_offset = offset;
+                for (uint64_t index : group.indices) {
+                    entry.chunk_index = index;
                     entries.push_back(entry);
                 }
             }
@@ -879,7 +879,7 @@ rawstd::DetachedTask Client::_allocate(
         co_await with_slot(
             client->_queue, client->_server.locations(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
-                co_await slot.create(uuid, payload.chunk_offset, spec, role);
+                co_await slot.create(uuid, payload.chunk_index, spec, role);
             }
         );
     } catch (const std::system_error& error) {
@@ -920,10 +920,10 @@ rawstd::DetachedTask Client::_release(
             client->_queue, client->_server.locations(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                 if (rawstd_uuid_is_nil(&version_id)) {
-                    co_await slot.remove(uuid, payload.offset);
+                    co_await slot.remove(uuid, payload.chunk_index);
                 } else {
                     co_await slot.remove_version(
-                        uuid, payload.offset, version_id
+                        uuid, payload.chunk_index, version_id
                     );
                 }
             }
@@ -972,7 +972,9 @@ rawstd::DetachedTask Client::_create_version(
         co_await with_slot(
             client->_queue, client->_server.locations(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
-                co_await slot.create_version(uuid, payload.offset, version_id);
+                co_await slot.create_version(
+                    uuid, payload.chunk_index, version_id
+                );
             }
         );
     } catch (const std::system_error& error) {
@@ -1015,7 +1017,7 @@ rawstd::DetachedTask Client::_meta(
             client->_queue, client->_server.locations(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                 auto records =
-                    co_await slot.meta(uuid, payload.offset, version_id);
+                    co_await slot.meta(uuid, payload.chunk_index, version_id);
                 for (const auto& record : records) {
                     if (record.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
                         meta = record;
@@ -1075,7 +1077,7 @@ rawstd::DetachedTask Client::_list_versions(
             client->_queue, client->_server.locations(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                 auto versions =
-                    co_await slot.list_versions(uuid, payload.offset);
+                    co_await slot.list_versions(uuid, payload.chunk_index);
                 for (const auto& version : versions) {
                     RawstorFrameVersionEntry entry{};
                     memcpy(
@@ -1145,7 +1147,7 @@ rawstd::DetachedTask Client::_set_config(
             std::exception_ptr error;
             try {
                 co_await slot->set_config(
-                    uuid, payload.chunk_offset, payload.member_index, config,
+                    uuid, payload.chunk_index, payload.member_index, config,
                     payload.flags,
                     payload.state == 0
                         ? std::nullopt
@@ -1215,12 +1217,12 @@ rawstd::DetachedTask Client::_sync(
             try {
                 if (head.cmd == RAWSTOR_CMD_SYNC_PREPARE) {
                     accepted = co_await slot->sync_prepare(
-                        uuid, payload.chunk_offset, ballot, meta
+                        uuid, payload.chunk_index, ballot, meta
                     );
                 } else {
                     accepted = co_await slot->sync_accept(
-                        uuid, payload.chunk_offset, payload.member_index,
-                        ballot, next, config, meta
+                        uuid, payload.chunk_index, payload.member_index, ballot,
+                        next, config, meta
                     );
                 }
             } catch (...) {
@@ -1368,7 +1370,7 @@ rawstd::DetachedTask Client::_set_object(
             *static_cast<rawio::Queue*>(queue), locations.front()
         );
         RawstorObjectMeta meta = co_await slot->open(
-            id, payload.offset, static_cast<int>(payload.val), version_id
+            id, payload.chunk_index, static_cast<int>(payload.val), version_id
         );
         size = meta.spec.size;
     } catch (const std::system_error& e) {

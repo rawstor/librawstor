@@ -120,7 +120,7 @@ ssize_t sync_op_wait(SyncOp& op, int res) {
 // than aborting the whole scan -- salvaging the readable copies, every
 // skipped copy covered by its mirrors (docs/mds.md, "Reconstruct / DR").
 // One listed target carries every chunk this OST holds of that object,
-// so each of its offsets gets its own META and record. A LIST
+// so each of its chunk indices gets its own META and record. A LIST
 // failure, in contrast, means this OST didn't answer at all and aborts
 // the whole reconstruct (see reconstruct()'s own doc comment on why a
 // partial scan is never silently accepted).
@@ -164,7 +164,7 @@ void scan_ost(
             // one (this scan walks physical objects one OST at a time) --
             // purely syntactic, no I/O (rawstor_target_chunks()'s own doc
             // comment): a first call for the count, a second for the
-            // offsets themselves.
+            // indices themselves.
             SyncOp count_op;
             count_op.queue = queue;
             ssize_t n = sync_op_wait(
@@ -172,14 +172,14 @@ void scan_ost(
                               queue, target, nullptr, 0, sync_op_cb, &count_op
                           )
             );
-            std::vector<uint64_t> offsets(n > 0 ? static_cast<size_t>(n) : 0);
+            std::vector<uint64_t> indices(n > 0 ? static_cast<size_t>(n) : 0);
             if (n > 0) {
-                SyncOp offsets_op;
-                offsets_op.queue = queue;
+                SyncOp indices_op;
+                indices_op.queue = queue;
                 n = sync_op_wait(
-                    offsets_op, rawstor_target_chunks(
-                                    queue, target, offsets.data(),
-                                    offsets.size(), sync_op_cb, &offsets_op
+                    indices_op, rawstor_target_chunks(
+                                    queue, target, indices.data(),
+                                    indices.size(), sync_op_cb, &indices_op
                                 )
                 );
             }
@@ -188,21 +188,21 @@ void scan_ost(
                 continue;
             }
 
-            for (uint64_t offset : offsets) {
+            for (uint64_t index : indices) {
                 RawstorObjectMeta meta{};
                 SyncOp meta_op;
                 meta_op.queue = queue;
                 ssize_t mr = sync_op_wait(
                     meta_op,
                     rawstor_target_meta(
-                        queue, target, offset, &meta, 1, sync_op_cb, &meta_op
+                        queue, target, index, &meta, 1, sync_op_cb, &meta_op
                     )
                 );
                 if (mr < 0) {
                     rawstd_error(
-                        "reconstruct: skipping %s at offset %llx: unreadable "
+                        "reconstruct: skipping %s at chunk %llu: unreadable "
                         "metadata: %s\n",
-                        target, (unsigned long long)offset,
+                        target, (unsigned long long)index,
                         strerror(static_cast<int>(-mr))
                     );
                     continue;
@@ -211,9 +211,9 @@ void scan_ost(
                 // as a zero-filled UNREACHABLE entry, not an error.
                 if (meta.state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
                     rawstd_error(
-                        "reconstruct: skipping %s at offset %llx: unreadable "
+                        "reconstruct: skipping %s at chunk %llu: unreadable "
                         "metadata\n",
-                        target, (unsigned long long)offset
+                        target, (unsigned long long)index
                     );
                     continue;
                 }
@@ -221,7 +221,7 @@ void scan_ost(
                 rawstor::mdsserver::ScanRecord record;
                 record.ost_id = ost_id;
                 record.obj_id = obj_id;
-                record.offset = offset;
+                record.chunk_index = index;
                 record.meta = meta;
                 records.push_back(record);
             }

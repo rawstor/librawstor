@@ -57,8 +57,8 @@ ssize_t target_remove(rawio::Queue& queue, const std::string& target) {
 }
 
 // rawstor_target_meta() now takes an array (one entry per URI of the
-// chunk at `offset`) instead of a single out-parameter -- every call
-// site here queries a single-URI, single-chunk target at offset 0, so
+// chunk at `index`) instead of a single out-parameter -- every call
+// site here queries a single-URI, single-chunk target at index 0, so
 // this keeps their own signature (one RawstorObjectMeta* out-parameter)
 // by unwrapping that one entry.
 ssize_t target_meta(
@@ -479,12 +479,11 @@ TEST(FileLifecycleTest, create_at_chunk_size_splits_into_multiple_chunks) {
     target.resize(res);
 
     // A genuine multi-chunk target names every one of its own chunks'
-    // offsets explicitly, even "0" -- 1ull << 20 is "100000" in hex.
+    // indices explicitly, even "0".
     rawstd::URI id_uri(location_uri, uuid);
     EXPECT_EQ(
-        target, rawstd::URI::uris(
-                    {rawstd::URI(id_uri, "0"), rawstd::URI(id_uri, "100000")}
-                )
+        target,
+        rawstd::URI::uris({rawstd::URI(id_uri, "0"), rawstd::URI(id_uri, "1")})
     );
 
     RawstorObjectSpec read_spec = {};

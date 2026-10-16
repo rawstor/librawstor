@@ -497,11 +497,11 @@ int create_cb(ssize_t result, void* data) {
 
 } // namespace
 
-// A multi-chunk object -- two chunks of the same id, at offset 0 and a
-// second, non-adjacent offset -- must come back over the wire as one row
-// per offset (RawstorFrameListEntry's own doc comment, protocol.h),
-// not just its first chunk's own offset repeated or dropped.
-TEST(OstClientTest, list_reports_every_chunk_offset) {
+// A multi-chunk object -- two chunks of the same id, at index 0 and a
+// second, non-adjacent index -- must come back over the wire as one row
+// per index (RawstorFrameListEntry's own doc comment, protocol.h),
+// not just its first chunk's own index repeated or dropped.
+TEST(OstClientTest, list_reports_every_chunk_index) {
     rawstor::ostserver::tests::TmpDir dir;
     int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
     rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
@@ -516,13 +516,11 @@ TEST(OstClientTest, list_reports_every_chunk_offset) {
     RawstdUUIDString id_str;
     rawstd_uuid_to_string(&id, &id_str);
 
-    const uint64_t second_offset = 1ull << 20;
-    char offset_hex[17];
-    std::snprintf(offset_hex, sizeof(offset_hex), "%" PRIx64, second_offset);
+    const uint64_t second_index = 7;
 
     std::string target0 = dir.uri() + "/" + id_str + "/0";
-    std::string target1 =
-        dir.uri() + "/" + std::string(id_str) + "/" + offset_hex;
+    std::string target1 = dir.uri() + "/" + std::string(id_str) + "/" +
+                          std::to_string(second_index);
 
     RawstorObjectSpec spec{
         .size = 4096,
@@ -548,7 +546,7 @@ TEST(OstClientTest, list_reports_every_chunk_offset) {
     RawstdUUID token{};
     client.send_list(token, 16);
 
-    // Two real rows (one per offset) plus the trailing resume cursor.
+    // Two real rows (one per index) plus the trailing resume cursor.
     const size_t expected_rows = 3;
     const size_t payload_size = expected_rows * sizeof(RawstorFrameListEntry);
     ASSERT_TRUE(pump_until(queue, [&] {
@@ -564,15 +562,15 @@ TEST(OstClientTest, list_reports_every_chunk_offset) {
     RawstdUUID row_id;
     std::memcpy(row_id.bytes, entries[0].id, sizeof(row_id.bytes));
     EXPECT_EQ(rawstd_uuid_cmp(&row_id, &id), 0);
-    EXPECT_EQ(entries[0].chunk_offset, 0u);
+    EXPECT_EQ(entries[0].chunk_index, 0u);
     EXPECT_EQ(entries[0].type, RAWSTOR_LIST_ENTRY_CHUNK);
 
     std::memcpy(row_id.bytes, entries[1].id, sizeof(row_id.bytes));
     EXPECT_EQ(rawstd_uuid_cmp(&row_id, &id), 0);
-    EXPECT_EQ(entries[1].chunk_offset, second_offset);
+    EXPECT_EQ(entries[1].chunk_index, second_index);
 
     // Bind to the second chunk and use offsets relative to it.
-    client.send_set_object(id, second_offset);
+    client.send_set_object(id, second_index);
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));

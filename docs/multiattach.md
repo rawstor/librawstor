@@ -119,7 +119,7 @@ location holding the data and, next to it, the record
 copy to its clients whatever it stores the chunk on
 ([Mirroring](mirroring.md#one-copy-per-server)).
 
-Every `Slot` serving the same location, object id and chunk offset in one
+Every `Slot` serving the same location, object id and chunk index in one
 process shares one `Slot::CopyState`, including metadata-only Slots and
 Slots using remote backends. The same coordination runs in the client and
 in the `rawstor-ost` serving the copy. It holds what the member knows in
@@ -453,7 +453,7 @@ record or frames, so both change in place. Details in
 
 - `include/rawstor/protocol.h`:
   - `SYNC_PREPARE` (`0x10`) and `SYNC_ACCEPT` (`0x11`):
-    `{object_id, chunk_offset, ballot, next, config, member_index}`; both
+    `{object_id, chunk_index, ballot, next, config, member_index}`; both
     reply with the member's record
     (`RawstorFrameSyncReplyPayload`).
   - `SET_CONFIG` carries the receiver's `member_index` too; it goes in stage 2

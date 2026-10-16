@@ -13,13 +13,13 @@ extern "C" {
  * own mirror[N] labels (nested under that chunk's own chunk[N]) -- more
  * than one when several members are declared jointly authoritative (e.g.
  * a manually-restored backup copied to more than one member) and
- * shouldn't resync from each other, only the rest. `has_offset` false
+ * shouldn't resync from each other, only the rest. `has_index` false
  * applies this to every chunk in the object (its own size/chunk_size,
  * via rawstor_target_spec(), say how many there are); true resolves only
- * the one chunk at `offset`. */
+ * the one chunk at `index`. */
 int rawstor_cli_resolve(
     const char* target, const size_t* winners, size_t num_winners,
-    int has_offset, uint64_t offset
+    int has_index, uint64_t index
 );
 
 #ifdef __cplusplus

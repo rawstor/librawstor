@@ -61,23 +61,23 @@ void validate_different_uris(const std::vector<rawstd::URI>& uris) {
 // Location::create() itself -- it needs the built string's own length
 // synchronously, before any I/O, for its snprintf()-style contract).
 // sp.chunk_size splits sp.size into size / chunk_size chunks, each
-// mirrored across every URI in `uris` at its own offset -- the same
-// (offset, mirror) shape a hand-built multi-offset -t/--target TARGET
+// mirrored across every URI in `uris` at its own index -- the same
+// (index, mirror) shape a hand-built multi-index -t/--target TARGET
 // already names, so Target::create() (target.cpp) handles the actual
 // per-chunk size split (and the chunk_size-must-be-a-power-of-two-
 // dividing-size checks) identically either way. 0 (the default) means the
 // ordinary single-chunk case, one chunk spanning the whole object.
-// Every offset is stamped explicitly, even "0" -- Location::list()'s own
+// Every index is stamped explicitly, even "0" -- Location::list()'s own
 // returned target strings always do (its own doc comment above), and a
 // caller comparing a freshly created target against one just listed
 // (pyrawstor's own Target.__eq__, a raw string compare) needs the two to
 // actually match.
 //
-// Never split (or offset-stamped) for mds://: an mds:// URI already
+// Never split (or index-stamped) for mds://: an mds:// URI already
 // names a whole object (docs/mds.md), and mds::Backend::create() does
 // its own placement-driven chunking internally, off sp.size/sp.chunk_size
 // directly, given exactly one whole-object call -- splitting or stamping
-// an offset here too would make Target::create()'s own per-group fan-out
+// an index here too would make Target::create()'s own per-group fan-out
 // call it more than once, each time with only that one group's own
 // reduced chunk_sp.size. Location::list() likewise lists an mds:// object
 // as its id alone, so a created target and a listed one still match.
@@ -97,9 +97,7 @@ std::vector<rawstd::URI> build_create_uris(
         for (const auto& uri : uris) {
             rawstd::URI target(uri, uuid_string);
             if (!is_mds) {
-                std::ostringstream oss;
-                oss << std::hex << i * sp.chunk_size;
-                target = rawstd::URI(target, oss.str());
+                target = rawstd::URI(target, std::to_string(i));
             }
             ret.push_back(std::move(target));
         }
@@ -371,8 +369,8 @@ rawstd::Task<void> Location::list(
         });
 
     // Merged across every URI, by id: each URI's own list_chunks() already
-    // groups its own offsets under one id (ChunkGroup, backend.hpp), but
-    // two different URIs can each hold a different offset of the same id
+    // groups its own indices under one id (ChunkGroup, backend.hpp), but
+    // two different URIs can each hold a different index of the same id
     // -- distinct chunks of the same multi-chunk object (docs/concepts.md's
     // own "internal multi-chunk form") -- which must come back as one
     // Target listing every chunk's own URI, not one Target per location.
@@ -391,26 +389,26 @@ rawstd::Task<void> Location::list(
         const rawstd::URI& location = _uris[i];
         const auto& [loc_groups, loc_token] = listings[i];
         // An mds:// object is addressed whole (build_create_uris()'s own
-        // comment): its target names the id alone, no offset segment.
+        // comment): its target names the id alone, no index segment.
         for (const auto& group : loc_groups) {
             std::vector<std::pair<uint64_t, rawstd::URI>>& entries =
                 targets_map[group.id];
             RawstdUUIDString uuid_string;
             rawstd_uuid_to_string(&group.id, &uuid_string);
-            if (group.offsets.empty()) {
+            if (group.indices.empty()) {
                 entries.emplace_back(0, rawstd::URI(location, uuid_string));
                 continue;
             }
-            for (uint64_t offset : group.offsets) {
+            for (uint64_t index : group.indices) {
                 // Always stamped, even "0" -- parsing still accepts a
-                // target string with no offset segment at all (implying
+                // target string with no index segment at all (implying
                 // 0, TargetPath's own doc comment above), but a string
                 // this library builds itself names every chunk's own
-                // offset explicitly rather than relying on that default.
-                std::ostringstream oss;
-                oss << std::hex << offset;
-                rawstd::URI uri(rawstd::URI(location, uuid_string), oss.str());
-                entries.emplace_back(offset, uri);
+                // index explicitly rather than relying on that default.
+                rawstd::URI uri(
+                    rawstd::URI(location, uuid_string), std::to_string(index)
+                );
+                entries.emplace_back(index, uri);
             }
         }
         if (rawstd_uuid_cmp(&loc_token, &empty_id) != 0) {
@@ -436,13 +434,13 @@ rawstd::Task<void> Location::list(
             capped = true;
             break;
         }
-        // Each id's own chunks, sorted by offset -- stable, so two
-        // entries sharing one offset (real mirrors of that chunk) keep
+        // Each id's own chunks, sorted by index -- stable, so two
+        // entries sharing one index (real mirrors of that chunk) keep
         // the order their own locations were listed in, matching every
         // other multi-URI ordering this codebase produces. The resulting
         // URI order is exactly parse_target_path()'s own expectation:
-        // URIs sharing one offset are mirrors of the same chunk,
-        // distinct chunks always differ, offsets ascending.
+        // URIs sharing one index are mirrors of the same chunk,
+        // distinct chunks always differ, indices ascending.
         std::vector<std::pair<uint64_t, rawstd::URI>>& chunks = it.second;
         std::stable_sort(
             chunks.begin(), chunks.end(), [](const auto& lhs, const auto& rhs) {
@@ -452,7 +450,7 @@ rawstd::Task<void> Location::list(
 
         std::vector<rawstd::URI> uris;
         uris.reserve(chunks.size());
-        for (const auto& [offset, uri] : chunks) {
+        for (const auto& [index, uri] : chunks) {
             uris.push_back(uri);
         }
         ret.emplace_back(uris);

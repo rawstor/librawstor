@@ -525,7 +525,7 @@ TEST_F(WitnessTest, witness_records_and_votes_are_per_chunk) {
     );
     run(*queue, object->close(true));
     auto first = run(*queue, target->meta(*queue, 0));
-    auto second = run(*queue, target->meta(*queue, 65536));
+    auto second = run(*queue, target->meta(*queue, 1));
     EXPECT_EQ(first[2].config.sync_id, first[0].config.sync_id);
     EXPECT_EQ(second[2].config.sync_id, second[0].config.sync_id);
     EXPECT_NE(first[2].config.sync_id, second[2].config.sync_id);
@@ -1049,7 +1049,7 @@ TEST_F(WitnessTest, mds_lists_objects_and_witnesses_with_one_cursor) {
     EXPECT_TRUE(rawstor_pagination_token_empty(&token));
 }
 
-TEST_F(WitnessTest, plain_mds_witness_listing_preserves_all_chunk_offsets) {
+TEST_F(WitnessTest, plain_mds_witness_listing_preserves_all_chunk_indices) {
     rawstor::tests::ObjectEnv servers(29625, 29626);
     witness = servers.location();
     spec.size = 131072;

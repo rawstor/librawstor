@@ -71,7 +71,7 @@ extern "C" {
 #define RAWSTOR_CMD_CREATE_VERSION 0x0d
 /*
  * Every version one stored object has: rides
- * RawstorFrameBasicPayload (object_id, offset = the chunk), its response
+ * RawstorFrameBasicPayload (object_id, chunk_index = the chunk), its response
  * payload is a packed array of RawstorFrameVersionEntry (body.res =
  * count * sizeof(RawstorFrameVersionEntry)), in no particular order. An
  * empty array on backends without versions (file://, classic LVM).
@@ -145,8 +145,8 @@ struct RawstorFrameHead {
 /*
  * Minimalistic protocol frame, shared by every command that doesn't need
  * one of the bigger, dedicated payloads elsewhere (READ/WRITE/DISCARD/
- * WRITE_ZEROES, SET_SYNC_STATE, ALLOCATE, LIST). `offset` is the
- * chunk_offset of the object/chunk `object_id` names (0 for a plain,
+ * WRITE_ZEROES, SET_SYNC_STATE, ALLOCATE, LIST). `chunk_index` is the
+ * index of the chunk `object_id` names (0 for a plain,
  * non-chunked object) for META; unused (0) for LOCATION_INFO/FLUSH.
  * `version_id` binds to a previously created version instead of the
  * live one, for the handful of commands that use it (SET_OBJECT, RELEASE,
@@ -161,13 +161,13 @@ struct RawstorFrameHead {
  * CREATE_VERSION/META/OBJ_OPEN. `version_id` and
  * `val` are otherwise never both meaningful on the same command (SET_OBJECT is
  * the one exception), but living in one struct means every command that carries
- * object_id/offset shares one wire shape and one C++-side request path
+ * object_id/chunk_index shares one wire shape and one C++-side request path
  * (Backend::_basic_request(), ost_backend.cpp) instead of two nearly identical
  * ones.
  */
 struct RawstorFrameBasicPayload {
     uint8_t object_id[16];
-    uint64_t offset;
+    uint64_t chunk_index;
     uint8_t version_id[16];
     uint64_t val;
 } RAWSTOR_PACKED;
@@ -179,11 +179,11 @@ struct RawstorFrameBasic {
 
 /*
  * LIST's request: `token_id` resumes strictly after the id it names --
- * every offset a listed id has is always reported together in the same
+ * every chunk index a listed id has is always reported together in the same
  * page (rawstor::Backend::list_chunks()'s own contract, src/backend.hpp:
- * one page entry is an id plus every offset it has, never split across
+ * one page entry is an id plus every chunk index it has, never split across
  * pages), so resuming only ever needs to name an id, unlike
- * RawstorFrameBasicPayload's own offset/version_id fields, which
+ * RawstorFrameBasicPayload's own chunk_index/version_id fields, which
  * LIST has no use for. This is why LIST gets its own dedicated request
  * payload rather than reusing that one; its own response shape
  * (BackendOpBasic's plain array-of-T, ost_backend.cpp) doesn't fit LIST's
@@ -202,9 +202,9 @@ struct RawstorFrameList {
 } RAWSTOR_PACKED;
 
 /*
- * One LIST response row: one id's own one offset -- a listed id with
- * more than one offset (distinct chunks of the same multi-chunk object)
- * rides one row per offset, all sharing that id, which the receiving end
+ * One LIST response row: one id's own one chunk index -- a listed id with
+ * more than one chunk index (distinct chunks of the same multi-chunk object)
+ * rides one row per chunk index, all sharing that id, which the receiving end
  * groups back into one rawstor::ChunkGroup (src/backend.hpp) per id.
  * Only live objects are listed. The response body is a packed array of these
  * (body.res = count * sizeof(this)), same "array of T" shape
@@ -219,9 +219,9 @@ struct RawstorFrameList {
  *
  * `type` says what the row addresses, so the receiving end never has to
  * probe the far end to find out: RAWSTOR_LIST_ENTRY_CHUNK is one chunk
- * stored at `chunk_offset`; RAWSTOR_LIST_ENTRY_OBJECT is a whole object
+ * stored at `chunk_index`; RAWSTOR_LIST_ENTRY_OBJECT is a whole object
  * addressed by id alone (an mds:// object, whose chunks are placed by its
- * map), with `chunk_offset` 0. `reserved` is all 0. The resume cursor row
+ * map), with `chunk_index` 0. `reserved` is all 0. The resume cursor row
  * has type 0 and is not interpreted as a result.
  */
 enum RawstorListEntryType {
@@ -231,7 +231,7 @@ enum RawstorListEntryType {
 
 struct RawstorFrameListEntry {
     uint8_t id[16];
-    uint64_t chunk_offset;
+    uint64_t chunk_index;
     uint8_t type; /* enum RawstorListEntryType */
     uint8_t reserved[7];
 } RAWSTOR_PACKED;
@@ -303,13 +303,13 @@ struct RawstorFrameConfig {
  * `member_index` is the copy's position among the
  * chunk's members, which `config.roles` is indexed by: the copy takes its
  * own role from it. Unlike META, it isn't wrapped in a
- * RawstorFrameBasicPayload of its own, so object_id/chunk_offset here are the
+ * RawstorFrameBasicPayload of its own, so object_id/chunk_index here are the
  * only way the server learns which object (and which of its chunks --
  * docs/mds.md, "Chunk identity") this applies to.
  */
 struct RawstorFrameSetConfigPayload {
     uint8_t object_id[16];
-    uint64_t chunk_offset;
+    uint64_t chunk_index;
     struct RawstorFrameConfig config;
     uint8_t flags;
     uint8_t member_index;
@@ -326,7 +326,7 @@ struct RawstorFrameSetConfig {
  * ALLOCATE's request: the object to create's size and width. Unlike
  * META's response (RawstorFrameMetaPayload below), this does need
  * object_id -- it isn't wrapped in a RawstorFrameBasicPayload of its
- * own, so object_id/chunk_offset here are the only way the server learns
+ * own, so object_id/chunk_index here are the only way the server learns
  * which object (and which of its chunks) to create.
  *
  * chunk_shift/stripe_width/failure_domain/member_role are the chunk's own
@@ -338,14 +338,14 @@ struct RawstorFrameSetConfig {
  * and it's cheaper on the wire besides; 0 means no chunking, same meaning
  * as chunk_size == 0. No volume_id/logical_index/version_id fields are
  * carried: object_id is the volume's own id for every one of its chunks
- * (docs/mds.md, "Chunk identity": obj_id = volume_id), chunk_offset
+ * (docs/mds.md, "Chunk identity": obj_id = volume_id), chunk_index
  * disambiguates which chunk, and version_id is always nil at create
  * time (RAWSTOR_CMD_CREATE_VERSION registers one afterwards) -- see
  * RawstorObjectSpec's own doc comment in target.h.
  */
 struct RawstorFrameAllocatePayload {
     uint8_t object_id[16];
-    uint64_t chunk_offset;
+    uint64_t chunk_index;
     uint64_t size;
     uint64_t stripe_width; /* K; 0 = spread every chunk, 1 = object-local */
     uint8_t chunk_shift;
@@ -407,7 +407,7 @@ struct RawstorFrameMetaPayload {
 
 /*
  * SYNC_PREPARE/SYNC_ACCEPT's request. SYNC_PREPARE uses object_id,
- * chunk_offset and ballot only, the rest zero. SYNC_ACCEPT also carries
+ * chunk_index and ballot only, the rest zero. SYNC_ACCEPT also carries
  * the ballot to promise on success (`next`, zero for none), the register's
  * value (`config`). Acceptance is one vote; the caller obtains a majority
  * of register acceptors, including the witness for two data copies.
@@ -416,7 +416,7 @@ struct RawstorFrameMetaPayload {
  */
 struct RawstorFrameSyncProposePayload {
     uint8_t object_id[16];
-    uint64_t chunk_offset;
+    uint64_t chunk_index;
     struct RawstorObjectBallot ballot;
     struct RawstorObjectBallot next;
     struct RawstorFrameConfig config;
@@ -688,7 +688,7 @@ static inline int rawstor_frame_meta_decode(
 }
 
 /* Allocation conversion includes spec and member role. The encoder preserves
- * object_id and chunk_offset, which the caller supplies separately. */
+ * object_id and chunk_index, which the caller supplies separately. */
 static inline int rawstor_frame_allocate_encode(
     struct RawstorFrameAllocatePayload* out, const struct RawstorObjectSpec* in,
     enum RawstorMemberRole role

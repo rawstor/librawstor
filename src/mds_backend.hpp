@@ -113,7 +113,7 @@ private:
     );
 
     rawstd::Task<std::optional<RawstorObjectMeta>>
-    _witness_meta(const RawstdUUID& id, uint64_t offset);
+    _witness_meta(const RawstdUUID& id, uint64_t index);
     std::unique_ptr<Object> _object;
     // leave() was called: close() closes the nested Object cleanly, so its
     // chunks leave their members in turn.
@@ -141,7 +141,7 @@ public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
     // Id-filtered form only (a nil `id` is ENOTSUP): that one object's
-    // own real chunk offsets, off its own WireMap.
+    // own real chunk indices, off its own WireMap.
     rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
         RawstdUUID& token, RawstdUUID version_id = {}
@@ -149,9 +149,8 @@ public:
 
     // DATA creates a whole placed object; WITNESS creates one metadata member.
     rawstd::Task<void> create(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        const RawstorObjectSpec& sp, RawstorMemberRole member_role
     ) override;
 
     // Unregisters and destroys the whole object (docs/mds.md, deletion
@@ -160,23 +159,23 @@ public:
     // best-effort cleanup -- a member that can no longer be resolved
     // (location changed, OST replaced) is left for the reconstruct scan.
     rawstd::Task<void> remove(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index
     ) override;
 
     // Removes one previously committed version, via _remove_version()
     // above. Same MDS-unregisters-first, best-effort per-chunk cleanup
     // convention as remove() above.
     rawstd::Task<void> remove_version(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& version_id
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        const RawstdUUID& version_id
     ) override;
 
-    // `offset` is always 0 here -- a single mds:// URI is never
+    // `index` is always 0 here -- a single mds:// URI is never
     // itself split into chunks (chunking happens one level down, inside
     // the object) -- see rawstor::Backend::resize()'s own doc comment.
     rawstd::Task<void> resize(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, uint64_t new_size
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        uint64_t new_size
     ) override;
 
     // MDS-orchestrated version (docs/mds.md, "Versions (stage 2)"):
@@ -192,29 +191,29 @@ public:
     // legitimately shorter, pre-resize version), then registers the
     // surviving membership. v1 caveat (see the design doc): assumes no
     // concurrent writer -- draining/flushing an in-flight write session
-    // is the writing client's own duty, not this call's. `offset`
+    // is the writing client's own duty, not this call's. `index`
     // is always 0, same reason as resize() above.
     rawstd::Task<void> create_version(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& version_id
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        const RawstdUUID& version_id
     ) override;
 
-    // Resolves `offset` to one of this object's own real chunks (its
+    // Resolves `index` to one of this object's own real chunks (its
     // own WireMap), then reports every one of that chunk's own real
     // members' real mirror consistency state -- querying every one of
     // that chunk's own real member locations concurrently, the same
     // resolve_meta() (target.hpp) a plain target's mirror set uses.
-    // `id`/`offset` at the
+    // `id`/`index` at the
     // *outer* Target level (Slot::open()/Chunk::create(), see this
     // class's own doc comment) is always chunk 0's -- the whole object
     // trusted outright there (mirrors == 1 at that level), taking this
     // method's own first entry as its answer (Backend::meta()'s own doc
     // comment).
     rawstd::Task<std::vector<RawstdUUID>>
-    list_versions(const RawstdUUID& id, uint64_t offset) override;
+    list_versions(const RawstdUUID& id, uint64_t index) override;
 
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id = {}
     ) override;
 
     // Real: this chunk's own real members' own bare locations, off the
@@ -223,18 +222,17 @@ public:
     // real member directly (rawstor resolve's own --winner), which no
     // target string naming this mds:// object could ever do on its own.
     rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id = {}
     ) override;
 
     // MDS holds no copy of its own: register requests fail with ENOSYS.
 
     rawstd::Task<bool> sync_prepare(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectBallot& ballot, bool proposed,
-        RawstorObjectMeta& meta
+        const RawstdUUID& id, uint64_t index, const RawstorObjectBallot& ballot,
+        bool proposed, RawstorObjectMeta& meta
     ) override;
     rawstd::Task<bool> sync_accept(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstdUUID& id, uint64_t index, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
         const RawstorObjectConfig& config, bool proposed,
         RawstorObjectMeta& meta
@@ -242,17 +240,17 @@ public:
 
     // Fetches the object's current (live) WireMap and opens the nested
     // multi-chunk Object it describes (see this class's own doc comment),
-    // via _set_object() above. `offset` is always 0, same reason as
+    // via _set_object() above. `index` is always 0, same reason as
     // resize() above.
     rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t offset, int flags) override;
+    set_object(const RawstdUUID& id, uint64_t index, int flags) override;
 
     // Same as set_object() above, for one previously committed version:
     // `version_id` is folded into every chunk slot's own URI (its own
     // trailing path segment, chunk_slot_target()'s own convention in
     // mds_backend.cpp), not passed down any other way.
     rawstd::Task<void> set_version(
-        const RawstdUUID& object_id, uint64_t offset,
+        const RawstdUUID& object_id, uint64_t index,
         const RawstdUUID& version_id
     ) override;
 

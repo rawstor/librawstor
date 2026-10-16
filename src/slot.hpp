@@ -27,11 +27,11 @@ class Slot final {
 private:
     rawio::Queue& _queue;
 
-    // Shared by all Slots serving the same location/id/offset, including
+    // Shared by all Slots serving the same location/id/index, including
     // Slots used only for metadata, regardless of the backend implementation.
     struct CopyState;
     std::shared_ptr<CopyState>
-    _copy_state(const RawstdUUID& id, uint64_t offset) const;
+    _copy_state(const RawstdUUID& id, uint64_t index) const;
     std::shared_ptr<CopyState> _member;
     bool _wrote;
     bool _left;
@@ -45,24 +45,24 @@ private:
     class Resync;
 
     rawstd::Task<void> _create_version(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& version_id
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        const RawstdUUID& version_id
     );
     rawstd::Task<void> _remove_version(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& version_id
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        const RawstdUUID& version_id
     );
     rawstd::Task<void> _set_config(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstdUUID& id, uint64_t index, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags,
         std::optional<RawstorObjectSyncStateValue> state
     );
     rawstd::Task<bool> _sync_prepare(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectBallot& ballot, RawstorObjectMeta& meta
+        const RawstdUUID& id, uint64_t index, const RawstorObjectBallot& ballot,
+        RawstorObjectMeta& meta
     );
     rawstd::Task<bool> _sync_accept(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstdUUID& id, uint64_t index, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
         const RawstorObjectConfig& config, RawstorObjectMeta& meta
     );
@@ -73,15 +73,15 @@ private:
     std::optional<RawstdUUID> _id;
     // A successful DATA open makes the durability barrier need no META lookup.
     bool _data_bound = false;
-    // The chunk offset/version open() bound _id to -- 0/0 (whole object,
+    // The chunk index/version open() bound _id to -- 0/0 (whole object,
     // live) unless open() was called otherwise (docs/mds.md, "Chunk
     // identity"/"Versions"). Meaningless while _id is unset; carried
     // alongside it so a reconnected backend's own set_object()
     // (_reconnect()) rebinds to the same chunk/version, not
     // silently back to the whole object's own live one.
-    uint64_t _offset;
+    uint64_t _index;
     // The open flags (RAWSTOR_READONLY or 0) open() bound _id with --
-    // carried alongside _id/_offset/_version_id for the same replay reason.
+    // carried alongside _id/_index/_version_id for the same replay reason.
     int _flags;
     // Departure waits for the session's outstanding I/O before closing its
     // backend.
@@ -90,7 +90,7 @@ private:
     rawstd::Barrier _drained;
     class OperationGuard;
     void _check_write() const;
-    rawstd::Task<void> _flush_copy(const RawstdUUID& id, uint64_t offset);
+    rawstd::Task<void> _flush_copy(const RawstdUUID& id, uint64_t index);
     RawstdUUID _version_id;
 
     std::shared_ptr<Backend> _backend;
@@ -196,48 +196,48 @@ public:
     );
 
     rawstd::Task<void> create_version(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
     );
 
     rawstd::Task<void>
-    resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size);
+    resize(const RawstdUUID& id, uint64_t index, uint64_t new_size);
 
     rawstd::Task<void> create(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
+        const RawstdUUID& id, uint64_t index, const RawstorObjectSpec& sp,
         RawstorMemberRole member_role
     );
 
-    rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset);
+    rawstd::Task<void> remove(const RawstdUUID& id, uint64_t index);
 
     rawstd::Task<std::vector<RawstdUUID>>
-    list_versions(const RawstdUUID& id, uint64_t offset);
+    list_versions(const RawstdUUID& id, uint64_t index);
 
     // Witnesses have no snapshots; deleting one preserves the live record.
     rawstd::Task<void> remove_version(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
     );
 
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id = {}
     );
 
     rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id = {}
     );
 
     rawstd::Task<void> set_config(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstdUUID& id, uint64_t index, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags,
         std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     );
 
     rawstd::Task<bool> sync_prepare(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectBallot& ballot, RawstorObjectMeta& meta
+        const RawstdUUID& id, uint64_t index, const RawstorObjectBallot& ballot,
+        RawstorObjectMeta& meta
     );
 
     rawstd::Task<bool> sync_accept(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstdUUID& id, uint64_t index, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
         const RawstorObjectConfig& config, RawstorObjectMeta& meta
     );
@@ -267,7 +267,7 @@ public:
     // (docs/mds.md, "Witness"); its own .cpp doc comment on
     // why this is the one place that needs to check.
     rawstd::Task<RawstorObjectMeta> open(
-        const RawstdUUID& id, uint64_t offset, int flags,
+        const RawstdUUID& id, uint64_t index, int flags,
         const RawstdUUID& version_id
     );
 

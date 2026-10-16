@@ -27,51 +27,51 @@ const RawstdUUID version_uuid = uuid_of(version_str);
 
 } // namespace
 
-TEST(TargetParsePathTest, bare_id_has_no_offset_or_version) {
+TEST(TargetParsePathTest, bare_id_has_no_index_or_version) {
     rawstor::TargetPath path = rawstor::parse_target_path("/data/" + id_str);
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
-    EXPECT_EQ(path.offset, 0u);
+    EXPECT_EQ(path.index, 0u);
     EXPECT_TRUE(rawstd_uuid_is_nil(&path.version_id));
     EXPECT_EQ(path.segments, 1u);
 }
 
-TEST(TargetParsePathTest, physical_live_shape_has_offset_no_version) {
+TEST(TargetParsePathTest, physical_live_shape_has_index_no_version) {
     rawstor::TargetPath path =
-        rawstor::parse_target_path("/data/" + id_str + "/2a");
+        rawstor::parse_target_path("/data/" + id_str + "/42");
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
-    EXPECT_EQ(path.offset, 42u);
+    EXPECT_EQ(path.index, 42u);
     EXPECT_TRUE(rawstd_uuid_is_nil(&path.version_id));
     EXPECT_EQ(path.segments, 2u);
 }
 
-TEST(TargetParsePathTest, logical_shape_has_version_no_offset) {
+TEST(TargetParsePathTest, logical_shape_has_version_no_index) {
     rawstor::TargetPath path =
         rawstor::parse_target_path("/data/" + id_str + "/" + version_str);
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
-    EXPECT_EQ(path.offset, 0u);
+    EXPECT_EQ(path.index, 0u);
     EXPECT_EQ(rawstd_uuid_cmp(&path.version_id, &version_uuid), 0);
     EXPECT_EQ(path.segments, 2u);
 }
 
 TEST(TargetParsePathTest, physical_shape_with_version_has_both) {
     rawstor::TargetPath path =
-        rawstor::parse_target_path("/data/" + id_str + "/2a/" + version_str);
+        rawstor::parse_target_path("/data/" + id_str + "/42/" + version_str);
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
-    EXPECT_EQ(path.offset, 42u);
+    EXPECT_EQ(path.index, 42u);
     EXPECT_EQ(rawstd_uuid_cmp(&path.version_id, &version_uuid), 0);
     EXPECT_EQ(path.segments, 3u);
 }
 
 TEST(TargetParsePathTest, deep_location_prefix_does_not_confuse_parsing) {
     rawstor::TargetPath path =
-        rawstor::parse_target_path("/a/b/c/" + id_str + "/2a/" + version_str);
+        rawstor::parse_target_path("/a/b/c/" + id_str + "/42/" + version_str);
 
     EXPECT_EQ(rawstd_uuid_cmp(&path.id, &id_uuid), 0);
-    EXPECT_EQ(path.offset, 42u);
+    EXPECT_EQ(path.index, 42u);
     EXPECT_EQ(rawstd_uuid_cmp(&path.version_id, &version_uuid), 0);
     EXPECT_EQ(path.segments, 3u);
 }
@@ -83,7 +83,7 @@ TEST(TargetParsePathTest, malformed_path_throws_einval) {
 }
 
 // A target binds at most one version: two version segments, with or
-// without an offset in front of them, are rejected.
+// without an index in front of them, are rejected.
 TEST(TargetParsePathTest, more_than_one_version_throws_einval) {
     EXPECT_THROW(
         rawstor::parse_target_path(
@@ -93,7 +93,7 @@ TEST(TargetParsePathTest, more_than_one_version_throws_einval) {
     );
     EXPECT_THROW(
         rawstor::parse_target_path(
-            "/data/" + id_str + "/2a/" + version_str + "/" + version_str
+            "/data/" + id_str + "/42/" + version_str + "/" + version_str
         ),
         std::system_error
     );

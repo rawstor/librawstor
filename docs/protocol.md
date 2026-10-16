@@ -13,7 +13,7 @@ directly, with a compile-time wire-size check in the same header. These function
 check representation. Unknown metadata sync-state bytes are rejected with
 `EPROTO`; `UNREACHABLE` (0) remains a valid decoded state. Slot and backends
 validate state transitions. The allocation encoder preserves
-`object_id` and `chunk_offset`, which the caller sets separately.
+`object_id` and `chunk_index`, which the caller sets separately.
 
 ## Status
 
@@ -63,8 +63,8 @@ A client may pipeline requests: each carries a `cid` (command id) and its
 response echoes it back, so responses are matched by `cid`, not by order.
 
 The first request on a connection is `SET_OBJECT`. On an OST it binds the
-connection to a copy through a Slot, identified by `object_id`, `offset`
-(the chunk offset within the object), and `version_id`. I/O offsets are
+connection to a copy through a Slot, identified by `object_id`, `chunk_index`
+(the chunk index within the object), and `version_id`. I/O offsets are
 relative to that chunk; the OST does not open an Object or route I/O
 between chunks. On the MDS it is a plain handshake. A server answers any
 command outside its role with `res = -ENOSYS`.
@@ -101,9 +101,9 @@ keep `0x0b`/`0x0c`.
 | `0x09` | `FLUSH` | OST | Basic (`val` = epoch) | — |
 | `0x0a` | `WRITE_ZEROES` | OST | IO (`flags`: `SYNC`, `UNMAP`, `RESYNC`) | — |
 | `0x0b` | `SET_CONFIG` | OST / MDS (witness only) | SetConfig | — |
-| `0x0c` | `META` | OST / MDS (witness only) | Basic (`offset` = chunk offset, `version_id`, nil = live) | Meta |
+| `0x0c` | `META` | OST / MDS (witness only) | Basic (`chunk_index`, `version_id`, nil = live) | Meta |
 | `0x0d` | `CREATE_VERSION` | OST | Basic (`version_id` = new version) | — |
-| `0x0e` | `LIST_VERSIONS` | OST | Basic (`offset` = chunk offset) | Version rows |
+| `0x0e` | `LIST_VERSIONS` | OST | Basic (`chunk_index`) | Version rows |
 | `0x0f` | `LEAVE` | OST | Basic (unused) | — |
 | `0x10` | `SYNC_PREPARE` | OST | SyncPropose (`ballot` only) | SyncReply |
 | `0x11` | `SYNC_ACCEPT` | OST | SyncPropose | SyncReply |
@@ -161,7 +161,7 @@ follows right after.
 ### Basic — 48 bytes
 
 Shared by every command that only names an object: `SET_OBJECT`, `RELEASE`,
-`CREATE_VERSION`, `META`, `LOCATION_INFO`, `FLUSH` and the MDS's `OBJ_OPEN`. `offset` is the chunk offset of
+`CREATE_VERSION`, `META`, `LOCATION_INFO`, `FLUSH` and the MDS's `OBJ_OPEN`. `chunk_index` is the chunk index of
 the object `object_id` names (0 for a plain object); `version_id` binds
 a version for `SET_OBJECT`, `RELEASE`, `CREATE_VERSION`, `META` and `OBJ_OPEN`
 (nil = live); `val` is command-specific: `FLUSH` carries the writer's
@@ -176,7 +176,7 @@ epoch in it, as IO does.
   8  |                                                                                       |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
- 16  |                                    uint64_t offset                                    |
+ 16  |                                 uint64_t chunk_index                                  |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  24  |                                                                                       |
@@ -325,7 +325,7 @@ allowing the final consistency state to reach storage.
   8  |                                                                                       |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
- 16  |                                 uint64_t chunk_offset                                 |
+ 16  |                                 uint64_t chunk_index                                  |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  24  Config (312 bytes)
@@ -357,7 +357,7 @@ support). `member_index` is as for SetConfig and indexes data members. OST accep
   8  |                                                                                       |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
- 16  |                                 uint64_t chunk_offset                                 |
+ 16  |                                 uint64_t chunk_index                                  |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  24  Ballot ballot (16 bytes)
@@ -385,7 +385,7 @@ chunk's placement identity, stored with it.
   8  |                                                                                       |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
- 16  |                                 uint64_t chunk_offset                                 |
+ 16  |                                 uint64_t chunk_index                                  |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  24  |                                     uint64_t size                                     |
@@ -404,10 +404,10 @@ chunk's placement identity, stored with it.
 
 ### List rows — 32 bytes each
 
-One row per (id, chunk offset); an id with several chunks spans consecutive
+One row per (id, chunk index); an id with several chunks spans consecutive
 rows. `type` says what the row addresses: `CHUNK` (1) is one chunk stored at
-`chunk_offset`; `OBJECT` (2) is a whole object addressed by id alone, with
-`chunk_offset` 0. The MDS answers one `OBJECT` row per `mds://` object and one
+`chunk_index`; `OBJECT` (2) is a whole object addressed by id alone, with
+`chunk_index` 0. The MDS answers one `OBJECT` row per `mds://` object and one
 `CHUNK` row per witness member. `reserved` is all 0. The **last** row is always the resume cursor for the next page (a nil id
 once nothing is left), never a result. An empty payload means the far end is
 already exhausted.
@@ -421,7 +421,7 @@ already exhausted.
   8  |                                                                                       |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
- 16  |                                 uint64_t chunk_offset                                 |
+ 16  |                                 uint64_t chunk_index                                  |
      |                                                                                       |
      +----------+----------------------------------------------------------------------------+
  24  | uint8_t  |                            uint8_t reserved[7]                             |
@@ -741,7 +741,7 @@ Witnesses do not accept data I/O or object versions.
 
 Ordinary `LIST` reports every registered MDS object and native witness member,
 using `RawstorFrameListEntry` rows plus the final pagination cursor row.
-Registered objects are `OBJECT` rows at offset zero; witness records are
-`CHUNK` rows carrying their real chunk offsets. Limits count IDs, and all
-offsets of an ID stay on one page. The row type alone says which kind of
+Registered objects are `OBJECT` rows at index zero; witness records are
+`CHUNK` rows carrying their real chunk indices. Limits count IDs, and all
+indices of an ID stay on one page. The row type alone says which kind of
 address was listed.

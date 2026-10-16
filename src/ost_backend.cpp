@@ -64,40 +64,40 @@ rawstd::Task<void> Backend::list_chunks(
 }
 
 rawstd::Task<void> Backend::create(
-    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
     const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
-    return _wire_create(idempotency_key, id, offset, sp, member_role);
+    return _wire_create(idempotency_key, id, index, sp, member_role);
 }
 
 rawstd::Task<void> Backend::remove(
-    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index
 ) {
-    return _wire_remove(idempotency_key, id, offset);
+    return _wire_remove(idempotency_key, id, index);
 }
 
 rawstd::Task<void> Backend::remove_version(
-    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
     const RawstdUUID& version_id
 ) {
-    return _wire_remove_version(idempotency_key, id, offset, version_id);
+    return _wire_remove_version(idempotency_key, id, index, version_id);
 }
 
 rawstd::Task<std::vector<RawstdUUID>>
-Backend::list_versions(const RawstdUUID& id, uint64_t offset) {
-    return _wire_list_versions(id, offset);
+Backend::list_versions(const RawstdUUID& id, uint64_t index) {
+    return _wire_list_versions(id, index);
 }
 
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
 ) {
-    return _wire_meta(id, offset, version_id);
+    return _wire_meta(id, index, version_id);
 }
 
 rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
 ) {
-    return _wire_resolve_locations(id, offset, version_id);
+    return _wire_resolve_locations(id, index, version_id);
 }
 
 rawstd::Task<void> Backend::leave() {
@@ -105,38 +105,38 @@ rawstd::Task<void> Backend::leave() {
 }
 
 rawstd::Task<bool> Backend::sync_prepare(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
+    const RawstdUUID& id, uint64_t index, const RawstorObjectBallot& ballot,
     bool proposed, RawstorObjectMeta& meta
 ) {
-    return _wire_sync_prepare(id, offset, ballot, proposed, meta);
+    return _wire_sync_prepare(id, index, ballot, proposed, meta);
 }
 
 rawstd::Task<bool> Backend::sync_accept(
-    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+    const RawstdUUID& id, uint64_t index, uint8_t member_index,
     const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
     const RawstorObjectConfig& config, bool proposed, RawstorObjectMeta& meta
 ) {
     return _wire_sync_accept(
-        id, offset, member_index, ballot, next, config, proposed, meta
+        id, index, member_index, ballot, next, config, proposed, meta
     );
 }
 
 rawstd::Task<void>
-Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
-    return _wire_set_object(id, offset, flags);
+Backend::set_object(const RawstdUUID& id, uint64_t index, int flags) {
+    return _wire_set_object(id, index, flags);
 }
 
 rawstd::Task<void> Backend::set_version(
-    const RawstdUUID& object_id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& object_id, uint64_t index, const RawstdUUID& version_id
 ) {
-    return _wire_set_version(object_id, offset, version_id);
+    return _wire_set_version(object_id, index, version_id);
 }
 
 rawstd::Task<void> Backend::create_version(
-    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
     const RawstdUUID& version_id
 ) {
-    return _wire_create_version(idempotency_key, id, offset, version_id);
+    return _wire_create_version(idempotency_key, id, index, version_id);
 }
 
 class BackendOpRead final : public BackendOp {
@@ -563,7 +563,7 @@ public:
                 },
             .payload = {
                 .object_id = {},
-                .offset = 0,
+                .chunk_index = 0,
                 .version_id = {},
                 .val = epoch,
             },
@@ -593,8 +593,8 @@ public:
 };
 
 // SET_SYNC_STATE's request carries the full RawstorFrameMetaPayload (not
-// just object_id/offset/val like BackendOpBasic below), so it needs its own
-// request shape -- the response is otherwise the same no-payload
+// just object_id/chunk_index/val like BackendOpBasic below), so it needs its
+// own request shape -- the response is otherwise the same no-payload
 // acknowledgement as BackendOpFlush above.
 rawstd::Task<size_t> Backend::pread(void* buf, size_t size, uint64_t offset) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(

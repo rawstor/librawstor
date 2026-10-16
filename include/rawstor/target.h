@@ -283,7 +283,7 @@ int rawstor_target_spec(
  *        every copy of one chunk of a target.
  *
  * Like rawstor_target_spec(), but queries every URI of the chunk at
- * @p offset concurrently and fills one RawstorObjectMeta per URI, in
+ * @p index concurrently and fills one RawstorObjectMeta per URI, in
  * that chunk's own order -- unlike rawstor_target_spec()'s single-answer
  * fail-over tolerance, this reports every copy's own state, not just one
  * answer standing in for the whole set. A URI that doesn't answer
@@ -301,7 +301,7 @@ int rawstor_target_spec(
  *
  * An mds://host:port/<id> @p target is, from this call's own
  * point of view, an ordinary single-URI target -- it succeeds with one
- * synthetic entry at @p offset 0 only (any other offset is @c -ENOENT,
+ * synthetic entry at @p index 0 only (any other index is @c -ENOENT,
  * even though `spec`'s own `size`/`chunk_size` describe a real,
  * multi-chunk object): `spec` reflects the object's own logical
  * size/chunk_size/policy, `state`/`config` a "legacy copy" CLEAN/epoch-0/
@@ -314,11 +314,11 @@ int rawstor_target_spec(
  *
  * @param queue   Queue used to drive the asynchronous lookup.
  * @param target  Target string, see rawstor_target_spec().
- * @param offset  The chunk's own byte offset within @p target (0 for an
+ * @param index  The chunk's own index within @p target (0 for an
  *                ordinary, single-chunk target -- rawstor_target_spec()'s
  *                own `size`/`chunk_size` tell a caller managing a real
- *                multi-chunk object every offset it has). @c -ENOENT if
- *                no chunk in @p target sits at this offset.
+ *                multi-chunk object every index it has). @c -ENOENT if
+ *                no chunk in @p target sits at this index.
  * @param metas   Out-parameter: an array of @p count entries. Filled with
  *                one entry per URI of that chunk (in order), up to
  *                @p count of them, immediately before @p cb is invoked.
@@ -334,7 +334,7 @@ int rawstor_target_spec(
  *                  @p metas, and the caller should retry with a bigger
  *                  buffer rather than treat this as an error -- or a
  *                  negative errno on failure (@c -EINVAL for invalid
- *                  target syntax, @c -ENOENT for no chunk at @p offset,
+ *                  target syntax, @c -ENOENT for no chunk at @p index,
  *                  @c -ENOMEM).
  *                - @p data is the same pointer passed as @p data below.
  *                - Return zero on success. A negative errno value signals
@@ -349,7 +349,7 @@ int rawstor_target_spec(
  * @see rawstor_target_spec
  */
 int rawstor_target_meta(
-    RawIOQueue* queue, const char* target, uint64_t offset,
+    RawIOQueue* queue, const char* target, uint64_t index,
     struct RawstorObjectMeta* metas, size_t count,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
@@ -359,7 +359,7 @@ int rawstor_target_meta(
  *        real member of one chunk of a target.
  *
  * Unlike rawstor_target_spec()/rawstor_target_meta(), this writes rather
- * than reads: it sets @p config on the chunk at @p offset's own
+ * than reads: it sets @p config on the chunk at @p index's own
  * real member @p member_index (fsynced on the backend before it is
  * acknowledged, per docs/mirroring.md's durability rule) -- the same
  * order rawstor_target_meta()'s own per-chunk result reports their state
@@ -391,7 +391,7 @@ int rawstor_target_meta(
  *
  * @param queue         Queue used to drive the asynchronous write.
  * @param target        Target string, see rawstor_target_spec().
- * @param offset        The chunk's own byte offset within @p target, see
+ * @param index        The chunk's own index within @p target, see
  *                      rawstor_target_meta().
  * @param member_index  Which real member of that chunk to write to, 0-based.
  * @param config        The configuration to write. Only read while this
@@ -405,7 +405,7 @@ int rawstor_target_meta(
  *                        errno on failure (@c -EINVAL for invalid target
  *                        syntax or @p member_index naming no real member
  *                        of the chunk, @c -ENOENT for no chunk at
- *                        @p offset).
+ *                        @p index).
  *                      - @p data is the same pointer passed as @p data
  *                        below.
  *                      - Return zero on success. A negative errno value
@@ -421,7 +421,7 @@ int rawstor_target_meta(
  * @see rawstor_target_meta
  */
 int rawstor_target_set_member_config(
-    RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
+    RawIOQueue* queue, const char* target, uint64_t index, size_t member_index,
     const struct RawstorObjectConfig* config, unsigned int flags,
     const enum RawstorObjectSyncStateValue* state,
     int (*cb)(ssize_t result, void* data), void* data
@@ -433,7 +433,7 @@ int rawstor_target_set_member_config(
  *        docs/multiattach.md, "The register").
  *
  * Addresses the member as rawstor_target_set_member_config() does
- * (@p target, @p offset, @p member_index). The member promises @p ballot if
+ * (@p target, @p index, @p member_index). The member promises @p ballot if
  * it is above both the ballot it promised and the ballot its
  * configuration was accepted under, persists that, and replies with its
  * whole record in @p meta either way.
@@ -448,7 +448,7 @@ int rawstor_target_set_member_config(
  *         several locations) fails with -ENOSYS.
  */
 int rawstor_target_sync_prepare(
-    RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
+    RawIOQueue* queue, const char* target, uint64_t index, size_t member_index,
     const struct RawstorObjectBallot* ballot, struct RawstorObjectMeta* meta,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
@@ -473,7 +473,7 @@ int rawstor_target_sync_prepare(
  *         failure (in which case @p cb is never invoked).
  */
 int rawstor_target_sync_accept(
-    RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
+    RawIOQueue* queue, const char* target, uint64_t index, size_t member_index,
     const struct RawstorObjectBallot* ballot,
     const struct RawstorObjectBallot* next,
     const struct RawstorObjectConfig* config, struct RawstorObjectMeta* meta,
@@ -550,8 +550,8 @@ int rawstor_target_create(
  * the object is removed from every backend in the list.
  *
  * A @p target that carries a bound version (its own trailing
- * "/<offset>/<version_id>" path segments, present only alongside an explicit
- * offset -- see rawstor_target_version_id()) instead destroys that one
+ * "/<index>/<version_id>" path segments, present only alongside an explicit
+ * index -- see rawstor_target_version_id()) instead destroys that one
  * version -- there is no separate function for it: which identity gets
  * removed is already whatever @p target itself names, live object or a
  * specific version. For an mds://host:port/<id> @p target naming a
@@ -759,33 +759,33 @@ int rawstor_target_location(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously retrieve every distinct chunk offset a target
+ * @brief Asynchronously retrieve every distinct chunk index a target
  *        actually has.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),
- * this function writes the byte offset of each of its own chunks into the
+ * this function writes the index of each of its own chunks into the
  * provided array, ascending, one entry per chunk -- a URI that shares its
- * own offset with an earlier one (a mirror of that same chunk, not a
+ * own index with an earlier one (a mirror of that same chunk, not a
  * distinct one) contributes no entry of its own. For an ordinary target
- * (every URI already names its own offset, or there is exactly one URI
+ * (every URI already names its own index, or there is exactly one URI
  * with none) this is purely syntactic, off @p target's own shape -- no
  * backend is contacted, and the target need not exist. An
  * mds://host:port/<id> target is the one exception: its own real
  * per-chunk shape isn't reflected in its single URI at all, so this
  * contacts the MDS instead and reports every one of the object's own
- * real chunk offsets.
+ * real chunk indices.
  *
  * This function returns immediately; the actual result is reported via
  * @p cb once the operation completes.
  *
  * @param queue    Queue used to drive the asynchronous lookup.
  * @param target   Target string, see rawstor_target_id().
- * @param offsets  Output array that will receive each chunk's own offset,
+ * @param indices  Output array that will receive each chunk's own index,
  *                 ascending, immediately before @p cb is invoked. Can be
  *                 NULL if only the required array length is needed. Left
  *                 untouched on error, and never written at all if the
  *                 lookup is never queued (see the return value below).
- * @param size     Capacity of @p offsets, in elements. If size is 0, no
+ * @param size     Capacity of @p indices, in elements. If size is 0, no
  *                 data is written, but the required length is still
  *                 reported.
  * @param cb       Callback invoked on completion.
@@ -793,7 +793,7 @@ int rawstor_target_location(
  *                   has on success -- same truncation convention as
  *                   rawstor_target_id()/_location(): if it is greater than
  *                   @p size, only the first @p size entries were actually
- *                   written to @p offsets -- or a negative errno on
+ *                   written to @p indices -- or a negative errno on
  *                   failure (@c -EINVAL for invalid target syntax, @c
  *                   -ENOMEM).
  *                 - @p data is the same pointer passed as @p data below.
@@ -802,13 +802,13 @@ int rawstor_target_location(
  * @param data     User-defined context pointer passed unchanged to @p cb.
  *
  * @return 0 if the lookup was successfully queued; negative errno on
- *         immediate failure (in which case neither @p offsets nor @p cb is
+ *         immediate failure (in which case neither @p indices nor @p cb is
  *         ever touched).
  *
  * @see rawstor_target_id
  */
 int rawstor_target_chunks(
-    RawIOQueue* queue, const char* target, uint64_t* offsets, size_t size,
+    RawIOQueue* queue, const char* target, uint64_t* indices, size_t size,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
@@ -857,8 +857,8 @@ int rawstor_target_versions(
  * this function reads the trailing version path segment (if any) off
  * @p target's own path, in either of two equivalent shapes: logical
  * (`<uuid>/<version_id>`, the shape a caller types for a plain target's own
- * bound version -- no chunk-offset concept to name at that level) or
- * physical (`<uuid>/<offset>/<version_id>`, offset never omitted even "0" --
+ * bound version -- no chunk-index concept to name at that level) or
+ * physical (`<uuid>/<index>/<version_id>`, index never omitted even "0" --
  * the shape internally used for one chunk of a larger mds:// object). This
  * is purely a syntactic operation on @p target -- no backend is contacted,
  * and the target need not exist.

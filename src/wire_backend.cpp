@@ -48,7 +48,7 @@ private:
 public:
     BackendOpSetConfig(
         const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
-        const RawstdUUID& id, uint64_t chunk_offset, uint8_t member_index,
+        const RawstdUUID& id, uint64_t chunk_index, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags,
         const rawstd::TraceEvent& trace_event,
         std::optional<RawstorObjectSyncStateValue> state
@@ -64,7 +64,7 @@ public:
             _request.payload.object_id, id.bytes,
             sizeof(_request.payload.object_id)
         );
-        _request.payload.chunk_offset = chunk_offset;
+        _request.payload.chunk_index = chunk_index;
         if (int error = rawstor_frame_config_encode(
                 &_request.payload.config, &config
             )) {
@@ -162,7 +162,7 @@ public:
 
 // ALLOCATE's request carries the object's own size and its caller's
 // mirrors intent as a RawstorFrameAllocatePayload (not just object_id/
-// offset/val like BackendOpBasic below), so it needs its own request shape
+// index/val like BackendOpBasic below), so it needs its own request shape
 // -- the response is otherwise the same no-payload acknowledgement as
 // BackendOpFlush above.
 class BackendOpAllocate final : public BackendOp {
@@ -172,9 +172,8 @@ private:
 public:
     BackendOpAllocate(
         const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
-        const RawstdUUID& id, uint64_t chunk_offset,
-        const RawstorObjectSpec& sp, RawstorMemberRole member_role,
-        const rawstd::TraceEvent& trace_event
+        const RawstdUUID& id, uint64_t chunk_index, const RawstorObjectSpec& sp,
+        RawstorMemberRole member_role, const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "create", 0, 0),
         _request({
@@ -186,7 +185,7 @@ public:
                 },
             .payload = {},
         }) {
-        _request.payload.chunk_offset = chunk_offset;
+        _request.payload.chunk_index = chunk_index;
         if (int error = rawstor_frame_allocate_encode(
                 &_request.payload, &sp, member_role
             )) {
@@ -244,7 +243,7 @@ public:
     BackendOpBasic(
         const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
-        uint64_t offset, uint64_t val, const RawstdUUID& version_id,
+        uint64_t index, uint64_t val, const RawstdUUID& version_id,
         const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, op_name, 0, 0),
@@ -258,7 +257,7 @@ public:
                 },
             .payload = {
                 .object_id = {},
-                .offset = offset,
+                .chunk_index = index,
                 .version_id = {},
                 .val = val,
             },
@@ -745,7 +744,7 @@ rawstd::Task<void> Backend::_wire_close() {
 template <typename T>
 rawstd::Task<std::vector<T>> Backend::_basic_request(
     RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
-    uint64_t offset, uint64_t val, const RawstdUUID& version_id
+    uint64_t index, uint64_t val, const RawstdUUID& version_id
 ) {
     if ((cmd == RAWSTOR_CMD_SET_OBJECT && !rawstd_uuid_is_nil(&id)) ||
         cmd == RAWSTOR_CMD_LIST_VERSIONS) {
@@ -756,7 +755,7 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
 
     std::shared_ptr<BackendOpBasic<T>> op = std::make_shared<BackendOpBasic<T>>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        cmd, op_name, id, offset, val, version_id, trace_event
+        cmd, op_name, id, index, val, version_id, trace_event
     );
     _add_op(op);
 
@@ -890,7 +889,7 @@ rawstd::Task<void> Backend::_wire_list_chunks(
         RawstdUUID entry_id;
         memcpy(entry_id.bytes, entry.id, sizeof(entry_id.bytes));
         if (entry.type == RAWSTOR_LIST_ENTRY_OBJECT) {
-            // A whole object is addressed by id alone: no offsets.
+            // A whole object is addressed by id alone: no indices.
             chunks.push_back(ChunkGroup{entry_id, {}});
             continue;
         }
@@ -899,9 +898,9 @@ rawstd::Task<void> Backend::_wire_list_chunks(
         }
         if (!chunks.empty() &&
             rawstd_uuid_cmp(&chunks.back().id, &entry_id) == 0) {
-            chunks.back().offsets.push_back(entry.chunk_offset);
+            chunks.back().indices.push_back(entry.chunk_index);
         } else {
-            chunks.push_back(ChunkGroup{entry_id, {entry.chunk_offset}});
+            chunks.push_back(ChunkGroup{entry_id, {entry.chunk_index}});
         }
     }
 
@@ -920,14 +919,14 @@ rawstd::Task<void> Backend::_wire_list_chunks(
 // The server preserves the requested member role and placement identity;
 // one connection addresses one data or metadata-only member.
 rawstd::Task<void> Backend::_wire_create(
-    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID&, const RawstdUUID& id, uint64_t index,
     const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('c', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpAllocate> op = std::make_shared<BackendOpAllocate>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        id, offset, sp, member_role, trace_event
+        id, index, sp, member_role, trace_event
     );
     _add_op(op);
 
@@ -946,11 +945,10 @@ rawstd::Task<void> Backend::_wire_create(
     co_await *op;
 }
 
-rawstd::Task<void> Backend::_wire_remove(
-    const RawstdUUID&, const RawstdUUID& id, uint64_t offset
-) {
+rawstd::Task<void>
+Backend::_wire_remove(const RawstdUUID&, const RawstdUUID& id, uint64_t index) {
     try {
-        co_await _basic_request(RAWSTOR_CMD_RELEASE, "remove", id, offset);
+        co_await _basic_request(RAWSTOR_CMD_RELEASE, "remove", id, index);
     } catch (const std::system_error&) {
         throw;
     } catch (...) {
@@ -960,12 +958,12 @@ rawstd::Task<void> Backend::_wire_remove(
 }
 
 rawstd::Task<void> Backend::_wire_remove_version(
-    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID&, const RawstdUUID& id, uint64_t index,
     const RawstdUUID& version_id
 ) {
     try {
         co_await _basic_request(
-            RAWSTOR_CMD_RELEASE, "remove_version", id, offset, 0, version_id
+            RAWSTOR_CMD_RELEASE, "remove_version", id, index, 0, version_id
         );
     } catch (const std::system_error&) {
         throw;
@@ -976,12 +974,12 @@ rawstd::Task<void> Backend::_wire_remove_version(
 }
 
 rawstd::Task<void> Backend::_wire_create_version(
-    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID&, const RawstdUUID& id, uint64_t index,
     const RawstdUUID& version_id
 ) {
     try {
         co_await _basic_request(
-            RAWSTOR_CMD_CREATE_VERSION, "create_version", id, offset, 0,
+            RAWSTOR_CMD_CREATE_VERSION, "create_version", id, index, 0,
             version_id
         );
     } catch (const std::system_error&) {
@@ -993,14 +991,14 @@ rawstd::Task<void> Backend::_wire_create_version(
 }
 
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_wire_meta(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
 ) {
     rawstd_debug("%s: Reading object metadata...\n", str().c_str());
 
     RawstorObjectMeta ret = {};
     try {
         std::vector<char> response = co_await _basic_request(
-            RAWSTOR_CMD_META, "meta", id, offset, 0, version_id
+            RAWSTOR_CMD_META, "meta", id, index, 0, version_id
         );
         if (response.size() != sizeof(RawstorFrameMetaPayload)) {
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
@@ -1024,9 +1022,9 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_wire_meta(
 }
 
 rawstd::Task<std::vector<RawstdUUID>>
-Backend::_wire_list_versions(const RawstdUUID& id, uint64_t offset) {
+Backend::_wire_list_versions(const RawstdUUID& id, uint64_t index) {
     std::vector<char> response = co_await _basic_request(
-        RAWSTOR_CMD_LIST_VERSIONS, "list_versions", id, offset
+        RAWSTOR_CMD_LIST_VERSIONS, "list_versions", id, index
     );
     if (response.size() % sizeof(RawstorFrameVersionEntry) != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
@@ -1082,20 +1080,20 @@ rawstd::Task<bool> Backend::_sync_request(
 }
 
 rawstd::Task<bool> Backend::_wire_sync_prepare(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
+    const RawstdUUID& id, uint64_t index, const RawstorObjectBallot& ballot,
     bool, RawstorObjectMeta& meta
 ) {
     RawstorFrameSyncPropose request{};
     request.head.magic = RAWSTOR_MAGIC;
     request.head.cmd = RAWSTOR_CMD_SYNC_PREPARE;
     memcpy(request.payload.object_id, id.bytes, sizeof(id.bytes));
-    request.payload.chunk_offset = offset;
+    request.payload.chunk_index = index;
     request.payload.ballot = ballot;
     co_return co_await _sync_request(request, "sync_prepare", meta);
 }
 
 rawstd::Task<bool> Backend::_wire_sync_accept(
-    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+    const RawstdUUID& id, uint64_t index, uint8_t member_index,
     const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
     const RawstorObjectConfig& config, bool, RawstorObjectMeta& meta
 ) {
@@ -1103,7 +1101,7 @@ rawstd::Task<bool> Backend::_wire_sync_accept(
     request.head.magic = RAWSTOR_MAGIC;
     request.head.cmd = RAWSTOR_CMD_SYNC_ACCEPT;
     memcpy(request.payload.object_id, id.bytes, sizeof(id.bytes));
-    request.payload.chunk_offset = offset;
+    request.payload.chunk_index = index;
     request.payload.ballot = ballot;
     request.payload.next = next;
     if (int error =
@@ -1127,7 +1125,7 @@ rawstd::Task<void> Backend::set_state(
 }
 
 rawstd::Task<void> Backend::set_config(
-    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+    const RawstdUUID& id, uint64_t index, uint8_t member_index,
     const RawstorObjectConfig& config, unsigned int flags,
     std::optional<RawstorObjectSyncStateValue> state
 ) {
@@ -1137,8 +1135,8 @@ rawstd::Task<void> Backend::set_config(
     std::shared_ptr<BackendOpSetConfig> op =
         std::make_shared<BackendOpSetConfig>(
             std::static_pointer_cast<Backend>(shared_from_this()),
-            _cid_counter++, id, offset, member_index, config, flags,
-            trace_event, state
+            _cid_counter++, id, index, member_index, config, flags, trace_event,
+            state
         );
     _add_op(op);
 
@@ -1188,7 +1186,7 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
 }
 
 rawstd::Task<void>
-Backend::_wire_set_object(const RawstdUUID& id, uint64_t offset, int flags) {
+Backend::_wire_set_object(const RawstdUUID& id, uint64_t index, int flags) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
@@ -1198,13 +1196,13 @@ Backend::_wire_set_object(const RawstdUUID& id, uint64_t offset, int flags) {
 
     // `flags` rides `val` (protocol.h's own doc comment on SET_OBJECT).
     co_await _basic_request(
-        RAWSTOR_CMD_SET_OBJECT, "set_object", id, offset,
+        RAWSTOR_CMD_SET_OBJECT, "set_object", id, index,
         static_cast<uint64_t>(flags)
     );
 }
 
 rawstd::Task<void> Backend::_wire_set_version(
-    const RawstdUUID& object_id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& object_id, uint64_t index, const RawstdUUID& version_id
 ) {
     if (_read_event == nullptr) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
@@ -1214,7 +1212,7 @@ rawstd::Task<void> Backend::_wire_set_version(
     // check), which is exactly what the remote rawstor-ost's own
     // rawstor_target_open() requires of a bound-version target.
     co_await _basic_request(
-        RAWSTOR_CMD_SET_OBJECT, "set_version", object_id, offset,
+        RAWSTOR_CMD_SET_OBJECT, "set_version", object_id, index,
         RAWSTOR_READONLY, version_id
     );
 }

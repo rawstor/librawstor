@@ -746,11 +746,11 @@ public:
 
 namespace {
 
-// The MirrorControl every writable open of chunk `id`/`offset` in this
+// The MirrorControl every writable open of chunk `id`/`index` in this
 // process shares. The process opens a chunk on one location list only: an
 // open naming another one fails with EINVAL.
 std::shared_ptr<MirrorControl> shared_control(
-    const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& id, uint64_t index,
     const std::vector<rawstd::URI>& locations
 ) {
     using Key = std::pair<std::string, uint64_t>;
@@ -763,7 +763,7 @@ std::shared_ptr<MirrorControl> shared_control(
     }
     Key key{
         std::string(reinterpret_cast<const char*>(id.bytes), sizeof(id.bytes)),
-        offset
+        index
     };
     std::weak_ptr<MirrorControl>& slot = registry[key];
     std::shared_ptr<MirrorControl> ret = slot.lock();
@@ -823,13 +823,13 @@ void Chunk::_disable_retry() noexcept {
 // same as _reconcile_sync_set()'s own doc comment on why a refusal here
 // is safe to let unwind through a throwing constructor.
 Chunk::Chunk(
-    Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
+    Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t index,
     bool readonly, bool force, RawstorObjectSpec spec,
     std::vector<Member> members, std::shared_ptr<MirrorControl> control
 ) :
     _queue(queue),
     _id(id),
-    _offset(offset),
+    _index(index),
     _spec(spec),
     _members(std::move(members)),
     _readonly(readonly),
@@ -981,8 +981,8 @@ Chunk::~Chunk() {
 namespace {
 
 rawstd::Task<RawstorObjectMeta>
-inspect_member(Slot& slot, const RawstdUUID& id, uint64_t offset) {
-    auto metas = co_await slot.meta(id, offset, RawstdUUID{});
+inspect_member(Slot& slot, const RawstdUUID& id, uint64_t index) {
+    auto metas = co_await slot.meta(id, index, RawstdUUID{});
     for (const auto& meta : metas) {
         if (meta.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             co_return meta;
@@ -992,11 +992,11 @@ inspect_member(Slot& slot, const RawstdUUID& id, uint64_t offset) {
 }
 
 rawstd::Task<RawstorObjectMeta> open_member(
-    Slot& slot, const RawstdUUID& id, uint64_t offset, int flags,
+    Slot& slot, const RawstdUUID& id, uint64_t index, int flags,
     const RawstdUUID& version_id, bool data_io
 ) {
-    auto meta = data_io ? co_await slot.open(id, offset, flags, version_id)
-                        : co_await inspect_member(slot, id, offset);
+    auto meta = data_io ? co_await slot.open(id, index, flags, version_id)
+                        : co_await inspect_member(slot, id, index);
     if (meta.member_role !=
         (data_io ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS)) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
@@ -1010,7 +1010,7 @@ rawstd::Task<RawstorObjectMeta> open_member(
 // Read-only opens and bound versions never allocate replacements.
 rawstd::Task<void> recreate_missing(
     rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
-    const RawstdUUID& id, uint64_t offset, int flags,
+    const RawstdUUID& id, uint64_t index, int flags,
     const RawstdUUID& version_id,
     std::vector<std::unique_ptr<rawstor::Slot>>& slots,
     std::vector<RawstorObjectMeta>& metas, std::vector<bool>& opened,
@@ -1060,12 +1060,11 @@ rawstd::Task<void> recreate_missing(
             const bool data =
                 !has_witness(sp, locations.size()) || i + 1 < locations.size();
             co_await slot->create(
-                id, offset, sp,
+                id, index, sp,
                 data ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS
             );
-            meta = co_await open_member(
-                *slot, id, offset, flags, version_id, data
-            );
+            meta =
+                co_await open_member(*slot, id, index, flags, version_id, data);
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member recreate failed: %s\n", e.what());
             failed = true;
@@ -1091,7 +1090,7 @@ rawstd::Task<void> recreate_missing(
 
 rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
-    const RawstdUUID& id, uint64_t offset, int flags,
+    const RawstdUUID& id, uint64_t index, int flags,
     const RawstdUUID& version_id, std::optional<uint64_t> logical_size
 ) {
     if ((flags & ~(RAWSTOR_READONLY | RAWSTOR_FORCE)) != 0 ||
@@ -1100,7 +1099,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     }
     // Object opens chunks directly, so
     // the location list is validated here. Identity needs no check: it
-    // arrives as the explicit `id`/`offset`/`version_id` parameters.
+    // arrives as the explicit `id`/`index`/`version_id` parameters.
     validate_not_empty(locations);
     validate_width(locations);
     validate_different_uris(locations);
@@ -1111,7 +1110,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     bool shared = (flags & RAWSTOR_READONLY) == 0 &&
                   rawstd_uuid_is_nil(&version_id) && locations.size() > 1;
     std::shared_ptr<MirrorControl> control =
-        shared ? shared_control(id, offset, locations)
+        shared ? shared_control(id, index, locations)
                : std::make_shared<MirrorControl>(locations);
     co_await control->lock_transition(queue);
     control->retain();
@@ -1217,7 +1216,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         // A valid witness layout has at least three members. Single-copy
         // and two-copy opens keep their existing member handshake.
         if (slots[i] && locations.size() > 2) {
-            inspections[i] = inspect_member(*slots[i], id, offset);
+            inspections[i] = inspect_member(*slots[i], id, index);
         }
     }
     for (size_t i = 0; i < inspections.size(); ++i) {
@@ -1262,7 +1261,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         }
         if (i < data_members || rawstd_uuid_is_nil(&version_id)) {
             open_tasks[i] = open_member(
-                *slots[i], id, offset, flags, version_id, i < data_members
+                *slots[i], id, index, flags, version_id, i < data_members
             );
         }
     }
@@ -1308,7 +1307,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     }
 
     co_await recreate_missing(
-        queue, locations, id, offset, flags, version_id, slots, metas, opened,
+        queue, locations, id, index, flags, version_id, slots, metas, opened,
         missing
     );
 
@@ -1374,7 +1373,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // shortcut, or _reconcile_sync_set()'s own quorum/split-brain/no-
     // trusted-member analysis) is the constructor's own job from here.
     std::unique_ptr<Chunk> chunk = std::make_unique<Chunk>(
-        Private(), queue, id, offset, (flags & RAWSTOR_READONLY) != 0,
+        Private(), queue, id, index, (flags & RAWSTOR_READONLY) != 0,
         (flags & RAWSTOR_FORCE) != 0, std::move(spec), std::move(members),
         control
     );
@@ -1494,10 +1493,10 @@ rawstd::Task<void> Chunk::_set_member_config(
             }
         }
         co_await member.slot->set_config(
-            _id, _offset, static_cast<uint8_t>(index), config, flags, state
+            _id, _index, static_cast<uint8_t>(index), config, flags, state
         );
         if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) {
-            member.meta = co_await inspect_member(*member.slot, _id, _offset);
+            member.meta = co_await inspect_member(*member.slot, _id, _index);
         }
         member.meta.config = config;
         if (state) {
@@ -1826,7 +1825,7 @@ std::string Chunk::_member_str(const Member& m) const {
     RawstdUUIDString uuid_string;
     rawstd_uuid_to_string(&_id, &uuid_string);
     std::ostringstream oss;
-    oss << std::hex << _offset;
+    oss << _index;
     return rawstd::URI(rawstd::URI(m.location, uuid_string), oss.str()).str();
 }
 
@@ -2441,7 +2440,7 @@ rawstd::Task<void> Chunk::_resync_attach(uint64_t generation, size_t idx) {
         try {
             slot = co_await Slot::create(_queue, member.location);
             member.meta = co_await open_member(
-                *slot, _id, _offset, 0, RawstdUUID{}, !member.witness
+                *slot, _id, _index, 0, RawstdUUID{}, !member.witness
             );
             if (!same_spec(member.meta.spec, _spec)) {
                 RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
@@ -3032,7 +3031,7 @@ rawstd::DetachedTask Chunk::_probe_tick() {
     rawio::Queue& queue = _queue;
     rawstd::URI location = _members[idx].location;
     RawstdUUID id = _id;
-    uint64_t offset = _offset;
+    uint64_t index = _index;
     const bool data_io = !_members[idx].witness;
     const RawstorObjectSpec spec = _spec;
 
@@ -3049,7 +3048,7 @@ rawstd::DetachedTask Chunk::_probe_tick() {
         bool missing = false;
         try {
             meta = co_await open_member(
-                *slot, id, offset, 0, RawstdUUID{}, data_io
+                *slot, id, index, 0, RawstdUUID{}, data_io
             );
         } catch (const std::system_error& e) {
             if (e.code().value() != ENOENT) {
@@ -3065,11 +3064,11 @@ rawstd::DetachedTask Chunk::_probe_tick() {
                 RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
             }
             co_await slot->create(
-                id, offset, spec,
+                id, index, spec,
                 data_io ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS
             );
             meta = co_await open_member(
-                *slot, id, offset, 0, RawstdUUID{}, data_io
+                *slot, id, index, 0, RawstdUUID{}, data_io
             );
         }
         if (!same_spec(meta.spec, spec)) {

@@ -1116,8 +1116,8 @@ build_mirror_meta(const struct RawstorObjectMeta* meta, ssize_t index) {
 
 PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
-    unsigned long long offset = 0;
-    if (!PyArg_ParseTuple(args, "s|K", &target, &offset)) {
+    unsigned long long index = 0;
+    if (!PyArg_ParseTuple(args, "s|K", &target, &index)) {
         return NULL;
     }
 
@@ -1151,7 +1151,7 @@ PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
             return NULL;
         }
         int mres = rawstor_target_meta(
-            op.queue, target, offset, metas, count, rawstor_sync_op_cb, &op
+            op.queue, target, index, metas, count, rawstor_sync_op_cb, &op
         );
         res = rawstor_sync_op_wait(&op, mres);
         rawstor_sync_op_destroy(&op);
@@ -1190,13 +1190,13 @@ py_rawstor_object_set_member_config(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
     PyObject* config_obj;
     unsigned long long member_index = 0;
-    unsigned long long offset = 0;
+    unsigned long long index = 0;
     unsigned int flags = 0;
     PyObject* state_obj = Py_None;
     enum RawstorObjectSyncStateValue state;
     const enum RawstorObjectSyncStateValue* state_ptr = NULL;
     if (!PyArg_ParseTuple(
-            args, "sO|KKIO", &target, &config_obj, &member_index, &offset,
+            args, "sO|KKIO", &target, &config_obj, &member_index, &index,
             &flags, &state_obj
         )) {
         return NULL;
@@ -1242,7 +1242,7 @@ py_rawstor_object_set_member_config(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
     int sres = rawstor_target_set_member_config(
-        op.queue, target, offset, (size_t)member_index, &config, flags,
+        op.queue, target, index, (size_t)member_index, &config, flags,
         state_ptr, rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);
@@ -1290,22 +1290,22 @@ PyObject* py_rawstor_object_chunks(PyObject* Py_UNUSED(self), PyObject* args) {
         set_os_error(-ires);
         return NULL;
     }
-    /* A first call for the count, a second for the offsets themselves --
+    /* A first call for the count, a second for the indices themselves --
      * rawstor_target_chunks()'s own NULL/0 convention. */
     int sres = rawstor_target_chunks(
         op.queue, target, NULL, 0, rawstor_sync_op_cb, &op
     );
     ssize_t count = rawstor_sync_op_wait(&op, sres);
-    uint64_t* offsets = NULL;
+    uint64_t* indices = NULL;
     if (count > 0) {
-        offsets = (uint64_t*)malloc((size_t)count * sizeof(*offsets));
-        if (offsets == NULL) {
+        indices = (uint64_t*)malloc((size_t)count * sizeof(*indices));
+        if (indices == NULL) {
             rawstor_sync_op_destroy(&op);
             return PyErr_NoMemory();
         }
         op.done = 0;
         sres = rawstor_target_chunks(
-            op.queue, target, offsets, (size_t)count, rawstor_sync_op_cb, &op
+            op.queue, target, indices, (size_t)count, rawstor_sync_op_cb, &op
         );
         ssize_t filled = rawstor_sync_op_wait(&op, sres);
         if (filled >= 0 && filled < count) {
@@ -1316,27 +1316,27 @@ PyObject* py_rawstor_object_chunks(PyObject* Py_UNUSED(self), PyObject* args) {
     }
     rawstor_sync_op_destroy(&op);
     if (count < 0) {
-        free(offsets);
+        free(indices);
         set_os_error((int)-count);
         return NULL;
     }
 
     PyObject* py_list = PyList_New(0);
     if (py_list == NULL) {
-        free(offsets);
+        free(indices);
         return NULL;
     }
     for (ssize_t i = 0; i < count; ++i) {
-        PyObject* py_offset = PyLong_FromUnsignedLongLong(offsets[i]);
-        if (py_offset == NULL || PyList_Append(py_list, py_offset) < 0) {
-            Py_XDECREF(py_offset);
+        PyObject* py_index = PyLong_FromUnsignedLongLong(indices[i]);
+        if (py_index == NULL || PyList_Append(py_list, py_index) < 0) {
+            Py_XDECREF(py_index);
             Py_DECREF(py_list);
-            free(offsets);
+            free(indices);
             return NULL;
         }
-        Py_DECREF(py_offset);
+        Py_DECREF(py_index);
     }
-    free(offsets);
+    free(indices);
     return py_list;
 }
 

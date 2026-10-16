@@ -606,7 +606,7 @@ TEST_F(ObjectStoreTest, reconstruct_rebuilds_multi_chunk_object) {
     // not from any copy's own size.
     std::vector<ScanRecord> records{
         ScanRecord{ost0, id, 0, make_meta(chunk_size, 1)},
-        ScanRecord{ost1, id, chunk_size, make_meta(chunk_size + 4096, 1)},
+        ScanRecord{ost1, id, 1, make_meta(chunk_size + 4096, 1)},
     };
     store.reconstruct(records);
 
@@ -637,10 +637,10 @@ TEST_F(ObjectStoreTest, reconstruct_fails_on_missing_chunk_hole) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
 
-    // Chunk 1 (offset chunk_size) never shows up in any record.
+    // Chunk 1 (index 1) never shows up in any record.
     std::vector<ScanRecord> records{
         ScanRecord{make_id(), id, 0, make_meta(chunk_size, 1)},
-        ScanRecord{make_id(), id, 2 * chunk_size, make_meta(chunk_size, 1)},
+        ScanRecord{make_id(), id, 2, make_meta(chunk_size, 1)},
     };
 
     EXPECT_THROW(store.reconstruct(records), std::system_error);
@@ -792,24 +792,19 @@ TEST_F(
     config.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     {
         ObjectStore store = make_store();
-        store.create_witness(id, chunk_size, spec);
-        store.set_config(
-            id, chunk_size, config, 0, RAWSTOR_OBJECT_SYNC_STATE_DIRTY
-        );
-        store.set_config(id, chunk_size, config, 0);
+        store.create_witness(id, 1, spec);
+        store.set_config(id, 1, config, 0, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+        store.set_config(id, 1, config, 0);
         EXPECT_EQ(
-            store.witness_meta(id, chunk_size).state,
-            RAWSTOR_OBJECT_SYNC_STATE_DIRTY
+            store.witness_meta(id, 1).state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY
         );
-        EXPECT_THROW(
-            store.create_witness(id, chunk_size, spec), std::system_error
-        );
+        EXPECT_THROW(store.create_witness(id, 1, spec), std::system_error);
         EXPECT_THROW(store.witness_meta(id, 0), std::system_error);
         EXPECT_THROW(store.open(id, RawstdUUID{}), std::system_error);
     }
     ObjectStore store = make_store();
     store.reconstruct({});
-    auto meta = store.witness_meta(id, chunk_size);
+    auto meta = store.witness_meta(id, 1);
     EXPECT_EQ(meta.member_role, RAWSTOR_MEMBER_WITNESS);
     EXPECT_EQ(meta.spec.size, spec.size);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
@@ -817,8 +812,8 @@ TEST_F(
     EXPECT_EQ(meta.config.resync_owner, config.resync_owner);
     EXPECT_EQ(meta.config.sync_id_history[0], 42u);
     EXPECT_EQ(meta.config.roles[0], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
-    store.remove_witness(id, chunk_size);
-    EXPECT_THROW(store.witness_meta(id, chunk_size), std::system_error);
+    store.remove_witness(id, 1);
+    EXPECT_THROW(store.witness_meta(id, 1), std::system_error);
 }
 
 TEST_F(
@@ -834,15 +829,15 @@ TEST_F(
     spec.width = 2;
     spec.chunk_size = chunk_size;
     store.create_witness(first, 0, spec);
-    store.create_witness(first, chunk_size, spec);
+    store.create_witness(first, 1, spec);
     store.create_witness(second, 0, spec);
     RawstdUUID token{};
     auto entries = store.list_chunks(token, 1);
     ASSERT_EQ(entries.size(), 2u);
     EXPECT_EQ(rawstd_uuid_cmp(&entries[0].id, &first), 0);
-    EXPECT_EQ(entries[0].offset, 0u);
+    EXPECT_EQ(entries[0].chunk_index, 0u);
     EXPECT_EQ(entries[0].type, RAWSTOR_LIST_ENTRY_CHUNK);
-    EXPECT_EQ(entries[1].offset, chunk_size);
+    EXPECT_EQ(entries[1].chunk_index, 1u);
     EXPECT_EQ(entries[1].type, RAWSTOR_LIST_ENTRY_CHUNK);
     EXPECT_EQ(rawstd_uuid_cmp(&token, &first), 0);
     entries = store.list_chunks(token, 1);
@@ -862,20 +857,20 @@ TEST_F(ObjectStoreTest, list_chunks_merges_objects_and_native_members) {
     spec.width = 2;
     spec.chunk_size = chunk_size;
     store.create_witness(witness, 0, spec);
-    store.create_witness(witness, chunk_size, spec);
+    store.create_witness(witness, 1, spec);
     RawstdUUID token{};
     auto entries = store.list_chunks(token, 1);
     ASSERT_EQ(entries.size(), 1u);
     EXPECT_EQ(rawstd_uuid_cmp(&entries[0].id, &object), 0);
-    EXPECT_EQ(entries[0].offset, 0u);
+    EXPECT_EQ(entries[0].chunk_index, 0u);
     EXPECT_EQ(entries[0].type, RAWSTOR_LIST_ENTRY_OBJECT);
     EXPECT_EQ(rawstd_uuid_cmp(&token, &object), 0);
     entries = store.list_chunks(token, 1);
     ASSERT_EQ(entries.size(), 2u);
     EXPECT_EQ(rawstd_uuid_cmp(&entries[0].id, &witness), 0);
-    EXPECT_EQ(entries[0].offset, 0u);
+    EXPECT_EQ(entries[0].chunk_index, 0u);
     EXPECT_EQ(entries[0].type, RAWSTOR_LIST_ENTRY_CHUNK);
-    EXPECT_EQ(entries[1].offset, chunk_size);
+    EXPECT_EQ(entries[1].chunk_index, 1u);
     EXPECT_EQ(entries[1].type, RAWSTOR_LIST_ENTRY_CHUNK);
     EXPECT_TRUE(rawstd_uuid_is_nil(&token));
 }

@@ -42,9 +42,9 @@ struct RawstorOpts {
  * ever needs to interpret these bytes; rawstor_pagination_token_empty()
  * (below) is the only thing that ever looks inside one. Internally, it
  * holds a resume cursor's own id -- a single listed entry already covers
- * every offset an object has on its own backend (rawstor::ChunkGroup,
+ * every chunk index an object has on its own backend (rawstor::ChunkGroup,
  * src/backend.hpp), so resuming only ever needs to name the last id
- * returned, never an offset alongside it. A nil id means "from the
+ * returned, never an index alongside it. A nil id means "from the
  * start" (or, on return, "nothing left").
  */
 #define RAWSTOR_PAGINATION_TOKEN_SIZE 16

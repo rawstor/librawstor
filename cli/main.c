@@ -777,8 +777,7 @@ static void command_resolve_usage(void) {
         "                        keep.\n"
         "\n"
         "command options:\n"
-        "  --offset OFFSET       The chunk to resolve, by its own byte "
-        "offset, in hex\n"
+        "  --index INDEX         The chunk to resolve, by its own index\n"
         "                        (`rawstor show -v`'s own chunk[N]). "
         "Default:\n"
         "                        every chunk in the object.\n"
@@ -791,13 +790,13 @@ static int command_resolve(int argc, char** argv) {
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"winner", required_argument, NULL, 'w'},
-        {"offset", required_argument, NULL, 'o'},
+        {"index", required_argument, NULL, 'i'},
         {},
     };
 
     char* target_arg = NULL;
     const char* winner_arg = NULL;
-    const char* offset_arg = NULL;
+    const char* index_arg = NULL;
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -814,8 +813,8 @@ static int command_resolve(int argc, char** argv) {
             winner_arg = optarg;
             break;
 
-        case 'o':
-            offset_arg = optarg;
+        case 'i':
+            index_arg = optarg;
             break;
 
         default:
@@ -843,20 +842,20 @@ static int command_resolve(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    int has_offset = 0;
-    uint64_t offset = 0;
-    if (offset_arg != NULL) {
-        /* Hex, not decimal -- same base `rawstor show -v` labels
-         * chunk[N] in, so a value copied straight from its output means
-         * the same chunk here. */
+    int has_index = 0;
+    uint64_t index = 0;
+    if (index_arg != NULL) {
+        /* Decimal, same base `rawstor show -v` labels chunk[N] in, so a
+         * value copied straight from its output means the same chunk
+         * here. */
         char* endptr = NULL;
         errno = 0;
-        offset = strtoull(offset_arg, &endptr, 16);
-        if (errno != 0 || endptr == offset_arg || *endptr != '\0') {
-            fprintf(stderr, "Invalid --offset value: %s\n", offset_arg);
+        index = strtoull(index_arg, &endptr, 10);
+        if (errno != 0 || endptr == index_arg || *endptr != '\0') {
+            fprintf(stderr, "Invalid --index value: %s\n", index_arg);
             return EX_USAGE;
         }
-        has_offset = 1;
+        has_index = 1;
     }
 
     /* Same buffer-capacity convention as cli/resolve.c's own
@@ -899,7 +898,7 @@ static int command_resolve(int argc, char** argv) {
     }
 
     return rawstor_cli_resolve(
-        target_arg, winners, num_winners, has_offset, offset
+        target_arg, winners, num_winners, has_index, index
     );
 }
 

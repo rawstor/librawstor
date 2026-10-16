@@ -154,9 +154,7 @@ void expect_chunks_of_multichunk_object(const rawstd::URI& location) {
     ASSERT_EQ(groups.size(), 1u);
     RawstdUUID target_id = target.object_id();
     EXPECT_EQ(rawstd_uuid_cmp(&groups.front().id, &target_id), 0);
-    EXPECT_EQ(
-        groups.front().offsets, (std::vector<uint64_t>{0, 1u << 20, 2u << 20})
-    );
+    EXPECT_EQ(groups.front().indices, (std::vector<uint64_t>{0, 1, 2}));
     EXPECT_TRUE(rawstd_uuid_is_nil(&token));
 
     // Nothing of it here at all: an empty listing, not an error.
@@ -701,14 +699,14 @@ TEST(BlkBackendTest, open_after_close_throws) {
     );
 }
 
-TEST(BackendChunksTest, file_reports_every_offset_of_id) {
+TEST(BackendChunksTest, file_reports_every_chunk_index_of_id) {
     rawstor::tests::TmpDir dir;
     expect_chunks_of_multichunk_object(rawstd::URI(dir.uri()));
 }
 
 // Same, over ost:// -- the remote rawstor-ost answers through its own
 // existing LIST command, no chunks-specific wire command needed.
-TEST(BackendChunksTest, ost_reports_every_offset_of_id) {
+TEST(BackendChunksTest, ost_reports_every_chunk_index_of_id) {
     rawstor::tests::ObjectEnv env(8792, 8793);
     expect_chunks_of_multichunk_object(rawstd::URI("ost://127.0.0.1:8793"));
 }

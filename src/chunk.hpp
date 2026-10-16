@@ -69,13 +69,13 @@ private:
 
     rawio::Queue& _queue;
     RawstdUUID _id;
-    // The chunk offset this Chunk was open()ed at -- 0 for a plain,
+    // The chunk index this Chunk was open()ed at -- 0 for a plain,
     // non-volume object or a volume's own chunk 0 (docs/mds.md, "Chunk
     // identity"). Carried alongside _id so a reconnected member's own
     // set_object() (Slot::_reconnect()) and the reconnect probe's
     // own re-open() (_probe_tick()) rebind to the same chunk, not
     // silently chunk 0's.
-    uint64_t _offset;
+    uint64_t _index;
 
     // The spec derived at create() time (see its own comment) -- kept
     // around for any future caller that needs it. The live member count
@@ -255,7 +255,7 @@ private:
     // is DIRTY.
     void _disable_retry() noexcept;
 
-    // `m`'s own chunk, as a target URI (location/id/offset), for logs.
+    // `m`'s own chunk, as a target URI (location/id/index), for logs.
     std::string _member_str(const Member& m) const;
 
     // Every voting member participates in the same strict majority.
@@ -426,8 +426,8 @@ private:
 
 public:
     // Connects every reachable backend in `locations` (all mirrors of the
-    // one chunk `id`/`offset` names -- bare addresses, with no identity
-    // of their own: the caller already knows `id`/`offset`/`version_id`, so
+    // one chunk `id`/`index` names -- bare addresses, with no identity
+    // of their own: the caller already knows `id`/`index`/`version_id`, so
     // there's nothing left for a location to carry that isn't already a
     // parameter here) into a Slot (Slot::create()), SET_OBJECT+meta()-s
     // every connected member, then builds the Chunk itself -- deciding
@@ -443,7 +443,7 @@ public:
     // (<rawstor/target.h>): READONLY drops all background maintenance and
     // makes every write fail with EROFS; only READONLY together with FORCE
     // drops the quorum requirement (any one reachable member is enough).
-    // `offset` is 0 for a plain, non-volume object or a volume's own chunk 0;
+    // `index` is 0 for a plain, non-volume object or a volume's own chunk 0;
     // `version_id` is nil for the live version, or a version id previously
     // registered via Target::create_version() (docs/mds.md, "Versions") -- only
     // ever opened with READONLY (Target::open()'s own check). logical_size
@@ -451,13 +451,13 @@ public:
     // the physical chunk size reported by its members.
     static rawstd::Task<std::unique_ptr<Chunk>> create(
         rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
-        const RawstdUUID& id, uint64_t offset, int flags,
+        const RawstdUUID& id, uint64_t index, int flags,
         const RawstdUUID& version_id,
         std::optional<uint64_t> logical_size = std::nullopt
     );
 
     Chunk(
-        Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
+        Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t index,
         bool readonly, bool force, RawstorObjectSpec spec,
         std::vector<Member> members, std::shared_ptr<MirrorControl> control
     );

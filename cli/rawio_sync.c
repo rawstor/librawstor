@@ -49,9 +49,9 @@ ssize_t rawstor_cli_op_wait(RawstorCliOp* op, int res) {
 }
 
 ssize_t rawstor_cli_op_chunks(
-    RawstorCliOp* op, const char* target, uint64_t** offsets
+    RawstorCliOp* op, const char* target, uint64_t** indices
 ) {
-    *offsets = NULL;
+    *indices = NULL;
 
     op->done = 0;
     ssize_t count = rawstor_cli_op_wait(
@@ -83,6 +83,6 @@ ssize_t rawstor_cli_op_chunks(
         filled = count;
     }
 
-    *offsets = buf;
+    *indices = buf;
     return filled;
 }

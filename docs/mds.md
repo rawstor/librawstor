@@ -20,7 +20,7 @@ numbers its stages separately.
 | `map_epoch` per object | 1 | 🟡 | stored and returned by `OBJ_*`; not sent in IO frames |
 | epoch-fence (`slot.fence` watermark on OSTs) | 1 | ❌ | — |
 | `updatePlacement` / migration / rebalance | 1 | ❌ | — |
-| One connection per (OST, object) serving all its chunks | 1 | 🟡 | one connection pool per chunk slot (`SET_OBJECT` with the chunk offset) |
+| One connection per (OST, object) serving all its chunks | 1 | 🟡 | one connection pool per chunk slot (`SET_OBJECT` with the chunk index) |
 | `--reconstruct`: rebuild the live map from `LIST` + `META` | 1 | ✅ | `mds/src/main.cpp` |
 | `--reconstruct`: register complete versions, collect garbage | 2 | ❌ | version records are skipped |
 | Scrub: full MDS serving the same scan from its own index | — | ❌ | — |
@@ -183,8 +183,8 @@ in four places and spent on one addition:
 ## Chunk identity
 
 ```
-logical chunk_id  = (id, chunk_offset, version)
-physical chunk_id = (id, chunk_offset, version, slot_index)
+logical chunk_id  = (id, chunk_index, version)
+physical chunk_id = (id, chunk_index, version, slot_index)
 ```
 
 A logical chunk has `width` slots (`slot_index` 0..width-1); see *Redundancy*.
@@ -195,7 +195,7 @@ every chunk-level command shares:
 ```c
 struct RawstorFrameBasicPayload {
     uint8_t  object_id[16];  // = id
-    uint64_t offset;         // = chunk_offset (logical_index * chunk_size)
+    uint64_t chunk_index;    // = logical_index
     uint8_t  version_id[16]; // = version; nil = live
     uint64_t val;
 } __attribute__((packed));
@@ -217,13 +217,13 @@ number:
 
 | Backend | Slot home + metadata | Versions (`version_id`) |
 |---------|----------------------|----------------------|
-| `file://` | dir `<id>/<offset>/`, `data` + `meta` inside it | `-ENOTSUP` in v1 |
-| `lvm://`  | thin LV `<id>-<offset>`, meta in LVM tags | thin snapshot LV |
-| `zfs://`  | zvol `<id>:<offset>`, meta in user properties | `@s<version_id>` |
+| `file://` | dir `<id>/<index>/`, `data` + `meta` inside it | `-ENOTSUP` in v1 |
+| `lvm://`  | thin LV `<id>-<index>`, meta in LVM tags | thin snapshot LV |
+| `zfs://`  | zvol `<id>:<index>`, meta in user properties | `@s<version_id>` |
 
-(The physical `<offset>` is never omitted, even "0" -- unlike the
-target-string syntax's own offset path segment (docs/concepts.md, "Chunk
-offset"), a physical name has no ambiguity to avoid by omitting it.
+(The physical `<index>` (decimal) is never omitted, even "0" -- unlike the
+target-string syntax's own index path segment (docs/concepts.md, "Chunk
+index"), a physical name has no ambiguity to avoid by omitting it.
 `slot_index` isn't part of the physical name at all: each
 mirror of one chunk gets its own URI in the target string that
 addresses it -- comma-separated, same as any plain mirrored target --
@@ -242,12 +242,10 @@ of inventing a second one:
 chunk_meta {
   magic, format_version
   // placement identity. id/logical_index are not stored here:
-  // object_id already *is* id (see above), logical_index is
-  // chunk_offset / chunk_size, and chunk_offset rides the wire
-  // unconditionally (RawstorFrameBasicPayload.offset above / its own
-  // dedicated field on ALLOCATE) -- only chunk_size is stored (needed
-  // to invert chunk_offset back into logical_index without a separate
-  // lookup).
+  // object_id already *is* id (see above), and logical_index is
+  // chunk_index, which rides the wire unconditionally
+  // (RawstorFrameBasicPayload.chunk_index above / its own dedicated
+  // field on ALLOCATE) -- only chunk_size is stored.
   chunk_size
   version                  // version_id this slot belongs to; nil = live
   redundancy               // mirror{R} | ec{k,m} — how to decode
@@ -270,7 +268,7 @@ migration bridge (no live installations, nothing to migrate; see
 *Compatibility stance*).
 
 `chunk_meta` feeds **two** consumers from one source: the OST's local in-RAM
-index (`offset → local slot`, built by one backend scan at startup) and the
+index (`chunk_index → local slot`, built by one backend scan at startup) and the
 global MDS reconstruct.
 
 ## MDS data model
@@ -300,7 +298,7 @@ versions[version_id] = {                   // version_id: UUID, client-generated
   view: { logical_index -> version }     // cache over OST-side versions
 }
 
-witness[id, chunk_offset] = {
+witness[id, chunk_index] = {
   state,                                 // CLEAN | DIRTY | LOST
   sync_id, sync_id_history[4], mirror_epoch,
   roles[]                                // data and witness member roles
@@ -647,10 +645,10 @@ sequenceDiagram
     M-->>C: descriptor + chunk map (slots, locations)
     Note over C: map cached, MDS is off the I/O path from here
     par one connection per OST and object
-        C->>A: SET_OBJECT(id, chunk_offset)
+        C->>A: SET_OBJECT(id, chunk_index)
         C->>A: WRITE(offset, len) ... pipelined by cid
     and in parallel
-        C->>B: SET_OBJECT(id, chunk_offset)
+        C->>B: SET_OBJECT(id, chunk_index)
         C->>B: WRITE(offset, len) ... pipelined by cid
     end
     A-->>C: res
@@ -811,8 +809,8 @@ reconstruct scan (below).
   `/dev/zvol/…@s<id>`, read-only at the device level too.
 - **Reads:** a trailing version path segment on the regular open
   (`mds://host:port/<id>/0/<version_id>`, `ost://…/<uuid>/0/<version_id>` -- the
-  offset segment is mandatory once a version follows it,
-  docs/concepts.md's own "Chunk offset"), `version_id` a UUID
+  index segment is mandatory once a version follows it,
+  docs/concepts.md's own "Chunk index"), `version_id` a UUID
   string; the wire carries it in SET_OBJECT's/OBJ_OPEN's own
   `version_id[16]` field (`RawstorFrameBasicPayload`), and META answers
   about that version's own copy the same way. Opening a
@@ -1006,7 +1004,7 @@ Only DATA members can be selected as content winners.
 
 ### Witness in the chunked world
 
-Witness records are per `(id, chunk_offset)` — chunks degrade
+Witness records are per `(id, chunk_index)` — chunks degrade
 independently in general. With `stripe_width K=1` (all chunks on the same
 OSTs) member loss degrades every chunk identically; the record may be stored
 once per object with the index dimension collapsed (an optimization of the
@@ -1129,9 +1127,9 @@ survivors in member order.
 `SET_CONFIG` atomically persists state plus
 configuration using the existing SetConfig request layout. Ordinary `LIST`
 reports both registered objects and native witness records on MDS. Internally,
-a listing group with empty offsets addresses a whole object; `{0}` addresses
-one physical chunk at offset zero. MDS converts registered-object rows to
-empty offsets and preserves all offsets of native witness records. No data
+a listing group with empty indices addresses a whole object; `{0}` addresses
+the physical chunk at index zero. MDS converts registered-object rows to
+empty indices and preserves all indices of native witness records. No data
 I/O or CoW operation is issued to a witness.
 
 Protocol version/feature negotiation and an I/O `map_epoch` fence are

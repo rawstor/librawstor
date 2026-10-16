@@ -21,7 +21,7 @@ namespace file {
 class Backend final : public rawstor::blk::Backend {
 private:
     rawstd::Task<int>
-    _open_object(const RawstdUUID& id, uint64_t offset, int flags) override;
+    _open_object(const RawstdUUID& id, uint64_t index, int flags) override;
 
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
@@ -32,39 +32,38 @@ public:
     ) override;
 
     rawstd::Task<void> create(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        const RawstorObjectSpec& sp, RawstorMemberRole member_role
     ) override;
 
     rawstd::Task<void> remove(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index
     ) override;
 
     // logical size comes from the stored metadata;
     // the rest (member_role/width/chunk_size, plus the mirror consistency
     // state) lives in a companion "meta" file next to it, both inside the
-    // same "<uuid>/<offset>[/<version_id>]" directory (get_target_dir()'s
+    // same "<uuid>/<index>[/<version_id>]" directory (get_target_dir()'s
     // own doc comment, file_backend.cpp; see docs/mirroring.md) -- there
     // is nowhere on a plain regular file to carve out space for this
     // without touching object data. A copy with no "meta" file (created
     // before this existed) is not trusted as legacy-CLEAN: meta() fails
     // ENOENT rather than fabricating a state.
     rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
     ) override;
 
     // Trivial (Backend::resolve_locations()'s own doc comment): this is a
     // plain, single-copy backend, already the one real member of whatever
-    // offset it's asked about.
+    // index it's asked about.
     rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id = {}
     ) override;
 
     rawstd::Task<void> _write_meta(
-        const RawstdUUID& id, uint64_t offset,
-        RawstorObjectSyncStateValue state, const RawstorObjectConfig& config,
-        const RawstorObjectBallot& promised, const RawstorObjectBallot& accepted
+        const RawstdUUID& id, uint64_t index, RawstorObjectSyncStateValue state,
+        const RawstorObjectConfig& config, const RawstorObjectBallot& promised,
+        const RawstorObjectBallot& accepted
     ) override;
 
     rawstd::Task<RawstorLocationInfo> info() override;

@@ -18,17 +18,17 @@
 
 namespace rawstor {
 
-// One list_chunks() entry: an id and every offset this one backend holds
+// One list_chunks() entry: an id and every index this one backend holds
 // for it (sorted ascending) -- one entry per id, not one per (id,
-// offset) pair, since more than one offset can share an id: distinct
+// index) pair, since more than one index can share an id: distinct
 // chunks of the same multi-chunk object (docs/concepts.md), or, for an
 // mds:// volume specifically, every one of its own chunks (mds::Backend's
 // own chunk_slot_target(), docs/mds.md's "Chunk identity": obj_id =
-// volume_id). Empty offsets address the object as a whole; {0} addresses
-// its chunk at offset zero. An absent object has no entry.
+// volume_id). Empty indices address the object as a whole; {0} addresses
+// its chunk at index zero. An absent object has no entry.
 struct ChunkGroup {
     RawstdUUID id;
-    std::vector<uint64_t> offsets;
+    std::vector<uint64_t> indices;
 };
 
 class Backend : public std::enable_shared_from_this<Backend> {
@@ -87,13 +87,13 @@ public:
     // Storage backends persist this transition; forwarding backends leave
     // it to the destination's writer sessions.
     virtual rawstd::Task<void> set_state(
-        const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& id, uint64_t index,
         RawstorObjectSyncStateValue expected, RawstorObjectSyncStateValue state
     ) = 0;
 
     // `chunks`: overwritten with this page's own ChunkGroups, one per id,
-    // each addressing a whole object with empty offsets, or carrying every
-    // physical offset this backend holds for that id
+    // each addressing a whole object with empty indices, or carrying every
+    // physical index this backend holds for that id
     // (ascending, including every chunk of an mds:// volume, now that
     // they all share their volume's own id -- ChunkGroup's own doc
     // comment) -- the caller (Location::list()) combines each one with
@@ -103,8 +103,8 @@ public:
     // on entry (the last id already returned), overwritten with the next
     // page's cursor on return (nil once there's nothing left) -- resumes
     // strictly after the id `token` itself names, so `limit` counts ids
-    // (ChunkGroups), not individual offsets: a concrete backend never
-    // splits one id's own offsets across two pages. A concrete backend
+    // (ChunkGroups), not individual indices: a concrete backend never
+    // splits one id's own indices across two pages. A concrete backend
     // implements this by re-deriving its own full, sorted-by-id listing
     // each call and resuming from the first id strictly
     // greater than `token` (e.g. std::upper_bound).
@@ -114,11 +114,11 @@ public:
     // ChunkGroup -- empty if this backend holds no chunk of it at all --
     // and `token`/`limit` play no part (`token` comes back nil, nothing
     // left to page through). This is how a caller learns every real
-    // chunk offset one object has (Target::chunks(),
+    // chunk index one object has (Target::chunks(),
     // rawstor_target_chunks()) when the target string itself doesn't
     // spell them out -- only an mds:// target asks the backend this way.
     // mds::Backend answers a nil `id` off the MDS's own object table (one
-    // group per object, offset 0) and the filtered form off its own
+    // group per object, index 0) and the filtered form off its own
     // WireMap.
     //
     // A non-nil `version_id` (only with a non-nil `id`) lists the chunks
@@ -132,16 +132,15 @@ public:
     // Creates one data or metadata-only witness member. member_role is
     // placement identity, distinct from the chunk-wide specification.
     virtual rawstd::Task<void> create(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        const RawstorObjectSpec& sp, RawstorMemberRole member_role
     ) = 0;
 
-    // Removes the live version of `id`/`offset`. A version
+    // Removes the live version of `id`/`index`. A version
     // previously registered via create_version() below is removed via
     // remove_version() below instead.
     virtual rawstd::Task<void> remove(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index
     ) = 0;
 
     // Removes one version previously registered via create_version()
@@ -153,8 +152,8 @@ public:
     // overrides it with its own MDS-orchestrated fan-out (see
     // mds_backend.cpp).
     virtual rawstd::Task<void> remove_version(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& version_id
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        const RawstdUUID& version_id
     );
 
     // The full creation-time shape (size/width/chunk_size) plus this
@@ -166,7 +165,7 @@ public:
     // rest). set_config() persists a caller-supplied configuration durably
     // before returning.
     //
-    // Returns one entry per real member of the chunk at `offset` -- every
+    // Returns one entry per real member of the chunk at `index` -- every
     // backend but mds::Backend represents exactly one physical copy of
     // its own, so this is always a single-element vector for them
     // (Target's own resolve_meta(), target.cpp, is what fans out across
@@ -177,7 +176,7 @@ public:
     // every backend but mds::Backend only ever has the one to give
     // anyway. mds::Backend is the one case where a single Backend
     // instance stands for a whole many-chunk object: at a real chunk
-    // offset, it resolves that chunk's own real OST members (via its own
+    // index, it resolves that chunk's own real OST members (via its own
     // WireMap) and reports every one of their real states, via the same
     // direct-to-Slot fan-out (mds_backend.cpp).
     //
@@ -187,10 +186,10 @@ public:
     // through the mirror state machine, so nothing acts on it). ENOTSUP
     // on a backend without versions.
     virtual rawstd::Task<std::vector<RawstorObjectMeta>> meta(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id = {}
     ) = 0;
 
-    // Every real member's own bare location of the chunk at `offset` --
+    // Every real member's own bare location of the chunk at `index` --
     // for addressing one specific member directly (rawstor resolve's own
     // --winner, rawstor_target_set_member_config()'s own write),
     // without needing a target string that already names it (unlike a
@@ -198,15 +197,15 @@ public:
     // aren't nameable that way at all). Every backend but mds::Backend
     // represents exactly one physical copy of its own -- this location()
     // itself, unconditionally, with no I/O -- and this Backend/chunk was
-    // already asked about via the same `offset` given here, so there's
+    // already asked about via the same `index` given here, so there's
     // nothing more to resolve. mds::Backend is the one case where a
     // single Backend instance stands for a whole many-chunk object: at a
-    // real chunk offset, it resolves that chunk's own real OST members
+    // real chunk index, it resolves that chunk's own real OST members
     // (via its own WireMap) and returns every one of their real bare
     // locations, in the same order meta() above reports their state in --
     // for `version_id`'s own members when it's non-nil.
     virtual rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+        const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id = {}
     ) = 0;
 
     // Persists configuration and any explicit state atomically, or forwards
@@ -214,7 +213,7 @@ public:
     // Slot serializes it with state transitions and applies CLEAR_LOST via
     // set_state(); transports forward flags to the destination's Slot.
     virtual rawstd::Task<void> set_config(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstdUUID& id, uint64_t index, uint8_t member_index,
         const RawstorObjectConfig& config, unsigned int flags,
         std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     ) = 0;
@@ -227,12 +226,11 @@ public:
     // `member_index` is as for set_config(). A backend that holds no copy
     // of its own rejects register requests with ENOSYS.
     virtual rawstd::Task<bool> sync_prepare(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectBallot& ballot, bool proposed,
-        RawstorObjectMeta& meta
+        const RawstdUUID& id, uint64_t index, const RawstorObjectBallot& ballot,
+        bool proposed, RawstorObjectMeta& meta
     ) = 0;
     virtual rawstd::Task<bool> sync_accept(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+        const RawstdUUID& id, uint64_t index, uint8_t member_index,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
         const RawstorObjectConfig& config, bool proposed,
         RawstorObjectMeta& meta
@@ -240,7 +238,7 @@ public:
 
     virtual rawstd::Task<RawstorLocationInfo> info() = 0;
 
-    // Binds this Backend to the live version of `id`/`offset` -- data-path
+    // Binds this Backend to the live version of `id`/`index` -- data-path
     // methods below need this done first. Also the one operation that
     // actually touches the real store for every backend kind (a
     // blk-backed one's own _open_object(const RawstdUUID&, uint64_t) is
@@ -254,10 +252,10 @@ public:
     // the way down to the final open (blk-backed: O_RDONLY; ost://: the
     // server's own rawstor_target_open() does the same).
     virtual rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t offset, int flags) = 0;
+    set_object(const RawstdUUID& id, uint64_t index, int flags) = 0;
 
     // Same as set_object() above, but binds one previously created
-    // version of `object_id`/`offset` (`version_id`, never nil -- see
+    // version of `object_id`/`index` (`version_id`, never nil -- see
     // create_version() below, docs/mds.md "Versions") instead of its
     // live version. Default: ENOTSUP, covering file::Backend and
     // lvm::Backend (classic LVM has no thin CoW) without each needing its
@@ -265,7 +263,7 @@ public:
     // capable of it (currently zfs::Backend only), mds::Backend overrides
     // it with its own MDS-orchestrated fan-out (see mds_backend.cpp).
     virtual rawstd::Task<void> set_version(
-        const RawstdUUID& object_id, uint64_t offset,
+        const RawstdUUID& object_id, uint64_t index,
         const RawstdUUID& version_id
     );
 
@@ -279,28 +277,28 @@ public:
     // mds::Backend overrides it with its own MDS-orchestrated fan-out
     // (see mds_backend.cpp).
     virtual rawstd::Task<void> create_version(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, const RawstdUUID& version_id
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        const RawstdUUID& version_id
     );
 
-    // Every version (version_id) `id`/`offset` has,
+    // Every version (version_id) `id`/`index` has,
     // in no particular order. Default: an empty list, covering
     // file::Backend and lvm::Backend, which hold no versions; zfs::Backend
     // lists its own version datasets, ost::Backend asks its server
     // (LIST_VERSIONS), mds::Backend asks the MDS (OBJ_LIST_VERSIONS).
     virtual rawstd::Task<std::vector<RawstdUUID>>
-    list_versions(const RawstdUUID& id, uint64_t offset);
+    list_versions(const RawstdUUID& id, uint64_t index);
 
     // Grows `id` to `new_size` (grow-only -- docs/mds.md: shrink
     // interacts with GC and versions, deferred past v1). Default:
     // ENOTSUP, covering every backend a plain (non-mds://) target
     // addresses directly -- their own size is fixed at create() time.
     // mds::Backend overrides this with the real per-chunk
-    // materialization; `offset` is always 0 there (a single mds:// URI is never
+    // materialization; `index` is always 0 there (a single mds:// URI is never
     // itself split into chunks -- resize operates on the whole volume).
     virtual rawstd::Task<void> resize(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t offset, uint64_t new_size
+        const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t index,
+        uint64_t new_size
     );
 
     virtual rawstd::Task<size_t>

@@ -174,29 +174,29 @@ rawstd::Task<void> Backend::close() {
 }
 
 rawstd::Task<void>
-Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
+Backend::set_object(const RawstdUUID& id, uint64_t index, int flags) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
-    co_await _bind_object(id, offset, flags, RawstdUUID{});
+    co_await _bind_object(id, index, flags, RawstdUUID{});
 }
 
 rawstd::Task<void> Backend::set_state(
-    const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue expected,
+    const RawstdUUID& id, uint64_t index, RawstorObjectSyncStateValue expected,
     RawstorObjectSyncStateValue state
 ) {
     RawstorObjectMeta meta =
-        (co_await this->meta(id, offset, RawstdUUID{})).front();
+        (co_await this->meta(id, index, RawstdUUID{})).front();
     if (meta.state == expected) {
         meta.state = state;
         co_await _write_meta(
-            id, offset, meta.state, meta.config, meta.promised, meta.accepted
+            id, index, meta.state, meta.config, meta.promised, meta.accepted
         );
     }
 }
 
 rawstd::Task<void> Backend::set_config(
-    const RawstdUUID& id, uint64_t offset, uint8_t,
+    const RawstdUUID& id, uint64_t index, uint8_t,
     const RawstorObjectConfig& config, unsigned int flags,
     std::optional<RawstorObjectSyncStateValue> state
 ) {
@@ -209,7 +209,7 @@ rawstd::Task<void> Backend::set_config(
     RawstorObjectMeta meta{};
     meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
     try {
-        meta = (co_await this->meta(id, offset, RawstdUUID{})).front();
+        meta = (co_await this->meta(id, index, RawstdUUID{})).front();
     } catch (const std::system_error& e) {
         if (e.code().value() != ENOENT) {
             throw;
@@ -220,49 +220,49 @@ rawstd::Task<void> Backend::set_config(
         meta.state = *state;
     }
     co_await _write_meta(
-        id, offset, meta.state, meta.config, meta.promised, meta.accepted
+        id, index, meta.state, meta.config, meta.promised, meta.accepted
     );
 }
 
 rawstd::Task<bool> Backend::sync_prepare(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot&,
+    const RawstdUUID& id, uint64_t index, const RawstorObjectBallot&,
     bool proposed, RawstorObjectMeta& meta
 ) {
     if (proposed) {
         co_await _write_meta(
-            id, offset, meta.state, meta.config, meta.promised, meta.accepted
+            id, index, meta.state, meta.config, meta.promised, meta.accepted
         );
     }
     co_return proposed;
 }
 
 rawstd::Task<bool> Backend::sync_accept(
-    const RawstdUUID& id, uint64_t offset, uint8_t, const RawstorObjectBallot&,
+    const RawstdUUID& id, uint64_t index, uint8_t, const RawstorObjectBallot&,
     const RawstorObjectBallot&, const RawstorObjectConfig&, bool proposed,
     RawstorObjectMeta& meta
 ) {
     if (proposed) {
         co_await _write_meta(
-            id, offset, meta.state, meta.config, meta.promised, meta.accepted
+            id, index, meta.state, meta.config, meta.promised, meta.accepted
         );
     }
     co_return proposed;
 }
 
 rawstd::Task<void> Backend::set_version(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID& id, uint64_t index, const RawstdUUID& version_id
 ) {
-    co_await _bind_object(id, offset, RAWSTOR_READONLY, version_id);
+    co_await _bind_object(id, index, RAWSTOR_READONLY, version_id);
 }
 
 rawstd::Task<void> Backend::_bind_object(
-    const RawstdUUID& id, uint64_t offset, int flags,
+    const RawstdUUID& id, uint64_t index, int flags,
     const RawstdUUID& version_id
 ) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
-    auto records = co_await meta(id, offset, version_id);
+    auto records = co_await meta(id, index, version_id);
     if (records.size() != 1) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
@@ -271,8 +271,8 @@ rawstd::Task<void> Backend::_bind_object(
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
     int opened = rawstd_uuid_is_nil(&version_id)
-                     ? co_await _open_object(id, offset, flags)
-                     : co_await _open_version(id, offset, version_id);
+                     ? co_await _open_object(id, index, flags)
+                     : co_await _open_version(id, index, version_id);
     set_fd(opened);
 }
 

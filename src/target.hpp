@@ -20,22 +20,22 @@
 namespace rawstor {
 
 // A target URI's own trailing path identity, in one of three shapes:
-// - Physical, with a bound version: `/<uuid>/<offset>/<version_id>`
-//   -- offset always an explicit segment (even "0"), the convention
+// - Physical, with a bound version: `/<uuid>/<index>/<version_id>`
+//   -- index always an explicit segment (even "0"), the convention
 //   every internal builder in this codebase uses (mds_backend.cpp's
 //   chunk_slot_target(), Target's own
 //   synthetic constructor) whenever it addresses one chunk of a larger
-//   object, since a chunk's own offset is a real, meaningful value
+//   object, since a chunk's own index is a real, meaningful value
 //   there.
-// - Physical, live: `/<uuid>/<offset>` -- same convention, no bound
+// - Physical, live: `/<uuid>/<index>` -- same convention, no bound
 //   version at all; the common case for one chunk of a larger mds://
 //   object that has never been versioned.
-// - Logical: `/<uuid>[/<version_id>]` -- no offset segment at all,
+// - Logical: `/<uuid>[/<version_id>]` -- no index segment at all,
 //   implied 0. This is the shape a caller types by hand to name a plain
 //   (non-mds://-chunk) target's own bound version -- there is no
-//   chunk-offset concept to name at that level, so spelling one out
+//   chunk-index concept to name at that level, so spelling one out
 //   just to satisfy a parsing rule would be pure noise. A bare
-//   `/<uuid>`, with no offset and no version at all, is this same
+//   `/<uuid>`, with no index and no version at all, is this same
 //   shape without the version segment.
 //
 // All three are really the same grammar read from the *end* (a target's
@@ -43,10 +43,10 @@ namespace rawstor {
 // the identity can't be found any other way): find the trailing run of
 // UUID-shaped segments. A target binds at most one version, so the run
 // is at most two segments long (id, version_id) -- or one, when an
-// offset segment separates the id from the version; anything longer is
-// EINVAL. If a valid hexadecimal offset segment, and another UUID (the
+// index segment separates the id from the version; anything longer is
+// EINVAL. If a valid decimal index segment, and another UUID (the
 // id) right before that, precede the run, it's the physical-with-version
-// shape: offset comes from that hexadecimal segment, the id from the
+// shape: index comes from that decimal segment, the id from the
 // UUID before it, and the run is the version_id. If the run isn't
 // preceded that way but is still non-empty, it's the logical shape
 // instead: its first segment is the id and its second, if any, the
@@ -54,7 +54,7 @@ namespace rawstor {
 // with no version at all). A location path that itself ends in a
 // UUID-shaped directory is therefore ambiguous and not supported. If the
 // *last* segment isn't UUID-shaped at all (the run is empty), it must be
-// a hexadecimal offset with a UUID id right before it -- the
+// a decimal index with a UUID id right before it -- the
 // physical-live shape, no version anywhere in the path. See
 // parse_target_path()'s own comment in target.cpp for the exact
 // algorithm. `segments` is how many trailing path segments this
@@ -63,7 +63,7 @@ namespace rawstor {
 // built under) call URI::parent() this many times, not just once.
 struct TargetPath {
     RawstdUUID id;
-    uint64_t offset;
+    uint64_t index;
     RawstdUUID version_id;
     unsigned int segments;
 };
@@ -74,18 +74,18 @@ struct TargetPath {
 // decode_token() in location.cpp), the identity's own path segments with
 // no scheme/host in front of them at all: the grammar only ever looks at
 // the path, so both are parsed identically. Throws EINVAL if the path's
-// last segment (past any version/offset segments) isn't a valid UUID,
-// or an offset segment isn't a valid hexadecimal number.
+// last segment (past any version/index segments) isn't a valid UUID,
+// or an index segment isn't a valid decimal number.
 TargetPath parse_target_path(const std::string& path);
 
 // Every location's own mirror consistency state for the chunk at `id`/
-// `offset` (of its `version_id` version, when non-nil), queried
+// `index` (of its `version_id` version, when non-nil), queried
 // concurrently -- a location that doesn't answer gets a
 // zero-filled (UNREACHABLE) entry instead of failing the call (target.cpp's
 // own comment).
 rawstd::Task<std::vector<RawstorObjectMeta>> resolve_meta(
     rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
-    uint64_t offset, RawstdUUID version_id
+    uint64_t index, RawstdUUID version_id
 );
 
 class Location;
@@ -105,12 +105,12 @@ class Object;
 // chunk's own mirrors, one after another, with no second separator
 // marking where one chunk's own uris end and the next chunk's begin.
 // Stored exactly that way too (`_uris` below) -- a chunk's own uris
-// (URIs sharing one offset path segment, see parse_target_path()'s own
+// (URIs sharing one index path segment, see parse_target_path()'s own
 // comment in target.cpp) are a derived view, not the primary
 // representation: the ordinary, single-chunk case (every user-facing
 // target) is the common one, and only create()/open() ever need every
 // chunk's own view at once (each one derives it locally,
-// chunk_uris_by_offset() in target.cpp), so nothing is gained by keeping
+// chunk_uris_by_index() in target.cpp), so nothing is gained by keeping
 // every other method reaching through one extra level of nesting just
 // for their own, always-first-and-only chunk. Deliberately lightweight
 // -- unlike Chunk, it never holds a Slot between calls; every method
@@ -119,9 +119,9 @@ class Object;
 // create()/remove() work across every chunk (see each one's own
 // comment) -- spec() only ever operates on the target's own
 // first chunk, and meta()/set_member_config() each touch exactly one
-// chunk, the one named by their own explicit `offset` parameter
-// (chunk_uris_at_offset() in target.cpp) -- never "every chunk"; a
-// caller wanting that loops over every offset itself. open() is the one
+// chunk, the one named by their own explicit `index` parameter
+// (chunk_uris_at_index() in target.cpp) -- never "every chunk"; a
+// caller wanting that loops over every index itself. open() is the one
 // exception that needs a Slot to survive past the call -- it builds a
 // SingleChunkObject or MultiChunkObject (object.hpp), depending on how
 // many chunks the target names, whose own Chunks it builds via
@@ -129,10 +129,10 @@ class Object;
 // Slot per URI alive in each Chunk.
 class Target final {
 private:
-    // The target string's own flat URI list, offset-sorted (see the
+    // The target string's own flat URI list, index-sorted (see the
     // class's own doc comment) -- every chunk's own uris are a
     // contiguous run within it, but that split is never stored here
-    // (chunk_uris_by_offset()/chunk_uris_at_offset() in target.cpp derive
+    // (chunk_uris_by_index()/chunk_uris_at_index() in target.cpp derive
     // it on demand instead).
     std::vector<rawstd::URI> _uris;
 
@@ -142,7 +142,7 @@ private:
     // version_id name *what* this target addresses -- a single value the
     // whole target agrees on, unlike location() (a chunk's own physical
     // placement, genuinely different chunk to chunk on a real
-    // multi-chunk mds:// object) or a chunk's own offset (which tells it
+    // multi-chunk mds:// object) or a chunk's own index (which tells it
     // apart from every other chunk of the same object, so has no
     // whole-target value at all -- object_id()/version_id()'s own doc
     // comments below say more).
@@ -150,9 +150,9 @@ private:
     RawstdUUID _version_id;
 
     // The bare location of real member `member_index` of the chunk at
-    // `offset`, as set_member_config() below addresses it.
+    // `index`, as set_member_config() below addresses it.
     rawstd::Task<rawstd::URI> _member_location(
-        rawio::Queue& queue, uint64_t offset, size_t member_index
+        rawio::Queue& queue, uint64_t index, size_t member_index
     ) const;
 
 public:
@@ -186,21 +186,21 @@ public:
     // set union, computed fresh each call.
     Location location() const;
 
-    // Deliberately no offset() accessor here, unlike object_id()/version_id()/
-    // location() above: unlike those, one chunk's own offset within a
+    // Deliberately no index() accessor here, unlike object_id()/version_id()/
+    // location() above: unlike those, one chunk's own index within a
     // larger mds:// object has no sensible whole-target combination at
     // all (not a single agreed value like id/version_id, not a
-    // meaningfully unioned set like location() -- an offset's entire
+    // meaningfully unioned set like location() -- an index's entire
     // point is telling one chunk apart from every other chunk of the
-    // same object, so there is no coherent "this target's own offset"
+    // same object, so there is no coherent "this target's own index"
     // for anything but a single-chunk target). A caller that actually
-    // wants one specific URI's own offset already has that URI in hand
+    // wants one specific URI's own index already has that URI in hand
     // (uris() above) and can ask parse_target_path() directly, the same
     // way this class's own free functions in target.cpp do. meta()/
-    // set_config() below take an explicit `offset` parameter for the
+    // set_config() below take an explicit `index` parameter for the
     // same reason: neither has a coherent "every chunk" answer to give
     // without one -- a caller wanting every chunk loops over each one's
-    // own offset itself (spec()'s own size/chunk_size say how many there
+    // own index itself (spec()'s own size/chunk_size say how many there
     // are).
 
     // Creates every chunk, in order -- a single chunk (the plain,
@@ -209,7 +209,7 @@ public:
     // statement that this call's own size needs splitting) gets `sp.size`
     // unmodified; a genuine multi-chunk target (mds::Backend's own
     // internal flat string) splits it, `sp.size` then being the whole
-    // object's own total size and each chunk's own offset path segment
+    // object's own total size and each chunk's own index path segment
     // (parse_target_path()) saying where its own, possibly smaller (the
     // last chunk), share begins. On any chunk's failure, every URI
     // actually created so far (earlier chunks in full, plus whichever of
@@ -234,22 +234,22 @@ public:
     // generalized across every chunk of a multi-chunk string:
     // mds::Backend's own create_version() override already does that
     // itself, in descending logical-index order (docs/mds.md) --
-    // chunk_uris_by_offset() (target.cpp) always walks a target string's
-    // own chunks in ascending offset order, so this method has no way to
+    // chunk_uris_by_index() (target.cpp) always walks a target string's
+    // own chunks in ascending index order, so this method has no way to
     // express that descending order even if it did fan out across every
     // chunk.
     rawstd::Task<void> create_version(rawio::Queue& queue) const;
 
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue) const;
-    // One RawstorObjectMeta per URI of the chunk at `offset`, same order
+    // One RawstorObjectMeta per URI of the chunk at `index`, same order
     // -- every URI of that chunk is queried, not just the first
     // reachable one; a URI that doesn't answer gets a zero-filled entry
     // (see this method's own doc comment in target.cpp for why). Throws
-    // ENOENT if no chunk in `_uris` sits at `offset`.
+    // ENOENT if no chunk in `_uris` sits at `index`.
     rawstd::Task<std::vector<RawstorObjectMeta>>
-    meta(rawio::Queue& queue, uint64_t offset) const;
-    // Every distinct chunk offset `_uris` actually names -- backend-
-    // verified for an opaque (single-URI, no offset segment of its own)
+    meta(rawio::Queue& queue, uint64_t index) const;
+    // Every distinct chunk index `_uris` actually names -- backend-
+    // verified for an opaque (single-URI, no index segment of its own)
     // target, purely syntactic otherwise (see this method's own doc
     // comment in target.cpp).
     rawstd::Task<std::vector<uint64_t>> chunks(rawio::Queue& queue) const;
@@ -260,19 +260,19 @@ public:
     // copy is listed.
     rawstd::Task<std::vector<RawstdUUID>> versions(rawio::Queue& queue) const;
     // Writes `config` to exactly one real member of the chunk at
-    // `offset` -- `member_index` into that chunk's own real member list,
+    // `index` -- `member_index` into that chunk's own real member list,
     // the same order rawstor_target_meta()'s own per-chunk result reports
     // their state in. This is rawstor resolve's own --winner: declaring
     // one member authoritative; a caller wanting every member of the
     // chunk written calls this once per member instead. Throws ENOENT if
-    // no chunk sits at `offset`, EINVAL if `member_index` names no real
+    // no chunk sits at `index`, EINVAL if `member_index` names no real
     // member of it (see this method's own doc comment in target.cpp for
     // how an opaque, e.g. mds://, target's real member list is resolved).
     // `member_index` also selects the receiver's role in `config.roles`.
     // `config` is taken by value and outlives the caller's argument across
     // the connect. OST forwards this index to its one local copy.
     rawstd::Task<void> set_member_config(
-        rawio::Queue& queue, uint64_t offset, size_t member_index,
+        rawio::Queue& queue, uint64_t index, size_t member_index,
         RawstorObjectConfig config, unsigned int flags,
         std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     ) const;
@@ -282,11 +282,11 @@ public:
     // is taken by value: it outlives the caller's arguments, across the
     // connect.
     rawstd::Task<bool> sync_prepare(
-        rawio::Queue& queue, uint64_t offset, size_t member_index,
+        rawio::Queue& queue, uint64_t index, size_t member_index,
         RawstorObjectBallot ballot, RawstorObjectMeta& meta
     ) const;
     rawstd::Task<bool> sync_accept(
-        rawio::Queue& queue, uint64_t offset, size_t member_index,
+        rawio::Queue& queue, uint64_t index, size_t member_index,
         RawstorObjectBallot ballot, RawstorObjectBallot next,
         RawstorObjectConfig config, RawstorObjectMeta& meta
     ) const;
