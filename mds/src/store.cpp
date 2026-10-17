@@ -549,10 +549,7 @@ void ObjectStore::set_config(
     unsigned int flags, std::optional<RawstorObjectSyncStateValue> state
 ) {
     if ((flags & ~RAWSTOR_CONFIG_CLEAR_LOST) != 0 ||
-        (state && (flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) ||
-        (state && *state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN &&
-         *state != RAWSTOR_OBJECT_SYNC_STATE_DIRTY &&
-         *state != RAWSTOR_OBJECT_SYNC_STATE_LOST)) {
+        (state && (flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     std::lock_guard<std::mutex> guard(_mutex);

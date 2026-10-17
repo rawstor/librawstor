@@ -12,6 +12,7 @@
 #include <rawio/awaitable.hpp>
 #include <rawio/stream.hpp>
 
+#include <rawstd/fsm.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
@@ -221,6 +222,10 @@ private:
     // writes settle. Once committing, a failed duplicate causes exclusion
     // after the rejoin instead of aborting the resync.
     enum class Phase { JOINING, SWEEP, COMMITTING };
+    static constexpr auto _phase_transitions = rawstd::fsm_transitions<Phase>({
+        {Phase::JOINING, Phase::SWEEP},
+        {Phase::SWEEP, Phase::COMMITTING},
+    });
     const uint64_t _generation;
     const Chunk* const _owner;
     const size_t _member;
@@ -233,7 +238,7 @@ private:
     std::unordered_map<size_t, size_t> _inflight;
     std::set<const Chunk*> _attached;
     std::set<const Chunk*> _pending;
-    Phase _phase = Phase::JOINING;
+    rawstd::Fsm<Phase> _phase{Phase::JOINING, _phase_transitions};
     bool _announced = false;
     // A heal copies onto a member that stays in the set and takes every
     // write as usual; it is never SYNCING and its abort excludes nobody.
@@ -265,7 +270,7 @@ public:
     bool owned_by(const Chunk* chunk) const noexcept { return _owner == chunk; }
     bool announced() const noexcept { return _announced; }
     bool heal() const noexcept { return _heal; }
-    bool committing() const noexcept { return _phase == Phase::COMMITTING; }
+    bool committing() const noexcept { return _phase.is(Phase::COMMITTING); }
     bool attached(const Chunk* chunk) const noexcept {
         return _attached.count(chunk) != 0;
     }
@@ -285,7 +290,7 @@ public:
         _pending.erase(chunk);
     }
 
-    bool begin_sweep(const std::set<const Chunk*>& chunks) noexcept {
+    bool begin_sweep(const std::set<const Chunk*>& chunks) {
         for (const Chunk* chunk : chunks) {
             if (!attached(chunk)) {
                 return false;
@@ -294,7 +299,7 @@ public:
         if (!_pending.empty()) {
             return false;
         }
-        _phase = Phase::SWEEP;
+        _phase.set(Phase::SWEEP);
         return true;
     }
 
@@ -344,7 +349,7 @@ public:
     }
 
     Sweep claim_region(size_t& region) noexcept {
-        assert(_phase == Phase::SWEEP && _copying < 0);
+        assert(_phase.is(Phase::SWEEP) && _copying < 0);
         if (_remaining == 0) {
             return Sweep::DONE;
         }
@@ -365,11 +370,27 @@ public:
         _cursor = region + 1 < _bits.size() ? region + 1 : 0;
         cancel_copy();
     }
-    void begin_commit() noexcept {
-        assert(_phase == Phase::SWEEP && _remaining == 0);
-        _phase = Phase::COMMITTING;
+    void begin_commit() {
+        assert(_phase.is(Phase::SWEEP) && _remaining == 0);
+        _phase.set(Phase::COMMITTING);
     }
 };
+
+namespace {
+
+// The transitions of a member's MemberState (docs/mirroring.md, the member
+// state diagram).
+constexpr auto member_transitions = rawstd::fsm_transitions<MemberState>({
+    {MemberState::IN_SYNC, MemberState::LEAVING},
+    {MemberState::LEAVING, MemberState::LEAVING},
+    {MemberState::LEAVING, MemberState::STALE},
+    {MemberState::STALE, MemberState::SYNCING},
+    {MemberState::SYNCING, MemberState::LEAVING},
+    {MemberState::SYNCING, MemberState::STALE},
+    {MemberState::SYNCING, MemberState::IN_SYNC},
+});
+
+} // namespace
 
 // Shared configuration and resync lifecycle. Atomic queries serve the I/O
 // path; operations ending in _locked require mutex() to be held. Metadata
@@ -385,7 +406,7 @@ private:
     bool _valid = false;
     std::atomic<bool> _dirty{false};
     std::atomic<bool> _frozen{false};
-    std::vector<std::atomic<MemberState>> _states;
+    std::vector<std::unique_ptr<rawstd::Fsm<MemberState>>> _states;
     std::vector<RawstorObjectConfig> _records;
     uint64_t _size = 0;
     RawstorObjectConfig _config{};
@@ -435,9 +456,16 @@ private:
 public:
     explicit MirrorControl(const std::vector<rawstd::URI>& locations) :
         _locations(locations),
-        _states(locations.size()),
         _records(locations.size()),
-        _unhealed(locations.size(), false) {}
+        _unhealed(locations.size(), false) {
+        for (size_t i = 0; i < locations.size(); ++i) {
+            _states.push_back(
+                std::make_unique<rawstd::Fsm<MemberState>>(
+                    MemberState::STALE, member_transitions
+                )
+            );
+        }
+    }
 
     std::mutex& mutex() noexcept { return _mutex; }
     rawstd::Task<void> lock_transition(rawio::Queue& queue) {
@@ -493,11 +521,11 @@ public:
         return _frozen.load(std::memory_order_acquire);
     }
     MemberState state(size_t member) const noexcept {
-        return _states[member].load(std::memory_order_acquire);
+        return _states[member]->state();
     }
     void initialize_single(const RawstorObjectMeta& meta) {
         std::lock_guard<std::mutex> lock(_mutex);
-        _states[0].store(MemberState::IN_SYNC);
+        _states[0]->reset(MemberState::IN_SYNC);
         _records[0] = meta.config;
         _size = meta.spec.size;
         _config = meta.config;
@@ -511,7 +539,7 @@ public:
         _dirty.store(false);
         _frozen.store(false);
         for (size_t i = 0; i < states.size(); ++i) {
-            _states[i].store(states[i]);
+            _states[i]->reset(states[i]);
         }
         _records = std::move(records);
         _size = size;
@@ -559,11 +587,11 @@ public:
         std::lock_guard<std::mutex> lock(_mutex);
         return next_unhealed_locked(_unhealed.size()) != _unhealed.size();
     }
-    void begin_exclusion_locked(size_t member) noexcept {
-        _states[member].store(MemberState::LEAVING, std::memory_order_release);
+    void begin_exclusion_locked(size_t member) {
+        _states[member]->set(MemberState::LEAVING);
     }
-    void exclude_locked(size_t member, bool unrecorded = false) noexcept {
-        _states[member].store(MemberState::STALE, std::memory_order_release);
+    void exclude_locked(size_t member, bool unrecorded = false) {
+        _states[member]->set(MemberState::STALE);
         if (unrecorded) {
             ++_unrecorded_stale;
         }
@@ -701,10 +729,10 @@ public:
         size_t member = _resync->member();
         _resync->announce();
         _records[member] = config;
-        _states[member].store(MemberState::SYNCING, std::memory_order_release);
+        _states[member]->set(MemberState::SYNCING);
         _resync_changed();
     }
-    bool begin_sweep_locked() noexcept { return _resync->begin_sweep(_chunks); }
+    bool begin_sweep_locked() { return _resync->begin_sweep(_chunks); }
     RawstorObjectConfig begin_resync_commit_locked() {
         _resync->begin_commit();
         return configuration_locked(false, true);
@@ -715,9 +743,7 @@ public:
         if (failed) {
             begin_exclusion_locked(member);
         } else {
-            _states[member].store(
-                MemberState::IN_SYNC, std::memory_order_release
-            );
+            _states[member]->set(MemberState::IN_SYNC);
             _records[member] = config;
             if (frozen() && !_below_quorum()) {
                 rawstd_info(
@@ -730,7 +756,7 @@ public:
         _resync.reset();
         _resync_changed();
     }
-    bool abort_resync_locked(uint64_t generation) noexcept {
+    bool abort_resync_locked(uint64_t generation) {
         if (!_resync || _resync->generation() != generation ||
             _resync->committing()) {
             return false;
