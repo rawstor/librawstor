@@ -368,7 +368,7 @@ sequenceDiagram
     A-->>C: ok
     B--xC: error (F1)
     Note over C: one of two members remains: no majority
-    C-->>App: EIO; writes frozen
+    C-->>App: EIO, writes frozen
     Note over B,C: restore quorum before reopening
 ```
 
