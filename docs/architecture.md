@@ -13,7 +13,7 @@ The table maps the page's components to what exists today.
 | Chunk size is a power of two | ✅ | `chunk_shift` in `include/rawstor/protocol.h` |
 | Chunk id with a version | ✅ | `version_id`, see [MDS design](mds.md) |
 | MDS (object → chunks map) | ✅ | `mds/` (`rawstor-mds`) |
-| `getObj` / `getObjPart` / `getFreeOst` | ✅ | replaced by `OBJ_OPEN` + HRW placement (`mds/src/placement.cpp`) |
+| `getObj` / `getObjPart` / `getFreeOst` | ✅ | replaced by `RESOLVE` + HRW placement (`mds/src/placement.cpp`) |
 | MDS sharding / clustering | ❌ | v1 is a single instance |
 | MGS (management/config server) | ❌ | replaced by a static `topology.conf` |
 | Client library | ✅ | `src/`, `include/rawstor/` |

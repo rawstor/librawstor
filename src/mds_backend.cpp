@@ -35,7 +35,7 @@ RawstdUUID uuid_from_bytes(const uint8_t bytes[16]) {
     return id;
 }
 
-// Deserializes an OBJ_OPEN response payload (descriptor + per-chunk
+// Deserializes an RESOLVE response payload (descriptor + per-chunk
 // entries + slots -- docs/mds.md, "Wire protocol"; the exact inverse of
 // mds/client.cpp's encode_object_map()) into a WireMap.
 WireMap decode_object_map(const std::vector<unsigned char>& data) {
@@ -286,12 +286,12 @@ rawstd::Task<uint64_t> Backend::_obj_create(
 }
 
 rawstd::Task<WireMap>
-Backend::_obj_open(const RawstdUUID& id, const RawstdUUID& version_id) {
+Backend::_resolve(const RawstdUUID& id, const RawstdUUID& version_id) {
     RawstorFrameBasic request{
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
-                .cmd = RAWSTOR_CMD_OBJ_OPEN,
+                .cmd = RAWSTOR_CMD_RESOLVE,
                 .cid = 0,
             },
         .payload = {.object_id = {}, .offset = 0, .version_id = {}, .val = 0},
@@ -300,7 +300,7 @@ Backend::_obj_open(const RawstdUUID& id, const RawstdUUID& version_id) {
     uuid_to_bytes(version_id, request.payload.version_id);
 
     std::vector<unsigned char> data = co_await exchange(
-        &request, sizeof(request), RAWSTOR_CMD_OBJ_OPEN, SIZE_MAX
+        &request, sizeof(request), RAWSTOR_CMD_RESOLVE, SIZE_MAX
     );
     co_return decode_object_map(data);
 }
@@ -404,7 +404,7 @@ Backend::_obj_list_versions(const RawstdUUID& id) {
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
-                .cmd = RAWSTOR_CMD_OBJ_LIST_VERSIONS,
+                .cmd = RAWSTOR_CMD_LIST_VERSIONS,
                 .cid = 0,
             },
         .payload = {.object_id = {}, .offset = 0, .version_id = {}, .val = 0},
@@ -412,7 +412,7 @@ Backend::_obj_list_versions(const RawstdUUID& id) {
     uuid_to_bytes(id, request.payload.object_id);
 
     std::vector<unsigned char> data = co_await exchange(
-        &request, sizeof(request), RAWSTOR_CMD_OBJ_LIST_VERSIONS, SIZE_MAX
+        &request, sizeof(request), RAWSTOR_CMD_LIST_VERSIONS, SIZE_MAX
     );
     if (data.size() % sizeof(RawstorFrameVersionEntry) != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
@@ -517,7 +517,7 @@ rawstd::Task<void> Backend::list_chunks(
 
     WireMap map;
     try {
-        map = co_await _obj_open(id, version_id);
+        map = co_await _resolve(id, version_id);
     } catch (const std::system_error& e) {
         if (e.code().value() != ENOENT) {
             throw;
@@ -557,7 +557,7 @@ rawstd::Task<void> Backend::create(
     co_await _obj_create(idempotency_key, id, sp.size, sp.chunk_size, policy);
 
     /* Materialize every chunk object on its OSTs. */
-    WireMap map = co_await _obj_open(id, RawstdUUID{});
+    WireMap map = co_await _resolve(id, RawstdUUID{});
 
     // co_await isn't allowed inside a catch block, so the failure is only
     // recorded here; rolling back happens just below, outside the
@@ -634,7 +634,7 @@ rawstd::Task<void> Backend::resize(
     }
 
     /* For the chunk_size to validate new_size against. */
-    WireMap before = co_await _obj_open(id, RawstdUUID{});
+    WireMap before = co_await _resolve(id, RawstdUUID{});
 
     // Growth only ever adds whole chunks (create()'s own invariant: every
     // chunk is exactly chunk_size), and an object without a chunk_size
@@ -654,7 +654,7 @@ rawstd::Task<void> Backend::resize(
         co_await _obj_resize(idempotency_key, id, new_size);
 
     /* Re-fetch: the map now has whatever new chunks the MDS reserved. */
-    WireMap after = co_await _obj_open(id, RawstdUUID{});
+    WireMap after = co_await _resolve(id, RawstdUUID{});
 
     /*
      * Materialize the new chunks, one copy at a time: a copy that already
@@ -689,7 +689,7 @@ rawstd::Task<void> Backend::create_version(
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    WireMap map = co_await _obj_open(id, RawstdUUID{});
+    WireMap map = co_await _resolve(id, RawstdUUID{});
 
     /*
      * Chunks are CoW'd in descending index order (docs/mds.md): a crash
@@ -776,7 +776,7 @@ rawstd::Task<void> Backend::_remove_version(
      * members it recorded -- a member that no longer resolves (location
      * changed, OST replaced) is left for the reconstruct scan.
      */
-    WireMap map = co_await _obj_open(id, RawstdUUID{});
+    WireMap map = co_await _resolve(id, RawstdUUID{});
 
     std::exception_ptr error;
     for (const mds::WireVersionMember& m : members) {
@@ -835,7 +835,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
             co_return std::vector<RawstorObjectMeta>{*witness};
         }
     }
-    WireMap map = co_await _obj_open(id, version_id);
+    WireMap map = co_await _resolve(id, version_id);
     uint64_t index = chunk_index_at(map, offset);
     std::vector<RawstorObjectMeta> ret = co_await resolve_meta(
         _queue, chunk_locations(map, index), id, offset, version_id
@@ -862,7 +862,7 @@ rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
     if (rawstd_uuid_is_nil(&version_id) && co_await _witness_meta(id, offset)) {
         co_return std::vector<rawstd::URI>{location()};
     }
-    WireMap map = co_await _obj_open(id, version_id);
+    WireMap map = co_await _resolve(id, version_id);
     uint64_t index = chunk_index_at(map, offset);
     co_return chunk_locations(map, index);
 }
@@ -887,7 +887,7 @@ rawstd::Task<bool> Backend::sync_accept(
 rawstd::Task<void> Backend::_set_object(
     const RawstdUUID& id, const RawstdUUID& version_id, int flags
 ) {
-    WireMap map = co_await _obj_open(id, version_id);
+    WireMap map = co_await _resolve(id, version_id);
     std::vector<rawstd::URI> target_uris = build_target_uris(map, version_id);
 
     // Replacing the object ends its session without a clean departure.

@@ -80,7 +80,7 @@ private:
     );
 
     rawstd::Task<WireMap>
-    _obj_open(const RawstdUUID& id, const RawstdUUID& version_id);
+    _resolve(const RawstdUUID& id, const RawstdUUID& version_id);
 
     rawstd::Task<WireResized> _obj_resize(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,

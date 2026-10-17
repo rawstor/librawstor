@@ -10,7 +10,7 @@ numbers its stages separately.
 |---|---|---|---|
 | `rawstor-mds` server, `-w/--workers` threads | 1 | ✅ | `mds/src/main.cpp`, `mds/src/server.cpp` |
 | SQLite store (WAL, `synchronous=FULL`) | 1 | ✅ | `mds/src/store.cpp` |
-| `OBJ_CREATE` / `OBJ_OPEN` / `OBJ_RESIZE` / `OBJ_REMOVE` | 1 | ✅ | `mds/src/client.cpp`, `src/mds_backend.cpp` |
+| `OBJ_CREATE` / `RESOLVE` / `OBJ_RESIZE` / `OBJ_REMOVE` | 1 | ✅ | `mds/src/client.cpp`, `src/mds_backend.cpp` |
 | Explicit chunk map, client-side routing by chunk | 1 | ✅ | `src/mds_backend.cpp`, `src/object.cpp` |
 | Weighted HRW placement, `failure_domain`, `stripe_width` | 1 | ✅ | `mds/src/placement.cpp` |
 | Unsatisfiable topology hard-fails | 1 | ✅ | `mds/src/placement.cpp` |
@@ -24,7 +24,7 @@ numbers its stages separately.
 | `--reconstruct`: rebuild the live map from `LIST` + `META` | 1 | ✅ | `mds/src/main.cpp` |
 | `--reconstruct`: register complete versions, collect garbage | 2 | ❌ | version records are skipped |
 | Scrub: full MDS serving the same scan from its own index | — | ❌ | — |
-| `OBJ_COMMIT_VERSION` / `OBJ_REMOVE_VERSION` / `OBJ_LIST_VERSIONS` | 2 | ✅ | `mds/src/client.cpp`, `src/mds_backend.cpp` |
+| `OBJ_COMMIT_VERSION` / `OBJ_REMOVE_VERSION` / `LIST_VERSIONS` | 2 | ✅ | `mds/src/client.cpp`, `src/mds_backend.cpp` |
 | Client-generated `version_id`, CoW in descending chunk order | 2 | ✅ | `src/mds_backend.cpp` |
 | Native CoW: `zfs://` | 2 | ✅ | `src/zfs_backend.cpp` |
 | Native CoW: `lvm://` (thin) | 2 | ❌ | `-ENOTSUP` |
@@ -68,7 +68,7 @@ flowchart TB
     end
 
     Topo -. "read at start / SIGHUP" .-> MDS
-    Client -- "control: OBJ_CREATE / OBJ_OPEN / OBJ_RESIZE /<br/>OBJ_REMOVE / OBJ_*_VERSION*" --> MDS
+    Client -- "control: OBJ_CREATE / RESOLVE / OBJ_RESIZE /<br/>OBJ_REMOVE / OBJ_*_VERSION*" --> MDS
     MDS -- "chunk map: slots + OST locations" --> Client
     Client == "data: READ / WRITE / ... to each chunk's OSTs<br/>(MDS not involved)" ==> OSTs
     MDS -. "reconstruct: LIST + META" .-> OSTs
@@ -202,7 +202,7 @@ struct RawstorFrameBasicPayload {
 ```
 
 Every chunk-level command (SET_OBJECT, RELEASE, CREATE_VERSION, META, …) and
-OBJ_OPEN rides this payload; `version_id` nil means "live" -- RELEASE
+RESOLVE rides this payload; `version_id` nil means "live" -- RELEASE
 removes the live version this way, and with a non-nil `version_id` the
 same command removes that one version. Commands that never bind a version
 leave it nil. OBJ_RESIZE, OBJ_REMOVE and OBJ_REMOVE_VERSION ride
@@ -456,7 +456,7 @@ sequenceDiagram
     C->>M: OBJ_RESIZE(id, idempotency_key, new_size)
     M->>M: idempotency_key already applied: replay
     M-->>C: the recorded epoch, old_nchunks
-    C->>M: OBJ_OPEN(id)
+    C->>M: RESOLVE(id)
     M-->>C: map with the new chunks
     C->>O: create chunks old_nchunks.. (EEXIST = already there)
 ```
@@ -470,9 +470,8 @@ reserved ranges per role:
 ```
 0x00    session:         SET_OBJECT                    // handshake, every role
 0x01..  data:            READ, WRITE, DISCARD, ALLOCATE, RELEASE, FLUSH
-0x40..  object (MDS):    OBJ_CREATE, OBJ_OPEN, OBJ_RESIZE, OBJ_REMOVE,
-                         OBJ_COMMIT_VERSION, OBJ_REMOVE_VERSION,
-                         OBJ_LIST_VERSIONS
+0x40..  object (MDS):    OBJ_CREATE, RESOLVE, OBJ_RESIZE, OBJ_REMOVE,
+                         OBJ_COMMIT_VERSION, OBJ_REMOVE_VERSION
 ```
 
 - `SET_OBJECT` is the mandatory first command on **every** connection and
@@ -500,7 +499,7 @@ Role matrix:
 Consequence: **a witness needs no new server.** A metadata-only
 member on a plain `rawstor-ost` already speaks the witness subset.
 
-Example `CMD_OBJ_OPEN`:
+Example `CMD_RESOLVE`:
 ```
 req  body: { id[16], version_id[16] }                      // nil = live
 resp: { res, len, hash }; body:
@@ -643,7 +642,7 @@ sequenceDiagram
     participant M as rawstor-mds
     participant A as OST a
     participant B as OST b
-    C->>M: OBJ_OPEN(id)
+    C->>M: RESOLVE(id)
     M-->>C: descriptor + chunk map (slots, locations)
     Note over C: map cached, MDS is off the I/O path from here
     par one connection per OST and object
@@ -813,7 +812,7 @@ reconstruct scan (below).
   (`mds://host:port/<id>/0/<version_id>`, `ost://…/<uuid>/0/<version_id>` -- the
   offset segment is mandatory once a version follows it,
   docs/concepts.md's own "Chunk offset"), `version_id` a UUID
-  string; the wire carries it in SET_OBJECT's/OBJ_OPEN's own
+  string; the wire carries it in SET_OBJECT's/RESOLVE's own
   `version_id[16]` field (`RawstorFrameBasicPayload`), and META answers
   about that version's own copy the same way. Opening a
   version **bypasses the mirror state machine
@@ -1102,7 +1101,7 @@ of normal opens/closes.
   Existing chunks keep their placement — the map is explicit — so only a
   post-disaster resize places new chunks under the reset policy.
 - **Degraded chunks reconstruct degraded:** a chunk with some copies lost
-  keeps its surviving slots and `OBJ_OPEN` serves them (the mirror layer
+  keeps its surviving slots and `RESOLVE` serves them (the mirror layer
   owns the redundancy question). A chunk with **no** surviving copy fails
   the whole reconstruct loudly — the MDS must not pretend the object is
   whole, and it cannot invent data.

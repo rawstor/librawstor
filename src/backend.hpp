@@ -294,7 +294,7 @@ public:
     // in no particular order. Default: an empty list, covering
     // file::Backend and lvm::Backend, which hold no versions; zfs::Backend
     // lists its own version datasets, ost::Backend asks its server
-    // (LIST_VERSIONS), mds::Backend asks the MDS (OBJ_LIST_VERSIONS).
+    // (LIST_VERSIONS), mds::Backend asks the MDS (LIST_VERSIONS).
     virtual rawstd::Task<std::vector<RawstdUUID>>
     list_versions(const RawstdUUID& id, uint64_t offset);
 

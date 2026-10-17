@@ -119,7 +119,7 @@ std::string ost_location(const Topology& topology, const RawstdUUID& ost_id) {
     return std::string(); // no longer in the topology -- unreachable
 }
 
-// Serializes an ObjectMap into an OBJ_OPEN response payload: descriptor,
+// Serializes an ObjectMap into an RESOLVE response payload: descriptor,
 // then one RawstorFrameObjChunkEntry + its width RawstorFrameObjChunkSlot
 // records per chunk (docs/mds.md, "Wire protocol").
 std::vector<unsigned char>
@@ -419,7 +419,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         }
         break;
     }
-    case RAWSTOR_CMD_OBJ_OPEN: {
+    case RAWSTOR_CMD_RESOLVE: {
         RawstorFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
@@ -472,7 +472,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         );
         break;
     }
-    case RAWSTOR_CMD_OBJ_LIST_VERSIONS: {
+    case RAWSTOR_CMD_LIST_VERSIONS: {
         RawstorFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
