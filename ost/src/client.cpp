@@ -459,16 +459,16 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
             // --- read this request's frame payload and dispatch it ---
             switch (head.cmd) {
             case RAWSTOR_CMD_SET_OBJECT: {
-                RawstorFrameBasicPayload basic;
+                RawstorFrameSetObjectPayload set_object;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
-                    &stream_failed
+                    stream, &set_object, sizeof(set_object), fd,
+                    "request payload", &stream_failed
                 );
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
                 }
-                _set_object(weak, head, basic);
+                _set_object(weak, head, set_object);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -1340,7 +1340,7 @@ Client::_info(std::weak_ptr<Client> weak, RawstorFrameHead head) {
 
 rawstd::DetachedTask Client::_set_object(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
-    RawstorFrameBasicPayload payload
+    RawstorFrameSetObjectPayload payload
 ) {
     RawIOQueue* queue;
     std::vector<rawstd::URI> locations;
@@ -1348,6 +1348,8 @@ rawstd::DetachedTask Client::_set_object(
     memcpy(id.bytes, payload.object_id, sizeof(payload.object_id));
     RawstdUUID version_id;
     memcpy(version_id.bytes, payload.version_id, sizeof(payload.version_id));
+    RawstdUUID session_id;
+    memcpy(session_id.bytes, payload.session_id, sizeof(payload.session_id));
     {
         std::shared_ptr<Client> client = co_await _close_current_slot(weak);
         if (client == nullptr) {
@@ -1368,7 +1370,8 @@ rawstd::DetachedTask Client::_set_object(
             *static_cast<rawio::Queue*>(queue), locations.front()
         );
         RawstorObjectMeta meta = co_await slot->open(
-            id, payload.offset, static_cast<int>(payload.val), version_id
+            session_id, id, payload.offset, static_cast<int>(payload.val),
+            version_id
         );
         size = meta.spec.size;
     } catch (const std::system_error& e) {

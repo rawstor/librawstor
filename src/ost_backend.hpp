@@ -71,12 +71,14 @@ public:
         RawstorObjectMeta& meta
     ) override;
 
-    rawstd::Task<void>
-    set_object(const RawstdUUID& id, uint64_t offset, int flags) override;
+    rawstd::Task<void> set_object(
+        const RawstdUUID& session_id, const RawstdUUID& id, uint64_t offset,
+        int flags
+    ) override;
 
     rawstd::Task<void> set_version(
-        const RawstdUUID& object_id, uint64_t offset,
-        const RawstdUUID& version_id
+        const RawstdUUID& session_id, const RawstdUUID& object_id,
+        uint64_t offset, const RawstdUUID& version_id
     ) override;
 
     rawstd::Task<void> create_version(

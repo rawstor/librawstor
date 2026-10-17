@@ -44,6 +44,16 @@ extern "C" {
  * RawstorFrameObj* for the payloads of the object (RAWSTOR_CMD_OBJ_*)
  * commands.
  */
+/*
+ * Binds the connection to a copy (RawstorFrameSetObjectPayload): `val` =
+ * open flags, `version_id` = the version to bind for a RAWSTOR_READONLY
+ * open (nil = live), `session_id` = the identity of the client session the
+ * connection serves, kept by the client across reconnects. A session that
+ * wrote and whose connection ends without LEAVE leaves the copy LOST --
+ * unless another connection of the same session id is open on the copy by
+ * then, which takes over the departed one's writes (docs/mirroring.md,
+ * "DIRTY, CLEAN and LOST").
+ */
 #define RAWSTOR_CMD_SET_OBJECT 0x00
 #define RAWSTOR_CMD_READ 0x01
 #define RAWSTOR_CMD_WRITE 0x02
@@ -149,18 +159,16 @@ struct RawstorFrameHead {
  * chunk_offset of the object/chunk `object_id` names (0 for a plain,
  * non-chunked object) for META; unused (0) for LOCATION_INFO/FLUSH.
  * `version_id` binds to a previously created version instead of the
- * live one, for the handful of commands that use it (SET_OBJECT, RELEASE,
+ * live one, for the handful of commands that use it (RELEASE,
  * CREATE_VERSION, META, OBJ_OPEN -- each command's own doc comment above says
  * which; nil means "the live version" where that's a meaningful state for
- * the command, SET_OBJECT/RELEASE/META/OBJ_OPEN, while CREATE_VERSION always
+ * the command, RELEASE/META/OBJ_OPEN, while CREATE_VERSION always
  * carries a real, non-nil version); left nil (unused) by every other
- * command. `val` is command-specific (e.g. the open flags --
- * RAWSTOR_READONLY, <rawstor/target.h>, or 0 -- for SET_OBJECT, which a
- * bound version always carries; the writer's configuration epoch for
- * FLUSH, as RawstorFrameIOPayload::epoch); unused (0) for RELEASE/
+ * command. `val` is command-specific (e.g. the writer's configuration
+ * epoch for FLUSH, as RawstorFrameIOPayload::epoch); unused (0) for RELEASE/
  * CREATE_VERSION/META/OBJ_OPEN. `version_id` and
- * `val` are otherwise never both meaningful on the same command (SET_OBJECT is
- * the one exception), but living in one struct means every command that carries
+ * `val` are never both meaningful on the same command, but living in one
+ * struct means every command that carries
  * object_id/offset shares one wire shape and one C++-side request path
  * (Backend::_basic_request(), ost_backend.cpp) instead of two nearly identical
  * ones.
@@ -175,6 +183,26 @@ struct RawstorFrameBasicPayload {
 struct RawstorFrameBasic {
     struct RawstorFrameHead head;
     struct RawstorFrameBasicPayload payload;
+} RAWSTOR_PACKED;
+
+/*
+ * SET_OBJECT's request. `object_id`/`offset` address the copy. `val` is the
+ * open flags (RAWSTOR_READONLY, <rawstor/target.h>, or 0). `version_id` binds
+ * a previously created version (nil = live), which a bound version always
+ * opens read-only. `session_id` identifies the client session the
+ * connection serves; it is never nil.
+ */
+struct RawstorFrameSetObjectPayload {
+    uint8_t session_id[16];
+    uint8_t object_id[16];
+    uint64_t offset;
+    uint8_t version_id[16];
+    uint64_t val;
+} RAWSTOR_PACKED;
+
+struct RawstorFrameSetObject {
+    struct RawstorFrameHead head;
+    struct RawstorFrameSetObjectPayload payload;
 } RAWSTOR_PACKED;
 
 /*
@@ -740,6 +768,7 @@ static inline int rawstor_frame_allocate_decode(
 
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameHead, 8);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBasicPayload, 48);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetObjectPayload, 64);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 20);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 32);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameVersionEntry, 16);

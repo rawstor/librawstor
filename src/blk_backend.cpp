@@ -173,8 +173,9 @@ rawstd::Task<void> Backend::close() {
     co_await _queue.close(f);
 }
 
-rawstd::Task<void>
-Backend::set_object(const RawstdUUID& id, uint64_t offset, int flags) {
+rawstd::Task<void> Backend::set_object(
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset, int flags
+) {
     if (fd() != -1) {
         throw std::runtime_error("Object already set");
     }
@@ -250,7 +251,8 @@ rawstd::Task<bool> Backend::sync_accept(
 }
 
 rawstd::Task<void> Backend::set_version(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& version_id
 ) {
     co_await _bind_object(id, offset, RAWSTOR_READONLY, version_id);
 }

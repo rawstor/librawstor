@@ -117,7 +117,7 @@ rawstor::blk::Backend* open_blk_backend(
             rawstor::Chunk::create(queue, {location}, id, 0, 0, RawstdUUID{}));
 
     backend = run(queue, rawstor::Backend::create(queue, location));
-    run(queue, backend->set_object(id, 0, 0));
+    run(queue, backend->set_object({}, id, 0, 0));
 
     return static_cast<rawstor::blk::Backend*>(backend.get());
 }
@@ -674,7 +674,7 @@ TEST(BlkBackendTest, witness_member_holds_no_data_and_refuses_real_io) {
     // silently handing back a live fd onto that empty file.
     bool threw = false;
     try {
-        run(*queue, slot->open(id, 0, 0, RawstdUUID{}));
+        run(*queue, slot->open({}, id, 0, 0, RawstdUUID{}));
     } catch (const std::system_error& e) {
         threw = true;
         EXPECT_EQ(e.code().value(), ENOTSUP);
@@ -697,7 +697,7 @@ TEST(BlkBackendTest, open_after_close_throws) {
     run(*queue, slot->close());
 
     EXPECT_THROW(
-        run(*queue, slot->open(id, 0, 0, RawstdUUID{})), std::runtime_error
+        run(*queue, slot->open({}, id, 0, 0, RawstdUUID{})), std::runtime_error
     );
 }
 

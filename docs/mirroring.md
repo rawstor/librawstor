@@ -163,6 +163,13 @@ state preserves it.
   the copies equal (F5), and `rawstor resolve`, for copies made consistent
   by hand.
 - A session that never wrote leaves the state as it is, cleanly or not.
+- A client that replaces a broken connection (a short write, a reset) opens
+  the new one before closing the old, under the same session id (one per
+  opened object, so per queue in `rawstor-vhost`)
+  (`SET_OBJECT`, `docs/protocol.md`). The new connection takes over the
+  old one's writes: the client replays every write it has not seen
+  acknowledged, so the copy is not `LOST`. A connection the server finds
+  gone before its replacement has opened still leaves the copy `LOST`.
 
 The chunk records `CLEAN` only after every intended `LEAVE` succeeds. A failed
 departure records `LOST` on the surviving members before closing their Slots.

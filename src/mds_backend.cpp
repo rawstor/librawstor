@@ -490,7 +490,7 @@ Backend::_witness_meta(const RawstdUUID& id, uint64_t offset) {
 
 rawstd::Task<void> Backend::_connect() {
     co_await _wire_connect();
-    co_await _wire_set_object({}, 0, 0);
+    co_await _wire_set_object({}, {}, 0, 0);
 }
 
 // LIST reports registered objects as whole-object rows (no offsets) and
@@ -902,13 +902,15 @@ rawstd::Task<void> Backend::_set_object(
     _object = co_await Target(target_uris).open(_queue, flags);
 }
 
-rawstd::Task<void>
-Backend::set_object(const RawstdUUID& id, uint64_t, int flags) {
+rawstd::Task<void> Backend::set_object(
+    const RawstdUUID&, const RawstdUUID& id, uint64_t, int flags
+) {
     co_await _set_object(id, RawstdUUID{}, flags);
 }
 
 rawstd::Task<void> Backend::set_version(
-    const RawstdUUID& object_id, uint64_t, const RawstdUUID& version_id
+    const RawstdUUID&, const RawstdUUID& object_id, uint64_t,
+    const RawstdUUID& version_id
 ) {
     // A version is only ever opened read-only (Target::open()'s own check).
     co_await _set_object(object_id, version_id, RAWSTOR_READONLY);

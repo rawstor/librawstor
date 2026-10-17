@@ -54,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A client reconnecting after a short write or a dropped connection no longer leaves the copy `LOST`: the new connection takes over the writes of the one it replaces.
 - Persist LOST after failed mirror departure, select conflicting member geometry only with an agreeing configuration quorum, reject unknown metadata states, and fail short DATA reads instead of returning incomplete data.
 - OST shutdown terminates incomplete network requests before draining storage operations; snapshot creation skips an unavailable trailing witness without ignoring unavailable data members.
 - Multi-chunk `mds://` objects accept I/O beyond the first chunk while retaining object bounds checks.

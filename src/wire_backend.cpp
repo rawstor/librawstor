@@ -223,7 +223,7 @@ public:
 
 // The cid-dispatched counterpart of BackendOpRead/BackendOpWrite/
 // BackendOpFlush above, for the RawstorFrameBasic-shaped commands
-// (remove/meta/info/set_object/set_version/create_version) -- these
+// (remove/meta/info/create_version) -- these
 // carry no hash and have either no response body or a body of some
 // number of T's, per response.body.res. Routed through the same
 // _recv_pump demultiplex mechanism as every other op, now that the pump
@@ -747,8 +747,7 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
     RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
     uint64_t offset, uint64_t val, const RawstdUUID& version_id
 ) {
-    if ((cmd == RAWSTOR_CMD_SET_OBJECT && !rawstd_uuid_is_nil(&id)) ||
-        cmd == RAWSTOR_CMD_LIST_VERSIONS) {
+    if (cmd == RAWSTOR_CMD_LIST_VERSIONS) {
         co_await _ensure_large_receive_ring();
     }
     co_await _receive_resize.settle();
@@ -1187,8 +1186,29 @@ rawstd::Task<RawstorLocationInfo> Backend::info() {
     co_return ret;
 }
 
-rawstd::Task<void>
-Backend::_wire_set_object(const RawstdUUID& id, uint64_t offset, int flags) {
+rawstd::Task<void> Backend::_wire_set_object(
+    const RawstdUUID& session_id, const RawstdUUID& id, uint64_t offset,
+    int flags
+) {
+    co_await _send_set_object(session_id, id, offset, flags, {});
+}
+
+rawstd::Task<void> Backend::_wire_set_version(
+    const RawstdUUID& session_id, const RawstdUUID& object_id, uint64_t offset,
+    const RawstdUUID& version_id
+) {
+    // A version is only ever opened read-only (Target::open()'s own
+    // check), which is exactly what the remote rawstor-ost's own
+    // rawstor_target_open() requires of a bound-version target.
+    co_await _send_set_object(
+        session_id, object_id, offset, RAWSTOR_READONLY, version_id
+    );
+}
+
+rawstd::Task<void> Backend::_send_set_object(
+    const RawstdUUID& session_id, const RawstdUUID& id, uint64_t offset,
+    int flags, const RawstdUUID& version_id
+) {
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
@@ -1196,27 +1216,39 @@ Backend::_wire_set_object(const RawstdUUID& id, uint64_t offset, int flags) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
 
-    // `flags` rides `val` (protocol.h's own doc comment on SET_OBJECT).
-    co_await _basic_request(
-        RAWSTOR_CMD_SET_OBJECT, "set_object", id, offset,
-        static_cast<uint64_t>(flags)
-    );
-}
-
-rawstd::Task<void> Backend::_wire_set_version(
-    const RawstdUUID& object_id, uint64_t offset, const RawstdUUID& version_id
-) {
-    if (_read_event == nullptr) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+    if (!rawstd_uuid_is_nil(&id)) {
+        co_await _ensure_large_receive_ring();
     }
 
-    // A version is only ever opened read-only (Target::open()'s own
-    // check), which is exactly what the remote rawstor-ost's own
-    // rawstor_target_open() requires of a bound-version target.
-    co_await _basic_request(
-        RAWSTOR_CMD_SET_OBJECT, "set_version", object_id, offset,
-        RAWSTOR_READONLY, version_id
+    RawstorFrameSetObject request{
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_SET_OBJECT,
+                .cid = 0,
+            },
+        .payload = {
+            .session_id = {},
+            .object_id = {},
+            .offset = offset,
+            .version_id = {},
+            .val = static_cast<uint64_t>(flags),
+        },
+    };
+    memcpy(request.payload.object_id, id.bytes, sizeof(id.bytes));
+    memcpy(
+        request.payload.version_id, version_id.bytes, sizeof(version_id.bytes)
     );
+    memcpy(
+        request.payload.session_id, session_id.bytes, sizeof(session_id.bytes)
+    );
+    try {
+        co_await exchange(&request, sizeof(request), RAWSTOR_CMD_SET_OBJECT, 0);
+    } catch (const std::system_error&) {
+        throw;
+    } catch (...) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
 }
 
 // See wire_backend.hpp for the lifetime of `weak` versus a strong

@@ -125,7 +125,7 @@ TEST(MemberStateTest, unreachable_metadata_cannot_be_opened_for_io) {
         RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE
     );
     try {
-        run(*queue, slot->open(id, 0, 0, RawstdUUID{}));
+        run(*queue, slot->open({}, id, 0, 0, RawstdUUID{}));
         FAIL() << "Unreachable member opened for I/O";
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), ENOTCONN);
@@ -444,8 +444,8 @@ void expect_copy_write_requests(const rawstd::URI& location) {
     run(*queue, target.create(*queue, spec));
     auto writer = run(*queue, rawstor::Slot::create(*queue, location));
     auto peer = run(*queue, rawstor::Slot::create(*queue, location));
-    run(*queue, writer->open(id, 0, 0, RawstdUUID{}));
-    run(*queue, peer->open(id, 0, 0, RawstdUUID{}));
+    run(*queue, writer->open({}, id, 0, 0, RawstdUUID{}));
+    run(*queue, peer->open({}, id, 0, 0, RawstdUUID{}));
 
     auto expect_stale = [&](rawstd::Task<size_t> task) {
         try {
@@ -619,7 +619,7 @@ TEST(
     };
     run(*queue, target.create(*queue, spec));
     auto slot = run(*queue, rawstor::Slot::create(*queue, location));
-    run(*queue, slot->open(id, 0, 0, RawstdUUID{}));
+    run(*queue, slot->open({}, id, 0, 0, RawstdUUID{}));
     RawstorObjectConfig config{};
     config.epoch = 1;
     config.nroles = 1;
@@ -798,7 +798,7 @@ TEST(MemberStateTest, unknown_persisted_state_is_rejected_for_io) {
                 ));
     run(*queue, backend->close());
     try {
-        run(*queue, slot->open(id, 0, 0, RawstdUUID{}));
+        run(*queue, slot->open({}, id, 0, 0, RawstdUUID{}));
         FAIL() << "Unknown sync state opened for I/O";
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), EPROTO);
