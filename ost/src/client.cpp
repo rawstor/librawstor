@@ -1140,6 +1140,11 @@ rawstd::DetachedTask Client::_set_config(
                 RAWSTD_THROW_SYSTEM_ERROR(error);
             }
             rawio::Queue& queue = *static_cast<rawio::Queue*>(client->_queue);
+            RawstorObjectSyncStateValue state;
+            if (int error =
+                    rawstor_frame_set_config_state_decode(&payload, &state)) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
             std::unique_ptr<rawstor::Slot> slot;
             slot = co_await rawstor::Slot::create(queue, locations.front());
             std::exception_ptr error;
@@ -1147,13 +1152,9 @@ rawstd::DetachedTask Client::_set_config(
                 co_await slot->set_config(
                     uuid, payload.chunk_offset, payload.member_index, config,
                     payload.flags,
-                    payload.state == 0
+                    state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE
                         ? std::nullopt
-                        : std::optional<RawstorObjectSyncStateValue>(
-                              static_cast<RawstorObjectSyncStateValue>(
-                                  payload.state
-                              )
-                          )
+                        : std::optional<RawstorObjectSyncStateValue>(state)
                 );
             } catch (...) {
                 error = std::current_exception();

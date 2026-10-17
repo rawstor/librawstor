@@ -10,6 +10,7 @@
 #include <rawio/awaitable.hpp>
 #include <rawio/queue.hpp>
 
+#include <rawstd/fsm.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
@@ -35,6 +36,28 @@
 #include <cstring>
 
 namespace {
+
+// The transitions of a copy's own state that its sessions and an explicit
+// clear make (docs/mirroring.md, the copy state diagram). An explicit
+// SET_CONFIG may record any valid state and is not bound by this table.
+constexpr auto sync_state_transitions =
+    rawstd::fsm_transitions<RawstorObjectSyncStateValue>({
+        {RAWSTOR_OBJECT_SYNC_STATE_CLEAN, RAWSTOR_OBJECT_SYNC_STATE_DIRTY},
+        {RAWSTOR_OBJECT_SYNC_STATE_DIRTY, RAWSTOR_OBJECT_SYNC_STATE_CLEAN},
+        {RAWSTOR_OBJECT_SYNC_STATE_DIRTY, RAWSTOR_OBJECT_SYNC_STATE_LOST},
+        {RAWSTOR_OBJECT_SYNC_STATE_LOST, RAWSTOR_OBJECT_SYNC_STATE_CLEAN},
+        {RAWSTOR_OBJECT_SYNC_STATE_LOST, RAWSTOR_OBJECT_SYNC_STATE_DIRTY},
+    });
+
+// Moves the copy's own state on `be` from `from` to `to` if it still holds
+// `from`; a move outside the copy state table is a bug of the caller.
+rawstd::Task<void> transition_state(
+    rawstor::Backend& be, const RawstdUUID& id, uint64_t offset,
+    RawstorObjectSyncStateValue from, RawstorObjectSyncStateValue to
+) {
+    sync_state_transitions.require(from, to);
+    co_await be.set_state(id, offset, from, to);
+}
 
 const size_t max_written_ranges = 64 * 1024;
 
@@ -674,8 +697,8 @@ rawstd::Task<void> Slot::_mark_dirty() {
         co_return;
     }
     std::shared_ptr<Backend> be = _get_backend();
-    co_await be->set_state(
-        id, offset, RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+    co_await transition_state(
+        *be, id, offset, RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         RAWSTOR_OBJECT_SYNC_STATE_DIRTY
     );
     member->dirty.store(true, std::memory_order_release);
@@ -715,7 +738,9 @@ rawstd::Task<void> Slot::_depart(std::shared_ptr<Backend> be) {
     const RawstorObjectSyncStateValue state =
         _left ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
               : RAWSTOR_OBJECT_SYNC_STATE_LOST;
-    co_await be->set_state(id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY, state);
+    co_await transition_state(
+        *be, id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY, state
+    );
     member->dirty.store(!_left, std::memory_order_release);
 }
 
@@ -730,8 +755,8 @@ rawstd::Task<void> Slot::_lose_backend(std::shared_ptr<Backend> be) {
     const uint64_t offset = _offset;
     co_await member->record.lock(_queue);
     RecordLockGuard guard{member->record};
-    co_await be->set_state(
-        id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
+    co_await transition_state(
+        *be, id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
         RAWSTOR_OBJECT_SYNC_STATE_LOST
     );
     _left = false;
@@ -1884,11 +1909,11 @@ rawstd::Task<void> Slot::_set_config(
     const RawstorObjectConfig& config, unsigned int flags,
     std::optional<RawstorObjectSyncStateValue> state
 ) {
+    // UNREACHABLE is not a state a copy can be set to.
     if ((flags & ~RAWSTOR_CONFIG_CLEAR_LOST) != 0 ||
         (state && (flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) ||
-        (state && *state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN &&
-         *state != RAWSTOR_OBJECT_SYNC_STATE_DIRTY &&
-         *state != RAWSTOR_OBJECT_SYNC_STATE_LOST)) {
+        (state && (*state < RAWSTOR_OBJECT_SYNC_STATE_CLEAN ||
+                   *state > RAWSTOR_OBJECT_SYNC_STATE_LOST))) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     if (member_index >= RAWSTOR_OBJECT_MAX_WIDTH) {
@@ -1922,8 +1947,8 @@ rawstd::Task<void> Slot::_set_config(
         );
     }
     if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) {
-        co_await be->set_state(
-            id, offset, RAWSTOR_OBJECT_SYNC_STATE_LOST,
+        co_await transition_state(
+            *be, id, offset, RAWSTOR_OBJECT_SYNC_STATE_LOST,
             member->writers.load() == 0 ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
                                         : RAWSTOR_OBJECT_SYNC_STATE_DIRTY
         );

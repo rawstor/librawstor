@@ -691,6 +691,21 @@ static inline int rawstor_frame_meta_encode(
     return rawstor_frame_config_encode(&out->config, &in->config);
 }
 
+/*
+ * SET_CONFIG's optional state: 0 (RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE)
+ * means "preserve", anything else is a copy state.
+ */
+static inline int rawstor_frame_set_config_state_decode(
+    const struct RawstorFrameSetConfigPayload* in,
+    enum RawstorObjectSyncStateValue* out
+) {
+    if (in->state > RAWSTOR_OBJECT_SYNC_STATE_LOST) {
+        return EINVAL;
+    }
+    *out = (enum RawstorObjectSyncStateValue)in->state;
+    return 0;
+}
+
 static inline int rawstor_frame_meta_decode(
     const struct RawstorFrameMetaPayload* in, struct RawstorObjectMeta* out
 ) {

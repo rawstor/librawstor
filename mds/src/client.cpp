@@ -30,11 +30,16 @@ using rawstor::mdsserver::VersionMember;
 // for no particular number, 0) gets this many.
 const unsigned int list_limit = 1024;
 
-std::optional<RawstorObjectSyncStateValue> decode_config_state(uint8_t value) {
-    if (value == 0) {
+std::optional<RawstorObjectSyncStateValue>
+decode_config_state(const RawstorFrameSetConfigPayload& payload) {
+    RawstorObjectSyncStateValue state;
+    if (int error = rawstor_frame_set_config_state_decode(&payload, &state)) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
+    }
+    if (state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
         return std::nullopt;
     }
-    return static_cast<RawstorObjectSyncStateValue>(value);
+    return state;
 }
 
 int recv_trampoline(ssize_t result, void* data) {
@@ -377,7 +382,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
             }
             store.set_config(
                 uuid_of(payload.object_id), payload.chunk_offset, config,
-                payload.flags, decode_config_state(payload.state)
+                payload.flags, decode_config_state(payload)
             );
         } catch (const std::system_error& e) {
             res = -e.code().value();
