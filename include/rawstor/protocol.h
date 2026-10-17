@@ -62,7 +62,7 @@ extern "C" {
 /*
  * Removes an object/chunk -- or, if `version_id` is non-nil, one previously
  * created version of it instead (nil-means-live, same convention as
- * SET_OBJECT/OBJ_OPEN) -- rides RawstorFrameBasicPayload.
+ * SET_OBJECT/RESOLVE) -- rides RawstorFrameBasicPayload.
  */
 #define RAWSTOR_CMD_RELEASE 0x05
 #define RAWSTOR_CMD_LIST 0x06
@@ -84,7 +84,9 @@ extern "C" {
  * RawstorFrameBasicPayload (object_id, offset = the chunk), its response
  * payload is a packed array of RawstorFrameVersionEntry (body.res =
  * count * sizeof(RawstorFrameVersionEntry)), in no particular order. An
- * empty array on backends without versions (file://, classic LVM).
+ * empty array on backends without versions (file://, classic LVM). The MDS
+ * answers it for a whole mds:// object, where `offset` plays no part, and
+ * replies -ENOENT for an object it doesn't know.
  */
 #define RAWSTOR_CMD_LIST_VERSIONS 0x0e
 /*
@@ -103,8 +105,8 @@ extern "C" {
 #define RAWSTOR_CMD_SYNC_ACCEPT 0x11
 
 /*
- * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/open/
- * resize/remove a whole, possibly multi-chunk mds:// object. OBJ_OPEN
+ * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/resolve/
+ * resize/remove a whole, possibly multi-chunk mds:// object. RESOLVE
  * rides RawstorFrameBasicPayload (object_id = id, version_id = the bound
  * version, nil = live). The mutating ones carry an idempotency_key, the
  * client's idempotency key (docs/mds.md, "Idempotent mutations"): OBJ_RESIZE
@@ -112,7 +114,7 @@ extern "C" {
  * OBJ_CREATE its own payload.
  */
 #define RAWSTOR_CMD_OBJ_CREATE 0x40
-#define RAWSTOR_CMD_OBJ_OPEN 0x41
+#define RAWSTOR_CMD_RESOLVE 0x41
 #define RAWSTOR_CMD_OBJ_RESIZE 0x42
 #define RAWSTOR_CMD_OBJ_REMOVE 0x43
 /*
@@ -126,12 +128,6 @@ extern "C" {
  */
 #define RAWSTOR_CMD_OBJ_COMMIT_VERSION 0x45
 #define RAWSTOR_CMD_OBJ_REMOVE_VERSION 0x46
-/*
- * Every version registered for an mds:// object: rides
- * RawstorFrameBasicPayload (object_id = id), response as LIST_VERSIONS's.
- * -ENOENT for an object the MDS doesn't know.
- */
-#define RAWSTOR_CMD_OBJ_LIST_VERSIONS 0x47
 
 typedef uint16_t RawstorCommandType;
 
@@ -160,13 +156,13 @@ struct RawstorFrameHead {
  * non-chunked object) for META; unused (0) for LOCATION_INFO/FLUSH.
  * `version_id` binds to a previously created version instead of the
  * live one, for the handful of commands that use it (RELEASE,
- * CREATE_VERSION, META, OBJ_OPEN -- each command's own doc comment above says
- * which; nil means "the live version" where that's a meaningful state for
- * the command, RELEASE/META/OBJ_OPEN, while CREATE_VERSION always
+ * CREATE_VERSION, META, RESOLVE -- each command's own doc comment above
+ * says which; nil means "the live version" where that's a meaningful state for
+ * the command, RELEASE/META/RESOLVE, while CREATE_VERSION always
  * carries a real, non-nil version); left nil (unused) by every other
  * command. `val` is command-specific (e.g. the writer's configuration
  * epoch for FLUSH, as RawstorFrameIOPayload::epoch); unused (0) for RELEASE/
- * CREATE_VERSION/META/OBJ_OPEN. `version_id` and
+ * CREATE_VERSION/META/RESOLVE. `version_id` and
  * `val` are never both meaningful on the same command, but living in one
  * struct means every command that carries
  * object_id/offset shares one wire shape and one C++-side request path
@@ -264,7 +260,7 @@ struct RawstorFrameListEntry {
     uint8_t reserved[7];
 } RAWSTOR_PACKED;
 
-/* One LIST_VERSIONS / OBJ_LIST_VERSIONS response row. */
+/* One LIST_VERSIONS response row. */
 struct RawstorFrameVersionEntry {
     uint8_t version_id[16];
 } RAWSTOR_PACKED;
@@ -469,7 +465,7 @@ struct RawstorFrameSyncReplyPayload {
 
 /*
  * Object (MDS) wire structs -- docs/mds.md, "Wire protocol" /
- * "MDS data model": a whole, possibly multi-chunk mds:// object. OBJ_OPEN
+ * "MDS data model": a whole, possibly multi-chunk mds:// object. RESOLVE
  * rides RawstorFrameBasicPayload (object_id = id, version_id = the bound
  * version, nil = live); OBJ_RESIZE, OBJ_REMOVE and OBJ_REMOVE_VERSION ride
  * RawstorFrameObjOpPayload below; OBJ_CREATE and OBJ_COMMIT_VERSION have
@@ -560,7 +556,7 @@ struct RawstorFrameObjResizedPayload {
 } RAWSTOR_PACKED;
 
 /*
- * OBJ_OPEN (and OBJ_REMOVE: the map the object had, for the client's
+ * RESOLVE (and OBJ_REMOVE: the map the object had, for the client's
  * fan-out destroy of its chunks) response payload: the descriptor
  * followed by nchunks chunk entries, each entry followed by its width slots
  * (RawstorFrameObjChunkEntry, then that many RawstorFrameObjChunkSlot

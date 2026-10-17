@@ -347,7 +347,7 @@ TEST(ObjectCloseTest, mds_backend_io_after_close_is_enotconn) {
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-// OBJ_LIST_VERSIONS end to end: an object with no committed version
+// LIST_VERSIONS against the MDS end to end: an object with no committed version
 // lists none, and an object the MDS doesn't know is ENOENT.
 TEST(ObjectVersionTest, list_versions_over_mds) {
     rawstor::tests::ObjectEnv env(8802, 8803);
