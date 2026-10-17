@@ -73,7 +73,9 @@ Each backend stores, next to the chunk's data, a metadata record (an extension o
 a writer last set it on the copy (`RawstorObjectConfig`); `state` is the
 copy's own.
 
-A copy's `state`, kept by the copy itself:
+A copy's `state`, kept by the copy itself (the diagram is the table of
+`sync_state_transitions` in `src/slot.cpp`; an explicit `SET_CONFIG`
+may record any of the three):
 
 ```mermaid
 stateDiagram-v2
@@ -83,25 +85,35 @@ stateDiagram-v2
     DIRTY --> CLEAN : last writer's LEAVE (copy, fsync)
     DIRTY --> LOST : a writer that wrote left without LEAVE
     LOST --> CLEAN : cleared once the copies are made equal (heal, resync), or explicitly (rawstor resolve)
+    LOST --> DIRTY : cleared while a session is open for writing
 ```
 
-Its place in the sync set, as the writer sees it (`STALE` included for
-clarity, though it is only ever derived; the rest is the copy's role):
+Its place in the sync set, as the writer sees it (the writer's in-memory
+member state, `rawstd::Fsm<MemberState>` in `src/chunk.cpp`, whose
+table is exactly the transitions below; `STALE` and `LEAVING` are never
+stored, the stored role of both is excluded):
 
 ```mermaid
 stateDiagram-v2
     direction TB
-    [*] --> IN_SYNC : created
-    IN_SYNC --> STALE : write/session failure (F1, F6), missed writes while offline
+    [*] --> IN_SYNC : open: reachable, on the set's sync_id
+    [*] --> STALE : open: unreachable or on an ancestor sync_id
+    IN_SYNC --> LEAVING : write/session failure (F1, F6): serves no I/O, exclusion not yet recorded
+    LEAVING --> LEAVING : another failure while the exclusion is being recorded
+    LEAVING --> STALE : exclusion recorded on the survivors
     STALE --> SYNCING : rejoin, resync starts (F7): role syncing (fsync)
-    SYNCING --> SYNCING : crash mid-resync, restart (F8)
     SYNCING --> IN_SYNC : resync done, set's new sync_id, role in-sync
+    SYNCING --> LEAVING : the final record failed, or the copy failed again
+    SYNCING --> STALE : resync aborted
     note right of STALE
         derived, never stored:
         an ancestor sync_id,
         excluded from I/O
     end note
 ```
+
+A crash mid-resync leaves the copy's record syncing (F8); the next open
+derives its member state from the records again, as at any open.
 
 ### States and roles
 
