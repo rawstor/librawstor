@@ -104,6 +104,11 @@ private:
     ObjectDescriptor _descriptor(const RawstdUUID& id);
     ObjectMap _open_live(const RawstdUUID& id);
     ObjectMap _open_version(const RawstdUUID& id, const RawstdUUID& version_id);
+    // The caller holds _mutex, and a transaction when it stores.
+    RawstorObjectMeta _load_witness(const RawstdUUID& id, uint64_t offset);
+    void _store_witness(
+        const RawstdUUID& id, uint64_t offset, const RawstorObjectMeta& meta
+    );
 
 public:
     ObjectStore(const std::string& path, Topology topology);
@@ -124,6 +129,22 @@ public:
         std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     );
     void remove_witness(const RawstdUUID& id, uint64_t offset);
+
+    /*
+     * The witness is a CASPaxos acceptor of the chunk's configuration
+     * register (docs/multiattach.md, "The register"). Both return the
+     * record as it stands after the request, whether `ok` or not, durable
+     * (synchronous=FULL) before they return.
+     */
+    RawstorObjectMeta sync_prepare(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot, bool& ok
+    );
+    RawstorObjectMeta sync_accept(
+        const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+        const RawstorObjectConfig& config, bool& ok
+    );
 
     /* One page of ids and all their offsets; token is nil on the last page. */
     std::vector<ChunkEntry> list_chunks(RawstdUUID& token, unsigned int limit);

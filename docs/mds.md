@@ -905,19 +905,20 @@ one underlying location. MDS discovers witness records from metadata and
 forwards their member operations through the same shared protocol; its
 ordinary object placement API remains separate.
 
-This stage is implemented before [multi-attach Stage 2](multiattach.md#implementation-stages).
-The recovery rules below describe shared in-process writer control. To support
-writers on different processes and machines, the witness must also be a
-durable CASPaxos acceptor for each chunk's configuration register, storing
-`promised`, `accepted` and the accepted configuration. It confirms
-`SYNC_PREPARE` / `SYNC_ACCEPT` only after persisting the transition.
-Two data copies and their witness then provide three register votes; any
+The witness is also a durable CASPaxos acceptor for each chunk's
+configuration register ([multi-attach Stage 2](multiattach.md#implementation-stages)),
+storing `promised`, `accepted` and the accepted configuration. On every
+member type it confirms `SYNC_PREPARE` / `SYNC_ACCEPT` only after persisting
+the transition; the MDS commits them in the same SQLite transaction as the
+record read (`synchronous=FULL`), and `SET_CONFIG` keeps the ballots.
+Two data copies and their witness provide three register votes; any
 two form a majority. The witness is omitted from data I/O; its role remains in the complete
 configuration and target member numbering.
 
+The recovery rules below describe shared in-process writer control.
+
 In multi-attach Stage 2, excluding a failed data member needs this register
-quorum before writes resume under the new epoch. The synchronous witness updates below provide in-process recovery;
-they do not supply CASPaxos votes for multi-attach transitions.
+quorum before writes resume under the new epoch.
 
 A witness is a **metadata-only member** of a chunk's quorum: it
 stores the consistency tuple (`state`-like record, `sync_id`,

@@ -868,20 +868,20 @@ rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
 }
 
 rawstd::Task<bool> Backend::sync_prepare(
-    const RawstdUUID&, uint64_t, const RawstorObjectBallot&, bool,
-    RawstorObjectMeta&
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
+    bool proposed, RawstorObjectMeta& meta
 ) {
-    RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
-    co_return false;
+    return _wire_sync_prepare(id, offset, ballot, proposed, meta);
 }
 
 rawstd::Task<bool> Backend::sync_accept(
-    const RawstdUUID&, uint64_t, uint8_t, const RawstorObjectBallot&,
-    const RawstorObjectBallot&, const RawstorObjectConfig&, bool,
-    RawstorObjectMeta&
+    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
+    const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
+    const RawstorObjectConfig& config, bool proposed, RawstorObjectMeta& meta
 ) {
-    RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
-    co_return false;
+    return _wire_sync_accept(
+        id, offset, member_index, ballot, next, config, proposed, meta
+    );
 }
 
 rawstd::Task<void> Backend::_set_object(

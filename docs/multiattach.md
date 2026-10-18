@@ -29,12 +29,11 @@ separately.
 | `SET_CONFIG` and `rawstor_target_set_member_config()` retired | 2 | ❌ | [Retiring `SET_CONFIG`](#retiring-set_config) |
 | The client keeps the register value once per chunk, not per member | 2 | ❌ | [The register](#the-register-caspaxos) |
 | OST serves one backend Slot; mirroring is coordinated by the client | 1 | ✅ | [Mirroring](mirroring.md#one-copy-per-server) |
-| Witness participation in the configuration register for N = 2 | Before 2 | ❌ | Prerequisite for multi-attach Stage 2; [MDS design](mds.md#witness) |
+| Witness participation in the configuration register for N = 2 | Before 2 | ✅ | `SYNC_PREPARE` / `SYNC_ACCEPT` on OST, file, LVM, ZFS and MDS (SQLite) witnesses; [MDS design](mds.md#witness) |
 
 Stage 1 introduces the public ABI, wire layouts and data-member behavior
 needed by multi-attach while the client still operates as one writer
-process. Witness support is implemented next, before multi-attach Stage 2
-starts. Stage 2 then integrates clients on different processes and machines
+process. Witness support is a prerequisite and is implemented. Stage 2 then integrates clients on different processes and machines
 with the configuration register, including the witness vote for two data
 copies. There is no single-acceptor exception to the register quorum.
 
@@ -486,12 +485,12 @@ record or frames, so both change in place. Details in
    The client keeps working as one writer process:
    the current chunk epoch on its writes, `SET_CONFIG` for its transitions.
 
-   **Prerequisite before Stage 2: witness support.** ❌ Implement the
-   witness planned in [MDS](mds.md#witness), including durable
-   CASPaxos votes for the chunk configuration register. Two data copies
-   plus the witness form three acceptors; no single-copy override. Witness
-   development precedes multi-attach Stage 2, rather than following it.
-2. **Several processes and machines, after witness.** ❌ Integrate the
+   **Prerequisite for Stage 2: witness support.** ✅ The witness planned in
+   [MDS](mds.md#witness) is a durable CASPaxos acceptor of the chunk
+   configuration register on every member type, the SQLite witness of
+   `rawstor-mds` included. Two data copies plus the witness form three
+   acceptors; there is no single-copy override.
+2. **Several processes and machines.** ❌ Integrate the
    implemented `rawstd::caspaxos::Proposer`; every transition
    through the register; adoption of the committed configuration on
    `-ESTALE`; resync of `LOST` chunks; resync across processes; a rule

@@ -226,7 +226,8 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) override;
 
-    // MDS holds no copy of its own: register requests fail with ENOSYS.
+    // MDS holds no copy of its own: it votes in the register as a witness
+    // only, and a chunk that is not one fails with ENOENT.
 
     rawstd::Task<bool> sync_prepare(
         const RawstdUUID& id, uint64_t offset,

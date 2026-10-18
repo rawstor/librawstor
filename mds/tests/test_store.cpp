@@ -879,3 +879,53 @@ TEST_F(ObjectStoreTest, list_chunks_merges_objects_and_native_members) {
     EXPECT_EQ(entries[1].type, RAWSTOR_LIST_ENTRY_CHUNK);
     EXPECT_TRUE(rawstd_uuid_is_nil(&token));
 }
+
+TEST_F(ObjectStoreTest, witness_votes_in_the_configuration_register) {
+    RawstdUUID id = make_id();
+    RawstorObjectSpec spec{};
+    spec.size = chunk_size;
+    spec.width = 2;
+    spec.chunk_size = chunk_size;
+    RawstorObjectConfig config{};
+    config.epoch = 8;
+    config.sync_id = 9;
+    config.nroles = 3;
+    config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    config.roles[1] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    config.roles[2] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    RawstorObjectBallot low{1, 5};
+    RawstorObjectBallot high{4, 5};
+    bool ok = false;
+    {
+        ObjectStore store = make_store();
+        EXPECT_THROW(store.sync_prepare(id, 0, low, ok), std::system_error);
+        store.create_witness(id, 0, spec);
+
+        auto meta = store.sync_prepare(id, 0, high, ok);
+        EXPECT_TRUE(ok);
+        EXPECT_EQ(meta.promised.counter, 4u);
+
+        // A ballot below the promise is refused and the record shows why.
+        meta = store.sync_accept(id, 0, low, {}, config, ok);
+        EXPECT_FALSE(ok);
+        EXPECT_EQ(meta.promised.counter, 4u);
+        EXPECT_EQ(meta.config.epoch, 0u);
+
+        meta = store.sync_accept(id, 0, high, {5, 5}, config, ok);
+        EXPECT_TRUE(ok);
+        EXPECT_EQ(meta.accepted.counter, 4u);
+        EXPECT_EQ(meta.promised.counter, 5u);
+
+        // Already accepted: a prepare at the same ballot is refused.
+        store.sync_prepare(id, 0, high, ok);
+        EXPECT_FALSE(ok);
+    }
+    // Promises and the accepted value survive a restart.
+    ObjectStore store = make_store();
+    store.reconstruct({});
+    auto meta = store.witness_meta(id, 0);
+    EXPECT_EQ(meta.promised.counter, 5u);
+    EXPECT_EQ(meta.accepted.counter, 4u);
+    EXPECT_EQ(meta.config.epoch, 8u);
+    EXPECT_EQ(meta.config.roles[1], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
+}
