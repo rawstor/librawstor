@@ -1968,4 +1968,65 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
     EXPECT_EQ(object_close(queue, object), -EIO);
 }
 
+/*
+ * A copy that cannot leave cleanly is not clean: LEAVE fails on one data
+ * member, and the close touches nothing else on it. The other members left
+ * on their own and are CLEAN, so the next open has a reference to heal the
+ * member from (MirrorResyncTest.vanished_writer_heals_from_first_clean_copy);
+ * that a session ending without LEAVE leaves its copy LOST is the copy's own
+ * doing (MemberStateTest.abandoned_writer_loses_the_copy).
+ */
+TEST(MirrorOstTest, failed_leave_on_a_data_member_leaves_the_others_clean) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000b4");
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    // The middle member is a scripted OST that answers as the copy it
+    // replaces, so nothing sets it apart from the others.
+    RawstorObjectMeta replaced{};
+    ASSERT_EQ(target_meta(queue, members.target(1), &replaced), 0);
+    RawstorFrameMetaPayload meta{};
+    ASSERT_EQ(rawstor_frame_meta_encode(&meta, &replaced), 0);
+
+    rawstor::tests::Server server(8759, 256);
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, meta);
+        // The first write's dirty gate: a prepare and an accept.
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 3, 0, meta);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 5, 0, meta);
+        s.cmd_write(RAWSTOR_MAGIC, 7, 4);
+        // The close: a flush, then the departure that fails. Nothing
+        // follows it.
+        s.cmd_flush(RAWSTOR_MAGIC, 8, 0);
+        s.cmd_leave(RAWSTOR_MAGIC, 9, -EIO);
+    }
+
+    std::string target =
+        members.target(0) +
+        ",ost://127.0.0.1:8759/00000000-0000-7000-8000-0000000000b4," +
+        members.target(2);
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, target, &object), 0);
+    std::string ping = "ping";
+    object_write(queue, object, ping.data(), ping.size(), 0, 0);
+    object_close_clean(queue, object);
+
+    for (size_t i : {0, 2}) {
+        RawstorObjectMeta left{};
+        ASSERT_EQ(target_meta(queue, members.target(i), &left), 0);
+        EXPECT_EQ(left.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN) << i;
+        EXPECT_EQ(left.writers, 0u) << i;
+    }
+}
+
 } // unnamed namespace
