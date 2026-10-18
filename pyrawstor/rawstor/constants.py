@@ -30,8 +30,6 @@ OBJECT_MEMBER_EXCLUDED = 3
 READONLY = 1
 FORCE = 2
 
-# Target.set_member_config() flags: RAWSTOR_CONFIG_* (<rawstor/target.h>).
-CONFIG_CLEAR_LOST = 1
 
 # ObjectMeta.member_role: RAWSTOR_MEMBER_* (<rawstor/target.h>).
 MEMBER_DATA = 1

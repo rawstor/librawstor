@@ -11,6 +11,7 @@
 #include "object.hpp"
 #include "object_env.hpp"
 #include "rawio_sync.hpp"
+#include "register.hpp"
 #include "target.hpp"
 #include "wire_backend.hpp"
 
@@ -203,12 +204,17 @@ ssize_t target_set_member_sync_state(
     if (result < 0) {
         return result;
     }
-    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_target_set_member_config(
-            &queue, selected.c_str(), member_index, &sync_state, 0, nullptr, cb,
-            data
+    static uint64_t counter = 1000;
+    RawstorObjectBallot ballot{++counter, 7};
+    RawstorObjectBallot next{0, 0};
+    RawstorObjectMeta meta{};
+    ssize_t res = rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_sync_accept(
+            &queue, selected.c_str(), member_index, &ballot, &next, &sync_state,
+            &meta, cb, data
         );
     });
+    return res < 0 ? res : (res == 1 ? 0 : -EAGAIN);
 }
 
 std::string
@@ -984,8 +990,9 @@ TEST(ObjectMetaTest, chunk_uris_do_not_probe_for_witness_records) {
         EXPECT_EQ(path.offset, index * spec.chunk_size);
         auto metadata = run(*queue, chunk.meta(*queue));
         EXPECT_EQ(metadata.size(), 1u);
-        run(*queue,
-            chunk.set_member_config(*queue, 0, metadata.front().config, 0));
+        run(*queue, rawstor::tests::force_config(
+                        *queue, chunk, 0, metadata.front().config
+                    ));
     }
     auto log = testing::internal::GetCapturedStderr();
     EXPECT_EQ(
@@ -1052,7 +1059,7 @@ TEST(ObjectIOTest, logical_object_writes_preserve_physical_chunk_epochs) {
     for (size_t i = 0; i < chunks.size(); ++i) {
         auto config = run(*queue, chunks[i].meta(*queue)).front().config;
         config.epoch = 5 + i;
-        run(*queue, chunks[i].set_member_config(*queue, 0, config, 0));
+        run(*queue, rawstor::tests::force_config(*queue, chunks[i], 0, config));
     }
     auto object = run(*queue, target.open(*queue, 0));
     std::string value(4096, 'x');

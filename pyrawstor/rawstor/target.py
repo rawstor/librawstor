@@ -101,21 +101,26 @@ class Target:
         None for a mirror that didn't answer."""
         return librawstor.object_meta(self._uri)
 
-    def set_member_config(
-            self, config: librawstor.ObjectConfig,
-            member_index: int = 0, flags: int = 0,
-            state: int | None = None) -> None:
-        """Write the chunk's configuration to one real member (position
-        `member_index` in meta()'s own per-chunk order) of the addressed chunk. state=None preserves
-        its state; an OBJECT_SYNC_STATE_* value sets it with the configuration.
-        A sharp tool:
-        setting this by hand can desynchronize a target's copies in ways
-        the library's own quorum/reconciliation logic isn't designed to
-        recover from automatically -- not meant for routine use. A caller
-        wanting every member of the chunk written calls this once per
-        member instead of relying on any fan-out here."""
-        librawstor.object_set_member_config(
-            self._uri, config, member_index, flags, state)
+    def sync_accept(
+            self, config: librawstor.ObjectConfig, counter: int,
+            proposer: int, member_index: int = 0,
+            next_counter: int = 0, next_proposer: int = 0) -> bool:
+        """Ask one real member (position `member_index` in meta()'s own
+        per-chunk order) of the addressed chunk to accept `config` as the
+        chunk's
+        configuration under the ballot (`counter`, `proposer`): phase 2 of
+        the chunk's configuration register (see
+        rawstor_target_sync_accept(), <rawstor/target.h>). Returns whether
+        the member accepted; a refusal means it holds a higher ballot. A
+        sharp tool: a configuration decided by hand can desynchronize a
+        target's copies in ways the library's own quorum/reconciliation
+        logic isn't designed to recover from automatically -- not meant
+        for routine use. A caller wanting every member of the chunk
+        reached calls this once per member instead of relying on any
+        fan-out here."""
+        return librawstor.object_sync_accept(
+            self._uri, config, counter, proposer, member_index,
+            next_counter, next_proposer)
 
     def chunks(self) -> list["Target"]:
         """Addressable physical chunk targets, in ascending offset order."""

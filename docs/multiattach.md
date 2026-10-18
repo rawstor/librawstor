@@ -17,26 +17,29 @@ separately.
 | Copies keep their own `DIRTY` / `CLEAN`; `LOST`; `LEAVE`; `rawstor_object_abandon()` | 1 | ✅ | [Mirroring](mirroring.md#dirty-clean-and-lost) |
 | Live writer count in `META` | 1 | ✅ | `RawstorObjectMeta.writers` |
 | A `rawstor-ost` data session opens one copy through a Slot | 1 | ✅ | [Mirroring](mirroring.md#one-copy-per-server) |
-| Syncing is a role, not a `state`; a copy learns its own from its position in the request | 1 | ✅ | [Mirroring](mirroring.md#states-and-roles), `member_index` in `SET_CONFIG` / `SYNC_ACCEPT` |
+| Syncing is a role, not a `state`; a copy learns its own from its position in the request | 1 | ✅ | [Mirroring](mirroring.md#states-and-roles), `member_index` in `SYNC_ACCEPT` |
 | `epoch` on write frames, `-ESTALE` below the copy's epoch, drain on raise | 1 | ✅ | `src/slot.cpp` (`Admission`) |
 | `RESYNC` flag on writes; client-write record of a syncing copy | 1 | ✅ | `src/slot.cpp` (`Resync`) |
 | `Proposer<V>`: a change as a coroutine over a pluggable transport | 2 | ✅ | `librawstd/include/rawstd/caspaxos.hpp`, [CASPaxos](caspaxos.md#api) |
 | Every transition of the client through the register: dirty gate, exclusion, resync start and rejoin, end of a heal | 2 | ✅ | `src/chunk.cpp` (`Chunk::_decide()`, `_record()`) |
 | The client stamps writes with its chunk configuration epoch | 1 | ✅ | ordinary Chunk operations supply the current epoch |
-| Adoption of the register value on `-ESTALE` from another writer process | 2 | ❌ | requires witness and the client Proposer |
+| Adoption of the register value on `-ESTALE` from another writer process | 2 | ❌ | the client Proposer exists; the write path only waits for a transition of its own process |
 | `LOST` at open and at runtime: resync of the losers | 2 | 🟡 | one process: its open heals the copies in the set and then clears `LOST` ([Mirroring](mirroring.md), F5); several writers: not implemented |
 | Resync across processes (`resync_owner`, sweep with `RESYNC`) | 2 | ❌ | — |
 | `LOST` cleared by a rule on the accepted value | 2 | ✅ | [Clearing `LOST`](#clearing-lost), `src/slot.cpp` (`clears_lost()`) |
-| `SET_CONFIG` and `rawstor_target_set_member_config()` retired | 2 | ❌ | [Retiring `SET_CONFIG`](#retiring-set_config) |
+| `SET_CONFIG` and `rawstor_target_set_member_config()` removed; `rawstor resolve` decides through the register | 2 | ✅ | `cli/resolve.c` |
 | The client keeps the register value once per chunk, not per member | 2 | ✅ | `MirrorControl` (the decided configuration and the `Proposer`), [The register](#the-register-caspaxos) |
 | OST serves one backend Slot; mirroring is coordinated by the client | 1 | ✅ | [Mirroring](mirroring.md#one-copy-per-server) |
 | Witness participation in the configuration register for N = 2 | Before 2 | ✅ | `SYNC_PREPARE` / `SYNC_ACCEPT` on OST, file, LVM, ZFS and MDS (SQLite) witnesses; [MDS design](mds.md#witness) |
 
-Stage 1 introduces the public ABI, wire layouts and data-member behavior
+Stage 1 introduced the public ABI, wire layouts and data-member behavior
 needed by multi-attach while the client still operates as one writer
-process. Witness support is a prerequisite and is implemented. Stage 2 then integrates clients on different processes and machines
-with the configuration register, including the witness vote for two data
-copies. There is no single-acceptor exception to the register quorum.
+process. Witness support, a prerequisite, is implemented. Stage 2 integrates
+clients on different processes and machines with the configuration register,
+including the witness vote for two data copies: the client's own transitions
+already go through it, and the adoption of another writer's decision and
+the resync across processes are what is left. There is no single-acceptor
+exception to the register quorum.
 
 ## Overview
 
@@ -51,9 +54,9 @@ metadata updates on the members ([Mirroring](mirroring.md#writers)). It
 also makes every change to the wire protocol, the stored record and the
 member's behavior that several writer processes need, so that stage 2 is a
 client-side change only: servers are upgraded first. With stage 1 the
-client still runs as the one writer process of a chunk: it sets the
-configuration with `SET_CONFIG`, makes no transition through the register
-and stamps its writes with the current chunk configuration epoch. Several
+client still runs as the one writer process of a chunk: it makes its
+transitions through the register, never meeting another proposer, and
+stamps its writes with the current chunk configuration epoch. Several
 processes writing one object at once are not supported yet, and nothing
 refuses them.
 
@@ -127,7 +130,7 @@ memory:
 
 | Field | Meaning |
 |---|---|
-| record lock | Serializes every change of the record (`SET_CONFIG`, `SYNC_PREPARE`, `SYNC_ACCEPT`, the copy's own `DIRTY`/`CLEAN`/`LOST`): read, decide, write back with fsync as one step |
+| record lock | Serializes every change of the record (`SYNC_PREPARE`, `SYNC_ACCEPT`, the copy's own `DIRTY`/`CLEAN`/`LOST`): read, decide, write back with fsync as one step |
 | `writers` | Sessions open for writing on the copy right now; reported in `META` |
 | `epoch`, admitted writes | Fencing, *Epoch on writes* |
 | written sectors | While the copy's role is syncing, *Resync across processes* |
@@ -142,7 +145,7 @@ a crash.
 A copy's role is the entry of `roles` at its position among the chunk's
 members ([Mirroring](mirroring.md#states-and-roles)). The record does not
 store that position: every request that records a configuration
-(`SET_CONFIG`, `SYNC_ACCEPT`) carries it for its receiver, which takes its
+(`SYNC_ACCEPT`) carries it for its receiver, which takes its
 own role from it as it records the value. `Target` uses the same
 `member_index` to select the destination and the role. An OST receives that
 index but always addresses its sole local copy; it uses the received index
@@ -272,19 +275,18 @@ included, leaves `LOST` where it is.
 A witness holds no copy and no writer session: its state stays as it was
 created.
 
-### Retiring `SET_CONFIG`
+### `rawstor resolve`
 
-`SET_CONFIG` (`rawstor_target_set_member_config()` in the C API) records a
-configuration on one copy unconditionally, bypassing the register; it
-keeps the copy's ballots. The client no longer uses it for any transition.
-It remains for `rawstor resolve`, tests and tooling, and a write that
-ignores promises cannot coexist with several proposers, so it goes once
-they use the register too:
-
-| Use | Replacement |
-|---|---|
-| `rawstor resolve` | `SYNC_PREPARE` with a ballot above every one seen, then `SYNC_ACCEPT` of the resolved configuration: consistent with writers still running |
-| pyrawstor `Target.set_member_config()`, tests | The same requests |
+`rawstor resolve` decides a configuration by hand: it chooses a ballot above
+every one the chunk's members report and has every reachable member promise
+it with `SYNC_PREPARE`, so that no writer can decide under a lower ballot
+while the members are changed one at a time. A member that refuses has a
+writer running: nothing has been changed, and the resolve is to be repeated.
+It then sends `SYNC_ACCEPT` of the resolved configuration to every reachable
+member -- the winners in-sync, everyone else excluded -- and, for a winner
+that was `LOST`, the two decisions that end a heal (*Clearing `LOST`*). The
+resolve replaces whatever was decided before it: it does not adopt the value
+the members hold.
 
 The value carries no `state` of the copy itself: `DIRTY`, `CLEAN` and
 `LOST` stay the copy's own ([Mirroring](mirroring.md#states-and-roles)).
@@ -302,8 +304,7 @@ Cost on the hot path: two atomic operations in the member's memory.
 `rawstor-ost` admits every request of a session on the `Slot::CopyState` of
 the copy it is. The member learns its epoch from the record when a
 session opens the copy for writing, and raises it whenever a record with
-a higher epoch is about to be persisted (`SET_CONFIG`, an accepted
-`SYNC_ACCEPT`). Raising refuses the older epoch at once and **waits for
+a higher epoch is about to be persisted (an accepted `SYNC_ACCEPT`). Raising refuses the older epoch at once and **waits for
 every write admitted under it to complete** before the record is
 written, so nothing stamped with the old configuration lands once the
 new one is recorded. While it waits it lets go of the record lock -- an
@@ -413,15 +414,13 @@ and `LOST` remain useful for copy lifecycle and recovery; they never replace
 a register quorum. No `ALONE` flag or session allowance is needed in the
 public ABI or wire request.
 
-This is Stage 2 behavior, after witness support is implemented. Stage 1
-retains the single-writer client's current `SET_CONFIG` transitions and
-the strict majority rule described in
-[Mirroring](mirroring.md#two-data-copies-and-a-witness).
-The witness design in [MDS](mds.md#witness) describes single-writer
-recovery; before Stage 2 it must also provide durable CASPaxos acceptor
-state and synchronous prepare/accept votes for configuration transitions.
-Its synchronous SET_CONFIG barriers do not supply the prepare/accept votes
-required by Stage 2.
+The witness is a durable CASPaxos acceptor on every member type
+([MDS](mds.md#witness)), and the client's transitions take its vote. The
+strict majority rule described in
+[Mirroring](mirroring.md#two-data-copies-and-a-witness) applies to the
+writes. Without a majority among the members already in the set, a member
+a resync is bringing back takes part in the decision that brings it back;
+no write goes on then.
 
 ---
 
@@ -486,8 +485,6 @@ record or frames, so both change in place. Details in
     `{object_id, chunk_offset, ballot, next, config, member_index}`; both
     reply with the member's record
     (`RawstorFrameSyncReplyPayload`).
-  - `SET_CONFIG` carries the receiver's `member_index` too; it goes in stage 2
-    (*Retiring `SET_CONFIG`*).
   - `META` reply carries the copy's ballots next to its configuration.
   - `RawstorFrameIOPayload` carries `epoch`, `FLUSH` carries it in `val`;
     `-ESTALE` from a copy past it; flag `RESYNC` on
@@ -495,8 +492,7 @@ record or frames, so both change in place. Details in
 - `include/rawstor/target.h`: `RawstorObjectConfig` carries
   `resync_owner`, `RawstorObjectMeta` the ballots (`RawstorObjectBallot`).
   `rawstor_target_sync_prepare()` and `rawstor_target_sync_accept()` apply
-  the requests to one member of a target, as
-  `rawstor_target_set_member_config()` does, with `member_index` as its
+  the requests to one member of a target, with `member_index` as its
   position.
 - The epoch and the `RESYNC` flag need no C API: `rawstor-ost` checks them
   in the server's `Slot`.
@@ -514,17 +510,17 @@ record or frames, so both change in place. Details in
    copies' own `DIRTY`/`CLEAN`/`LOST`, roles in every record, `LEAVE`, the
    writer count, `-ESTALE`, and the record of client writes for `RESYNC`.
    The client keeps working as one writer process:
-   the current chunk epoch on its writes, `SET_CONFIG` for its transitions.
+   the current chunk epoch on its writes.
 
    **Prerequisite for Stage 2: witness support.** ✅ The witness planned in
    [MDS](mds.md#witness) is a durable CASPaxos acceptor of the chunk
    configuration register on every member type, the SQLite witness of
    `rawstor-mds` included. Two data copies plus the witness form three
    acceptors; there is no single-copy override.
-2. **Several processes and machines.** ❌ Integrate the
-   implemented `rawstd::caspaxos::Proposer`; every transition
-   through the register; adoption of the committed configuration on
-   `-ESTALE`; resync of `LOST` chunks; resync across processes; a rule
-   for clearing `LOST`, then `SET_CONFIG` and
+2. **Several processes and machines.** 🟡 Done: the
+   `rawstd::caspaxos::Proposer` integrated; every transition of the client
+   through the register; a rule for clearing `LOST`; `SET_CONFIG` and
    `rawstor_target_set_member_config()` removed; the register value kept
-   once per chunk in the client.
+   once per chunk in the client. Left: adoption of the committed
+   configuration on `-ESTALE` from another writer; resync of `LOST` chunks
+   with several writers; resync across processes.

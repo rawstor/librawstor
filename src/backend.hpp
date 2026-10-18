@@ -37,10 +37,6 @@ private:
     int _fd;
 
 protected:
-    static void _validate_config_update(
-        unsigned int flags, std::optional<RawstorObjectSyncStateValue> state
-    );
-
     struct Private {
         explicit Private() = default;
     };
@@ -163,8 +159,7 @@ public:
     // metadata round trip every concrete Backend implements, no separate
     // cheaper variant that only reports a subset (a caller that only wants
     // the spec half, e.g. Target's own spec lookup, just discards the
-    // rest). set_config() persists a caller-supplied configuration durably
-    // before returning.
+    // rest).
     //
     // Returns one entry per real member of the chunk at `offset` -- every
     // backend but mds::Backend represents exactly one physical copy of
@@ -192,7 +187,7 @@ public:
 
     // Every real member's own bare location of the chunk at `offset` --
     // for addressing one specific member directly (rawstor resolve's own
-    // --winner, rawstor_target_set_member_config()'s own write),
+    // --winner),
     // without needing a target string that already names it (unlike a
     // plain target's own flat URI list, an mds:// target's real members
     // aren't nameable that way at all). Every backend but mds::Backend
@@ -209,23 +204,14 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) = 0;
 
-    // Persists configuration and any explicit state atomically, or forwards
-    // the request to the destination.
-    // Slot serializes it with state transitions and applies CLEAR_LOST via
-    // set_state(); transports forward flags to the destination's Slot.
-    virtual rawstd::Task<void> set_config(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-        const RawstorObjectConfig& config, unsigned int flags,
-        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
-    ) = 0;
-
     // The two requests of the chunk's configuration register
     // (docs/multiattach.md, "The register"), applied to this copy's record
     // with the rawstd::caspaxos acceptor rules and persisted before the
     // reply. sync_accept() takes the register's value from `config`.
     // Acceptance is one vote; the caller establishes the register quorum.
-    // `member_index` is as for set_config(). A backend that holds no copy
-    // of its own rejects register requests with ENOSYS.
+    // `member_index` is this copy's position among the chunk's members. A
+    // backend that holds no copy of its own rejects register requests with
+    // ENOSYS.
     virtual rawstd::Task<bool> sync_prepare(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, bool proposed,

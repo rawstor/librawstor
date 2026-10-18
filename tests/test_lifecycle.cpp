@@ -79,11 +79,17 @@ ssize_t target_set_config(
     rawio::Queue& queue, const std::string& target,
     const RawstorObjectConfig& sync_state
 ) {
-    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_target_set_member_config(
-            &queue, target.c_str(), 0, &sync_state, 0, nullptr, cb, data
+    static uint64_t counter = 1000;
+    RawstorObjectBallot ballot{++counter, 7};
+    RawstorObjectBallot next{0, 0};
+    RawstorObjectMeta meta{};
+    ssize_t res = rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_sync_accept(
+            &queue, target.c_str(), 0, &ballot, &next, &sync_state, &meta, cb,
+            data
         );
     });
+    return res < 0 ? res : (res == 1 ? 0 : -EAGAIN);
 }
 
 ssize_t target_open(
@@ -554,7 +560,7 @@ TEST(FileLifecycleTest, create_at_spec_list_remove) {
     EXPECT_EQ(res, 0);
 }
 
-TEST(FileLifecycleTest, meta_set_config) {
+TEST(FileLifecycleTest, meta_accepted_config) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location_uri(dir.uri());
     std::string uuid = "00000000-0000-7000-8000-000000000001";
@@ -593,7 +599,7 @@ TEST(FileLifecycleTest, meta_set_config) {
     res = target_meta(*queue, target, &meta);
     EXPECT_EQ(res, 0);
     EXPECT_EQ(meta.spec.size, 1ull << 20);
-    // The copy keeps its own state: setting the configuration leaves it.
+    // The copy keeps its own state: accepting a configuration leaves it.
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
     EXPECT_EQ(meta.config.epoch, 3u);
     EXPECT_EQ(meta.config.sync_id, 0x1122334455667788ull);
@@ -648,7 +654,7 @@ TEST(OstLifecycleTest, create_spec_remove) {
 
     {
         rawstor::tests::Session s(server);
-        s.cmd_set_state(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, meta_body);
     }
 
     {

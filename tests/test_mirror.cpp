@@ -1,5 +1,6 @@
 #include "opts.h"
 #include "rawio_sync.hpp"
+#include "register.hpp"
 #include "server.hpp"
 #include "session.hpp"
 
@@ -1246,18 +1247,10 @@ TEST(MirrorResyncTest, vanished_writer_heals_from_first_clean_copy) {
     /* The second copy is made consistent by hand, the first is not. */
     RawstorObjectMeta second{};
     ASSERT_EQ(target_meta(queue, members.target(1), &second), 0);
-    ASSERT_EQ(
-        rawstor::tests::sync_run(
-            queue,
-            [&](auto cb, void* data) {
-                return rawstor_target_set_member_config(
-                    queue, members.target(1).c_str(), 0, &second.config,
-                    RAWSTOR_CONFIG_CLEAR_LOST, nullptr, cb, data
-                );
-            }
-        ),
-        0
-    );
+    RawstorObjectConfig begin, end;
+    rawstor::tests::heal_configs(second.config, 0, begin, end);
+    ASSERT_EQ(target_set_config(queue, members.target(1), begin), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(1), end), 0);
     const std::string unacked = "unacked";
     object_write_single(
         queue, members.target(0), unacked.data(), unacked.size(), 8192

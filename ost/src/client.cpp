@@ -613,20 +613,6 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
-            case RAWSTOR_CMD_SET_CONFIG: {
-                RawstorFrameSetConfigPayload set_config_payload;
-                co_await recv_frame(
-                    stream, &set_config_payload, sizeof(set_config_payload), fd,
-                    "request payload", &stream_failed
-                );
-                client = weak.lock();
-                if (client == nullptr) {
-                    co_return;
-                }
-                _set_config(weak, head, set_config_payload);
-                rawstd::DetachedTask::rethrow_if_pending();
-                break;
-            }
             case RAWSTOR_CMD_READ: {
                 RawstorFrameIOPayload io;
                 co_await recv_frame(
@@ -1112,74 +1098,6 @@ rawstd::DetachedTask Client::_list_versions(
     }
 }
 
-rawstd::DetachedTask Client::_set_config(
-    std::weak_ptr<Client> weak, RawstorFrameHead head,
-    RawstorFrameSetConfigPayload payload
-) {
-    std::shared_ptr<Client> client = weak.lock();
-    if (client == nullptr) {
-        co_return;
-    }
-
-    RawstdUUID uuid;
-    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-
-    const auto locations = client->_server.locations();
-
-    RawstorObjectConfig config{};
-
-    // The server's one copy is addressed locally at index 0; the request's
-    // member_index selects its role in the client's configuration.
-    int result = 0;
-    if (locations.size() != 1) {
-        result = -ENOSYS;
-    } else {
-        try {
-            if (int error =
-                    rawstor_frame_config_decode(&payload.config, &config)) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-            rawio::Queue& queue = *static_cast<rawio::Queue*>(client->_queue);
-            RawstorObjectSyncStateValue state;
-            if (int error =
-                    rawstor_frame_set_config_state_decode(&payload, &state)) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-            std::unique_ptr<rawstor::Slot> slot;
-            slot = co_await rawstor::Slot::create(queue, locations.front());
-            std::exception_ptr error;
-            try {
-                co_await slot->set_config(
-                    uuid, payload.chunk_offset, payload.member_index, config,
-                    payload.flags,
-                    state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE
-                        ? std::nullopt
-                        : std::optional<RawstorObjectSyncStateValue>(state)
-                );
-            } catch (...) {
-                error = std::current_exception();
-            }
-            co_await slot->close();
-            if (error) {
-                std::rethrow_exception(error);
-            }
-        } catch (const std::system_error& e) {
-            result = -e.code().value();
-        }
-    }
-
-    bool send_failed = false;
-    try {
-        co_await client->_send_response(head.cmd, head.cid, result, 0);
-    } catch (const std::exception& e) {
-        rawstd_error("%s\n", e.what());
-        send_failed = true;
-    }
-    if (send_failed) {
-        co_await client->_server.del_client(client->_fd);
-    }
-}
-
 rawstd::DetachedTask Client::_sync(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameSyncProposePayload payload
@@ -1197,7 +1115,8 @@ rawstd::DetachedTask Client::_sync(
     const RawstorObjectBallot next = payload.next;
     RawstorObjectConfig config{};
 
-    // One copy, as for SET_CONFIG (_set_config()).
+    // The server's one copy is addressed locally at index 0; the request's
+    // member_index selects its role in the client's configuration.
     int result = 0;
     RawstorObjectMeta meta{};
     bool accepted = false;

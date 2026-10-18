@@ -37,9 +37,8 @@
 
 namespace {
 
-// The transitions of a copy's own state that its sessions and an explicit
-// clear make (docs/mirroring.md, the copy state diagram). An explicit
-// SET_CONFIG may record any valid state and is not bound by this table.
+// The transitions of a copy's own state that its sessions and an accepted
+// configuration make (docs/mirroring.md, the copy state diagram).
 constexpr auto sync_state_transitions =
     rawstd::fsm_transitions<RawstorObjectSyncStateValue>({
         {RAWSTOR_OBJECT_SYNC_STATE_CLEAN, RAWSTOR_OBJECT_SYNC_STATE_DIRTY},
@@ -269,9 +268,9 @@ auto retry_n_async(rawio::Queue& queue, const char* func_name, F&& attempt)
 namespace rawstor {
 
 struct Slot::CopyState {
-    // Serializes every change to the copy's record (SET_CONFIG, the copy's
-    // own DIRTY/CLEAN/LOST): each reads the record, decides, and writes it
-    // back with fsync as one step.
+    // Serializes every change to the copy's record (SYNC_PREPARE,
+    // SYNC_ACCEPT, the copy's own DIRTY/CLEAN/LOST): each reads the record,
+    // decides, and writes it back with fsync as one step.
     rawthread::Lock record;
     // Sessions open for writing on the copy right now. Changed only with
     // `record` held: a session joins before its first write, so a
@@ -1832,6 +1831,11 @@ rawstd::Task<bool> Slot::_sync_accept(
     if (member_index >= RAWSTOR_OBJECT_MAX_WIDTH) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
+    for (size_t i = 0; i < config.nroles; ++i) {
+        if (config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
 
     std::shared_ptr<CopyState> member = _copy_state(id, offset);
     co_await member->record.lock(_queue);
@@ -1943,86 +1947,6 @@ rawstd::Task<void> Slot::_flush_copy(const RawstdUUID& id, uint64_t offset) {
     co_await copy->close();
     if (error) {
         std::rethrow_exception(error);
-    }
-}
-
-rawstd::Task<void> Slot::_set_config(
-    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-    const RawstorObjectConfig& config, unsigned int flags,
-    std::optional<RawstorObjectSyncStateValue> state
-) {
-    // UNREACHABLE is not a state a copy can be set to.
-    if ((flags & ~RAWSTOR_CONFIG_CLEAR_LOST) != 0 ||
-        (state && (flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) ||
-        (state && (*state < RAWSTOR_OBJECT_SYNC_STATE_CLEAN ||
-                   *state > RAWSTOR_OBJECT_SYNC_STATE_LOST))) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    if (member_index >= RAWSTOR_OBJECT_MAX_WIDTH) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-
-    std::shared_ptr<CopyState> member = _copy_state(id, offset);
-    co_await member->record.lock(_queue);
-    RecordLockGuard guard{member->record};
-    co_await member->raise_epoch(_queue, config.epoch);
-    std::shared_ptr<Backend> be = _get_backend();
-    if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 ||
-        state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN) {
-        bool data = _data_bound && _id && rawstd_uuid_cmp(&*_id, &id) == 0 &&
-                    _offset == offset && rawstd_uuid_is_nil(&_version_id);
-        if (!data) {
-            auto metas = co_await be->meta(id, offset, RawstdUUID{});
-            if (metas.size() != 1) {
-                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-            }
-            data = metas.front().member_role == RAWSTOR_MEMBER_DATA;
-        }
-        if (data) {
-            co_await _flush_copy(id, offset);
-        }
-    }
-    co_await be->set_config(id, offset, member_index, config, flags, state);
-    if (state) {
-        member->dirty.store(
-            state != RAWSTOR_OBJECT_SYNC_STATE_CLEAN, std::memory_order_release
-        );
-    }
-    if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) {
-        co_await transition_state(
-            *be, id, offset, RAWSTOR_OBJECT_SYNC_STATE_LOST,
-            member->writers.load() == 0 ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
-                                        : RAWSTOR_OBJECT_SYNC_STATE_DIRTY
-        );
-        // Recheck the persisted state before the next first write.
-        member->dirty.store(false, std::memory_order_release);
-    }
-    member->follow_role(
-        member_index < config.nroles
-            ? static_cast<RawstorObjectMemberRole>(config.roles[member_index])
-            : RAWSTOR_OBJECT_MEMBER_UNKNOWN
-    );
-}
-
-rawstd::Task<void> Slot::set_config(
-    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-    const RawstorObjectConfig& config, unsigned int flags,
-    std::optional<RawstorObjectSyncStateValue> state
-) {
-    const char* func_name = __FUNCTION__;
-    rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
-    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
-
-    try {
-        co_await _with_retry(
-            func_name, trace_event, &Slot::_set_config, id, offset,
-            member_index, config, flags, state
-        );
-        _finish(t_call);
-    } catch (...) {
-        _finish(t_call);
-        throw;
     }
 }
 

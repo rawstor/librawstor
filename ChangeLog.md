@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - N-way mirroring ([design](docs/mirroring.md)): quorum-gated open, degrade-and-continue writes, read failover and repair, and online resync of a stale, reconnected or missing member (a copy lost from one member is recreated at open while the remaining copies are still a majority), with each copy's own consistency state persisted by its backend (a `meta` file next to `file://`'s data, an LVM tag, a ZFS user property).
 - A mirrored object may be open for writing several times within one process (every virtqueue of a multiqueue `rawstor-vhost`/`rawstor-vduse` device), all opens sharing its mirror state; several writer processes (multi-attach) are not supported.
 - `rawstor create -m`/`--mirrors N` and the matching `RawstorObjectSpec.width`/pyrawstor `width` (both required); a width of 0 is `-EINVAL`, and witnesses are excluded from the data-copy count.
-- `rawstor show -v` (every copy's own consistency state and role, per chunk) and `rawstor resolve TARGET --winner=N[,N...] [--offset OFFSET]` for manual split-brain recovery, backed by the new `rawstor_target_meta()`/`rawstor_target_chunks()`/`rawstor_target_set_member_config()` API (pyrawstor `Target.meta()`/`Target.set_member_config()`).
+- `rawstor show -v` (every copy's own consistency state and role, per chunk) and `rawstor resolve TARGET --winner=N[,N...] [--offset OFFSET]` for manual split-brain recovery, backed by the new `rawstor_target_meta()`/`rawstor_target_chunks()`/`rawstor_target_sync_prepare()`/`rawstor_target_sync_accept()` API (pyrawstor `Target.meta()`/`Target.sync_accept()`).
 - Each copy of a mirrored chunk keeps its own `DIRTY`/`CLEAN` state from the sessions writing it, and goes `LOST` when one that wrote vanished without a clean close; `rawstor_object_abandon()` closes without one ([design](docs/mirroring.md#dirty-clean-and-lost)).
 - Multi-chunk objects: `RawstorObjectSpec.chunk_size`/`rawstor create --chunk-size` splits an object into equal chunks (its size must be a multiple of it) addressed by offset, one target routing I/O across all of them; `rawstor_location_create()` lays them out itself and `rawstor_location_list()` returns each such object as a single target.
 - `rawstor-mds` metadata server ([design](docs/mds.md); own deb/rpm package with the `rawstor-mds@<uuid>.service` template, one instance per cluster configured by `/etc/rawstor/mds/<uuid>.conf`, `--without-sqlite3` to skip it) with `-w`/`--workers N` threads (default `4`), and `mds://host:port/<id>` objects (`--chunk-size` required), whose chunks it places across a static OST topology, usable anywhere a target is and listed by `rawstor list mds://host:port`; plus `rawstor create --failure-domain`/`--stripe-width`, grow-only `rawstor resize` by whole chunks (`rawstor_target_resize()`), topology reload on `SIGHUP` (refused if it drops an OST still holding chunks, as is such a topology at startup) and `rawstor-mds --reconstruct` to rebuild a lost chunk map from the OSTs.
@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - BLK metadata stores logical size for DATA and WITNESS members independently of physical allocation.
 - OST serves exactly one backend Slot and rejects multiple locations at startup.
 - Member configuration updates take an optional typed state separately from flags.
-- Data and witness members share `SET_CONFIG` for atomic state and configuration updates.
+- Data and witness members share the `SYNC_PREPARE`/`SYNC_ACCEPT` requests of the chunk's configuration register for atomic configuration updates.
 - MDS lists objects and witness members through the ordinary `LIST` command.
 - Witness members use ordinary backend URIs and use the last location when there is one more location than the even data width, with their type reported by metadata.
 - Every backend now stores an object per chunk (`file://` `<uuid>/<offset>/data`, LVM `<uuid>-<offset>`, ZFS `<uuid>:<offset>`), with no migration: objects created by 0.2.x are not visible to this release.
@@ -49,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rawstor-vhost`/`rawstor-vhost-qemu`/`rawstor testio`'s `--queue-size` defaults raised from 256 to 4096, matching `rawstor-ost`.
 - `rawstor-vduse`'s `--num-queues` defaults to the host's number of CPUs instead of `16`, and a virtqueue's thread and connection to the target are only started once the driver enables it.
 - The client opens exactly one connection per object chunk and backend (per mirror arm).
-- The OST wire protocol changed incompatibly (`LIST` entries carry a chunk offset, `RELEASE` also removes a version, new `META`/`SET_CONFIG`/`LEAVE`/`CREATE_VERSION`/`LIST_VERSIONS`/`OBJ_*` commands); `rawstor-ost` and its clients must be upgraded together.
+- The OST wire protocol changed incompatibly (`LIST` entries carry a chunk offset, `RELEASE` also removes a version, new `META`/`SYNC_PREPARE`/`SYNC_ACCEPT`/`LEAVE`/`CREATE_VERSION`/`LIST_VERSIONS`/`OBJ_*` commands); `rawstor-ost` and its clients must be upgraded together.
 
 ### Removed
 - The deprecated synchronous `rawstor_object_spec()`/`_list()`/`_create()`/`_create_at()`/`_remove()`/`_open()`/`_id()`/`_location()`, in favor of the async `rawstor_target_*()`/`rawstor_location_*()` API.

@@ -198,12 +198,6 @@ public:
         RawstorObjectSyncStateValue expected, RawstorObjectSyncStateValue state
     ) override final;
 
-    rawstd::Task<void> set_config(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-        const RawstorObjectConfig& config, unsigned int flags,
-        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
-    ) override final;
-
     rawstd::Task<RawstorLocationInfo> info() override final;
 };
 

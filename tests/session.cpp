@@ -312,35 +312,6 @@ void Session::cmd_meta(
     cmd_meta_response(magic, cid, res, meta);
 }
 
-void Session::cmd_set_state_request() {
-    _server.read(
-        "RAWSTOR_CMD_SET_CONFIG <<<", sizeof(RawstorFrameSetConfig),
-        [](const void*) {}
-    );
-}
-
-void Session::cmd_set_state_response(
-    uint32_t magic, uint16_t cid, int32_t res
-) {
-    RawstorFrameResponse response = {
-        .head{
-            .magic = magic,
-            .cmd = RAWSTOR_CMD_SET_CONFIG,
-            .cid = cid,
-        },
-        .body = {
-            .hash = 0,
-            .res = res,
-        },
-    };
-    _server.write("RAWSTOR_CMD_SET_CONFIG >>>", &response, sizeof(response));
-}
-
-void Session::cmd_set_state(uint32_t magic, uint16_t cid, int32_t res) {
-    cmd_set_state_request();
-    cmd_set_state_response(magic, cid, res);
-}
-
 void Session::cmd_sync_prepare_request() {
     _server.read(
         "RAWSTOR_CMD_SYNC_PREPARE <<<", sizeof(RawstorFrameSyncPropose),

@@ -141,14 +141,10 @@ private:
     );
     static rawstd::DetachedTask
     _flush(std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t epoch);
-    static rawstd::DetachedTask _set_config(
-        std::weak_ptr<Client> weak, RawstorFrameHead head,
-        RawstorFrameSetConfigPayload payload
-    );
     // The session's clean departure: closes the object it set cleanly.
     static rawstd::DetachedTask
     _leave(std::weak_ptr<Client> weak, RawstorFrameHead head);
-    // SYNC_PREPARE/SYNC_ACCEPT on the copy this server is (_set_config()).
+    // SYNC_PREPARE/SYNC_ACCEPT on the copy this server is.
     static rawstd::DetachedTask _sync(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameSyncProposePayload payload

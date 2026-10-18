@@ -1,6 +1,7 @@
 #include "chunk.hpp"
 #include "object.hpp"
 #include "opts.h"
+#include "register.hpp"
 #include "slot.hpp"
 #include "target.hpp"
 #include "tmp_dir.hpp"
@@ -325,9 +326,9 @@ TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_offset) {
     RawstorObjectConfig config = metas[0].config;
     config.epoch += 1;
     config.sync_id = 0x1234;
-    run(*queue, run(*queue, target.chunks(*queue))
-                    .at(1)
-                    .set_member_config(*queue, 0, config, 0));
+    run(*queue, rawstor::tests::force_config(
+                    *queue, run(*queue, target.chunks(*queue)).at(1), 0, config
+                ));
 
     metas = run(*queue, run(*queue, target.chunks(*queue)).at(1).meta(*queue));
     ASSERT_EQ(metas.size(), 1u);
@@ -347,7 +348,7 @@ TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_offset) {
     ASSERT_EQ(absent.size(), 1u);
     EXPECT_EQ(absent.front().state, RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE);
     try {
-        run(*queue, missing.set_member_config(*queue, 0, config, 0));
+        run(*queue, rawstor::tests::force_config(*queue, missing, 0, config));
         ADD_FAILURE() << "configuration update of an absent chunk succeeded";
     } catch (const std::system_error& error) {
         EXPECT_EQ(error.code().value(), ENOENT);

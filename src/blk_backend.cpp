@@ -196,35 +196,6 @@ rawstd::Task<void> Backend::set_state(
     }
 }
 
-rawstd::Task<void> Backend::set_config(
-    const RawstdUUID& id, uint64_t offset, uint8_t,
-    const RawstorObjectConfig& config, unsigned int flags,
-    std::optional<RawstorObjectSyncStateValue> state
-) {
-    _validate_config_update(flags, state);
-    for (size_t i = 0; i < config.nroles; ++i) {
-        if (config.roles[i] > RAWSTOR_OBJECT_MEMBER_EXCLUDED) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-    }
-    RawstorObjectMeta meta{};
-    meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    try {
-        meta = (co_await this->meta(id, offset, RawstdUUID{})).front();
-    } catch (const std::system_error& e) {
-        if (e.code().value() != ENOENT) {
-            throw;
-        }
-    }
-    meta.config = config;
-    if (state) {
-        meta.state = *state;
-    }
-    co_await _write_meta(
-        id, offset, meta.state, meta.config, meta.promised, meta.accepted
-    );
-}
-
 rawstd::Task<bool> Backend::sync_prepare(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot&,
     bool proposed, RawstorObjectMeta& meta

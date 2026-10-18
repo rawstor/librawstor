@@ -127,15 +127,6 @@ uint16_t Client::send_meta(const RawstdUUID& id, uint64_t chunk_offset) {
     return cid;
 }
 
-uint16_t Client::send_set_config(RawstorFrameSetConfig frame) {
-    uint16_t cid = _next_cid++;
-    frame.head.magic = RAWSTOR_MAGIC;
-    frame.head.cmd = RAWSTOR_CMD_SET_CONFIG;
-    frame.head.cid = cid;
-    send_all(_fd, &frame, sizeof(frame));
-    return cid;
-}
-
 uint16_t Client::send_sync(RawstorFrameSyncPropose frame) {
     uint16_t cid = _next_cid++;
     frame.head.magic = RAWSTOR_MAGIC;

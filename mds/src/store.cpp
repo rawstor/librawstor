@@ -566,28 +566,6 @@ ObjectStore::witness_meta(const RawstdUUID& id, uint64_t offset) {
     return _load_witness(id, offset);
 }
 
-void ObjectStore::set_config(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int flags, std::optional<RawstorObjectSyncStateValue> state
-) {
-    if ((flags & ~RAWSTOR_CONFIG_CLEAR_LOST) != 0 ||
-        (state && (flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0)) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    std::lock_guard<std::mutex> guard(_mutex);
-    Transaction tx(_db);
-    RawstorObjectMeta meta = _load_witness(id, offset);
-    if (state) {
-        meta.state = *state;
-    } else if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 &&
-               meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST) {
-        meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    }
-    meta.config = config;
-    _store_witness(id, offset, meta);
-    tx.commit();
-}
-
 RawstorObjectMeta ObjectStore::sync_prepare(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
     bool& ok

@@ -115,13 +115,16 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
     EXPECT_EQ(meta.config.roles[1], RAWSTOR_OBJECT_MEMBER_SYNCING);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 
-    // A configuration set outside the register keeps the ballots: an old
-    // ballot is still refused afterwards.
+    // A ballot below the promise is refused, and the member keeps what it
+    // holds.
     config.epoch = 10;
-    run(*queue, target.set_member_config(*queue, 0, config, 0));
+    EXPECT_FALSE(
+        run(*queue, target.sync_accept(*queue, 0, {4, 9}, {}, config, reply))
+    );
+    EXPECT_EQ(reply.config.epoch, 9u);
     meta = run(*queue, run(*queue, target.chunks(*queue)).front().meta(*queue))
                .front();
-    EXPECT_EQ(meta.config.epoch, 10u);
+    EXPECT_EQ(meta.config.epoch, 9u);
     EXPECT_EQ(meta.promised.counter, 5u);
     EXPECT_EQ(meta.accepted.counter, 4u);
     EXPECT_FALSE(run(*queue, target.sync_prepare(*queue, 0, {4, 9}, reply)));

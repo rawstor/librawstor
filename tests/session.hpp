@@ -46,10 +46,6 @@ public:
         const RawstorFrameMetaPayload& meta
     );
 
-    void cmd_set_state_request();
-    void cmd_set_state_response(uint32_t magic, uint16_t cid, int32_t res);
-    // SET_CONFIG.
-    void cmd_set_state(uint32_t magic, uint16_t cid, int32_t res);
     // SYNC_PREPARE / SYNC_ACCEPT: the register's requests, answered with
     // whether the member took part and its record.
     void cmd_sync_prepare_request();

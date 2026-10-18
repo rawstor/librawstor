@@ -793,14 +793,9 @@ TEST_F(
     {
         ObjectStore store = make_store();
         store.create_witness(id, chunk_size, spec);
-        store.set_config(
-            id, chunk_size, config, 0, RAWSTOR_OBJECT_SYNC_STATE_DIRTY
-        );
-        store.set_config(id, chunk_size, config, 0);
-        EXPECT_EQ(
-            store.witness_meta(id, chunk_size).state,
-            RAWSTOR_OBJECT_SYNC_STATE_DIRTY
-        );
+        bool ok = false;
+        store.sync_accept(id, chunk_size, {1, 1}, {}, config, ok);
+        EXPECT_TRUE(ok);
         EXPECT_THROW(
             store.create_witness(id, chunk_size, spec), std::system_error
         );
@@ -812,7 +807,7 @@ TEST_F(
     auto meta = store.witness_meta(id, chunk_size);
     EXPECT_EQ(meta.member_role, RAWSTOR_MEMBER_WITNESS);
     EXPECT_EQ(meta.spec.size, spec.size);
-    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
     EXPECT_EQ(meta.config.sync_id, config.sync_id);
     EXPECT_EQ(meta.config.resync_owner, config.resync_owner);
     EXPECT_EQ(meta.config.sync_id_history[0], 42u);

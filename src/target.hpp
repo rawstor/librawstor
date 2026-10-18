@@ -119,7 +119,7 @@ class Object;
 // before returning.
 // create()/remove() work across every chunk (see each one's own
 // comment) -- spec() only ever operates on the target's own
-// first chunk, and meta()/set_member_config() each touch exactly one
+// first chunk, and meta()/sync_prepare() each touch exactly one
 // chunk, the one named by their own explicit `offset` parameter
 // (chunk_uris_at_offset() in target.cpp) -- never "every chunk"; a
 // caller wanting that loops over every offset itself. open() is the one
@@ -152,7 +152,7 @@ private:
     RawstdUUID _version_id;
 
     // The bare location of real member `member_index` of the chunk at
-    // `offset`, as set_member_config() below addresses it.
+    // `offset`, as sync_prepare() below addresses it.
     rawstd::Task<rawstd::URI> _member_location(
         rawio::Queue& queue, uint64_t offset, size_t member_index
     ) const;
@@ -239,28 +239,19 @@ public:
     // copy of the object's first chunk, merged -- a version taken on any
     // copy is listed.
     rawstd::Task<std::vector<RawstdUUID>> versions(rawio::Queue& queue) const;
-    // Writes `config` to exactly one real member of the chunk at
-    // the URI -- `member_index` into that chunk's own real member list,
-    // the same order rawstor_target_meta()'s own per-chunk result reports
-    // their state in. This is rawstor resolve's own --winner: declaring
-    // one member authoritative; a caller wanting every member of the
-    // chunk written calls this once per member instead. Throws ENOENT if
-    // no chunk is addressed, EINVAL if `member_index` names no real
-    // member of it (see this method's own doc comment in target.cpp for
-    // how an opaque, e.g. mds://, target's real member list is resolved).
-    // `member_index` also selects the receiver's role in `config.roles`.
-    // `config` is taken by value and outlives the caller's argument across
-    // the connect. OST forwards this index to its one local copy.
-    rawstd::Task<void> set_member_config(
-        rawio::Queue& queue, size_t member_index, RawstorObjectConfig config,
-        unsigned int flags,
-        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
-    ) const;
     // The two requests of the chunk's configuration register
-    // (Backend::sync_prepare()/sync_accept()), sent to one member, which
-    // is addressed as set_member_config() above addresses it. The request
-    // is taken by value: it outlives the caller's arguments, across the
-    // connect.
+    // (Backend::sync_prepare()/sync_accept()), sent to exactly one real
+    // member of the chunk the URI addresses -- `member_index` into that
+    // chunk's own real member list, the same order rawstor_target_meta()'s
+    // own per-chunk result reports their state in (rawstor resolve's own
+    // --winner). A caller wanting every member of the chunk reached calls
+    // this once per member. Throws ENOENT if no chunk is addressed,
+    // EINVAL if `member_index` names no real member of it (see
+    // _member_location() in target.cpp for how an opaque, e.g. mds://,
+    // target's real member list is resolved). `member_index` also selects
+    // the receiver's role in `config.roles`; OST forwards it to its one
+    // local copy. The request is taken by value: it outlives the caller's
+    // arguments, across the connect.
     rawstd::Task<bool> sync_prepare(
         rawio::Queue& queue, size_t member_index, RawstorObjectBallot ballot,
         RawstorObjectMeta& meta

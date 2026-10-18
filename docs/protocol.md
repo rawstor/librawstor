@@ -25,7 +25,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Response `hash` (xxh3 with libxxhash) | ✅ | `librawstd/src/hash.c` |
 | Session: `SET_OBJECT` | ✅ | OST `ost/src/client.cpp`, MDS `mds/src/client.cpp` |
 | Data: `READ` `WRITE` `DISCARD` `ALLOCATE` `RELEASE` `FLUSH` `WRITE_ZEROES` | ✅ | OST server + `src/ost_backend.cpp` (I/O), `src/wire_backend.cpp` (member lifecycle) |
-| Metadata: `META` `SET_CONFIG` `LEAVE` `CREATE_VERSION` `LIST_VERSIONS` | ✅ | OST server + `src/wire_backend.cpp` |
+| Metadata: `META` `LEAVE` `CREATE_VERSION` `LIST_VERSIONS` | ✅ | OST server + `src/wire_backend.cpp` |
 | `LIST`, `LOCATION_INFO` | ✅ | OST and MDS servers, both clients |
 | Object: `OBJ_CREATE` `RESOLVE` `OBJ_RESIZE` `OBJ_REMOVE` | ✅ | MDS server + `src/mds_backend.cpp` |
 | Object versions: `OBJ_COMMIT_VERSION` `OBJ_REMOVE_VERSION` | ✅ | MDS server + `src/mds_backend.cpp` |
@@ -85,8 +85,7 @@ Every request and every response starts with the same 8-byte head.
 
 One command space for every role, grouped into ranges: `0x00` session (every
 role), `0x01..0x1f` data (OST), `0x20..0x3f` metadata shared by OST and MDS,
-`0x40..0x5f` object (MDS). `SET_CONFIG` and `META` predate the grouping and
-keep `0x0b`/`0x0c`.
+`0x40..0x5f` object (MDS). `META` predates the grouping and keeps `0x0c`.
 
 | cmd | name | role | request payload | response payload |
 |---|---|---|---|---|
@@ -100,13 +99,12 @@ keep `0x0b`/`0x0c`.
 | `0x08` | `LOCATION_INFO` | OST / MDS | Basic (unused) | `RawstorLocationInfo` |
 | `0x09` | `FLUSH` | OST | Basic (`val` = epoch) | — |
 | `0x0a` | `WRITE_ZEROES` | OST | IO (`flags`: `SYNC`, `UNMAP`, `RESYNC`) | — |
-| `0x0b` | `SET_CONFIG` | OST / MDS (witness only) | SetConfig | — |
 | `0x0c` | `META` | OST / MDS (witness only) | Basic (`offset` = chunk offset, `version_id`, nil = live) | Meta |
 | `0x0d` | `CREATE_VERSION` | OST | Basic (`version_id` = new version) | — |
 | `0x0e` | `LIST_VERSIONS` | OST / MDS | Basic (`offset` = chunk offset on an OST, unused on the MDS) | Version rows |
 | `0x0f` | `LEAVE` | OST | Basic (unused) | — |
-| `0x10` | `SYNC_PREPARE` | OST | SyncPropose (`ballot` only) | SyncReply |
-| `0x11` | `SYNC_ACCEPT` | OST | SyncPropose | SyncReply |
+| `0x10` | `SYNC_PREPARE` | OST / MDS (witness only) | SyncPropose (`ballot` only) | SyncReply |
+| `0x11` | `SYNC_ACCEPT` | OST / MDS (witness only) | SyncPropose | SyncReply |
 | `0x40` | `OBJ_CREATE` | MDS | ObjCreate | ObjCreated |
 | `0x41` | `RESOLVE` | MDS | Basic (`version_id`, nil = live) | ObjDescriptor + chunks |
 | `0x42` | `OBJ_RESIZE` | MDS | ObjOp (`val` = new size) | ObjResized |
@@ -289,7 +287,7 @@ The chunk's configuration (`RawstorObjectConfig`): its sync set, the
 writer running the resync of the syncing member (`resync_owner`, 0 when
 none) and every member's role, `nroles` entries of `enum RawstorObjectMemberRole` (0
 unknown, 1 in-sync, 2 syncing, 3 excluded), the rest zero. Carried in
-SetConfig and Meta; see [mirroring](mirroring.md#states-and-roles).
+SyncPropose and Meta; see [mirroring](mirroring.md#states-and-roles).
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -329,20 +327,6 @@ A ballot of the configuration register (`RawstorObjectBallot`):
      +---------------------------------------------------------------------------------------+
 16
 ```
-
-### SetConfig — 339 bytes
-
-Records the chunk's configuration on one copy (`SET_CONFIG`). The separate
-`state` byte contains a `RawstorObjectSyncStateValue`: `CLEAN = 1`,
-`DIRTY = 2`, or `LOST = 3`, persisted atomically with configuration. Zero
-means preserve the current state. `flags` contains only bit 0,
-`RAWSTOR_CONFIG_CLEAR_LOST`, which turns a `LOST` copy `CLEAN` (no writer
-sessions) or `DIRTY`. Explicit state and CLEAR_LOST cannot be combined;
-invalid states or unknown flag bits return `-EINVAL`. OST accepts one backend location
-([mirroring](mirroring.md#one-copy-per-server)). The copy's ballots stay
-as they are: only the register's own requests change them. `member_index` is
-the copy's position among the chunk's members, which the Config's roles
-are indexed by: the copy takes its own role from it.
 
 `LEAVE` (Basic, unused) is a session's clean departure from the object it
 set: the server closes it cleanly, and a copy with no session open for
@@ -389,7 +373,7 @@ register's value -- the Config -- under `ballot`, and to promise `next` on
 success (zero for none). Each successful accept is one vote; the client
 must obtain a majority of register acceptors. With two data copies, the
 witness supplies the third vote (multi-attach Stage 2 follows witness
-support). `member_index` is as for SetConfig and indexes data members. OST accepts one backend location.
+support). `member_index` is the copy's position among the chunk's members, which the Config's roles are indexed by: the copy takes its own role from it. OST accepts one backend location ([mirroring](mirroring.md#one-copy-per-server)).
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -772,19 +756,19 @@ address count.
 
 Both OST and MDS accept `ALLOCATE` with `member_role = 2` to create a
 metadata-only member, `META` to read it and `RELEASE` to remove it.
-The common `SET_CONFIG` request atomically records state and configuration
-with its separate optional `state` field. Zero preserves the existing state.
-The update is serialized with member state transitions and persisted before
-the empty success response. `config.roles` records all members in
-the target's stable order; the witness entry is IN_SYNC after a successful
-configuration update, or EXCLUDED when the data quorum continues without it.
+The register's `SYNC_PREPARE` and `SYNC_ACCEPT` requests record the
+configuration and the ballots atomically, serialized with member state
+transitions and persisted before the reply. `config.roles` records all
+members in the target's stable order; the witness entry is IN_SYNC while it
+takes part and EXCLUDED when the data quorum continues without it. A
+witness holds no copy and no writer session: its `state` stays as created.
 MDS accepts these operations independently of its `OBJ_*` map registry.
 `width` is data-copy redundancy; the configuration role array includes the
 witness. One witness per chunk is allowed only with an even data-member count.
 
 A manual branch resolution records EXCLUDED for every non-winner through
-`SET_CONFIG`, regardless of its member type. LOST describes unclean departure
-and follows the same reconciliation rules as DIRTY for both DATA and WITNESS.
+`SYNC_ACCEPT` under a ballot above every one seen, regardless of its member
+type.
 Witnesses do not accept data I/O or object versions.
 
 Ordinary `LIST` reports every registered MDS object and native witness member,

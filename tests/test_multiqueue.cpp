@@ -94,11 +94,16 @@ target_meta(Queue& queue, const std::string& target, RawstorObjectMeta* meta) {
 ssize_t target_set_config(
     Queue& queue, const std::string& target, const RawstorObjectConfig& config
 ) {
-    return rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
-        return rawstor_target_set_member_config(
-            queue, target.c_str(), 0, &config, 0, nullptr, cb, data
+    static uint64_t counter = 1000;
+    RawstorObjectBallot ballot{++counter, 7};
+    RawstorObjectBallot next{0, 0};
+    RawstorObjectMeta meta{};
+    ssize_t res = rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
+        return rawstor_target_sync_accept(
+            queue, target.c_str(), 0, &ballot, &next, &config, &meta, cb, data
         );
     });
+    return res < 0 ? res : (res == 1 ? 0 : -EAGAIN);
 }
 
 ssize_t object_close(Queue& queue, RawstorObject* object) {
