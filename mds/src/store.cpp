@@ -1,6 +1,7 @@
 #include <mds/store.hpp>
 #include <rawstor/protocol.h>
 
+#include <rawstd/caspaxos.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
 
@@ -522,8 +523,7 @@ void ObjectStore::create_witness(
 }
 
 RawstorObjectMeta
-ObjectStore::witness_meta(const RawstdUUID& id, uint64_t offset) {
-    std::lock_guard<std::mutex> guard(_mutex);
+ObjectStore::_load_witness(const RawstdUUID& id, uint64_t offset) {
     Stmt stmt(
         _db, "SELECT record FROM witnesses WHERE id=? AND chunk_offset=?"
     );
@@ -544,40 +544,10 @@ ObjectStore::witness_meta(const RawstdUUID& id, uint64_t offset) {
     return meta;
 }
 
-void ObjectStore::set_config(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int flags, std::optional<RawstorObjectSyncStateValue> state
+void ObjectStore::_store_witness(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectMeta& meta
 ) {
-    if ((flags & ~RAWSTOR_CONFIG_CLEAR_LOST) != 0 ||
-        (state && (flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0)) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    std::lock_guard<std::mutex> guard(_mutex);
-    Transaction tx(_db);
-    Stmt stmt(
-        _db, "SELECT record FROM witnesses WHERE id=? AND chunk_offset=?"
-    );
-    stmt.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, offset);
-    if (!stmt.step()) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
-    }
-    auto bytes = stmt.column_blob(0);
-    if (bytes.size() != sizeof(RawstorFrameMetaPayload)) {
-        RAWSTD_THROW_SYSTEM_ERROR(EIO);
-    }
     RawstorFrameMetaPayload record{};
-    memcpy(&record, bytes.data(), sizeof(record));
-    RawstorObjectMeta meta{};
-    if (int error = rawstor_frame_meta_decode(&record, &meta)) {
-        RAWSTD_THROW_SYSTEM_ERROR(error);
-    }
-    if (state) {
-        meta.state = *state;
-    } else if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 &&
-               meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST) {
-        meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    }
-    meta.config = config;
     if (int error = rawstor_frame_meta_encode(&record, &meta)) {
         RAWSTD_THROW_SYSTEM_ERROR(error);
     }
@@ -588,7 +558,80 @@ void ObjectStore::set_config(
         .bind_blob(2, id.bytes, sizeof(id.bytes))
         .bind_int64(3, offset)
         .step();
+}
+
+RawstorObjectMeta
+ObjectStore::witness_meta(const RawstdUUID& id, uint64_t offset) {
+    std::lock_guard<std::mutex> guard(_mutex);
+    return _load_witness(id, offset);
+}
+
+void ObjectStore::set_config(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
+    unsigned int flags, std::optional<RawstorObjectSyncStateValue> state
+) {
+    if ((flags & ~RAWSTOR_CONFIG_CLEAR_LOST) != 0 ||
+        (state && (flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    std::lock_guard<std::mutex> guard(_mutex);
+    Transaction tx(_db);
+    RawstorObjectMeta meta = _load_witness(id, offset);
+    if (state) {
+        meta.state = *state;
+    } else if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 &&
+               meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST) {
+        meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
+    }
+    meta.config = config;
+    _store_witness(id, offset, meta);
     tx.commit();
+}
+
+RawstorObjectMeta ObjectStore::sync_prepare(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
+    bool& ok
+) {
+    std::lock_guard<std::mutex> guard(_mutex);
+    Transaction tx(_db);
+    RawstorObjectMeta meta = _load_witness(id, offset);
+    rawstd::caspaxos::Acceptor<RawstorObjectConfig> state{
+        {meta.promised.counter, meta.promised.proposer},
+        {meta.accepted.counter, meta.accepted.proposer},
+        meta.config
+    };
+    ok = state.prepare({ballot.counter, ballot.proposer});
+    if (ok) {
+        meta.promised = {state.promised().counter, state.promised().proposer};
+        _store_witness(id, offset, meta);
+    }
+    tx.commit();
+    return meta;
+}
+
+RawstorObjectMeta ObjectStore::sync_accept(
+    const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
+    const RawstorObjectBallot& next, const RawstorObjectConfig& config, bool& ok
+) {
+    std::lock_guard<std::mutex> guard(_mutex);
+    Transaction tx(_db);
+    RawstorObjectMeta meta = _load_witness(id, offset);
+    rawstd::caspaxos::Acceptor<RawstorObjectConfig> state{
+        {meta.promised.counter, meta.promised.proposer},
+        {meta.accepted.counter, meta.accepted.proposer},
+        meta.config
+    };
+    ok = state.accept(
+        {ballot.counter, ballot.proposer}, config, {next.counter, next.proposer}
+    );
+    if (ok) {
+        meta.promised = {state.promised().counter, state.promised().proposer};
+        meta.accepted = {state.accepted().counter, state.accepted().proposer};
+        meta.config = state.value();
+        _store_witness(id, offset, meta);
+    }
+    tx.commit();
+    return meta;
 }
 
 void ObjectStore::remove_witness(const RawstdUUID& id, uint64_t offset) {

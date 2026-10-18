@@ -390,6 +390,45 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         co_await client->_send_response(head.cmd, head.cid, res);
         break;
     }
+    case RAWSTOR_CMD_SYNC_PREPARE:
+    case RAWSTOR_CMD_SYNC_ACCEPT: {
+        RawstorFrameSyncProposePayload payload{};
+        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        int32_t res = 0;
+        RawstorFrameSyncReplyPayload out{};
+        try {
+            RawstdUUID id = uuid_of(payload.object_id);
+            bool ok = false;
+            RawstorObjectMeta meta{};
+            if (head.cmd == RAWSTOR_CMD_SYNC_PREPARE) {
+                meta = store.sync_prepare(
+                    id, payload.chunk_offset, payload.ballot, ok
+                );
+            } else {
+                RawstorObjectConfig config{};
+                if (int error =
+                        rawstor_frame_config_decode(&payload.config, &config)) {
+                    RAWSTD_THROW_SYSTEM_ERROR(error);
+                }
+                meta = store.sync_accept(
+                    id, payload.chunk_offset, payload.ballot, payload.next,
+                    config, ok
+                );
+            }
+            out.ok = ok;
+            if (int error = rawstor_frame_meta_encode(&out.meta, &meta)) {
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            }
+            res = sizeof(out);
+        } catch (const std::system_error& e) {
+            res = -e.code().value();
+        }
+        co_await client->_send_response(
+            head.cmd, head.cid, res, res > 0 ? &out : nullptr,
+            res > 0 ? sizeof(out) : 0
+        );
+        break;
+    }
     case RAWSTOR_CMD_OBJ_CREATE: {
         RawstorFrameObjCreatePayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
