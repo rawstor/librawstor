@@ -120,11 +120,25 @@ ssize_t target_set_config(
     Queue& queue, const std::string& target,
     const RawstorObjectConfig& sync_state
 ) {
-    return rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
-        return rawstor_target_set_member_config(
-            queue, target.c_str(), 0, &sync_state, 0, nullptr, cb, data
+    static uint64_t counter = 1000;
+    RawstorObjectBallot ballot{++counter, 7};
+    RawstorObjectBallot next{0, 0};
+    RawstorObjectMeta meta{};
+    ssize_t res = rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
+        return rawstor_target_sync_prepare(
+            queue, target.c_str(), 0, &ballot, &meta, cb, data
         );
     });
+    if (res < 0) {
+        return res;
+    }
+    res = rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
+        return rawstor_target_sync_accept(
+            queue, target.c_str(), 0, &ballot, &next, &sync_state, &meta, cb,
+            data
+        );
+    });
+    return res < 0 ? res : (res == 1 ? 0 : -EAGAIN);
 }
 
 ssize_t object_close(Queue& queue, RawstorObject* object) {
@@ -888,16 +902,22 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
         .promised = {},
         .accepted = {},
     };
-    std::atomic<bool> syncing_sent(false);
     std::atomic<bool> final_state_sent(false);
     auto s = std::make_unique<rawstor::tests::Session>(server);
     s->cmd_meta(RAWSTOR_MAGIC, 0, 0, stale);
     s->cmd_set_object(RAWSTOR_MAGIC, 1, 0);
     s->cmd_meta(RAWSTOR_MAGIC, 2, 0, stale);
-    // The SYNCING mark, answered once the object is dirty (below).
+    // The SYNCING role is decided with the first change of the register:
+    // a prepare and an accept.
+    s->cmd_sync_prepare(RAWSTOR_MAGIC, 3, 0, stale);
+    std::atomic<bool> syncing_sent(false);
+    s->cmd_meta(RAWSTOR_MAGIC, 5, 0, stale);
     server.read(
-        "SYNCING SET_CONFIG <<<", sizeof(RawstorFrameSetConfig),
+        "SYNCING SYNC_ACCEPT <<<", sizeof(RawstorFrameSyncPropose),
         [&syncing_sent](const void*) { syncing_sent = true; }
+    );
+    s->cmd_sync_response(
+        RAWSTOR_CMD_SYNC_ACCEPT, RAWSTOR_MAGIC, 6, 0, true, stale
     );
 
     std::string target =
@@ -911,34 +931,32 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
     }
     ASSERT_TRUE(syncing_sent);
 
-    // Dirty the object before the resync proper starts: this write goes
-    // to the two current members, and the write below then needs no dirty
-    // barrier, so the identity the member gets stays current.
-    std::string first(4096, 'F');
-    object_write(queue, object, first.data(), first.size(), 0, 0);
-
-    s->cmd_set_state_response(RAWSTOR_MAGIC, 3, 0);
-    s->cmd_write(RAWSTOR_MAGIC, 4, spec.size); // the copy
-    s->cmd_flush(RAWSTOR_MAGIC, 5, 0);         // durable before clearing LOST
+    // The resync's decision recorded the set: the writes below need no dirty
+    // barrier.
+    // The copy of an empty chunk goes out as zeroes.
+    s->cmd_write_zeroes(RAWSTOR_MAGIC, 7, spec.size);
+    s->cmd_flush(RAWSTOR_MAGIC, 8, 0); // durable before it rejoins
     RawstorFrameMetaPayload final_meta = stale;
     final_meta.state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
-    // The final state, answered only once the client's write is in.
+    // The rejoin, answered only once the client's write is in.
+    s->cmd_meta(RAWSTOR_MAGIC, 9, 0, stale);
     server.read(
-        "final SET_CONFIG <<<", sizeof(RawstorFrameSetConfig),
+        "rejoin SYNC_ACCEPT <<<", sizeof(RawstorFrameSyncPropose),
         [&final_state_sent, &final_meta](const void* data) {
             final_meta.config =
-                static_cast<const RawstorFrameSetConfig*>(data)->payload.config;
+                static_cast<const RawstorFrameSyncPropose*>(data)
+                    ->payload.config;
             final_state_sent = true;
         }
     );
     s->cmd_write_request(4096);
-    s->cmd_set_state_response(RAWSTOR_MAGIC, 6, 0);
+    s->cmd_sync_response(
+        RAWSTOR_CMD_SYNC_ACCEPT, RAWSTOR_MAGIC, 10, 0, true, stale
+    );
     for (int i = 0; i < 1000 && !final_state_sent; ++i) {
         rawio_wait_timeout(queue, 10);
     }
     ASSERT_TRUE(final_state_sent);
-    s->cmd_meta(RAWSTOR_MAGIC, 8, 0, final_meta);
-    s->cmd_set_state(RAWSTOR_MAGIC, 9, 0);
 
     testing::internal::CaptureStderr();
     bool written = false;
@@ -962,7 +980,7 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
         rawio_wait_timeout(queue, 10);
     }
     EXPECT_FALSE(written);
-    s->cmd_write_response(RAWSTOR_MAGIC, 7, 2048);
+    s->cmd_write_response(RAWSTOR_MAGIC, 11, 2048);
     for (int i = 0; i < 1000 && !written; ++i) {
         rawio_wait_timeout(queue, 10);
     }
@@ -1591,7 +1609,7 @@ TEST(MirrorQuorumTest, stale_member_bumps_identity_on_rejoin_only) {
     EXPECT_EQ(am.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
     EXPECT_NE(am.config.sync_id, fresh.sync_id);
     EXPECT_EQ(am.config.sync_id_history[0], fresh.sync_id);
-    EXPECT_EQ(am.config.epoch, fresh.epoch + 1);
+    EXPECT_EQ(am.config.epoch, fresh.epoch + 2);
     EXPECT_EQ(bm.config.sync_id, am.config.sync_id);
     EXPECT_EQ(bm.config.epoch, am.config.epoch);
 }
@@ -1759,20 +1777,19 @@ TEST(MirrorOstTest, two_members_freeze_below_majority) {
         rawstor::tests::Session s(server1);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 4, 0, legacy);
         s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 3, -EIO);
+        s.cmd_write_response(RAWSTOR_MAGIC, 6, -EIO);
     }
 
     {
         rawstor::tests::Session s(server2);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
-        /* The failed write was not acknowledged. Close records an
-         * unclean departure on the survivor. */
-        s.cmd_set_state(RAWSTOR_MAGIC, 4, 0);
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 4, 0, legacy);
+        s.cmd_write(RAWSTOR_MAGIC, 6, 4);
     }
 
     RawstorObject* object = nullptr;
@@ -1840,13 +1857,15 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
         /* Both members reject the first write's dirty-barrier update. */
-        s.cmd_set_state(RAWSTOR_MAGIC, 2, -EINVAL);
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 4, -EINVAL, legacy);
     }
     {
         rawstor::tests::Session s(server2);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 2, -EINVAL);
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 4, -EINVAL, legacy);
     }
 
     RawstorObject* object = nullptr;
@@ -1914,24 +1933,25 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         rawstor::tests::Session s(server1);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 4, 0, legacy);
+        s.cmd_write(RAWSTOR_MAGIC, 6, 4);
         /* member0's session is "lost" (a transport-class error, not a
          * payload one) right while the object is DIRTY; transparent retry
          * is already off by this point, so _read() moves on to member1
          * after this one failure. */
-        s.cmd_read_error(RAWSTOR_MAGIC, 4, -EIO);
+        s.cmd_read_error(RAWSTOR_MAGIC, 7, -EIO);
     }
     {
         rawstor::tests::Session s(server2);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
-        s.cmd_set_state(RAWSTOR_MAGIC, 2, 0);
-        s.cmd_write(RAWSTOR_MAGIC, 3, 4);
-        s.cmd_read(RAWSTOR_MAGIC, 4, "ping", 4);
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 4, 0, legacy);
+        s.cmd_write(RAWSTOR_MAGIC, 6, 4);
+        s.cmd_read(RAWSTOR_MAGIC, 7, "ping", 4);
         /* A single survivor cannot record a majority transition. */
-        s.cmd_flush(RAWSTOR_MAGIC, 5, 0);
-        s.cmd_set_state(RAWSTOR_MAGIC, 6, 0);
+        s.cmd_flush(RAWSTOR_MAGIC, 8, 0);
     }
 
     RawstorObject* object = nullptr;

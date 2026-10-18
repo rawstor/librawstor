@@ -113,6 +113,7 @@ private:
     const size_t _members;
     uint64_t _counter = 0;
     std::optional<Ballot> _next;
+    std::optional<Ballot> _decided;
     std::optional<V> _value;
     bool _busy = false;
 
@@ -181,6 +182,16 @@ public:
     Proposer(const Proposer&) = delete;
     Proposer& operator=(const Proposer&) = delete;
 
+    // The ballot of the last decision of this proposer, which an acceptor
+    // that missed it can still accept the decided value under.
+    const std::optional<Ballot>& decided() const noexcept { return _decided; }
+
+    // Counters seen outside a round (acceptor states read some other way)
+    // raise the next ballot above them, saving a refused prepare.
+    void observe(const Ballot& ballot) noexcept {
+        _counter = std::max(_counter, ballot.counter);
+    }
+
     // The transport and this proposer must outlive the returned task.
     // The change is owned by the coroutine and may be reapplied on a
     // conflict. nullopt means retain the current value; that value still
@@ -234,6 +245,7 @@ public:
             });
             if (accepted.ok > _members / 2) {
                 _value = value;
+                _decided = ballot;
                 if (!accepted.refused) {
                     _next = next;
                 }

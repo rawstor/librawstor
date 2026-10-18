@@ -187,7 +187,6 @@ TEST_F(WitnessTest, clean_witness_allows_one_data_member_down) {
     EXPECT_EQ(data, "hello");
     write(*object, "newer");
     auto metadata = metas();
-    EXPECT_EQ(metadata[2].state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     EXPECT_NE(metadata[2].config.sync_id, previous);
     EXPECT_EQ(metadata[2].config.sync_id, metadata[0].config.sync_id);
     run(*queue, object->close(true));
@@ -298,8 +297,11 @@ TEST_F(WitnessTest, unclean_close_retains_dirty_configuration) {
     auto object = run(*queue, target->open(*queue, 0));
     write(*object);
     run(*queue, object->close(false));
+    // A witness has no copy and no writer session: its state stays as created.
     for (const auto& meta : metas()) {
-        EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+        if (meta.member_role == RAWSTOR_MEMBER_DATA) {
+            EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+        }
     }
     HiddenLocation offline(b);
     auto reopened = run(*queue, target->open(*queue, 0));
@@ -361,7 +363,6 @@ TEST_F(
     servers.reset();
     write(*object, "newer");
     auto metadata = metas();
-    EXPECT_EQ(metadata[2].state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     EXPECT_EQ(metadata[2].config.sync_id, metadata[0].config.sync_id);
     EXPECT_EQ(metadata[2].config.roles[1], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
     run(*queue, object->close(false));
@@ -655,7 +656,6 @@ TEST_F(WitnessTest, four_data_members_write_and_restart_on_half_plus_witness) {
     write(*object, "newer");
     auto metadata = metas();
     ASSERT_EQ(metadata.size(), 5u);
-    EXPECT_EQ(metadata[4].state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     EXPECT_EQ(metadata[4].config.sync_id, metadata[0].config.sync_id);
     EXPECT_EQ(metadata[4].config.sync_id, metadata[1].config.sync_id);
     EXPECT_EQ(metadata[4].config.roles[2], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
@@ -821,8 +821,11 @@ TEST_F(WitnessTest, abandoned_idle_queue_does_not_lose_other_writer) {
     auto idle = run(*second_queue, target->open(*second_queue, 0));
     write(*writer);
     run(*second_queue, idle->close(false));
+    // A witness has no copy and no writer session: its state stays as created.
     for (const auto& meta : metas()) {
-        EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+        if (meta.member_role == RAWSTOR_MEMBER_DATA) {
+            EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+        }
     }
     run(*queue, writer->close(true));
     for (const auto& meta : metas()) {
@@ -840,8 +843,11 @@ TEST_F(WitnessTest, abandoned_writer_keeps_all_members_lost_after_clean_close) {
     std::string value = "newer";
     run(*second_queue, second->pwrite(value.data(), value.size(), 0, false));
     run(*second_queue, second->close(true));
+    // A witness has no copy and no writer session: its state stays as created.
     for (const auto& meta : metas()) {
-        EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+        if (meta.member_role == RAWSTOR_MEMBER_DATA) {
+            EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+        }
     }
 }
 
@@ -852,7 +858,6 @@ TEST_F(WitnessTest, writer_queues_share_witness_until_last_clean_close) {
     auto second = run(*second_queue, target->open(*second_queue, 0));
     write(*first);
     run(*queue, first->close(true));
-    EXPECT_EQ(metas()[2].state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     std::string value = "newer";
     EXPECT_EQ(
         run(*second_queue,
@@ -1336,7 +1341,7 @@ TEST_F(WitnessTest, conflicting_member_shapes_require_an_agreeing_quorum) {
     }
 }
 
-TEST_F(WitnessTest, failed_leave_persists_lost_on_surviving_members) {
+TEST_F(WitnessTest, failed_leave_on_the_witness_leaves_data_members_clean) {
     create();
     auto metadata = metas();
     rawstor::tests::Server server(29641, 256);
@@ -1345,19 +1350,9 @@ TEST_F(WitnessTest, failed_leave_persists_lost_on_surviving_members) {
     ASSERT_EQ(rawstor_frame_meta_encode(&reply, &metadata.back()), 0);
     session->cmd_meta(RAWSTOR_MAGIC, 0, 0, reply);
     session->cmd_meta(RAWSTOR_MAGIC, 1, 0, reply);
-    session->cmd_set_state(RAWSTOR_MAGIC, 2, 0);
-    session->cmd_leave(RAWSTOR_MAGIC, 3, -EIO);
-    std::atomic<unsigned int> final_state{
-        RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE
-    };
-    server.read(
-        "departure state", sizeof(RawstorFrameSetConfig),
-        [&](const void* data) {
-            final_state =
-                static_cast<const RawstorFrameSetConfig*>(data)->payload.state;
-        }
-    );
-    session->cmd_set_state_response(RAWSTOR_MAGIC, 4, 0);
+    session->cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, reply);
+    session->cmd_sync_accept(RAWSTOR_MAGIC, 4, 0, reply);
+    session->cmd_leave(RAWSTOR_MAGIC, 6, -EIO);
     rawstor::Target mirrored(
         {rawstd::URI(a.uri() + "/" + id_string(id)),
          rawstd::URI(b.uri() + "/" + id_string(id)),
@@ -1366,14 +1361,15 @@ TEST_F(WitnessTest, failed_leave_persists_lost_on_surviving_members) {
     auto object = run(*queue, mirrored.open(*queue, 0));
     write(*object);
     run(*queue, object->close(true));
-    EXPECT_EQ(final_state.load(), RAWSTOR_OBJECT_SYNC_STATE_LOST);
+    // The data members left on their own and are clean; the witness holds
+    // no copy that a failed departure could leave different.
     for (const auto& location : {a.uri(), b.uri()}) {
         rawstor::Target data({rawstd::URI(location + "/" + id_string(id))});
         EXPECT_EQ(
             run(*queue, run(*queue, data.chunks(*queue)).front().meta(*queue))
                 .front()
                 .state,
-            RAWSTOR_OBJECT_SYNC_STATE_LOST
+            RAWSTOR_OBJECT_SYNC_STATE_CLEAN
         );
     }
 }
@@ -1621,16 +1617,17 @@ TEST_F(WitnessTest, resync_commit_rechecks_the_returned_spec) {
     auto session = std::make_unique<rawstor::tests::Session>(server);
     session->cmd_meta(RAWSTOR_MAGIC, 0, 0, stale);
     session->cmd_meta(RAWSTOR_MAGIC, 1, 0, stale);
-    session->cmd_set_state(RAWSTOR_MAGIC, 2, 0); // SYNCING
-    session->cmd_meta(
-        RAWSTOR_MAGIC, 3, 0, stale
-    ); // role lookup before CLEAR_LOST
-    session->cmd_set_state(RAWSTOR_MAGIC, 4, 0); // CLEAR_LOST
+    // The SYNCING role: a prepare and an accept.
+    session->cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, stale);
+    session->cmd_sync_accept(RAWSTOR_MAGIC, 4, 0, stale);
     auto changed = stale;
     changed.size *= 2;
-    session->cmd_meta(
-        RAWSTOR_MAGIC, 5, 0, changed
-    ); // refreshed metadata at commit
+    // The rejoin: the member's answer carries the refreshed metadata.
+    session->cmd_meta(RAWSTOR_MAGIC, 6, 0, stale);
+    session->cmd_sync_accept_request();
+    session->cmd_sync_response(
+        RAWSTOR_CMD_SYNC_ACCEPT, RAWSTOR_MAGIC, 7, 0, true, changed
+    );
     rawstor::Target mirrored(
         {rawstd::URI(a.uri() + "/" + id_string(id)),
          rawstd::URI(b.uri() + "/" + id_string(id)),

@@ -21,13 +21,14 @@ separately.
 | `epoch` on write frames, `-ESTALE` below the copy's epoch, drain on raise | 1 | ✅ | `src/slot.cpp` (`Admission`) |
 | `RESYNC` flag on writes; client-write record of a syncing copy | 1 | ✅ | `src/slot.cpp` (`Resync`) |
 | `Proposer<V>`: a change as a coroutine over a pluggable transport | 2 | ✅ | `librawstd/include/rawstd/caspaxos.hpp`, [CASPaxos](caspaxos.md#api) |
-| Every transition through the register | 2 | ❌ | the client uses `SET_CONFIG` |
+| Every transition of the client through the register: dirty gate, exclusion, resync start and rejoin, end of a heal | 2 | ✅ | `src/chunk.cpp` (`Chunk::_decide()`, `_record()`) |
 | The client stamps writes with its chunk configuration epoch | 1 | ✅ | ordinary Chunk operations supply the current epoch |
 | Adoption of the register value on `-ESTALE` from another writer process | 2 | ❌ | requires witness and the client Proposer |
 | `LOST` at open and at runtime: resync of the losers | 2 | 🟡 | one process: its open heals the copies in the set and then clears `LOST` ([Mirroring](mirroring.md), F5); several writers: not implemented |
 | Resync across processes (`resync_owner`, sweep with `RESYNC`) | 2 | ❌ | — |
+| `LOST` cleared by a rule on the accepted value | 2 | ✅ | [Clearing `LOST`](#clearing-lost), `src/slot.cpp` (`clears_lost()`) |
 | `SET_CONFIG` and `rawstor_target_set_member_config()` retired | 2 | ❌ | [Retiring `SET_CONFIG`](#retiring-set_config) |
-| The client keeps the register value once per chunk, not per member | 2 | ❌ | [The register](#the-register-caspaxos) |
+| The client keeps the register value once per chunk, not per member | 2 | ✅ | `MirrorControl` (the decided configuration and the `Proposer`), [The register](#the-register-caspaxos) |
 | OST serves one backend Slot; mirroring is coordinated by the client | 1 | ✅ | [Mirroring](mirroring.md#one-copy-per-server) |
 | Witness participation in the configuration register for N = 2 | Before 2 | ✅ | `SYNC_PREPARE` / `SYNC_ACCEPT` on OST, file, LVM, ZFS and MDS (SQLite) witnesses; [MDS design](mds.md#witness) |
 
@@ -224,34 +225,64 @@ sequenceDiagram
     Note over X: decided: B excluded, acks resume
 ```
 
-Every member stores the whole value -- that is what replicating the
-register means, and it is cheap on disk: `roles` takes one digit per
-member. A writer needs it once per chunk, though: it keeps the decided
-value in the chunk's shared state (`MirrorControl`) and, per member, only
-what is that member's own -- `state`, `epoch`, `sync_id` and its history.
-The stage-1 client still keeps a whole configuration per member and makes
-no use of the register; stage 2 moves to one value per chunk.
+Every member that takes part in a decision stores the whole value -- that
+is what replicating the register means, and it is cheap on disk: `roles`
+takes one digit per member. A writer needs it once per chunk, though: it
+keeps the decided value in the chunk's shared state (`MirrorControl`)
+together with its `Proposer`, and, per member, only what is that member's
+own -- `state`, `epoch`, `sync_id` and its history.
+
+A decision needs a majority of all the members, but only the members that
+take part in the new configuration are asked: the in-sync members, and a
+member whose role the decision changes to or from syncing. An excluded
+member is not asked and keeps the record it has, so its older `sync_id` and
+ballots are how a later open knows it for stale. A member that fails the
+request is excluded by the next decision. The writers of one process make
+their decisions one at a time under the chunk's transition lock.
+
+A resync is a sequence of decisions: its start names the member syncing
+and the writer its owner and moves the epoch; the rejoin names it in-sync
+again with a new `sync_id`. The member takes the rejoin decision after the
+in-sync members and the writer have moved to its epoch (the writer teaches
+it the decided value under the decision's own ballot), so the writes the
+writer duplicates onto the member are never stamped below it. A chunk
+without a majority among its in-sync members lets the member take part in
+the decision itself; no write goes on then.
 
 `rawstor-ost` applies both requests to the copy it is, on its one
 location; multiple locations are rejected at startup
 ([Mirroring](mirroring.md#one-copy-per-server)).
 
+### Clearing `LOST`
+
+A copy goes `LOST` when a session that wrote it vanished
+([Mirroring](mirroring.md#dirty-clean-and-lost)). Accepting a value ends
+that state, after the copy is made durable, when the copies are equal again:
+
+- its own role turns from syncing to in-sync: the resync finished;
+- `resync_owner` leaves, the roles stay and the `sync_id` moves on, with the
+  copy in-sync: the heal of the in-sync copies after a vanished writer
+  finished. The healing writer names itself the owner first and ends the
+  heal with the second decision.
+
+The copy is then `CLEAN` when no session writes it and `DIRTY` otherwise.
+Nothing else clears it: a value that changes only the set, an exclusion
+included, leaves `LOST` where it is.
+
+A witness holds no copy and no writer session: its state stays as it was
+created.
+
 ### Retiring `SET_CONFIG`
 
 `SET_CONFIG` (`rawstor_target_set_member_config()` in the C API) records a
 configuration on one copy unconditionally, bypassing the register; it
-keeps the copy's ballots, so the stage-1 client's transitions never wipe
-promises. With stage 1 it carries every transition of the client -- the
-syncing role that starts a copy's record of client writes included -- and
-`rawstor resolve`. A write that ignores promises cannot coexist with
-several proposers, so stage 2 removes the command and the function once
-nothing needs them:
+keeps the copy's ballots. The client no longer uses it for any transition.
+It remains for `rawstor resolve`, tests and tooling, and a write that
+ignores promises cannot coexist with several proposers, so it goes once
+they use the register too:
 
-| Use | Stage 2 replacement |
+| Use | Replacement |
 |---|---|
-| The client's transitions (dirty gate, exclusion, rejoin) | `SYNC_PREPARE` / `SYNC_ACCEPT` |
-| The syncing role | Already a role: an accepted value naming the copy syncing starts its record of client writes, as `SET_CONFIG` does |
-| Clearing `LOST` (`RAWSTOR_CONFIG_CLEAR_LOST`) | A rule on the accepted value. Candidate: an accept with a new `sync_id` and every member in-sync clears `LOST` -- that only happens when a resync has just made the copies equal again. To be settled before the removal: clearing `LOST` over copies that still differ would hide them from F5 |
 | `rawstor resolve` | `SYNC_PREPARE` with a ballot above every one seen, then `SYNC_ACCEPT` of the resolved configuration: consistent with writers still running |
 | pyrawstor `Target.set_member_config()`, tests | The same requests |
 

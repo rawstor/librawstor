@@ -11,6 +11,7 @@ the acceptor; stage 2 adds the generic proposer.
 | `accept()` promising the proposer's next ballot (one-round changes) | 1 | ✅ | `rawstd::caspaxos::Acceptor<V>::accept()` |
 | `Proposer<V>`: the two phases as a coroutine over a pluggable transport | 2 | ✅ | `librawstd/include/rawstd/caspaxos.hpp`, `librawstd/tests/test_caspaxos.cpp` |
 | Proposer skipping phase 1 after its own decision | 2 | ✅ | `rawstd::caspaxos::Proposer<V>::change()` |
+| Proposer raising its counter above states it read outside a round | 2 | ✅ | `rawstd::caspaxos::Proposer<V>::observe()` |
 
 ## Overview
 

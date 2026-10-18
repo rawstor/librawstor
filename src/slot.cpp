@@ -73,6 +73,27 @@ RawstorObjectBallot ballot_to(const rawstd::caspaxos::Ballot& b) noexcept {
     return RawstorObjectBallot{b.counter, b.proposer};
 }
 
+// Whether accepting `next` over `prev` ends the copy's LOST state
+// (docs/multiattach.md, "Clearing LOST"): its resync completed (its role
+// turns from SYNCING to in-sync), or a heal of the in-sync copies ended
+// (`resync_owner` leaves, the roles stay and the sync set moves on). Both
+// mean the copies are equal again.
+bool clears_lost(
+    const RawstorObjectConfig& prev, const RawstorObjectConfig& next,
+    uint8_t member_index
+) noexcept {
+    if (member_index >= prev.nroles || member_index >= next.nroles ||
+        next.roles[member_index] != RAWSTOR_OBJECT_MEMBER_IN_SYNC) {
+        return false;
+    }
+    if (prev.roles[member_index] == RAWSTOR_OBJECT_MEMBER_SYNCING) {
+        return true;
+    }
+    return prev.resync_owner != 0 && next.resync_owner == 0 &&
+           next.sync_id != prev.sync_id && prev.nroles == next.nroles &&
+           memcmp(prev.roles, next.roles, next.nroles) == 0;
+}
+
 // Releases a member's record lock on every way out of a coroutine.
 struct RecordLockGuard {
     rawthread::Lock& lock;
@@ -1818,6 +1839,7 @@ rawstd::Task<bool> Slot::_sync_accept(
     std::shared_ptr<Backend> be = _get_backend();
     rawstd::caspaxos::Acceptor<RawstorObjectConfig> state{};
     bool ok = false;
+    bool clear_lost = false;
     for (bool again = true; again;) {
         meta = (co_await be->meta(id, offset, RawstdUUID{})).front();
         meta.writers = std::max(meta.writers, member->writers.load());
@@ -1825,7 +1847,14 @@ rawstd::Task<bool> Slot::_sync_accept(
             ballot_from(meta.promised), ballot_from(meta.accepted), meta.config
         };
         ok = state.accept(ballot_from(ballot), config, ballot_from(next));
+        clear_lost = ok && meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST &&
+                     meta.member_role == RAWSTOR_MEMBER_DATA &&
+                     clears_lost(meta.config, config, member_index);
         again = ok && co_await member->raise_epoch(_queue, config.epoch);
+    }
+    if (clear_lost) {
+        // The copy is made durable before it stops being LOST.
+        co_await _flush_copy(id, offset);
     }
     if (ok) {
         meta.promised = ballot_to(state.promised());
@@ -1844,6 +1873,16 @@ rawstd::Task<bool> Slot::_sync_accept(
                   )
                 : RAWSTOR_OBJECT_MEMBER_UNKNOWN
         );
+    }
+    if (accepted && clear_lost) {
+        meta.state = member->writers.load() == 0
+                         ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
+                         : RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
+        co_await transition_state(
+            *be, id, offset, RAWSTOR_OBJECT_SYNC_STATE_LOST, meta.state
+        );
+        // Recheck the persisted state before the next first write.
+        member->dirty.store(false, std::memory_order_release);
     }
     meta.writers = std::max(meta.writers, member->writers.load());
     member->learn_epoch(meta.config.epoch);

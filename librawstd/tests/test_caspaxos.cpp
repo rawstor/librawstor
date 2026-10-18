@@ -189,6 +189,20 @@ TEST(CasPaxosProposerTest, decides_and_then_skips_prepare) {
     }
 }
 
+TEST(CasPaxosProposerTest, observed_counter_saves_a_refused_prepare) {
+    MemoryTransport transport;
+    transport.states[0] = {{7, 9}, {}, 0};
+    transport.states[1] = {{7, 9}, {}, 0};
+    transport.states[2] = {{7, 9}, {}, 0};
+    IntProposer proposer(1, 3);
+    proposer.observe({7, 9});
+    EXPECT_EQ(proposer.change(transport, increment).get(), 1);
+    EXPECT_EQ(transport.prepares, 3u);
+    for (const auto& state : transport.states) {
+        EXPECT_GT(state.accepted(), (Ballot{7, 9}));
+    }
+}
+
 TEST(
     CasPaxosProposerTest, highest_accepted_value_and_unchanged_value_are_decided
 ) {

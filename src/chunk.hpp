@@ -95,9 +95,10 @@ private:
     // the write quorum. RAWSTOR_FORCE without READONLY is not honoured.
     bool _skip_quorum;
 
-    rawstd::Task<void> _set_member_config(
-        size_t index, RawstorObjectConfig config, unsigned int flags = 0,
-        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
+    struct RegisterTransport;
+    rawstd::Task<void> _decide(
+        const RawstorObjectConfig& value, const std::vector<bool>& accepting,
+        std::vector<size_t>& failed
     );
 
     std::shared_ptr<MirrorControl> _control;
@@ -299,11 +300,8 @@ private:
     // Throws EIO with no in-sync member left, or once fewer than a write
     // quorum survive (`joining` counts a member about to rejoin), freezing
     // writes.
-    rawstd::Task<void> _record(bool bump, size_t joining);
-    rawstd::Task<void> _set_config_one(
-        size_t idx, RawstorObjectConfig config,
-        std::shared_ptr<std::vector<size_t>> failed
-    );
+    rawstd::Task<void>
+    _record(bool bump, size_t joining, bool* joined = nullptr);
 
     // Mirrored write fan-out shared by pwrite()/pwritev()/discard()/
     // write_zeroes()/flush(): `issue` is co_await-ed against every

@@ -43,9 +43,11 @@ enum CommandType {
 class Command {
 public:
     rawstd::TraceEvent trace_event;
+    std::string name;
 
     explicit Command(const char* name) :
-        trace_event(RAWSTD_TRACE_EVENT('!', "%s\n", name)) {}
+        trace_event(RAWSTD_TRACE_EVENT('!', "%s\n", name)),
+        name(name) {}
     virtual ~Command() = default;
     Command(const Command&) = delete;
     Command(Command&&) = delete;
@@ -350,19 +352,30 @@ Server::_do_read(rawio::Queue& queue, std::shared_ptr<Command> command) {
     assert(_client_fd != -1);
 
     auto command_read = std::dynamic_pointer_cast<CommandRead>(command);
-    size_t result = co_await queue.read(
-        _client_fd, command_read->buf(), command_read->size()
-    );
+    // A request may reach the stream in several pieces, a header and then
+    // its payload.
+    size_t result = 0;
+    while (result < command_read->size()) {
+        size_t n = co_await queue.read(
+            _client_fd, static_cast<char*>(command_read->buf()) + result,
+            command_read->size() - result
+        );
+        if (n == 0) {
+            if (result == 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
+            }
+            throw std::runtime_error(
+                "Partial read: " + command_read->name + ": " +
+                std::to_string(result) + " of " +
+                std::to_string(command_read->size())
+            );
+        }
+        result += n;
+    }
 
     RAWSTD_TRACE_EVENT_MESSAGE(
         command_read->trace_event, "read(): result = %zu, error = 0\n", result
     );
-    if (result == 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
-    }
-    if (result != command_read->size()) {
-        throw std::runtime_error("Partial read");
-    }
     command_read->cb();
 }
 

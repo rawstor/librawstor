@@ -271,6 +271,7 @@ rawstd::Task<void> initialize_members(
     if (rawstd_uuid7_init(&generation) != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
+    const RawstorObjectBallot initial_ballot{1, 1};
     RawstorObjectConfig config{};
     config.epoch = 1;
     memcpy(&config.sync_id, generation.bytes + 8, sizeof(config.sync_id));
@@ -286,11 +287,16 @@ rawstd::Task<void> initialize_members(
             co_await rawstor::Slot::create(queue, strip_path(members[i]));
         std::exception_ptr error;
         try {
-            co_await slot->set_config(
-                uuid_from_target(members[i]), extract_offset(members[i]),
-                static_cast<uint8_t>(i), config, 0,
-                RAWSTOR_OBJECT_SYNC_STATE_CLEAN
-            );
+            RawstorObjectMeta meta{};
+            // The first decision of the register, taken without a prepare:
+            // no proposer has promised anything on a new member.
+            if (!co_await slot->sync_accept(
+                    uuid_from_target(members[i]), extract_offset(members[i]),
+                    static_cast<uint8_t>(i), initial_ballot,
+                    RawstorObjectBallot{}, config, meta
+                )) {
+                RAWSTD_THROW_SYSTEM_ERROR(EIO);
+            }
         } catch (...) {
             error = std::current_exception();
         }

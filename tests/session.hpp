@@ -50,6 +50,25 @@ public:
     void cmd_set_state_response(uint32_t magic, uint16_t cid, int32_t res);
     // SET_CONFIG.
     void cmd_set_state(uint32_t magic, uint16_t cid, int32_t res);
+    // SYNC_PREPARE / SYNC_ACCEPT: the register's requests, answered with
+    // whether the member took part and its record.
+    void cmd_sync_prepare_request();
+    void cmd_sync_accept_request();
+    void cmd_sync_response(
+        RawstorCommandType cmd, uint32_t magic, uint16_t cid, int32_t res,
+        bool ok, const RawstorFrameMetaPayload& meta
+    );
+    // A client's Slot reads the member's record (META, `cid`) before it
+    // sends the request (`cid` + 1).
+    void cmd_sync_prepare(
+        uint32_t magic, uint16_t cid, int32_t res,
+        const RawstorFrameMetaPayload& meta
+    );
+    void cmd_sync_accept(
+        uint32_t magic, uint16_t cid, int32_t res,
+        const RawstorFrameMetaPayload& meta
+    );
+
     void cmd_leave(uint32_t magic, uint16_t cid, int32_t res);
 
     void cmd_location_info_request();

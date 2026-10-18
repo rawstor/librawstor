@@ -341,6 +341,87 @@ void Session::cmd_set_state(uint32_t magic, uint16_t cid, int32_t res) {
     cmd_set_state_response(magic, cid, res);
 }
 
+void Session::cmd_sync_prepare_request() {
+    _server.read(
+        "RAWSTOR_CMD_SYNC_PREPARE <<<", sizeof(RawstorFrameSyncPropose),
+        [](const void*) {}
+    );
+}
+
+void Session::cmd_sync_accept_request() {
+    _server.read(
+        "RAWSTOR_CMD_SYNC_ACCEPT <<<", sizeof(RawstorFrameSyncPropose),
+        [](const void*) {}
+    );
+}
+
+void Session::cmd_sync_response(
+    RawstorCommandType cmd, uint32_t magic, uint16_t cid, int32_t res, bool ok,
+    const RawstorFrameMetaPayload& meta
+) {
+    if (res < 0) {
+        RawstorFrameResponse response = {
+            .head{
+                .magic = magic,
+                .cmd = cmd,
+                .cid = cid,
+            },
+            .body = {
+                .hash = 0,
+                .res = res,
+            },
+        };
+        _server.write("RAWSTOR_CMD_SYNC >>>", &response, sizeof(response));
+        return;
+    }
+
+    RawstorFrameSyncReplyPayload reply{};
+    reply.ok = ok;
+    reply.meta = meta;
+    RawstorFrameResponse response = {
+        .head{
+            .magic = magic,
+            .cmd = cmd,
+            .cid = cid,
+        },
+        .body = {
+            .hash = rawstd_hash_scalar(&reply, sizeof(reply)),
+            .res = static_cast<int32_t>(sizeof(reply)),
+        },
+    };
+    iovec iov[2] = {
+        {
+            .iov_base = &response,
+            .iov_len = sizeof(response),
+        },
+        {
+            .iov_base = &reply,
+            .iov_len = sizeof(reply),
+        },
+    };
+    _server.writev("RAWSTOR_CMD_SYNC >>>", iov, sizeof(iov) / sizeof(iov[0]));
+}
+
+void Session::cmd_sync_prepare(
+    uint32_t magic, uint16_t cid, int32_t res,
+    const RawstorFrameMetaPayload& meta
+) {
+    cmd_meta(magic, cid, 0, meta);
+    cmd_sync_prepare_request();
+    cmd_sync_response(
+        RAWSTOR_CMD_SYNC_PREPARE, magic, cid + 1, res, true, meta
+    );
+}
+
+void Session::cmd_sync_accept(
+    uint32_t magic, uint16_t cid, int32_t res,
+    const RawstorFrameMetaPayload& meta
+) {
+    cmd_meta(magic, cid, 0, meta);
+    cmd_sync_accept_request();
+    cmd_sync_response(RAWSTOR_CMD_SYNC_ACCEPT, magic, cid + 1, res, true, meta);
+}
+
 void Session::cmd_leave(uint32_t magic, uint16_t cid, int32_t res) {
     _server.read(
         "RAWSTOR_CMD_LEAVE <<<", sizeof(RawstorFrameBasic), [](const void*) {}
