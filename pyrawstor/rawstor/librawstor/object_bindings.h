@@ -8,8 +8,8 @@
 extern "C" {
 #endif
 
-// Heap types (Py_LIMITED_API-compatible, built via PyType_FromModuleAndSpec)
-// -- NULL until py_rawstor_types_init() creates them at module init time.
+// Borrowed references to module-owned heap types (Py_LIMITED_API-compatible).
+// NULL until py_rawstor_types_init() creates them at module init time.
 extern PyTypeObject* PyObjectSpecType;
 extern PyTypeObject* PyLocationInfoType;
 extern PyTypeObject* PyObjectMetaType;

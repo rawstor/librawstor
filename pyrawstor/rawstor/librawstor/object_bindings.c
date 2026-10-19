@@ -723,47 +723,27 @@ static PyType_Spec PyObjectMeta_spec = {
 
 PyTypeObject* PyObjectMetaType = NULL;
 
+static int add_type(PyObject* module, PyType_Spec* spec, PyTypeObject** type) {
+    *type = (PyTypeObject*)PyType_FromModuleAndSpec(module, spec, NULL);
+    if (*type == NULL) {
+        return -1;
+    }
+    int result = PyModule_AddType(module, *type);
+    /* PyModule_AddType retains its own reference; the global is borrowed. */
+    Py_DECREF(*type);
+    if (result < 0) {
+        *type = NULL;
+    }
+    return result;
+}
+
 int py_rawstor_types_init(PyObject* module) {
-    PyObjectSpecType = (PyTypeObject*)PyType_FromModuleAndSpec(
-        module, &PyObjectSpec_spec, NULL
-    );
-    if (PyObjectSpecType == NULL) {
+    if (add_type(module, &PyObjectSpec_spec, &PyObjectSpecType) < 0 ||
+        add_type(module, &PyLocationInfo_spec, &PyLocationInfoType) < 0 ||
+        add_type(module, &PyObjectMeta_spec, &PyObjectMetaType) < 0 ||
+        add_type(module, &PyObjectConfig_spec, &PyObjectConfigType) < 0) {
         return -1;
     }
-    if (PyModule_AddType(module, PyObjectSpecType) < 0) {
-        return -1;
-    }
-
-    PyLocationInfoType = (PyTypeObject*)PyType_FromModuleAndSpec(
-        module, &PyLocationInfo_spec, NULL
-    );
-    if (PyLocationInfoType == NULL) {
-        return -1;
-    }
-    if (PyModule_AddType(module, PyLocationInfoType) < 0) {
-        return -1;
-    }
-
-    PyObjectMetaType = (PyTypeObject*)PyType_FromModuleAndSpec(
-        module, &PyObjectMeta_spec, NULL
-    );
-    if (PyObjectMetaType == NULL) {
-        return -1;
-    }
-    if (PyModule_AddType(module, PyObjectMetaType) < 0) {
-        return -1;
-    }
-
-    PyObjectConfigType = (PyTypeObject*)PyType_FromModuleAndSpec(
-        module, &PyObjectConfig_spec, NULL
-    );
-    if (PyObjectConfigType == NULL) {
-        return -1;
-    }
-    if (PyModule_AddType(module, PyObjectConfigType) < 0) {
-        return -1;
-    }
-
     return 0;
 }
 
