@@ -274,7 +274,8 @@ TEST(PlacementTest, even_data_width_adds_one_witness_on_an_unused_domain) {
         make_ost("00000000-0000-7000-8000-000000000002", 100, "host2")
     );
     auto mds = make_ost("00000000-0000-7000-8000-000000000003", 100, "host3");
-    mds.location = "mds://127.0.0.1:7776";
+    mds.location = "ost://127.0.0.1:7776";
+    mds.roles = {rawstor::mdsserver::Role::Witness};
     topology.add(mds);
     for (uint64_t stripe : {uint64_t(0), uint64_t(1), uint64_t(2)}) {
         PlacementPolicy policy{2, Level::Server, stripe, 7};
@@ -330,7 +331,8 @@ TEST(PlacementTest, witness_needs_a_distinct_populated_failure_domain) {
         make_ost("00000000-0000-7000-8000-000000000002", 100, "host2")
     );
     auto mds = make_ost("00000000-0000-7000-8000-000000000003", 100, "host1");
-    mds.location = "mds://127.0.0.1:7776";
+    mds.location = "ost://127.0.0.1:7776";
+    mds.roles = {rawstor::mdsserver::Role::Witness};
     topology.add(mds);
     EXPECT_THROW(
         rawstor::mdsserver::place_chunk(
@@ -362,7 +364,8 @@ TEST(PlacementTest, witness_shares_the_object_pinned_partial_stripe_pool) {
         snprintf(uuid, sizeof(uuid), "00000000-0000-7000-8000-%012u", i);
         auto backend = make_ost(uuid, 100, std::to_string(i).c_str());
         if (i > 8) {
-            backend.location = "mds://127.0.0.1:7776";
+            backend.location = "ost://127.0.0.1:7776";
+            backend.roles = {rawstor::mdsserver::Role::Witness};
         }
         topology.add(backend);
     }
@@ -382,5 +385,65 @@ TEST(PlacementTest, witness_shares_the_object_pinned_partial_stripe_pool) {
             }
         }
         EXPECT_LE(domains.size(), std::max<uint64_t>(stripe, 3));
+    }
+}
+
+TEST(PlacementTest, mixed_roles_reserve_the_only_witness_capable_domain) {
+    using rawstor::mdsserver::Role;
+    Topology topology;
+    auto both = make_ost("00000000-0000-7000-8000-000000000001", 100, "host1");
+    topology.add(both);
+    for (unsigned i = 2; i <= 4; ++i) {
+        char uuid[40];
+        snprintf(uuid, sizeof(uuid), "00000000-0000-7000-8000-%012u", i);
+        auto data = make_ost(uuid, 100, std::to_string(i).c_str());
+        data.roles = {Role::Data};
+        topology.add(data);
+    }
+    for (uint64_t stripe :
+         {uint64_t(0), uint64_t(1), uint64_t(2), uint64_t(4)}) {
+        for (unsigned object = 0; object < 32; ++object) {
+            auto id = make_id();
+            for (uint64_t chunk = 0; chunk < 8; ++chunk) {
+                const auto slots = rawstor::mdsserver::place_chunk(
+                    topology, id, chunk,
+                    PlacementPolicy{2, Level::Server, stripe, 0}
+                );
+                ASSERT_EQ(slots.size(), 3u);
+                EXPECT_EQ(rawstd_uuid_cmp(&slots.back().ost_id, &both.id), 0);
+                for (unsigned i = 0; i < 2; ++i) {
+                    EXPECT_NE(rawstd_uuid_cmp(&slots[i].ost_id, &both.id), 0);
+                }
+            }
+        }
+    }
+}
+
+TEST(PlacementTest, data_only_backends_cannot_supply_a_witness) {
+    using rawstor::mdsserver::Role;
+    Topology topology;
+    for (unsigned i = 1; i <= 3; ++i) {
+        char uuid[40];
+        snprintf(uuid, sizeof(uuid), "00000000-0000-7000-8000-%012u", i);
+        auto backend = make_ost(uuid, 100, std::to_string(i).c_str());
+        backend.roles = {Role::Data};
+        topology.add(backend);
+    }
+    for (uint64_t stripe : {uint64_t(0), uint64_t(1), uint64_t(4)}) {
+        EXPECT_THROW(
+            rawstor::mdsserver::place_chunk(
+                topology, make_id(), 0,
+                (PlacementPolicy{2, Level::Server, stripe, 0})
+            ),
+            std::system_error
+        );
+        EXPECT_EQ(
+            rawstor::mdsserver::place_chunk(
+                topology, make_id(), 0,
+                PlacementPolicy{3, Level::Server, stripe, 0}
+            )
+                .size(),
+            3u
+        );
     }
 }

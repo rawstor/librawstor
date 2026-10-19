@@ -1245,19 +1245,23 @@ version creation and resizing require a whole-object URI.
 ### Automatic witness placement
 
 Creating or growing an MDS object with an even mirror count adds one witness
-per new chunk. DATA members use the ordinary weighted HRW placement. The witness
-uses the same placement policy over the remaining failure domains. All DATA
+per new chunk. Both roles use ordinary weighted HRW placement over eligible
+backends. Witness selection reserves enough other DATA domains for the required
+width; DATA copies are then placed outside the witness domain. All DATA
 members and the witness must occupy distinct domains at the requested level;
 insufficient eligible domains fail the operation instead of omitting the vote.
 Odd mirror counts do not add a witness. Existing chunk maps are not rewritten.
 
-An ordinary backend can host DATA or a witness. A topology entry with an
-`mds://` location is metadata-only and can be selected only as a witness:
+Topology rows require five columns: `<uuid> <location> <weight> <role> <path>`.
+The `role` column is `data`, `witness`, `data,witness` or `witness,data`; role
+order has no effect. DATA placement only uses entries permitting `data`, and
+witness placement only uses entries permitting `witness`. A physical URI does
+not select the role: an MDS backend uses `ost://` with `witness`:
 
 ```text
-00000000-0000-7000-8000-000000000001 ost://host1:7777 100 dc1/row1/rack1/host1
-00000000-0000-7000-8000-000000000002 ost://host2:7777 100 dc1/row1/rack1/host2
-00000000-0000-7000-8000-000000000003 mds://host3:7776 100 dc1/row1/rack1/host3
+00000000-0000-7000-8000-000000000001 ost://host1:7777 100 data,witness dc1/row1/rack1/host1
+00000000-0000-7000-8000-000000000002 ost://host2:7777 100 data,witness dc1/row1/rack1/host2
+00000000-0000-7000-8000-000000000003 ost://host3:7776 100 witness dc1/row1/rack1/host3
 ```
 
 Here `-m 2 --failure-domain server` places two DATA copies and a witness on
@@ -1271,7 +1275,7 @@ their chunk. They take part in configuration barriers and quorum, but receive
 no data I/O or CoW versions. Version maps contain DATA members only. Witnesses
 must not turn a failed DATA snapshot into a successful version.
 
-`--reconstruct` recovers maps from DATA records; metadata-only MDS candidates
+`--reconstruct` recovers maps from DATA records; witness-only candidates
 are skipped during the startup scan. Reconstruction does not recreate witness
 placement or votes. This is distinct from restarting with the existing MDS
 database, which preserves both chunk maps and native witness records.

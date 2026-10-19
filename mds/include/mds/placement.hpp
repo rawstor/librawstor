@@ -48,7 +48,8 @@ std::vector<PlacementSlot> place(
 
 // Place DATA members on data-capable backends, followed by one witness for
 // an even data width. All members occupy distinct policy failure domains;
-// the witness uses the same HRW placement over the remaining domains.
+// both roles use weighted HRW over role-eligible backends. Witness selection
+// reserves enough other DATA domains to satisfy the requested width.
 std::vector<PlacementSlot> place_chunk(
     const Topology& topology, const RawstdUUID& id, uint64_t index,
     const PlacementPolicy& policy

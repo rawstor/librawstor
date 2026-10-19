@@ -31,9 +31,11 @@
 #include <filesystem>
 #include <list>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include <cerrno>
 
@@ -1162,13 +1164,17 @@ TEST(
 
 namespace {
 rawstor::mdsserver::TopologyOST automatic_witness_backend(
-    const char* id, const std::string& location, const char* host
+    const char* id, const std::string& location, const char* host,
+    std::set<rawstor::mdsserver::Role> roles = {
+        rawstor::mdsserver::Role::Data, rawstor::mdsserver::Role::Witness
+    }
 ) {
     rawstor::mdsserver::TopologyOST backend{};
     if (rawstd_uuid_from_string(&backend.id, id) < 0) {
         throw std::runtime_error("bad test backend UUID");
     }
     backend.location = location;
+    backend.roles = std::move(roles);
     backend.weight = 100;
     backend.path[0] = "dc1";
     backend.path[1] = "row1";
@@ -1185,7 +1191,8 @@ automatic_witness_backends(unsigned mds_port, unsigned other_ost_port) {
         ),
         automatic_witness_backend(
             "018f4e2a-0000-7000-8000-000000000003",
-            "mds://127.0.0.1:" + std::to_string(mds_port), "host3"
+            "ost://127.0.0.1:" + std::to_string(mds_port), "host3",
+            {rawstor::mdsserver::Role::Witness}
         )
     };
 }

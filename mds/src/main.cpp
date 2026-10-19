@@ -250,8 +250,8 @@ void reconstruct(
     std::vector<rawstor::mdsserver::ScanRecord> records;
     try {
         for (const rawstor::mdsserver::TopologyOST& ost : topology.osts()) {
-            // MDS candidates contain only votes, not recoverable data or CoW
-            // versions. In particular, this MDS is not serving during startup.
+            // Witness-only candidates contain no recoverable DATA or CoW
+            // versions; an MDS candidate may also be offline during startup.
             if (ost.witness_only()) {
                 continue;
             }

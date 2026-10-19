@@ -428,6 +428,7 @@ slot's `target:` under its `mirror[N]`, even when the member is unreachable.
 
 
 For new MDS chunks with an even DATA width, placement adds a witness on an
-unused failure domain. A configured `mds://` topology entry is eligible for
-witnesses only; its returned physical slot URI uses `ost://`. With no eligible
+unused failure domain. The required topology `role` column permits `data`,
+`witness` or both (`data,witness` in either order), independently of URI.
+MDS backends use `ost://` with role `witness`. With no eligible
 extra failure domain, placement fails instead of silently leaving out a witness.

@@ -937,7 +937,8 @@ TEST_F(
 ) {
     auto topology = make_topology();
     auto mds = make_ost("00000000-0000-7000-8000-000000000004", "host4");
-    mds.location = "mds://127.0.0.1:7776";
+    mds.location = "ost://127.0.0.1:7776";
+    mds.roles = {rawstor::mdsserver::Role::Witness};
     topology.add(mds);
     ObjectStore store(dir.db_path(), topology);
     RawstorLocationInfo info{.used = 10, .total = 100};

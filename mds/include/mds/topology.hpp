@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <iosfwd>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -29,39 +30,41 @@ enum class Level : unsigned {
 /* Throws EINVAL unless `value` is one of Level's values. */
 Level level_of(unsigned value);
 
+enum class Role { Data, Witness };
+
 struct TopologyOST {
     RawstdUUID id;
     /* A rawstor location URI (ost://host:port, ...); the client opens
      * the chunks this OST holds through it. */
     std::string location;
     uint64_t weight;
+    std::set<Role> roles{Role::Data, Role::Witness};
     std::string path[4]; /* dc, row, rack, server; "" = not given */
 
     /* Domain identity at a level: the full path prefix (not the last
      * component alone: two "host1" in different racks are different
      * domains). */
     std::string domain(Level level) const;
-    // MDS locations can host metadata votes but never DATA chunks.
-    bool witness_only() const;
+    bool supports(Role role) const { return roles.contains(role); }
+    bool witness_only() const { return !supports(Role::Data); }
 };
 
 /*
  * The static topology config, v1 of the MGS role of docs/mds.md.
  * Line-based:
  *
- *   # <ost-uuid> <location> <weight> [[[<dc>/]<row>/]<rack>/]<server>
- *   00000000-0000-7000-8000-000000000001 ost://host1:7777 100 dc1/w1/r1/host1
+ *   # <ost-uuid> <location> <weight> <role> [[[<dc>/]<row>/]<rack>/]<server>
+ *   00000000-0000-7000-8000-000000000001 ost://h:7 1 data,witness h
  *
  * The path goes from the root down to the server the OST runs on; only
  * the server is required and the leading levels may be left out: a level
  * an entry leaves out is one implicit domain shared by every entry that
  * leaves it out too.
- * <location> is a single rawstor location URI. An mds:// entry is
- * witness-only; other backends can host DATA or witnesses. Client-facing
- * physical slots on MDS use ost:// at that same endpoint. Local backends
- * are handed to clients as is, so a client-local one (file://, lvm://, zfs://)
- * only makes sense on a single host. '#' comments and blank lines are
- * skipped.
+ * <location> is a single physical location URI. MDS-hosted witnesses use
+ * ost:// at the MDS endpoint. <role> is data, witness, or both separated
+ * by a comma in either order; it controls eligibility independently of URI.
+ * Local backends (file://, lvm://, zfs://) only make sense on a single host.
+ * All five columns are required. '#' comments and blank lines are skipped.
  */
 class Topology final {
 private:

@@ -74,7 +74,7 @@ jobs:
     - name: start rawstor-mds
       run: |
         mkdir -p /tmp/objects
-        echo "$(cat /proc/sys/kernel/random/uuid) ${{ matrix.store }} 100 host1" > ${GITHUB_WORKSPACE}/topology.conf
+        echo "$(cat /proc/sys/kernel/random/uuid) ${{ matrix.store }} 100 data,witness host1" > ${GITHUB_WORKSPACE}/topology.conf
         rawstor-mds --bind 127.0.0.1:7776 --db ${GITHUB_WORKSPACE}/mds.db --topology ${GITHUB_WORKSPACE}/topology.conf &
         sleep 5
     - name: create object

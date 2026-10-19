@@ -382,7 +382,7 @@ jobs:
         sudo systemctl enable --now rawstor-mds@018f4e2a-3333-7000-8000-000000000001.service
         sleep 1
         systemctl is-active rawstor-mds@018f4e2a-3333-7000-8000-000000000001.service
-        echo "018f4e2a-1111-7000-8000-000000000001 ost://127.0.0.1:7777 100 dc1/row1/rack1/host1" | sudo tee /etc/rawstor/mds/018f4e2a-3333-7000-8000-000000000001.topology
+        echo "018f4e2a-1111-7000-8000-000000000001 ost://127.0.0.1:7777 100 data,witness dc1/row1/rack1/host1" | sudo tee /etc/rawstor/mds/018f4e2a-3333-7000-8000-000000000001.topology
         # reload only sends SIGHUP; give the MDS a moment to swap the
         # topology in, then confirm it did.
         sudo systemctl reload rawstor-mds@018f4e2a-3333-7000-8000-000000000001.service
@@ -595,7 +595,7 @@ jobs:
         rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor/ost/test &
         OST_PID=$!
         sleep 10
-        echo "018f4e2a-1111-7000-8000-000000000001 ost://127.0.0.1:7777 100 dc1/row1/rack1/host1" > /tmp/topology.conf
+        echo "018f4e2a-1111-7000-8000-000000000001 ost://127.0.0.1:7777 100 data,witness dc1/row1/rack1/host1" > /tmp/topology.conf
         rawstor-mds --bind=127.0.0.1:7776 --db=/tmp/mds.db --topology=/tmp/topology.conf &
         MDS_PID=$!
         sleep 5
