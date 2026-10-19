@@ -871,12 +871,13 @@ TEST_F(ObjectStoreTest, list_chunks_merges_objects_and_native_members) {
     EXPECT_EQ(entries[0].type, RAWSTOR_LIST_ENTRY_OBJECT);
     EXPECT_EQ(rawstd_uuid_cmp(&token, &object), 0);
     entries = store.list_chunks(token, 1);
-    ASSERT_EQ(entries.size(), 2u);
+    ASSERT_EQ(entries.size(), 3u);
     EXPECT_EQ(rawstd_uuid_cmp(&entries[0].id, &witness), 0);
-    EXPECT_EQ(entries[0].offset, 0u);
-    EXPECT_EQ(entries[0].type, RAWSTOR_LIST_ENTRY_CHUNK);
-    EXPECT_EQ(entries[1].offset, chunk_size);
+    EXPECT_EQ(entries[0].type, RAWSTOR_LIST_ENTRY_OBJECT);
+    EXPECT_EQ(entries[1].offset, 0u);
     EXPECT_EQ(entries[1].type, RAWSTOR_LIST_ENTRY_CHUNK);
+    EXPECT_EQ(entries[2].offset, chunk_size);
+    EXPECT_EQ(entries[2].type, RAWSTOR_LIST_ENTRY_CHUNK);
     EXPECT_TRUE(rawstd_uuid_is_nil(&token));
 }
 
@@ -928,4 +929,41 @@ TEST_F(ObjectStoreTest, witness_votes_in_the_configuration_register) {
     EXPECT_EQ(meta.accepted.counter, 4u);
     EXPECT_EQ(meta.config.epoch, 8u);
     EXPECT_EQ(meta.config.roles[1], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
+}
+
+TEST_F(
+    ObjectStoreTest,
+    witness_candidate_is_health_gated_and_does_not_count_as_capacity
+) {
+    auto topology = make_topology();
+    auto mds = make_ost("00000000-0000-7000-8000-000000000004", "host4");
+    mds.location = "mds://127.0.0.1:7776";
+    topology.add(mds);
+    ObjectStore store(dir.db_path(), topology);
+    RawstorLocationInfo info{.used = 10, .total = 100};
+    for (const auto& backend : topology.osts()) {
+        store.update_backend(backend, &info);
+    }
+    EXPECT_EQ(store.info().total, 300u);
+    EXPECT_EQ(store.info().used, 30u);
+    auto id = make_id();
+    store.create({}, id, chunk_size, chunk_size, make_policy(2));
+    EXPECT_EQ(store.open(id, {}).chunks.front().size(), 3u);
+    store.reset_backend_availability();
+    for (size_t i = 0; i < 2; ++i) {
+        store.update_backend(topology.osts()[i], &info);
+    }
+    EXPECT_THROW(
+        store.create({}, make_id(), chunk_size, chunk_size, make_policy(2)),
+        std::system_error
+    );
+    store.update_backend(mds, &info);
+    auto another = make_id();
+    store.create({}, another, chunk_size, chunk_size, make_policy(2));
+    EXPECT_EQ(
+        rawstd_uuid_cmp(
+            &store.open(another, {}).chunks.front().back().ost_id, &mds.id
+        ),
+        0
+    );
 }

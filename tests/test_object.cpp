@@ -7,6 +7,7 @@
 // path needs a live zfs pool and isn't reachable from a portable test
 // (see object_env.hpp's own doc comment).
 #include "backend.hpp"
+#include "location.hpp"
 #include "object.hpp"
 #include "object_env.hpp"
 #include "rawio_sync.hpp"
@@ -28,8 +29,10 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <list>
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 
 #include <cerrno>
@@ -1155,4 +1158,154 @@ TEST(
         ASSERT_EQ(slots[i].uris().size(), 1u);
         EXPECT_EQ(slots[i].uris().front().str(), uris[i].str());
     }
+}
+
+namespace {
+rawstor::mdsserver::TopologyOST automatic_witness_backend(
+    const char* id, const std::string& location, const char* host
+) {
+    rawstor::mdsserver::TopologyOST backend{};
+    if (rawstd_uuid_from_string(&backend.id, id) < 0) {
+        throw std::runtime_error("bad test backend UUID");
+    }
+    backend.location = location;
+    backend.weight = 100;
+    backend.path[0] = "dc1";
+    backend.path[1] = "row1";
+    backend.path[2] = "rack1";
+    backend.path[3] = host;
+    return backend;
+}
+std::vector<rawstor::mdsserver::TopologyOST>
+automatic_witness_backends(unsigned mds_port, unsigned other_ost_port) {
+    return {
+        automatic_witness_backend(
+            "018f4e2a-0000-7000-8000-000000000002",
+            "ost://127.0.0.1:" + std::to_string(other_ost_port), "host2"
+        ),
+        automatic_witness_backend(
+            "018f4e2a-0000-7000-8000-000000000003",
+            "mds://127.0.0.1:" + std::to_string(mds_port), "host3"
+        )
+    };
+}
+} // namespace
+
+TEST(AutomaticWitnessTest, mds_witness_is_created_grown_listed_and_deleted) {
+    rawstor::tests::ObjectEnv other(8822, 8823);
+    rawstor::tests::ObjectEnv env(
+        8820, 8821, automatic_witness_backends(8820, 8823)
+    );
+    const std::string uri =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000093");
+    auto queue = rawio::Queue::create(64);
+    auto spec = one_chunk_spec();
+    spec.width = 2;
+    spec.failure_domain = RAWSTOR_OBJ_DOMAIN_SERVER;
+    ASSERT_EQ(target_create(*queue, uri, spec), 0);
+    rawstor::Target target(rawstd::URI::uriv(uri.c_str()));
+    EXPECT_EQ(run(*queue, target.spec(*queue)).width, 2u);
+    auto slots = run(*queue, target.slots(*queue));
+    ASSERT_EQ(slots.size(), 3u);
+    EXPECT_TRUE(
+        slots[2].uris().front().str().starts_with("ost://127.0.0.1:8820/")
+    );
+    auto metadata = run(*queue, target.meta(*queue));
+    ASSERT_EQ(metadata.size(), 3u);
+    EXPECT_EQ(metadata[0].member_role, RAWSTOR_MEMBER_DATA);
+    EXPECT_EQ(metadata[1].member_role, RAWSTOR_MEMBER_DATA);
+    EXPECT_EQ(metadata[2].member_role, RAWSTOR_MEMBER_WITNESS);
+    EXPECT_EQ(metadata[2].config.nroles, 3u);
+    rawstor::Location logical({rawstd::URI(env.location())});
+    std::list<rawstor::Target> listed;
+    RawstorPaginationToken token{};
+    run(*queue, logical.list(*queue, 0, listed, token));
+    ASSERT_EQ(listed.size(), 1u);
+    EXPECT_EQ(listed.front().uris().front().str(), uri);
+    rawstor::Location native({rawstd::URI("ost://127.0.0.1:8820")});
+    run(*queue, native.list(*queue, 0, listed, token));
+    ASSERT_EQ(listed.size(), 1u);
+    EXPECT_EQ(
+        listed.front().uris().front().str(), slots[2].uris().front().str()
+    );
+    EXPECT_EQ(object_create_version(*queue, uri, nullptr), -ENOTSUP);
+    EXPECT_EQ(object_resize(*queue, uri, 2 * spec.chunk_size), 0);
+    auto chunks = run(*queue, target.chunks(*queue));
+    ASSERT_EQ(chunks.size(), 2u);
+    for (const auto& chunk : chunks) {
+        auto records = run(*queue, chunk.meta(*queue));
+        ASSERT_EQ(records.size(), 3u);
+        EXPECT_EQ(records.back().member_role, RAWSTOR_MEMBER_WITNESS);
+    }
+    auto object = run(*queue, target.open(*queue, 0));
+    std::string value(4096, 'w');
+    EXPECT_EQ(
+        run(*queue,
+            object->pwrite(value.data(), value.size(), spec.chunk_size, true)),
+        value.size()
+    );
+    run(*queue, object->close(true));
+    EXPECT_EQ(target_remove(*queue, uri), 0);
+    listed.clear();
+    run(*queue, native.list(*queue, 0, listed, token));
+    EXPECT_TRUE(listed.empty());
+}
+
+TEST(
+    AutomaticWitnessTest, mds_vote_keeps_one_data_member_writable_after_failure
+) {
+    auto other = std::make_unique<rawstor::tests::ObjectEnv>(8826, 8827);
+    rawstor::tests::ObjectEnv env(
+        8824, 8825, automatic_witness_backends(8824, 8827)
+    );
+    const std::string uri =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000092");
+    auto queue = rawio::Queue::create(64);
+    auto spec = one_chunk_spec();
+    spec.width = 2;
+    spec.failure_domain = RAWSTOR_OBJ_DOMAIN_SERVER;
+    ASSERT_EQ(target_create(*queue, uri, spec), 0);
+    rawstor::Target target(rawstd::URI::uriv(uri.c_str()));
+    auto object = run(*queue, target.open(*queue, 0));
+    std::string value(4096, 'a');
+    EXPECT_EQ(
+        run(*queue, object->pwrite(value.data(), value.size(), 0, true)),
+        value.size()
+    );
+    other.reset();
+    value.assign(value.size(), 'b');
+    EXPECT_EQ(
+        run(*queue, object->pwrite(value.data(), value.size(), 0, true)),
+        value.size()
+    );
+    std::string read(value.size(), '\0');
+    EXPECT_EQ(
+        run(*queue, object->pread(read.data(), read.size(), 0)), read.size()
+    );
+    EXPECT_EQ(read, value);
+    run(*queue, object->close(true));
+}
+
+TEST(AutomaticWitnessTest, ost_can_host_the_automatic_witness) {
+    rawstor::tests::ObjectEnv second(8830, 8831);
+    rawstor::tests::ObjectEnv third(8832, 8833);
+    auto extras = automatic_witness_backends(8828, 8831);
+    extras[1].location = "ost://127.0.0.1:8833";
+    rawstor::tests::ObjectEnv env(8828, 8829, extras);
+    const std::string uri =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000091");
+    auto queue = rawio::Queue::create(64);
+    auto spec = one_chunk_spec();
+    spec.width = 2;
+    spec.failure_domain = RAWSTOR_OBJ_DOMAIN_SERVER;
+    ASSERT_EQ(target_create(*queue, uri, spec), 0);
+    rawstor::Target target(rawstd::URI::uriv(uri.c_str()));
+    auto metadata = run(*queue, target.meta(*queue));
+    ASSERT_EQ(metadata.size(), 3u);
+    EXPECT_EQ(metadata.back().member_role, RAWSTOR_MEMBER_WITNESS);
+    auto slots = run(*queue, target.slots(*queue));
+    EXPECT_FALSE(
+        slots.back().uris().front().str().starts_with("ost://127.0.0.1:8828/")
+    );
+    EXPECT_EQ(target_remove(*queue, uri), 0);
 }

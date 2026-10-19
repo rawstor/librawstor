@@ -75,7 +75,11 @@ enum RawstorMemberRole {
  *
  * When a chunk has width + 1 locations, the last is a metadata-only witness.
  * At most one witness per chunk is supported, only with an even number of
- * data members; ordinary mds:// placement does not automatically attach one.
+ * data members. For a newly created mds:// object, an even data width
+ * automatically places one additional witness in a distinct failure domain.
+ * The topology must supply width + 1 eligible domains; MDS locations may
+ * host the witness but never DATA. Plain physical targets require the
+ * witness URI to be supplied explicitly as the last member.
  *
  * @see rawstor_target_spec
  * @see rawstor_target_create

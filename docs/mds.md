@@ -864,7 +864,8 @@ members (2, 4, 6, ...). Odd data-member counts are rejected with `EINVAL`.
 The ordinary create path creates it with the other members; `width` counts
 only data copies, while `config.nroles` includes the witness. MDS witness records are independent of the object map:
 a witness can serve an explicitly addressed chunk without an MDS object
-registration. An `mds://` object's placement does not automatically add one.
+registration. New `mds://` chunks automatically receive one witness when
+`width` is even; `width` continues to count DATA copies only.
 
 For example, create a two-copy object with a witness on MDS:
 
@@ -1130,8 +1131,9 @@ survivors in member order.
 configuration using the existing SetConfig request layout. Ordinary `LIST`
 reports both registered objects and native witness records on MDS. Internally,
 a listing group with empty offsets addresses a whole object; `{0}` addresses
-one physical chunk at offset zero. MDS converts registered-object rows to
-empty offsets and preserves all offsets of native witness records. No data
+one physical chunk at offset zero. Registered-object rows have empty offsets; native witness rows preserve
+their chunk offsets. Logical MDS listings prefer the object when its local
+witness shares the UUID. Native ost:// access lists the witness records. No data
 I/O or CoW operation is issued to a witness.
 
 Protocol version/feature negotiation and an I/O `map_epoch` fence are
@@ -1238,3 +1240,38 @@ using `ost://` for both data members and witnesses served by MDS. Listing an
 as `ost://` targets. Logical chunk URIs support metadata lookup, member
 configuration, register voting and chunk-local I/O; object creation, removal,
 version creation and resizing require a whole-object URI.
+
+
+### Automatic witness placement
+
+Creating or growing an MDS object with an even mirror count adds one witness
+per new chunk. DATA members use the ordinary weighted HRW placement. The witness
+uses the same placement policy over the remaining failure domains. All DATA
+members and the witness must occupy distinct domains at the requested level;
+insufficient eligible domains fail the operation instead of omitting the vote.
+Odd mirror counts do not add a witness. Existing chunk maps are not rewritten.
+
+An ordinary backend can host DATA or a witness. A topology entry with an
+`mds://` location is metadata-only and can be selected only as a witness:
+
+```text
+00000000-0000-7000-8000-000000000001 ost://host1:7777 100 dc1/row1/rack1/host1
+00000000-0000-7000-8000-000000000002 ost://host2:7777 100 dc1/row1/rack1/host2
+00000000-0000-7000-8000-000000000003 mds://host3:7776 100 dc1/row1/rack1/host3
+```
+
+Here `-m 2 --failure-domain server` places two DATA copies and a witness on
+host3. The MDS endpoint is explicit in the topology so its failure domain is
+known. It is health-probed like other candidates, but its reported aggregate
+capacity is not counted again as storage capacity. Returned physical witness
+URIs use `ost://host3:7776/UUID/OFFSET`, including in `rawstor show -v`.
+
+Witness slots are last in each live chunk map and are created and removed with
+their chunk. They take part in configuration barriers and quorum, but receive
+no data I/O or CoW versions. Version maps contain DATA members only. Witnesses
+must not turn a failed DATA snapshot into a successful version.
+
+`--reconstruct` recovers maps from DATA records; metadata-only MDS candidates
+are skipped during the startup scan. Reconstruction does not recreate witness
+placement or votes. This is distinct from restarting with the existing MDS
+database, which preserves both chunk maps and native witness records.

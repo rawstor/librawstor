@@ -491,6 +491,20 @@ rawstd::Task<void> Backend::list_chunks(
     chunks.clear();
     if (rawstd_uuid_is_nil(&id)) {
         co_await _wire_list_chunks({}, limit, chunks, token, version_id);
+        std::vector<RawstdUUID> objects;
+        for (const auto& group : chunks) {
+            if (group.offsets.empty()) {
+                objects.push_back(group.id);
+            }
+        }
+        std::erase_if(chunks, [&](const auto& group) {
+            return !group.offsets.empty() &&
+                   std::any_of(
+                       objects.begin(), objects.end(), [&](const auto& object) {
+                           return rawstd_uuid_cmp(&group.id, &object) == 0;
+                       }
+                   );
+        });
         co_return;
     }
     token = {};
@@ -639,17 +653,27 @@ rawstd::Task<void> Backend::resize(
      * finishes the job.
      */
     for (uint64_t i = resized.old_nchunks; i < after.chunks.size(); ++i) {
-        for (const rawstd::URI& uri : chunk_targets(after, i)) {
-            // Named, not brace-initialized at the co_await'ed call: GCC 13
-            // ICEs on the latter (build_special_member_call).
-            std::vector<rawstd::URI> copy = {uri};
-            Target target(copy);
+        for (const auto& member : after.chunks[i]) {
+            auto slot = co_await Slot::create(_queue, slot_location(member));
+            std::exception_ptr error;
             try {
-                co_await target.create(_queue, chunk_spec(after));
+                const auto role = member.slot_index == after.policy.width &&
+                                          after.policy.width % 2 == 0
+                                      ? RAWSTOR_MEMBER_WITNESS
+                                      : RAWSTOR_MEMBER_DATA;
+                co_await slot->create(
+                    after.id, i * after.chunk_size, chunk_spec(after), role
+                );
             } catch (const std::system_error& e) {
                 if (e.code().value() != EEXIST) {
-                    throw;
+                    error = std::current_exception();
                 }
+            } catch (...) {
+                error = std::current_exception();
+            }
+            co_await slot->close();
+            if (error) {
+                std::rethrow_exception(error);
             }
         }
     }
@@ -677,7 +701,9 @@ rawstd::Task<void> Backend::create_version(
         bool any = false;
         std::exception_ptr last_error;
         for (const WireSlot& slot : map.chunks[i]) {
-            if (slot.location.empty()) {
+            if (slot.location.empty() ||
+                (map.policy.width % 2 == 0 &&
+                 slot.slot_index == map.policy.width)) {
                 continue;
             }
             try {

@@ -4,6 +4,7 @@
 #include <rawstd/gpp.hpp>
 #include <rawstd/uuid.h>
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <string>
@@ -263,3 +264,123 @@ TEST(PlacementTest, spreads_objects_in_proportion_to_weight) {
 }
 
 } // namespace
+
+TEST(PlacementTest, even_data_width_adds_one_witness_on_an_unused_domain) {
+    Topology topology;
+    topology.add(
+        make_ost("00000000-0000-7000-8000-000000000001", 100, "host1")
+    );
+    topology.add(
+        make_ost("00000000-0000-7000-8000-000000000002", 100, "host2")
+    );
+    auto mds = make_ost("00000000-0000-7000-8000-000000000003", 100, "host3");
+    mds.location = "mds://127.0.0.1:7776";
+    topology.add(mds);
+    for (uint64_t stripe : {uint64_t(0), uint64_t(1), uint64_t(2)}) {
+        PlacementPolicy policy{2, Level::Server, stripe, 7};
+        auto id = make_id();
+        for (uint64_t index = 0; index < 8; ++index) {
+            const auto slots =
+                rawstor::mdsserver::place_chunk(topology, id, index, policy);
+            ASSERT_EQ(slots.size(), 3u);
+            EXPECT_EQ(slots[0].slot_index, 0u);
+            EXPECT_EQ(slots[1].slot_index, 1u);
+            EXPECT_NE(rawstd_uuid_cmp(&slots[0].ost_id, &mds.id), 0);
+            EXPECT_NE(rawstd_uuid_cmp(&slots[1].ost_id, &mds.id), 0);
+            EXPECT_EQ(slots[2].slot_index, 2u);
+            EXPECT_EQ(rawstd_uuid_cmp(&slots[2].ost_id, &mds.id), 0);
+            auto repeat =
+                rawstor::mdsserver::place_chunk(topology, id, index, policy);
+            for (size_t i = 0; i < slots.size(); ++i) {
+                EXPECT_EQ(
+                    rawstd_uuid_cmp(&slots[i].ost_id, &repeat[i].ost_id), 0
+                );
+            }
+        }
+    }
+}
+
+TEST(PlacementTest, witness_can_use_an_ost_and_is_not_added_for_odd_width) {
+    Topology topology;
+    for (unsigned i = 1; i <= 5; ++i) {
+        char uuid[40];
+        snprintf(uuid, sizeof(uuid), "00000000-0000-7000-8000-%012u", i);
+        topology.add(make_ost(uuid, 100, std::to_string(i).c_str()));
+    }
+    for (unsigned width : {1u, 2u, 3u, 4u, 5u}) {
+        PlacementPolicy policy{width, Level::OST, 0, 0};
+        auto slots =
+            rawstor::mdsserver::place_chunk(topology, make_id(), 0, policy);
+        EXPECT_EQ(slots.size(), width + (width % 2 == 0));
+        std::set<std::string> members;
+        for (const auto& slot : slots) {
+            RawstdUUIDString id;
+            rawstd_uuid_to_string(&slot.ost_id, &id);
+            EXPECT_TRUE(members.insert(id).second);
+        }
+    }
+}
+
+TEST(PlacementTest, witness_needs_a_distinct_populated_failure_domain) {
+    Topology topology;
+    topology.add(
+        make_ost("00000000-0000-7000-8000-000000000001", 100, "host1")
+    );
+    topology.add(
+        make_ost("00000000-0000-7000-8000-000000000002", 100, "host2")
+    );
+    auto mds = make_ost("00000000-0000-7000-8000-000000000003", 100, "host1");
+    mds.location = "mds://127.0.0.1:7776";
+    topology.add(mds);
+    EXPECT_THROW(
+        rawstor::mdsserver::place_chunk(
+            topology, make_id(), 0, PlacementPolicy{2, Level::Server, 0, 0}
+        ),
+        std::system_error
+    );
+    EXPECT_EQ(
+        rawstor::mdsserver::place_chunk(
+            topology, make_id(), 0, PlacementPolicy{2, Level::OST, 0, 0}
+        )
+            .size(),
+        3u
+    );
+    Topology only_mds;
+    only_mds.add(mds);
+    EXPECT_THROW(
+        rawstor::mdsserver::place_chunk(
+            only_mds, make_id(), 0, PlacementPolicy{1, Level::OST, 0, 0}
+        ),
+        std::system_error
+    );
+}
+
+TEST(PlacementTest, witness_shares_the_object_pinned_partial_stripe_pool) {
+    Topology topology;
+    for (unsigned i = 1; i <= 12; ++i) {
+        char uuid[40];
+        snprintf(uuid, sizeof(uuid), "00000000-0000-7000-8000-%012u", i);
+        auto backend = make_ost(uuid, 100, std::to_string(i).c_str());
+        if (i > 8) {
+            backend.location = "mds://127.0.0.1:7776";
+        }
+        topology.add(backend);
+    }
+    auto id = make_id();
+    for (uint64_t stripe :
+         {uint64_t(1), uint64_t(2), uint64_t(4), uint64_t(6)}) {
+        std::set<std::string> domains;
+        PlacementPolicy policy{2, Level::Server, stripe, 0};
+        for (uint64_t index = 0; index < 64; ++index) {
+            const auto slots =
+                rawstor::mdsserver::place_chunk(topology, id, index, policy);
+            ASSERT_EQ(slots.size(), 3u);
+            for (const auto& slot : slots) {
+                RawstdUUIDString uuid;
+                rawstd_uuid_to_string(&slot.ost_id, &uuid);
+                domains.insert(uuid);
+            }
+        }
+        EXPECT_LE(domains.size(), std::max<uint64_t>(stripe, 3));
+    }
+}

@@ -425,3 +425,9 @@ A physical comma-separated target is split without querying the members;
 unreachable slots remain in the result. Version suffixes are preserved.
 Witnesses on MDS use `ost://` at the MDS endpoint. `rawstor show -v` prints each
 slot's `target:` under its `mirror[N]`, even when the member is unreachable.
+
+
+For new MDS chunks with an even DATA width, placement adds a witness on an
+unused failure domain. A configured `mds://` topology entry is eligible for
+witnesses only; its returned physical slot URI uses `ost://`. With no eligible
+extra failure domain, placement fails instead of silently leaving out a witness.

@@ -37,7 +37,10 @@ std::thread spawn_server(ConstructAndLoop&& body) {
 
 } // namespace
 
-ObjectEnv::ObjectEnv(unsigned int mds_port, unsigned int ost_port) :
+ObjectEnv::ObjectEnv(
+    unsigned int mds_port, unsigned int ost_port,
+    const std::vector<mdsserver::TopologyOST>& extra_backends
+) :
     _ost_listen_fd(-1),
     _ost_wake_write_fd(-1),
     _mds_listen_fd(-1),
@@ -64,6 +67,9 @@ ObjectEnv::ObjectEnv(unsigned int mds_port, unsigned int ost_port) :
     ost.path[2] = "rack1";
     ost.path[3] = "host1";
     topology.add(ost);
+    for (const auto& backend : extra_backends) {
+        topology.add(backend);
+    }
 
     // bind_listen() happens here, on this (the test's) thread, for both
     // servers -- neither Server's own constructor binds anything itself.

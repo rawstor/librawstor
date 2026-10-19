@@ -15,7 +15,7 @@ namespace mdsserver {
 constexpr uint64_t STRIPE_ALL = 0;
 
 struct PlacementPolicy {
-    unsigned width;        /* slots per chunk: mirror R | ec k+m */
+    unsigned width;        /* DATA copies per chunk: mirror R | ec k+m */
     Level failure_domain;  /* level at which slots must differ */
     uint64_t stripe_width; /* K; 1 = object-local, STRIPE_ALL = spread */
     uint64_t seed;
@@ -42,6 +42,14 @@ struct PlacementSlot {
  * never a silently under-protected placement.
  */
 std::vector<PlacementSlot> place(
+    const Topology& topology, const RawstdUUID& id, uint64_t index,
+    const PlacementPolicy& policy
+);
+
+// Place DATA members on data-capable backends, followed by one witness for
+// an even data width. All members occupy distinct policy failure domains;
+// the witness uses the same HRW placement over the remaining domains.
+std::vector<PlacementSlot> place_chunk(
     const Topology& topology, const RawstdUUID& id, uint64_t index,
     const PlacementPolicy& policy
 );

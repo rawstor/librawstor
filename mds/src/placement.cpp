@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -174,6 +175,102 @@ std::vector<PlacementSlot> place(
     }
 
     return ret;
+}
+
+std::vector<PlacementSlot> place_chunk(
+    const Topology& topology, const RawstdUUID& id, uint64_t index,
+    const PlacementPolicy& policy
+) {
+    if (policy.width == 0 || policy.width > UINT8_MAX) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    Topology data;
+    for (const auto& backend : topology.osts()) {
+        if (!backend.witness_only()) {
+            data.add(backend);
+        }
+    }
+    if (policy.width % 2 != 0) {
+        return place(data, id, index, policy);
+    }
+    Topology eligible = topology;
+    if (policy.stripe_width != STRIPE_ALL) {
+        // The object-pinned pool covers DATA and witness members together.
+        // Seed it with enough DATA domains so metadata-only domains cannot
+        // crowd out the required data redundancy.
+        auto pinned = policy;
+        pinned.stripe_width = 1;
+        auto seeds = place(data, id, 0, pinned);
+        std::set<std::string> pool;
+        for (const auto& seed : seeds) {
+            for (const auto& backend : data.osts()) {
+                if (rawstd_uuid_cmp(&seed.ost_id, &backend.id) == 0) {
+                    pool.insert(backend.domain(policy.failure_domain));
+                    break;
+                }
+            }
+        }
+        Topology remaining;
+        std::set<std::string> remaining_domains;
+        for (const auto& backend : topology.osts()) {
+            const auto domain = backend.domain(policy.failure_domain);
+            if (backend.weight != 0 && !pool.contains(domain)) {
+                remaining.add(backend);
+                remaining_domains.insert(domain);
+            }
+        }
+        const auto wanted =
+            std::max<uint64_t>(policy.stripe_width, policy.width + 1);
+        const auto extra =
+            std::min<uint64_t>(wanted - pool.size(), remaining_domains.size());
+        if (extra != 0) {
+            pinned.width = static_cast<unsigned>(extra);
+            for (const auto& seed : place(remaining, id, 0, pinned)) {
+                for (const auto& backend : remaining.osts()) {
+                    if (rawstd_uuid_cmp(&seed.ost_id, &backend.id) == 0) {
+                        pool.insert(backend.domain(policy.failure_domain));
+                        break;
+                    }
+                }
+            }
+        }
+        eligible = Topology();
+        data = Topology();
+        for (const auto& backend : topology.osts()) {
+            if (pool.contains(backend.domain(policy.failure_domain))) {
+                eligible.add(backend);
+                if (!backend.witness_only()) {
+                    data.add(backend);
+                }
+            }
+        }
+    }
+    auto member_policy = policy;
+    if (policy.stripe_width != 1) {
+        member_policy.stripe_width = STRIPE_ALL;
+    }
+    auto slots = place(data, id, index, member_policy);
+    std::set<std::string> occupied;
+    for (const auto& slot : slots) {
+        for (const auto& backend : data.osts()) {
+            if (rawstd_uuid_cmp(&slot.ost_id, &backend.id) == 0) {
+                occupied.insert(backend.domain(policy.failure_domain));
+                break;
+            }
+        }
+    }
+    Topology candidates;
+    for (const auto& backend : eligible.osts()) {
+        if (!occupied.contains(backend.domain(policy.failure_domain))) {
+            candidates.add(backend);
+        }
+    }
+    auto witness_policy = member_policy;
+    witness_policy.width = 1;
+    auto witness = place(candidates, id, index, witness_policy).front();
+    witness.slot_index = static_cast<uint8_t>(policy.width);
+    slots.push_back(witness);
+    return slots;
 }
 
 } // namespace mdsserver

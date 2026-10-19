@@ -684,6 +684,11 @@ OST.
      +----------+----------+----------+----------+-------------------------------------------+
 ```
 
+The descriptor policy width counts DATA copies. A live chunk with a newly
+placed even DATA width has one additional witness; its slot index equals the
+policy width, after all DATA slots. The chunk entry width counts every slot,
+including that witness. Version maps contain DATA members only.
+
 Each chunk entry:
 
 ```text

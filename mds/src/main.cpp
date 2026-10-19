@@ -250,6 +250,11 @@ void reconstruct(
     std::vector<rawstor::mdsserver::ScanRecord> records;
     try {
         for (const rawstor::mdsserver::TopologyOST& ost : topology.osts()) {
+            // MDS candidates contain only votes, not recoverable data or CoW
+            // versions. In particular, this MDS is not serving during startup.
+            if (ost.witness_only()) {
+                continue;
+            }
             const std::string& location = ost.location;
             RawstdUUIDString ost_id_string;
             rawstd_uuid_to_string(&ost.id, &ost_id_string);

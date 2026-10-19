@@ -61,6 +61,10 @@ Level level_of(unsigned value) {
     }
 }
 
+bool TopologyOST::witness_only() const {
+    return rawstd::URI(location).scheme() == "mds";
+}
+
 std::string TopologyOST::domain(Level level) const {
     // How many leading path components (dc, row, rack, server) name a
     // domain at `level`; an OST adds its own id below its server.

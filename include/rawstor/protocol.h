@@ -501,7 +501,7 @@ struct RawstorFrameObjPolicy {
     uint64_t stripe_width;
     uint64_t placement_seed;
     uint8_t redundancy; /* RAWSTOR_OBJ_REDUNDANCY_* */
-    uint8_t width;      /* slots per chunk: mirror R */
+    uint8_t width;      /* DATA copies per chunk: mirror R */
     uint8_t failure_domain;
 } RAWSTOR_PACKED;
 
@@ -571,6 +571,9 @@ struct RawstorFrameObjDescriptorPayload {
     uint32_t nchunks;
 } RAWSTOR_PACKED;
 
+/* The entry width counts all slots, unlike policy.width (DATA only).
+ * New even-width live chunks append a witness at slot_index == policy.width;
+ * DATA indices precede it. Version maps contain DATA members only. */
 struct RawstorFrameObjChunkEntry {
     uint8_t width; /* slots that follow */
 } RAWSTOR_PACKED;

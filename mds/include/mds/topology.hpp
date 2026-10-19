@@ -41,6 +41,8 @@ struct TopologyOST {
      * component alone: two "host1" in different racks are different
      * domains). */
     std::string domain(Level level) const;
+    // MDS locations can host metadata votes but never DATA chunks.
+    bool witness_only() const;
 };
 
 /*
@@ -54,8 +56,10 @@ struct TopologyOST {
  * the server is required and the leading levels may be left out: a level
  * an entry leaves out is one implicit domain shared by every entry that
  * leaves it out too.
- * <location> is a single rawstor location URI of any scheme; it is
- * handed to clients as is, so a client-local one (file://, lvm://, zfs://)
+ * <location> is a single rawstor location URI. An mds:// entry is
+ * witness-only; other backends can host DATA or witnesses. Client-facing
+ * physical slots on MDS use ost:// at that same endpoint. Local backends
+ * are handed to clients as is, so a client-local one (file://, lvm://, zfs://)
  * only makes sense on a single host. '#' comments and blank lines are
  * skipped.
  */
