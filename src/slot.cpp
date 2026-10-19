@@ -136,21 +136,23 @@ RawstdUUID new_idempotency_key() {
 // permanently lacks a capability (ENOTSUP -- e.g. create_version()/a
 // non-nil version_id to remove() on file:// or classic LVM, docs/mds.md's
 // "Versions": no retry will ever make a backend grow native CoW support
-// it doesn't have), or the server doesn't know the command at all (ENOSYS
+// it doesn't have; EOPNOTSUPP is distinct from ENOTSUP on macOS), or the
+// server doesn't know the command at all (ENOSYS
 // -- e.g. an older rawstor-ost/rawstor-mds), or the operation was
 // cancelled on purpose through its rawio::Queue (ECANCELED -- e.g. a
 // shutdown; a backend closed under an operation fails it with
 // ECONNABORTED instead, which stays retryable).
 // A stale epoch (ESTALE) also rejects the request permanently: reconnecting
-// cannot make that epoch current.
+// cannot make that epoch current. EILSEQ marks malformed persisted metadata;
+// reconnecting cannot repair its encoding.
 // Anything else defaults to retryable -- safer to spend a few pointless
 // retries on a genuinely transient rejection we don't recognize than to
 // silently give up on one that would have gone away on its own (e.g.
 // EBUSY, ENOSPC, EIO).
 bool is_permanent_backend_error(int error) {
     return error == ENOENT || error == EEXIST || error == EINVAL ||
-           error == ENOTSUP || error == ENOSYS || error == ECANCELED ||
-           error == ESTALE;
+           error == ENOTSUP || error == EOPNOTSUPP || error == ENOSYS ||
+           error == ECANCELED || error == ESTALE || error == EILSEQ;
 }
 
 // Binds `backend` to `id`/`offset`'s live version, or one previously
@@ -774,7 +776,8 @@ Slot::create(rawio::Queue& queue, const rawstd::URI& location) {
     std::shared_ptr<Backend> backend =
         co_await Backend::create(queue, location);
 
-    co_return std::make_unique<Slot>(Private(), queue, std::move(backend));
+    auto slot = std::make_unique<Slot>(Private(), queue, std::move(backend));
+    co_return slot;
 }
 
 std::shared_ptr<Backend> Slot::_get_backend() const {

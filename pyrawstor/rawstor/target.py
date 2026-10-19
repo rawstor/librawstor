@@ -96,19 +96,17 @@ class Target:
     def spec(self) -> librawstor.ObjectSpec:
         return librawstor.object_spec(self._uri)
 
-    def meta(self, offset: int = 0) -> list[librawstor.ObjectMeta | None]:
-        """One entry per mirror of the chunk at `offset` (0 for an
-        ordinary, single-chunk target), in URI order: an ObjectMeta, or
+    def meta(self) -> list[librawstor.ObjectMeta | None]:
+        """One entry per mirror of the chunk addressed by this URI, in URI order: an ObjectMeta, or
         None for a mirror that didn't answer."""
-        return librawstor.object_meta(self._uri, offset)
+        return librawstor.object_meta(self._uri)
 
     def set_member_config(
             self, config: librawstor.ObjectConfig,
-            member_index: int = 0, offset: int = 0, flags: int = 0,
+            member_index: int = 0, flags: int = 0,
             state: int | None = None) -> None:
         """Write the chunk's configuration to one real member (position
-        `member_index` in meta()'s own per-chunk order) of the chunk at
-        `offset` (0 for an ordinary, single-chunk target). state=None preserves
+        `member_index` in meta()'s own per-chunk order) of the addressed chunk. state=None preserves
         its state; an OBJECT_SYNC_STATE_* value sets it with the configuration.
         A sharp tool:
         setting this by hand can desynchronize a target's copies in ways
@@ -117,12 +115,20 @@ class Target:
         wanting every member of the chunk written calls this once per
         member instead of relying on any fan-out here."""
         librawstor.object_set_member_config(
-            self._uri, config, member_index, offset, flags, state)
+            self._uri, config, member_index, flags, state)
 
-    def chunks(self) -> list[int]:
-        """Every chunk offset this target's object has, ascending (see
-        rawstor_target_chunks(), <rawstor/target.h>)."""
-        return librawstor.object_chunks(self._uri)
+    def chunks(self) -> list["Target"]:
+        """Addressable physical chunk targets, in ascending offset order."""
+        return [Target(uri) for uri in librawstor.object_chunks(self._uri)]
+
+    def slots(self) -> list["Target"]:
+        """Physical member targets, ordered by chunk offset then member index.
+
+        Resolve logical MDS object/chunk targets through their placement map.
+        Each returned target contains one URI, including any witness member;
+        listing does not require the physical members to be reachable.
+        """
+        return [Target(uri) for uri in librawstor.object_slots(self._uri)]
 
     def versions(self) -> Iterator["Target"]:
         """Every version of this target's object, oldest first, each as

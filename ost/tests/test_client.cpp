@@ -634,7 +634,7 @@ RawstorObjectSyncStateValue stored_state(
         ssize_t* result;
     } ctx{&done, &result};
     int res = rawstor_target_meta(
-        queue, target.c_str(), 0, &meta, 1,
+        queue, target.c_str(), &meta, 1,
         [](ssize_t r, void* data) {
             Ctx* c = static_cast<Ctx*>(data);
             *c->result = r;

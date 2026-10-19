@@ -557,7 +557,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
         size_t rval = co_await _queue.pread(fd, disk.data(), disk.size(), 0);
         if (rval != disk.size()) {
             rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
-            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            RAWSTD_THROW_SYSTEM_ERROR(EILSEQ);
         }
         try {
             meta_decode(
@@ -621,7 +621,7 @@ rawstd::Task<void> Backend::_write_meta(
         size_t got = co_await _queue.pread(fd, disk.data(), disk.size(), 0);
         if (got != disk.size()) {
             rawstd_error("Malformed object meta: %s\n", meta_path.c_str());
-            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            RAWSTD_THROW_SYSTEM_ERROR(EILSEQ);
         }
         // Preserve the logical size and placement identity across rewrites.
         // An unreadable record cannot supply those fields and is rejected.

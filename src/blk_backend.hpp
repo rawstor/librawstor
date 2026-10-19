@@ -162,7 +162,7 @@ protected:
     // bytes -- see its own doc comment for why). Only characters valid in all
     // three are used (no comma, no whitespace).
     //
-    // meta_decode() reverses meta_encode(), throwing EPROTO if value is
+    // meta_decode() reverses meta_encode(), throwing EILSEQ if value is
     // not a well-formed encoding of the current META_FORMAT_VERSION
     // (including an empty string: the caller must not mistake "no value
     // was ever recorded" for a valid record, and a record from a

@@ -98,3 +98,11 @@ TEST(TargetParsePathTest, more_than_one_version_throws_einval) {
         std::system_error
     );
 }
+
+TEST(TargetParsePathTest, explicit_zero_offset_is_distinct_from_object_uri) {
+    auto object = rawstor::parse_target_path("/" + id_str);
+    auto chunk = rawstor::parse_target_path("/" + id_str + "/0");
+    EXPECT_FALSE(object.explicit_offset);
+    EXPECT_TRUE(chunk.explicit_offset);
+    EXPECT_EQ(object.offset, chunk.offset);
+}

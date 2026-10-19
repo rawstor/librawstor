@@ -169,20 +169,17 @@ chunk_uris_at_offset(const std::vector<rawstd::URI>& uris, uint64_t offset) {
     return ret;
 }
 
-// Whether `uris` names a target whose own real per-chunk shape isn't
-// reflected in its own syntax at all -- true only for an mds:// target
-// (mds_backend.hpp's own class doc comment): resolving any offset beyond
-// the trivial, always-present chunk 0 is then each location's own
-// Backend's job (Backend::meta()/Backend::list_chunks()'s own doc comments),
-// never something `uris` itself could ever answer. Every other scheme is
-// fully self-describing on its own terms instead -- chunk addressing for
-// a plain target is entirely client-side (docs/concepts.md): a URI
-// carrying its own explicit offset segment names it authoritatively, and
-// one that doesn't (a plain, unchunked object, `uris.size() == 1`) is
-// unambiguously chunk 0 -- neither needs a backend to confirm it, so
-// `false` covers both without distinguishing them.
+// MDS targets name logical resources; their physical members come from the
+// placement map. An explicit offset selects one logical chunk, not a native
+// metadata record on the MDS server.
 bool is_opaque(const std::vector<rawstd::URI>& uris) {
     return uris.size() == 1 && uris.front().scheme() == "mds";
+}
+
+bool is_logical_chunk(const std::vector<rawstd::URI>& uris) {
+    return is_opaque(uris) &&
+           rawstor::parse_target_path(uris.front().path().str())
+               .explicit_offset;
 }
 
 // The (stripped) locations resolve_spec()/resolve_meta()/resolve_chunks()
@@ -843,13 +840,12 @@ rawstd::DetachedTask launch_spec_op_coro(
 // that chunk's own URI count, even past `count` -- only the first
 // `count` entries are actually written).
 rawstd::DetachedTask launch_meta_op_coro(
-    rawstor::Target t, rawio::Queue* queue, uint64_t offset,
-    RawstorObjectMeta* metas, size_t count,
-    int (*cb)(ssize_t result, void* data), void* data
+    rawstor::Target t, rawio::Queue* queue, RawstorObjectMeta* metas,
+    size_t count, int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     try {
-        std::vector<RawstorObjectMeta> ret = co_await t.meta(*queue, offset);
+        std::vector<RawstorObjectMeta> ret = co_await t.meta(*queue);
         size_t n = count < ret.size() ? count : ret.size();
         for (size_t i = 0; i < n; ++i) {
             metas[i] = ret[i];
@@ -872,22 +868,41 @@ rawstd::DetachedTask launch_meta_op_coro(
     }
 }
 
-// Same shape as launch_meta_op_coro() above, for Target::chunks() --
-// `offsets` is an array, `count` only a buffer capacity (same truncation
-// convention: the result, on success, is always the target's own real
-// chunk count, even past `count`).
-rawstd::DetachedTask launch_chunks_op_coro(
-    rawstor::Target t, rawio::Queue* queue, uint64_t* offsets, size_t count,
-    int (*cb)(ssize_t result, void* data), void* data
+// Converts an enumeration of targets into an owned C string list.
+using TargetListMethod =
+    rawstd::Task<std::vector<rawstor::Target>> (rawstor::Target::*)(
+        rawio::Queue&
+    ) const;
+
+rawstd::DetachedTask launch_targets_op_coro(
+    rawstor::Target t, rawio::Queue* queue, RawstorStringList** output,
+    TargetListMethod enumerate, int (*cb)(ssize_t result, void* data),
+    void* data
 ) {
     ssize_t result = 0;
+    RawstorStringList* list = nullptr;
     try {
-        std::vector<uint64_t> ret = co_await t.chunks(*queue);
-        size_t n = count < ret.size() ? count : ret.size();
-        for (size_t i = 0; i < n; ++i) {
-            offsets[i] = ret[i];
+        auto targets = co_await (t.*enumerate)(*queue);
+        list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
+        if (list == nullptr) {
+            throw std::bad_alloc();
         }
-        result = static_cast<ssize_t>(ret.size());
+        for (const auto& target : targets) {
+            std::string value = rawstd::URI::uris(target.uris());
+            char* str = strdup(value.c_str());
+            if (!str) {
+                throw std::bad_alloc();
+            }
+            char** it = (char**)rawstd_list_append((RawstdList*)list);
+            if (!it) {
+                free(str);
+                throw std::bad_alloc();
+            }
+            *it = str;
+        }
+        *output = list;
+        list = nullptr;
+        result = static_cast<ssize_t>(targets.size());
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -895,10 +910,8 @@ rawstd::DetachedTask launch_chunks_op_coro(
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
         result = -EINVAL;
-    } catch (...) {
-        rawstd_error("Unexpected error\n");
-        result = -EINVAL;
     }
+    rawstor_string_list_delete(list);
     int res = cb(result, data);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
@@ -978,15 +991,15 @@ rawstd::DetachedTask launch_versions_op_coro(
 // Same shape as launch_remove_op_coro() above, for
 // Target::set_member_config(): no out-parameter, just a result.
 rawstd::DetachedTask launch_set_member_config_op_coro(
-    rawstor::Target t, rawio::Queue* queue, uint64_t offset,
-    size_t member_index, RawstorObjectConfig config, unsigned int flags,
+    rawstor::Target t, rawio::Queue* queue, size_t member_index,
+    RawstorObjectConfig config, unsigned int flags,
     std::optional<RawstorObjectSyncStateValue> state,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     try {
         co_await t.set_member_config(
-            *queue, offset, member_index, config, flags, state
+            *queue, member_index, config, flags, state
         );
     } catch (const std::system_error& e) {
         result = -e.code().value();
@@ -1032,21 +1045,19 @@ rawstd::DetachedTask launch_sync_op_coro(
 // Runs one register request against `t`, which lives in this frame for
 // the request's whole life.
 rawstd::Task<bool> sync_prepare_coro(
-    rawstor::Target t, rawio::Queue* queue, uint64_t offset,
-    size_t member_index, RawstorObjectBallot ballot, RawstorObjectMeta& meta
+    rawstor::Target t, rawio::Queue* queue, size_t member_index,
+    RawstorObjectBallot ballot, RawstorObjectMeta& meta
 ) {
-    co_return co_await t.sync_prepare(
-        *queue, offset, member_index, ballot, meta
-    );
+    co_return co_await t.sync_prepare(*queue, member_index, ballot, meta);
 }
 
 rawstd::Task<bool> sync_accept_coro(
-    rawstor::Target t, rawio::Queue* queue, uint64_t offset,
-    size_t member_index, RawstorObjectBallot ballot, RawstorObjectBallot next,
+    rawstor::Target t, rawio::Queue* queue, size_t member_index,
+    RawstorObjectBallot ballot, RawstorObjectBallot next,
     RawstorObjectConfig config, RawstorObjectMeta& meta
 ) {
     co_return co_await t.sync_accept(
-        *queue, offset, member_index, ballot, next, config, meta
+        *queue, member_index, ballot, next, config, meta
     );
 }
 
@@ -1119,6 +1130,7 @@ TargetPath parse_target_path(const std::string& path) {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
             ret.offset = offset;
+            ret.explicit_offset = true;
             rawstd_uuid_from_string(&ret.version_id, segments.back().c_str());
             ret.segments = static_cast<unsigned int>(chain + 2);
             return ret;
@@ -1147,6 +1159,7 @@ TargetPath parse_target_path(const std::string& path) {
                 &ret.id, segments[segments.size() - 2].c_str()
             ) == 0) {
             ret.offset = offset;
+            ret.explicit_offset = true;
             ret.segments = 2;
             return ret;
         }
@@ -1232,6 +1245,10 @@ const RawstdUUID& Target::version_id() const {
 
 rawstd::Task<void>
 Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
+    if (is_logical_chunk(_uris)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     if (!rawstd_uuid_is_nil(&_version_id)) {
         // create() is only ever for a fresh object -- creating a version
         // of an existing one is create_version()'s own job (this class's
@@ -1413,6 +1430,10 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
 }
 
 rawstd::Task<void> Target::create_version(rawio::Queue& queue) const {
+    if (is_logical_chunk(_uris)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     if (rawstd_uuid_is_nil(&_version_id)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -1511,7 +1532,7 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
     bool opaque = is_opaque(_uris);
     RawstdUUID id = uuid_from_target(_uris.front());
 
-    std::vector<uint64_t> offsets = co_await chunks(queue);
+    std::vector<uint64_t> offsets = co_await _offsets(queue);
 
     RawstorObjectSpec ret = co_await resolve_spec(
         queue, locations_for(_uris, offsets.front(), opaque), id,
@@ -1524,27 +1545,14 @@ rawstd::Task<RawstorObjectSpec> Target::spec(rawio::Queue& queue) const {
     co_return ret;
 }
 
-// Unlike spec() above, every location of the chunk at `offset` is
-// queried, not just the first reachable one: a caller asking for mirror
-// consistency state wants to see each copy of that chunk's own state
-// (docs/mirroring.md), not one answer papered over the rest by fail-over
-// -- e.g. rawstor show -v printing every mirror's own state, or rawstor
-// resolve needing to compare copies against each other, neither of
-// which a single-answer result could ever support. The actual lookup
-// (every location of that one chunk queried concurrently, flattening in
-// every one of an mds:// location's own real members -- resolve_meta()'s
-// own doc comment) is resolve_meta()'s own job; locations_for() above
-// resolves which locations to ask (throwing ENOENT itself for a
-// non-opaque target with no chunk at `offset` -- an opaque one instead
-// leaves that to its own Backend). Every answering entry's own
-// spec.width is trusted verbatim, no override: it is the width
-// Target::create() persisted on every member (the object's own policy,
-// always non-zero -- its own comment), and every chunk of one object
-// shares the same policy width by construction (docs/mds.md). A bound
-// version reports that version's own copies (Backend::meta()'s own doc
-// comment).
+// Metadata is per addressed chunk. Whole MDS objects use their first chunk;
+// callers inspecting every chunk enumerate physical targets with chunks().
 rawstd::Task<std::vector<RawstorObjectMeta>>
-Target::meta(rawio::Queue& queue, uint64_t offset) const {
+Target::meta(rawio::Queue& queue) const {
+    uint64_t offset = extract_offset(_uris.front());
+    if (chunk_uris_by_offset(_uris).size() != 1) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     bool opaque = is_opaque(_uris);
     RawstdUUID id = uuid_from_target(_uris.front());
     return resolve_meta(
@@ -1560,7 +1568,8 @@ Target::meta(rawio::Queue& queue, uint64_t offset) const {
 // opaque (mds://) target instead asks its own Backend directly
 // (resolve_chunks(), Backend::list_chunks()'s own doc comment), for the
 // bound version's own chunks when there is one.
-rawstd::Task<std::vector<uint64_t>> Target::chunks(rawio::Queue& queue) const {
+rawstd::Task<std::vector<uint64_t>>
+Target::_offsets(rawio::Queue& queue) const {
     if (!is_opaque(_uris)) {
         std::vector<std::vector<rawstd::URI>> groups =
             chunk_uris_by_offset(_uris);
@@ -1572,10 +1581,56 @@ rawstd::Task<std::vector<uint64_t>> Target::chunks(rawio::Queue& queue) const {
         co_return ret;
     }
 
+    if (is_logical_chunk(_uris)) {
+        co_return std::vector<uint64_t>{extract_offset(_uris.front())};
+    }
     RawstdUUID id = uuid_from_target(_uris.front());
     co_return co_await resolve_chunks(
         queue, locations_for(_uris, 0, true), id, _version_id
     );
+}
+
+rawstd::Task<std::vector<Target>> Target::chunks(rawio::Queue& queue) const {
+    if (!is_opaque(_uris)) {
+        std::vector<Target> targets;
+        for (const auto& group : chunk_uris_by_offset(_uris)) {
+            targets.emplace_back(group);
+        }
+        co_return targets;
+    }
+    auto offsets = co_await _offsets(queue);
+    std::vector<Target> targets;
+    RawstdUUIDString id, version;
+    rawstd_uuid_to_string(&object_id(), &id);
+    rawstd_uuid_to_string(&_version_id, &version);
+    for (uint64_t offset : offsets) {
+        auto members = co_await resolve_member_locations(
+            queue, locations_for(_uris, offset, true), object_id(), offset,
+            _version_id
+        );
+        std::ostringstream path;
+        path << id << "/" << std::hex << offset;
+        if (!rawstd_uuid_is_nil(&_version_id)) {
+            path << "/" << version;
+        }
+        std::vector<rawstd::URI> uris;
+        for (const auto& member : members) {
+            uris.emplace_back(member, path.str());
+        }
+        targets.emplace_back(uris);
+    }
+    co_return targets;
+}
+
+rawstd::Task<std::vector<Target>> Target::slots(rawio::Queue& queue) const {
+    auto chunks = co_await this->chunks(queue);
+    std::vector<Target> slots;
+    for (const auto& chunk : chunks) {
+        for (const auto& uri : chunk.uris()) {
+            slots.emplace_back(std::vector<rawstd::URI>{uri});
+        }
+    }
+    co_return slots;
 }
 
 // Every location is queried concurrently and their answers merged; a
@@ -1589,7 +1644,7 @@ Target::versions(rawio::Queue& queue) const {
     // answer for it; an mds:// backend ignores the offset.
     uint64_t offset = 0;
     if (!opaque) {
-        std::vector<uint64_t> offsets = co_await chunks(queue);
+        std::vector<uint64_t> offsets = co_await _offsets(queue);
         offset = offsets.front();
     }
     std::vector<rawstd::URI> locations = locations_for(_uris, offset, opaque);
@@ -1668,10 +1723,10 @@ rawstd::Task<rawstd::URI> Target::_member_location(
 }
 
 rawstd::Task<void> Target::set_member_config(
-    rawio::Queue& queue, uint64_t offset, size_t member_index,
-    RawstorObjectConfig config, unsigned int flags,
-    std::optional<RawstorObjectSyncStateValue> state
+    rawio::Queue& queue, size_t member_index, RawstorObjectConfig config,
+    unsigned int flags, std::optional<RawstorObjectSyncStateValue> state
 ) const {
+    uint64_t offset = extract_offset(_uris.front());
     rawstd::URI location =
         co_await _member_location(queue, offset, member_index);
     RawstdUUID id = uuid_from_target(_uris.front());
@@ -1693,9 +1748,10 @@ rawstd::Task<void> Target::set_member_config(
 }
 
 rawstd::Task<bool> Target::sync_prepare(
-    rawio::Queue& queue, uint64_t offset, size_t member_index,
-    RawstorObjectBallot ballot, RawstorObjectMeta& meta
+    rawio::Queue& queue, size_t member_index, RawstorObjectBallot ballot,
+    RawstorObjectMeta& meta
 ) const {
+    uint64_t offset = extract_offset(_uris.front());
     rawstd::URI location =
         co_await _member_location(queue, offset, member_index);
     RawstdUUID id = uuid_from_target(_uris.front());
@@ -1717,10 +1773,11 @@ rawstd::Task<bool> Target::sync_prepare(
 }
 
 rawstd::Task<bool> Target::sync_accept(
-    rawio::Queue& queue, uint64_t offset, size_t member_index,
-    RawstorObjectBallot ballot, RawstorObjectBallot next,
-    RawstorObjectConfig config, RawstorObjectMeta& meta
+    rawio::Queue& queue, size_t member_index, RawstorObjectBallot ballot,
+    RawstorObjectBallot next, RawstorObjectConfig config,
+    RawstorObjectMeta& meta
 ) const {
+    uint64_t offset = extract_offset(_uris.front());
     rawstd::URI location =
         co_await _member_location(queue, offset, member_index);
     RawstdUUID id = uuid_from_target(_uris.front());
@@ -1745,6 +1802,10 @@ rawstd::Task<bool> Target::sync_accept(
 }
 
 rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
+    if (is_logical_chunk(_uris)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     // Every URI of every chunk's own REMOVE goes out concurrently
     // instead of one chunk (or one URI) at a time -- _uris is already a
     // flat list of all of them (Target's own class doc comment), so
@@ -1762,6 +1823,10 @@ rawstd::Task<void> Target::remove(rawio::Queue& queue) const {
 
 rawstd::Task<void>
 Target::resize(rawio::Queue& queue, uint64_t new_size) const {
+    if (is_logical_chunk(_uris)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     std::vector<std::vector<rawstd::URI>> chunks = chunk_uris_by_offset(_uris);
     const std::vector<rawstd::URI>& uris = chunks.front();
     // Every URI's own backend is asked to grow -- for the one real
@@ -1801,6 +1866,10 @@ Target::resize(rawio::Queue& queue, uint64_t new_size) const {
 // every Chunk::create() below.
 rawstd::Task<std::unique_ptr<Object>>
 Target::open(rawio::Queue& queue, int flags) const {
+    if (is_logical_chunk(_uris)) {
+        auto targets = co_await chunks(queue);
+        co_return co_await targets.front().open(queue, flags);
+    }
     if ((flags & ~(RAWSTOR_READONLY | RAWSTOR_FORCE)) != 0) {
         rawstd_error("Unknown open flags: %x\n", flags);
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -2018,15 +2087,14 @@ int rawstor_target_spec(
 }
 
 int rawstor_target_meta(
-    RawIOQueue* queue, const char* target, uint64_t offset,
-    RawstorObjectMeta* metas, size_t count,
-    int (*cb)(ssize_t result, void* data), void* data
+    RawIOQueue* queue, const char* target, RawstorObjectMeta* metas,
+    size_t count, int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
         launch_meta_op_coro(
-            std::move(t), static_cast<rawio::Queue*>(queue), offset, metas,
-            count, cb, data
+            std::move(t), static_cast<rawio::Queue*>(queue), metas, count, cb,
+            data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;
@@ -2044,7 +2112,7 @@ int rawstor_target_meta(
 }
 
 int rawstor_target_set_member_config(
-    RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
+    RawIOQueue* queue, const char* target, size_t member_index,
     const RawstorObjectConfig* config, unsigned int flags,
     const RawstorObjectSyncStateValue* state,
     int (*cb)(ssize_t result, void* data), void* data
@@ -2052,9 +2120,9 @@ int rawstor_target_set_member_config(
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
         launch_set_member_config_op_coro(
-            std::move(t), static_cast<rawio::Queue*>(queue), offset,
-            member_index, *config, flags,
-            state ? std::optional(*state) : std::nullopt, cb, data
+            std::move(t), static_cast<rawio::Queue*>(queue), member_index,
+            *config, flags, state ? std::optional(*state) : std::nullopt, cb,
+            data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;
@@ -2120,15 +2188,59 @@ int rawstor_target_id(const char* target, char* buf, size_t size) noexcept {
     }
 }
 
+int rawstor_target_offset(const char* target, uint64_t* offset) noexcept {
+    try {
+        rawstor::Target t(rawstd::URI::uriv(target));
+        auto groups = chunk_uris_by_offset(t.uris());
+        if ((is_opaque(t.uris()) && !is_logical_chunk(t.uris())) ||
+            groups.size() != 1) {
+            return -EINVAL;
+        }
+        *offset = extract_offset(groups.front().front());
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc&) {
+        return -ENOMEM;
+    } catch (...) {
+        return -EINVAL;
+    }
+}
+
 int rawstor_target_chunks(
-    RawIOQueue* queue, const char* target, uint64_t* offsets, size_t size,
+    RawIOQueue* queue, const char* target, RawstorStringList** chunks,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Target t(rawstd::URI::uriv(target));
-        launch_chunks_op_coro(
-            std::move(t), static_cast<rawio::Queue*>(queue), offsets, size, cb,
-            data
+        launch_targets_op_coro(
+            std::move(t), static_cast<rawio::Queue*>(queue), chunks,
+            &rawstor::Target::chunks, cb, data
+        );
+        rawstd::DetachedTask::rethrow_if_pending();
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_target_slots(
+    RawIOQueue* queue, const char* target, RawstorStringList** slots,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Target t(rawstd::URI::uriv(target));
+        launch_targets_op_coro(
+            std::move(t), static_cast<rawio::Queue*>(queue), slots,
+            &rawstor::Target::slots, cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;
@@ -2339,7 +2451,7 @@ int rawstor_target_version_id(
 }
 
 int rawstor_target_sync_prepare(
-    RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
+    RawIOQueue* queue, const char* target, size_t member_index,
     const RawstorObjectBallot* ballot, RawstorObjectMeta* meta,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
@@ -2347,8 +2459,8 @@ int rawstor_target_sync_prepare(
         rawstor::Target t(rawstd::URI::uriv(target));
         launch_sync_op_coro(
             sync_prepare_coro(
-                std::move(t), static_cast<rawio::Queue*>(queue), offset,
-                member_index, *ballot, *meta
+                std::move(t), static_cast<rawio::Queue*>(queue), member_index,
+                *ballot, *meta
             ),
             cb, data
         );
@@ -2368,7 +2480,7 @@ int rawstor_target_sync_prepare(
 }
 
 int rawstor_target_sync_accept(
-    RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
+    RawIOQueue* queue, const char* target, size_t member_index,
     const RawstorObjectBallot* ballot, const RawstorObjectBallot* next,
     const RawstorObjectConfig* config, RawstorObjectMeta* meta,
     int (*cb)(ssize_t result, void* data), void* data
@@ -2377,8 +2489,8 @@ int rawstor_target_sync_accept(
         rawstor::Target t(rawstd::URI::uriv(target));
         launch_sync_op_coro(
             sync_accept_coro(
-                std::move(t), static_cast<rawio::Queue*>(queue), offset,
-                member_index, *ballot, *next, *config, *meta
+                std::move(t), static_cast<rawio::Queue*>(queue), member_index,
+                *ballot, *next, *config, *meta
             ),
             cb, data
         );

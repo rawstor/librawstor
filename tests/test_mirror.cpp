@@ -105,7 +105,7 @@ ssize_t target_open(
 ssize_t
 target_meta(Queue& queue, const std::string& target, RawstorObjectMeta* meta) {
     ssize_t res = rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
-        return rawstor_target_meta(queue, target.c_str(), 0, meta, 1, cb, data);
+        return rawstor_target_meta(queue, target.c_str(), meta, 1, cb, data);
     });
     if (res < 0) {
         return res;
@@ -122,7 +122,7 @@ ssize_t target_set_config(
 ) {
     return rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
         return rawstor_target_set_member_config(
-            queue, target.c_str(), 0, 0, &sync_state, 0, nullptr, cb, data
+            queue, target.c_str(), 0, &sync_state, 0, nullptr, cb, data
         );
     });
 }
@@ -1233,7 +1233,7 @@ TEST(MirrorResyncTest, vanished_writer_heals_from_first_clean_copy) {
             queue,
             [&](auto cb, void* data) {
                 return rawstor_target_set_member_config(
-                    queue, members.target(1).c_str(), 0, 0, &second.config,
+                    queue, members.target(1).c_str(), 0, &second.config,
                     RAWSTOR_CONFIG_CLEAR_LOST, nullptr, cb, data
                 );
             }

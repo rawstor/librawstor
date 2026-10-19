@@ -351,18 +351,18 @@ void Backend::meta_decode(
         width > UINT8_MAX ||
         (member_role != RAWSTOR_MEMBER_DATA &&
          member_role != RAWSTOR_MEMBER_WITNESS)) {
-        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        RAWSTD_THROW_SYSTEM_ERROR(EILSEQ);
     }
 
     size_t nroles = 0;
     if (strcmp(roles, "-") != 0) {
         nroles = strlen(roles);
         if (nroles > RAWSTOR_OBJECT_MAX_WIDTH) {
-            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            RAWSTD_THROW_SYSTEM_ERROR(EILSEQ);
         }
         for (size_t i = 0; i < nroles; ++i) {
             if (roles[i] < '0' || roles[i] > '9') {
-                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+                RAWSTD_THROW_SYSTEM_ERROR(EILSEQ);
             }
             c.roles[i] = static_cast<uint8_t>(roles[i] - '0');
         }

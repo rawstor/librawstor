@@ -49,40 +49,12 @@ ssize_t rawstor_cli_op_wait(RawstorCliOp* op, int res) {
 }
 
 ssize_t rawstor_cli_op_chunks(
-    RawstorCliOp* op, const char* target, uint64_t** offsets
+    RawstorCliOp* op, const char* target, RawstorStringList** chunks
 ) {
-    *offsets = NULL;
-
+    *chunks = NULL;
     op->done = 0;
-    ssize_t count = rawstor_cli_op_wait(
+    return rawstor_cli_op_wait(
         op,
-        rawstor_target_chunks(op->queue, target, NULL, 0, rawstor_cli_op_cb, op)
+        rawstor_target_chunks(op->queue, target, chunks, rawstor_cli_op_cb, op)
     );
-    if (count <= 0) {
-        return count;
-    }
-
-    uint64_t* buf = malloc((size_t)count * sizeof(*buf));
-    if (buf == NULL) {
-        return -ENOMEM;
-    }
-
-    op->done = 0;
-    ssize_t filled = rawstor_cli_op_wait(
-        op, rawstor_target_chunks(
-                op->queue, target, buf, (size_t)count, rawstor_cli_op_cb, op
-            )
-    );
-    if (filled < 0) {
-        free(buf);
-        return filled;
-    }
-    /* The object may have grown between the two calls; only the first
-     * `count` entries were written. */
-    if (filled > count) {
-        filled = count;
-    }
-
-    *offsets = buf;
-    return filled;
 }

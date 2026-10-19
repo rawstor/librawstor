@@ -809,9 +809,9 @@ reconstruct scan (below).
   each one that exists is also openable), read via
   `/dev/zvol/…@s<id>`, read-only at the device level too.
 - **Reads:** a trailing version path segment on the regular open
-  (`mds://host:port/<id>/0/<version_id>`, `ost://…/<uuid>/0/<version_id>` -- the
-  offset segment is mandatory once a version follows it,
-  docs/concepts.md's own "Chunk offset"), `version_id` a UUID
+  (`mds://host:port/<id>/<version_id>` for the whole logical object,
+  `mds://host:port/<id>/0/<version_id>` for its first logical chunk, or
+  `ost://…/<uuid>/0/<version_id>` for a physical chunk member), `version_id` a UUID
   string; the wire carries it in SET_OBJECT's/RESOLVE's own
   `version_id[16]` field (`RawstorFrameBasicPayload`), and META answers
   about that version's own copy the same way. Opening a
@@ -849,7 +849,7 @@ reconstruct scan (below).
 ## Witness
 
 Witness members use ordinary backend URIs: `ost://host:port`,
-`mds://host:port`, `file:///path`, `lvm://vg` or `zfs://pool/rawstor`.
+`ost://host:port` (including an MDS server), `file:///path`, `lvm://vg` or `zfs://pool/rawstor`.
 The URI contains only the address. Creation makes the last location a
 witness when the chunk has `width + 1`
 locations and `width` is even and at least two. With `width` locations, all
@@ -869,7 +869,7 @@ registration. An `mds://` object's placement does not automatically add one.
 For example, create a two-copy object with a witness on MDS:
 
 ```sh
-rawstor create -s 1G -m 2 'ost://10.0.0.11:9090,ost://10.0.0.12:9090,mds://10.0.0.13:9091'
+rawstor create -s 1G -m 2 'ost://10.0.0.11:9090,ost://10.0.0.12:9090,ost://10.0.0.13:9091'
 ```
 
 The mirroring model supports several writer queues within one process (see
@@ -1221,3 +1221,20 @@ the topology but are unavailable are probed again at once rather than at
 their next slot. In-flight results
 for a removed OST or its old address are ignored. The existing refusal to
 remove an OST that still holds chunks or version members also applies.
+
+### Logical objects and physical members
+
+`mds://host:port/UUID` resolves the registered object's placement map.
+`mds://host:port/UUID/OFFSET` selects one logical chunk and resolves its
+physical members from that map. Offsets are hexadecimal byte offsets.
+`ost://host:port/UUID/OFFSET` addresses a physical member directly, including
+when that member is a witness stored on the MDS server. MDS serves the native
+member commands over the same wire protocol; the URI scheme selects the client
+backend, not the server process. No witness-detection probe is needed.
+
+Chunk enumeration returns physical targets at their actual backend locations,
+using `ost://` for both data members and witnesses served by MDS. Listing an
+`mds://` location preserves logical object URIs and emits native witness records
+as `ost://` targets. Logical chunk URIs support metadata lookup, member
+configuration, register voting and chunk-local I/O; object creation, removal,
+version creation and resizing require a whole-object URI.

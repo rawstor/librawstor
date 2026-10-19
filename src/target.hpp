@@ -66,6 +66,7 @@ struct TargetPath {
     uint64_t offset;
     RawstdUUID version_id;
     unsigned int segments;
+    bool explicit_offset;
 };
 
 // Parses a target's own trailing path identity (see TargetPath's own
@@ -135,6 +136,7 @@ private:
     // (chunk_uris_by_offset()/chunk_uris_at_offset() in target.cpp derive
     // it on demand instead).
     std::vector<rawstd::URI> _uris;
+    rawstd::Task<std::vector<uint64_t>> _offsets(rawio::Queue& queue) const;
 
     // The object's own identity -- the same for every URI in `_uris`,
     // across every chunk, not just within one (validated once, at
@@ -186,23 +188,6 @@ public:
     // set union, computed fresh each call.
     Location location() const;
 
-    // Deliberately no offset() accessor here, unlike object_id()/version_id()/
-    // location() above: unlike those, one chunk's own offset within a
-    // larger mds:// object has no sensible whole-target combination at
-    // all (not a single agreed value like id/version_id, not a
-    // meaningfully unioned set like location() -- an offset's entire
-    // point is telling one chunk apart from every other chunk of the
-    // same object, so there is no coherent "this target's own offset"
-    // for anything but a single-chunk target). A caller that actually
-    // wants one specific URI's own offset already has that URI in hand
-    // (uris() above) and can ask parse_target_path() directly, the same
-    // way this class's own free functions in target.cpp do. meta()/
-    // set_config() below take an explicit `offset` parameter for the
-    // same reason: neither has a coherent "every chunk" answer to give
-    // without one -- a caller wanting every chunk loops over each one's
-    // own offset itself (spec()'s own size/chunk_size say how many there
-    // are).
-
     // Creates every chunk, in order -- a single chunk (the plain,
     // single-chunk case, including a lone mds:// URI -- sp.chunk_size
     // there is just the volume's own future chunking policy, not a
@@ -241,18 +226,13 @@ public:
     rawstd::Task<void> create_version(rawio::Queue& queue) const;
 
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue) const;
-    // One RawstorObjectMeta per URI of the chunk at `offset`, same order
-    // -- every URI of that chunk is queried, not just the first
-    // reachable one; a URI that doesn't answer gets a zero-filled entry
-    // (see this method's own doc comment in target.cpp for why). Throws
-    // ENOENT if no chunk in `_uris` sits at `offset`.
+    // Metadata for the addressed chunk; enumerate whole objects with chunks().
     rawstd::Task<std::vector<RawstorObjectMeta>>
-    meta(rawio::Queue& queue, uint64_t offset) const;
-    // Every distinct chunk offset `_uris` actually names -- backend-
-    // verified for an opaque (single-URI, no offset segment of its own)
-    // target, purely syntactic otherwise (see this method's own doc
-    // comment in target.cpp).
-    rawstd::Task<std::vector<uint64_t>> chunks(rawio::Queue& queue) const;
+    meta(rawio::Queue& queue) const;
+    // Physical chunk targets, resolving a whole MDS object's placement map.
+    rawstd::Task<std::vector<Target>> chunks(rawio::Queue& queue) const;
+    // One physical member URI per target, in chunk offset/member order.
+    rawstd::Task<std::vector<Target>> slots(rawio::Queue& queue) const;
     // Every version this object has, oldest first
     // (version ids are UUID v7). Asks the backend, whichever version
     // `this` is bound to: the MDS for an mds:// target, otherwise every
@@ -260,20 +240,20 @@ public:
     // copy is listed.
     rawstd::Task<std::vector<RawstdUUID>> versions(rawio::Queue& queue) const;
     // Writes `config` to exactly one real member of the chunk at
-    // `offset` -- `member_index` into that chunk's own real member list,
+    // the URI -- `member_index` into that chunk's own real member list,
     // the same order rawstor_target_meta()'s own per-chunk result reports
     // their state in. This is rawstor resolve's own --winner: declaring
     // one member authoritative; a caller wanting every member of the
     // chunk written calls this once per member instead. Throws ENOENT if
-    // no chunk sits at `offset`, EINVAL if `member_index` names no real
+    // no chunk is addressed, EINVAL if `member_index` names no real
     // member of it (see this method's own doc comment in target.cpp for
     // how an opaque, e.g. mds://, target's real member list is resolved).
     // `member_index` also selects the receiver's role in `config.roles`.
     // `config` is taken by value and outlives the caller's argument across
     // the connect. OST forwards this index to its one local copy.
     rawstd::Task<void> set_member_config(
-        rawio::Queue& queue, uint64_t offset, size_t member_index,
-        RawstorObjectConfig config, unsigned int flags,
+        rawio::Queue& queue, size_t member_index, RawstorObjectConfig config,
+        unsigned int flags,
         std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     ) const;
     // The two requests of the chunk's configuration register
@@ -282,13 +262,13 @@ public:
     // is taken by value: it outlives the caller's arguments, across the
     // connect.
     rawstd::Task<bool> sync_prepare(
-        rawio::Queue& queue, uint64_t offset, size_t member_index,
-        RawstorObjectBallot ballot, RawstorObjectMeta& meta
+        rawio::Queue& queue, size_t member_index, RawstorObjectBallot ballot,
+        RawstorObjectMeta& meta
     ) const;
     rawstd::Task<bool> sync_accept(
-        rawio::Queue& queue, uint64_t offset, size_t member_index,
-        RawstorObjectBallot ballot, RawstorObjectBallot next,
-        RawstorObjectConfig config, RawstorObjectMeta& meta
+        rawio::Queue& queue, size_t member_index, RawstorObjectBallot ballot,
+        RawstorObjectBallot next, RawstorObjectConfig config,
+        RawstorObjectMeta& meta
     ) const;
     // Removes every URI of every chunk concurrently -- unlike create()
     // above, there's no rollback to speak of (removal has nothing to
