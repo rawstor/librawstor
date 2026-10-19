@@ -317,7 +317,7 @@ TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_offset) {
     run(*queue, target.create(*queue, spec));
 
     std::vector<RawstorObjectMeta> metas =
-        run(*queue, target.meta(*queue, chunk_size));
+        run(*queue, run(*queue, target.chunks(*queue)).at(1).meta(*queue));
     ASSERT_EQ(metas.size(), 1u);
     EXPECT_EQ(metas[0].spec.size, chunk_size);
     EXPECT_EQ(metas[0].spec.chunk_size, chunk_size);
@@ -325,31 +325,32 @@ TEST(MultiChunkTest, meta_and_set_member_sync_state_at_nonzero_offset) {
     RawstorObjectConfig config = metas[0].config;
     config.epoch += 1;
     config.sync_id = 0x1234;
-    run(*queue, target.set_member_config(*queue, chunk_size, 0, config, 0));
+    run(*queue, run(*queue, target.chunks(*queue))
+                    .at(1)
+                    .set_member_config(*queue, 0, config, 0));
 
-    metas = run(*queue, target.meta(*queue, chunk_size));
+    metas = run(*queue, run(*queue, target.chunks(*queue)).at(1).meta(*queue));
     ASSERT_EQ(metas.size(), 1u);
     EXPECT_EQ(metas[0].config.sync_id, 0x1234u);
     EXPECT_EQ(metas[0].config.epoch, config.epoch);
 
     // Chunk 0 keeps its own state.
-    metas = run(*queue, target.meta(*queue, 0));
+    metas =
+        run(*queue, run(*queue, target.chunks(*queue)).front().meta(*queue));
     ASSERT_EQ(metas.size(), 1u);
     EXPECT_NE(metas[0].config.sync_id, 0x1234u);
 
+    rawstor::Target missing({rawstd::URI(
+        location, std::string(uuid_string) + "/" + hex_offset(3 * chunk_size)
+    )});
+    auto absent = run(*queue, missing.meta(*queue));
+    ASSERT_EQ(absent.size(), 1u);
+    EXPECT_EQ(absent.front().state, RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE);
     try {
-        run(*queue, target.meta(*queue, 3 * chunk_size));
-        ADD_FAILURE() << "meta() at an offset with no chunk succeeded";
-    } catch (const std::system_error& e) {
-        EXPECT_EQ(e.code().value(), ENOENT);
-    }
-    try {
-        run(*queue,
-            target.set_member_config(*queue, 3 * chunk_size, 0, config, 0));
-        ADD_FAILURE()
-            << "set_member_config() at an offset with no chunk succeeded";
-    } catch (const std::system_error& e) {
-        EXPECT_EQ(e.code().value(), ENOENT);
+        run(*queue, missing.set_member_config(*queue, 0, config, 0));
+        ADD_FAILURE() << "configuration update of an absent chunk succeeded";
+    } catch (const std::system_error& error) {
+        EXPECT_EQ(error.code().value(), ENOENT);
     }
 
     run(*queue, target.remove(*queue));
@@ -507,7 +508,7 @@ TEST(TargetCreateTest, width_rules) {
         run(*queue, slot->close());
     }
     std::vector<RawstorObjectMeta> metas =
-        run(*queue, mirrored.meta(*queue, 0));
+        run(*queue, run(*queue, mirrored.chunks(*queue)).front().meta(*queue));
     ASSERT_EQ(metas.size(), 2u);
     EXPECT_EQ(metas[0].spec.width, 1u);
     EXPECT_EQ(metas[1].spec.width, 1u);

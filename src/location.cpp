@@ -409,7 +409,13 @@ rawstd::Task<void> Location::list(
                 // offset explicitly rather than relying on that default.
                 std::ostringstream oss;
                 oss << std::hex << offset;
-                rawstd::URI uri(rawstd::URI(location, uuid_string), oss.str());
+                rawstd::URI member_location =
+                    location.scheme() == "mds"
+                        ? rawstd::URI("ost" + location.str().substr(3))
+                        : location;
+                rawstd::URI uri(
+                    rawstd::URI(member_location, uuid_string), oss.str()
+                );
                 entries.emplace_back(offset, uri);
             }
         }

@@ -586,7 +586,7 @@ TEST(BlkBackendTest, meta_decode_rejects_invalid_width) {
             );
             FAIL() << "Accepted invalid width " << width;
         } catch (const std::system_error& e) {
-            EXPECT_EQ(e.code().value(), EPROTO);
+            EXPECT_EQ(e.code().value(), EILSEQ);
         }
     }
 }
@@ -609,7 +609,7 @@ TEST(BlkBackendTest, meta_decode_rejects_unknown_member_role) {
             );
             FAIL() << "Accepted unknown member role " << role;
         } catch (const std::system_error& e) {
-            EXPECT_EQ(e.code().value(), EPROTO);
+            EXPECT_EQ(e.code().value(), EILSEQ);
         }
     }
 }
@@ -756,7 +756,7 @@ TEST(ChunkF10Test, missing_copy_recreated_over_ost) {
     run(*queue, chunk->close());
 
     std::vector<RawstorObjectMeta> metas =
-        run(*queue, rawstor::Target({ost_uri}).meta(*queue, 0));
+        run(*queue, rawstor::Target({ost_uri}).meta(*queue));
     ASSERT_EQ(metas.size(), 1u);
     EXPECT_EQ(metas.front().spec.size, spec.size);
 }

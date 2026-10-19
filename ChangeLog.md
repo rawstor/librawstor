@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rawstor_target_slots()` and Python `Target.slots()` enumerate physical member URIs, also shown per mirror by `rawstor show -v`.
 - Metadata-only witness members on OST, MDS and local backends, with synchronous membership barriers and witness-assisted quorum for even numbers of data copies.
 - `rawstor-vhost` supports `VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD`, and `rawstor-vduse` keeps an equivalent in-flight log in `/dev/shm`, so requests in flight when the backend crashes are resubmitted after it restarts instead of never completing.
 - `rawstor-ost@<uuid>.service` systemd template (one instance per OST, configured by `/etc/rawstor/ost/<uuid>.conf`, serving `/var/lib/rawstor/ost/<uuid>` by default), so a host runs several OSTs; installing the package starts nothing and an upgrade restarts the running instances, of `rawstor-mds@` too.
@@ -27,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rawstor show -v` prints ancestor and current sync ids on one line, oldest first.
+- Native witnesses on MDS use `ost://` URIs; `mds://` URIs resolve logical objects and chunks.
+- `rawstor show -v` prints each chunk's physical target URI for recovery commands.
+- Chunk metadata and recovery APIs address chunks by URI instead of a separate offset; chunk listing returns target strings, and MDS routing no longer probes for witness records.
 - A mirrored writable open heals copies a vanished writer may have left different from the first clean (else first) copy in the background while writes go on, and clears their `LOST` mark once they are equal.
 - All members share configuration, state and rejoin rules; writable mirrors require a strict majority even with two data copies and no witness.
 - BLK metadata stores logical size for DATA and WITNESS members independently of physical allocation.
@@ -54,6 +59,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- MDS object writes keep epoch fencing on physical chunks; unsupported operations fail without retries on macOS.
+- Malformed persisted member metadata fails with `EILSEQ` without retrying; wire protocol errors retain reconnect retries.
 - A client reconnecting after a short write or a dropped connection no longer leaves the copy `LOST`: the new connection takes over the writes of the one it replaces.
 - Persist LOST after failed mirror departure, select conflicting member geometry only with an agreeing configuration quorum, reject unknown metadata states, and fail short DATA reads instead of returning incomplete data.
 - OST shutdown terminates incomplete network requests before draining storage operations; snapshot creation skips an unavailable trailing witness without ignoring unavailable data members.

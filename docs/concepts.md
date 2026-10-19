@@ -355,7 +355,8 @@ out explicitly (one of the two physical shapes) since it's never
 is. Like the internal multi-chunk form above, this is built only by
 `mds::Backend` from its own chunk map and never something a caller
 types — `Target`'s own constructor reads it back out to reconstruct
-chunk grouping, and it's also readable through `rawstor_target_chunks()`
+chunk grouping. `rawstor_target_chunks()` returns addressable physical chunk
+target strings, preserving their offset in each URI
 directly (a single entry, 0, for a plain, non-`mds://` target).
 
 ---
@@ -395,3 +396,32 @@ position; it does not search for a witness by role. `width` counts only data cop
 even number of data members. It participates in synchronous membership
 barriers and quorum; data I/O and the data-copy phase of resync skip it. Keep the complete target
 and member order. See [Witness](mds.md#witness).
+
+### Addressing metadata operations
+
+A logical `mds://host:port/UUID` addresses a whole object through its placement
+map. `mds://host:port/UUID/OFFSET` selects a logical chunk through that map.
+A physical member always uses its native backend scheme: `ost://host:port/UUID/OFFSET`
+also addresses a witness stored on MDS, whose server speaks the member protocol.
+Routing follows the URI scheme, without probing for witness records.
+`rawstor_target_chunks()` returns physical chunk targets; Python `Target.chunks()`
+returns `Target` instances. Metadata and member-configuration operations take a
+chunk target and no separate offset. Read/write offsets remain offsets within
+an opened object.
+
+`rawstor show -v` prints a `target:` line under each chunk; this target can
+be passed directly to `rawstor resolve TARGET --winner=N`.
+
+
+### Physical member slots
+
+`rawstor_target_slots()` returns an owned string list with one physical member
+URI per entry; free it with `rawstor_string_list_delete()`. Python exposes the
+same operation as `Target.slots()`, returning a list of single-URI `Target`s.
+
+A logical `mds://host:port/UUID/OFFSET` resolves to that chunk's physical slots.
+Without an offset, all chunks are enumerated in offset order, then member order.
+A physical comma-separated target is split without querying the members;
+unreachable slots remain in the result. Version suffixes are preserved.
+Witnesses on MDS use `ost://` at the MDS endpoint. `rawstor show -v` prints each
+slot's `target:` under its `mirror[N]`, even when the member is unreachable.

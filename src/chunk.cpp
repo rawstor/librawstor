@@ -3331,6 +3331,12 @@ Chunk::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
 }
 
 uint64_t Chunk::_epoch() const {
+    // An MDS slot routes a logical object, whose physical chunks each own
+    // a separate configuration register. The nested physical Chunk stamps
+    // its epoch; the logical wrapper has no member record to fence on.
+    if (_members.size() == 1 && _members.front().location.scheme() == "mds") {
+        return 0;
+    }
     return _control->epoch();
 }
 

@@ -81,12 +81,11 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
     run(*queue, target.create(*queue, spec));
 
     RawstorObjectMeta reply{};
-    bool accepted =
-        run(*queue, target.sync_prepare(*queue, 0, 0, {4, 1}, reply));
+    bool accepted = run(*queue, target.sync_prepare(*queue, 0, {4, 1}, reply));
     EXPECT_TRUE(accepted);
     EXPECT_EQ(reply.promised.counter, 4u);
 
-    accepted = run(*queue, target.sync_prepare(*queue, 0, 0, {3, 9}, reply));
+    accepted = run(*queue, target.sync_prepare(*queue, 0, {3, 9}, reply));
     EXPECT_FALSE(accepted);
     EXPECT_EQ(reply.promised.counter, 4u);
     EXPECT_EQ(reply.promised.proposer, 1u);
@@ -100,11 +99,13 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
     config.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
     accepted =
         run(*queue,
-            target.sync_accept(*queue, 0, 0, {4, 1}, {5, 1}, config, reply));
+            target.sync_accept(*queue, 0, {4, 1}, {5, 1}, config, reply));
     EXPECT_TRUE(accepted);
 
     // What the member persisted, read back the ordinary way.
-    RawstorObjectMeta meta = run(*queue, target.meta(*queue, 0)).front();
+    RawstorObjectMeta meta =
+        run(*queue, run(*queue, target.chunks(*queue)).front().meta(*queue))
+            .front();
     EXPECT_EQ(meta.config.epoch, 9u);
     EXPECT_EQ(meta.config.sync_id, 0x99u);
     EXPECT_EQ(meta.config.resync_owner, 1u);
@@ -117,12 +118,13 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
     // A configuration set outside the register keeps the ballots: an old
     // ballot is still refused afterwards.
     config.epoch = 10;
-    run(*queue, target.set_member_config(*queue, 0, 0, config, 0));
-    meta = run(*queue, target.meta(*queue, 0)).front();
+    run(*queue, target.set_member_config(*queue, 0, config, 0));
+    meta = run(*queue, run(*queue, target.chunks(*queue)).front().meta(*queue))
+               .front();
     EXPECT_EQ(meta.config.epoch, 10u);
     EXPECT_EQ(meta.promised.counter, 5u);
     EXPECT_EQ(meta.accepted.counter, 4u);
-    EXPECT_FALSE(run(*queue, target.sync_prepare(*queue, 0, 0, {4, 9}, reply)));
+    EXPECT_FALSE(run(*queue, target.sync_prepare(*queue, 0, {4, 9}, reply)));
 }
 
 // An ost:// member: the request goes out as SYNC_ACCEPT with every field
@@ -166,7 +168,7 @@ TEST(RegisterTest, ost_member_request_and_reply) {
     config.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     RawstorObjectMeta reply{};
     rawstd::Task<bool> task =
-        target.sync_accept(*queue, 0, 1, {5, 0x77}, {6, 0x77}, config, reply);
+        target.sync_accept(*queue, 1, {5, 0x77}, {6, 0x77}, config, reply);
 
     for (int i = 0; i < 5000 && !got; ++i) {
         try {
@@ -249,7 +251,7 @@ TEST(RegisterTest, c_api_reports_acceptance_refusal_and_errors_in_result) {
     RawstorObjectBallot ballot{4, 1};
     ASSERT_EQ(
         rawstor_target_sync_prepare(
-            queue.get(), uri.c_str(), 0, 0, &ballot, &meta, cb, &result
+            queue.get(), uri.c_str(), 0, &ballot, &meta, cb, &result
         ),
         0
     );
@@ -258,7 +260,7 @@ TEST(RegisterTest, c_api_reports_acceptance_refusal_and_errors_in_result) {
     ballot = {3, 9};
     ASSERT_EQ(
         rawstor_target_sync_prepare(
-            queue.get(), uri.c_str(), 0, 0, &ballot, &meta, cb, &result
+            queue.get(), uri.c_str(), 0, &ballot, &meta, cb, &result
         ),
         0
     );
@@ -273,7 +275,7 @@ TEST(RegisterTest, c_api_reports_acceptance_refusal_and_errors_in_result) {
     config.sync_id = 42;
     ASSERT_EQ(
         rawstor_target_sync_accept(
-            queue.get(), uri.c_str(), 0, 0, &ballot, &next, &config, &meta, cb,
+            queue.get(), uri.c_str(), 0, &ballot, &next, &config, &meta, cb,
             &result
         ),
         0
@@ -284,7 +286,7 @@ TEST(RegisterTest, c_api_reports_acceptance_refusal_and_errors_in_result) {
     EXPECT_EQ(meta.accepted.counter, 4u);
     ASSERT_EQ(
         rawstor_target_sync_accept(
-            queue.get(), uri.c_str(), 0, 0, &ballot, &next, &config, &meta, cb,
+            queue.get(), uri.c_str(), 0, &ballot, &next, &config, &meta, cb,
             &result
         ),
         0
@@ -296,7 +298,7 @@ TEST(RegisterTest, c_api_reports_acceptance_refusal_and_errors_in_result) {
     std::string missing = dir.uri() + "/" + id_string(new_id());
     ASSERT_EQ(
         rawstor_target_sync_prepare(
-            queue.get(), missing.c_str(), 0, 0, &ballot, &meta, cb, &result
+            queue.get(), missing.c_str(), 0, &ballot, &meta, cb, &result
         ),
         0
     );

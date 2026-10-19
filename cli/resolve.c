@@ -73,10 +73,13 @@ static int is_winner(const size_t* winners, size_t num_winners, size_t idx) {
  * own `member_index` addresses (its own doc comment) -- so an index read
  * off one call names the same member in the other, for an ordinary
  * target and an mds:// one alike. */
-static int resolve_chunk(
-    const char* target, const size_t* winners, size_t num_winners,
-    uint64_t offset
-) {
+static int
+resolve_chunk(const char* target, const size_t* winners, size_t num_winners) {
+    uint64_t offset;
+    int offset_res = rawstor_target_offset(target, &offset);
+    if (offset_res < 0) {
+        return rawstd_exitcode_for_errno(-offset_res);
+    }
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);
     if (res < 0) {
@@ -86,7 +89,7 @@ static int resolve_chunk(
 
     struct RawstorObjectMeta metas[MAX_MIRRORS];
     int mres = rawstor_target_meta(
-        op.queue, target, offset, metas, MAX_MIRRORS, rawstor_cli_op_cb, &op
+        op.queue, target, metas, MAX_MIRRORS, rawstor_cli_op_cb, &op
     );
     ssize_t result = rawstor_cli_op_wait(&op, mres);
     rawstor_cli_op_destroy(&op);
@@ -205,8 +208,8 @@ static int resolve_chunk(
         enum RawstorObjectSyncStateValue member_state =
             RAWSTOR_OBJECT_SYNC_STATE_LOST;
         int sres = rawstor_target_set_member_config(
-            member_op.queue, target, offset, (size_t)i, &new_config, 0,
-            &member_state, rawstor_cli_op_cb, &member_op
+            member_op.queue, target, (size_t)i, &new_config, 0, &member_state,
+            rawstor_cli_op_cb, &member_op
         );
         ssize_t sresult = rawstor_cli_op_wait(&member_op, sres);
         rawstor_cli_op_destroy(&member_op);
@@ -233,7 +236,7 @@ static int resolve_chunk(
             return rawstd_exitcode_for_errno(-res);
         }
         int sres = rawstor_target_set_member_config(
-            set_op.queue, target, offset, winners[i], &new_config,
+            set_op.queue, target, winners[i], &new_config,
             RAWSTOR_CONFIG_CLEAR_LOST, NULL, rawstor_cli_op_cb, &set_op
         );
         ssize_t sresult = rawstor_cli_op_wait(&set_op, sres);
@@ -271,8 +274,7 @@ static int resolve_chunk(
 }
 
 int rawstor_cli_resolve(
-    const char* target, const size_t* winners, size_t num_winners,
-    int has_offset, uint64_t offset
+    const char* target, const size_t* winners, size_t num_winners
 ) {
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);
@@ -293,17 +295,13 @@ int rawstor_cli_resolve(
         return rawstd_exitcode_for_errno((int)-result);
     }
 
-    if (has_offset) {
-        return resolve_chunk(target, winners, num_winners, offset);
-    }
-
     res = rawstor_cli_op_init(&op);
     if (res < 0) {
         fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
         return rawstd_exitcode_for_errno(-res);
     }
-    uint64_t* offsets;
-    ssize_t chunk_count = rawstor_cli_op_chunks(&op, target, &offsets);
+    RawstorStringList* chunks = NULL;
+    ssize_t chunk_count = rawstor_cli_op_chunks(&op, target, &chunks);
     rawstor_cli_op_destroy(&op);
     if (chunk_count < 0) {
         fprintf(
@@ -314,12 +312,13 @@ int rawstor_cli_resolve(
     }
 
     int ret = EXIT_SUCCESS;
-    for (ssize_t i = 0; i < chunk_count; i++) {
-        ret = resolve_chunk(target, winners, num_winners, offsets[i]);
+    for (const char** it = rawstor_string_list_iter(chunks); it != NULL;
+         it = rawstor_string_list_next(it)) {
+        ret = resolve_chunk(*it, winners, num_winners);
         if (ret != EXIT_SUCCESS) {
             break;
         }
     }
-    free(offsets);
+    rawstor_string_list_delete(chunks);
     return ret;
 }

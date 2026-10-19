@@ -147,9 +147,25 @@ class TestTarget(unittest.TestCase):
                 size=4 << 20, width=1, chunk_size=1 << 20)
 
             self.assertEqual(
-                target.chunks(), [0, 1 << 20, 2 << 20, 3 << 20])
+                [int(chunk.uri.split(",")[0].rsplit("/", 1)[1], 16)
+                 for chunk in target.chunks()],
+                [0, 1 << 20, 2 << 20, 3 << 20])
 
             target.remove()
+
+    def test_slots(self):
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            target = rawstor.Location(f"file://{first},file://{second}").create(
+                size=2 << 20, width=2, chunk_size=1 << 20)
+            try:
+                expected = [uri for chunk in target.chunks()
+                            for uri in chunk.uri.split(",")]
+                slots = target.slots()
+                self.assertEqual([slot.uri for slot in slots], expected)
+                self.assertEqual(len(slots), 4)
+                self.assertTrue(all(len(slot.meta()) == 1 for slot in slots))
+            finally:
+                target.remove()
 
     # file:// has no versions, so the listing is empty rather than an
     # error.

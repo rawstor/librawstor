@@ -34,6 +34,7 @@ PyObject* py_rawstor_object_set_member_config(PyObject* self, PyObject* args);
 PyObject* py_rawstor_object_remove(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_chunks(PyObject* self, PyObject* args);
+PyObject* py_rawstor_object_slots(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_versions(PyObject* self, PyObject* args);
 

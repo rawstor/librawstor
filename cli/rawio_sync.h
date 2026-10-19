@@ -1,6 +1,7 @@
 #ifndef RAWSTOR_CLI_RAWIO_SYNC_H
 #define RAWSTOR_CLI_RAWIO_SYNC_H
 
+#include <rawstor/list.h>
 #include <rawstor/rawio.h>
 
 #include <sys/types.h>
@@ -37,13 +38,11 @@ int rawstor_cli_op_cb(ssize_t result, void* data);
  * `res` unchanged without waiting). */
 ssize_t rawstor_cli_op_wait(RawstorCliOp* op, int res);
 
-/* Every real chunk offset `target` has (rawstor_target_chunks() -- purely
- * syntactic for an ordinary target, a real MDS round trip for an mds://
- * one), in a malloc()'d array stored into *offsets (NULL when there are
- * none; the caller free()s it). Returns the number of offsets, or a
- * negative errno. Reuses `op`, resetting it before each call. */
-ssize_t
-rawstor_cli_op_chunks(RawstorCliOp* op, const char* target, uint64_t** offsets);
+/* Addressable chunk targets in an owned string list; free with
+ * rawstor_string_list_delete(). Returns the count or a negative errno. */
+ssize_t rawstor_cli_op_chunks(
+    RawstorCliOp* op, const char* target, RawstorStringList** chunks
+);
 
 #ifdef __cplusplus
 }

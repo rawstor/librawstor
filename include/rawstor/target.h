@@ -15,6 +15,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/**
+ * @file target.h
+ * @brief Object, logical chunk and physical member target APIs.
+ *
+ * The URI scheme selects how a target is accessed. An mds:// URI resolves
+ * a logical object through its placement map; an explicit hexadecimal
+ * offset selects one logical chunk. An ost:// URI addresses a physical
+ * member directly, including a witness hosted by the MDS server. The
+ * server endpoint may be the same while the access semantics differ.
+ *
+ * Logical chunk targets support metadata, configuration-register operations
+ * and chunk-local I/O. Creating, removing, resizing or creating a version
+ * of an MDS object requires a whole-object URI without a chunk offset.
+ * Physical chunk targets are obtained with rawstor_target_chunks().
+ */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -279,201 +295,194 @@ int rawstor_target_spec(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously retrieve the full mirror consistency metadata of
- *        every copy of one chunk of a target.
+ * @brief Asynchronously retrieve the metadata of each member of a chunk.
  *
- * Like rawstor_target_spec(), but queries every URI of the chunk at
- * @p offset concurrently and fills one RawstorObjectMeta per URI, in
- * that chunk's own order -- unlike rawstor_target_spec()'s single-answer
- * fail-over tolerance, this reports every copy's own state, not just one
- * answer standing in for the whole set. A URI that doesn't answer
- * (unreachable, ENOENT, ...) gets an entry with `state ==
- * RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE` rather than failing the whole
- * call or being left out -- the entry's own position in @p metas is what
- * ties it back to that URI, so skipping it would lose that. `spec.width`
- * in every entry that did answer is that copy's own persisted width,
- * reported verbatim (see RawstorObjectMeta).
+ * The chunk offset is encoded in @p target as a hexadecimal path segment,
+ * e.g. @c ost://host:7777/UUID/40000000. Comma-separated URIs at the same
+ * offset address the chunk's members, in the order returned in @p metas.
+ * A plain target without an offset addresses offset zero. A whole-object
+ * MDS target, @c mds://host:7776/UUID, resolves the first chunk through MDS;
+ * @c mds://host:7776/UUID/OFFSET resolves the specified logical chunk and
+ * neither form returns metadata for every chunk. Use rawstor_target_chunks()
+ * to enumerate physical chunk targets and call this function for each one.
+ * A target containing several distinct chunk offsets is rejected.
  *
- * Legacy copies created before metadata support report size only, with
- * state CLEAN, epoch 0 and sync_id 0 -- distinguishable from a URI that
- * didn't answer at all by `state` alone (`RAWSTOR_OBJECT_SYNC_STATE_CLEAN`
- * vs `_UNREACHABLE`).
+ * Every member is queried. A member that cannot be read has a zero-filled
+ * record with state RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE; this does not
+ * fail the entire lookup. An MDS lookup failure is reported as an error.
+ * A bound version in @p target selects that version's metadata.
  *
- * An mds://host:port/<id> @p target is, from this call's own
- * point of view, an ordinary single-URI target -- it succeeds with one
- * synthetic entry at @p offset 0 only (any other offset is @c -ENOENT,
- * even though `spec`'s own `size`/`chunk_size` describe a real,
- * multi-chunk object): `spec` reflects the object's own logical
- * size/chunk_size/policy, `state`/`config` a "legacy copy" CLEAN/epoch-0/
- * sync_id-0 answer. The real per-chunk DIRTY/CLEAN state (many chunks,
- * each with its own slots) is tracked one level down and not exposed
- * through the object-level target at all.
+ * @param queue Queue used to drive the asynchronous lookup; must remain
+ *              valid until completion.
+ * @param target Non-NULL target string. Parsed before this call returns;
+ *               the string need not remain valid until completion.
+ * @param[out] metas Caller-owned array with room for @p count records.
+ *                   May be NULL when @p count is zero. On success, the first
+ *                   min(count, result) records are written before @p cb runs;
+ *                   remaining entries are untouched. Not written on error.
+ *                   The array must remain valid until completion.
+ * @param count Capacity of @p metas, in records. Zero permits a size query.
+ * @param cb Non-NULL completion callback. Its result is the required number
+ *           of records on success, even if it exceeds @p count, or a negative
+ *           errno on failure. Examples include @c -EINVAL for an invalid
+ *           target or several chunk offsets, @c -ENOENT for an unknown MDS
+ *           object, and @c -ENOMEM. Return zero, or a negative errno to report
+ *           a callback error to the I/O completion machinery.
+ * @param data Context pointer passed unchanged to @p cb.
  *
- * This function returns immediately; the actual result is reported via
- * @p cb once the operation completes.
- *
- * @param queue   Queue used to drive the asynchronous lookup.
- * @param target  Target string, see rawstor_target_spec().
- * @param offset  The chunk's own byte offset within @p target (0 for an
- *                ordinary, single-chunk target -- rawstor_target_spec()'s
- *                own `size`/`chunk_size` tell a caller managing a real
- *                multi-chunk object every offset it has). @c -ENOENT if
- *                no chunk in @p target sits at this offset.
- * @param metas   Out-parameter: an array of @p count entries. Filled with
- *                one entry per URI of that chunk (in order), up to
- *                @p count of them, immediately before @p cb is invoked.
- *                Left untouched on error, and never written at all if
- *                the lookup is never queued (see the return value
- *                below).
- * @param count   Capacity of @p metas.
- * @param cb      Callback invoked on completion.
- *                - @p result is that chunk's own URI count on success --
- *                  same truncation convention as rawstor_target_id()/
- *                  _location(): if it is greater than @p count, only the
- *                  first @p count entries were actually written to
- *                  @p metas, and the caller should retry with a bigger
- *                  buffer rather than treat this as an error -- or a
- *                  negative errno on failure (@c -EINVAL for invalid
- *                  target syntax, @c -ENOENT for no chunk at @p offset,
- *                  @c -ENOMEM).
- *                - @p data is the same pointer passed as @p data below.
- *                - Return zero on success. A negative errno value signals
- *                  an error back into the I/O completion machinery.
- * @param data    User-defined context pointer passed unchanged to @p cb.
- *
- * @return 0 if the lookup was successfully queued; negative errno on
- *         immediate failure (in which case neither @p metas nor @p cb is
- *         ever touched).
+ * @return Zero if the lookup was queued; negative errno on immediate failure,
+ *         in which case neither @p metas nor @p cb is touched. The return
+ *         value is not the record count; that is delivered to @p cb.
  *
  * @see RawstorObjectMeta
- * @see rawstor_target_spec
+ * @see rawstor_target_chunks
+ * @see rawstor_target_offset
  */
 int rawstor_target_meta(
-    RawIOQueue* queue, const char* target, uint64_t offset,
-    struct RawstorObjectMeta* metas, size_t count,
-    int (*cb)(ssize_t result, void* data), void* data
+    RawIOQueue* queue, const char* target, struct RawstorObjectMeta* metas,
+    size_t count, int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously write the chunk's configuration to exactly one
- *        real member of one chunk of a target.
+ * @brief Asynchronously replace one chunk member's configuration.
  *
- * Unlike rawstor_target_spec()/rawstor_target_meta(), this writes rather
- * than reads: it sets @p config on the chunk at @p offset's own
- * real member @p member_index (fsynced on the backend before it is
- * acknowledged, per docs/mirroring.md's durability rule) -- the same
- * order rawstor_target_meta()'s own per-chunk result reports their state
- * in, so an index read off one call names the same member in the other.
- * A caller wanting every member of the chunk written (rather than one)
- * calls this once per member instead -- every real member's own real
- * count comes from rawstor_target_meta() (a caller-driven fan-out, still
- * attempting every member even if an earlier one failed, leaves that
- * choice to the caller instead of baking one fixed policy in here).
+ * The offset comes from @p target, and @p member_index selects a member in
+ * rawstor_target_meta() order. A whole-object MDS target resolves the first
+ * chunk; use rawstor_target_chunks() to address other chunks explicitly.
+ * An MDS URI with an explicit offset resolves that logical chunk's members.
+ * To address a witness stored on MDS directly, use an ost:// URI pointing
+ * to the MDS server. A bound version is rejected: this operation modifies
+ * live member metadata.
  *
- * The member keeps its own state (RawstorObjectSyncStateValue) as it is,
- * but for @p flags.
+ * Only the selected member is updated; this call neither gathers a quorum
+ * nor updates other members. Configuration and an optional explicit state
+ * are persisted by the selected backend before successful completion.
  *
- * @warning Setting mirror consistency state by hand can desynchronize a
- * target's copies in ways the library's own quorum/reconciliation logic
- * (docs/mirroring.md) is not designed to recover from automatically --
- * this exists for tooling that already understands that model (e.g. a
- * `rawstor-cli resolve`-style split-brain recovery flow, or
- * `rawstor-ost` relaying an incoming wire `SET_CONFIG` command), not
- * for routine application use.
+ * @param queue Queue used to drive the operation; valid until completion.
+ * @param target Non-NULL target string, parsed before this call returns.
+ * @param member_index Zero-based member position in the addressed chunk.
+ *                     An index outside the member list fails with @c -EINVAL.
+ * @param config Non-NULL configuration to store. Copied before returning;
+ *               it need not remain valid until completion.
+ * @param flags Zero or RAWSTOR_CONFIG_CLEAR_LOST. The latter clears LOST
+ *              according to the member's current writer state.
+ * @param state Optional explicit state, or NULL to preserve the current
+ *              state subject to @p flags. Copied before returning. An explicit
+ *              state cannot be combined with RAWSTOR_CONFIG_CLEAR_LOST;
+ *              RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE is not a stored state.
+ * @param cb Non-NULL completion callback. Its result is zero on success or
+ *           a negative errno on failure, such as @c -EINVAL for an invalid
+ *           index, state, flags or bound version, or a backend I/O error.
+ *           Return zero, or a negative errno to report a callback error.
+ * @param data Context pointer passed unchanged to @p cb.
  *
- * An mds://host:port/<id> @p target's own real per-chunk members aren't
- * nameable by any target string at all -- its own WireMap is consulted
- * instead, the same real round trip rawstor_target_meta() makes for a
- * real chunk.
+ * @return Zero if queued; negative errno on immediate failure, in which case
+ *         @p cb is not invoked. Completion status is delivered to @p cb.
  *
- * This function returns immediately; the actual result is reported via
- * @p cb once the operation completes.
+ * @warning This is an operator recovery operation. Changing one member's
+ *          configuration without coordinating the others can desynchronize
+ *          copies. Normal configuration changes use the configuration register.
  *
- * @param queue         Queue used to drive the asynchronous write.
- * @param target        Target string, see rawstor_target_spec().
- * @param offset        The chunk's own byte offset within @p target, see
- *                      rawstor_target_meta().
- * @param member_index  Which real member of that chunk to write to, 0-based.
- * @param config        The configuration to write. Only read while this
- *                      call is being queued -- need not stay valid until
- *                      @p cb runs.
- * @param flags         RAWSTOR_CONFIG_* flags, 0 for none.
- * @param state         Optional state to record with config; NULL preserves it.
- *                      Read while queuing. Cannot be combined with CLEAR_LOST.
- * @param cb            Callback invoked on completion.
- *                      - @p result is zero on success, or a negative
- *                        errno on failure (@c -EINVAL for invalid target
- *                        syntax or @p member_index naming no real member
- *                        of the chunk, @c -ENOENT for no chunk at
- *                        @p offset).
- *                      - @p data is the same pointer passed as @p data
- *                        below.
- *                      - Return zero on success. A negative errno value
- *                        signals an error back into the I/O completion
- *                        machinery.
- * @param data          User-defined context pointer passed unchanged to
- *                      @p cb.
- *
- * @return 0 if the write was successfully queued; negative errno on
- *         immediate failure (in which case @p cb is never invoked).
- *
- * @see RawstorObjectConfig
  * @see rawstor_target_meta
+ * @see rawstor_target_sync_prepare
+ * @see rawstor_target_sync_accept
  */
 int rawstor_target_set_member_config(
-    RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
+    RawIOQueue* queue, const char* target, size_t member_index,
     const struct RawstorObjectConfig* config, unsigned int flags,
     const enum RawstorObjectSyncStateValue* state,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously ask one member of a chunk to promise a ballot
- *        (phase 1 of the chunk's configuration register,
- *        docs/multiattach.md, "The register").
+ * @brief Asynchronously request a configuration-register promise.
  *
- * Addresses the member as rawstor_target_set_member_config() does
- * (@p target, @p offset, @p member_index). The member promises @p ballot if
- * it is above both the ballot it promised and the ballot its
- * configuration was accepted under, persists that, and replies with its
- * whole record in @p meta either way.
+ * This is phase 1 of the chunk's configuration register. The selected
+ * member promises @p ballot if it is above both its promised ballot and
+ * the ballot under which its configuration was accepted. The promise is
+ * persisted before a successful reply. Both acceptance and refusal return
+ * the member's record in @p meta, allowing the caller to inspect its
+ * promised ballot and accepted configuration.
  *
- * @param meta Filled before @p cb runs with a nonnegative result. Must remain
- *             valid until then. The callback receives 1 for acceptance, 0 for
- *             refusal, or negative errno on failure.
+ * The offset is taken from @p target. Member selection and MDS resolution
+ * follow rawstor_target_set_member_config(); whole-object MDS targets
+ * select the first chunk, and bound versions are rejected. One successful
+ * promise is one member's vote; the caller coordinates the quorum.
  *
- * @return 0 if the request was queued; negative errno on immediate
- *         failure (in which case @p cb is never invoked). A member that
- *         holds no copy of its own (an mds:// location, a rawstor-ost with
- *         several locations) fails with -ENOSYS.
+ * @param queue Queue used to drive the operation; valid until completion.
+ * @param target Non-NULL target string, parsed before this call returns.
+ * @param member_index Zero-based member position in rawstor_target_meta()
+ *                     order, including a witness if present.
+ * @param ballot Non-NULL proposed ballot. Copied before this call returns.
+ * @param[out] meta Non-NULL caller-owned record. Filled before @p cb runs
+ *                  with a nonnegative result; must remain valid until then.
+ *                  Its contents must not be used after a failed operation.
+ * @param cb Non-NULL completion callback. Its result is 1 if promised, 0 if
+ *           refused, or a negative errno on failure. Refusal is a successful
+ *           exchange, not an I/O error. Invalid targets or member indices
+ *           fail with @c -EINVAL; a backend that cannot serve an individual
+ *           member's register may report @c -ENOSYS. Return zero, or a negative
+ *           errno to report a callback error.
+ * @param data Context pointer passed unchanged to @p cb.
+ *
+ * @return Zero if queued; negative errno on immediate failure, in which case
+ *         @p cb is not invoked. The promise decision is delivered to @p cb.
+ *
+ * @see RawstorObjectBallot
+ * @see rawstor_target_sync_accept
+ * @see rawstor_target_chunks
  */
 int rawstor_target_sync_prepare(
-    RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
+    RawIOQueue* queue, const char* target, size_t member_index,
     const struct RawstorObjectBallot* ballot, struct RawstorObjectMeta* meta,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously ask one member of a chunk to accept a
- *        configuration (phase 2 of the chunk's configuration register).
+ * @brief Asynchronously request acceptance of a chunk configuration.
  *
- * The member accepts if @p ballot is not below the ballot it promised and
- * above the ballot its configuration was accepted under: it then records
- * @p config as accepted under @p ballot, and promises @p next if that is
- * above @p ballot. It persists that and replies with its whole record in
- * @p meta either way. Acceptance on this member is one vote; the caller
- * must obtain a majority of the configuration register's acceptors. For
- * two data copies, a witness supplies the third vote.
+ * This is phase 2 of the chunk's configuration register. The member accepts
+ * when @p ballot is not below its promised ballot and is above the ballot
+ * under which its configuration was accepted. It records @p config under
+ * @p ballot and promises @p next if that ballot is above @p ballot. The
+ * update is persisted before a successful reply. Acceptance and refusal
+ * both return the member's record in @p meta.
  *
- * @param meta Filled before @p cb runs with a nonnegative result. Must remain
- *             valid until then. The callback receives 1 for acceptance, 0 for
- *             refusal, or negative errno on failure.
+ * The offset comes from @p target. Member selection and MDS resolution
+ * follow rawstor_target_set_member_config(); whole-object MDS targets
+ * select the first chunk, and bound versions are rejected. Acceptance on
+ * one member is one vote: the caller must obtain a majority of the
+ * configuration register's acceptors. For two data members, a witness
+ * supplies a third vote. This function does not copy or resynchronize data.
  *
- * @return 0 if the request was queued; negative errno on immediate
- *         failure (in which case @p cb is never invoked).
+ * @param queue Queue used to drive the operation; valid until completion.
+ * @param target Non-NULL target string, parsed before this call returns.
+ * @param member_index Zero-based member position in rawstor_target_meta()
+ *                     order, including a witness if present.
+ * @param ballot Non-NULL ballot under which to accept @p config.
+ * @param next Non-NULL ballot to promise after acceptance when higher than
+ *             @p ballot. Ballots are ordered by counter, then proposer.
+ * @param config Non-NULL configuration proposed for the chunk. Both ballots
+ *               and the configuration are copied before this call returns.
+ * @param[out] meta Non-NULL caller-owned record. Filled before @p cb runs
+ *                  with a nonnegative result; must remain valid until then.
+ *                  Its contents must not be used after a failed operation.
+ * @param cb Non-NULL completion callback. Its result is 1 if accepted, 0 if
+ *           refused, or a negative errno on failure, including @c -EINVAL
+ *           for an invalid target or member index and backend I/O errors.
+ *           Refusal is not an I/O error. Return zero, or a negative errno
+ *           to report a callback error.
+ * @param data Context pointer passed unchanged to @p cb.
+ *
+ * @return Zero if queued; negative errno on immediate failure, in which case
+ *         @p cb is not invoked. The acceptance decision is delivered to @p cb.
+ *
+ * @see RawstorObjectConfig
+ * @see rawstor_target_sync_prepare
+ * @see rawstor_target_chunks
  */
 int rawstor_target_sync_accept(
-    RawIOQueue* queue, const char* target, uint64_t offset, size_t member_index,
+    RawIOQueue* queue, const char* target, size_t member_index,
     const struct RawstorObjectBallot* ballot,
     const struct RawstorObjectBallot* next,
     const struct RawstorObjectConfig* config, struct RawstorObjectMeta* meta,
@@ -759,57 +768,141 @@ int rawstor_target_location(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously retrieve every distinct chunk offset a target
- *        actually has.
+ * @brief Asynchronously enumerate addressable chunk targets.
  *
- * Given a target string (as defined in the Rawstor location/target syntax),
- * this function writes the byte offset of each of its own chunks into the
- * provided array, ascending, one entry per chunk -- a URI that shares its
- * own offset with an earlier one (a mirror of that same chunk, not a
- * distinct one) contributes no entry of its own. For an ordinary target
- * (every URI already names its own offset, or there is exactly one URI
- * with none) this is purely syntactic, off @p target's own shape -- no
- * backend is contacted, and the target need not exist. An
- * mds://host:port/<id> target is the one exception: its own real
- * per-chunk shape isn't reflected in its single URI at all, so this
- * contacts the MDS instead and reports every one of the object's own
- * real chunk offsets.
+ * For an MDS target, query MDS for the placement map and resolve
+ * each selected chunk to its physical member URIs, such as
+ * @c ost://host:7777/UUID/40000000. A whole-object URI selects all chunks;
+ * an explicit offset selects one logical chunk. A witness stored on MDS has an
+ * explicit physical URI such as @c ost://host:7776/UUID/40000000. The returned
+ * strings do not redirect ordinary data-chunk operations through the logical
+ * MDS object. When @p target binds a version, the returned URIs bind that same
+ * version and describe its placement.
  *
- * This function returns immediately; the actual result is reported via
- * @p cb once the operation completes.
+ * Each list entry addresses one chunk; its comma-separated URIs name that
+ * chunk's members in metadata/member-index order. Entries are ordered by
+ * ascending byte offset. For a physical target, group its existing URIs by
+ * offset without querying backends; a single chunk yields one entry. Such
+ * a listing describes addresses and does not verify member reachability.
  *
- * @param queue    Queue used to drive the asynchronous lookup.
- * @param target   Target string, see rawstor_target_id().
- * @param offsets  Output array that will receive each chunk's own offset,
- *                 ascending, immediately before @p cb is invoked. Can be
- *                 NULL if only the required array length is needed. Left
- *                 untouched on error, and never written at all if the
- *                 lookup is never queued (see the return value below).
- * @param size     Capacity of @p offsets, in elements. If size is 0, no
- *                 data is written, but the required length is still
- *                 reported.
- * @param cb       Callback invoked on completion.
- *                 - @p result is the number of chunks @p target actually
- *                   has on success -- same truncation convention as
- *                   rawstor_target_id()/_location(): if it is greater than
- *                   @p size, only the first @p size entries were actually
- *                   written to @p offsets -- or a negative errno on
- *                   failure (@c -EINVAL for invalid target syntax, @c
- *                   -ENOMEM).
- *                 - @p data is the same pointer passed as @p data below.
- *                 - Return zero on success. A negative errno value signals
- *                   an error back into the I/O completion machinery.
- * @param data     User-defined context pointer passed unchanged to @p cb.
+ * The entries can be passed directly to rawstor_target_meta() or the
+ * configuration-register operations. Read an entry's byte offset with
+ * rawstor_target_offset().
  *
- * @return 0 if the lookup was successfully queued; negative errno on
- *         immediate failure (in which case neither @p offsets nor @p cb is
- *         ever touched).
+ * @param queue Queue used to drive the lookup; valid until completion.
+ * @param target Non-NULL target string, parsed before this call returns.
+ * @param[out] chunks Non-NULL output pointer. On success, receives a newly
+ *                    allocated list, possibly empty, before @p cb runs.
+ *                    Left untouched on failure. The pointer must remain
+ *                    valid until completion. The caller owns the list and
+ *                    releases it, including all strings, with
+ *                    rawstor_string_list_delete(). Do not free strings
+ *                    individually; they remain valid while the list exists.
+ * @param cb Non-NULL completion callback. Its result is the number of chunk
+ *           targets on success, or a negative errno on failure, such as
+ *           @c -EINVAL for an invalid target, @c -ENOENT for an unknown MDS
+ *           object, @c -ENOMEM, or an MDS communication error. Return zero,
+ *           or a negative errno to report a callback error.
+ * @param data Context pointer passed unchanged to @p cb.
  *
- * @see rawstor_target_id
+ * @return Zero if queued; negative errno on immediate failure, in which case
+ *         neither @p chunks nor @p cb is touched. The count is delivered to
+ *         @p cb, not returned directly.
+ *
+ * @see rawstor_string_list_iter
+ * @see rawstor_string_list_next
+ * @see rawstor_string_list_delete
+ * @see rawstor_target_meta
+ * @see rawstor_target_offset
  */
 int rawstor_target_chunks(
-    RawIOQueue* queue, const char* target, uint64_t* offsets, size_t size,
+    RawIOQueue* queue, const char* target, RawstorStringList** chunks,
     int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously enumerate the physical member slots of a target.
+ *
+ * Each returned string contains exactly one physical member URI, suitable
+ * for rawstor_target_meta() or direct member access. A chunk target with
+ * several comma-separated member URIs produces one entry per member,
+ * including a witness. Native witnesses hosted by MDS use ost:// URIs.
+ *
+ * A logical MDS chunk URI, mds://host:port/UUID/OFFSET, is resolved through
+ * its placement map to the physical slots of that chunk. An offset-free
+ * MDS object URI enumerates the slots of every chunk. Bound versions are
+ * preserved in the returned URIs and resolved using their version's map.
+ * Entries are ordered by ascending chunk byte offset and then by member
+ * order within the chunk, matching rawstor_target_meta() indices for that
+ * chunk. Slots on the same backend in different chunks remain separate.
+ *
+ * A physical target is split syntactically without contacting its members;
+ * an MDS target contacts MDS to resolve placement. Unreachable member slots
+ * are not omitted: enumeration describes addresses, not availability.
+ *
+ * @param queue Queue used to drive the lookup; valid until completion.
+ * @param target Non-NULL target string. Parsed before this call returns;
+ *               its storage need not remain valid until completion.
+ * @param[out] slots Non-NULL output pointer, valid until completion. Before
+ *                   a successful callback, receives a newly allocated list,
+ *                   possibly empty. Left untouched on error. The caller
+ *                   owns the list and frees it with
+ *                   rawstor_string_list_delete(), which also frees every
+ *                   string. Do not free individual strings; they remain
+ *                   valid until the list is destroyed.
+ * @param cb Non-NULL completion callback. Its result is the number of slots
+ *           on success or a negative errno on failure, including @c -EINVAL
+ *           for invalid target syntax, @c -ENOENT for an unknown logical
+ *           chunk, @c -ENOMEM, or an MDS communication error. Return zero,
+ *           or a negative errno to report a callback error.
+ * @param data Context pointer passed unchanged to @p cb.
+ *
+ * @return Zero if queued; negative errno on immediate failure, in which
+ *         case neither @p slots nor @p cb is touched. The slot count is
+ *         delivered to @p cb, not returned directly.
+ *
+ * @see rawstor_target_chunks
+ * @see rawstor_target_meta
+ * @see rawstor_string_list_iter
+ * @see rawstor_string_list_next
+ * @see rawstor_string_list_delete
+ */
+int rawstor_target_slots(
+    RawIOQueue* queue, const char* target, RawstorStringList** slots,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Extract the byte offset of a single chunk target.
+ *
+ * This is a synchronous syntax-only operation: no backend is contacted and
+ * the chunk need not exist. The offset path segment is hexadecimal, while
+ * the value written to @p offset is a byte count. For example,
+ * @c ost://host:7777/UUID/40000000 yields 1073741824 (1 GiB).
+ * A bound version after the offset does not change the extracted value.
+ *
+ * Comma-separated member URIs are accepted if they address the same chunk
+ * (all have the same offset). An ordinary non-MDS target with no explicit
+ * offset denotes offset zero. A whole-object MDS URI without an explicit
+ * offset is rejected, because it denotes a logical object rather than a
+ * chunk; @c mds://host:7776/UUID/0 explicitly selects a logical chunk
+ * at offset zero and is accepted. Use rawstor_target_chunks() to resolve
+ * its physical members; native witnesses on MDS use ost:// URIs.
+ *
+ * @param target Non-NULL target string identifying a single chunk, e.g. an
+ *               entry returned by rawstor_target_chunks().
+ * @param[out] offset Non-NULL caller-owned output, written only on success.
+ *
+ * @return Zero on success; negative errno on failure. @c -EINVAL means
+ *         invalid target syntax, several chunk offsets, or a whole-object
+ *         MDS target; @c -ENOMEM indicates an allocation failure.
+ *
+ * @see rawstor_target_chunks
+ * @see rawstor_target_id
+ * @see rawstor_target_version_id
+ */
+int rawstor_target_offset(
+    const char* target, uint64_t* offset
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -972,6 +1065,9 @@ int rawstor_target_create_version(
 
 /**
  * @brief Asynchronously grow an mds:// object to a new logical size.
+ *
+ * A logical chunk URI with an explicit offset is rejected with @c -EINVAL;
+ * resize the whole object using its offset-free MDS URI.
  *
  * Grow-only: a @p new_size smaller than the object's current size fails
  * with -EINVAL (docs/mds.md -- shrink interacts with GC and

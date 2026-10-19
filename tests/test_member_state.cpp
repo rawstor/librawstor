@@ -20,6 +20,8 @@
 #include <barrier>
 #include <chrono>
 #include <exception>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -93,7 +95,7 @@ public:
     }
 
     RawstorObjectMeta meta(rawio::Queue& queue) {
-        return run(queue, target.meta(queue, 0)).front();
+        return run(queue, target.meta(queue)).front();
     }
 };
 
@@ -186,13 +188,13 @@ TEST(MemberStateTest, abandoned_writer_loses_the_copy) {
     write_one(*queue, *b);
     RawstorObjectConfig config = f.meta(*queue).config;
     config.epoch += 1;
-    run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0));
+    run(*queue, f.target.set_member_config(*queue, 0, config, 0));
     run(*queue, b->close());
     EXPECT_EQ(f.meta(*queue).state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
 
     // Only an explicit clear does.
     run(*queue, f.target.set_member_config(
-                    *queue, 0, 0, config, RAWSTOR_CONFIG_CLEAR_LOST
+                    *queue, 0, config, RAWSTOR_CONFIG_CLEAR_LOST
                 ));
     EXPECT_EQ(f.meta(*queue).state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 }
@@ -223,7 +225,7 @@ TEST(MemberStateTest, set_config_keeps_the_state_and_records_roles) {
     config.nroles = 2;
     config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
     config.roles[1] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
-    run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0));
+    run(*queue, f.target.set_member_config(*queue, 0, config, 0));
 
     RawstorObjectMeta meta = f.meta(*queue);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
@@ -257,7 +259,10 @@ TEST(MemberStateTest, mds_object_passes_departure_to_its_chunks) {
     auto wait_state = [&](RawstorObjectSyncStateValue state) {
         RawstorObjectSyncStateValue seen = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
         for (int i = 0; i < 500; ++i) {
-            seen = run(*queue, target.meta(*queue, 0)).front().state;
+            seen = run(*queue,
+                       run(*queue, target.chunks(*queue)).front().meta(*queue))
+                       .front()
+                       .state;
             if (seen == state) {
                 break;
             }
@@ -310,7 +315,7 @@ void expect_clear_lost_with_writer(MemberObject& f) {
     RawstorObjectConfig config = meta.config;
     ++config.epoch;
     run(*queue, f.target.set_member_config(
-                    *queue, 0, 0, config, RAWSTOR_CONFIG_CLEAR_LOST
+                    *queue, 0, config, RAWSTOR_CONFIG_CLEAR_LOST
                 ));
     meta = f.meta(*queue);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
@@ -366,7 +371,7 @@ void expect_thread_shared_copy_state(MemberObject& f) {
             config.nroles = 1;
             config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
             EXPECT_NO_THROW(
-                run(*queue, f.target.set_member_config(*queue, 0, 0, config, 0))
+                run(*queue, f.target.set_member_config(*queue, 0, config, 0))
             );
         }
         phase.arrive_and_wait();
@@ -573,7 +578,9 @@ void expect_copy_write_requests(const rawstd::URI& location) {
     run(*queue, peer->leave());
     run(*queue, writer->close());
     run(*queue, peer->close());
-    auto meta = run(*queue, target.meta(*queue, 0)).front();
+    auto meta =
+        run(*queue, run(*queue, target.chunks(*queue)).front().meta(*queue))
+            .front();
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
     EXPECT_EQ(meta.writers, 0u);
 }
@@ -801,7 +808,59 @@ TEST(MemberStateTest, unknown_persisted_state_is_rejected_for_io) {
         run(*queue, slot->open({}, id, 0, 0, RawstdUUID{}));
         FAIL() << "Unknown sync state opened for I/O";
     } catch (const std::system_error& e) {
-        EXPECT_EQ(e.code().value(), EPROTO);
+        EXPECT_EQ(e.code().value(), EILSEQ);
+    }
+    run(*queue, slot->close());
+}
+
+TEST(MemberStateTest, malformed_persisted_metadata_is_not_retried) {
+    auto queue = rawio::Queue::create(64);
+    rawstor::tests::TmpDir dir;
+    const auto id = new_id();
+    auto slot =
+        run(*queue, rawstor::Slot::create(*queue, rawstd::URI(dir.uri())));
+    RawstorObjectSpec spec{};
+    spec.size = 4096;
+    spec.width = 1;
+    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_DATA));
+    const auto path = dir.path() / id_string(id) / "0" / "meta";
+    std::ifstream input(path, std::ios::binary);
+    const std::string original((std::istreambuf_iterator<char>(input)), {});
+    ASSERT_FALSE(original.empty());
+    input.close();
+    auto write_meta = [&](const std::string& contents) {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        output.write(contents.data(), contents.size());
+        output.close();
+        ASSERT_TRUE(output.good());
+    };
+    for (bool truncated : {false, true}) {
+        SCOPED_TRACE(truncated);
+        std::string malformed = original;
+        malformed[0] = '!';
+        if (truncated) {
+            malformed.resize(3);
+        }
+        write_meta(malformed);
+        testing::internal::CaptureStderr();
+        int error = 0;
+        try {
+            run(*queue, slot->meta(id, 0, RawstdUUID{}));
+        } catch (const std::system_error& e) {
+            error = e.code().value();
+        }
+        const auto log = testing::internal::GetCapturedStderr();
+        EXPECT_EQ(error, EILSEQ);
+        EXPECT_NE(log.find("Malformed object meta:"), std::string::npos);
+        EXPECT_EQ(
+            log.find("Malformed object meta:"),
+            log.rfind("Malformed object meta:")
+        );
+        EXPECT_EQ(log.find("retrying"), std::string::npos);
+        write_meta(original);
+        const auto records = run(*queue, slot->meta(id, 0, RawstdUUID{}));
+        ASSERT_EQ(records.size(), 1u);
+        EXPECT_EQ(records.front().state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
     }
     run(*queue, slot->close());
 }

@@ -112,8 +112,6 @@ private:
         const RawstdUUID& version_id
     );
 
-    rawstd::Task<std::optional<RawstorObjectMeta>>
-    _witness_meta(const RawstdUUID& id, uint64_t offset);
     std::unique_ptr<Object> _object;
     // leave() was called: close() closes the nested Object cleanly, so its
     // chunks leave their members in turn.

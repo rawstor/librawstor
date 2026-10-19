@@ -1116,8 +1116,7 @@ build_mirror_meta(const struct RawstorObjectMeta* meta, ssize_t index) {
 
 PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
-    unsigned long long offset = 0;
-    if (!PyArg_ParseTuple(args, "s|K", &target, &offset)) {
+    if (!PyArg_ParseTuple(args, "s", &target)) {
         return NULL;
     }
 
@@ -1151,7 +1150,7 @@ PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
             return NULL;
         }
         int mres = rawstor_target_meta(
-            op.queue, target, offset, metas, count, rawstor_sync_op_cb, &op
+            op.queue, target, metas, count, rawstor_sync_op_cb, &op
         );
         res = rawstor_sync_op_wait(&op, mres);
         rawstor_sync_op_destroy(&op);
@@ -1190,14 +1189,13 @@ py_rawstor_object_set_member_config(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
     PyObject* config_obj;
     unsigned long long member_index = 0;
-    unsigned long long offset = 0;
     unsigned int flags = 0;
     PyObject* state_obj = Py_None;
     enum RawstorObjectSyncStateValue state;
     const enum RawstorObjectSyncStateValue* state_ptr = NULL;
     if (!PyArg_ParseTuple(
-            args, "sO|KKIO", &target, &config_obj, &member_index, &offset,
-            &flags, &state_obj
+            args, "sO|KIO", &target, &config_obj, &member_index, &flags,
+            &state_obj
         )) {
         return NULL;
     }
@@ -1242,8 +1240,8 @@ py_rawstor_object_set_member_config(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
     int sres = rawstor_target_set_member_config(
-        op.queue, target, offset, (size_t)member_index, &config, flags,
-        state_ptr, rawstor_sync_op_cb, &op
+        op.queue, target, (size_t)member_index, &config, flags, state_ptr,
+        rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);
     rawstor_sync_op_destroy(&op);
@@ -1278,7 +1276,12 @@ PyObject* py_rawstor_object_remove(PyObject* Py_UNUSED(self), PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyObject* py_rawstor_object_chunks(PyObject* Py_UNUSED(self), PyObject* args) {
+typedef int (*TargetListFunction)(
+    RawIOQueue*, const char*, RawstorStringList**, int (*)(ssize_t, void*),
+    void*
+);
+
+static PyObject* target_list(PyObject* args, TargetListFunction enumerate) {
     const char* target;
     if (!PyArg_ParseTuple(args, "s", &target)) {
         return NULL;
@@ -1290,54 +1293,41 @@ PyObject* py_rawstor_object_chunks(PyObject* Py_UNUSED(self), PyObject* args) {
         set_os_error(-ires);
         return NULL;
     }
-    /* A first call for the count, a second for the offsets themselves --
-     * rawstor_target_chunks()'s own NULL/0 convention. */
-    int sres = rawstor_target_chunks(
-        op.queue, target, NULL, 0, rawstor_sync_op_cb, &op
-    );
-    ssize_t count = rawstor_sync_op_wait(&op, sres);
-    uint64_t* offsets = NULL;
-    if (count > 0) {
-        offsets = (uint64_t*)malloc((size_t)count * sizeof(*offsets));
-        if (offsets == NULL) {
-            rawstor_sync_op_destroy(&op);
-            return PyErr_NoMemory();
-        }
-        op.done = 0;
-        sres = rawstor_target_chunks(
-            op.queue, target, offsets, (size_t)count, rawstor_sync_op_cb, &op
-        );
-        ssize_t filled = rawstor_sync_op_wait(&op, sres);
-        if (filled >= 0 && filled < count) {
-            count = filled;
-        } else if (filled < 0) {
-            count = filled;
-        }
-    }
+    RawstorStringList* list = NULL;
+    int sres = enumerate(op.queue, target, &list, rawstor_sync_op_cb, &op);
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
     rawstor_sync_op_destroy(&op);
-    if (count < 0) {
-        free(offsets);
-        set_os_error((int)-count);
+    if (res < 0) {
+        set_os_error((int)-res);
         return NULL;
     }
 
     PyObject* py_list = PyList_New(0);
     if (py_list == NULL) {
-        free(offsets);
+        rawstor_string_list_delete(list);
         return NULL;
     }
-    for (ssize_t i = 0; i < count; ++i) {
-        PyObject* py_offset = PyLong_FromUnsignedLongLong(offsets[i]);
-        if (py_offset == NULL || PyList_Append(py_list, py_offset) < 0) {
-            Py_XDECREF(py_offset);
+    for (const char** it = rawstor_string_list_iter(list); it != NULL;
+         it = rawstor_string_list_next(it)) {
+        PyObject* py_target = PyUnicode_FromString(*it);
+        if (py_target == NULL || PyList_Append(py_list, py_target) < 0) {
+            Py_XDECREF(py_target);
             Py_DECREF(py_list);
-            free(offsets);
+            rawstor_string_list_delete(list);
             return NULL;
         }
-        Py_DECREF(py_offset);
+        Py_DECREF(py_target);
     }
-    free(offsets);
+    rawstor_string_list_delete(list);
     return py_list;
+}
+
+PyObject* py_rawstor_object_chunks(PyObject* Py_UNUSED(self), PyObject* args) {
+    return target_list(args, rawstor_target_chunks);
+}
+
+PyObject* py_rawstor_object_slots(PyObject* Py_UNUSED(self), PyObject* args) {
+    return target_list(args, rawstor_target_slots);
 }
 
 PyObject*

@@ -118,7 +118,11 @@ rawstd::URI slot_location(const WireSlot& slot) {
         rawstd_error("Chunk slot without a resolved OST location\n");
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
-    return rawstd::URI(slot.location);
+    rawstd::URI location(slot.location);
+    if (location.scheme() == "mds") {
+        return rawstd::URI("ost" + location.str().substr(3));
+    }
+    return location;
 }
 
 // One chunk slot's own target URI: "<uuid>/<offset>[/<version_id>]"
@@ -471,23 +475,6 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     _left(false) {
 }
 
-rawstd::Task<std::optional<RawstorObjectMeta>>
-Backend::_witness_meta(const RawstdUUID& id, uint64_t offset) {
-    try {
-        auto records = co_await _wire_meta(id, offset, RawstdUUID{});
-        if (records.size() != 1 ||
-            records.front().member_role != RAWSTOR_MEMBER_WITNESS) {
-            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-        }
-        co_return records.front();
-    } catch (const std::system_error& error) {
-        if (error.code().value() != ENOENT && error.code().value() != ENOSYS) {
-            throw;
-        }
-    }
-    co_return std::nullopt;
-}
-
 rawstd::Task<void> Backend::_connect() {
     co_await _wire_connect();
     co_await _wire_set_object({}, {}, 0, 0);
@@ -505,13 +492,6 @@ rawstd::Task<void> Backend::list_chunks(
     if (rawstd_uuid_is_nil(&id)) {
         co_await _wire_list_chunks({}, limit, chunks, token, version_id);
         co_return;
-    }
-    if (rawstd_uuid_is_nil(&version_id)) {
-        co_await _wire_list_chunks(id, limit, chunks, token, version_id);
-        if (!chunks.empty() && !chunks.front().offsets.empty()) {
-            co_return;
-        }
-        chunks.clear();
     }
     token = {};
 
@@ -539,9 +519,8 @@ rawstd::Task<void> Backend::create(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
     const RawstorObjectSpec& sp, RawstorMemberRole member_role
 ) {
-    if (member_role == RAWSTOR_MEMBER_WITNESS) {
-        co_await _wire_create(idempotency_key, id, offset, sp, member_role);
-        co_return;
+    if (member_role != RAWSTOR_MEMBER_DATA || offset != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     // An mds:// object is always chunked: the MDS map is per-chunk, and
     // there is no single-chunk layout for it to fall back on.
@@ -595,12 +574,8 @@ rawstd::Task<void> Backend::remove_version(
 }
 
 rawstd::Task<void> Backend::remove(
-    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t
 ) {
-    if (co_await _witness_meta(id, offset)) {
-        co_await _wire_remove(idempotency_key, id, offset);
-        co_return;
-    }
     /*
      * Unregister first (docs/mds.md, deletion order): the MDS is where
      * "the object still has versions" refuses with EBUSY -- before any
@@ -829,12 +804,6 @@ rawstd::Task<void> Backend::_remove_version(
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
-    if (rawstd_uuid_is_nil(&version_id)) {
-        auto witness = co_await _witness_meta(id, offset);
-        if (witness) {
-            co_return std::vector<RawstorObjectMeta>{*witness};
-        }
-    }
     WireMap map = co_await _resolve(id, version_id);
     uint64_t index = chunk_index_at(map, offset);
     std::vector<RawstorObjectMeta> ret = co_await resolve_meta(
@@ -859,9 +828,6 @@ Backend::list_versions(const RawstdUUID& id, uint64_t) {
 rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
-    if (rawstd_uuid_is_nil(&version_id) && co_await _witness_meta(id, offset)) {
-        co_return std::vector<rawstd::URI>{location()};
-    }
     WireMap map = co_await _resolve(id, version_id);
     uint64_t index = chunk_index_at(map, offset);
     co_return chunk_locations(map, index);

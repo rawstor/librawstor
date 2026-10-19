@@ -44,25 +44,17 @@ role_to_string(const struct RawstorObjectConfig* config, ssize_t index) {
     }
 }
 
-/* Hex, not decimal -- same base sync_id is printed in below, matching
- * meta_encode()'s own on-disk encoding of both fields (blk_backend.cpp).
- */
-static void print_sync_id_history(
-    const char* indent, const uint64_t* history, size_t count
-) {
-    printf("%ssync_id_history:", indent);
-    int any = 0;
-    for (size_t i = 0; i < count; i++) {
-        if (history[i] == 0) {
-            continue;
+/* Stored ancestors are newest first; display the lineage oldest first,
+ * followed by the current sync id. All ids use hexadecimal notation. */
+static void print_sync_ids(const struct RawstorObjectConfig* config) {
+    printf("    sync_id:");
+    for (size_t i = RAWSTOR_OBJECT_SYNC_ID_HISTORY; i > 0; --i) {
+        uint64_t id = config->sync_id_history[i - 1];
+        if (id != 0) {
+            printf(" %llx", (unsigned long long)id);
         }
-        printf(" %llx", (unsigned long long)history[i]);
-        any = 1;
     }
-    if (!any) {
-        printf(" none");
-    }
-    printf("\n");
+    printf(" %llx\n", (unsigned long long)config->sync_id);
 }
 
 /* rawstor_target_meta()'s own buffer capacity for one chunk's own
@@ -71,8 +63,12 @@ static void print_sync_id_history(
  * needs to cover one chunk's own width, not the whole object at once. */
 enum { MAX_MIRRORS = 256 };
 
-static int
-show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
+static int show_chunk_meta(RawstorCliOp* op, const char* target) {
+    uint64_t offset;
+    int offset_res = rawstor_target_offset(target, &offset);
+    if (offset_res < 0) {
+        return rawstd_exitcode_for_errno(-offset_res);
+    }
     struct RawstorObjectMeta metas[MAX_MIRRORS];
     /* op is shared across every chunk in show_meta()'s own loop below --
      * reset before each reuse, same convention as cli/info.c's own
@@ -81,7 +77,7 @@ show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
      * actually waiting for this call's completion. */
     op->done = 0;
     int mres = rawstor_target_meta(
-        op->queue, target, offset, metas, MAX_MIRRORS, rawstor_cli_op_cb, op
+        op->queue, target, metas, MAX_MIRRORS, rawstor_cli_op_cb, op
     );
     ssize_t result = rawstor_cli_op_wait(op, mres);
     if (result < 0) {
@@ -100,15 +96,33 @@ show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
         return EXIT_FAILURE;
     }
 
-    /* offset, not an index -- the same value `rawstor resolve`'s own
-     * --offset takes, and target's own comma-separated order, not a
-     * value this command has to re-parse target to print. Hex, not
-     * decimal -- same base the offset segment itself uses in a target
-     * string (parse_target_path()'s own doc comment, target.hpp). */
+    RawstorStringList* slots = NULL;
+    op->done = 0;
+    ssize_t slot_count = rawstor_cli_op_wait(
+        op,
+        rawstor_target_slots(op->queue, target, &slots, rawstor_cli_op_cb, op)
+    );
+    if (slot_count < 0) {
+        fprintf(
+            stderr, "rawstor_target_slots() failed: %s\n",
+            strerror((int)-slot_count)
+        );
+        return rawstd_exitcode_for_errno((int)-slot_count);
+    }
+    if (slot_count != result) {
+        fprintf(stderr, "rawstor show -v: slot and metadata counts differ\n");
+        rawstor_string_list_delete(slots);
+        return EXIT_FAILURE;
+    }
+
     printf("chunk[%llx]:\n", (unsigned long long)offset);
-    for (ssize_t i = 0; i < result; i++) {
+    printf("  target: %s\n", target);
+    const char** slot = rawstor_string_list_iter(slots);
+    for (ssize_t i = 0; i < result;
+         i++, slot = rawstor_string_list_next(slot)) {
         const struct RawstorObjectMeta* meta = &metas[i];
         printf("  mirror[%zd]:\n", i);
+        printf("    target: %s\n", *slot);
         if (meta->state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             printf("    unreachable\n");
         } else {
@@ -122,16 +136,11 @@ show_chunk_meta(RawstorCliOp* op, const char* target, uint64_t offset) {
             printf("    state: %s\n", sync_state_to_string(meta->state));
             printf("    role: %s\n", role_to_string(&meta->config, i));
             printf("    epoch: %llu\n", (unsigned long long)meta->config.epoch);
-            printf(
-                "    sync_id: %llx\n", (unsigned long long)meta->config.sync_id
-            );
-            print_sync_id_history(
-                "    ", meta->config.sync_id_history,
-                RAWSTOR_OBJECT_SYNC_ID_HISTORY
-            );
+            print_sync_ids(&meta->config);
         }
     }
 
+    rawstor_string_list_delete(slots);
     return EXIT_SUCCESS;
 }
 
@@ -143,8 +152,8 @@ static int show_meta(const char* target) {
         return rawstd_exitcode_for_errno(-res);
     }
 
-    uint64_t* offsets;
-    ssize_t chunk_count = rawstor_cli_op_chunks(&op, target, &offsets);
+    RawstorStringList* chunks = NULL;
+    ssize_t chunk_count = rawstor_cli_op_chunks(&op, target, &chunks);
     if (chunk_count < 0) {
         fprintf(
             stderr, "rawstor_target_chunks() failed: %s\n",
@@ -155,14 +164,15 @@ static int show_meta(const char* target) {
     }
 
     int ret = EXIT_SUCCESS;
-    for (ssize_t i = 0; i < chunk_count; i++) {
-        ret = show_chunk_meta(&op, target, offsets[i]);
+    for (const char** it = rawstor_string_list_iter(chunks); it != NULL;
+         it = rawstor_string_list_next(it)) {
+        ret = show_chunk_meta(&op, *it);
         if (ret != EXIT_SUCCESS) {
             break;
         }
     }
 
-    free(offsets);
+    rawstor_string_list_delete(chunks);
     rawstor_cli_op_destroy(&op);
     return ret;
 }

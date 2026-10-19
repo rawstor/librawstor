@@ -160,42 +160,41 @@ void scan_ost(
                 continue;
             }
 
-            // `target` names physical chunks directly, never an mds://
-            // one (this scan walks physical objects one OST at a time) --
-            // purely syntactic, no I/O (rawstor_target_chunks()'s own doc
-            // comment): a first call for the count, a second for the
-            // offsets themselves.
-            SyncOp count_op;
-            count_op.queue = queue;
+            RawstorStringList* chunks = nullptr;
+            SyncOp chunks_op;
+            chunks_op.queue = queue;
             ssize_t n = sync_op_wait(
-                count_op, rawstor_target_chunks(
-                              queue, target, nullptr, 0, sync_op_cb, &count_op
-                          )
+                chunks_op, rawstor_target_chunks(
+                               queue, target, &chunks, sync_op_cb, &chunks_op
+                           )
             );
-            std::vector<uint64_t> offsets(n > 0 ? static_cast<size_t>(n) : 0);
-            if (n > 0) {
-                SyncOp offsets_op;
-                offsets_op.queue = queue;
-                n = sync_op_wait(
-                    offsets_op, rawstor_target_chunks(
-                                    queue, target, offsets.data(),
-                                    offsets.size(), sync_op_cb, &offsets_op
-                                )
-                );
+            std::vector<std::string> chunk_targets;
+            if (n >= 0) {
+                for (const char** chunk = rawstor_string_list_iter(chunks);
+                     chunk; chunk = rawstor_string_list_next(chunk)) {
+                    chunk_targets.emplace_back(*chunk);
+                }
             }
+            rawstor_string_list_delete(chunks);
             if (n < 0) {
                 rawstd_error("reconstruct: malformed target: %s\n", target);
                 continue;
             }
-
-            for (uint64_t offset : offsets) {
+            for (const auto& chunk : chunk_targets) {
+                uint64_t offset;
+                if (rawstor_target_offset(chunk.c_str(), &offset) < 0) {
+                    rawstd_error(
+                        "reconstruct: malformed chunk: %s\n", chunk.c_str()
+                    );
+                    continue;
+                }
                 RawstorObjectMeta meta{};
                 SyncOp meta_op;
                 meta_op.queue = queue;
                 ssize_t mr = sync_op_wait(
                     meta_op,
                     rawstor_target_meta(
-                        queue, target, offset, &meta, 1, sync_op_cb, &meta_op
+                        queue, chunk.c_str(), &meta, 1, sync_op_cb, &meta_op
                     )
                 );
                 if (mr < 0) {

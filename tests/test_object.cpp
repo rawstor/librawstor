@@ -147,13 +147,44 @@ ssize_t object_resize(
     });
 }
 
+int resolve_chunk_target(
+    rawio::Queue& queue, const std::string& target, uint64_t offset,
+    std::string& selected
+) {
+    RawstorStringList* chunks = nullptr;
+    ssize_t result = rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
+        return rawstor_target_chunks(&queue, target.c_str(), &chunks, cb, data);
+    });
+    if (result < 0) {
+        return static_cast<int>(result);
+    }
+    for (const char** it = rawstor_string_list_iter(chunks); it;
+         it = rawstor_string_list_next(it)) {
+        uint64_t current;
+        if (rawstor_target_offset(*it, &current) == 0 && current == offset) {
+            selected = *it;
+            break;
+        }
+    }
+    rawstor_string_list_delete(chunks);
+    return selected.empty() ? -ENOENT : 0;
+}
+
 ssize_t target_meta(
     rawio::Queue& queue, const std::string& target, uint64_t offset,
     RawstorObjectMeta* metas, size_t count
 ) {
+    std::string selected = target;
+    if (offset != 0) {
+        selected.clear();
+        int result = resolve_chunk_target(queue, target, offset, selected);
+        if (result < 0) {
+            return result;
+        }
+    }
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
         return rawstor_target_meta(
-            &queue, target.c_str(), offset, metas, count, cb, data
+            &queue, selected.c_str(), metas, count, cb, data
         );
     });
 }
@@ -162,10 +193,15 @@ ssize_t target_set_member_sync_state(
     rawio::Queue& queue, const std::string& target, uint64_t offset,
     size_t member_index, const RawstorObjectConfig& sync_state
 ) {
+    std::string selected;
+    int result = resolve_chunk_target(queue, target, offset, selected);
+    if (result < 0) {
+        return result;
+    }
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
         return rawstor_target_set_member_config(
-            &queue, target.c_str(), offset, member_index, &sync_state, 0,
-            nullptr, cb, data
+            &queue, selected.c_str(), member_index, &sync_state, 0, nullptr, cb,
+            data
         );
     });
 }
@@ -577,7 +613,7 @@ TEST(ObjectSpecTest, reports_placement_policy) {
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
-TEST(ObjectMetaTest, set_member_sync_state_on_object_target_is_real) {
+TEST(ObjectMetaTest, set_member_sync_state_updates_only_requested_chunk) {
     rawstor::tests::ObjectEnv env(8788, 8789);
     std::string target =
         object_target(env, "018f4e2a-3000-7000-8000-00000000000c");
@@ -585,20 +621,34 @@ TEST(ObjectMetaTest, set_member_sync_state_on_object_target_is_real) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
     RawstorObjectSpec spec = one_chunk_spec();
+    spec.size = 2 * spec.chunk_size;
     ASSERT_EQ(target_create(*queue, target, spec), 0);
 
     RawstorObjectConfig sync_state{};
     sync_state.epoch = 5;
     sync_state.sync_id = 0x1122334455667788ull;
     EXPECT_EQ(
-        target_set_member_sync_state(*queue, target, 0, 0, sync_state), 0
+        target_set_member_sync_state(
+            *queue, target, spec.chunk_size, 0, sync_state
+        ),
+        0
     );
 
     RawstorObjectMeta meta{};
-    ASSERT_EQ(target_meta(*queue, target, 0, &meta, 1), 1);
+    ASSERT_EQ(target_meta(*queue, target, spec.chunk_size, &meta, 1), 1);
     EXPECT_EQ(meta.config.epoch, 5u);
     EXPECT_EQ(meta.config.sync_id, 0x1122334455667788ull);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+
+    RawstorObjectMeta first{};
+    ASSERT_EQ(target_meta(*queue, target, 0, &first, 1), 1);
+    EXPECT_EQ(first.config.epoch, 0u);
+    EXPECT_EQ(first.config.sync_id, 0u);
+    EXPECT_EQ(first.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(
+        target_set_member_sync_state(*queue, target, spec.size, 0, sync_state),
+        -ENOENT
+    );
 
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
@@ -906,4 +956,203 @@ TEST(ObjectTest, mds_io_beyond_first_chunk) {
     );
     run(*queue, object->close());
     run(*queue, target.remove(*queue));
+}
+
+TEST(ObjectMetaTest, chunk_uris_do_not_probe_for_witness_records) {
+    rawstor::tests::ObjectEnv env(8796, 8797);
+    std::string uri =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000099");
+    auto queue = rawio::Queue::create(8);
+    RawstorObjectSpec spec = one_chunk_spec();
+    spec.size = 2 * spec.chunk_size;
+    ASSERT_EQ(target_create(*queue, uri, spec), 0);
+    rawstor::Target object(rawstd::URI::uriv(uri.c_str()));
+    testing::internal::CaptureStderr();
+    auto chunks = run(*queue, object.chunks(*queue));
+    ASSERT_EQ(chunks.size(), 2u);
+    for (size_t index = 0; index < chunks.size(); ++index) {
+        const auto& chunk = chunks[index];
+        EXPECT_EQ(chunk.uris().front().scheme(), "ost");
+        auto path =
+            rawstor::parse_target_path(chunk.uris().front().path().str());
+        EXPECT_TRUE(path.explicit_offset);
+        EXPECT_EQ(path.offset, index * spec.chunk_size);
+        auto metadata = run(*queue, chunk.meta(*queue));
+        EXPECT_EQ(metadata.size(), 1u);
+        run(*queue,
+            chunk.set_member_config(*queue, 0, metadata.front().config, 0));
+    }
+    auto log = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(
+        log.find("Server error: No such file or directory"), std::string::npos
+    );
+    EXPECT_EQ(target_remove(*queue, uri), 0);
+}
+
+TEST(ObjectMetaTest, logical_chunk_uri_resolves_and_opens_only_its_chunk) {
+    rawstor::tests::ObjectEnv env(8798, 8799);
+    std::string uri =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000098");
+    auto queue = rawio::Queue::create(8);
+    RawstorObjectSpec spec = one_chunk_spec();
+    spec.size = 2 * spec.chunk_size;
+    ASSERT_EQ(target_create(*queue, uri, spec), 0);
+    std::ostringstream suffix;
+    suffix << "/" << std::hex << spec.chunk_size;
+    rawstor::Target chunk(rawstd::URI::uriv((uri + suffix.str()).c_str()));
+    auto targets = run(*queue, chunk.chunks(*queue));
+    ASSERT_EQ(targets.size(), 1u);
+    EXPECT_EQ(targets.front().uris().front().scheme(), "ost");
+    EXPECT_EQ(run(*queue, chunk.spec(*queue)).size, spec.chunk_size);
+    EXPECT_EQ(run(*queue, chunk.meta(*queue)).size(), 1u);
+    uint64_t offset = 0;
+    EXPECT_EQ(rawstor_target_offset((uri + suffix.str()).c_str(), &offset), 0);
+    EXPECT_EQ(offset, spec.chunk_size);
+    auto object = run(*queue, chunk.open(*queue, 0));
+    std::string value = "logical chunk";
+    EXPECT_EQ(
+        run(*queue, object->pwrite(value.data(), value.size(), 0, false)),
+        value.size()
+    );
+    run(*queue, object->close(true));
+    auto whole =
+        run(*queue, rawstor::Target(rawstd::URI::uriv(uri.c_str()))
+                        .open(*queue, RAWSTOR_READONLY));
+    std::string actual(value.size(), '\0');
+    EXPECT_EQ(
+        run(*queue,
+            whole->pread(actual.data(), actual.size(), spec.chunk_size)),
+        actual.size()
+    );
+    EXPECT_EQ(actual, value);
+    run(*queue, whole->close(true));
+    EXPECT_THROW(run(*queue, chunk.remove(*queue)), std::system_error);
+    EXPECT_THROW(
+        run(*queue, chunk.resize(*queue, spec.size)), std::system_error
+    );
+    EXPECT_EQ(target_remove(*queue, uri), 0);
+}
+
+TEST(ObjectIOTest, logical_object_writes_preserve_physical_chunk_epochs) {
+    rawstor::tests::ObjectEnv env(8800, 8801);
+    std::string uri =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000097");
+    auto queue = rawio::Queue::create(16);
+    RawstorObjectSpec spec = one_chunk_spec();
+    spec.size = 2 * spec.chunk_size;
+    ASSERT_EQ(target_create(*queue, uri, spec), 0);
+    rawstor::Target target(rawstd::URI::uriv(uri.c_str()));
+    auto chunks = run(*queue, target.chunks(*queue));
+    ASSERT_EQ(chunks.size(), 2u);
+    for (size_t i = 0; i < chunks.size(); ++i) {
+        auto config = run(*queue, chunks[i].meta(*queue)).front().config;
+        config.epoch = 5 + i;
+        run(*queue, chunks[i].set_member_config(*queue, 0, config, 0));
+    }
+    auto object = run(*queue, target.open(*queue, 0));
+    std::string value(4096, 'x');
+    for (uint64_t offset : {uint64_t(0), spec.chunk_size}) {
+        EXPECT_EQ(
+            run(*queue,
+                object->pwrite(value.data(), value.size(), offset, true)),
+            value.size()
+        );
+        iovec vector{.iov_base = value.data(), .iov_len = value.size()};
+        EXPECT_EQ(
+            run(*queue,
+                object->pwritev(&vector, 1, value.size(), offset + 4096, true)),
+            value.size()
+        );
+        EXPECT_EQ(
+            run(*queue, object->write_zeroes(4096, offset + 8192, false, true)),
+            4096u
+        );
+        EXPECT_EQ(run(*queue, object->discard(4096, offset + 12288)), 4096u);
+    }
+    run(*queue, object->flush());
+    std::string actual(value.size(), '\0');
+    EXPECT_EQ(
+        run(*queue,
+            object->pread(actual.data(), actual.size(), spec.chunk_size)),
+        actual.size()
+    );
+    EXPECT_EQ(actual, value);
+    run(*queue, object->close(true));
+    for (size_t i = 0; i < chunks.size(); ++i) {
+        EXPECT_EQ(
+            run(*queue, chunks[i].meta(*queue)).front().config.epoch, 5 + i
+        );
+    }
+    EXPECT_EQ(target_remove(*queue, uri), 0);
+}
+
+TEST(
+    TargetSlotsTest, resolves_mds_objects_and_logical_chunks_through_public_api
+) {
+    rawstor::tests::ObjectEnv env(8802, 8803);
+    const std::string uri =
+        object_target(env, "018f4e2a-3000-7000-8000-000000000096");
+    auto queue = rawio::Queue::create(16);
+    auto spec = one_chunk_spec();
+    spec.size = 2 * spec.chunk_size;
+    ASSERT_EQ(target_create(*queue, uri, spec), 0);
+    auto enumerate = [&](const std::string& input) {
+        RawstorStringList* list = nullptr;
+        auto count =
+            rawstor::tests::sync_run(&*queue, [&](auto cb, void* data) {
+                return rawstor_target_slots(
+                    &*queue, input.c_str(), &list, cb, data
+                );
+            });
+        EXPECT_GE(count, 0);
+        std::vector<std::string> targets;
+        if (count >= 0) {
+            for (const char** it = rawstor_string_list_iter(list); it;
+                 it = rawstor_string_list_next(it)) {
+                targets.emplace_back(*it);
+            }
+            EXPECT_EQ(targets.size(), static_cast<size_t>(count));
+        }
+        rawstor_string_list_delete(list);
+        return targets;
+    };
+    auto slots = enumerate(uri);
+    ASSERT_EQ(slots.size(), 2u);
+    for (size_t i = 0; i < slots.size(); ++i) {
+        rawstor::Target slot(rawstd::URI::uriv(slots[i].c_str()));
+        ASSERT_EQ(slot.uris().size(), 1u);
+        EXPECT_EQ(slot.uris().front().scheme(), "ost");
+        EXPECT_EQ(
+            rawstor::parse_target_path(slot.uris().front().path().str()).offset,
+            i * spec.chunk_size
+        );
+        EXPECT_EQ(run(*queue, slot.meta(*queue)).size(), 1u);
+    }
+    std::ostringstream chunk;
+    chunk << uri << "/" << std::hex << spec.chunk_size;
+    EXPECT_EQ(enumerate(chunk.str()), std::vector<std::string>{slots.back()});
+    EXPECT_EQ(enumerate(slots.back()), std::vector<std::string>{slots.back()});
+    EXPECT_EQ(target_remove(*queue, uri), 0);
+}
+
+TEST(
+    TargetSlotsTest,
+    physical_slots_preserve_member_order_versions_and_unreachable_addresses
+) {
+    auto queue = rawio::Queue::create(16);
+    const std::string id = "018f4e2a-3000-7000-8000-000000000095";
+    const std::string version = "018f4e2a-3000-7000-8000-000000000094";
+    const std::vector<rawstd::URI> uris{
+        rawstd::URI("ost://127.0.0.1:1/" + id + "/0/" + version),
+        rawstd::URI("ost://127.0.0.1:2/" + id + "/0/" + version),
+        rawstd::URI("ost://127.0.0.1:1/" + id + "/1000/" + version),
+        rawstd::URI("ost://127.0.0.1:2/" + id + "/1000/" + version)
+    };
+    const rawstor::Target target(uris);
+    const auto slots = run(*queue, target.slots(*queue));
+    ASSERT_EQ(slots.size(), uris.size());
+    for (size_t i = 0; i < slots.size(); ++i) {
+        ASSERT_EQ(slots[i].uris().size(), 1u);
+        EXPECT_EQ(slots[i].uris().front().str(), uris[i].str());
+    }
 }
