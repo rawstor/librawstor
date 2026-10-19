@@ -30,7 +30,7 @@ sync_state_to_string(enum RawstorObjectSyncStateValue state) {
 static const char*
 role_to_string(const struct RawstorObjectConfig* config, ssize_t index) {
     if (index >= (ssize_t)config->nroles) {
-        return "UNKNOWN";
+        return NULL;
     }
     switch (config->roles[index]) {
     case RAWSTOR_OBJECT_MEMBER_IN_SYNC:
@@ -40,7 +40,7 @@ role_to_string(const struct RawstorObjectConfig* config, ssize_t index) {
     case RAWSTOR_OBJECT_MEMBER_EXCLUDED:
         return "EXCLUDED";
     default:
-        return "UNKNOWN";
+        return NULL;
     }
 }
 
@@ -134,7 +134,10 @@ static int show_chunk_meta(RawstorCliOp* op, const char* target) {
             );
             printf("    size: %s\n", buf);
             printf("    state: %s\n", sync_state_to_string(meta->state));
-            printf("    role: %s\n", role_to_string(&meta->config, i));
+            const char* role = role_to_string(&meta->config, i);
+            if (role != NULL) {
+                printf("    role: %s\n", role);
+            }
             printf("    epoch: %llu\n", (unsigned long long)meta->config.epoch);
             print_sync_ids(&meta->config);
         }
