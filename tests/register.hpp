@@ -12,6 +12,7 @@
 #include <rawstor/target.h>
 
 #include <algorithm>
+#include <limits>
 #include <system_error>
 
 #include <cerrno>
@@ -26,9 +27,11 @@ namespace rawstor {
 namespace tests {
 
 inline RawstorObjectBallot above(const RawstorObjectMeta& meta) {
-    return RawstorObjectBallot{
-        std::max(meta.promised.counter, meta.accepted.counter) + 1, 1
-    };
+    uint64_t counter = std::max(meta.promised.counter, meta.accepted.counter);
+    if (counter == std::numeric_limits<uint64_t>::max()) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
+    }
+    return RawstorObjectBallot{counter + 1, 1};
 }
 
 inline rawstd::Task<void> force_config(

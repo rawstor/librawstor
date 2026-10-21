@@ -8,6 +8,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -255,6 +256,15 @@ resolve_chunk(const char* target, const size_t* winners, size_t num_winners) {
      * mirror promises it before any of them is changed, so that no writer
      * can decide under a lower ballot between the changes below; one that
      * refuses has a writer running, and nothing has been touched yet. */
+    if (max_ballot > UINT64_MAX - 2) {
+        fprintf(
+            stderr,
+            "chunk[%llx]: the mirrors' ballots are exhausted; no ballot "
+            "above them exists\n",
+            (unsigned long long)offset
+        );
+        return rawstd_exitcode_for_errno(EOVERFLOW);
+    }
     struct RawstorObjectBallot ballot;
     ballot.counter = max_ballot + 1;
     ballot.proposer = random_sync_id();
