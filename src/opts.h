@@ -20,6 +20,7 @@ extern "C" {
 //     unsigned int io_retry_backoff_max;
 //     unsigned int io_retry_backoff_jitter;
 //     unsigned int mirror_probe_interval;
+//     unsigned int mirror_resync_lease;
 // };
 
 int rawstor_opts_initialize(const struct RawstorOpts* opts);
@@ -59,6 +60,10 @@ unsigned int rawstor_opts_io_retry_backoff_jitter(void);
 // How often, in milliseconds, an open mirrored object probes its
 // unreachable arms for reconnection (and resyncs them on success).
 unsigned int rawstor_opts_mirror_probe_interval(void);
+
+// How long, in milliseconds, a resync that another writer runs may go
+// without a sign of life before the member it brings back is excluded.
+unsigned int rawstor_opts_mirror_resync_lease(void);
 
 #ifdef __cplusplus
 }

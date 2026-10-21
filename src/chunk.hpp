@@ -10,6 +10,7 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -97,6 +98,14 @@ private:
 
     struct RegisterTransport;
     void _adopt_locked(const RawstorObjectConfig& v);
+    // With the transition lock held: records that the member this Chunk
+    // brought back, if its resync ended without the rejoin, is excluded.
+    rawstd::Task<void> _resync_release();
+    // Renews the register under which the resync `generation` runs.
+    rawstd::Task<void> _resync_renew(uint64_t generation);
+    // Excludes the member of a resync another writer runs once it has shown
+    // no sign of life for the lease.
+    rawstd::DetachedTask _resync_watch();
     rawstd::Task<void> _adopt();
     rawstd::Task<void> _decide(
         const RawstorObjectConfig& value, const std::vector<bool>& accepting,
@@ -168,6 +177,18 @@ private:
     // _probe_pending guards against a second _probe_tick() firing while a
     // reconnect attempt it started is still in flight.
     bool _probe_pending;
+
+    // The member this Chunk started the resync of, or -1: the register
+    // names this process its owner until the rejoin or a release.
+    size_t _owned_syncing;
+
+    // The resync another writer runs, as _lease_watch() last saw it: the
+    // member, the ballot the register was last accepted under and when that
+    // changed. A running resync renews itself within the lease.
+    size_t _lease_member;
+    RawstorObjectBallot _lease_ballot;
+    std::chrono::steady_clock::time_point _lease_at;
+    bool _lease_pending;
 
     uint64_t _epoch() const;
 
@@ -380,7 +401,7 @@ private:
     rawstd::Task<void> _resync_attach(uint64_t generation, size_t idx);
     // Every writable mirrored Chunk's watcher: attaches it to a resync
     // another Chunk starts, and follows one that ends.
-    rawstd::DetachedTask _resync_watch();
+    rawstd::DetachedTask _lease_watch();
     // The owner: waits for every writer to attach, sweeps, then finishes
     // (_resync_finish(): the rejoin barrier, the member's record, and the
     // commit that lets it serve reads).

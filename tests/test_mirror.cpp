@@ -15,6 +15,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
@@ -123,18 +124,18 @@ ssize_t target_set_config(
     Queue& queue, const std::string& target,
     const RawstorObjectConfig& sync_state
 ) {
-    static uint64_t counter = 1000;
-    RawstorObjectBallot ballot{++counter, 7};
-    RawstorObjectBallot next{0, 0};
+    // A ballot above every one the member holds.
     RawstorObjectMeta meta{};
     ssize_t res = rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
-        return rawstor_target_sync_prepare(
-            queue, target.c_str(), 0, &ballot, &meta, cb, data
-        );
+        return rawstor_target_meta(queue, target.c_str(), &meta, 1, cb, data);
     });
     if (res < 0) {
         return res;
     }
+    RawstorObjectBallot ballot{
+        std::max(meta.promised.counter, meta.accepted.counter) + 1, 7
+    };
+    RawstorObjectBallot next{0, 0};
     res = rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
         return rawstor_target_sync_accept(
             queue, target.c_str(), 0, &ballot, &next, &sync_state, &meta, cb,
@@ -593,6 +594,15 @@ TEST(MirrorResyncTest, close_during_resync) {
         RawstorObject* object = nullptr;
         ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
         EXPECT_EQ(object_close(queue, object), 0);
+
+        // A resync the closing writer ran does not outlive it in the
+        // register: no writer is left to duplicate onto the member for it.
+        RawstorObjectMeta a{};
+        ASSERT_EQ(target_meta(queue, members.target(0), &a), 0);
+        EXPECT_EQ(a.config.resync_owner, 0u);
+        if (a.config.nroles == 3) {
+            EXPECT_NE(a.config.roles[1], RAWSTOR_OBJECT_MEMBER_SYNCING);
+        }
     }
 
     Queue queue(16);
@@ -919,8 +929,15 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
         "SYNCING SYNC_ACCEPT <<<", sizeof(RawstorFrameSyncPropose),
         [&syncing_sent](const void*) { syncing_sent = true; }
     );
+    // The member answers with the record it holds: it names the member
+    // syncing, so the copy that follows is a RESYNC write.
+    RawstorFrameMetaPayload syncing = stale;
+    syncing.config.nroles = 3;
+    syncing.config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    syncing.config.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+    syncing.config.roles[2] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
     s->cmd_sync_response(
-        RAWSTOR_CMD_SYNC_ACCEPT, RAWSTOR_MAGIC, 6, 0, true, stale
+        RAWSTOR_CMD_SYNC_ACCEPT, RAWSTOR_MAGIC, 6, 0, true, syncing
     );
 
     std::string target =
@@ -1056,7 +1073,18 @@ TEST(MirrorResyncTest, member_refusing_its_rejoin_is_excluded_again) {
         s.cmd_meta(RAWSTOR_MAGIC, 2, 0, stale);
         // The SYNCING role: a prepare and an accept.
         s.cmd_sync_prepare(RAWSTOR_MAGIC, 3, 0, stale);
-        s.cmd_sync_accept(RAWSTOR_MAGIC, 5, 0, stale);
+        // The member answers with the record it holds, which names it
+        // syncing: the copy that follows is a RESYNC write.
+        RawstorFrameMetaPayload syncing = stale;
+        syncing.config.nroles = 3;
+        syncing.config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+        syncing.config.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+        syncing.config.roles[2] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+        s.cmd_meta(RAWSTOR_MAGIC, 5, 0, stale);
+        s.cmd_sync_accept_request();
+        s.cmd_sync_response(
+            RAWSTOR_CMD_SYNC_ACCEPT, RAWSTOR_MAGIC, 6, 0, true, syncing
+        );
         // The copy of an empty chunk goes out as zeroes, durable before the
         // member rejoins.
         s.cmd_write_zeroes(RAWSTOR_MAGIC, 7, spec.size);
@@ -1344,6 +1372,159 @@ TEST(MirrorResyncTest, write_duplicates_onto_another_writers_syncing_member) {
             << i;
     }
     object_close_clean(queue, object);
+}
+
+namespace {
+
+struct ScopedLease {
+    ScopedLease(unsigned int probe, unsigned int lease) {
+        RawstorOpts opts{};
+        opts.mirror_probe_interval = probe;
+        opts.mirror_resync_lease = lease;
+        rawstor_opts_initialize(&opts);
+    }
+    ~ScopedLease() { rawstor_opts_initialize(nullptr); }
+};
+
+// Another writer has started a resync onto the third member, and this one
+// has taken it over with its next write.
+struct ForeignResync {
+    Queue queue;
+    Members members;
+    RawstorObject* object = nullptr;
+    RawstorObjectConfig decided{};
+
+    ForeignResync(const char* uuid) : queue(16), members(3, uuid) {}
+
+    void start() {
+        RawstorObjectSpec spec{
+            .size = 1ull << 20,
+            .width = 3,
+            .chunk_size = 0,
+            .stripe_width = 0,
+            .failure_domain = 0,
+        };
+        ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+        ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+        std::string first = "first";
+        object_write(queue, object, first.data(), first.size(), 0, 0);
+
+        RawstorObjectMeta before{};
+        ASSERT_EQ(target_meta(queue, members.target(0), &before), 0);
+        decided = before.config;
+        ++decided.epoch;
+        decided.roles[2] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+        decided.resync_owner = 0x77;
+        for (size_t i : {0, 1, 2}) {
+            ASSERT_EQ(target_set_config(queue, members.target(i), decided), 0);
+        }
+        std::string second = "second";
+        object_write(queue, object, second.data(), second.size(), 16, 0);
+    }
+
+    // The other writer's sign of life: the register decided anew.
+    void renew() {
+        for (size_t i : {0, 1}) {
+            ASSERT_EQ(target_set_config(queue, members.target(i), decided), 0);
+        }
+    }
+
+    bool excluded() {
+        RawstorObjectMeta meta{};
+        if (target_meta(queue, members.target(0), &meta) != 0) {
+            return false;
+        }
+        return meta.config.roles[2] == RAWSTOR_OBJECT_MEMBER_EXCLUDED &&
+               meta.config.resync_owner == 0 &&
+               meta.config.epoch > decided.epoch;
+    }
+
+    bool wait_excluded(int tenths_of_a_second) {
+        for (int i = 0; i < tenths_of_a_second * 10 && !excluded(); ++i) {
+            rawio_wait_timeout(queue, 10);
+        }
+        return excluded();
+    }
+};
+
+} // namespace
+
+// The writer that runs a resync is gone: it never renews the register. Once
+// the lease is over, a writer that duplicates onto the member for it
+// excludes the member.
+TEST(MirrorResyncTest, silent_foreign_resync_is_released_after_the_lease) {
+    ScopedLease lease(50, 300);
+    ForeignResync f("00000000-0000-7000-8000-0000000000d4");
+    f.start();
+    EXPECT_FALSE(f.excluded());
+    EXPECT_TRUE(f.wait_excluded(50));
+
+    // The writer goes on without the member.
+    std::string third = "third";
+    object_write(f.queue, f.object, third.data(), third.size(), 32, 0);
+    object_close_clean(f.queue, f.object);
+}
+
+// A resync that renews itself within the lease is left alone.
+TEST(MirrorResyncTest, renewed_foreign_resync_is_not_released) {
+    ScopedLease lease(50, 300);
+    ForeignResync f("00000000-0000-7000-8000-0000000000d5");
+    f.start();
+    for (int i = 0; i < 20; ++i) {
+        f.renew();
+        rawio_wait_timeout(f.queue, 50);
+    }
+    EXPECT_FALSE(f.excluded());
+    EXPECT_TRUE(f.wait_excluded(50));
+    object_close_clean(f.queue, f.object);
+}
+
+// The writer that runs a resync closes before it ends: the register is left
+// without a resync nobody runs, and the member is excluded.
+TEST(MirrorResyncTest, closing_the_writer_releases_its_resync) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000d6");
+    RawstorObjectSpec spec{
+        .size = 256ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+    RawstorObjectConfig fresh{};
+    fresh.epoch = 2;
+    fresh.sync_id = 0x1111111111111111ull;
+    fresh.sync_id_history[0] = 0x2222222222222222ull;
+    ASSERT_EQ(target_set_config(queue, members.target(0), fresh), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(2), fresh), 0);
+    RawstorObjectConfig stale{};
+    stale.epoch = 1;
+    stale.sync_id = 0x2222222222222222ull;
+    ASSERT_EQ(target_set_config(queue, members.target(1), stale), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+
+    // The register names the member syncing, with this writer as the owner.
+    RawstorObjectMeta meta{};
+    bool running = false;
+    for (int i = 0; i < 2000 && !running; ++i) {
+        rawio_wait_timeout(queue, 1);
+        running = target_meta(queue, members.target(0), &meta) == 0 &&
+                  meta.config.nroles == 3 &&
+                  meta.config.roles[1] == RAWSTOR_OBJECT_MEMBER_SYNCING &&
+                  meta.config.resync_owner != 0;
+    }
+    ASSERT_TRUE(running);
+    uint64_t epoch = meta.config.epoch;
+
+    EXPECT_EQ(object_close(queue, object), 0);
+
+    ASSERT_EQ(target_meta(queue, members.target(0), &meta), 0);
+    EXPECT_EQ(meta.config.roles[1], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
+    EXPECT_EQ(meta.config.resync_owner, 0u);
+    EXPECT_GT(meta.config.epoch, epoch);
 }
 
 TEST(MirrorResyncTest, resync_under_concurrent_writes) {

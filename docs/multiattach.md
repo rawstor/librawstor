@@ -25,7 +25,7 @@ separately.
 | The client stamps writes with its chunk configuration epoch | 1 | ✅ | ordinary Chunk operations supply the current epoch |
 | Adoption of the register value on `-ESTALE` from another writer process | 2 | ✅ | `src/chunk.cpp` (`Chunk::_adopt()`, `_adopt_locked()`, `_fan_out_write()`) |
 | `LOST` at open and at runtime: resync of the losers | 2 | 🟡 | one process: its open heals the copies in the set and then clears `LOST` ([Mirroring](mirroring.md), F5); several writers: not implemented |
-| Resync across processes (`resync_owner`, sweep with `RESYNC`) | 2 | ❌ | — |
+| Resync across processes (`resync_owner`, sweep with `RESYNC`, lease of a silent owner) | 2 | ✅ | `src/chunk.cpp` (`_resync_run()`, `_resync_renew()`, `_lease_watch()`, `_resync_release()`) |
 | `LOST` cleared by a rule on the accepted value | 2 | ✅ | [Clearing `LOST`](#clearing-lost), `src/slot.cpp` (`clears_lost()`) |
 | `SET_CONFIG` and `rawstor_target_set_member_config()` removed; `rawstor resolve` decides through the register | 2 | ✅ | `cli/resolve.c` |
 | The client keeps the register value once per chunk, not per member | 2 | ✅ | `MirrorControl` (the decided configuration and the `Proposer`), [The register](#the-register-caspaxos) |
@@ -367,16 +367,26 @@ For two data copies, see below.
   keeps m syncing keeps the record; any other role drops it.
 - **Rejoin** is a transition "m → in-sync, `resync_owner` = 0". Stage 1
   flushes the restored copy before clearing `LOST` in this transition.
-- An owner that disappears leaves m syncing; any writer aborts the resync
-  with "m → excluded, `resync_owner` = 0".
+- The owner renews the register while it sweeps, three times within the
+  lease (`mirror_resync_lease`, 30 s): a decision that changes nothing but
+  the ballot. A writer that duplicates onto m for a resync it does not run
+  watches the ballot the register was last accepted under; if it has not
+  moved for a whole lease, the owner is gone, and the writer decides "m →
+  excluded, `resync_owner` = 0". The next reconnect probe of any writer may
+  start the resync anew.
+- An owner that closes before the rejoin, or whose resync ends for any other
+  reason without one, takes the same decision when it closes, so that no
+  writer goes on duplicating for a resync nobody runs.
 
 The record of client writes lives in memory only. A copy that keeps none
 -- not syncing, or syncing since before its `rawstor-ost` started --
 refuses a `RESYNC` write with `-ESTALE`: it cannot tell which bytes a
 client wrote, and copying over all of them could overwrite one. The owner
-then records the syncing role anew, which starts an empty record, and
-starts the sweep over. A server with no copy of its own refuses `RESYNC`
-with `-EOPNOTSUPP`.
+takes over what the register holds, in case another writer decided, and
+repeats the write; if the member still refuses, the owner ends the resync,
+and the next reconnect probe starts it anew with the syncing role recorded
+again, which starts an empty record. A server with no copy of its own
+refuses `RESYNC` with `-EOPNOTSUPP`.
 
 Partial-sector writes are preserved byte for byte; the sweep restores the
 remaining bytes of the sector. Overlapping and adjacent written ranges
@@ -480,7 +490,7 @@ refer to [Mirroring](mirroring.md#failure-cases).
 | Two writers transition at once | Both prepare; ballots are ordered | ✅ acceptor rules | At most one value is decided; the loser's retry finds the change made (or builds on it) |
 | A proposer crashes between prepare and accept | Promises left, nothing accepted | ✅ | The next proposer uses a higher ballot; nothing is lost |
 | A proposer crashes after accepting on a minority | That value may or may not be decided | ✅ | The next proposer's prepare majority intersects the minority that accepted it and picks it up if it was decided -- CASPaxos's own guarantee |
-| The resync owner disappears | The member stays syncing, `resync_owner` set | ✅ (one writer: the resync restarts with it) | Any writer aborts it ("m → excluded, owner 0") and may start a new one |
+| The resync owner disappears | The member stays syncing, `resync_owner` set | ✅ (one writer: the resync restarts with it) | The owner's renewals stop; after the lease any writer that duplicates onto the member decides "m → excluded, owner 0" and may start a new resync |
 | A write races a transition on one member | Admitted under epoch e, record of e+1 about to be written | ✅ The raise waits for the write, letting go of the record lock meanwhile; later e-writes get `-ESTALE` | Same |
 
 ---
@@ -534,5 +544,6 @@ record or frames, so both change in place. Details in
    through the register; a rule for clearing `LOST`; `SET_CONFIG` and
    `rawstor_target_set_member_config()` removed; the register value kept
    once per chunk in the client; adoption of another writer's decision on
-   `-ESTALE`, in a write and in a transition. Left: resync of `LOST` chunks
-   with several writers; resync across processes.
+   `-ESTALE`, in a write and in a transition; resync across processes (the
+   sweep as `RESYNC` writes, a lease for the owner). Left: resync of `LOST`
+   chunks with several writers (the heal).
