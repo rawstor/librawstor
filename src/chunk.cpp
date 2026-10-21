@@ -3517,9 +3517,12 @@ rawstd::DetachedTask Chunk::_resync_lease(uint64_t generation) {
                     "Mirror resync: renewing it failed: %s\n", e.what()
                 );
             }
+            // The other writers see the ballot move when the renewal ends,
+            // not when it began: a slow one counts from its end.
+            auto now = std::chrono::steady_clock::now();
             if (ok) {
-                renewed = attempted;
-            } else if (attempted - renewed >= lease) {
+                renewed = now;
+            } else if (now - renewed >= lease) {
                 rawstd_error(
                     "Mirror resync: the register could not be renewed for a "
                     "whole lease, ending the resync: %s\n",
