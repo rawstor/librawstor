@@ -35,6 +35,13 @@ struct RawstorOpts {
      * unreachable members for reconnection (and resyncs them on success).
      */
     unsigned int mirror_probe_interval;
+    /**
+     * How long, in milliseconds, a resync that another writer runs may go
+     * without a sign of life before an open mirrored object excludes the
+     * member it brings back. The running writer renews it three times
+     * within this time.
+     */
+    unsigned int mirror_resync_lease;
 };
 
 /**

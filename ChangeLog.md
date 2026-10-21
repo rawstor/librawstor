@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - BLK metadata stores logical size for DATA and WITNESS members independently of physical allocation.
 - OST serves exactly one backend Slot and rejects multiple locations at startup.
 - Member configuration updates take an optional typed state separately from flags.
+- `mirror_resync_lease` (`RAWSTOR_OPTS_MIRROR_RESYNC_LEASE`, 30 s): how long a resync that another writer runs may stay silent before the member it brings back is excluded.
 - Data and witness members share the `SYNC_PREPARE`/`SYNC_ACCEPT` requests of the chunk's configuration register for atomic configuration updates.
 - MDS lists objects and witness members through the ordinary `LIST` command.
 - Witness members use ordinary backend URIs and use the last location when there is one more location than the even data width, with their type reported by metadata.
