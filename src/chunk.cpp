@@ -633,8 +633,6 @@ public:
     configuration_locked(bool bump = false, bool joining = false) const {
         RawstorObjectConfig config{};
         _fill_roles(config);
-        config.resync_owner =
-            (!joining && (_resync || _healing)) ? _proposer_id : 0;
         config.epoch = _config.epoch;
         config.sync_id = _config.sync_id;
         memcpy(
@@ -655,7 +653,28 @@ public:
         if (joining && _resync && _resync->member() < config.nroles) {
             config.roles[_resync->member()] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
         }
+        // The owner is named while a resync or a heal runs, and only then.
+        // A writer that runs neither keeps the one the register names for
+        // as long as a member is syncing: it must not take another writer's
+        // resync for its own, nor for nobody's.
+        config.resync_owner = 0;
+        if (!joining && (_resync || _healing)) {
+            config.resync_owner = _proposer_id;
+        } else if (!joining) {
+            for (size_t i = 0; i < config.nroles; ++i) {
+                if (config.roles[i] == RAWSTOR_OBJECT_MEMBER_SYNCING) {
+                    config.resync_owner = _config.resync_owner;
+                    break;
+                }
+            }
+        }
         return config;
+    }
+    // Whether the roles in `config` are the ones the register last decided.
+    bool
+    decided_roles_locked(const RawstorObjectConfig& config) const noexcept {
+        return config.nroles == _config.nroles &&
+               memcmp(config.roles, _config.roles, config.nroles) == 0;
     }
     void record_transition_locked(
         const RawstorObjectConfig& config, const std::vector<size_t>& targets,
@@ -968,6 +987,7 @@ Chunk::Chunk(
     _lease_ballot{},
     _lease_at{},
     _lease_pending(false),
+    _lost_pending(false),
     _writes_issued(0),
     _unflushed(false),
     _write_failed(false) {
@@ -2245,6 +2265,7 @@ rawstd::Task<void> Chunk::_record(bool bump, size_t joining, bool* joined) {
             }
         }
         std::vector<size_t> failed;
+        bool already = false;
         try {
             co_await _decide(config, accepting, failed);
         } catch (const std::system_error& e) {
@@ -2252,10 +2273,18 @@ rawstd::Task<void> Chunk::_record(bool bump, size_t joining, bool* joined) {
                 throw;
             }
             // Another writer decided meanwhile and its configuration is
-            // taken over: the change is made on top of it.
+            // taken over: the change is made on top of it, unless it is
+            // there already.
             std::lock_guard<std::mutex> guard(c.mutex());
             config = c.configuration_locked(bump, joining > 0);
-            continue;
+            if (bump && joining == 0 && c.decided_roles_locked(config)) {
+                already = true;
+            } else {
+                continue;
+            }
+        }
+        if (already) {
+            co_return;
         }
         {
             std::lock_guard<std::mutex> guard(c.mutex());
@@ -3035,10 +3064,19 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
                     src = ref;
                 }
             } else {
+                // A copy that is not LOST first: a LOST one may hold
+                // writes nobody acknowledged.
                 for (size_t i = 0; i < _members.size(); ++i) {
-                    if (source_ok(i)) {
+                    if (source_ok(i) && _members[i].meta.state !=
+                                            RAWSTOR_OBJECT_SYNC_STATE_LOST) {
                         src = i;
                         break;
+                    }
+                }
+                for (size_t i = 0;
+                     src == _members.size() && i < _members.size(); ++i) {
+                    if (source_ok(i)) {
+                        src = i;
                     }
                 }
             }
@@ -3622,6 +3660,170 @@ rawstd::DetachedTask Chunk::_lease_watch() {
     }
 }
 
+/*
+ * Excludes the copy `idx` from the set because it is to be healed, not
+ * because it failed: the change is a function of the configuration the
+ * register has decided, so that a writer that found the same copy first, or
+ * took another one out meanwhile, is not repeated or added to. It is not made
+ * when it would leave fewer than a write quorum in the set, and then the
+ * writers go on, none the worse. Takes the decision over whatever it was.
+ * Returns whether the copy is excluded.
+ */
+rawstd::Task<bool> Chunk::_exclude_for_heal(size_t idx) {
+    MirrorControl& c = *_control;
+    co_await _lock();
+    bool excluded = false;
+    try {
+        std::vector<bool> accepting(_members.size(), false);
+        {
+            std::lock_guard<std::mutex> guard(c.mutex());
+            for (size_t i = 0; i < _members.size(); ++i) {
+                accepting[i] = _state(i) == MemberState::IN_SYNC;
+            }
+        }
+        RegisterTransport transport{
+            *this, accepting, std::vector<bool>(_members.size(), false)
+        };
+        const size_t n = _members.size();
+        RawstorObjectConfig decided = co_await c.proposer().change(
+            transport,
+            [&](const RawstorObjectConfig& current)
+                -> std::optional<RawstorObjectConfig> {
+                if (current.nroles != n ||
+                    current.roles[idx] != RAWSTOR_OBJECT_MEMBER_IN_SYNC) {
+                    return std::nullopt;
+                }
+                size_t votes = 0;
+                for (size_t i = 0; i < n; ++i) {
+                    votes += current.roles[i] == RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+                }
+                if (_below_write_quorum(votes - 1)) {
+                    return std::nullopt;
+                }
+                RawstorObjectConfig next = current;
+                ++next.epoch;
+                memmove(
+                    &next.sync_id_history[1], next.sync_id_history,
+                    (RAWSTOR_OBJECT_SYNC_ID_HISTORY - 1) * sizeof(uint64_t)
+                );
+                next.sync_id_history[0] = current.sync_id;
+                next.sync_id = random_sync_id();
+                next.roles[idx] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+                return next;
+            }
+        );
+        std::lock_guard<std::mutex> guard(c.mutex());
+        if (decided.epoch > c.epoch_locked()) {
+            _adopt_locked(decided);
+        }
+        excluded = _state(idx) != MemberState::IN_SYNC;
+    } catch (const std::system_error& e) {
+        rawstd_warning(
+            "Mirror heal: excluding a LOST copy failed: %s\n",
+            strerror(e.code().value())
+        );
+    }
+    _unlock();
+    co_return excluded;
+}
+
+/*
+ * A writer that vanished while others go on leaves the copies it wrote LOST;
+ * the copies may differ in its unacknowledged writes. Those writes cannot be
+ * told apart from the others', so a LOST copy is made equal to a copy that is
+ * not: it is excluded like a failed one and resynced, which the other writers
+ * duplicate their writes into and the member keeps the record of. The
+ * resync clears LOST.
+ *
+ * Only one copy at a time, and only while the rest of the set stays a write
+ * quorum. The reference is the first copy that is not LOST; when all are, the
+ * first one, and it is healed last, from the others.
+ */
+rawstd::DetachedTask Chunk::_lost_watch() {
+    BackgroundGuard guard(*this);
+    if (_closing || _readonly || _members.size() == 1 || _lost_pending ||
+        _resync_attached != 0) {
+        co_return;
+    }
+    MirrorControl& c = *_control;
+    // The heal of the copies in the set (F5) clears LOST itself.
+    if (c.unhealed()) {
+        co_return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(c.mutex());
+        if (c.resync_locked() != nullptr || c.frozen() || _any_leaving()) {
+            co_return;
+        }
+        for (size_t i = 0; i < _members.size(); ++i) {
+            if (_state(i) == MemberState::SYNCING) {
+                co_return;
+            }
+        }
+    }
+    std::vector<size_t> data;
+    for (size_t i = 0; i < _members.size(); ++i) {
+        if (_state(i) == MemberState::IN_SYNC && !_members[i].witness &&
+            _members[i].slot && _members[i].reachable) {
+            data.push_back(i);
+        }
+    }
+    if (data.size() < 2) {
+        co_return;
+    }
+    _lost_pending = true;
+    struct Pending {
+        bool& flag;
+        ~Pending() { flag = false; }
+    } pending{_lost_pending};
+    try {
+        std::vector<bool> lost(data.size(), false);
+        bool any = false;
+        for (size_t k = 0; k < data.size(); ++k) {
+            Member& member = _members[data[k]];
+            RawstorObjectMeta meta =
+                (co_await member.slot->meta(_id, _offset, RawstdUUID{}))
+                    .front();
+            member.meta.state = meta.state;
+            member.meta.writers = meta.writers;
+            lost[k] = meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST;
+            any |= lost[k];
+        }
+        if (!any) {
+            co_return;
+        }
+        size_t reference = 0;
+        for (size_t k = 0; k < data.size(); ++k) {
+            if (!lost[k]) {
+                reference = k;
+                break;
+            }
+        }
+        size_t healee = data.size();
+        for (size_t k = 0; k < data.size(); ++k) {
+            if (lost[k] && k != reference) {
+                healee = k;
+                break;
+            }
+        }
+        if (healee == data.size() ||
+            _below_write_quorum(_in_sync_count() - 1)) {
+            co_return;
+        }
+        rawstd_info(
+            "Mirror heal: a writer vanished and left a copy LOST, resyncing "
+            "it: %s\n",
+            _member_str(_members[data[healee]]).c_str()
+        );
+        co_await _exclude_for_heal(data[healee]);
+    } catch (const std::system_error& e) {
+        rawstd_warning(
+            "Mirror heal: looking for LOST copies failed: %s\n",
+            strerror(e.code().value())
+        );
+    }
+}
+
 // Ticks every mirror_probe_interval via the queue's own timeout_multishot()
 // -- no fd/buffer of this object's own to manage, unlike a raw timerfd: the
 // stream is entirely self-contained, and its own destructor cancels the
@@ -3661,6 +3863,7 @@ rawstd::DetachedTask Chunk::_probe_watch(std::weak_ptr<void> alive) {
                 _heal_maybe_start();
                 _probe_tick();
                 _lease_watch();
+                _lost_watch();
             }
             if (alive.expired() || error != ENOBUFS) {
                 co_return;

@@ -29,6 +29,8 @@ numbers its stages separately.
 | Force-open below quorum, read-only (`RAWSTOR_FORCE \| RAWSTOR_READONLY`; `--force` with `--readonly` in the exporters) | 2 | ✅ | `src/chunk.cpp` |
 | Force-open below quorum for writing (CLI / opts) | — | ❌ | — |
 | Heal of copies a vanished writer may have left different (F5) | 3 | ✅ | `src/chunk.cpp` (`_heal_maybe_start()`) |
+| Heal of a copy a vanished writer left `LOST` while other writers go on: exclusion and resync, one copy at a time | 3 | ✅ | `src/chunk.cpp` (`_lost_watch()`) |
+| Member role `HEALING`: a copy that stays in the set while it is healed | 5 | ❌ | [Planned](#planned-the-healing-role) |
 | Persistent write-intent bitmap (resumable resync, cheaper heal) | 4 | ❌ | — |
 | OST start identity in `META`: the heal never takes an OST-restarted copy as its reference ([known limitation](#known-limitation-the-degrade-barrier-window)) | 4 | ❌ | — |
 | Metadata-only witness on MDS, OST or local backend | 4 | ✅ | [Witness](mds.md#witness), `src/chunk.cpp` |
@@ -540,6 +542,66 @@ a vote and another copy of the contents.
 
 ---
 
+## Runtime heal of a LOST copy
+
+A writer that vanished while others go on leaves the copies it wrote `LOST`;
+they may differ in its unacknowledged writes, which cannot be told from the
+other writers' acknowledged ones. A writer finds such a copy while it goes
+on (the reconnect probe reads the copies' `state` every
+`mirror_probe_interval`) and makes it equal to a copy that is not `LOST`:
+the copy is excluded like a failed one, and the resync that brings a stale
+copy back copies the rest onto it. The other writers duplicate their writes
+onto it meanwhile, as for any resync, and the member keeps the record of
+those that reached it, so a copy of a region never overwrites a newer write
+of any writer. The rejoin ends the copy's `LOST` ([Clearing
+`LOST`](multiattach.md#clearing-lost)).
+
+- **One copy at a time**, and only while the copies that stay in the set are
+  still a write quorum. The writers go on with two copies of three while it
+  runs, and another failure in that time freezes writes.
+- **Several writers find the same copy.** The exclusion is a change of the
+  configuration the register has decided, not of the writer's own view: it is
+  not made when the copy is out already, or when another copy was taken out
+  meanwhile and one more would leave fewer than a write quorum. The writer
+  takes the decision over and tries again at the next probe. A change that a
+  decision of another writer already contains is not made a second time in
+  any transition. A writer that runs no resync keeps the owner the register
+  names while a member is syncing, so that its transition does not look like
+  the end of a heal ([Clearing `LOST`](multiattach.md#clearing-lost)).
+- **The reference** is the first copy that is not `LOST`. When all are, the
+  first one is the reference and is healed last, from the others once they
+  are equal to it.
+- **The source of a resync** is a copy that is not `LOST`, if there is one.
+- The heal of the copies in the set (F5) is still what an open does when no
+  other writer is there; this one is what a writer does while it goes on,
+  and what an open leaves to it when other writers are.
+
+### Planned: the `HEALING` role
+
+The runtime heal takes a copy out of the set while it is healed. That costs
+a vote for as long as the copy runs: with three copies the writers go on with
+two, and a copy that a vanished writer wrote on every member is healed in turn
+for as long as it takes to copy each of them. The F5 heal at open does not
+pay it, because it keeps the copies in the set; but it can do that only
+because no other writer is there, since a plain copy of a region is not safe
+against a writer in another process (the member keeps the record of client
+writes only while its role is syncing).
+
+The role `HEALING` would let one mechanism serve both. A `HEALING` member
+stays in the set and votes, as in F5; reads avoid it; and the member keeps the
+record of client writes as it does while syncing, so the owner of the heal
+copies onto it with `RESYNC` writes, whichever writers go on. The
+rejoin is `HEALING` → in-sync, which ends `LOST` like the end of a resync. The
+other writers need nothing more than they have for a member that is
+excluded or syncing: they take the decision over at their next `-ESTALE`,
+and their ordinary writes onto the member are what it records.
+
+The price is a new value of the public `enum RawstorObjectMemberRole` and
+of the role byte in the record and on the wire, which servers refuse today
+(`-EINVAL`), so servers are upgraded first. It is not done because two
+copies without a witness are not planned: with three copies or more the loss
+of a vote during a heal is accepted for now.
+
 ## Protocol and code changes
 
 - **`include/rawstor/protocol.h`** — new opcodes:
@@ -567,3 +629,4 @@ a vote and another copy of the contents.
 2. Quorum rules at open + degrade & continue / write freeze + read failover and read-repair.
 3. Online resync.
 4. Witness members are implemented; v2+ work includes persistent write-intent bitmap, OST start identity, stored checksums / scrub, fastest-mirror read selection.
+5. The member role `HEALING` ([Planned](#planned-the-healing-role)).

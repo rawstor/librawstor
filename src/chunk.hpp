@@ -191,6 +191,7 @@ private:
     RawstorObjectBallot _lease_ballot;
     std::chrono::steady_clock::time_point _lease_at;
     bool _lease_pending;
+    bool _lost_pending;
 
     uint64_t _epoch() const;
 
@@ -404,6 +405,10 @@ private:
     // Every writable mirrored Chunk's watcher: attaches it to a resync
     // another Chunk starts, and follows one that ends.
     rawstd::DetachedTask _lease_watch();
+    // Finds a copy another writer's vanishing left LOST while this one goes
+    // on, and has it resynced like a failed one, one at a time.
+    rawstd::DetachedTask _lost_watch();
+    rawstd::Task<bool> _exclude_for_heal(size_t idx);
     // The owner: waits for every writer to attach, sweeps, then finishes
     // (_resync_finish(): the rejoin barrier, the member's record, and the
     // commit that lets it serve reads).

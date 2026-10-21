@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Native witnesses on MDS use `ost://` URIs; `mds://` URIs resolve logical objects and chunks.
 - `rawstor show -v` prints each chunk's physical target URI for recovery commands.
 - Chunk metadata and recovery APIs address chunks by URI instead of a separate offset; chunk listing returns target strings, and MDS routing no longer probes for witness records.
-- A mirrored writable open heals copies a vanished writer may have left different from the first clean (else first) copy in the background while writes go on, and clears their `LOST` mark once they are equal.
+- A mirrored writable open heals copies a vanished writer may have left different from the first clean (else first) copy in the background while writes go on, and clears their `LOST` mark once they are equal. While other writers go on, a copy a vanished writer left `LOST` is excluded and resynced, one at a time, with the same effect.
 - All members share configuration, state and rejoin rules; writable mirrors require a strict majority even with two data copies and no witness.
 - BLK metadata stores logical size for DATA and WITNESS members independently of physical allocation.
 - OST serves exactly one backend Slot and rejects multiple locations at startup.
