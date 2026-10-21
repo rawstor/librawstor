@@ -123,11 +123,6 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& spec
     );
     RawstorObjectMeta witness_meta(const RawstdUUID& id, uint64_t offset);
-    void set_config(
-        const RawstdUUID& id, uint64_t offset,
-        const RawstorObjectConfig& config, unsigned int flags,
-        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
-    );
     void remove_witness(const RawstdUUID& id, uint64_t offset);
 
     /*

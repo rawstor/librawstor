@@ -57,6 +57,22 @@ public:
         _accepted(accepted),
         _value(std::move(value)) {}
 
+    // A request moves the acceptor's counters forward by at most this much
+    // (see within_jump()).
+    static constexpr uint64_t max_jump = uint64_t(1) << 28;
+
+    // Whether `ballot` is within reach of the acceptor: its counter is not
+    // more than max_jump above the highest the acceptor holds. A proposer
+    // raises its counter by one per attempt, from the counters the
+    // acceptors report, so a legitimate ballot is as far ahead as the
+    // acceptor is behind its peers -- decisions it missed. A request further
+    // ahead could only exhaust the counter space: the acceptor would
+    // promise it and refuse every ballot below, and no proposer could go on.
+    bool within_jump(const Ballot& ballot) const noexcept {
+        uint64_t base = std::max(_promised.counter, _accepted.counter);
+        return ballot.counter <= base || ballot.counter - base <= max_jump;
+    }
+
     const Ballot& promised() const noexcept { return _promised; }
     const Ballot& accepted() const noexcept { return _accepted; }
     const V& value() const noexcept { return _value; }
@@ -113,6 +129,7 @@ private:
     const size_t _members;
     uint64_t _counter = 0;
     std::optional<Ballot> _next;
+    std::optional<Ballot> _decided;
     std::optional<V> _value;
     bool _busy = false;
 
@@ -181,6 +198,16 @@ public:
     Proposer(const Proposer&) = delete;
     Proposer& operator=(const Proposer&) = delete;
 
+    // The ballot of the last decision of this proposer, which an acceptor
+    // that missed it can still accept the decided value under.
+    const std::optional<Ballot>& decided() const noexcept { return _decided; }
+
+    // Counters seen outside a round (acceptor states read some other way)
+    // raise the next ballot above them, saving a refused prepare.
+    void observe(const Ballot& ballot) noexcept {
+        _counter = std::max(_counter, ballot.counter);
+    }
+
     // The transport and this proposer must outlive the returned task.
     // The change is owned by the coroutine and may be reapplied on a
     // conflict. nullopt means retain the current value; that value still
@@ -234,6 +261,7 @@ public:
             });
             if (accepted.ok > _members / 2) {
                 _value = value;
+                _decided = ballot;
                 if (!accepted.refused) {
                     _next = next;
                 }

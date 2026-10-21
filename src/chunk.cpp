@@ -12,6 +12,7 @@
 #include <rawio/awaitable.hpp>
 #include <rawio/stream.hpp>
 
+#include <rawstd/caspaxos.hpp>
 #include <rawstd/fsm.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/iovec.h>
@@ -401,7 +402,6 @@ private:
     rawthread::Lock _transition;
     const std::vector<rawstd::URI> _locations;
     size_t _users = 0;
-    bool _lost_writer = false;
     std::set<const Chunk*> _chunks;
     bool _valid = false;
     std::atomic<bool> _dirty{false};
@@ -422,6 +422,14 @@ private:
     std::atomic<uint64_t> _resync_seq{0};
     rawthread::Condition _resync_waiters;
     rawthread::Condition _watch_waiters;
+    // The chunk's configuration register: every transition of a Chunk of
+    // this process is a change through it, one at a time under the
+    // transition lock.
+    const uint64_t _proposer_id;
+    rawstd::caspaxos::Proposer<RawstorObjectConfig> _proposer;
+    // The in-sync copies are being healed from the reference (F5): the
+    // register names this process the owner meanwhile.
+    bool _healing = false;
 
     void _fill_roles(RawstorObjectConfig& config) const noexcept {
         config.nroles = static_cast<uint8_t>(_states.size());
@@ -457,7 +465,9 @@ public:
     explicit MirrorControl(const std::vector<rawstd::URI>& locations) :
         _locations(locations),
         _records(locations.size()),
-        _unhealed(locations.size(), false) {
+        _unhealed(locations.size(), false),
+        _proposer_id(random_sync_id()),
+        _proposer(_proposer_id, locations.size()) {
         for (size_t i = 0; i < locations.size(); ++i) {
             _states.push_back(
                 std::make_unique<rawstd::Fsm<MemberState>>(
@@ -468,6 +478,10 @@ public:
     }
 
     std::mutex& mutex() noexcept { return _mutex; }
+    rawstd::caspaxos::Proposer<RawstorObjectConfig>& proposer() noexcept {
+        return _proposer;
+    }
+    void set_healing_locked(bool healing) noexcept { _healing = healing; }
     rawstd::Task<void> lock_transition(rawio::Queue& queue) {
         co_await _transition.lock(queue);
     }
@@ -509,11 +523,6 @@ public:
         }
     }
     bool initialized() const noexcept { return _valid; }
-    bool last_user_locked() const noexcept { return _users == 1; }
-    void record_departure_locked(bool clean) noexcept {
-        _lost_writer |= !clean;
-    }
-    bool lost_writer_locked() const noexcept { return _lost_writer; }
     bool dirty() const noexcept {
         return _dirty.load(std::memory_order_acquire);
     }
@@ -623,6 +632,8 @@ public:
     configuration_locked(bool bump = false, bool joining = false) const {
         RawstorObjectConfig config{};
         _fill_roles(config);
+        config.resync_owner =
+            (!joining && (_resync || _healing)) ? _proposer_id : 0;
         config.epoch = _config.epoch;
         config.sync_id = _config.sync_id;
         memcpy(
@@ -689,14 +700,11 @@ public:
         _resync = std::make_unique<MirrorResync>(
             ++_resync_generation, owner, member, copy_size, RESYNC_CHUNK
         );
+        // A change of roles moves the epoch: every writer learns of the
+        // resync at its next write and duplicates its writes onto the
+        // member. The sync set stays the one the in-sync members hold.
         RawstorObjectConfig config = configuration_locked();
-        const RawstorObjectConfig& own = _records[member];
-        config.epoch = own.epoch;
-        config.sync_id = own.sync_id;
-        memcpy(
-            config.sync_id_history, own.sync_id_history,
-            sizeof(config.sync_id_history)
-        );
+        ++config.epoch;
         if (member < config.nroles) {
             config.roles[member] = RAWSTOR_OBJECT_MEMBER_SYNCING;
         }
@@ -725,11 +733,26 @@ public:
         assert(_resync && !_resync->announced());
         _resync.reset();
     }
+    // A decided configuration the members of the set already hold: writes
+    // carry its epoch from now on.
+    void adopt_locked(const RawstorObjectConfig& config) {
+        _config = config;
+        for (size_t i = 0; i < _states.size(); ++i) {
+            if (state(i) == MemberState::IN_SYNC) {
+                _records[i] = config;
+            }
+        }
+    }
     void announce_resync_locked(const RawstorObjectConfig& config) {
         size_t member = _resync->member();
         _resync->announce();
+        adopt_locked(config);
         _records[member] = config;
         _states[member]->set(MemberState::SYNCING);
+        // The decision recorded the set the way the dirty barrier would.
+        if (!needs_new_identity_locked()) {
+            complete_dirty_barrier_locked();
+        }
         _resync_changed();
     }
     bool begin_sweep_locked() { return _resync->begin_sweep(_chunks); }
@@ -1503,36 +1526,115 @@ bool Chunk::_any_leaving() const noexcept {
     return false;
 }
 
-rawstd::Task<void> Chunk::_set_member_config(
-    size_t index, RawstorObjectConfig config, unsigned int flags,
-    std::optional<RawstorObjectSyncStateValue> state
+// The register's requests as the Proposer sends them, both only to the
+// members that take part in the new configuration: any majority of the
+// members decides, and an excluded member keeps the record it has, which is
+// how a later open knows it for stale. A member whose request fails is
+// recorded in `failed` and is unreachable from then on.
+struct Chunk::RegisterTransport {
+    Chunk& chunk;
+    std::vector<bool> accepting;
+    std::vector<bool> failed;
+
+    rawstd::Task<rawstd::caspaxos::Reply<RawstorObjectConfig>>
+    prepare(size_t index, rawstd::caspaxos::Ballot ballot) {
+        Member& member = chunk._members[index];
+        if (!accepting[index] || !member.slot || !member.reachable) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+        }
+        RawstorObjectMeta meta{};
+        bool ok = false;
+        try {
+            ok = co_await member.slot->sync_prepare(
+                chunk._id, chunk._offset,
+                RawstorObjectBallot{ballot.counter, ballot.proposer}, meta
+            );
+        } catch (...) {
+            member.reachable = false;
+            throw;
+        }
+        co_return reply(ok, meta);
+    }
+
+    rawstd::Task<rawstd::caspaxos::Reply<RawstorObjectConfig>> accept(
+        size_t index, rawstd::caspaxos::Ballot ballot,
+        const RawstorObjectConfig& value, rawstd::caspaxos::Ballot next
+    ) {
+        Member& member = chunk._members[index];
+        if (!accepting[index]) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+        }
+        failed[index] = true;
+        if (!member.slot || !member.reachable) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+        }
+        RawstorObjectMeta meta{};
+        bool ok = false;
+        try {
+            ok = co_await member.slot->sync_accept(
+                chunk._id, chunk._offset, static_cast<uint8_t>(index),
+                RawstorObjectBallot{ballot.counter, ballot.proposer},
+                RawstorObjectBallot{next.counter, next.proposer}, value, meta
+            );
+        } catch (const std::system_error& e) {
+            rawstd_error(
+                "Mirror member state update failed: %s\n",
+                strerror(e.code().value())
+            );
+            member.reachable = false;
+            throw;
+        }
+        failed[index] = false;
+        member.meta = meta;
+        co_return reply(ok, meta);
+    }
+
+private:
+    static rawstd::caspaxos::Reply<RawstorObjectConfig>
+    reply(bool ok, const RawstorObjectMeta& meta) {
+        return {
+            ok, rawstd::caspaxos::Acceptor<RawstorObjectConfig>{
+                    {meta.promised.counter, meta.promised.proposer},
+                    {meta.accepted.counter, meta.accepted.proposer},
+                    meta.config
+                }
+        };
+    }
+};
+
+/*
+ * Decides `value` as the chunk's configuration through the register, with
+ * the transition lock held. `accepting` names the members that take part;
+ * the ones among them that did not accept are returned in `failed`. A
+ * decision needs a majority of all the members, so a chunk below it
+ * freezes like any other lost quorum.
+ */
+rawstd::Task<void> Chunk::_decide(
+    const RawstorObjectConfig& value, const std::vector<bool>& accepting,
+    std::vector<size_t>& failed
 ) {
-    auto& member = _members[index];
+    MirrorControl& c = *_control;
+    RegisterTransport transport{
+        *this, accepting, std::vector<bool>(_members.size(), false)
+    };
     try {
-        if (!member.slot) {
-            member.slot = co_await Slot::create(_queue, member.location);
-        }
-        if (state && (flags & RAWSTOR_CONFIG_CLEAR_LOST) == 0) {
-            std::lock_guard<std::mutex> guard(_control->mutex());
-            if (member.meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST ||
-                _control->lost_writer_locked()) {
-                state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
-            }
-        }
-        co_await member.slot->set_config(
-            _id, _offset, static_cast<uint8_t>(index), config, flags, state
+        co_await c.proposer().change(
+            transport,
+            [&value](const RawstorObjectConfig&)
+                -> std::optional<RawstorObjectConfig> { return value; }
         );
-        if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0) {
-            member.meta = co_await inspect_member(*member.slot, _id, _offset);
+    } catch (const std::system_error& e) {
+        if (e.code().value() != EHOSTUNREACH) {
+            throw;
         }
-        member.meta.config = config;
-        if (state) {
-            member.meta.state = *state;
+        std::lock_guard<std::mutex> guard(c.mutex());
+        c.freeze_locked();
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    for (size_t i = 0; i < _members.size(); ++i) {
+        if (transport.failed[i]) {
+            failed.push_back(i);
         }
-        member.reachable = true;
-    } catch (...) {
-        member.reachable = false;
-        throw;
     }
 }
 
@@ -1782,6 +1884,14 @@ void Chunk::_reconcile_sync_set() {
     c.initialize_locked(
         state, std::move(records), size, config, unrecorded_stale
     );
+    for (const Member& member : _members) {
+        c.proposer().observe(
+            {member.meta.promised.counter, member.meta.promised.proposer}
+        );
+        c.proposer().observe(
+            {member.meta.accepted.counter, member.meta.accepted.proposer}
+        );
+    }
     c.set_unhealed_locked(unhealed, reference);
 }
 
@@ -1930,24 +2040,36 @@ rawstd::Task<void> Chunk::_degrade(std::vector<size_t> idxs) {
 }
 
 /*
- * Persists the sync state on every in-sync member, with the transition
- * lock held. A member that fails the update is excluded: recorded by the
- * very sync_id it now lacks when `bump`, pending otherwise.
+ * Decides the sync configuration through the register, with the transition
+ * lock held. The in-sync members take part. When `joining`, the member a
+ * resync is bringing back takes the decided value once this process has
+ * moved to it: the writes it duplicates onto the member never carry an
+ * epoch below the member's. A member that fails the request is excluded:
+ * recorded by the very sync_id it now lacks when `bump`, pending otherwise.
+ * Whether the joining member took the decision is reported in `joined`; its
+ * failure is left to the caller.
  */
-rawstd::Task<void> Chunk::_record(bool bump, size_t joining) {
+rawstd::Task<void> Chunk::_record(bool bump, size_t joining, bool* joined) {
     MirrorControl& c = *_control;
     RawstorObjectConfig config;
     {
         std::lock_guard<std::mutex> guard(c.mutex());
         config = c.configuration_locked(bump, joining > 0);
     }
+    if (joined != nullptr) {
+        *joined = joining > 0;
+    }
+    size_t joiner = _members.size();
+    bool joiner_votes = false;
     for (;;) {
         std::vector<size_t> targets, leaving;
+        std::vector<bool> accepting(_members.size(), false);
         {
             std::lock_guard<std::mutex> guard(c.mutex());
             for (size_t i = 0; i < _members.size(); ++i) {
                 if (_state(i) == MemberState::IN_SYNC) {
                     targets.push_back(i);
+                    accepting[i] = true;
                 } else if (_state(i) == MemberState::LEAVING) {
                     leaving.push_back(i);
                     config.roles[i] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
@@ -1960,26 +2082,35 @@ rawstd::Task<void> Chunk::_record(bool bump, size_t joining) {
                  _state(c.resync_locked()->member()) != MemberState::SYNCING)) {
                 joining = 0;
             }
+            if (joining) {
+                joiner = c.resync_locked()->member();
+                // Without a majority among the members already in the set
+                // the joiner takes part in the decision itself. No write
+                // goes on then, for a write quorum is lacking.
+                joiner_votes = targets.size() * 2 <= _members.size();
+                accepting[joiner] = joiner_votes;
+            }
             if (targets.empty() ||
-                _below_write_quorum(targets.size() + joining)) {
+                _below_write_quorum(targets.size() + (joining ? 1 : 0))) {
                 c.freeze_locked();
                 RAWSTD_THROW_SYSTEM_ERROR(EIO);
             }
         }
-        auto failed = std::make_shared<std::vector<size_t>>();
-        co_await rawstd::gather(targets.size(), [&](size_t i) {
-            return _set_config_one(targets[i], config, failed);
-        });
+        std::vector<size_t> failed;
+        co_await _decide(config, accepting, failed);
         {
             std::lock_guard<std::mutex> guard(c.mutex());
+            if (joined != nullptr) {
+                *joined = joining > 0;
+            }
             for (size_t i : targets) {
                 if (_state(i) != MemberState::IN_SYNC &&
-                    std::find(failed->begin(), failed->end(), i) ==
-                        failed->end()) {
-                    failed->push_back(i);
+                    std::find(failed.begin(), failed.end(), i) ==
+                        failed.end()) {
+                    failed.push_back(i);
                 }
             }
-            if (failed->empty()) {
+            if (failed.empty()) {
                 if (joining && (!c.resync_locked() ||
                                 _state(c.resync_locked()->member()) !=
                                     MemberState::SYNCING)) {
@@ -1989,10 +2120,13 @@ rawstd::Task<void> Chunk::_record(bool bump, size_t joining) {
                 } else {
                     c.record_transition_locked(config, targets, leaving, bump);
                     c.complete_dirty_barrier_locked();
-                    co_return;
+                    if (!joining || joiner_votes) {
+                        co_return;
+                    }
+                    break;
                 }
             }
-            for (size_t i : *failed) {
+            for (size_t i : failed) {
                 c.begin_exclusion_locked(i);
                 _members[i].reachable = false;
             }
@@ -2006,26 +2140,22 @@ rawstd::Task<void> Chunk::_record(bool bump, size_t joining) {
         config.sync_id = random_sync_id();
         bump = true;
     }
-}
 
-rawstd::Task<void> Chunk::_set_config_one(
-    size_t idx, RawstorObjectConfig config,
-    std::shared_ptr<std::vector<size_t>> failed
-) {
-    if (!_members[idx].slot) {
-        failed->push_back(idx);
-        co_return;
-    }
+    // The joining member accepts the decision it missed, under the ballot
+    // it was decided with. If it does not, the caller drops it again.
+    const auto decided = c.proposer().decided();
+    std::vector<bool> accepting(_members.size(), false);
+    accepting[joiner] = true;
+    RegisterTransport transport{
+        *this, accepting, std::vector<bool>(_members.size(), false)
+    };
+    bool taken = false;
     try {
-        co_await _set_member_config(
-            idx, config, 0, RAWSTOR_OBJECT_SYNC_STATE_DIRTY
-        );
-    } catch (const std::system_error& e) {
-        int error = e.code().value();
-        rawstd_error(
-            "Mirror member state update failed: %s\n", strerror(error)
-        );
-        failed->push_back(idx);
+        taken = (co_await transport.accept(joiner, *decided, config, {})).ok;
+    } catch (const std::system_error&) {
+    }
+    if (!taken && joined != nullptr) {
+        *joined = false;
     }
 }
 
@@ -2395,27 +2525,54 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
             _member_str(_members[idx]).c_str()
         );
 
-        // The member's syncing role must be durable before the copy
+        // The member's syncing role must be decided before the copy
         // starts: a crash mid-resync must leave it recognizably untrusted
-        // (docs/mirroring.md, case F8). Its sync set stays its own.
-
+        // (docs/mirroring.md, case F8).
+        co_await _lock();
         int error = 0;
+        bool decided = false;
+        std::vector<size_t> failed;
         try {
-            co_await _set_member_config(idx, m);
+            std::vector<bool> accepting(_members.size(), false);
+            {
+                std::lock_guard<std::mutex> lock(c.mutex());
+                MirrorResync* r = c.resync_locked();
+                if (r == nullptr || r->generation() != generation) {
+                    _unlock();
+                    co_return;
+                }
+                for (size_t i = 0; i < _members.size(); ++i) {
+                    accepting[i] = _state(i) == MemberState::IN_SYNC;
+                }
+                accepting[idx] = true;
+            }
+            co_await _decide(m, accepting, failed);
+            decided = true;
         } catch (const std::system_error& e) {
             error = e.code().value();
         }
 
         {
             std::lock_guard<std::mutex> lock(c.mutex());
+            auto self = std::find(failed.begin(), failed.end(), idx);
+            if (self != failed.end()) {
+                error = error ? error : EIO;
+                failed.erase(self);
+            }
             MirrorResync* r = c.resync_locked();
             if (r == nullptr || r->generation() != generation) {
                 // Aborted meanwhile (e.g. a writer that opened could not
                 // reach the member).
+                _unlock();
                 co_return;
             }
             if (error || _closing) {
-                // Not announced yet: nobody attached, nothing to wake.
+                // Not announced yet: nobody attached, nothing to wake. What
+                // was decided stays decided: its epoch is the one to write
+                // with.
+                if (decided) {
+                    c.adopt_locked(m);
+                }
                 c.discard_unannounced_resync_locked();
                 if (error) {
                     rawstd_error(
@@ -2424,11 +2581,19 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
                     );
                     _members[idx].reachable = false;
                 }
-                co_return;
+            } else {
+                // Attach before notifying watchers, preserving the start
+                // ordering.
+                _resync_attach_locked(generation);
+                c.announce_resync_locked(m);
             }
-            // Attach before notifying watchers, preserving the start ordering.
-            _resync_attach_locked(generation);
-            c.announce_resync_locked(m);
+        }
+        _unlock();
+        if (!failed.empty()) {
+            co_await _degrade(std::move(failed));
+        }
+        if (error || _closing) {
+            co_return;
         }
 
         _resync_run(generation);
@@ -2756,14 +2921,21 @@ rawstd::Task<void> Chunk::_resync_finish(uint64_t generation) {
     }
 
     bool ok = true;
+    bool joined = false;
     try {
-        co_await _record(true, 1);
+        // What the sweep copied is durable before the member is in sync.
+        if (!_members[idx].witness) {
+            co_await _members[idx].slot->flush(0);
+        }
+        co_await _record(true, 1, &joined);
     } catch (const std::system_error&) {
         ok = false;
     }
 
     // From COMMITTING on the resync is no longer aborted: a write whose
     // duplicate fails waits for the commit below, then degrades the member.
+    // The decision brought the member back in the same step; its LOST mark
+    // went with it.
     RawstorObjectConfig m{};
     {
         std::lock_guard<std::mutex> lock(c.mutex());
@@ -2782,14 +2954,10 @@ rawstd::Task<void> Chunk::_resync_finish(uint64_t generation) {
     }
 
     int error = 0;
-    try {
-        co_await _set_member_config(idx, m, RAWSTOR_CONFIG_CLEAR_LOST);
-        if (!same_spec(_members[idx].meta.spec, _spec)) {
-            RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
-        }
-        co_await _set_member_config(idx, m, 0, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
-    } catch (const std::system_error& e) {
-        error = e.code().value();
+    if (!joined) {
+        error = EIO;
+    } else if (!same_spec(_members[idx].meta.spec, _spec)) {
+        error = ENOTRECOVERABLE;
     }
 
     {
@@ -2883,7 +3051,6 @@ rawstd::Task<void> Chunk::_heal_finish(uint64_t generation) {
 
     bool gone = false;
     bool all_healed = false;
-    RawstorObjectConfig config;
     {
         std::lock_guard<std::mutex> lock(c.mutex());
         MirrorResync* r = c.resync_locked();
@@ -2893,7 +3060,6 @@ rawstd::Task<void> Chunk::_heal_finish(uint64_t generation) {
             _resync_attached = 0;
             all_healed =
                 c.next_unhealed_locked(_members.size()) == _members.size();
-            config = c.configuration_locked();
         }
     }
     if (gone) {
@@ -2901,39 +3067,38 @@ rawstd::Task<void> Chunk::_heal_finish(uint64_t generation) {
         co_return;
     }
 
-    std::vector<size_t> failed;
+    // The heal ends in two decisions: the first names this process the
+    // owner of a heal, the second takes the ownership away with a new sync
+    // set while the roles stay. The copies hold the same data now, and
+    // taking part in that second decision ends their LOST state.
+    bool lost = false;
     for (size_t i = 0; all_healed && i < _members.size(); ++i) {
-        Member& m = _members[i];
-        if (_state(i) != MemberState::IN_SYNC || m.witness || !m.slot ||
-            m.meta.state == RAWSTOR_OBJECT_SYNC_STATE_CLEAN) {
-            continue;
-        }
+        lost |= _state(i) == MemberState::IN_SYNC && !_members[i].witness &&
+                _members[i].meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST;
+    }
+    if (lost) {
         try {
-            if (m.meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST) {
-                co_await _set_member_config(
-                    i, config, RAWSTOR_CONFIG_CLEAR_LOST
-                );
+            {
+                std::lock_guard<std::mutex> lock(c.mutex());
+                c.set_healing_locked(true);
             }
-            if (!c.dirty()) {
-                co_await _set_member_config(
-                    i, config, 0, RAWSTOR_OBJECT_SYNC_STATE_CLEAN
-                );
+            co_await _record(false, 0);
+            {
+                std::lock_guard<std::mutex> lock(c.mutex());
+                c.set_healing_locked(false);
             }
+            co_await _record(true, 0);
         } catch (const std::system_error& e) {
             rawstd_error(
-                "Mirror heal: state update failed: %s: %s\n",
-                _member_str(m).c_str(), strerror(e.code().value())
+                "Mirror heal: state update failed: %s\n",
+                strerror(e.code().value())
             );
-            failed.push_back(i);
         }
+        std::lock_guard<std::mutex> lock(c.mutex());
+        c.set_healing_locked(false);
     }
 
     _unlock();
-
-    if (!failed.empty()) {
-        co_await _degrade(std::move(failed));
-        co_return;
-    }
 
     _heal_maybe_start();
 }
@@ -3600,38 +3765,7 @@ rawstd::Task<void> Chunk::close(bool clean) {
             return leaving[i]->leave();
         });
     } catch (const std::exception& e) {
-        leave = false;
         rawstd_warning("Chunk::close(): leave failed: %s\n", e.what());
-    }
-    bool last_user;
-    bool lost_writer;
-    RawstorObjectConfig config;
-    {
-        std::lock_guard<std::mutex> guard(c.mutex());
-        last_user = c.last_user_locked();
-        if (c.dirty() && (last_user || _writes_issued != 0 || flush_failed ||
-                          _write_failed)) {
-            c.record_departure_locked(leave);
-        }
-        lost_writer = c.lost_writer_locked();
-        config = c.configuration_locked();
-    }
-    if (!_readonly && (last_user || lost_writer) && c.dirty()) {
-        auto state = leave ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
-                           : RAWSTOR_OBJECT_SYNC_STATE_LOST;
-        for (size_t i = 0; i < _members.size(); ++i) {
-            if (_state(i) == MemberState::IN_SYNC) {
-                try {
-                    co_await _set_member_config(i, config, 0, state);
-                } catch (const std::exception& e) {
-                    leave = false;
-                    state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
-                    rawstd_warning(
-                        "Member departure update failed: %s\n", e.what()
-                    );
-                }
-            }
-        }
     }
     c.release();
     _unlock();

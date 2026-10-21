@@ -10,9 +10,9 @@ numbers its stages separately.
 |---|---|---|---|
 | Per-copy metadata (`state`, `epoch`, `sync_id`, history) on `file://` | 1 | ✅ | `src/file_backend.cpp` |
 | Per-copy metadata on `lvm://` / `zfs://` (LVM tags, ZFS user properties) | 1 | ✅ | `src/lvm_backend.cpp`, `src/zfs_backend.cpp` |
-| `META`, `SET_CONFIG`, `LEAVE`, `FLUSH` opcodes | 1 | ✅ | `include/rawstor/protocol.h`, `ost/src/client.cpp` |
+| `META`, `LEAVE`, `FLUSH` opcodes | 1 | ✅ | `include/rawstor/protocol.h`, `ost/src/client.cpp` |
 | Metadata transitions fsynced before the ack | 1 | ✅ | `src/chunk.cpp` |
-| `rawstor_target_meta()` / `rawstor_target_set_member_config()` | 1 | ✅ | `include/rawstor/target.h` |
+| `rawstor_target_meta()` / `rawstor_target_sync_prepare()` / `rawstor_target_sync_accept()` | 1 | ✅ | `include/rawstor/target.h` |
 | Quorum at open (> N/2), split-brain detection | 2 | ✅ | `src/chunk.cpp` |
 | Degraded open, F10 recreate of a missing copy | 2 | ✅ | `src/chunk.cpp` |
 | Degrade & continue (F1), write freeze below quorum | 2 | ✅ | `src/chunk.cpp` |
@@ -31,7 +31,7 @@ numbers its stages separately.
 | Heal of copies a vanished writer may have left different (F5) | 3 | ✅ | `src/chunk.cpp` (`_heal_maybe_start()`) |
 | Persistent write-intent bitmap (resumable resync, cheaper heal) | 4 | ❌ | — |
 | OST start identity in `META`: the heal never takes an OST-restarted copy as its reference ([known limitation](#known-limitation-the-degrade-barrier-window)) | 4 | ❌ | — |
-| Metadata-only witness on MDS, OST or local backend | 4 | ✅ | [Witness](mds.md#witness), `Backend::set_config()`, `src/chunk.cpp` |
+| Metadata-only witness on MDS, OST or local backend | 4 | ✅ | [Witness](mds.md#witness), `src/chunk.cpp` |
 | Stored checksums / scrub | 4 | ❌ | — |
 | Fastest-mirror read selection | 4 | ❌ | — |
 
@@ -74,8 +74,7 @@ a writer last set it on the copy (`RawstorObjectConfig`); `state` is the
 copy's own.
 
 A copy's `state`, kept by the copy itself (the diagram is the table of
-`sync_state_transitions` in `src/slot.cpp`; an explicit `SET_CONFIG`
-may record any of the three):
+`sync_state_transitions` in `src/slot.cpp`):
 
 ```mermaid
 stateDiagram-v2
@@ -123,7 +122,7 @@ A copy's record says two independent things about it:
 |---|---|---|
 | About | The copy's own data, as its writers left it | The writer's decision about the copy |
 | Values | `CLEAN`, `DIRTY`, `LOST` | in-sync, syncing, excluded (unknown: none recorded) |
-| Written by | The copy itself, from the sessions it serves | The writer, `SET_CONFIG` |
+| Written by | The copy itself, from the sessions it serves | The writer, through the register |
 | Where | This copy's record only | Every member's record: `roles`, one per member |
 
 They cannot be one field because they are written by different parties at
@@ -140,7 +139,7 @@ never learn of. Any pairing occurs:
 
 The roles are in the order the writer lists the chunk's members (a plain
 target's URIs, an `mds://` chunk's placement), so a copy's own role is the
-entry at its own position in that order; `SET_CONFIG` carries that
+entry at its own position in that order; `SYNC_ACCEPT` carries that
 position for its receiver. The writer fills `roles` from its
 members' states in every configuration it sets. An unreachable copy's
 record keeps whatever it last held, which is why only a copy's own role is
@@ -149,10 +148,11 @@ syncing is mid-resync, and an open treats it as stale (F8).
 
 ### DIRTY, CLEAN and LOST
 
-Data I/O changes the copy's `state` from the sessions it serves. Explicit
-metadata transitions use `SET_CONFIG` with an optional
-`RawstorObjectSyncStateValue` for data and witness members alike; omitting
-state preserves it.
+Data I/O changes the copy's `state` from the sessions it serves. Nothing
+else writes it, except that accepting a configuration which ends the copy's
+resync or a heal ends its `LOST` ([Clearing
+`LOST`](multiattach.md#clearing-lost)). A witness has no copy and no writer
+session: its `state` stays as created.
 
 - **`DIRTY`**: before the first write into a `CLEAN` copy the copy marks
   itself `DIRTY` (fsync), under its record lock. Later writes see a cached
@@ -170,10 +170,10 @@ state preserves it.
   chunk's close found its writes might not all have landed -- leaves a
   `DIRTY` copy `LOST`: the copies may differ in that writer's
   unacknowledged regions. `LOST` sticks: a later clean departure does not
-  clear it, and neither does a new configuration. Only
-  `RAWSTOR_CONFIG_CLEAR_LOST` does: after a resync or the heal that makes
-  the copies equal (F5), and `rawstor resolve`, for copies made consistent
-  by hand.
+  clear it, and neither does a new configuration. Only the end of a resync
+  or of the heal that makes the copies equal (F5) does, as a rule on the
+  configuration the copy accepts, and `rawstor resolve`, for copies made
+  consistent by hand.
 - A session that never wrote leaves the state as it is, cleanly or not.
 - A client that replaces a broken connection (a short write, a reset) opens
   the new one before closing the old, under the same session id (one per
@@ -183,8 +183,9 @@ state preserves it.
   acknowledged, so the copy is not `LOST`. A connection the server finds
   gone before its replacement has opened still leaves the copy `LOST`.
 
-The chunk records `CLEAN` only after every intended `LEAVE` succeeds. A failed
-departure records `LOST` on the surviving members before closing their Slots.
+A copy marks itself `CLEAN` when its own last session leaves cleanly, so a
+failed `LEAVE` on one member leaves that copy not `CLEAN`, and an open heals
+it from a `CLEAN` one.
 
 The chunk's `close()` sends `LEAVE` to every in-sync member only when its
 flush succeeded, none of its writes failed outright and every exclusion is
@@ -212,7 +213,7 @@ stores it on: the client counts it as one member, with one position in
 `roles`, and never sees what is beneath.
 
 A server accepts exactly one backend location and operates on it through
-`Slot`. Its location's record is the copy's record: `SET_CONFIG`, `LEAVE`,
+`Slot`. Its location's record is the copy's record: `LEAVE`,
 `META` and the register requests act on that member. A list of locations
 is rejected at startup with `EINVAL`; the client-side `Chunk` coordinates
 mirroring across servers.
@@ -221,11 +222,11 @@ At the API level (`include/rawstor/target.h`), `rawstor_target_chunks()` returns
 physical chunk targets, including their explicit hexadecimal offsets.
 `rawstor_target_meta()` reads every member's metadata from the addressed chunk
 URI; unavailable members are reported as `UNREACHABLE`.
-`rawstor_target_set_member_config()` updates the selected `member_index` of that
-same chunk atomically with its optional state. Neither operation takes a
-separate offset. Enumerate an MDS object's chunks before operating on individual
-members. Configuration changes are an operator recovery tool and can
-desynchronize copies if used incorrectly.
+`rawstor_target_sync_prepare()` and `rawstor_target_sync_accept()` send the
+register's requests to the selected `member_index` of that same chunk. No
+operation takes a separate offset. Enumerate an MDS object's chunks before
+operating on individual members. Deciding a configuration by hand is an
+operator recovery tool and can desynchronize copies if used incorrectly.
 
 ### Comparison rules (at open)
 
@@ -543,7 +544,7 @@ a vote and another copy of the contents.
 
 - **`include/rawstor/protocol.h`** — new opcodes:
   - `META` — read full per-copy metadata (size + width/chunk_size/member_role + state/epoch/sync_id/history); the one metadata round trip every backend answers, `rawstor_target_spec()` included (replaces the separate, cheaper `SPEC` opcode -- size only, no mirror-consistency-state lookup -- added in 0.2.3 and retired here: no backend ever answered it with more than a partial `RawstorObjectSpec` anyway);
-  - `SET_CONFIG` — write the chunk's configuration to a copy (no `size`, and never the copy's own state), fsynced on the server;
+  - `SYNC_PREPARE` / `SYNC_ACCEPT` — the requests of the chunk's configuration register ([multi-attach](multiattach.md#the-register-caspaxos)), fsynced on the server;
   - `LEAVE` — a session's clean departure; the copy marks itself `CLEAN` once no session open for writing is left;
   - `FLUSH` — fdatasync of object data; needed for clean close and so that `rawstor-vhost`/QEMU can forward guest flushes.
   - An old server receiving an unknown opcode must answer `-ENOSYS`. There is no wire version field — acceptable before 1.0.
@@ -555,8 +556,10 @@ a vote and another copy of the contents.
   `rawstor resolve TARGET --winner=N[,N...]` declares the selected members
   authoritative: a whole-object target resolves every chunk; a physical chunk
   URI resolves only that chunk. The winners receive the same new dominant
-  `sync_id`, with `RAWSTOR_CONFIG_CLEAR_LOST`; other members are excluded until
-  the next open resynchronizes them.
+  `sync_id` through `rawstor_target_sync_accept()` under a ballot above every
+  one the members hold (a winner that was `LOST` is cleared the way the end of
+  a heal clears it); other members are excluded until the next open
+  resynchronizes them.
 
 ### Implementation stages
 

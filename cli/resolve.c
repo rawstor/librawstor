@@ -6,7 +6,9 @@
 
 #include <rawstd/exitcode.h>
 
+#include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -67,10 +69,61 @@ static int is_winner(const size_t* winners, size_t num_winners, size_t idx) {
     return 0;
 }
 
+/* Makes one member promise `ballot`: the register's prepare, with a ballot
+ * the operator chose above every one the members reported. A member that
+ * refuses has seen a higher one meanwhile -- a writer is running -- and the
+ * resolve is to be repeated. Returns 0, or a negative errno. */
+static int prepare_member(
+    const char* target, size_t member, const struct RawstorObjectBallot* ballot
+) {
+    RawstorCliOp op;
+    int res = rawstor_cli_op_init(&op);
+    if (res < 0) {
+        return res;
+    }
+    struct RawstorObjectMeta meta;
+    int sres = rawstor_target_sync_prepare(
+        op.queue, target, member, ballot, &meta, rawstor_cli_op_cb, &op
+    );
+    ssize_t result = rawstor_cli_op_wait(&op, sres);
+    rawstor_cli_op_destroy(&op);
+    if (result < 0) {
+        return (int)result;
+    }
+    return result == 1 ? 0 : -EAGAIN;
+}
+
+/* Decides `config` on one member: the register's accept under `ballot`, the
+ * one the member promised. A member that refuses has seen a higher ballot
+ * meanwhile, and the resolve is to be repeated. Returns 0, or a negative
+ * errno. */
+static int accept_config(
+    const char* target, size_t member, const struct RawstorObjectBallot* ballot,
+    const struct RawstorObjectConfig* config
+) {
+    RawstorCliOp op;
+    int res = rawstor_cli_op_init(&op);
+    if (res < 0) {
+        return res;
+    }
+    struct RawstorObjectBallot next = {0, 0};
+    struct RawstorObjectMeta meta;
+    int sres = rawstor_target_sync_accept(
+        op.queue, target, member, ballot, &next, config, &meta,
+        rawstor_cli_op_cb, &op
+    );
+    ssize_t result = rawstor_cli_op_wait(&op, sres);
+    rawstor_cli_op_destroy(&op);
+    if (result < 0) {
+        return (int)result;
+    }
+    return result == 1 ? 0 : -EAGAIN;
+}
+
 /* Resolves exactly one chunk: `winners` are positions within that
  * chunk's own real member list -- rawstor_target_meta()'s own per-chunk
- * `result` order, the same one rawstor_target_set_member_config()'s
- * own `member_index` addresses (its own doc comment) -- so an index read
+ * `result` order, the same one rawstor_target_sync_accept()'s own
+ * `member_index` addresses (its own doc comment) -- so an index read
  * off one call names the same member in the other, for an ordinary
  * target and an mds:// one alike. */
 static int
@@ -146,6 +199,7 @@ resolve_chunk(const char* target, const size_t* winners, size_t num_winners) {
     uint64_t history[RAWSTOR_OBJECT_SYNC_ID_HISTORY] = {0};
     size_t history_len = 0;
     uint64_t max_epoch = 0;
+    uint64_t max_ballot = 0;
     int dropped = 0;
     for (ssize_t i = 0; i < result; i++) {
         const struct RawstorObjectMeta* m = &metas[i];
@@ -154,6 +208,12 @@ resolve_chunk(const char* target, const size_t* winners, size_t num_winners) {
         }
         if (m->config.epoch > max_epoch) {
             max_epoch = m->config.epoch;
+        }
+        if (m->promised.counter > max_ballot) {
+            max_ballot = m->promised.counter;
+        }
+        if (m->accepted.counter > max_ballot) {
+            max_ballot = m->accepted.counter;
         }
         if (is_winner(winners, num_winners, (size_t)i)) {
             continue;
@@ -178,9 +238,7 @@ resolve_chunk(const char* target, const size_t* winners, size_t num_winners) {
         );
     }
 
-    /* The winners in-sync, every other mirror excluded until its resync.
-     * The winners are declared consistent by hand: a LOST one is cleared
-     * (RAWSTOR_CONFIG_CLEAR_LOST). */
+    /* The winners in-sync, every other mirror excluded until its resync. */
     struct RawstorObjectConfig new_config;
     memset(&new_config, 0, sizeof(new_config));
     new_config.epoch = max_epoch + 1;
@@ -193,62 +251,90 @@ resolve_chunk(const char* target, const size_t* winners, size_t num_winners) {
                                   : RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     }
 
+    /* The operator is the register's only proposer for this one decision:
+     * its ballot is above every one any mirror reported. Every reachable
+     * mirror promises it before any of them is changed, so that no writer
+     * can decide under a lower ballot between the changes below; one that
+     * refuses has a writer running, and nothing has been touched yet. */
+    if (max_ballot > UINT64_MAX - 2) {
+        fprintf(
+            stderr,
+            "chunk[%llx]: the mirrors' ballots are exhausted; no ballot "
+            "above them exists\n",
+            (unsigned long long)offset
+        );
+        return rawstd_exitcode_for_errno(EOVERFLOW);
+    }
+    struct RawstorObjectBallot ballot;
+    ballot.counter = max_ballot + 1;
+    ballot.proposer = random_sync_id();
+    for (ssize_t i = 0; i < result; ++i) {
+        if (metas[i].state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+            continue;
+        }
+        res = prepare_member(target, (size_t)i, &ballot);
+        if (res < 0) {
+            fprintf(
+                stderr,
+                "chunk[%llx]: mirror[%zd] did not promise the resolve's "
+                "ballot: %s; nothing was changed\n",
+                (unsigned long long)offset, i,
+                res == -EAGAIN ? "a writer is running, repeat the resolve"
+                               : strerror(-res)
+            );
+            return rawstd_exitcode_for_errno(-res);
+        }
+    }
+
     /* Exclude non-winners before establishing the operator's new branch.
      * Failure aborts: an old vote must not endorse an excluded member
      * after the operator's chosen winner is lost. */
     for (ssize_t i = 0; i < result; ++i) {
-        if (is_winner(winners, num_winners, (size_t)i)) {
+        if (is_winner(winners, num_winners, (size_t)i) ||
+            metas[i].state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
             continue;
         }
-        RawstorCliOp member_op;
-        res = rawstor_cli_op_init(&member_op);
+        res = accept_config(target, (size_t)i, &ballot, &new_config);
         if (res < 0) {
-            return rawstd_exitcode_for_errno(-res);
-        }
-        enum RawstorObjectSyncStateValue member_state =
-            RAWSTOR_OBJECT_SYNC_STATE_LOST;
-        int sres = rawstor_target_set_member_config(
-            member_op.queue, target, (size_t)i, &new_config, 0, &member_state,
-            rawstor_cli_op_cb, &member_op
-        );
-        ssize_t sresult = rawstor_cli_op_wait(&member_op, sres);
-        rawstor_cli_op_destroy(&member_op);
-        if (sresult < 0) {
             fprintf(
                 stderr, "Cannot exclude member before resolve: %s\n",
-                strerror((int)-sresult)
+                strerror(-res)
             );
-            return rawstd_exitcode_for_errno((int)-sresult);
+            return rawstd_exitcode_for_errno(-res);
         }
     }
 
     /* Every winner gets the exact same new identity, written one at a
-     * time (rawstor_target_set_member_config() only ever points at a
-     * single member) -- as many as already succeeded stay written even
-     * if a later one fails, the same "partial failure leaves as many
-     * copies updated as possible" spirit as the rest of this codebase's
-     * own fan-outs. */
+     * time (a request only ever points at a single member) -- as many as
+     * already succeeded stay written even if a later one fails, the same
+     * "partial failure leaves as many copies updated as possible" spirit
+     * as the rest of this codebase's own fan-outs. The winners are
+     * declared consistent by hand: a LOST one is cleared. A copy leaves
+     * LOST when a heal of the in-sync copies ends (docs/multiattach.md,
+     * "Clearing LOST"), so the new identity comes in two decisions: the
+     * same roles with this operator as the owner of a heal, then the new
+     * sync set without one. */
+    struct RawstorObjectConfig heal_config = new_config;
+    heal_config.sync_id = metas[winners[0]].config.sync_id;
+    if (heal_config.sync_id == new_config.sync_id) {
+        heal_config.sync_id = 0;
+    }
+    heal_config.resync_owner = ballot.proposer;
+    struct RawstorObjectBallot final_ballot = ballot;
+    final_ballot.counter++;
     for (size_t i = 0; i < num_winners; i++) {
-        RawstorCliOp set_op;
-        res = rawstor_cli_op_init(&set_op);
-        if (res < 0) {
-            fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
-            return rawstd_exitcode_for_errno(-res);
+        res = accept_config(target, winners[i], &ballot, &heal_config);
+        if (res >= 0) {
+            res = accept_config(target, winners[i], &final_ballot, &new_config);
         }
-        int sres = rawstor_target_set_member_config(
-            set_op.queue, target, winners[i], &new_config,
-            RAWSTOR_CONFIG_CLEAR_LOST, NULL, rawstor_cli_op_cb, &set_op
-        );
-        ssize_t sresult = rawstor_cli_op_wait(&set_op, sres);
-        rawstor_cli_op_destroy(&set_op);
-        if (sresult < 0) {
+        if (res < 0) {
             fprintf(
                 stderr,
                 "chunk[%llx]: mirror[%zu]: "
-                "rawstor_target_set_member_config() failed: %s\n",
-                (unsigned long long)offset, winners[i], strerror((int)-sresult)
+                "rawstor_target_sync_accept() failed: %s\n",
+                (unsigned long long)offset, winners[i], strerror(-res)
             );
-            return rawstd_exitcode_for_errno((int)-sresult);
+            return rawstd_exitcode_for_errno(-res);
         }
 
         /* sync_id in hex, as rawstor show -v and meta_encode()'s on-disk

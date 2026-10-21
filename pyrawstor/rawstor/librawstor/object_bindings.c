@@ -282,7 +282,7 @@ static PyType_Spec PyLocationInfo_spec = {
 PyTypeObject* PyLocationInfoType = NULL;
 
 // The settable half of a mirror's metadata (see RawstorObjectConfig) --
-// input to Target.set_member_config() (object_set_member_config()
+// input to Target.sync_accept() (object_sync_accept()
 // below), same shape/pattern as ObjectSpec above (constructible, with
 // setters) since a
 // caller builds one of these and passes it in, unlike ObjectMeta/
@@ -579,7 +579,7 @@ PyTypeObject* PyObjectConfigType = NULL;
 // (object_meta() below). Output-only, like LocationInfo above -- no
 // Py_tp_new/_init/setters -- there is no legitimate way for a Python
 // caller to construct one and pass it back: the writer, Target.
-// set_member_config() (object_set_member_config() below), takes an
+// sync_accept() (object_sync_accept() below), takes an
 // ObjectConfig instead, the settable subset of these same fields.
 typedef struct {
     PyObject_HEAD unsigned long long size;
@@ -1165,36 +1165,21 @@ PyObject* py_rawstor_object_meta(PyObject* Py_UNUSED(self), PyObject* args) {
 }
 
 PyObject*
-py_rawstor_object_set_member_config(PyObject* Py_UNUSED(self), PyObject* args) {
+py_rawstor_object_sync_accept(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
     PyObject* config_obj;
+    unsigned long long counter;
+    unsigned long long proposer;
     unsigned long long member_index = 0;
-    unsigned int flags = 0;
-    PyObject* state_obj = Py_None;
-    enum RawstorObjectSyncStateValue state;
-    const enum RawstorObjectSyncStateValue* state_ptr = NULL;
+    unsigned long long next_counter = 0;
+    unsigned long long next_proposer = 0;
     if (!PyArg_ParseTuple(
-            args, "sO|KIO", &target, &config_obj, &member_index, &flags,
-            &state_obj
+            args, "sOKK|KKK", &target, &config_obj, &counter, &proposer,
+            &member_index, &next_counter, &next_proposer
         )) {
         return NULL;
     }
 
-    if (state_obj != Py_None) {
-        long value = PyLong_AsLong(state_obj);
-        if (PyErr_Occurred()) {
-            return NULL;
-        }
-        if (value < RAWSTOR_OBJECT_SYNC_STATE_CLEAN ||
-            value > RAWSTOR_OBJECT_SYNC_STATE_LOST) {
-            PyErr_SetString(
-                PyExc_ValueError, "state must be CLEAN, DIRTY, LOST or None"
-            );
-            return NULL;
-        }
-        state = (enum RawstorObjectSyncStateValue)value;
-        state_ptr = &state;
-    }
     if (!PyObject_TypeCheck(config_obj, PyObjectConfigType)) {
         PyErr_SetString(
             PyExc_TypeError, "config must be an ObjectConfig instance"
@@ -1213,14 +1198,19 @@ py_rawstor_object_set_member_config(PyObject* Py_UNUSED(self), PyObject* args) {
     config.nroles = py_config->nroles;
     memcpy(config.roles, py_config->roles, py_config->nroles);
 
+    struct RawstorObjectBallot ballot = {counter, proposer};
+    struct RawstorObjectBallot next = {next_counter, next_proposer};
+    struct RawstorObjectMeta meta;
+    memset(&meta, 0, sizeof(meta));
+
     RawstorSyncOp op;
     int ires = rawstor_sync_op_init(&op);
     if (ires < 0) {
         set_os_error(-ires);
         return NULL;
     }
-    int sres = rawstor_target_set_member_config(
-        op.queue, target, (size_t)member_index, &config, flags, state_ptr,
+    int sres = rawstor_target_sync_accept(
+        op.queue, target, (size_t)member_index, &ballot, &next, &config, &meta,
         rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);
@@ -1230,7 +1220,7 @@ py_rawstor_object_set_member_config(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
 
-    Py_RETURN_NONE;
+    return PyBool_FromLong(res == 1);
 }
 
 PyObject* py_rawstor_object_remove(PyObject* Py_UNUSED(self), PyObject* args) {

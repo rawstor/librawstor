@@ -3,6 +3,7 @@
 #include "object.hpp"
 #include "object_env.hpp"
 #include "opts.h"
+#include "register.hpp"
 #include "server.hpp"
 #include "session.hpp"
 #include "slot.hpp"
@@ -116,15 +117,12 @@ protected:
             *queue, run(*queue, target->chunks(*queue)).front().meta(*queue)
         );
     }
-    void set_member_state(
-        RawstorObjectSyncStateValue state, RawstorObjectConfig config
-    ) {
+    void set_witness_config(RawstorObjectConfig config) {
         auto slot =
             run(*queue, rawstor::Slot::create(*queue, rawstd::URI(witness)));
-        run(*queue,
-            slot->set_config(
-                id, 0, static_cast<uint8_t>(spec.width), config, 0, state
-            ));
+        run(*queue, rawstor::tests::force_config(
+                        *slot, id, 0, static_cast<uint8_t>(spec.width), config
+                    ));
         run(*queue, slot->close());
     }
     void refused() {
@@ -187,21 +185,9 @@ TEST_F(WitnessTest, clean_witness_allows_one_data_member_down) {
     EXPECT_EQ(data, "hello");
     write(*object, "newer");
     auto metadata = metas();
-    EXPECT_EQ(metadata[2].state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     EXPECT_NE(metadata[2].config.sync_id, previous);
     EXPECT_EQ(metadata[2].config.sync_id, metadata[0].config.sync_id);
     run(*queue, object->close(true));
-}
-
-TEST_F(WitnessTest, lost_witness_recovers_like_dirty_data_member) {
-    create();
-    seed();
-    set_member_state(RAWSTOR_OBJECT_SYNC_STATE_LOST, metas()[0].config);
-    HiddenLocation offline(b);
-    auto object = run(*queue, target->open(*queue, 0));
-    write(*object, "newer");
-    run(*queue, object->close(true));
-    EXPECT_EQ(metas()[2].state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
 }
 
 TEST_F(WitnessTest, degraded_witness_only_approves_recorded_survivor) {
@@ -209,8 +195,8 @@ TEST_F(WitnessTest, degraded_witness_only_approves_recorded_survivor) {
     seed();
     auto config = metas()[0].config;
     config.roles[1] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
-    run(*queue, target->set_member_config(*queue, 0, config, 0));
-    set_member_state(RAWSTOR_OBJECT_SYNC_STATE_DIRTY, config);
+    run(*queue, rawstor::tests::force_config(*queue, *target, 0, config));
+    set_witness_config(config);
     {
         HiddenLocation offline(b);
         auto object = run(*queue, target->open(*queue, 0));
@@ -223,7 +209,7 @@ TEST_F(WitnessTest, degraded_witness_only_approves_recorded_survivor) {
 TEST_F(WitnessTest, dirty_witness_votes_for_matching_configuration) {
     create();
     seed();
-    set_member_state(RAWSTOR_OBJECT_SYNC_STATE_DIRTY, metas()[0].config);
+    set_witness_config(metas()[0].config);
     HiddenLocation offline(b);
     auto object = run(*queue, target->open(*queue, 0));
     write(*object);
@@ -233,7 +219,7 @@ TEST_F(WitnessTest, dirty_witness_votes_for_matching_configuration) {
 TEST_F(WitnessTest, empty_witness_abstains_and_data_quorum_reattaches) {
     create();
     seed();
-    set_member_state(RAWSTOR_OBJECT_SYNC_STATE_CLEAN, RawstorObjectConfig{});
+    set_witness_config(RawstorObjectConfig{});
     {
         HiddenLocation offline(b);
         refused();
@@ -263,8 +249,8 @@ TEST_F(WitnessTest, witness_newer_generation_vetoes_ancestor) {
     config.sync_id ^= 0x12345678;
     ++config.epoch;
     config.roles[1] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
-    run(*queue, target->set_member_config(*queue, 0, config, 0));
-    set_member_state(RAWSTOR_OBJECT_SYNC_STATE_DIRTY, config);
+    run(*queue, rawstor::tests::force_config(*queue, *target, 0, config));
+    set_witness_config(config);
     HiddenLocation offline(a);
     refused();
 }
@@ -298,8 +284,11 @@ TEST_F(WitnessTest, unclean_close_retains_dirty_configuration) {
     auto object = run(*queue, target->open(*queue, 0));
     write(*object);
     run(*queue, object->close(false));
+    // A witness has no copy and no writer session: its state stays as created.
     for (const auto& meta : metas()) {
-        EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+        if (meta.member_role == RAWSTOR_MEMBER_DATA) {
+            EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+        }
     }
     HiddenLocation offline(b);
     auto reopened = run(*queue, target->open(*queue, 0));
@@ -361,7 +350,6 @@ TEST_F(
     servers.reset();
     write(*object, "newer");
     auto metadata = metas();
-    EXPECT_EQ(metadata[2].state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     EXPECT_EQ(metadata[2].config.sync_id, metadata[0].config.sync_id);
     EXPECT_EQ(metadata[2].config.roles[1], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
     run(*queue, object->close(false));
@@ -403,55 +391,6 @@ TEST_F(WitnessTest, witness_quorum_recreates_missing_copy_and_resyncs) {
     run(*queue, object->close(true));
 }
 
-TEST_F(WitnessTest, metadata_update_applies_state_and_config_to_data_member) {
-    create();
-    auto slot =
-        run(*queue, rawstor::Slot::create(*queue, rawstd::URI(a.uri())));
-    auto config = metas()[0].config;
-    ++config.epoch;
-    ++config.sync_id;
-    for (auto state :
-         {RAWSTOR_OBJECT_SYNC_STATE_DIRTY, RAWSTOR_OBJECT_SYNC_STATE_LOST,
-          RAWSTOR_OBJECT_SYNC_STATE_CLEAN}) {
-        run(*queue, slot->set_config(id, 0, 0, config, 0, state));
-        auto meta = run(*queue, slot->meta(id, 0)).front();
-        EXPECT_EQ(meta.member_role, RAWSTOR_MEMBER_DATA);
-        EXPECT_EQ(meta.state, state);
-        EXPECT_EQ(meta.config.sync_id, config.sync_id);
-    }
-    run(*queue, slot->close());
-}
-
-TEST_F(WitnessTest, configuration_only_update_preserves_witness_state) {
-    create();
-    auto config = metas()[0].config;
-    set_member_state(RAWSTOR_OBJECT_SYNC_STATE_DIRTY, config);
-    ++config.epoch;
-    ++config.sync_id;
-    run(*queue, target->set_member_config(*queue, 2, config, 0));
-    EXPECT_EQ(metas()[2].state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
-    EXPECT_EQ(metas()[2].config.sync_id, config.sync_id);
-    run(*queue, target->set_member_config(
-                    *queue, 2, config, 0, RAWSTOR_OBJECT_SYNC_STATE_LOST
-                ));
-    EXPECT_EQ(metas()[2].state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
-    EXPECT_THROW(
-        run(*queue, target->set_member_config(
-                        *queue, 2, config, RAWSTOR_CONFIG_CLEAR_LOST,
-                        RAWSTOR_OBJECT_SYNC_STATE_CLEAN
-                    )),
-        std::system_error
-    );
-    EXPECT_THROW(
-        run(*queue,
-            target->set_member_config(
-                *queue, 2, config, 0, RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE
-            )),
-        std::system_error
-    );
-    EXPECT_EQ(metas()[2].state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
-}
-
 TEST_F(WitnessTest, rejects_witness_with_odd_number_of_data_members) {
     rawstor::tests::TmpDir c;
     id = new_id();
@@ -472,10 +411,9 @@ TEST_F(WitnessTest, readonly_open_never_rewrites_witness) {
     create();
     seed();
     auto config = metas()[0].config;
-    set_member_state(RAWSTOR_OBJECT_SYNC_STATE_LOST, config);
+    set_witness_config(config);
     auto object = run(*queue, target->open(*queue, RAWSTOR_READONLY));
     run(*queue, object->close(true));
-    EXPECT_EQ(metas()[2].state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
     EXPECT_EQ(metas()[2].config.sync_id, config.sync_id);
 }
 
@@ -622,10 +560,8 @@ TEST_F(WitnessTest, explicit_exclusion_invalidates_member_vote) {
     config.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     auto slot =
         run(*queue, rawstor::Slot::create(*queue, rawstd::URI(w.uri())));
-    run(*queue,
-        slot->set_config(id, 0, 2, config, 0, RAWSTOR_OBJECT_SYNC_STATE_LOST));
+    run(*queue, rawstor::tests::force_config(*slot, id, 0, 2, config));
     run(*queue, slot->close());
-    EXPECT_EQ(metas()[2].state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
     HiddenLocation offline(b);
     refused();
 }
@@ -638,10 +574,8 @@ TEST_F(WitnessTest, mds_explicit_exclusion_invalidates_member_vote) {
     config.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     auto slot =
         run(*queue, rawstor::Slot::create(*queue, rawstd::URI(witness)));
-    run(*queue,
-        slot->set_config(id, 0, 2, config, 0, RAWSTOR_OBJECT_SYNC_STATE_LOST));
+    run(*queue, rawstor::tests::force_config(*slot, id, 0, 2, config));
     run(*queue, slot->close());
-    EXPECT_EQ(metas()[2].state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
     HiddenLocation offline(b);
     refused();
 }
@@ -655,7 +589,6 @@ TEST_F(WitnessTest, four_data_members_write_and_restart_on_half_plus_witness) {
     write(*object, "newer");
     auto metadata = metas();
     ASSERT_EQ(metadata.size(), 5u);
-    EXPECT_EQ(metadata[4].state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     EXPECT_EQ(metadata[4].config.sync_id, metadata[0].config.sync_id);
     EXPECT_EQ(metadata[4].config.sync_id, metadata[1].config.sync_id);
     EXPECT_EQ(metadata[4].config.roles[2], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
@@ -678,7 +611,7 @@ TEST_F(WitnessTest, four_data_members_require_two_matching_data_votes) {
     seed();
     auto config = metas()[0].config;
     ++config.epoch;
-    run(*queue, target->set_member_config(*queue, 1, config, 0));
+    run(*queue, rawstor::tests::force_config(*queue, *target, 1, config));
     HiddenLocation offline_c(c), offline_d(d);
     refused();
 }
@@ -821,8 +754,11 @@ TEST_F(WitnessTest, abandoned_idle_queue_does_not_lose_other_writer) {
     auto idle = run(*second_queue, target->open(*second_queue, 0));
     write(*writer);
     run(*second_queue, idle->close(false));
+    // A witness has no copy and no writer session: its state stays as created.
     for (const auto& meta : metas()) {
-        EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+        if (meta.member_role == RAWSTOR_MEMBER_DATA) {
+            EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+        }
     }
     run(*queue, writer->close(true));
     for (const auto& meta : metas()) {
@@ -840,8 +776,11 @@ TEST_F(WitnessTest, abandoned_writer_keeps_all_members_lost_after_clean_close) {
     std::string value = "newer";
     run(*second_queue, second->pwrite(value.data(), value.size(), 0, false));
     run(*second_queue, second->close(true));
+    // A witness has no copy and no writer session: its state stays as created.
     for (const auto& meta : metas()) {
-        EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+        if (meta.member_role == RAWSTOR_MEMBER_DATA) {
+            EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+        }
     }
 }
 
@@ -852,7 +791,6 @@ TEST_F(WitnessTest, writer_queues_share_witness_until_last_clean_close) {
     auto second = run(*second_queue, target->open(*second_queue, 0));
     write(*first);
     run(*queue, first->close(true));
-    EXPECT_EQ(metas()[2].state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     std::string value = "newer";
     EXPECT_EQ(
         run(*second_queue,
@@ -936,8 +874,6 @@ TEST_F(WitnessTest, native_witness_update_preserves_register_ballots) {
     ASSERT_TRUE(
         run(*queue, slot->sync_accept(id, 0, 2, ballot, next, config, meta))
     );
-    run(*queue,
-        slot->set_config(id, 0, 2, config, 0, RAWSTOR_OBJECT_SYNC_STATE_DIRTY));
     run(*queue, slot->close());
     auto metadata = metas()[2];
     EXPECT_EQ(metadata.accepted.counter, ballot.counter);
@@ -982,7 +918,7 @@ TEST_F(WitnessTest, returning_witness_rejoins_without_data_io) {
 TEST_F(WitnessTest, witness_rejoin_without_client_write_closes_cleanly) {
     create();
     seed();
-    set_member_state(RAWSTOR_OBJECT_SYNC_STATE_CLEAN, RawstorObjectConfig{});
+    set_witness_config(RawstorObjectConfig{});
     auto object = run(*queue, target->open(*queue, 0));
     bool rejoined = false;
     for (unsigned i = 0; i < 2000; ++i) {
@@ -1304,7 +1240,7 @@ TEST_F(WitnessTest, conflicting_member_shapes_require_an_agreeing_quorum) {
                 id, 0, oversized,
                 index == 0 ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS
             ));
-        run(*queue, slot->set_config(id, 0, index, config, 0));
+        run(*queue, rawstor::tests::force_config(*slot, id, 0, index, config));
         run(*queue, slot->close());
         auto object = run(*queue, target->open(*queue, 0));
         write(*object, "surviving quorum");
@@ -1336,7 +1272,7 @@ TEST_F(WitnessTest, conflicting_member_shapes_require_an_agreeing_quorum) {
     }
 }
 
-TEST_F(WitnessTest, failed_leave_persists_lost_on_surviving_members) {
+TEST_F(WitnessTest, failed_leave_on_the_witness_leaves_data_members_clean) {
     create();
     auto metadata = metas();
     rawstor::tests::Server server(29641, 256);
@@ -1345,19 +1281,9 @@ TEST_F(WitnessTest, failed_leave_persists_lost_on_surviving_members) {
     ASSERT_EQ(rawstor_frame_meta_encode(&reply, &metadata.back()), 0);
     session->cmd_meta(RAWSTOR_MAGIC, 0, 0, reply);
     session->cmd_meta(RAWSTOR_MAGIC, 1, 0, reply);
-    session->cmd_set_state(RAWSTOR_MAGIC, 2, 0);
-    session->cmd_leave(RAWSTOR_MAGIC, 3, -EIO);
-    std::atomic<unsigned int> final_state{
-        RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE
-    };
-    server.read(
-        "departure state", sizeof(RawstorFrameSetConfig),
-        [&](const void* data) {
-            final_state =
-                static_cast<const RawstorFrameSetConfig*>(data)->payload.state;
-        }
-    );
-    session->cmd_set_state_response(RAWSTOR_MAGIC, 4, 0);
+    session->cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, reply);
+    session->cmd_sync_accept(RAWSTOR_MAGIC, 4, 0, reply);
+    session->cmd_leave(RAWSTOR_MAGIC, 6, -EIO);
     rawstor::Target mirrored(
         {rawstd::URI(a.uri() + "/" + id_string(id)),
          rawstd::URI(b.uri() + "/" + id_string(id)),
@@ -1366,14 +1292,15 @@ TEST_F(WitnessTest, failed_leave_persists_lost_on_surviving_members) {
     auto object = run(*queue, mirrored.open(*queue, 0));
     write(*object);
     run(*queue, object->close(true));
-    EXPECT_EQ(final_state.load(), RAWSTOR_OBJECT_SYNC_STATE_LOST);
+    // The data members left on their own and are clean; the witness holds
+    // no copy that a failed departure could leave different.
     for (const auto& location : {a.uri(), b.uri()}) {
         rawstor::Target data({rawstd::URI(location + "/" + id_string(id))});
         EXPECT_EQ(
             run(*queue, run(*queue, data.chunks(*queue)).front().meta(*queue))
                 .front()
                 .state,
-            RAWSTOR_OBJECT_SYNC_STATE_LOST
+            RAWSTOR_OBJECT_SYNC_STATE_CLEAN
         );
     }
 }
@@ -1395,7 +1322,7 @@ TEST_F(WitnessTest, data_only_mirror_uses_the_matching_quorum) {
     auto wrong = spec;
     wrong.size *= 2;
     run(*queue, divergent->create(id, 0, wrong, RAWSTOR_MEMBER_DATA));
-    run(*queue, divergent->set_config(id, 0, 0, config, 0));
+    run(*queue, rawstor::tests::force_config(*divergent, id, 0, 0, config));
     for (int flags : {RAWSTOR_READONLY, 0}) {
         auto object = run(*queue, target->open(*queue, flags));
         std::string value(5, '\0');
@@ -1440,7 +1367,7 @@ TEST_F(WitnessTest, divergent_spec_fields_do_not_override_the_quorum) {
             run(*queue, rawstor::Slot::create(*queue, rawstd::URI(a.uri())));
         run(*queue, slot->remove(id, 0));
         run(*queue, slot->create(id, 0, wrong, RAWSTOR_MEMBER_DATA));
-        run(*queue, slot->set_config(id, 0, 0, config, 0));
+        run(*queue, rawstor::tests::force_config(*slot, id, 0, 0, config));
         auto object = run(*queue, target->open(*queue, 0));
         std::string tail = "tail";
         EXPECT_EQ(
@@ -1479,7 +1406,8 @@ TEST_F(WitnessTest, replacements_use_the_quorum_spec_with_a_divergent_member) {
                 id, 0, wrong,
                 index == 0 ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS
             ));
-        run(*queue, divergent->set_config(id, 0, index, config, 0));
+        run(*queue,
+            rawstor::tests::force_config(*divergent, id, 0, index, config));
         auto missing =
             run(*queue, rawstor::Slot::create(*queue, rawstd::URI(b.uri())));
         run(*queue, missing->remove(id, 0));
@@ -1525,7 +1453,7 @@ TEST_F(WitnessTest, spec_and_configuration_must_have_the_same_quorum) {
                     index == 4 ? RAWSTOR_MEMBER_WITNESS : RAWSTOR_MEMBER_DATA
                 ));
         }
-        run(*queue, slot->set_config(id, 0, index, other, 0));
+        run(*queue, rawstor::tests::force_config(*slot, id, 0, index, other));
         run(*queue, slot->close());
     }
     refused();
@@ -1556,7 +1484,7 @@ TEST_F(WitnessTest, excluded_member_does_not_supply_a_spec_vote) {
                     index == 4 ? RAWSTOR_MEMBER_WITNESS : RAWSTOR_MEMBER_DATA
                 ));
         }
-        run(*queue, slot->set_config(id, 0, index, config, 0));
+        run(*queue, rawstor::tests::force_config(*slot, id, 0, index, config));
         run(*queue, slot->close());
     }
     refused();
@@ -1579,7 +1507,7 @@ TEST_F(WitnessTest, repaired_spec_rejoins_through_the_probe) {
     auto wrong = spec;
     wrong.size *= 2;
     run(*queue, slot->create(id, 0, wrong, RAWSTOR_MEMBER_WITNESS));
-    run(*queue, slot->set_config(id, 0, 2, config, 0));
+    run(*queue, rawstor::tests::force_config(*slot, id, 0, 2, config));
     auto object = run(*queue, target->open(*queue, 0));
     write(*object);
     for (size_t i = 0; i < 30; ++i) {
@@ -1621,16 +1549,17 @@ TEST_F(WitnessTest, resync_commit_rechecks_the_returned_spec) {
     auto session = std::make_unique<rawstor::tests::Session>(server);
     session->cmd_meta(RAWSTOR_MAGIC, 0, 0, stale);
     session->cmd_meta(RAWSTOR_MAGIC, 1, 0, stale);
-    session->cmd_set_state(RAWSTOR_MAGIC, 2, 0); // SYNCING
-    session->cmd_meta(
-        RAWSTOR_MAGIC, 3, 0, stale
-    ); // role lookup before CLEAR_LOST
-    session->cmd_set_state(RAWSTOR_MAGIC, 4, 0); // CLEAR_LOST
+    // The SYNCING role: a prepare and an accept.
+    session->cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, stale);
+    session->cmd_sync_accept(RAWSTOR_MAGIC, 4, 0, stale);
     auto changed = stale;
     changed.size *= 2;
-    session->cmd_meta(
-        RAWSTOR_MAGIC, 5, 0, changed
-    ); // refreshed metadata at commit
+    // The rejoin: the member's answer carries the refreshed metadata.
+    session->cmd_meta(RAWSTOR_MAGIC, 6, 0, stale);
+    session->cmd_sync_accept_request();
+    session->cmd_sync_response(
+        RAWSTOR_CMD_SYNC_ACCEPT, RAWSTOR_MAGIC, 7, 0, true, changed
+    );
     rawstor::Target mirrored(
         {rawstd::URI(a.uri() + "/" + id_string(id)),
          rawstd::URI(b.uri() + "/" + id_string(id)),

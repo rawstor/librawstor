@@ -793,14 +793,9 @@ TEST_F(
     {
         ObjectStore store = make_store();
         store.create_witness(id, chunk_size, spec);
-        store.set_config(
-            id, chunk_size, config, 0, RAWSTOR_OBJECT_SYNC_STATE_DIRTY
-        );
-        store.set_config(id, chunk_size, config, 0);
-        EXPECT_EQ(
-            store.witness_meta(id, chunk_size).state,
-            RAWSTOR_OBJECT_SYNC_STATE_DIRTY
-        );
+        bool ok = false;
+        store.sync_accept(id, chunk_size, {1, 1}, {}, config, ok);
+        EXPECT_TRUE(ok);
         EXPECT_THROW(
             store.create_witness(id, chunk_size, spec), std::system_error
         );
@@ -812,7 +807,7 @@ TEST_F(
     auto meta = store.witness_meta(id, chunk_size);
     EXPECT_EQ(meta.member_role, RAWSTOR_MEMBER_WITNESS);
     EXPECT_EQ(meta.spec.size, spec.size);
-    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
     EXPECT_EQ(meta.config.sync_id, config.sync_id);
     EXPECT_EQ(meta.config.resync_owner, config.resync_owner);
     EXPECT_EQ(meta.config.sync_id_history[0], 42u);
@@ -879,6 +874,38 @@ TEST_F(ObjectStoreTest, list_chunks_merges_objects_and_native_members) {
     EXPECT_EQ(entries[2].offset, chunk_size);
     EXPECT_EQ(entries[2].type, RAWSTOR_LIST_ENTRY_CHUNK);
     EXPECT_TRUE(rawstd_uuid_is_nil(&token));
+}
+
+TEST_F(ObjectStoreTest, witness_refuses_a_ballot_beyond_its_reach) {
+    RawstdUUID id = make_id();
+    RawstorObjectSpec spec{};
+    spec.size = chunk_size;
+    spec.width = 2;
+    spec.chunk_size = chunk_size;
+    ObjectStore store = make_store();
+    store.create_witness(id, 0, spec);
+
+    // A request moves the counters forward by a bounded amount only, so that
+    // a peer cannot exhaust the counter space.
+    const uint64_t jump = uint64_t(1) << 28;
+    bool ok = false;
+    RawstorObjectConfig config{};
+    EXPECT_THROW(
+        store.sync_prepare(id, 0, {jump + 1, 1}, ok), std::system_error
+    );
+    EXPECT_THROW(
+        store.sync_accept(id, 0, {jump + 1, 1}, {}, config, ok),
+        std::system_error
+    );
+    EXPECT_THROW(
+        store.sync_accept(id, 0, {1, 1}, {jump + 1, 1}, config, ok),
+        std::system_error
+    );
+    EXPECT_EQ(store.witness_meta(id, 0).promised.counter, 0u);
+
+    store.sync_prepare(id, 0, {jump, 1}, ok);
+    EXPECT_TRUE(ok);
+    EXPECT_EQ(store.witness_meta(id, 0).promised.counter, jump);
 }
 
 TEST_F(ObjectStoreTest, witness_votes_in_the_configuration_register) {

@@ -870,48 +870,6 @@ TEST(OstClientTest, several_locations_are_rejected) {
     ::close(listen_fd);
 }
 
-TEST(OstClientTest, set_config_forwards_explicit_state_to_slot) {
-    rawstor::ostserver::tests::TmpDir dir;
-    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
-    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
-    rawstor::ostserver::tests::Queue queue;
-    auto [raw_client, client_fd] = connect_client(server, queue);
-    ClientCleanup server_client(std::move(raw_client), queue);
-    rawstor::ostserver::tests::Client client(client_fd);
-    RawstdUUID id;
-    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
-    auto expect_response = [&](RawstorCommandType cmd, int32_t result) {
-        ASSERT_TRUE(pump_until(queue, [&] {
-            return client.bytes_available() >= sizeof(RawstorFrameResponse);
-        }));
-        auto response = client.recv_response();
-        EXPECT_EQ(response.head.cmd, cmd);
-        EXPECT_EQ(response.body.res, result);
-    };
-    client.send_allocate(id, 4096, 2);
-    expect_response(RAWSTOR_CMD_ALLOCATE, 0);
-    RawstorFrameSetConfig set{};
-    std::memcpy(set.payload.object_id, id.bytes, sizeof(id.bytes));
-    set.payload.config.epoch = 3;
-    set.payload.state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
-    client.send_set_config(set);
-    expect_response(RAWSTOR_CMD_SET_CONFIG, 0);
-    set.payload.config.epoch = 4;
-    set.payload.state = 4;
-    client.send_set_config(set);
-    expect_response(RAWSTOR_CMD_SET_CONFIG, -EINVAL);
-    client.send_meta(id, 0);
-    RawstorFrameMetaPayload meta{};
-    ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >=
-               sizeof(RawstorFrameResponse) + sizeof(meta);
-    }));
-    auto response = client.recv_response(&meta, sizeof(meta));
-    EXPECT_EQ(response.body.res, static_cast<int32_t>(sizeof(meta)));
-    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
-    EXPECT_EQ(meta.config.epoch, 3u);
-}
-
 namespace {
 
 RawstorFrameSyncPropose sync_frame(
@@ -1001,15 +959,6 @@ TEST(OstClientTest, sync_register_promises_and_accepts) {
     invalid_accept.payload.member_index = RAWSTOR_OBJECT_MAX_WIDTH;
     invalid_accept.payload.config.epoch = 100;
     client.send_sync(invalid_accept);
-    ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorFrameResponse);
-    }));
-    EXPECT_EQ(client.recv_response().body.res, -EINVAL);
-    RawstorFrameSetConfig invalid_config{};
-    std::memcpy(invalid_config.payload.object_id, id.bytes, sizeof(id.bytes));
-    invalid_config.payload.member_index = RAWSTOR_OBJECT_MAX_WIDTH;
-    invalid_config.payload.config.epoch = 100;
-    client.send_set_config(invalid_config);
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));
@@ -1123,15 +1072,15 @@ TEST(OstClientTest, resync_write_preserves_exact_client_ranges) {
         EXPECT_EQ(response.body.res, res);
     };
     // This copy is member 1 of 2; member 0 is the source of the resync.
+    uint64_t counter = 0;
     auto set_role = [&](RawstorObjectMemberRole role) {
-        RawstorFrameSetConfig frame{};
-        std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));
+        RawstorFrameSyncPropose frame =
+            sync_frame(RAWSTOR_CMD_SYNC_ACCEPT, id, ++counter, 9);
         frame.payload.config.nroles = 2;
         frame.payload.config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
         frame.payload.config.roles[1] = role;
         frame.payload.member_index = 1;
-        client.send_set_config(frame);
-        expect_response(RAWSTOR_CMD_SET_CONFIG, 0);
+        EXPECT_EQ(sync_round_trip(client, queue, frame).ok, 1);
     };
     auto read_all = [&](size_t size) {
         client.send_read(0, static_cast<uint32_t>(size));

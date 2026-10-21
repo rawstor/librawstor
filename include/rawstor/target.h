@@ -123,8 +123,10 @@ struct RawstorObjectSpec {
  * LOST        - DIRTY, and a session that wrote the copy went without a
  *               clean departure: the copy may differ from its mirrors in
  *               that writer's unacknowledged writes. It stays LOST until
- *               cleared explicitly (RAWSTOR_CONFIG_CLEAR_LOST), which a
- *               mirrored open does once it has made the copies equal.
+ *               it accepts a configuration that ends its resync or the
+ *               heal of its mirrors (docs/multiattach.md, "Clearing
+ *               LOST"), which a mirrored open does once it has made the
+ *               copies equal.
  *
  * Witness members use the same states for their durable metadata record;
  * LOST invalidates their vote. They have no data writer sessions.
@@ -177,12 +179,13 @@ struct RawstorObjectBallot {
 };
 
 /**
- * @brief The chunk's configuration, as a writer sets it on a copy.
+ * @brief The chunk's configuration, the value of its register.
  *
  * Its sync set (`epoch`, `sync_id` and its history) and every member's
  * role, in the order the chunk's members are listed (a plain target's
- * URIs, an mds:// chunk's placement). Written with
- * rawstor_target_set_member_config(), read back in RawstorObjectMeta. A
+ * URIs, an mds:// chunk's placement). Decided through the register
+ * (rawstor_target_sync_prepare(), rawstor_target_sync_accept()), read back
+ * in RawstorObjectMeta. A
  * sync_id of 0 marks a legacy copy that has never been part of an
  * established sync set; such copies are treated as CLEAN and identical
  * right after creation.
@@ -203,21 +206,14 @@ struct RawstorObjectConfig {
 };
 
 /**
- * rawstor_target_set_member_config() flag: a LOST copy becomes CLEAN (no
- * session open for writing) or DIRTY. For tooling that has made the
- * copies consistent by hand, e.g. `rawstor resolve`.
- */
-#define RAWSTOR_CONFIG_CLEAR_LOST (1u << 0)
-
-/**
  * @brief Object copy metadata.
  *
  * The full per-copy record, read-only: `spec` (unlike a RawstorObjectSpec
  * obtained through rawstor_target_spec()/_create(), which is used both
  * ways), the copy's own member_role, its own `state` and the number of
  * sessions open for writing on it right now (`writers`), both kept by the
- * copy itself, and the chunk's configuration as last written to it
- * (`config`, the part rawstor_target_set_member_config() sets). `config`
+ * copy itself, and the chunk's configuration as last accepted by it
+ * (`config`). `config`
  * with `promised`/`accepted` is the copy's replica of the chunk's
  * configuration register (docs/multiattach.md, "The register").
  * `spec.width` is that copy's own persisted width -- the width
@@ -232,7 +228,6 @@ struct RawstorObjectConfig {
  * particular copy, exactly like `state`, not of the chunk's own shape.
  *
  * @see rawstor_target_meta
- * @see rawstor_target_set_member_config
  */
 struct RawstorObjectMeta {
     struct RawstorObjectSpec spec;
@@ -349,57 +344,6 @@ int rawstor_target_meta(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously replace one chunk member's configuration.
- *
- * The offset comes from @p target, and @p member_index selects a member in
- * rawstor_target_meta() order. A whole-object MDS target resolves the first
- * chunk; use rawstor_target_chunks() to address other chunks explicitly.
- * An MDS URI with an explicit offset resolves that logical chunk's members.
- * To address a witness stored on MDS directly, use an ost:// URI pointing
- * to the MDS server. A bound version is rejected: this operation modifies
- * live member metadata.
- *
- * Only the selected member is updated; this call neither gathers a quorum
- * nor updates other members. Configuration and an optional explicit state
- * are persisted by the selected backend before successful completion.
- *
- * @param queue Queue used to drive the operation; valid until completion.
- * @param target Non-NULL target string, parsed before this call returns.
- * @param member_index Zero-based member position in the addressed chunk.
- *                     An index outside the member list fails with @c -EINVAL.
- * @param config Non-NULL configuration to store. Copied before returning;
- *               it need not remain valid until completion.
- * @param flags Zero or RAWSTOR_CONFIG_CLEAR_LOST. The latter clears LOST
- *              according to the member's current writer state.
- * @param state Optional explicit state, or NULL to preserve the current
- *              state subject to @p flags. Copied before returning. An explicit
- *              state cannot be combined with RAWSTOR_CONFIG_CLEAR_LOST;
- *              RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE is not a stored state.
- * @param cb Non-NULL completion callback. Its result is zero on success or
- *           a negative errno on failure, such as @c -EINVAL for an invalid
- *           index, state, flags or bound version, or a backend I/O error.
- *           Return zero, or a negative errno to report a callback error.
- * @param data Context pointer passed unchanged to @p cb.
- *
- * @return Zero if queued; negative errno on immediate failure, in which case
- *         @p cb is not invoked. Completion status is delivered to @p cb.
- *
- * @warning This is an operator recovery operation. Changing one member's
- *          configuration without coordinating the others can desynchronize
- *          copies. Normal configuration changes use the configuration register.
- *
- * @see rawstor_target_meta
- * @see rawstor_target_sync_prepare
- * @see rawstor_target_sync_accept
- */
-int rawstor_target_set_member_config(
-    RawIOQueue* queue, const char* target, size_t member_index,
-    const struct RawstorObjectConfig* config, unsigned int flags,
-    const enum RawstorObjectSyncStateValue* state,
-    int (*cb)(ssize_t result, void* data), void* data
-) RAWSTOR_NOEXCEPT;
-
-/**
  * @brief Asynchronously request a configuration-register promise.
  *
  * This is phase 1 of the chunk's configuration register. The selected
@@ -409,10 +353,14 @@ int rawstor_target_set_member_config(
  * the member's record in @p meta, allowing the caller to inspect its
  * promised ballot and accepted configuration.
  *
- * The offset is taken from @p target. Member selection and MDS resolution
- * follow rawstor_target_set_member_config(); whole-object MDS targets
- * select the first chunk, and bound versions are rejected. One successful
- * promise is one member's vote; the caller coordinates the quorum.
+ * The offset is taken from @p target, and @p member_index selects a member in
+ * rawstor_target_meta() order. A whole-object MDS target resolves the first
+ * chunk; use rawstor_target_chunks() to address other chunks explicitly. An
+ * MDS URI with an explicit offset resolves that logical chunk's members. To
+ * address a witness stored on MDS directly, use an ost:// URI pointing to the
+ * MDS server. Bound versions are rejected: the operation modifies live member
+ * metadata. One successful promise is one member's vote; the caller
+ * coordinates the quorum.
  *
  * @param queue Queue used to drive the operation; valid until completion.
  * @param target Non-NULL target string, parsed before this call returns.
@@ -454,7 +402,7 @@ int rawstor_target_sync_prepare(
  * both return the member's record in @p meta.
  *
  * The offset comes from @p target. Member selection and MDS resolution
- * follow rawstor_target_set_member_config(); whole-object MDS targets
+ * follow rawstor_target_sync_prepare(); whole-object MDS targets
  * select the first chunk, and bound versions are rejected. Acceptance on
  * one member is one vote: the caller must obtain a majority of the
  * configuration register's acceptors. For two data members, a witness

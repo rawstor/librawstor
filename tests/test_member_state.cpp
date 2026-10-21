@@ -2,6 +2,7 @@
 #include "object.hpp"
 #include "object_env.hpp"
 #include "opts.h"
+#include "register.hpp"
 #include "slot.hpp"
 #include "target.hpp"
 #include "tmp_dir.hpp"
@@ -188,14 +189,12 @@ TEST(MemberStateTest, abandoned_writer_loses_the_copy) {
     write_one(*queue, *b);
     RawstorObjectConfig config = f.meta(*queue).config;
     config.epoch += 1;
-    run(*queue, f.target.set_member_config(*queue, 0, config, 0));
+    run(*queue, rawstor::tests::force_config(*queue, f.target, 0, config));
     run(*queue, b->close());
     EXPECT_EQ(f.meta(*queue).state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
 
-    // Only an explicit clear does.
-    run(*queue, f.target.set_member_config(
-                    *queue, 0, config, RAWSTOR_CONFIG_CLEAR_LOST
-                ));
+    // Only the end of a heal does.
+    run(*queue, rawstor::tests::force_heal_end(*queue, f.target, 0, config));
     EXPECT_EQ(f.meta(*queue).state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 }
 
@@ -211,7 +210,9 @@ TEST(MemberStateTest, abandoned_reader_changes_nothing) {
     EXPECT_EQ(f.meta(*queue).state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
 }
 
-TEST(MemberStateTest, set_config_keeps_the_state_and_records_roles) {
+TEST(
+    MemberStateTest, accepted_configuration_keeps_the_state_and_records_roles
+) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
     MemberObject f;
     f.create(*queue);
@@ -225,7 +226,7 @@ TEST(MemberStateTest, set_config_keeps_the_state_and_records_roles) {
     config.nroles = 2;
     config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
     config.roles[1] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
-    run(*queue, f.target.set_member_config(*queue, 0, config, 0));
+    run(*queue, rawstor::tests::force_config(*queue, f.target, 0, config));
 
     RawstorObjectMeta meta = f.meta(*queue);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
@@ -314,9 +315,7 @@ void expect_clear_lost_with_writer(MemberObject& f) {
     ASSERT_EQ(meta.writers, 1u);
     RawstorObjectConfig config = meta.config;
     ++config.epoch;
-    run(*queue, f.target.set_member_config(
-                    *queue, 0, config, RAWSTOR_CONFIG_CLEAR_LOST
-                ));
+    run(*queue, rawstor::tests::force_heal_end(*queue, f.target, 0, config));
     meta = f.meta(*queue);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     EXPECT_EQ(meta.writers, 1u);
@@ -371,7 +370,8 @@ void expect_thread_shared_copy_state(MemberObject& f) {
             config.nroles = 1;
             config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
             EXPECT_NO_THROW(
-                run(*queue, f.target.set_member_config(*queue, 0, config, 0))
+                run(*queue,
+                    rawstor::tests::force_config(*queue, f.target, 0, config))
             );
         }
         phase.arrive_and_wait();
@@ -464,7 +464,7 @@ void expect_copy_write_requests(const rawstd::URI& location) {
     config.epoch = 5;
     config.nroles = 1;
     config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
-    run(*queue, peer->set_config(id, 0, 0, config, 0));
+    run(*queue, rawstor::tests::force_config(*peer, id, 0, 0, config));
     std::string client_data(512, 'W');
     expect_stale(
         writer->pwrite(client_data.data(), client_data.size(), 512, false, 4)
@@ -488,7 +488,7 @@ void expect_copy_write_requests(const rawstd::URI& location) {
 
     config.epoch = 7;
     config.roles[0] = RAWSTOR_OBJECT_MEMBER_SYNCING;
-    run(*queue, peer->set_config(id, 0, 0, config, 0));
+    run(*queue, rawstor::tests::force_config(*peer, id, 0, 0, config));
     ASSERT_EQ(
         run(*queue, writer->pwrite(
                         client_data.data(), client_data.size(), 512, false, 7
@@ -550,7 +550,7 @@ void expect_copy_write_requests(const rawstd::URI& location) {
     }
     config.epoch = 9;
     config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
-    run(*queue, peer->set_config(id, 0, 0, config, 0));
+    run(*queue, rawstor::tests::force_config(*peer, id, 0, 0, config));
     std::string actual(block.size(), '\0');
     ASSERT_EQ(
         run(*queue, peer->pread(actual.data(), actual.size(), 4096)),
@@ -631,7 +631,7 @@ TEST(
     config.epoch = 1;
     config.nroles = 1;
     config.roles[0] = RAWSTOR_OBJECT_MEMBER_SYNCING;
-    run(*queue, slot->set_config(id, 0, 0, config, 0));
+    run(*queue, rawstor::tests::force_config(*slot, id, 0, 0, config));
     char data = 'B';
     size_t count = 0;
     bool limited = false;

@@ -35,7 +35,7 @@ numbers its stages separately.
 | Backend health / `LOCATION_INFO` collector | — | ✅ | `mds/src/monitor.cpp`, `mds/src/opts.cpp` |
 | Protocol version + feature bits in `SET_OBJECT` | — | ❌ | — |
 | Unified response frame `{res, len, hash}` | — | ❌ | — |
-| Witness: metadata-only members and quorum | 3 | ✅ | `src/chunk.cpp`, `Backend::set_config()`, SQLite witness records |
+| Witness: metadata-only members and quorum | 3 | ✅ | `src/chunk.cpp`, SQLite witness records |
 | Witness: durable states, voting rules, synchronous barriers, re-attach | 3 | ✅ | `src/chunk.cpp` |
 | MDS replication (primary + log) | v2+ | ❌ | — |
 | EC policy | v2+ | ❌ | — |
@@ -81,7 +81,7 @@ MDS encodes object commands and decodes their responses directly in
 its chunk map and route data to the nested object; native witness metadata
 uses the protected nonvirtual wire requests directly. OST implements its
 virtual member operations by forwarding to those same requests. Shared
-`set_config`, `set_state`, and `info` implementations are final in the wire
+`set_state` and `info` implementations are final in the wire
 base class. OST data I/O (`READ`, `WRITE`,
 `DISCARD`, `WRITE_ZEROES`, `FLUSH`) is implemented in `ost::Backend`
 (`src/ost_backend.cpp`); MDS data I/O routes to its nested object.
@@ -171,7 +171,7 @@ in four places and spent on one addition:
 
 | Draft decision | Verdict | Why |
 |---|---|---|
-| Separate MDS wire protocol, distinct magic `rsmd` | **Changed: single protocol with OST** | An OST doubles as a partial MDS (the witness subset — `META`/`SET_CONFIG` — already exists on OSTs today); one framing/parsing stack; misconnection safety comes from `-ENOSYS` on unknown opcodes instead of a magic mismatch |
+| Separate MDS wire protocol, distinct magic `rsmd` | **Changed: single protocol with OST** | An OST doubles as a partial MDS (the witness subset — `META` and the register's requests — already exists on OSTs today); one framing/parsing stack; misconnection safety comes from `-ENOSYS` on unknown opcodes instead of a magic mismatch |
 | Explicit stored map (not CRUSH-computed) | Keep | ≤ 1024 entries/TiB; placement function stays the generator |
 | Weighted rendezvous (HRW) placement | Keep | deterministic, minimal reshuffle, stateless, O(N) fine at this scale |
 | Hand-rolled packed structs, count prefixes, `format_version` | Keep | codebase idiom, no new dependency |
@@ -491,7 +491,7 @@ Role matrix:
 | session (`SET_OBJECT`) | yes | yes | yes |
 | data (`READ`,`WRITE`,`DISCARD`,`FLUSH`) | yes | yes | no (`-ENOSYS`) |
 | member lifecycle (`ALLOCATE`,`RELEASE`) | yes | yes | witness members only |
-| member metadata (`META`, `SET_CONFIG`) | yes | yes | witness members only |
+| member metadata (`META`, `SYNC_PREPARE`, `SYNC_ACCEPT`) | yes | yes | witness members only |
 | member listing (`LIST` + `META`) | yes | yes | yes |
 | reconstruct scan (`LIST` + member `META`) | yes | yes | `LIST` serves registered objects and native witnesses |
 | object commands (`CMD_OBJ_*`) | no | optional | yes |
@@ -882,14 +882,13 @@ opens. Member ordering and the member set must stay fixed. Interprocess
 coordination between independently attached writers is multiattach stage 2
 and is not implemented by this feature.
 
-`Backend::set_config()` atomically stores the record's state and configuration.
-Chunk uses the same member configuration/state update path for DATA and
-witness members. The caller decides whether quorum permits recreating a
+Chunk decides the configuration through the same register requests for DATA
+and witness members. The caller decides whether quorum permits recreating a
 missing member. The member role selects
 the allocation type; it does not select a separate state-write operation.
 After recreation, Chunk re-reads META to obtain the persisted member record.
-The OST transports it using `SET_CONFIG`; MDS commits it in SQLite WAL with
-`synchronous=FULL`. The block backends use their existing metadata format:
+The OST transports the requests as `SYNC_PREPARE`/`SYNC_ACCEPT`; MDS commits
+them in SQLite WAL with `synchronous=FULL`. The block backends use their existing metadata format:
 file witnesses keep an empty data file plus metadata, LVM witnesses use a
 minimum-size LV and its tag, and ZFS witnesses use a minimum-size zvol and its
 property. All BLK members persist the requested logical size in native
@@ -910,7 +909,7 @@ configuration register ([multi-attach Stage 2](multiattach.md#implementation-sta
 storing `promised`, `accepted` and the accepted configuration. On every
 member type it confirms `SYNC_PREPARE` / `SYNC_ACCEPT` only after persisting
 the transition; the MDS commits them in the same SQLite transaction as the
-record read (`synchronous=FULL`), and `SET_CONFIG` keeps the ballots.
+record read (`synchronous=FULL`).
 Two data copies and their witness provide three register votes; any
 two form a majority. The witness is omitted from data I/O; its role remains in the complete
 configuration and target member numbering.
@@ -924,7 +923,7 @@ A witness is a **metadata-only member** of a chunk's quorum: it
 stores the consistency tuple (`state`-like record, `sync_id`,
 `sync_id_history`, `mirror_epoch`) and holds no data. For N=2 data mirrors it
 is the third vote that restores auto-start with one OST down. Implementation:
-any server speaking the witness subset (`ALLOCATE`/`META`/`SET_CONFIG`/`RELEASE`) — a plain OST, an
+any server speaking the witness subset (`ALLOCATE`/`META`/`SYNC_PREPARE`/`SYNC_ACCEPT`/`RELEASE`) — a plain OST, an
 OST doubling as partial MDS, or the MDS itself. The member appears in the
 target list like any other member; data I/O and the data-copy phase of resync skip it. Its stored
 record carries `member_role = WITNESS` (see `chunk_meta`), so the
@@ -936,20 +935,19 @@ host for a data slot.
 The witness participates in the same synchronous configuration barriers as
 other members. Every member stores `epoch`, `sync_id`, history and the
 complete role array. IN_SYNC, SYNCING and EXCLUDED determine membership;
-CLEAN, DIRTY and LOST describe the stored state. LOST remains sticky through
-ordinary barriers and clean departure; resync or explicit CLEAR_LOST clears it.
-LOST is treated as DIRTY
-when reconciling a generation for either member type. It does not by itself
-exclude a vote. A witness has no data writer sessions.
+CLEAN, DIRTY and LOST describe a copy's stored state, which the copy keeps
+itself from its writer sessions; a witness has no copy and no writer
+session, so its state stays as created. LOST remains sticky through
+ordinary barriers and clean departure; the end of a resync or of a heal
+clears it ([Clearing LOST](multiattach.md#clearing-lost)).
 
 | Moment | Durable record before dependent acknowledgements |
 |---|---|
 | creation | identical initial CLEAN generation on all members |
-| first write / read-repair | DIRTY state and consistent configuration on all voters |
-| runtime degradation | new generation and surviving composition on all remaining voters |
-| resync completion | configuration promoting the rejoined member, with DIRTY state |
-| last writer's clean close | CLEAN state after data writes have been flushed |
-| unclean close | LOST state on remaining members |
+| first write / read-repair | consistent configuration decided on all voters |
+| runtime degradation | new generation and surviving composition decided on all remaining voters |
+| resync start | the member syncing, the writer its owner, a new epoch |
+| resync completion | configuration promoting the rejoined member, a new generation |
 
 Configuration updates may run in parallel. The synchronous barrier waits
 for all updates, excludes failed members, records the resulting composition
@@ -1124,11 +1122,10 @@ a response head plus `{hash, res}` body (`res` is the following payload's
 length), and a Basic `SET_OBJECT` handshake with object/chunk/version and
 open flags. I/O offsets are local to the chunk bound by that handshake.
 
-Witness metadata uses the existing 360-byte Meta record: state encodes
-`CLEAN` / `DIRTY` / `LOST`, and `config.roles` identifies
-survivors in member order.
-`SET_CONFIG` atomically persists state plus
-configuration using the existing SetConfig request layout. Ordinary `LIST`
+Witness metadata uses the existing 360-byte Meta record: `config.roles`
+identifies survivors in member order.
+`SYNC_PREPARE`/`SYNC_ACCEPT` atomically persist the ballots and the
+configuration using the SyncPropose request layout. Ordinary `LIST`
 reports both registered objects and native witness records on MDS. Internally,
 a listing group with empty offsets addresses a whole object; `{0}` addresses
 one physical chunk at offset zero. Registered-object rows have empty offsets; native witness rows preserve
@@ -1137,9 +1134,7 @@ witness shares the UUID. Native ost:// access lists the witness records. No data
 I/O or CoW operation is issued to a witness.
 
 Protocol version/feature negotiation and an I/O `map_epoch` fence are
-future extensions. The current client still tolerates `-ENOSYS` from
-configuration-only `SET_CONFIG`; state updates require support for
-the optional state field.
+future extensions.
 Interprocess mirror coordination remains multiattach stage 2.
 
 ## Implementation stages

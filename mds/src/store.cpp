@@ -566,28 +566,6 @@ ObjectStore::witness_meta(const RawstdUUID& id, uint64_t offset) {
     return _load_witness(id, offset);
 }
 
-void ObjectStore::set_config(
-    const RawstdUUID& id, uint64_t offset, const RawstorObjectConfig& config,
-    unsigned int flags, std::optional<RawstorObjectSyncStateValue> state
-) {
-    if ((flags & ~RAWSTOR_CONFIG_CLEAR_LOST) != 0 ||
-        (state && (flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0)) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    std::lock_guard<std::mutex> guard(_mutex);
-    Transaction tx(_db);
-    RawstorObjectMeta meta = _load_witness(id, offset);
-    if (state) {
-        meta.state = *state;
-    } else if ((flags & RAWSTOR_CONFIG_CLEAR_LOST) != 0 &&
-               meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST) {
-        meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
-    }
-    meta.config = config;
-    _store_witness(id, offset, meta);
-    tx.commit();
-}
-
 RawstorObjectMeta ObjectStore::sync_prepare(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
     bool& ok
@@ -600,6 +578,9 @@ RawstorObjectMeta ObjectStore::sync_prepare(
         {meta.accepted.counter, meta.accepted.proposer},
         meta.config
     };
+    if (!state.within_jump({ballot.counter, ballot.proposer})) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     ok = state.prepare({ballot.counter, ballot.proposer});
     if (ok) {
         meta.promised = {state.promised().counter, state.promised().proposer};
@@ -621,6 +602,10 @@ RawstorObjectMeta ObjectStore::sync_accept(
         {meta.accepted.counter, meta.accepted.proposer},
         meta.config
     };
+    if (!state.within_jump({ballot.counter, ballot.proposer}) ||
+        !state.within_jump({next.counter, next.proposer})) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     ok = state.accept(
         {ballot.counter, ballot.proposer}, config, {next.counter, next.proposer}
     );

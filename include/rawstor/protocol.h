@@ -69,7 +69,6 @@ extern "C" {
 #define RAWSTOR_CMD_LOCATION_INFO 0x08
 #define RAWSTOR_CMD_FLUSH 0x09
 #define RAWSTOR_CMD_WRITE_ZEROES 0x0a
-#define RAWSTOR_CMD_SET_CONFIG 0x0b
 #define RAWSTOR_CMD_META 0x0c
 /*
  * Native CoW version of one stored object (docs/mds.md,
@@ -321,32 +320,6 @@ struct RawstorFrameConfig {
 } RAWSTOR_PACKED;
 
 /*
- * SET_CONFIG's request: the configuration to record on one copy and
- * RAWSTOR_CONFIG_* `flags` (<rawstor/target.h>). The copy's own state is
- * preserved when the optional state byte is zero.
- * `member_index` is the copy's position among the
- * chunk's members, which `config.roles` is indexed by: the copy takes its
- * own role from it. Unlike META, it isn't wrapped in a
- * RawstorFrameBasicPayload of its own, so object_id/chunk_offset here are the
- * only way the server learns which object (and which of its chunks --
- * docs/mds.md, "Chunk identity") this applies to.
- */
-struct RawstorFrameSetConfigPayload {
-    uint8_t object_id[16];
-    uint64_t chunk_offset;
-    struct RawstorFrameConfig config;
-    uint8_t flags;
-    uint8_t member_index;
-    uint8_t state; /* 0 = preserve; otherwise RawstorObjectSyncStateValue */
-} RAWSTOR_PACKED;
-
-/* SET_CONFIG request */
-struct RawstorFrameSetConfig {
-    struct RawstorFrameHead head;
-    struct RawstorFrameSetConfigPayload payload;
-} RAWSTOR_PACKED;
-
-/*
  * ALLOCATE's request: the object to create's size and width. Unlike
  * META's response (RawstorFrameMetaPayload below), this does need
  * object_id -- it isn't wrapped in a RawstorFrameBasicPayload of its
@@ -403,8 +376,7 @@ struct RawstorFrameResponse {
  * full chunk_size), the copy's own state and live writer count, and the
  * chunk's configuration as last set on it (see docs/mirroring.md) -- the
  * one wire round trip that reports everything a caller could want about
- * one copy. The only per-copy response payload -- SET_CONFIG's request
- * is RawstorFrameSetConfigPayload (configuration and optional state). No
+ * one copy. The only per-copy response payload. No
  * object_id: this is only ever a response, correlated to its request via
  * RawstorFrameHead::cid
  * -- the caller already knows which object it asked about. Sent as a
@@ -435,8 +407,8 @@ struct RawstorFrameMetaPayload {
  * the ballot to promise on success (`next`, zero for none), the register's
  * value (`config`). Acceptance is one vote; the caller obtains a majority
  * of register acceptors, including the witness for two data copies.
- * `member_index` is the copy's position among the chunk's data members, as for
- * SET_CONFIG.
+ * `member_index` is the copy's position among the chunk's members, which
+ * `config.roles` is indexed by: the copy takes its own role from it.
  */
 struct RawstorFrameSyncProposePayload {
     uint8_t object_id[16];
@@ -690,21 +662,6 @@ static inline int rawstor_frame_meta_encode(
     return rawstor_frame_config_encode(&out->config, &in->config);
 }
 
-/*
- * SET_CONFIG's optional state: 0 (RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE)
- * means "preserve", anything else is a copy state.
- */
-static inline int rawstor_frame_set_config_state_decode(
-    const struct RawstorFrameSetConfigPayload* in,
-    enum RawstorObjectSyncStateValue* out
-) {
-    if (in->state > RAWSTOR_OBJECT_SYNC_STATE_LOST) {
-        return EINVAL;
-    }
-    *out = (enum RawstorObjectSyncStateValue)in->state;
-    return 0;
-}
-
 static inline int rawstor_frame_meta_decode(
     const struct RawstorFrameMetaPayload* in, struct RawstorObjectMeta* out
 ) {
@@ -789,7 +746,6 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameVersionEntry, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 29);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorObjectBallot, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameConfig, 312);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetConfigPayload, 339);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncProposePayload, 369);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAllocatePayload, 44);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameResponseBody, 12);

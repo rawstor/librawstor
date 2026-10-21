@@ -41,64 +41,6 @@
 namespace rawstor {
 namespace wire {
 
-class BackendOpSetConfig final : public BackendOp {
-private:
-    RawstorFrameSetConfig _request;
-
-public:
-    BackendOpSetConfig(
-        const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
-        const RawstdUUID& id, uint64_t chunk_offset, uint8_t member_index,
-        const RawstorObjectConfig& config, unsigned int flags,
-        const rawstd::TraceEvent& trace_event,
-        std::optional<RawstorObjectSyncStateValue> state
-    ) :
-        BackendOp(backend, cid, trace_event, "set_config", 0, 0),
-        _request{} {
-        _request.head = {
-            .magic = RAWSTOR_MAGIC,
-            .cmd = RAWSTOR_CMD_SET_CONFIG,
-            .cid = cid,
-        };
-        memcpy(
-            _request.payload.object_id, id.bytes,
-            sizeof(_request.payload.object_id)
-        );
-        _request.payload.chunk_offset = chunk_offset;
-        if (int error = rawstor_frame_config_encode(
-                &_request.payload.config, &config
-            )) {
-            RAWSTD_THROW_SYSTEM_ERROR(error);
-        }
-        _request.payload.flags = static_cast<uint8_t>(flags);
-        _request.payload.member_index = member_index;
-        _request.payload.state = state ? static_cast<uint8_t>(*state) : 0;
-    }
-
-    const void* request_data() const noexcept { return &_request; }
-
-    size_t request_size() const noexcept override { return sizeof(_request); }
-
-    size_t
-    response_head_cb(const RawstorFrameResponse* response, int error) override {
-        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
-
-        if (!error) {
-            error = validate_response(response);
-        }
-
-        if (!error) {
-            error = validate_cmd(response->head.cmd, _request.head.cmd);
-        }
-
-        _dispatch(0, error);
-
-        // A set_config response never carries a body, regardless of
-        // error.
-        return 0;
-    }
-};
-
 // SYNC_PREPARE/SYNC_ACCEPT: the request as built by the caller, the reply
 // a fixed-size RawstorFrameSyncReplyPayload whether the member agreed or
 // not.
@@ -1126,37 +1068,6 @@ rawstd::Task<void> Backend::set_state(
     RawstorObjectSyncStateValue
 ) {
     co_return;
-}
-
-rawstd::Task<void> Backend::set_config(
-    const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-    const RawstorObjectConfig& config, unsigned int flags,
-    std::optional<RawstorObjectSyncStateValue> state
-) {
-    _validate_config_update(flags, state);
-    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "fd = %d\n", fd());
-
-    std::shared_ptr<BackendOpSetConfig> op =
-        std::make_shared<BackendOpSetConfig>(
-            std::static_pointer_cast<Backend>(shared_from_this()),
-            _cid_counter++, id, offset, member_index, config, flags,
-            trace_event, state
-        );
-    _add_op(op);
-
-    try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
-        );
-        RAWSTD_TRACE_EVENT_MESSAGE(
-            trace_event, "%zu of %zu\n", result, op->request_size()
-        );
-        op->request_cb(validate_result(op->request_size(), result));
-    } catch (const std::system_error& e) {
-        op->request_cb(e.code().value());
-    }
-
-    co_await *op;
 }
 
 rawstd::Task<RawstorLocationInfo> Backend::info() {

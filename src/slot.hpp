@@ -53,11 +53,6 @@ private:
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstdUUID& version_id
     );
-    rawstd::Task<void> _set_config(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-        const RawstorObjectConfig& config, unsigned int flags,
-        std::optional<RawstorObjectSyncStateValue> state
-    );
     rawstd::Task<bool> _sync_prepare(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, RawstorObjectMeta& meta
@@ -226,12 +221,6 @@ public:
 
     rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
-    );
-
-    rawstd::Task<void> set_config(
-        const RawstdUUID& id, uint64_t offset, uint8_t member_index,
-        const RawstorObjectConfig& config, unsigned int flags,
-        std::optional<RawstorObjectSyncStateValue> state = std::nullopt
     );
 
     rawstd::Task<bool> sync_prepare(

@@ -30,18 +30,6 @@ using rawstor::mdsserver::VersionMember;
 // for no particular number, 0) gets this many.
 const unsigned int list_limit = 1024;
 
-std::optional<RawstorObjectSyncStateValue>
-decode_config_state(const RawstorFrameSetConfigPayload& payload) {
-    RawstorObjectSyncStateValue state;
-    if (int error = rawstor_frame_set_config_state_decode(&payload, &state)) {
-        RAWSTD_THROW_SYSTEM_ERROR(error);
-    }
-    if (state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
-        return std::nullopt;
-    }
-    return state;
-}
-
 int recv_trampoline(ssize_t result, void* data) {
     size_t value = result < 0 ? 0 : static_cast<size_t>(result);
     int error = result < 0 ? static_cast<int>(-result) : 0;
@@ -368,26 +356,6 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
             head.cmd, head.cid, res, res > 0 ? &out : nullptr,
             res > 0 ? sizeof(out) : 0
         );
-        break;
-    }
-    case RAWSTOR_CMD_SET_CONFIG: {
-        RawstorFrameSetConfigPayload payload{};
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
-        int32_t res = 0;
-        try {
-            RawstorObjectConfig config{};
-            if (int error =
-                    rawstor_frame_config_decode(&payload.config, &config)) {
-                RAWSTD_THROW_SYSTEM_ERROR(error);
-            }
-            store.set_config(
-                uuid_of(payload.object_id), payload.chunk_offset, config,
-                payload.flags, decode_config_state(payload)
-            );
-        } catch (const std::system_error& e) {
-            res = -e.code().value();
-        }
-        co_await client->_send_response(head.cmd, head.cid, res);
         break;
     }
     case RAWSTOR_CMD_SYNC_PREPARE:

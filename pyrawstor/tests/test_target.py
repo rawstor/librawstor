@@ -112,32 +112,22 @@ class TestTarget(unittest.TestCase):
 
             target.remove()
 
-    def test_optional_member_state(self):
+    def test_sync_accept(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             target = rawstor.Location(f"file://{temp_dir}").create(
                 size=65536, width=1)
             config = rawstor.librawstor.ObjectConfig(epoch=1, sync_id=41)
-            target.set_member_config(
-                config, state=rawstor.OBJECT_SYNC_STATE_DIRTY)
-            self.assertEqual(target.meta()[0].state,
-                             rawstor.OBJECT_SYNC_STATE_DIRTY)
-            config.sync_id = 42
-            target.set_member_config(config, state=None)
-            self.assertEqual(target.meta()[0].state,
-                             rawstor.OBJECT_SYNC_STATE_DIRTY)
-            self.assertEqual(target.meta()[0].sync_id, 42)
-            target.set_member_config(
-                config, state=rawstor.OBJECT_SYNC_STATE_CLEAN)
+            self.assertTrue(target.sync_accept(config, 5, 1))
+            self.assertEqual(target.meta()[0].sync_id, 41)
+            # A copy keeps its own state when it accepts a configuration.
             self.assertEqual(target.meta()[0].state,
                              rawstor.OBJECT_SYNC_STATE_CLEAN)
-            with self.assertRaises(ValueError):
-                target.set_member_config(
-                    config, state=rawstor.OBJECT_SYNC_STATE_UNREACHABLE)
-            with self.assertRaises(OSError) as error:
-                target.set_member_config(
-                    config, flags=rawstor.CONFIG_CLEAR_LOST,
-                    state=rawstor.OBJECT_SYNC_STATE_CLEAN)
-            self.assertEqual(error.exception.errno, errno.EINVAL)
+            config.sync_id = 42
+            # A ballot at or below the accepted one is refused.
+            self.assertFalse(target.sync_accept(config, 5, 1))
+            self.assertEqual(target.meta()[0].sync_id, 41)
+            self.assertTrue(target.sync_accept(config, 6, 1))
+            self.assertEqual(target.meta()[0].sync_id, 42)
             target.remove()
 
     def test_chunks(self):
