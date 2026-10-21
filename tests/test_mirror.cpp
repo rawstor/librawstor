@@ -13,6 +13,8 @@
 
 #include <gtest/gtest.h>
 
+#include <unistd.h>
+
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
@@ -1090,6 +1092,257 @@ TEST(MirrorResyncTest, member_refusing_its_rejoin_is_excluded_again) {
 
     std::string block(4096, 'W');
     object_write(queue, object, block.data(), block.size(), 0, 0);
+    object_close_clean(queue, object);
+}
+
+// Another writer decides a new configuration (here: it excludes the third
+// member) while this one has the object open. This writer's next write is
+// refused for its old epoch; it takes the decision over and writes to the
+// members the decision names, instead of excluding the members that refused.
+TEST(MirrorQuorumTest, write_takes_over_another_writers_decision) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000d1");
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    std::string first = "first";
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+
+    // The decision of the other writer, on a majority of the members.
+    RawstorObjectMeta before{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &before), 0);
+    RawstorObjectConfig decided = before.config;
+    ++decided.epoch;
+    memmove(
+        &decided.sync_id_history[1], decided.sync_id_history,
+        (RAWSTOR_OBJECT_SYNC_ID_HISTORY - 1) * sizeof(uint64_t)
+    );
+    decided.sync_id_history[0] = decided.sync_id;
+    decided.sync_id = 0x5151515151515151ull;
+    ASSERT_EQ(decided.nroles, 3);
+    decided.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    ASSERT_EQ(target_set_config(queue, members.target(0), decided), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(1), decided), 0);
+
+    testing::internal::CaptureStderr();
+    std::string second = "second";
+    object_write(queue, object, second.data(), second.size(), 16, 0);
+    std::string log = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(log.find("Mirror member degraded"), std::string::npos) << log;
+
+    // This writer made no decision of its own, and wrote to the members the
+    // other writer's decision names.
+    for (size_t i : {0, 1}) {
+        RawstorObjectMeta meta{};
+        ASSERT_EQ(target_meta(queue, members.target(i), &meta), 0);
+        EXPECT_EQ(meta.config.epoch, decided.epoch) << i;
+        EXPECT_EQ(meta.config.sync_id, decided.sync_id) << i;
+        EXPECT_EQ(meta.config.roles[2], RAWSTOR_OBJECT_MEMBER_EXCLUDED) << i;
+        EXPECT_EQ(read_file(members.dat(i)).substr(16, second.size()), second)
+            << i;
+    }
+    // The excluded member keeps its record. The first attempt of the write
+    // may have reached it before the refusals came; it is resynced anyway.
+    RawstorObjectMeta third{};
+    ASSERT_EQ(target_meta(queue, members.target(2), &third), 0);
+    EXPECT_EQ(third.config.epoch, before.config.epoch);
+    EXPECT_EQ(third.config.sync_id, before.config.sync_id);
+
+    // The writes that follow need no second look at the register.
+    std::string third_write = "third";
+    object_write(queue, object, third_write.data(), third_write.size(), 32, 0);
+    object_close_clean(queue, object);
+}
+
+// A member this writer is excluding stays excluded when another writer's
+// decision names it in-sync: its writes failed here, and none may be
+// acknowledged without it in the set. The exclusion is recorded on top of the
+// decision.
+TEST(MirrorQuorumTest, pending_exclusion_survives_another_writers_decision) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000d7");
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    // The last member is a scripted OST that answers as the copy it
+    // replaces, and fails the second write.
+    RawstorObjectMeta replaced{};
+    ASSERT_EQ(target_meta(queue, members.target(2), &replaced), 0);
+    RawstorFrameMetaPayload meta{};
+    ASSERT_EQ(rawstor_frame_meta_encode(&meta, &replaced), 0);
+
+    const std::string first = "first";
+    const std::string second = "second";
+    std::atomic<bool> injected(false);
+    RawstorObjectConfig decided{};
+    rawstor::tests::Server server(8760, 256);
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, meta);
+        // The dirty gate of the first write: a prepare and an accept.
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 3, 0, meta);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 5, 0, meta);
+        s.cmd_write(RAWSTOR_MAGIC, 7, first.size());
+        // The second write reaches this member once the other two have it.
+        // Before the member fails it, another writer decides a configuration
+        // that names every member in-sync, on the other two.
+        server.read(
+            "second WRITE <<<", sizeof(RawstorFrameIO) + second.size(),
+            [&](const void*) {
+                for (int i = 0; i < 5000; ++i) {
+                    if (read_file(members.dat(0)).substr(16, second.size()) ==
+                            second &&
+                        read_file(members.dat(1)).substr(16, second.size()) ==
+                            second) {
+                        break;
+                    }
+                    usleep(1000);
+                }
+                Queue other(16);
+                RawstorObjectMeta before{};
+                if (target_meta(other, members.target(0), &before) != 0) {
+                    return;
+                }
+                decided = before.config;
+                ++decided.epoch;
+                for (size_t i : {0, 1}) {
+                    if (target_set_config(other, members.target(i), decided) !=
+                        0) {
+                        return;
+                    }
+                }
+                injected = true;
+            }
+        );
+        s.cmd_write_response(RAWSTOR_MAGIC, 8, -EINVAL);
+    }
+
+    std::string target =
+        members.target(0) + "," + members.target(1) +
+        ",ost://127.0.0.1:8760/00000000-0000-7000-8000-0000000000d7";
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, target, &object), 0);
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+    object_write(queue, object, second.data(), second.size(), 16, 0);
+    ASSERT_TRUE(injected);
+    object_close_clean(queue, object);
+
+    for (size_t i : {0, 1}) {
+        RawstorObjectMeta recorded{};
+        ASSERT_EQ(target_meta(queue, members.target(i), &recorded), 0);
+        EXPECT_EQ(recorded.config.roles[2], RAWSTOR_OBJECT_MEMBER_EXCLUDED)
+            << i;
+        EXPECT_EQ(recorded.config.epoch, decided.epoch + 1) << i;
+        EXPECT_NE(recorded.config.sync_id, decided.sync_id) << i;
+    }
+}
+
+// A transition of this writer meets another writer's decision first: the
+// dirty gate of its first write takes the decision over and records the set
+// as it is decided, instead of replacing it with this writer's view of the
+// chunk.
+TEST(MirrorQuorumTest, dirty_gate_builds_on_another_writers_decision) {
+    Queue queue(16);
+    Members members(5, "00000000-0000-7000-8000-0000000000d2");
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 5,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+
+    // The other writer excludes the last member, deciding on a majority.
+    RawstorObjectMeta before{};
+    ASSERT_EQ(target_meta(queue, members.target(1), &before), 0);
+    RawstorObjectConfig decided = before.config;
+    ++decided.epoch;
+    decided.sync_id_history[0] = decided.sync_id;
+    decided.sync_id = 0x5252525252525252ull;
+    ASSERT_EQ(decided.nroles, 5);
+    decided.roles[4] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    for (size_t i : {1, 2, 3}) {
+        ASSERT_EQ(target_set_config(queue, members.target(i), decided), 0);
+    }
+
+    std::string first = "first";
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+    object_close_clean(queue, object);
+
+    for (size_t i : {0, 1, 2, 3}) {
+        RawstorObjectMeta meta{};
+        ASSERT_EQ(target_meta(queue, members.target(i), &meta), 0);
+        EXPECT_EQ(meta.config.epoch, decided.epoch) << i;
+        EXPECT_EQ(meta.config.sync_id, decided.sync_id) << i;
+        EXPECT_EQ(meta.config.roles[4], RAWSTOR_OBJECT_MEMBER_EXCLUDED) << i;
+        EXPECT_EQ(meta.config.roles[i], RAWSTOR_OBJECT_MEMBER_IN_SYNC) << i;
+    }
+    RawstorObjectMeta last{};
+    ASSERT_EQ(target_meta(queue, members.target(4), &last), 0);
+    EXPECT_EQ(last.config.epoch, before.config.epoch);
+}
+
+// Another writer starts a resync onto the third member. This writer takes
+// the decision over at its next write and duplicates its writes onto the
+// member too, without a resync of its own to attach to.
+TEST(MirrorResyncTest, write_duplicates_onto_another_writers_syncing_member) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000d3");
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    std::string first = "first";
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+
+    RawstorObjectMeta before{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &before), 0);
+    RawstorObjectConfig decided = before.config;
+    ++decided.epoch;
+    decided.roles[2] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+    decided.resync_owner = 0x77;
+    for (size_t i : {0, 1, 2}) {
+        ASSERT_EQ(target_set_config(queue, members.target(i), decided), 0);
+    }
+
+    std::string second = "second";
+    object_write(queue, object, second.data(), second.size(), 16, 0);
+
+    for (size_t i : {0, 1, 2}) {
+        RawstorObjectMeta meta{};
+        ASSERT_EQ(target_meta(queue, members.target(i), &meta), 0);
+        EXPECT_EQ(meta.config.epoch, decided.epoch) << i;
+        EXPECT_EQ(meta.config.roles[2], RAWSTOR_OBJECT_MEMBER_SYNCING) << i;
+        EXPECT_EQ(read_file(members.dat(i)).substr(16, second.size()), second)
+            << i;
+    }
     object_close_clean(queue, object);
 }
 

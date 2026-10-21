@@ -23,7 +23,7 @@ separately.
 | `Proposer<V>`: a change as a coroutine over a pluggable transport | 2 | ✅ | `librawstd/include/rawstd/caspaxos.hpp`, [CASPaxos](caspaxos.md#api) |
 | Every transition of the client through the register: dirty gate, exclusion, resync start and rejoin, end of a heal | 2 | ✅ | `src/chunk.cpp` (`Chunk::_decide()`, `_record()`) |
 | The client stamps writes with its chunk configuration epoch | 1 | ✅ | ordinary Chunk operations supply the current epoch |
-| Adoption of the register value on `-ESTALE` from another writer process | 2 | ❌ | the client Proposer exists; the write path only waits for a transition of its own process |
+| Adoption of the register value on `-ESTALE` from another writer process | 2 | ✅ | `src/chunk.cpp` (`Chunk::_adopt()`, `_adopt_locked()`, `_fan_out_write()`) |
 | `LOST` at open and at runtime: resync of the losers | 2 | 🟡 | one process: its open heals the copies in the set and then clears `LOST` ([Mirroring](mirroring.md), F5); several writers: not implemented |
 | Resync across processes (`resync_owner`, sweep with `RESYNC`) | 2 | ❌ | — |
 | `LOST` cleared by a rule on the accepted value | 2 | ✅ | [Clearing `LOST`](#clearing-lost), `src/slot.cpp` (`clears_lost()`) |
@@ -337,9 +337,15 @@ sequenceDiagram
     Note over Y: META, adopt epoch 8, retry
 ```
 
-With stage 2, a writer that gets `-ESTALE` reads the register from a
-majority (`META`), adopts the configuration -- exclusions, a syncing member
-to duplicate onto, a rejoined member -- and retries the write. A decided
+A writer that gets `-ESTALE` and has no transition of its own in flight
+reads the register from a majority (an unchanged value decided anew, so
+that what it reads is decided), adopts the configuration -- the members it
+excludes turn stale here too, a syncing member is duplicated onto, a
+rejoined member is in-sync -- and writes again from the start, on the
+members the configuration names. What the first attempt wrote is written
+again to the same place. A transition of this writer that finds a
+configuration newer than its own takes it over the same way and makes its
+change on top of it. A decided
 transition is accepted by a majority, and every write needs every member
 its writer believes in-sync; both sets are majorities and therefore intersect, so a writer
 can never acknowledge a write against an outdated configuration (A3).
@@ -527,6 +533,6 @@ record or frames, so both change in place. Details in
    `rawstd::caspaxos::Proposer` integrated; every transition of the client
    through the register; a rule for clearing `LOST`; `SET_CONFIG` and
    `rawstor_target_set_member_config()` removed; the register value kept
-   once per chunk in the client. Left: adoption of the committed
-   configuration on `-ESTALE` from another writer; resync of `LOST` chunks
+   once per chunk in the client; adoption of another writer's decision on
+   `-ESTALE`, in a write and in a transition. Left: resync of `LOST` chunks
    with several writers; resync across processes.

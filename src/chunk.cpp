@@ -628,6 +628,7 @@ public:
         std::lock_guard<std::mutex> lock(_mutex);
         return _config.epoch;
     }
+    uint64_t epoch_locked() const noexcept { return _config.epoch; }
     RawstorObjectConfig
     configuration_locked(bool bump = false, bool joining = false) const {
         RawstorObjectConfig config{};
@@ -735,6 +736,72 @@ public:
     }
     // A decided configuration the members of the set already hold: writes
     // carry its epoch from now on.
+    // Takes over a configuration another writer decided: every member moves
+    // to the state its role in `v` stands for. A member this process cannot
+    // use (`usable` false) is not taken for in-sync; the next transition
+    // excludes it. Returns the members it turned STALE.
+    std::vector<size_t> adopt_decided_locked(
+        const RawstorObjectConfig& v, const std::vector<bool>& usable
+    ) {
+        std::vector<size_t> excluded;
+        if (v.nroles != _states.size()) {
+            if (v.nroles != 0) {
+                rawstd_warning(
+                    "Mirror register names %u members, this chunk has %zu: "
+                    "its configuration is not taken over\n",
+                    static_cast<unsigned>(v.nroles), _states.size()
+                );
+            }
+            return excluded;
+        }
+        for (size_t i = 0; i < _states.size(); ++i) {
+            auto to = [&](MemberState s) {
+                if (state(i) != s) {
+                    _states[i]->set(s);
+                }
+            };
+            switch (v.roles[i]) {
+            case RAWSTOR_OBJECT_MEMBER_SYNCING:
+                if (state(i) == MemberState::IN_SYNC) {
+                    to(MemberState::LEAVING);
+                }
+                if (state(i) == MemberState::LEAVING) {
+                    to(MemberState::STALE);
+                }
+                to(MemberState::SYNCING);
+                break;
+            case RAWSTOR_OBJECT_MEMBER_IN_SYNC:
+                // A member this process is excluding stays so, whatever the
+                // decision says: its writes failed here, none may be
+                // acknowledged without it in the set, and the exclusion
+                // dropped the session to it (`usable` is false). The next
+                // transition records the exclusion.
+                if (usable[i] && (state(i) == MemberState::STALE ||
+                                  state(i) == MemberState::SYNCING)) {
+                    if (state(i) == MemberState::STALE) {
+                        to(MemberState::SYNCING);
+                    }
+                    to(MemberState::IN_SYNC);
+                }
+                break;
+            default:
+                if (state(i) == MemberState::IN_SYNC) {
+                    to(MemberState::LEAVING);
+                }
+                if (state(i) == MemberState::LEAVING ||
+                    state(i) == MemberState::SYNCING) {
+                    to(MemberState::STALE);
+                    excluded.push_back(i);
+                }
+                break;
+            }
+        }
+        adopt_locked(v);
+        if (!needs_new_identity_locked()) {
+            complete_dirty_barrier_locked();
+        }
+        return excluded;
+    }
     void adopt_locked(const RawstorObjectConfig& config) {
         _config = config;
         for (size_t i = 0; i < _states.size(); ++i) {
@@ -1561,7 +1628,11 @@ struct Chunk::RegisterTransport {
         const RawstorObjectConfig& value, rawstd::caspaxos::Ballot next
     ) {
         Member& member = chunk._members[index];
-        if (!accepting[index]) {
+        // A member the value excludes keeps its record, whoever else takes
+        // part.
+        if (!accepting[index] ||
+            (index < value.nroles &&
+             value.roles[index] == RAWSTOR_OBJECT_MEMBER_EXCLUDED)) {
             RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
         }
         failed[index] = true;
@@ -1617,11 +1688,20 @@ rawstd::Task<void> Chunk::_decide(
     RegisterTransport transport{
         *this, accepting, std::vector<bool>(_members.size(), false)
     };
+    // A configuration decided by another writer is taken over, not
+    // overwritten with this process' view of the chunk.
+    std::optional<RawstorObjectConfig> foreign;
     try {
         co_await c.proposer().change(
             transport,
-            [&value](const RawstorObjectConfig&)
-                -> std::optional<RawstorObjectConfig> { return value; }
+            [&](const RawstorObjectConfig& current)
+                -> std::optional<RawstorObjectConfig> {
+                if (current.epoch > c.epoch()) {
+                    foreign = current;
+                    return std::nullopt;
+                }
+                return value;
+            }
         );
     } catch (const std::system_error& e) {
         if (e.code().value() != EHOSTUNREACH) {
@@ -1631,10 +1711,73 @@ rawstd::Task<void> Chunk::_decide(
         c.freeze_locked();
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
+    if (foreign) {
+        {
+            std::lock_guard<std::mutex> guard(c.mutex());
+            _adopt_locked(*foreign);
+        }
+        RAWSTD_THROW_SYSTEM_ERROR(ESTALE);
+    }
     for (size_t i = 0; i < _members.size(); ++i) {
         if (transport.failed[i]) {
             failed.push_back(i);
         }
+    }
+}
+
+/*
+ * Takes over a configuration another writer decided, with _control->mutex()
+ * held: the members it excludes turn STALE here too (this process' sessions
+ * to them are dropped, as for any exclusion), the one it names syncing is
+ * duplicated onto, and a resync this process runs for a member the decision
+ * does not name syncing ends.
+ */
+void Chunk::_adopt_locked(const RawstorObjectConfig& v) {
+    MirrorControl& c = *_control;
+    std::vector<bool> usable(_members.size());
+    for (size_t i = 0; i < _members.size(); ++i) {
+        usable[i] = _members[i].slot && _members[i].reachable;
+    }
+    for (size_t i : c.adopt_decided_locked(v, usable)) {
+        _members[i].reachable = false;
+    }
+    MirrorResync* r = c.resync_locked();
+    if (r != nullptr && r->announced() && !r->heal() &&
+        _state(r->member()) != MemberState::SYNCING && !r->committing()) {
+        _resync_abort_locked(
+            r->generation(), "another writer decided the configuration"
+        );
+    }
+}
+
+/*
+ * Reads the chunk's configuration from the register, with the transition
+ * lock held, and takes it over.
+ */
+rawstd::Task<void> Chunk::_adopt() {
+    MirrorControl& c = *_control;
+    RegisterTransport transport{
+        *this, std::vector<bool>(_members.size(), true),
+        std::vector<bool>(_members.size(), false)
+    };
+    RawstorObjectConfig decided;
+    try {
+        decided = co_await c.proposer().change(
+            transport,
+            [](const RawstorObjectConfig&)
+                -> std::optional<RawstorObjectConfig> { return std::nullopt; }
+        );
+    } catch (const std::system_error& e) {
+        if (e.code().value() != EHOSTUNREACH) {
+            throw;
+        }
+        std::lock_guard<std::mutex> guard(c.mutex());
+        c.freeze_locked();
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    std::lock_guard<std::mutex> guard(c.mutex());
+    if (decided.epoch > c.epoch_locked()) {
+        _adopt_locked(decided);
     }
 }
 
@@ -2097,7 +2240,18 @@ rawstd::Task<void> Chunk::_record(bool bump, size_t joining, bool* joined) {
             }
         }
         std::vector<size_t> failed;
-        co_await _decide(config, accepting, failed);
+        try {
+            co_await _decide(config, accepting, failed);
+        } catch (const std::system_error& e) {
+            if (e.code().value() != ESTALE) {
+                throw;
+            }
+            // Another writer decided meanwhile and its configuration is
+            // taken over: the change is made on top of it.
+            std::lock_guard<std::mutex> guard(c.mutex());
+            config = c.configuration_locked(bump, joining > 0);
+            continue;
+        }
         {
             std::lock_guard<std::mutex> guard(c.mutex());
             if (joined != nullptr) {
@@ -2185,6 +2339,10 @@ struct Chunk::FanOutWriteState {
     std::vector<size_t> failed;
     bool has_syncing = false;
     bool syncing_ok = false;
+    // A member refused the write for an epoch below its own that no
+    // transition of this process explains: another writer decided a new
+    // configuration, to be taken over before the write is repeated.
+    bool stale = false;
 };
 
 rawstd::Task<void> Chunk::_fan_out_write_one(
@@ -2206,13 +2364,13 @@ rawstd::Task<void> Chunk::_fan_out_write_one(
         }
         // This process may have raised the copy's epoch while its shared
         // configuration is still being persisted. Finish that transition
-        // before retrying with the new epoch. An external stale writer
-        // cannot refresh its configuration this way.
+        // before retrying with the new epoch. If nothing changed, the
+        // epoch is another writer's.
         co_await _lock();
         uint64_t current = _epoch();
         _unlock();
         if (current == epoch) {
-            st->failed.push_back(idx);
+            st->stale = true;
             co_return;
         }
     }
@@ -2237,6 +2395,29 @@ rawstd::Task<void> Chunk::_fan_out_write_syncing_one(
     }
 }
 
+// The write duplicated onto a member another writer is bringing back: it
+// is not this process' resync to abort, so a failure excludes the member
+// like any other failed write, and the resync it belongs to ends with that.
+rawstd::Task<void> Chunk::_fan_out_write_follower_one(
+    size_t idx, size_t expected_size,
+    std::function<rawstd::Task<size_t>(Slot&)> issue,
+    std::shared_ptr<FanOutWriteState> st
+) {
+    try {
+        size_t result = co_await issue(*_members[idx].slot);
+        if (result != expected_size) {
+            st->failed.push_back(idx);
+        }
+    } catch (const std::system_error& e) {
+        if (e.code().value() == ESTALE) {
+            st->stale = true;
+        } else {
+            rawstd_error("%s\n", strerror(e.code().value()));
+            st->failed.push_back(idx);
+        }
+    }
+}
+
 /*
  * Mirrored write fan-out: the operation is acknowledged only after it
  * completed on every in-sync member, or after the failed members -- and any
@@ -2245,9 +2426,9 @@ rawstd::Task<void> Chunk::_fan_out_write_syncing_one(
  * member; its result does not affect the acknowledgement, but a failure
  * aborts the resync. Takes no lock unless a resync is running.
  */
-rawstd::Task<size_t> Chunk::_fan_out_write(
+rawstd::Task<size_t> Chunk::_fan_out_write_once(
     uint64_t offset, size_t size,
-    std::function<rawstd::Task<size_t>(Slot&)> issue
+    std::function<rawstd::Task<size_t>(Slot&)> issue, bool& stale
 ) {
     // Marks the write failed on every way out but its two co_returns.
     struct Outcome {
@@ -2288,6 +2469,15 @@ rawstd::Task<size_t> Chunk::_fan_out_write(
         }
     }
 
+    // Members another writer's resync names syncing take this write too.
+    std::vector<size_t> followers;
+    for (size_t i = 0; i < _members.size(); ++i) {
+        if (_state(i) == MemberState::SYNCING && !_members[i].witness &&
+            _members[i].slot && (ssize_t)i != ticket.syncing) {
+            followers.push_back(i);
+        }
+    }
+
     if (idxs.empty()) {
         if (ticket.tracked) {
             _resync_leave(ticket, offset, size, false, false);
@@ -2314,15 +2504,29 @@ rawstd::Task<size_t> Chunk::_fan_out_write(
 
         ++_writes_in_flight;
 
-        size_t n = idxs.size() + (st->has_syncing ? 1 : 0);
+        size_t n = idxs.size() + (st->has_syncing ? 1 : 0) + followers.size();
         co_await rawstd::gather(n, [&](size_t i) {
             if (i < idxs.size()) {
                 return _fan_out_write_one(idxs[i], issue, st);
             }
-            return _fan_out_write_syncing_one(
-                (size_t)ticket.syncing, size, issue, st
+            if (st->has_syncing && i == idxs.size()) {
+                return _fan_out_write_syncing_one(
+                    (size_t)ticket.syncing, size, issue, st
+                );
+            }
+            return _fan_out_write_follower_one(
+                followers[i - idxs.size() - (st->has_syncing ? 1 : 0)], size,
+                issue, st
             );
         });
+    }
+
+    if (st->stale) {
+        // Nothing of this attempt counts: the caller takes the new
+        // configuration over and repeats the write.
+        stale = true;
+        outcome.done = true;
+        co_return 0;
     }
 
     if (degrade_syncing) {
@@ -2352,6 +2556,32 @@ rawstd::Task<size_t> Chunk::_fan_out_write(
     co_await _degrade(std::move(st->failed));
     outcome.done = true;
     co_return st->result;
+}
+
+// A write refused for another writer's epoch takes that writer's decision
+// over and starts again, on the members the decision names. What the first
+// attempt wrote is written again, to the same place.
+rawstd::Task<size_t> Chunk::_fan_out_write(
+    uint64_t offset, size_t size,
+    std::function<rawstd::Task<size_t>(Slot&)> issue
+) {
+    for (size_t attempt = 0; attempt < 16; ++attempt) {
+        bool stale = false;
+        size_t result =
+            co_await _fan_out_write_once(offset, size, issue, stale);
+        if (!stale) {
+            co_return result;
+        }
+        co_await _lock();
+        try {
+            co_await _adopt();
+        } catch (...) {
+            _unlock();
+            throw;
+        }
+        _unlock();
+    }
+    RAWSTD_THROW_SYSTEM_ERROR(EIO);
 }
 
 rawstd::Task<size_t> Chunk::_flush_one(Slot& slot) {
