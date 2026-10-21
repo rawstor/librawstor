@@ -96,6 +96,8 @@ private:
     bool _skip_quorum;
 
     struct RegisterTransport;
+    void _adopt_locked(const RawstorObjectConfig& v);
+    rawstd::Task<void> _adopt();
     rawstd::Task<void> _decide(
         const RawstorObjectConfig& value, const std::vector<bool>& accepting,
         std::vector<size_t>& failed
@@ -318,6 +320,15 @@ private:
     rawstd::Task<size_t> _fan_out_write(
         uint64_t offset, size_t size,
         std::function<rawstd::Task<size_t>(Slot&)> issue
+    );
+    rawstd::Task<size_t> _fan_out_write_once(
+        uint64_t offset, size_t size,
+        std::function<rawstd::Task<size_t>(Slot&)> issue, bool& stale
+    );
+    rawstd::Task<void> _fan_out_write_follower_one(
+        size_t idx, size_t expected_size,
+        std::function<rawstd::Task<size_t>(Slot&)> issue,
+        std::shared_ptr<FanOutWriteState> st
     );
     rawstd::Task<void> _fan_out_write_one(
         size_t idx, std::function<rawstd::Task<size_t>(Slot&)> issue,
