@@ -745,6 +745,13 @@ public:
     ) {
         std::vector<size_t> excluded;
         if (v.nroles != _states.size()) {
+            if (v.nroles != 0) {
+                rawstd_warning(
+                    "Mirror register names %u members, this chunk has %zu: "
+                    "its configuration is not taken over\n",
+                    static_cast<unsigned>(v.nroles), _states.size()
+                );
+            }
             return excluded;
         }
         for (size_t i = 0; i < _states.size(); ++i) {
@@ -764,8 +771,11 @@ public:
                 to(MemberState::SYNCING);
                 break;
             case RAWSTOR_OBJECT_MEMBER_IN_SYNC:
-                // A member this process is excluding stays so: the next
-                // transition records it.
+                // A member this process is excluding stays so, whatever the
+                // decision says: its writes failed here, none may be
+                // acknowledged without it in the set, and the exclusion
+                // dropped the session to it (`usable` is false). The next
+                // transition records the exclusion.
                 if (usable[i] && (state(i) == MemberState::STALE ||
                                   state(i) == MemberState::SYNCING)) {
                     if (state(i) == MemberState::STALE) {

@@ -13,6 +13,8 @@
 
 #include <gtest/gtest.h>
 
+#include <unistd.h>
+
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
@@ -1158,6 +1160,97 @@ TEST(MirrorQuorumTest, write_takes_over_another_writers_decision) {
     std::string third_write = "third";
     object_write(queue, object, third_write.data(), third_write.size(), 32, 0);
     object_close_clean(queue, object);
+}
+
+// A member this writer is excluding stays excluded when another writer's
+// decision names it in-sync: its writes failed here, and none may be
+// acknowledged without it in the set. The exclusion is recorded on top of the
+// decision.
+TEST(MirrorQuorumTest, pending_exclusion_survives_another_writers_decision) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000d7");
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    // The last member is a scripted OST that answers as the copy it
+    // replaces, and fails the second write.
+    RawstorObjectMeta replaced{};
+    ASSERT_EQ(target_meta(queue, members.target(2), &replaced), 0);
+    RawstorFrameMetaPayload meta{};
+    ASSERT_EQ(rawstor_frame_meta_encode(&meta, &replaced), 0);
+
+    const std::string first = "first";
+    const std::string second = "second";
+    std::atomic<bool> injected(false);
+    RawstorObjectConfig decided{};
+    rawstor::tests::Server server(8760, 256);
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, meta);
+        // The dirty gate of the first write: a prepare and an accept.
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 3, 0, meta);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 5, 0, meta);
+        s.cmd_write(RAWSTOR_MAGIC, 7, first.size());
+        // The second write reaches this member once the other two have it.
+        // Before the member fails it, another writer decides a configuration
+        // that names every member in-sync, on the other two.
+        server.read(
+            "second WRITE <<<", sizeof(RawstorFrameIO) + second.size(),
+            [&](const void*) {
+                for (int i = 0; i < 5000; ++i) {
+                    if (read_file(members.dat(0)).substr(16, second.size()) ==
+                            second &&
+                        read_file(members.dat(1)).substr(16, second.size()) ==
+                            second) {
+                        break;
+                    }
+                    usleep(1000);
+                }
+                Queue other(16);
+                RawstorObjectMeta before{};
+                if (target_meta(other, members.target(0), &before) != 0) {
+                    return;
+                }
+                decided = before.config;
+                ++decided.epoch;
+                for (size_t i : {0, 1}) {
+                    if (target_set_config(other, members.target(i), decided) !=
+                        0) {
+                        return;
+                    }
+                }
+                injected = true;
+            }
+        );
+        s.cmd_write_response(RAWSTOR_MAGIC, 8, -EINVAL);
+    }
+
+    std::string target =
+        members.target(0) + "," + members.target(1) +
+        ",ost://127.0.0.1:8760/00000000-0000-7000-8000-0000000000d7";
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, target, &object), 0);
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+    object_write(queue, object, second.data(), second.size(), 16, 0);
+    ASSERT_TRUE(injected);
+    object_close_clean(queue, object);
+
+    for (size_t i : {0, 1}) {
+        RawstorObjectMeta recorded{};
+        ASSERT_EQ(target_meta(queue, members.target(i), &recorded), 0);
+        EXPECT_EQ(recorded.config.roles[2], RAWSTOR_OBJECT_MEMBER_EXCLUDED)
+            << i;
+        EXPECT_EQ(recorded.config.epoch, decided.epoch + 1) << i;
+        EXPECT_NE(recorded.config.sync_id, decided.sync_id) << i;
+    }
 }
 
 // A transition of this writer meets another writer's decision first: the
