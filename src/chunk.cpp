@@ -2794,6 +2794,14 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
                 error = error ? error : EIO;
                 failed.erase(self);
             }
+            // What was decided stays decided, whatever became of the resync
+            // meanwhile: writes carry its epoch from now on, and the
+            // register names this process the owner of a resync until a
+            // release.
+            if (decided) {
+                c.adopt_locked(m);
+                _owned_syncing = idx;
+            }
             MirrorResync* r = c.resync_locked();
             if (r == nullptr || r->generation() != generation) {
                 // Aborted meanwhile (e.g. a writer that opened could not
@@ -2802,12 +2810,7 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
                 co_return;
             }
             if (error || _closing) {
-                // Not announced yet: nobody attached, nothing to wake. What
-                // was decided stays decided: its epoch is the one to write
-                // with.
-                if (decided) {
-                    c.adopt_locked(m);
-                }
+                // Not announced yet: nobody attached, nothing to wake.
                 c.discard_unannounced_resync_locked();
                 if (error) {
                     rawstd_error(
