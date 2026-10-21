@@ -578,6 +578,9 @@ RawstorObjectMeta ObjectStore::sync_prepare(
         {meta.accepted.counter, meta.accepted.proposer},
         meta.config
     };
+    if (!state.within_jump({ballot.counter, ballot.proposer})) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     ok = state.prepare({ballot.counter, ballot.proposer});
     if (ok) {
         meta.promised = {state.promised().counter, state.promised().proposer};
@@ -599,6 +602,10 @@ RawstorObjectMeta ObjectStore::sync_accept(
         {meta.accepted.counter, meta.accepted.proposer},
         meta.config
     };
+    if (!state.within_jump({ballot.counter, ballot.proposer}) ||
+        !state.within_jump({next.counter, next.proposer})) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     ok = state.accept(
         {ballot.counter, ballot.proposer}, config, {next.counter, next.proposer}
     );

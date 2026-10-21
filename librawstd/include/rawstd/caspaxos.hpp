@@ -57,6 +57,22 @@ public:
         _accepted(accepted),
         _value(std::move(value)) {}
 
+    // A request moves the acceptor's counters forward by at most this much
+    // (see within_jump()).
+    static constexpr uint64_t max_jump = uint64_t(1) << 28;
+
+    // Whether `ballot` is within reach of the acceptor: its counter is not
+    // more than max_jump above the highest the acceptor holds. A proposer
+    // raises its counter by one per attempt, from the counters the
+    // acceptors report, so a legitimate ballot is as far ahead as the
+    // acceptor is behind its peers -- decisions it missed. A request further
+    // ahead could only exhaust the counter space: the acceptor would
+    // promise it and refuse every ballot below, and no proposer could go on.
+    bool within_jump(const Ballot& ballot) const noexcept {
+        uint64_t base = std::max(_promised.counter, _accepted.counter);
+        return ballot.counter <= base || ballot.counter - base <= max_jump;
+    }
+
     const Ballot& promised() const noexcept { return _promised; }
     const Ballot& accepted() const noexcept { return _accepted; }
     const V& value() const noexcept { return _value; }

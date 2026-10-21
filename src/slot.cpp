@@ -1790,6 +1790,9 @@ rawstd::Task<bool> Slot::_sync_prepare(
     rawstd::caspaxos::Acceptor<RawstorObjectConfig> state{
         ballot_from(meta.promised), ballot_from(meta.accepted), meta.config
     };
+    if (!state.within_jump(ballot_from(ballot))) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     bool ok = state.prepare(ballot_from(ballot));
     if (ok) {
         meta.promised = ballot_to(state.promised());
@@ -1850,6 +1853,10 @@ rawstd::Task<bool> Slot::_sync_accept(
         state = {
             ballot_from(meta.promised), ballot_from(meta.accepted), meta.config
         };
+        if (!state.within_jump(ballot_from(ballot)) ||
+            !state.within_jump(ballot_from(next))) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
         ok = state.accept(ballot_from(ballot), config, ballot_from(next));
         clear_lost = ok && meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST &&
                      meta.member_role == RAWSTOR_MEMBER_DATA &&

@@ -28,6 +28,25 @@ TEST(CasPaxosBallotTest, ordered_by_counter_then_proposer) {
     EXPECT_LT(Ballot{}, (Ballot{0, 1}));
 }
 
+TEST(CasPaxosAcceptorTest, ballot_is_within_a_bounded_jump_of_the_acceptor) {
+    const uint64_t jump = State::max_jump;
+    State fresh;
+    EXPECT_TRUE(fresh.within_jump({jump, 1}));
+    EXPECT_FALSE(fresh.within_jump({jump + 1, 1}));
+
+    // Counted from the highest counter held, promised or accepted.
+    State held({10, 1}, {40, 1}, "");
+    EXPECT_TRUE(held.within_jump({3, 1}));
+    EXPECT_TRUE(held.within_jump({40 + jump, 1}));
+    EXPECT_FALSE(held.within_jump({40 + jump + 1, 1}));
+
+    // The top of the range is never within reach of a low acceptor, and the
+    // test does not wrap.
+    EXPECT_FALSE(held.within_jump({std::numeric_limits<uint64_t>::max(), 1}));
+    State top({std::numeric_limits<uint64_t>::max() - 5, 1}, {}, "");
+    EXPECT_TRUE(top.within_jump({std::numeric_limits<uint64_t>::max(), 1}));
+}
+
 TEST(CasPaxosAcceptorTest, prepare_promises_a_higher_ballot_only) {
     State s;
     EXPECT_TRUE(s.prepare(Ballot{1, 1}));

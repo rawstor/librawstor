@@ -178,7 +178,13 @@ The value is `RawstorObjectConfig`; the ballots are `RawstorObjectMeta`'s
 
 A **ballot** is `(counter, proposer)`, compared lexicographically, so two
 attempts never share one. The proposer is a random nonzero 64-bit value a
-writer draws once per process; nothing else identifies a writer.
+writer draws once per process; nothing else identifies a writer. A member
+refuses a request (`-EINVAL`) whose counter, or whose `next`, is more than
+2^28 above the highest counter it holds: a proposer raises its counter by
+one per attempt from the counters the members report, so a legitimate ballot
+is only as far ahead as a member is behind its peers, while a larger step
+could only exhaust the counter space and leave every proposer without a
+ballot above the member's promise.
 
 Two requests, each persisted with fsync before the reply:
 

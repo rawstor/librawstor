@@ -130,6 +130,70 @@ TEST(RegisterTest, file_member_promises_and_accepts) {
     EXPECT_FALSE(run(*queue, target.sync_prepare(*queue, 0, {4, 9}, reply)));
 }
 
+// A request may move a member's counters forward by a bounded amount: a
+// peer cannot exhaust the counter space, which no proposer could recover
+// from. The bound is counted from what the member holds.
+TEST(RegisterTest, file_member_refuses_a_ballot_beyond_its_reach) {
+    rawstor::tests::TmpDir dir;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
+    RawstdUUID id = new_id();
+    rawstor::Target target(
+        {rawstd::URI(rawstd::URI(dir.uri()), id_string(id))}
+    );
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .width = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    run(*queue, target.create(*queue, spec));
+
+    const uint64_t jump = uint64_t(1) << 28;
+    auto error_of = [&](rawstd::Task<bool> task) {
+        try {
+            run(*queue, std::move(task));
+        } catch (const std::system_error& e) {
+            return e.code().value();
+        }
+        return 0;
+    };
+    RawstorObjectMeta reply{};
+    RawstorObjectConfig config{};
+
+    // Just beyond the reach of a member holding nothing.
+    EXPECT_EQ(
+        error_of(target.sync_prepare(*queue, 0, {jump + 1, 1}, reply)), EINVAL
+    );
+    EXPECT_EQ(
+        error_of(
+            target.sync_accept(*queue, 0, {jump + 1, 1}, {}, config, reply)
+        ),
+        EINVAL
+    );
+    // The next ballot to promise is bound the same way.
+    EXPECT_EQ(
+        error_of(
+            target.sync_accept(*queue, 0, {1, 1}, {jump + 1, 1}, config, reply)
+        ),
+        EINVAL
+    );
+    RawstorObjectMeta meta = run(*queue, target.meta(*queue)).front();
+    EXPECT_EQ(meta.promised.counter, 0u);
+    EXPECT_EQ(meta.accepted.counter, 0u);
+
+    // Exactly the reach is granted, and the reach moves with the member.
+    EXPECT_TRUE(run(*queue, target.sync_prepare(*queue, 0, {jump, 1}, reply)));
+    EXPECT_EQ(reply.promised.counter, jump);
+    EXPECT_EQ(
+        error_of(target.sync_prepare(*queue, 0, {2 * jump + 1, 1}, reply)),
+        EINVAL
+    );
+    EXPECT_TRUE(
+        run(*queue, target.sync_prepare(*queue, 0, {2 * jump, 1}, reply))
+    );
+}
+
 // An ost:// member: the request goes out as SYNC_ACCEPT with every field
 // of the value, and the member's reply -- here a refusal -- comes back
 // with its record.

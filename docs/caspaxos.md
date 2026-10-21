@@ -86,6 +86,17 @@ flowchart TB
 `next` is optional: on success the acceptor also promises it, which lets
 the same proposer make its next change in one round (*One-round changes*).
 
+### Reach
+
+An acceptor refuses a request whose counter is more than
+`Acceptor::max_jump` (2^28) above the highest counter it holds, promised or
+accepted (`within_jump()`); the caller reports it as an error, not as a
+refusal. A proposer raises its counter by one per attempt from the counters
+the acceptors report, so a legitimate ballot is only as far ahead as the
+acceptor is behind its peers, in decisions it missed. A larger step could
+only exhaust the counter space: the acceptor would promise it and refuse
+every ballot below, and no proposer could go on.
+
 ## A change
 
 A proposer changes the value with a **change function**: given the

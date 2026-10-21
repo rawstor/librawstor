@@ -876,6 +876,38 @@ TEST_F(ObjectStoreTest, list_chunks_merges_objects_and_native_members) {
     EXPECT_TRUE(rawstd_uuid_is_nil(&token));
 }
 
+TEST_F(ObjectStoreTest, witness_refuses_a_ballot_beyond_its_reach) {
+    RawstdUUID id = make_id();
+    RawstorObjectSpec spec{};
+    spec.size = chunk_size;
+    spec.width = 2;
+    spec.chunk_size = chunk_size;
+    ObjectStore store = make_store();
+    store.create_witness(id, 0, spec);
+
+    // A request moves the counters forward by a bounded amount only, so that
+    // a peer cannot exhaust the counter space.
+    const uint64_t jump = uint64_t(1) << 28;
+    bool ok = false;
+    RawstorObjectConfig config{};
+    EXPECT_THROW(
+        store.sync_prepare(id, 0, {jump + 1, 1}, ok), std::system_error
+    );
+    EXPECT_THROW(
+        store.sync_accept(id, 0, {jump + 1, 1}, {}, config, ok),
+        std::system_error
+    );
+    EXPECT_THROW(
+        store.sync_accept(id, 0, {1, 1}, {jump + 1, 1}, config, ok),
+        std::system_error
+    );
+    EXPECT_EQ(store.witness_meta(id, 0).promised.counter, 0u);
+
+    store.sync_prepare(id, 0, {jump, 1}, ok);
+    EXPECT_TRUE(ok);
+    EXPECT_EQ(store.witness_meta(id, 0).promised.counter, jump);
+}
+
 TEST_F(ObjectStoreTest, witness_votes_in_the_configuration_register) {
     RawstdUUID id = make_id();
     RawstorObjectSpec spec{};
