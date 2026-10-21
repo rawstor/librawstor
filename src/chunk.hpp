@@ -102,7 +102,7 @@ private:
     // brought back, if its resync ended without the rejoin, is excluded.
     rawstd::Task<void> _resync_release();
     // Renews the register under which the resync `generation` runs.
-    rawstd::Task<void> _resync_renew(uint64_t generation);
+    rawstd::Task<bool> _resync_renew(uint64_t generation);
     // Does so on a timer of its own, until the resync ends.
     rawstd::DetachedTask _resync_lease(uint64_t generation);
     // Excludes the member of a resync another writer runs once it has shown

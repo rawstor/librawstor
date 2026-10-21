@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -1636,6 +1637,105 @@ TEST(MirrorResyncTest, resync_renews_the_register_while_a_write_is_pending) {
         }
     }
     object_close_clean(queue, object);
+}
+
+// A resync whose register cannot be renewed for a whole lease ends: the
+// other writers take it for dead by then and exclude the member, so the
+// owner does not go on copying.
+TEST(MirrorResyncTest, resync_ends_when_its_lease_cannot_be_renewed) {
+    ScopedLease lease(60000, 200);
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000d9");
+    RawstorObjectSpec spec{
+        .size = 4096,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+    RawstorObjectConfig fresh{};
+    fresh.epoch = 2;
+    fresh.sync_id = 0x1111111111111111ull;
+    fresh.sync_id_history[0] = 0x2222222222222222ull;
+    ASSERT_EQ(target_set_config(queue, members.target(0), fresh), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(1), fresh), 0);
+
+    // The second member is in sync and scripted: it takes the start of the
+    // resync and fails the next request, so the register cannot be decided
+    // again.
+    RawstorObjectMeta replaced{};
+    ASSERT_EQ(target_meta(queue, members.target(1), &replaced), 0);
+    RawstorFrameMetaPayload meta{};
+    ASSERT_EQ(rawstor_frame_meta_encode(&meta, &replaced), 0);
+    rawstor::tests::Server in_sync(8815, 256);
+    {
+        rawstor::tests::Session s(in_sync);
+        s.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, meta);
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 3, 0, meta);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 5, 0, meta);
+        s.cmd_meta(RAWSTOR_MAGIC, 7, 0, meta);
+        s.cmd_sync_accept_request();
+        s.cmd_sync_response(
+            RAWSTOR_CMD_SYNC_ACCEPT, RAWSTOR_MAGIC, 8, -EINVAL, false, meta
+        );
+        // Whatever the close asks of it.
+        s.cmd_flush(RAWSTOR_MAGIC, 9, 0);
+        s.cmd_leave(RAWSTOR_MAGIC, 10, 0);
+    }
+
+    // The third member is the one brought back, and scripted too: it takes
+    // many leases to answer the copy.
+    rawstor::tests::Server syncing_server(8816, 256);
+    RawstorFrameMetaPayload stale = meta;
+    stale.config = {};
+    stale.config.epoch = 1;
+    stale.config.sync_id = 0x2222222222222222ull;
+    RawstorFrameMetaPayload syncing = stale;
+    syncing.config.nroles = 3;
+    syncing.config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    syncing.config.roles[1] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    syncing.config.roles[2] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+    {
+        rawstor::tests::Session s(syncing_server);
+        s.cmd_meta(RAWSTOR_MAGIC, 0, 0, stale);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, stale);
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 3, 0, stale);
+        s.cmd_meta(RAWSTOR_MAGIC, 5, 0, stale);
+        s.cmd_sync_accept_request();
+        s.cmd_sync_response(
+            RAWSTOR_CMD_SYNC_ACCEPT, RAWSTOR_MAGIC, 6, 0, true, syncing
+        );
+        syncing_server.read(
+            "WRITE_ZEROES <<<", sizeof(RawstorFrameIO),
+            [](const void*) { usleep(1500 * 1000); }
+        );
+        s.cmd_write_zeroes_response(RAWSTOR_MAGIC, 7, spec.size);
+    }
+
+    std::string target =
+        members.target(0) +
+        ",ost://127.0.0.1:8815/00000000-0000-7000-8000-0000000000d9," +
+        "ost://127.0.0.1:8816/00000000-0000-7000-8000-0000000000d9";
+    testing::internal::CaptureStderr();
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, target, &object), 0);
+    // The copy keeps the queue busy: wait by the clock, not by the number of
+    // times it is driven.
+    const auto until =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+    while (std::chrono::steady_clock::now() < until) {
+        rawio_wait_timeout(queue, 10);
+    }
+    EXPECT_EQ(object_close(queue, object), 0);
+    std::string log = testing::internal::GetCapturedStderr();
+    EXPECT_NE(
+        log.find("could not be renewed for a whole lease, ending the resync"),
+        std::string::npos
+    ) << log;
 }
 
 TEST(MirrorResyncTest, resync_under_concurrent_writes) {

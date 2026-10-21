@@ -3442,9 +3442,10 @@ rawstd::Task<void> Chunk::_resync_release() {
  * The resync a writer runs renews itself in the register while it goes on:
  * the other writers see the ballot move and know the writer is alive.
  */
-rawstd::Task<void> Chunk::_resync_renew(uint64_t generation) {
+rawstd::Task<bool> Chunk::_resync_renew(uint64_t generation) {
     MirrorControl& c = *_control;
     co_await _lock();
+    bool renewed = true;
     try {
         bool running;
         {
@@ -3455,13 +3456,12 @@ rawstd::Task<void> Chunk::_resync_renew(uint64_t generation) {
         if (running) {
             co_await _record(false, 0);
         }
-    } catch (const std::system_error& e) {
-        rawstd_warning(
-            "Mirror resync: renewing it failed: %s\n",
-            strerror(e.code().value())
-        );
+    } catch (const std::exception& e) {
+        renewed = false;
+        rawstd_warning("Mirror resync: renewing it failed: %s\n", e.what());
     }
     _unlock();
+    co_return renewed;
 }
 
 /*
@@ -3482,9 +3482,19 @@ rawstd::DetachedTask Chunk::_resync_lease(uint64_t generation) {
                 lease.count() / 3, 1, 100
             )
         );
-        auto renewed = std::chrono::steady_clock::now();
+        auto attempted = std::chrono::steady_clock::now();
+        auto renewed = attempted;
         for (;;) {
-            co_await _queue.timeout(step_ms * 1000u);
+            try {
+                co_await _queue.timeout(step_ms * 1000u);
+            } catch (const std::system_error& e) {
+                if (e.code().value() != ECANCELED) {
+                    rawstd_warning(
+                        "Mirror resync: renewal stopped: %s\n", e.what()
+                    );
+                }
+                co_return;
+            }
             {
                 std::lock_guard<std::mutex> lock(c.mutex());
                 MirrorResync* r = c.resync_locked();
@@ -3492,9 +3502,31 @@ rawstd::DetachedTask Chunk::_resync_lease(uint64_t generation) {
                     co_return;
                 }
             }
-            if (std::chrono::steady_clock::now() - renewed >= lease / 3) {
-                renewed = std::chrono::steady_clock::now();
-                co_await _resync_renew(generation);
+            if (std::chrono::steady_clock::now() - attempted < lease / 3) {
+                continue;
+            }
+            attempted = std::chrono::steady_clock::now();
+            // A failed renewal is tried again at the next step. If none
+            // succeeds for a whole lease, the other writers take the
+            // resync for dead and exclude the member, so it ends here too.
+            bool ok = false;
+            try {
+                ok = co_await _resync_renew(generation);
+            } catch (const std::exception& e) {
+                rawstd_warning(
+                    "Mirror resync: renewing it failed: %s\n", e.what()
+                );
+            }
+            if (ok) {
+                renewed = attempted;
+            } else if (attempted - renewed >= lease) {
+                rawstd_error(
+                    "Mirror resync: the register could not be renewed for a "
+                    "whole lease, ending the resync: %s\n",
+                    _member_str(_members[_resync_idx]).c_str()
+                );
+                _resync_abort(generation, "its lease could not be renewed");
+                co_return;
             }
         }
     } catch (const std::exception& e) {
