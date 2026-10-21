@@ -2832,6 +2832,7 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
             co_return;
         }
 
+        _resync_lease(generation);
         _resync_run(generation);
     } catch (const std::exception& e) {
         rawstd_error("Mirror resync failed to start: %s\n", e.what());
@@ -2983,16 +2984,8 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
         }
 
         std::vector<char> buf(RESYNC_CHUNK);
-        const auto lease =
-            std::chrono::milliseconds(rawstor_opts_mirror_resync_lease());
-        auto renewed = std::chrono::steady_clock::now();
 
         for (;;) {
-            if (!heal &&
-                std::chrono::steady_clock::now() - renewed >= lease / 3) {
-                renewed = std::chrono::steady_clock::now();
-                co_await _resync_renew(generation);
-            }
             size_t k = 0;
             size_t idx = 0;
             bool done = false;
@@ -3469,6 +3462,44 @@ rawstd::Task<void> Chunk::_resync_renew(uint64_t generation) {
         );
     }
     _unlock();
+}
+
+/*
+ * Renews the register under which the resync `generation` runs, three times
+ * within the lease, until the resync ends. A timer of its own, so that a
+ * write to the member or a read of the source that takes long does not make
+ * the other writers take the resync for dead. Polls in short steps: close()
+ * waits for it.
+ */
+rawstd::DetachedTask Chunk::_resync_lease(uint64_t generation) {
+    BackgroundGuard guard(*this);
+    try {
+        MirrorControl& c = *_control;
+        const auto lease =
+            std::chrono::milliseconds(rawstor_opts_mirror_resync_lease());
+        const unsigned int step_ms = static_cast<unsigned int>(
+            std::clamp<std::chrono::milliseconds::rep>(
+                lease.count() / 3, 1, 100
+            )
+        );
+        auto renewed = std::chrono::steady_clock::now();
+        for (;;) {
+            co_await _queue.timeout(step_ms * 1000u);
+            {
+                std::lock_guard<std::mutex> lock(c.mutex());
+                MirrorResync* r = c.resync_locked();
+                if (_closing || r == nullptr || r->generation() != generation) {
+                    co_return;
+                }
+            }
+            if (std::chrono::steady_clock::now() - renewed >= lease / 3) {
+                renewed = std::chrono::steady_clock::now();
+                co_await _resync_renew(generation);
+            }
+        }
+    } catch (const std::exception& e) {
+        rawstd_warning("Mirror resync: renewal stopped: %s\n", e.what());
+    }
 }
 
 /*

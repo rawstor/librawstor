@@ -367,9 +367,10 @@ For two data copies, see below.
   keeps m syncing keeps the record; any other role drops it.
 - **Rejoin** is a transition "m → in-sync, `resync_owner` = 0". Stage 1
   flushes the restored copy before clearing `LOST` in this transition.
-- The owner renews the register while it sweeps, three times within the
-  lease (`mirror_resync_lease`, 30 s): a decision that changes nothing but
-  the ballot. A writer that duplicates onto m for a resync it does not run
+- The owner renews the register on a timer of its own while the resync
+  runs, three times within the lease (`mirror_resync_lease`, 30 s): a
+  decision that changes nothing but the ballot, whatever the sweep is
+  waiting for. A writer that duplicates onto m for a resync it does not run
   watches the ballot the register was last accepted under; if it has not
   moved for a whole lease, the owner is gone, and the writer decides "m →
   excluded, `resync_owner` = 0". The next reconnect probe of any writer may
