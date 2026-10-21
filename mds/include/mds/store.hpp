@@ -39,7 +39,7 @@ struct ObjectDescriptor {
 
 struct ObjectMap {
     ObjectDescriptor descriptor;
-    /* chunk_map[logical_index] = width slots. */
+    /* DATA slots followed by one witness for newly placed even widths. */
     std::vector<std::vector<PlacementSlot>> chunks;
 };
 

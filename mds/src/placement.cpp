@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -174,6 +175,140 @@ std::vector<PlacementSlot> place(
     }
 
     return ret;
+}
+
+namespace {
+Topology select_role(const Topology& topology, Role role) {
+    Topology result;
+    for (const auto& backend : topology.osts()) {
+        if (backend.supports(role)) {
+            result.add(backend);
+        }
+    }
+    return result;
+}
+
+Topology exclude_domain(
+    const Topology& topology, const std::string& domain, Level level
+) {
+    Topology result;
+    for (const auto& backend : topology.osts()) {
+        if (backend.domain(level) != domain) {
+            result.add(backend);
+        }
+    }
+    return result;
+}
+
+const TopologyOST& backend_of(const Topology& topology, const RawstdUUID& id) {
+    for (const auto& backend : topology.osts()) {
+        if (rawstd_uuid_cmp(&id, &backend.id) == 0) {
+            return backend;
+        }
+    }
+    RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+}
+
+// A witness must leave enough distinct DATA domains for the whole chunk.
+Topology
+witness_candidates(const Topology& topology, const PlacementPolicy& policy) {
+    const auto data = select_role(topology, Role::Data);
+    std::set<std::string> data_domains;
+    for (const auto& backend : data.osts()) {
+        if (backend.weight != 0) {
+            data_domains.insert(backend.domain(policy.failure_domain));
+        }
+    }
+    Topology result;
+    for (const auto& backend : topology.osts()) {
+        const auto domain = backend.domain(policy.failure_domain);
+        if (backend.weight != 0 && backend.supports(Role::Witness) &&
+            data_domains.size() - data_domains.count(domain) >= policy.width) {
+            result.add(backend);
+        }
+    }
+    return result;
+}
+} // namespace
+
+std::vector<PlacementSlot> place_chunk(
+    const Topology& topology, const RawstdUUID& id, uint64_t index,
+    const PlacementPolicy& policy
+) {
+    if (policy.width == 0 || policy.width > UINT8_MAX) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    auto data = select_role(topology, Role::Data);
+    if (policy.width % 2 != 0) {
+        return place(data, id, index, policy);
+    }
+    Topology eligible = topology;
+    if (policy.stripe_width != STRIPE_ALL) {
+        // Pin a pool that can satisfy both roles before filling extra domains.
+        auto pinned = policy;
+        pinned.stripe_width = 1;
+        auto witness_policy = pinned;
+        witness_policy.width = 1;
+        const auto witness =
+            place(witness_candidates(topology, policy), id, 0, witness_policy)
+                .front();
+        const auto witness_domain =
+            backend_of(topology, witness.ost_id).domain(policy.failure_domain);
+        std::set<std::string> pool{witness_domain};
+        const auto seeds = place(
+            exclude_domain(data, witness_domain, policy.failure_domain), id, 0,
+            pinned
+        );
+        for (const auto& seed : seeds) {
+            pool.insert(
+                backend_of(topology, seed.ost_id).domain(policy.failure_domain)
+            );
+        }
+        Topology remaining;
+        std::set<std::string> remaining_domains;
+        for (const auto& backend : topology.osts()) {
+            const auto domain = backend.domain(policy.failure_domain);
+            if (backend.weight != 0 && !pool.contains(domain)) {
+                remaining.add(backend);
+                remaining_domains.insert(domain);
+            }
+        }
+        const auto wanted =
+            std::max<uint64_t>(policy.stripe_width, policy.width + 1);
+        const auto extra =
+            std::min<uint64_t>(wanted - pool.size(), remaining_domains.size());
+        if (extra != 0) {
+            pinned.width = static_cast<unsigned>(extra);
+            for (const auto& seed : place(remaining, id, 0, pinned)) {
+                pool.insert(backend_of(topology, seed.ost_id)
+                                .domain(policy.failure_domain));
+            }
+        }
+        eligible = Topology();
+        for (const auto& backend : topology.osts()) {
+            if (pool.contains(backend.domain(policy.failure_domain))) {
+                eligible.add(backend);
+            }
+        }
+    }
+    auto member_policy = policy;
+    if (policy.stripe_width != 1) {
+        member_policy.stripe_width = STRIPE_ALL;
+    }
+    auto witness_policy = member_policy;
+    witness_policy.width = 1;
+    auto witness =
+        place(witness_candidates(eligible, policy), id, index, witness_policy)
+            .front();
+    const auto witness_domain =
+        backend_of(eligible, witness.ost_id).domain(policy.failure_domain);
+    data = exclude_domain(
+        select_role(eligible, Role::Data), witness_domain, policy.failure_domain
+    );
+    auto slots = place(data, id, index, member_policy);
+    witness.slot_index = static_cast<uint8_t>(policy.width);
+    slots.push_back(witness);
+    return slots;
 }
 
 } // namespace mdsserver

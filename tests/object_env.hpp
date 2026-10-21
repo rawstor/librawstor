@@ -3,8 +3,11 @@
 
 #include "tmp_dir.hpp"
 
+#include <mds/topology.hpp>
+
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace rawstor {
 namespace tests {
@@ -40,7 +43,10 @@ public:
     // thread's own bind()/listen() racing the first test call's connect()
     // would otherwise make this flaky) -- see the .cpp file's own doc
     // comment on how.
-    ObjectEnv(unsigned int mds_port, unsigned int ost_port);
+    ObjectEnv(
+        unsigned int mds_port, unsigned int ost_port,
+        const std::vector<mdsserver::TopologyOST>& extra_backends = {}
+    );
     ObjectEnv(const ObjectEnv&) = delete;
     ObjectEnv(ObjectEnv&&) = delete;
     ~ObjectEnv();

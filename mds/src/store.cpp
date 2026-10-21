@@ -248,7 +248,7 @@ void insert_chunks(
 
     for (uint64_t index = first_index; index < end_index; ++index) {
         std::vector<rawstor::mdsserver::PlacementSlot> slots =
-            rawstor::mdsserver::place(topology, id, index, policy);
+            rawstor::mdsserver::place_chunk(topology, id, index, policy);
         for (const rawstor::mdsserver::PlacementSlot& slot : slots) {
             insert.reset();
             insert.bind_blob(1, id.bytes, sizeof(id.bytes))
@@ -649,10 +649,9 @@ ObjectStore::list_chunks(RawstdUUID& token, unsigned int limit) {
     Stmt stmt(
         _db, "WITH entries AS ("
              "SELECT id,chunk_offset,1 AS type FROM witnesses UNION ALL "
-             "SELECT id,0,2 FROM objects WHERE NOT EXISTS "
-             "(SELECT 1 FROM witnesses WHERE witnesses.id=objects.id)) "
+             "SELECT id,0,2 FROM objects) "
              "SELECT id,chunk_offset,type FROM entries WHERE id>? "
-             "ORDER BY id,chunk_offset"
+             "ORDER BY id,type DESC,chunk_offset"
     );
     RawstdUUID after = token;
     stmt.bind_blob(1, after.bytes, sizeof(after.bytes));
@@ -679,7 +678,13 @@ ObjectStore::list_chunks(RawstdUUID& token, unsigned int limit) {
         entries.begin(), entries.end(),
         [](const ChunkEntry& a, const ChunkEntry& b) {
             int order = rawstd_uuid_cmp(&a.id, &b.id);
-            return order == 0 ? a.offset < b.offset : order < 0;
+            if (order != 0) {
+                return order < 0;
+            }
+            if (a.type != b.type) {
+                return a.type > b.type;
+            }
+            return a.offset < b.offset;
         }
     );
     return entries;
@@ -785,8 +790,8 @@ void ObjectStore::update_backend(
     int pos = 1;
     uint64_t now = static_cast<uint64_t>(time(nullptr));
     if (info != nullptr) {
-        update.bind_int64(pos++, info->used);
-        update.bind_int64(pos++, info->total);
+        update.bind_int64(pos++, ost.witness_only() ? 0 : info->used);
+        update.bind_int64(pos++, ost.witness_only() ? 0 : info->total);
         update.bind_int64(pos++, now);
         update.bind_int64(pos++, now);
     } else {
@@ -862,7 +867,7 @@ ObjectDescriptor ObjectStore::create(
 
     /* Hard-fails on an unsatisfiable topology before anything lands. */
     Topology available = _available_topology();
-    place(available, ret.id, 0, policy);
+    place_chunk(available, ret.id, 0, policy);
 
     Transaction tx(_db);
 
@@ -942,10 +947,12 @@ ObjectMap ObjectStore::_open_live(const RawstdUUID& id) {
             rawstd_error("MDS store: chunk map is missing a chunk\n");
             RAWSTD_THROW_SYSTEM_ERROR(EIO);
         }
-        if (ret.chunks[index].size() != ret.descriptor.policy.width) {
+        const auto width = ret.descriptor.policy.width;
+        const auto expected = width + (width % 2 == 0 ? 1u : 0u);
+        if (ret.chunks[index].size() != expected) {
             rawstd_warning(
                 "MDS store: chunk %zu has %zu of %u slots\n", index,
-                ret.chunks[index].size(), ret.descriptor.policy.width
+                ret.chunks[index].size(), expected
             );
         }
     }

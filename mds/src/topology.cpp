@@ -139,9 +139,9 @@ Topology Topology::parse(std::istream& in) {
             continue; /* blank */
         }
 
-        std::string location, path;
+        std::string location, role, path;
         uint64_t weight = 0;
-        if (!(tokens >> location >> weight >> path)) {
+        if (!(tokens >> location >> weight >> role >> path)) {
             rawstd_error("Topology line %zu: malformed entry\n", lineno);
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
@@ -172,6 +172,43 @@ Topology Topology::parse(std::istream& in) {
             );
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
+        if (rawstd::URI(location).scheme() == "mds") {
+            rawstd_error(
+                "Topology line %zu: expected a physical location URI\n", lineno
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        ost.roles.clear();
+        size_t begin = 0;
+        while (true) {
+            const size_t end = role.find(',', begin);
+            const auto name = role.substr(
+                begin, end == std::string::npos ? end : end - begin
+            );
+            Role value;
+            if (name == "data") {
+                value = Role::Data;
+            } else if (name == "witness") {
+                value = Role::Witness;
+            } else {
+                rawstd_error(
+                    "Topology line %zu: unknown role: %s\n", lineno,
+                    name.c_str()
+                );
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
+            if (!ost.roles.insert(value).second) {
+                rawstd_error(
+                    "Topology line %zu: duplicate role: %s\n", lineno,
+                    name.c_str()
+                );
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
+            if (end == std::string::npos) {
+                break;
+            }
+            begin = end + 1;
+        }
         ost.location = location;
         ost.weight = weight;
         split_path(path, ost.path);
@@ -192,6 +229,9 @@ Topology Topology::parse_file(const std::string& path) {
 }
 
 void Topology::add(const TopologyOST& ost) {
+    if (ost.roles.empty()) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     for (const TopologyOST& existing : _osts) {
         if (memcmp(existing.id.bytes, ost.id.bytes, sizeof(ost.id.bytes)) ==
             0) {

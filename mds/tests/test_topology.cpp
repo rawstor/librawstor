@@ -16,6 +16,7 @@ using rawstor::mdsserver::TopologyOST;
 TEST(TopologyTest, parse_single_ost) {
     std::istringstream in(
         "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:8753 100 "
+        "data,witness "
         "dc1/row1/rack1/host1\n"
     );
 
@@ -36,6 +37,7 @@ TEST(TopologyTest, parse_skips_comments_and_blank_lines) {
         "# a comment\n"
         "\n"
         "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:8753 100 "
+        "data,witness "
         "dc1/row1/rack1/host1 # trailing comment\n"
     );
 
@@ -47,8 +49,10 @@ TEST(TopologyTest, parse_skips_comments_and_blank_lines) {
 TEST(TopologyTest, parse_multiple_osts) {
     std::istringstream in(
         "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:8753 100 "
+        "data,witness "
         "dc1/row1/rack1/host1\n"
         "00000000-0000-7000-8000-000000000002 ost://127.0.0.1:8754 100 "
+        "data,witness "
         "dc1/row1/rack1/host2\n"
     );
 
@@ -60,6 +64,7 @@ TEST(TopologyTest, parse_multiple_osts) {
 TEST(TopologyTest, parse_accepts_any_backend_location) {
     std::istringstream in(
         "00000000-0000-7000-8000-000000000001 file:///srv/ost1 100 "
+        "data,witness "
         "dc1/row1/rack1/host1\n"
     );
 
@@ -72,7 +77,8 @@ TEST(TopologyTest, parse_accepts_any_backend_location) {
 TEST(TopologyTest, parse_rejects_multiple_location_uris) {
     std::istringstream in(
         "00000000-0000-7000-8000-000000000001 "
-        "ost://127.0.0.1:8753,ost://127.0.0.1:8754 100 dc1/row1/rack1/host1\n"
+        "ost://127.0.0.1:8753,ost://127.0.0.1:8754 100 data,witness "
+        "dc1/row1/rack1/host1\n"
     );
 
     EXPECT_THROW(Topology::parse(in), std::system_error);
@@ -89,6 +95,7 @@ TEST(TopologyTest, parse_rejects_malformed_entry) {
 TEST(TopologyTest, parse_rejects_trailing_tokens) {
     std::istringstream in(
         "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:8753 100 "
+        "data,witness "
         "dc1/row1/rack1/host1 extra\n"
     );
 
@@ -97,7 +104,8 @@ TEST(TopologyTest, parse_rejects_trailing_tokens) {
 
 TEST(TopologyTest, parse_rejects_malformed_ost_id) {
     std::istringstream in(
-        "not-a-uuid ost://127.0.0.1:8753 100 dc1/row1/rack1/host1\n"
+        "not-a-uuid ost://127.0.0.1:8753 100 data,witness "
+        "dc1/row1/rack1/host1\n"
     );
 
     EXPECT_THROW(Topology::parse(in), std::system_error);
@@ -109,10 +117,13 @@ TEST(TopologyTest, parse_rejects_malformed_ost_id) {
 TEST(TopologyTest, parse_accepts_path_without_head) {
     std::istringstream in(
         "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:8753 100 "
+        "data,witness "
         "rack1/host1\n"
         "00000000-0000-7000-8000-000000000002 ost://127.0.0.1:8754 100 "
+        "data,witness "
         "rack2/host2\n"
         "00000000-0000-7000-8000-000000000003 ost://127.0.0.1:8755 100 "
+        "data,witness "
         "host3\n"
     );
 
@@ -141,7 +152,7 @@ TEST(TopologyTest, parse_rejects_malformed_path) {
         std::istringstream in(
             std::string(
                 "00000000-0000-7000-8000-000000000001 "
-                "ost://127.0.0.1:8753 100 "
+                "ost://127.0.0.1:8753 100 data,witness "
             ) +
             path + "\n"
         );
@@ -220,6 +231,52 @@ TEST(TopologyTest, level_of_rejects_default_and_unknown_levels) {
     EXPECT_EQ(rawstor::mdsserver::level_of(5), Level::DC);
     EXPECT_THROW(rawstor::mdsserver::level_of(0), std::system_error);
     EXPECT_THROW(rawstor::mdsserver::level_of(6), std::system_error);
+}
+
+TEST(TopologyTest, roles_are_explicit_and_order_independent) {
+    using rawstor::mdsserver::Role;
+    for (const auto& role :
+         {"data", "witness", "data,witness", "witness,data"}) {
+        std::istringstream in(
+            std::string(
+                "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:7776 100 "
+            ) +
+            role + " host1\n"
+        );
+        auto topology = Topology::parse(in);
+        const auto& backend = topology.osts().front();
+        const std::string roles(role);
+        EXPECT_EQ(
+            backend.supports(Role::Data),
+            roles.find("data") != std::string::npos
+        );
+        EXPECT_EQ(
+            backend.supports(Role::Witness),
+            roles.find("witness") != std::string::npos
+        );
+    }
+}
+
+TEST(TopologyTest, rejects_missing_invalid_or_duplicate_roles) {
+    for (const auto& role :
+         {"", "unknown", "data,", ",witness", "data,,witness", "data,data",
+          "data,witness,other"}) {
+        std::istringstream in(
+            std::string(
+                "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:7777 100 "
+            ) +
+            role + " host1\n"
+        );
+        EXPECT_THROW(Topology::parse(in), std::system_error) << role;
+    }
+}
+
+TEST(TopologyTest, rejects_logical_mds_locations) {
+    std::istringstream in(
+        "00000000-0000-7000-8000-000000000001 mds://127.0.0.1:7776 100 witness "
+        "host1\n"
+    );
+    EXPECT_THROW(Topology::parse(in), std::system_error);
 }
 
 } // namespace
