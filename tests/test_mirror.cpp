@@ -996,6 +996,103 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
     object_close_clean(queue, object);
 }
 
+// A member that refuses the decision which brings it back has not rejoined:
+// it is excluded again, and the writers go on without it.
+TEST(MirrorResyncTest, member_refusing_its_rejoin_is_excluded_again) {
+    struct ScopedOpts {
+        ScopedOpts() {
+            RawstorOpts opts{};
+            // Keep the reconnect probe away from the scripted member.
+            opts.mirror_probe_interval = 60000;
+            rawstor_opts_initialize(&opts);
+        }
+        ~ScopedOpts() { rawstor_opts_initialize(nullptr); }
+    } opts;
+
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000ac");
+    RawstorObjectSpec spec{
+        .size = 4096,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+    RawstorObjectConfig fresh{};
+    fresh.epoch = 2;
+    fresh.sync_id = 0x1111111111111111ull;
+    fresh.sync_id_history[0] = 0x2222222222222222ull;
+    ASSERT_EQ(target_set_config(queue, members.target(0), fresh), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(2), fresh), 0);
+
+    // The second member is a scripted OST holding a stale copy.
+    rawstor::tests::Server server(8813, 256);
+    RawstorFrameMetaPayload stale = {
+        .size = spec.size,
+        .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
+        .width = 3,
+        .member_role = RAWSTOR_MEMBER_DATA,
+        .writers = 0,
+        .config =
+            {
+                .epoch = 1,
+                .sync_id = 0x2222222222222222ull,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
+    };
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_meta(RAWSTOR_MAGIC, 0, 0, stale);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, stale);
+        // The SYNCING role: a prepare and an accept.
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 3, 0, stale);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 5, 0, stale);
+        // The copy of an empty chunk goes out as zeroes, durable before the
+        // member rejoins.
+        s.cmd_write_zeroes(RAWSTOR_MAGIC, 7, spec.size);
+        s.cmd_flush(RAWSTOR_MAGIC, 8, 0);
+        // The rejoin is refused: the member holds a higher ballot.
+        s.cmd_meta(RAWSTOR_MAGIC, 9, 0, stale);
+        s.cmd_sync_accept_request();
+        s.cmd_sync_response(
+            RAWSTOR_CMD_SYNC_ACCEPT, RAWSTOR_MAGIC, 10, 0, false, stale
+        );
+    }
+
+    std::string target =
+        members.target(0) +
+        ",ost://127.0.0.1:8813/00000000-0000-7000-8000-0000000000ac," +
+        members.target(2);
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, target, &object), 0);
+
+    // The start moves the epoch to 3, the rejoin decision to 4 and the
+    // exclusion of the member that did not take it to 5.
+    bool excluded = false;
+    for (int i = 0; i < 1000 && !excluded; ++i) {
+        rawio_wait_timeout(queue, 10);
+        RawstorObjectMeta meta{};
+        if (target_meta(queue, members.target(0), &meta) != 0) {
+            continue;
+        }
+        excluded = meta.config.epoch >= 5 && meta.config.nroles == 3 &&
+                   meta.config.roles[1] == RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    }
+    EXPECT_TRUE(excluded);
+
+    std::string block(4096, 'W');
+    object_write(queue, object, block.data(), block.size(), 0, 0);
+    object_close_clean(queue, object);
+}
+
 TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000a7");

@@ -2149,12 +2149,13 @@ rawstd::Task<void> Chunk::_record(bool bump, size_t joining, bool* joined) {
     RegisterTransport transport{
         *this, accepting, std::vector<bool>(_members.size(), false)
     };
+    bool taken = false;
     try {
-        co_await transport.accept(joiner, *decided, config, {});
+        taken = (co_await transport.accept(joiner, *decided, config, {})).ok;
     } catch (const std::system_error&) {
-        if (joined != nullptr) {
-            *joined = false;
-        }
+    }
+    if (!taken && joined != nullptr) {
+        *joined = false;
     }
 }
 
