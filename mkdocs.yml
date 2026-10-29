@@ -26,6 +26,7 @@ theme:
 
 nav:
   - Home: README.md
+  - Downloads: downloads.md
   - Concepts: concepts.md
   - Architecture: architecture.md
   - Protocol: protocol.md
@@ -33,6 +34,12 @@ nav:
   - Mirroring: mirroring.md
   - CASPaxos: caspaxos.md
   - Multi-attach: multiattach.md
+
+plugins:
+  - search
+  - gen-files:
+      scripts:
+        - .github/tools/gen_downloads.py
 
 markdown_extensions:
   - admonition

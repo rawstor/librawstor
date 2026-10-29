@@ -7,6 +7,12 @@ on:
       - docs/**
       - mkdocs.yml
       - .github/workflows/docs.yml
+      - .github/tools/gen_downloads.py
+  # A release published with GITHUB_TOKEN does not fire the `release` event,
+  # so the downloads page is rebuilt once dist has finished on a version tag.
+  workflow_run:
+    workflows: [dist]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -21,6 +27,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v'))
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,6 +40,8 @@ jobs:
           cache-dependency-path: docs/requirements.txt
       - run: pip install -r docs/requirements.txt
       - run: mkdocs build --strict
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
