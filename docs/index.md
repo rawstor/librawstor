@@ -74,10 +74,10 @@ file. Start an OST that stores its data in `/var/lib/rawstor/ost/<id>`
 
 ```
 OST=$(cat /proc/sys/kernel/random/uuid)
-echo "BIND_ADDR=0.0.0.0:7777" | sudo tee /etc/rawstor/ost/${OST}.conf
+echo "BIND_ADDR=0.0.0.0" | sudo tee /etc/rawstor/ost/${OST}.conf
 sudo systemctl enable --now rawstor-ost@${OST}
 
-rawstor info ost://127.0.0.1:7777               # serving?
+rawstor info ost://127.0.0.1                  # serving?
 journalctl -u rawstor-ost@${OST}              # log
 ```
 
@@ -85,7 +85,7 @@ Create a 10 GiB object on it. `rawstor` prints the object's target, and the
 last path segment of that target is the object's UUID:
 
 ```
-OBJECT_TARGET=$(rawstor create ost://127.0.0.1:7777 --size=10G --mirrors=1)
+OBJECT_TARGET=$(rawstor create ost://127.0.0.1 --size=10G --mirrors=1)
 OBJECT=${OBJECT_TARGET##*/}
 ```
 
