@@ -295,8 +295,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.0.2] - 2026-05-26
 
-Maintenance release of 0.0.1.
-
 ### Added
 
 - GoogleTest suite, `clang-format` check, tracing events with reference counts, and the `--version` command line argument.
