@@ -231,28 +231,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Multishot IO operations.
 - Units for command line arguments.
-- [Location and target](docs/concepts.md) conception.
 - OST backend implementation.
-- Multiqueue support.
+- Multiqueue support, with the `rawio` public headers.
+- Multishot `recv`.
 - Add allocate and release methods to the OST protocol.
 - Python bindings.
-- Async open, close and connect, user-defined object UUIDs, and creating an object by target.
-- Public `accept`, `recv` and `send` routines and cancellation by file descriptor.
-- `--version` command line argument and a version header.
+- Public `open`, `close`, `connect` and `accept` API, user-defined object UUIDs, and creating an object by target.
+- `rawstor_fd_cancel_all()` and `rawstor_fd_recv()`/`rawstor_fd_send()` public routines.
 
 ### Changed
 
-- `librawstorstd` and `librawstorio` are renamed to `librawstd` and `librawio`.
-- The OST protocol header is public as `rawstor/protocol.h`; the request frame carries the command id in its head.
-- The queue depth option is called queue size.
+- The OST protocol header is public as `rawstor/protocol.h`.
 
 ### Fixed
 
 - Multishot operations break correctly and handle `POLLHUP` in multishot `recv`.
 - Cancelling an event from inside its own callback.
-- Graceful `rawstor-vhost-qemu` disconnect.
 
 ## [0.1.2] - 2026-07-02
 
@@ -266,7 +261,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `librawstorstd` and `librawstorio` are renamed to `librawstd` and `librawio`.
 - `RawstorObject` is redefined, and the command id moves to the head of the request frame.
-- Public headers carry the license.
 
 ### Fixed
 
@@ -278,40 +272,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - [Location and target](docs/concepts.md) conception and the matching documentation.
-- Multishot `poll` and `recv`, `recv`/`send` and `accept` queue routines, and event cancellation, also by file descriptor.
-- `SIGTERM` handling and the `--version` command line argument.
-- GoogleTest suites, `clang-format` check, tracing events with reference counts, and release automation.
+- Multishot `poll`, `recv`/`send` and `accept` queue routines, and event cancellation, also by file descriptor.
+- `SIGTERM` handling.
+- Batch processing of completions on wait.
 
 ### Changed
 
-- The previous OST backend is renamed to `ost-legacy`.
-- The OST frame is split into head and body, and responses carry an explicit body.
-- Callbacks are `std::function`s instead of task classes, and a queue batches completions on wait.
+- Callbacks are `std::function`s instead of task classes.
 
 ### Fixed
 
 - Handling of `POLLERR`, `POLLHUP` and `POLLNVAL`, and `SIGPIPE` is ignored.
-- Uninitialized `sockaddr`, a descriptor leak after `mkstemp`, and URI port parsing errors.
-- In-flight operations fail with the right size, and a callback that throws no longer leaks its CQE data.
-- Cleanup on terminate and signal handler fixes.
-
-## [0.1.0] - 2025-12-29
-
-### Added
-
-- `rawstor-vhost-qemu`, a vhost-user-blk server built on the qemu libvhost-user library.
-- `rawstor_fd_poll()`, `rawstor_fd_recvmsg()` and `rawstor_fd_sendmsg()` routines.
-- `rawstor_object_id()` and iovec routines (size, from buffer).
-- Public headers carry an SPDX license identifier.
-
-### Changed
-
-- The ring buffer is rewritten in C++, and the uuid routines are hidden.
-
-### Fixed
-
-- Timeout calculation, and session lookup by file descriptor.
-- The rpm release number taken from the tag.
+- Uninitialized `sockaddr` and a descriptor leak after `mkstemp`.
+- A callback that throws no longer leaks its CQE data.
 
 ## [0.0.2] - 2026-05-26
 
@@ -319,17 +292,27 @@ Maintenance release of 0.0.1.
 
 ### Added
 
-- GoogleTest suite, `clang-format` check, tracing events and the `--version` command line argument.
+- GoogleTest suite, `clang-format` check, tracing events with reference counts, and the `--version` command line argument.
 - Warning when `TCP_NODELAY` cannot be set on a unix domain socket, and io_uring init flags.
+- Release automation.
 
 ### Changed
 
-- The previous OST backend is renamed to `ost-legacy`, and the OST frame is split into head and body.
+- The previous OST backend is renamed to `ost-legacy`.
+- The OST frame is split into head and body, and responses carry an explicit body.
 
 ### Fixed
 
-- Error handling in `setup_fd`, in argument validation, and when failing in-flight operations.
+- Error handling in `setup_fd` and in argument validation.
+- In-flight operations fail with the right size, and cleanup on terminate.
 - Handling of URI port parsing errors and the signal handler.
+
+## [0.1.0] - 2025-12-29
+
+### Added
+
+- `rawstor-vhost-qemu`, a vhost-user-blk server built on the qemu libvhost-user library.
+- `rawstor_fd_poll()`, `rawstor_fd_recvmsg()` and `rawstor_fd_sendmsg()` routines.
 
 ## [0.0.1] - 2025-12-26
 
