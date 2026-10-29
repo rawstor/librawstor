@@ -101,6 +101,7 @@ private:
     // With the transition lock held: records that the member this Chunk
     // brought back, if its resync ended without the rejoin, is excluded.
     rawstd::Task<void> _resync_release();
+    rawstd::Task<void> _exclude_syncing(size_t idx, bool own);
     // Renews the register under which the resync `generation` runs.
     rawstd::Task<bool> _resync_renew(uint64_t generation);
     // Does so on a timer of its own, until the resync ends.

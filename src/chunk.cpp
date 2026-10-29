@@ -482,6 +482,7 @@ public:
         return _proposer;
     }
     void set_healing_locked(bool healing) noexcept { _healing = healing; }
+    uint64_t proposer_id() const noexcept { return _proposer_id; }
     rawstd::Task<void> lock_transition(rawio::Queue& queue) {
         co_await _transition.lock(queue);
     }
@@ -3470,12 +3471,56 @@ rawstd::Task<void> Chunk::_resync_release() {
         co_return;
     }
     try {
-        co_await _record(true, 0);
+        co_await _exclude_syncing(idx, true);
     } catch (const std::system_error& e) {
         rawstd_warning(
             "Mirror resync: releasing the member failed: %s\n",
             strerror(e.code().value())
         );
+    }
+}
+
+/*
+ * Excludes the member `idx` of a resync, with the transition lock held: the
+ * resync is not run by anyone any more. The change is a function of the
+ * configuration the register has decided: it is made only if that still names
+ * the member syncing (and, with `own`, under this process), so that a rejoin
+ * decided meanwhile, by this process or another, is not undone. The writers
+ * that duplicate onto the member stop once they take the decision over.
+ */
+rawstd::Task<void> Chunk::_exclude_syncing(size_t idx, bool own) {
+    MirrorControl& c = *_control;
+    std::vector<bool> accepting(_members.size(), false);
+    {
+        std::lock_guard<std::mutex> guard(c.mutex());
+        for (size_t i = 0; i < _members.size(); ++i) {
+            accepting[i] = _state(i) == MemberState::IN_SYNC;
+        }
+    }
+    RegisterTransport transport{
+        *this, accepting, std::vector<bool>(_members.size(), false)
+    };
+    const size_t n = _members.size();
+    const uint64_t me = c.proposer_id();
+    RawstorObjectConfig decided = co_await c.proposer().change(
+        transport,
+        [&](const RawstorObjectConfig& current)
+            -> std::optional<RawstorObjectConfig> {
+            if (current.nroles != n ||
+                current.roles[idx] != RAWSTOR_OBJECT_MEMBER_SYNCING ||
+                (own && current.resync_owner != me)) {
+                return std::nullopt;
+            }
+            RawstorObjectConfig next = current;
+            ++next.epoch;
+            next.roles[idx] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+            next.resync_owner = 0;
+            return next;
+        }
+    );
+    std::lock_guard<std::mutex> guard(c.mutex());
+    if (decided.epoch > c.epoch_locked()) {
+        _adopt_locked(decided);
     }
 }
 
@@ -3635,17 +3680,8 @@ rawstd::DetachedTask Chunk::_lease_watch() {
         _lease_member = static_cast<size_t>(-1);
         co_await _lock();
         try {
-            MirrorControl& c = *_control;
-            {
-                std::lock_guard<std::mutex> lock(c.mutex());
-                if (_state(idx) == MemberState::SYNCING &&
-                    _resync_attached == 0) {
-                    c.exclude_locked(idx);
-                    _members[idx].reachable = false;
-                }
-            }
-            if (_state(idx) == MemberState::STALE) {
-                co_await _record(true, 0);
+            if (_state(idx) == MemberState::SYNCING && _resync_attached == 0) {
+                co_await _exclude_syncing(idx, false);
             }
         } catch (...) {
             _unlock();

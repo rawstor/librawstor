@@ -379,7 +379,9 @@ For two data copies, see below.
   start the resync anew.
 - An owner that closes before the rejoin, or whose resync ends for any other
   reason without one, takes the same decision when it closes, so that no
-  writer goes on duplicating for a resync nobody runs.
+  writer goes on duplicating for a resync nobody runs. The decision is made only if the register still names the
+  member syncing: a rejoin decided meanwhile, even as the owner closes, is
+  not undone.
 
 The record of client writes lives in memory only. A copy that keeps none
 -- not syncing, or syncing since before its `rawstor-ost` started --

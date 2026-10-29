@@ -2058,6 +2058,100 @@ TEST(MirrorResyncTest, a_vanished_healer_is_replaced_by_a_writer_that_goes_on) {
     object_close_clean(queue, object);
 }
 
+// The writer closes while the member it brings back takes the decision that
+// brings it back: the rejoin was decided, and releasing the resync does not
+// undo it.
+TEST(MirrorResyncTest, closing_during_the_rejoin_keeps_the_member) {
+    ScopedLease lease(60000, 30000);
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000e7");
+    RawstorObjectSpec spec{
+        .size = 4096,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+    RawstorObjectConfig fresh{};
+    fresh.epoch = 2;
+    fresh.sync_id = 0x1111111111111111ull;
+    fresh.sync_id_history[0] = 0x2222222222222222ull;
+    ASSERT_EQ(target_set_config(queue, members.target(0), fresh), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(1), fresh), 0);
+
+    // The third member is the one brought back, and scripted: it is slow to
+    // answer the decision that brings it back.
+    rawstor::tests::Server server(8817, 256);
+    RawstorFrameMetaPayload stale = {
+        .size = spec.size,
+        .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
+        .width = 3,
+        .member_role = RAWSTOR_MEMBER_DATA,
+        .writers = 0,
+        .config =
+            {
+                .epoch = 1,
+                .sync_id = 0x2222222222222222ull,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
+    };
+    RawstorFrameMetaPayload syncing = stale;
+    syncing.config.nroles = 3;
+    syncing.config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    syncing.config.roles[1] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    syncing.config.roles[2] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+    std::atomic<bool> rejoining(false);
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_meta(RAWSTOR_MAGIC, 0, 0, stale);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, stale);
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 3, 0, stale);
+        s.cmd_meta(RAWSTOR_MAGIC, 5, 0, stale);
+        s.cmd_sync_accept_request();
+        s.cmd_sync_response(
+            RAWSTOR_CMD_SYNC_ACCEPT, RAWSTOR_MAGIC, 6, 0, true, syncing
+        );
+        s.cmd_write_zeroes(RAWSTOR_MAGIC, 7, spec.size);
+        s.cmd_flush(RAWSTOR_MAGIC, 8, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 9, 0, stale);
+        server.read(
+            "rejoin SYNC_ACCEPT <<<", sizeof(RawstorFrameSyncPropose),
+            [&rejoining](const void*) {
+                rejoining = true;
+                usleep(400 * 1000);
+            }
+        );
+        s.cmd_sync_response(
+            RAWSTOR_CMD_SYNC_ACCEPT, RAWSTOR_MAGIC, 10, 0, true, stale
+        );
+    }
+
+    std::string target =
+        members.target(0) + "," + members.target(1) +
+        ",ost://127.0.0.1:8817/00000000-0000-7000-8000-0000000000e7";
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, target, &object), 0);
+    for (int i = 0; i < 500 && !rejoining; ++i) {
+        rawio_wait_timeout(queue, 10);
+    }
+    ASSERT_TRUE(rejoining);
+    EXPECT_EQ(object_close(queue, object), 0);
+
+    RawstorObjectMeta meta{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &meta), 0);
+    ASSERT_EQ(meta.config.nroles, 3);
+    EXPECT_EQ(meta.config.roles[2], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
+    EXPECT_EQ(meta.config.resync_owner, 0u);
+}
+
 TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000a7");
