@@ -38,7 +38,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 
 One binary protocol is spoken by every rawstor server role: `rawstor-ost`
 (object storage) and `rawstor-mds` (metadata server). The authoritative
-definition is [`include/rawstor/protocol.h`](../include/rawstor/protocol.h);
+definition is [`include/rawstor/protocol.h`](https://github.com/rawstor/librawstor/blob/main/include/rawstor/protocol.h);
 this page describes the same layouts for a reader.
 
 - **Transport:** a stateful TCP connection.
