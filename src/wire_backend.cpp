@@ -38,6 +38,20 @@
 #include <cstdlib>
 #include <cstring>
 
+namespace {
+
+const unsigned int default_ost_port = 7777;
+const unsigned int default_mds_port = 7776;
+
+unsigned int location_port(const rawstd::URI& location) {
+    if (location.port() != 0) {
+        return location.port();
+    }
+    return location.scheme() == "mds" ? default_mds_port : default_ost_port;
+}
+
+} // namespace
+
 namespace rawstor {
 namespace wire {
 
@@ -540,7 +554,7 @@ rawstd::Task<void> Backend::_wire_connect() {
 
         sockaddr_in servaddr = {};
         servaddr.sin_family = AF_INET;
-        servaddr.sin_port = htons(location().port());
+        servaddr.sin_port = htons(location_port(location()));
 
         res = inet_pton(
             AF_INET, location().hostname().c_str(), &servaddr.sin_addr
