@@ -24,7 +24,7 @@ separately.
 | Every transition of the client through the register: dirty gate, exclusion, resync start and rejoin, end of a heal | 2 | ✅ | `src/chunk.cpp` (`Chunk::_decide()`, `_record()`) |
 | The client stamps writes with its chunk configuration epoch | 1 | ✅ | ordinary Chunk operations supply the current epoch |
 | Adoption of the register value on `-ESTALE` from another writer process | 2 | ✅ | `src/chunk.cpp` (`Chunk::_adopt()`, `_adopt_locked()`, `_fan_out_write()`) |
-| `LOST` at open and at runtime: resync of the losers | 2 | 🟡 | one process: its open heals the copies in the set and then clears `LOST` ([Mirroring](mirroring.md), F5); several writers: not implemented |
+| `LOST` at open and at runtime: resync of the losers | 2 | ✅ | at open, without other writers, the open heals the copies in the set and then clears `LOST` ([Mirroring](mirroring.md), F5); while writers go on, a writer that finds a copy `LOST` excludes it and resyncs it, one copy at a time (`src/chunk.cpp`, `_lost_watch()`) |
 | Resync across processes (`resync_owner`, sweep with `RESYNC`, lease of a silent owner) | 2 | ✅ | `src/chunk.cpp` (`_resync_run()`, `_resync_renew()`, `_lease_watch()`, `_resync_release()`) |
 | `LOST` cleared by a rule on the accepted value | 2 | ✅ | [Clearing `LOST`](#clearing-lost), `src/slot.cpp` (`clears_lost()`) |
 | `SET_CONFIG` and `rawstor_target_set_member_config()` removed; `rawstor resolve` decides through the register | 2 | ✅ | `cli/resolve.c` |
@@ -379,7 +379,9 @@ For two data copies, see below.
   start the resync anew.
 - An owner that closes before the rejoin, or whose resync ends for any other
   reason without one, takes the same decision when it closes, so that no
-  writer goes on duplicating for a resync nobody runs.
+  writer goes on duplicating for a resync nobody runs. The decision is made only if the register still names the
+  member syncing: a rejoin decided meanwhile, even as the owner closes, is
+  not undone.
 
 The record of client writes lives in memory only. A copy that keeps none
 -- not syncing, or syncing since before its `rawstor-ost` started --
@@ -542,11 +544,14 @@ record or frames, so both change in place. Details in
    configuration register on every member type, the SQLite witness of
    `rawstor-mds` included. Two data copies plus the witness form three
    acceptors; there is no single-copy override.
-2. **Several processes and machines.** 🟡 Done: the
+2. **Several processes and machines.** ✅ The
    `rawstd::caspaxos::Proposer` integrated; every transition of the client
    through the register; a rule for clearing `LOST`; `SET_CONFIG` and
    `rawstor_target_set_member_config()` removed; the register value kept
    once per chunk in the client; adoption of another writer's decision on
    `-ESTALE`, in a write and in a transition; resync across processes (the
-   sweep as `RESYNC` writes, a lease for the owner). Left: resync of `LOST`
-   chunks with several writers (the heal).
+   sweep as `RESYNC` writes, a lease for the owner); the resync of a `LOST`
+   copy while the writers go on, one copy at a time ([Runtime heal of a LOST
+   copy](mirroring.md#runtime-heal-of-a-lost-copy)). The role `HEALING` that
+   would keep a healed copy in the set is
+   [planned](mirroring.md#planned-the-healing-role).
