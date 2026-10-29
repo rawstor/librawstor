@@ -68,7 +68,7 @@ def render(release):
     parts = sections(release.get("body") or "")
     for heading in ("## Assets", "## Changelog"):
         if parts.get(heading):
-            out.append(f"#{heading}\n")
+            out.append(f"### {heading[3:]}\n")
             out.append(demote(parts[heading]) + "\n")
     return "\n".join(out)
 
