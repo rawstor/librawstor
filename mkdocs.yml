@@ -4,6 +4,9 @@ site_url: https://rawstor.github.io/librawstor/
 repo_url: https://github.com/rawstor/librawstor
 edit_uri: edit/main/docs/
 docs_dir: docs
+exclude_docs: |
+  README.md
+  requirements.txt
 
 theme:
   name: material
@@ -27,7 +30,7 @@ theme:
         name: Switch to light mode
 
 nav:
-  - Home: README.md
+  - Home: index.md
   - Downloads: downloads.md
   - Concepts: concepts.md
   - Architecture: architecture.md
