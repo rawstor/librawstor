@@ -7,6 +7,8 @@ docs_dir: docs
 
 theme:
   name: material
+  logo: assets/logo.jpg
+  favicon: assets/logo.jpg
   features:
     - navigation.sections
     - navigation.top
@@ -34,6 +36,9 @@ nav:
   - Mirroring: mirroring.md
   - CASPaxos: caspaxos.md
   - Multi-attach: multiattach.md
+
+extra_css:
+  - assets/extra.css
 
 plugins:
   - search
