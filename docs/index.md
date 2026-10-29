@@ -48,10 +48,11 @@ flowchart LR
 
 ## Getting started
 
-A single host serving a VM disk from a local directory, with every service
-run by systemd. Download the packages from [Downloads](downloads.md) first:
-`librawstor` (the `rawstor` CLI and the library), `rawstor-ost` and
-`rawstor-vhost`.
+A single host serving a VM disk: one OST that stores the data, one MDS that
+places the object's chunks on it, and a vhost-user disk for QEMU, all run by
+systemd. Download the packages from [Downloads](downloads.md) first:
+`librawstor` (the `rawstor` CLI and the library), `rawstor-ost`, `rawstor-mds`
+and `rawstor-vhost`.
 
 ```
 VERSION=0.2.12
@@ -59,18 +60,24 @@ VERSION=0.2.12
 # Debian/Ubuntu
 sudo apt install ./librawstor_${VERSION}_amd64.deb \
                  ./rawstor-ost_${VERSION}_amd64.deb \
+                 ./rawstor-mds_${VERSION}_amd64.deb \
                  ./rawstor-vhost_${VERSION}_amd64.deb
 
 # RHEL/AlmaLinux
 sudo dnf install ./librawstor-${VERSION}-0.x86_64.rpm \
                  ./rawstor-ost-${VERSION}-0.x86_64.rpm \
+                 ./rawstor-mds-${VERSION}-0.x86_64.rpm \
                  ./rawstor-vhost-${VERSION}-0.x86_64.rpm
 ```
 
 Installing a package starts nothing. Each server is a systemd template unit,
-one instance per OST, named after its id and configured by an environment
-file. Start an OST that stores its data in `/var/lib/rawstor/ost/<id>`
-(created on start and owned by the `rawstor` user):
+one instance per OST or cluster, named after its id and configured by an
+environment file in `/etc/rawstor/`.
+
+### Object storage target
+
+Start an OST that stores its data in `/var/lib/rawstor/ost/<id>` (created on
+start and owned by the `rawstor` user):
 
 ```
 OST=$(cat /proc/sys/kernel/random/uuid)
@@ -81,20 +88,45 @@ rawstor info ost://127.0.0.1                  # serving?
 journalctl -u rawstor-ost@${OST}              # log
 ```
 
-Create a 10 GiB object on it. `rawstor` prints the object's target, and the
-last path segment of that target is the object's UUID:
+### Metadata server
+
+The MDS decides which OSTs hold each chunk of an object. It reads a topology
+file with one line per OST: the OST's id (the one its instance is named
+after), its location, a weight, its roles and its place in the failure
+hierarchy. A single OST takes both the `data` and `witness` roles:
 
 ```
-OBJECT_TARGET=$(rawstor create ost://127.0.0.1 --size=10G --mirrors=1)
+CLUSTER=$(cat /proc/sys/kernel/random/uuid)
+echo "${OST} ost://127.0.0.1 100 data,witness dc1/row1/rack1/host1" \
+    | sudo tee /etc/rawstor/mds/${CLUSTER}.topology
+echo "BIND_ADDR=0.0.0.0" | sudo tee /etc/rawstor/mds/${CLUSTER}.conf
+sudo systemctl enable --now rawstor-mds@${CLUSTER}
+
+rawstor info mds://127.0.0.1                  # serving?
+```
+
+After editing the topology file later, apply it with
+`sudo systemctl reload rawstor-mds@${CLUSTER}`. The package also ships a
+commented example in `/usr/share/doc/rawstor-mds/topology.conf`.
+
+### A disk for a virtual machine
+
+Create a 10 GiB object, split into 256 MiB chunks that the MDS places on the
+OSTs. `rawstor` prints the object's target, and the last path segment of that
+target is the object's UUID:
+
+```
+OBJECT_TARGET=$(rawstor create mds://127.0.0.1 --size=10G --chunk-size=256M --mirrors=1)
 OBJECT=${OBJECT_TARGET##*/}
 ```
 
 Expose the object as a vhost-user disk. The `rawstor-vhost@` instance is
-named after the object and listens on `/run/rawstor/<object>.sock`; it reads
-the backend from `LOCATION` in `/etc/rawstor-vhost.conf` (default
-`ost://127.0.0.1:7777`):
+named after the object and listens on `/run/rawstor/<object>.sock`. It
+opens `${LOCATION}/<object>`, with `LOCATION` taken from
+`/etc/rawstor-vhost.conf`, so point it at the MDS:
 
 ```
+echo "LOCATION=mds://127.0.0.1" | sudo tee /etc/rawstor-vhost.conf
 sudo systemctl enable --now rawstor-vhost@${OBJECT}
 ```
 
@@ -118,10 +150,20 @@ qemu-system-x86_64 \
 ```
 
 A restarted `rawstor-vhost` instance picks up where it left off, so QEMU's
-`reconnect=1` is enough to survive it. For several OSTs on one host, give each
-its own id, port and store. For chunked objects placed across a cluster, run
-`rawstor-mds@` the same way and create the object on `mds://` instead. Both
-are covered in the
+`reconnect=1` is enough to survive it. Later, grow the disk with
+`rawstor resize ${OBJECT_TARGET} --size=20G`.
+
+### Without the MDS
+
+A whole object can also live on one OST, with no MDS and no chunking. Create
+it on the OST and leave `LOCATION` at its default, `ost://127.0.0.1:7777`:
+
+```
+OBJECT_TARGET=$(rawstor create ost://127.0.0.1 --size=10G --mirrors=1)
+```
+
+The rest is the same. For more OSTs, give each its own id, address and store;
+the details of every service are in the
 [README](https://github.com/rawstor/librawstor#readme).
 
 ## Where to go next
