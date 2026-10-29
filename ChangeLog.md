@@ -211,30 +211,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- List objects.
-- rawstor-ost and librawstor-dev packages.
-- systemd service for rawstor-ost.
+- `rawstor list` and `rawstor_location_list()` list the objects of a location.
+- `rawstor-ost` deb/rpm package and `librawstor-dev` development package, built from simplified deb and rpm packaging.
+- `rawstor-ost.service` systemd unit, with the user, group and data directory created at package installation.
+- pyrawstor `Location` and `Target` classes replace the single `Object` class.
+- Lifecycle tests for objects.
+
+### Changed
+
+- The default rawstor port is 7777.
+
+### Fixed
+
+- A server-side error is forwarded to the client as is instead of being reported as `-EPROTO`.
+- Removing an object no longer leaves orphaned files behind when the removal fails.
+- pyrawstor development builds get a PEP 440 compliant version.
 
 ## [0.2.0] - 2026-07-03
 
 ### Added
 
-- Multishot IO operations.
 - Units for command line arguments.
-- [Location and target](docs/concepts.md) conception.
 - OST backend implementation.
-- Multiqueue support.
+- Multiqueue support, with the `rawio` public headers.
+- Multishot `recv`.
 - Add allocate and release methods to the OST protocol.
 - Python bindings.
+- Public `open`, `close`, `connect` and `accept` API, user-defined object UUIDs, and creating an object by target.
+- `rawstor_fd_cancel_all()` and `rawstor_fd_recv()`/`rawstor_fd_send()` public routines.
+
+### Changed
+
+- The OST protocol header is public as `rawstor/protocol.h`.
+
+### Fixed
+
+- Multishot operations break correctly and handle `POLLHUP` in multishot `recv`.
+- Cancelling an event from inside its own callback.
 
 ## [0.1.2] - 2026-07-02
 
+### Added
+
+- `Queue::wait_timeout()` and an option controlling the queue size.
+- Asynchronous object open and close, and retry of interrupted connects.
+- Version header and this changelog.
+
+### Changed
+
+- `librawstorstd` and `librawstorio` are renamed to `librawstd` and `librawio`.
+- `RawstorObject` is redefined, and the command id moves to the head of the request frame.
+
+### Fixed
+
+- Graceful vhost disconnect.
+- Error handling in the OST session.
+
 ## [0.1.1] - 2026-05-26
+
+### Added
+
+- [Location and target](docs/concepts.md) conception and the matching documentation.
+- Multishot `poll`, `recv`/`send` and `accept` queue routines, and event cancellation, also by file descriptor.
+- `SIGTERM` handling.
+- Batch processing of completions on wait.
+
+### Changed
+
+- Callbacks are `std::function`s instead of task classes.
+
+### Fixed
+
+- Handling of `POLLERR`, `POLLHUP` and `POLLNVAL`, and `SIGPIPE` is ignored.
+- Uninitialized `sockaddr` and a descriptor leak after `mkstemp`.
+- A callback that throws no longer leaks its CQE data.
 
 ## [0.1.0] - 2025-12-29
 
+### Added
+
+- `rawstor-vhost-qemu`, a vhost-user-blk server built on the qemu libvhost-user library.
+- `rawstor_fd_poll()`, `rawstor_fd_recvmsg()` and `rawstor_fd_sendmsg()` routines.
+
 ## [0.0.2] - 2026-05-26
 
-## [0.0.1] - 2025-12-29
+### Added
+
+- GoogleTest suite, `clang-format` check, tracing events with reference counts, and the `--version` command line argument.
+- Warning when `TCP_NODELAY` cannot be set on a unix domain socket, and io_uring init flags.
+- Release automation.
+
+### Changed
+
+- The previous OST backend is renamed to `ost-legacy`.
+- The OST frame is split into head and body, and responses carry an explicit body.
+
+### Fixed
+
+- Error handling in `setup_fd` and in argument validation.
+- In-flight operations fail with the right size, and cleanup on terminate.
+- Handling of URI port parsing errors and the signal handler.
+
+## [0.0.1] - 2025-12-26
+
+### Added
+
+- iovec routines, `rawstor_object_id()` and public header licenses.
+
+### Changed
+
+- The ring buffer is rewritten in C++, and the uuid routines are hidden.
+
+### Fixed
+
+- Timeout calculation and session lookup by file descriptor.
+- The rpm release number taken from the tag.
 
 ## [0.0.0] - 2025-10-26
+
+Initial release: the `librawstor` client with io_uring based asynchronous I/O, in-memory, file and OST object backends, the `rawstor` testio command line tool and deb/rpm packaging. Releases before 0.1.2 have no changelog of their own.
