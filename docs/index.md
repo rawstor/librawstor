@@ -48,18 +48,24 @@ flowchart LR
 
 ## Getting started
 
-A virtual machine's disk served from three hosts, every service run by
+A mirrored virtual machine disk served from four hosts, every service run by
 systemd:
 
 | Host | Address | Runs | Packages |
 |---|---|---|---|
-| storage | `192.168.0.11` | `rawstor-ost`, holds the data | `rawstor-ost` |
-| metadata | `192.168.0.12` | `rawstor-mds`, places the object's chunks on the OSTs | `rawstor-mds` |
+| storage 1 | `192.168.0.11` | `rawstor-ost`, holds one copy of the data | `rawstor-ost` |
+| storage 2 | `192.168.0.12` | `rawstor-ost`, holds the other copy | `rawstor-ost` |
+| metadata | `192.168.0.13` | `rawstor-mds`, places the object's chunks on the OSTs and acts as the mirror's witness | `rawstor-mds` |
 | hypervisor | any | `rawstor-vhost` and QEMU, the VM's disk | `rawstor-vhost` |
 
 The hypervisor talks to the metadata host to find an object's chunks and to
-the storage host to read and write them, and the metadata host talks to the
-storage host. Addresses in locations are IPs, not host names.
+both storage hosts to read and write them, and the metadata host talks to the
+storage hosts. Addresses in locations are IPs, not host names.
+
+With two data copies, a quorum needs a third vote to tell a failed copy from
+a network split. The witness is that vote: it stores no data, only the
+mirror's state, and the MDS can host it, so no fifth machine is needed. With
+it, the disk stays available when either storage host goes down.
 
 Download the packages from [Downloads](downloads.md). Every host needs
 `librawstor` (the library and the `rawstor` CLI) next to its own package:
@@ -67,7 +73,7 @@ Download the packages from [Downloads](downloads.md). Every host needs
 ```
 VERSION=0.2.12
 
-# Debian/Ubuntu, on the storage host; likewise rawstor-mds and
+# Debian/Ubuntu, on a storage host; likewise rawstor-mds and
 # rawstor-vhost on the other two
 sudo apt install ./librawstor_${VERSION}_amd64.deb \
                  ./rawstor-ost_${VERSION}_amd64.deb
@@ -81,11 +87,11 @@ Installing a package starts nothing. Each server is a systemd template unit,
 one instance per OST or cluster, named after its id and configured by an
 environment file in `/etc/rawstor/`.
 
-### Storage host
+### Storage hosts
 
-Start an OST that stores its data in `/var/lib/rawstor/ost/<id>` (created on
-start and owned by the `rawstor` user), and note its id, the metadata host
-needs it:
+On each of the two storage hosts, start an OST that stores its data in
+`/var/lib/rawstor/ost/<id>` (created on start and owned by the `rawstor`
+user), and note its id, the metadata host needs it:
 
 ```
 OST=$(cat /proc/sys/kernel/random/uuid)
@@ -93,7 +99,7 @@ echo "BIND_ADDR=0.0.0.0" | sudo tee /etc/rawstor/ost/${OST}.conf
 sudo systemctl enable --now rawstor-ost@${OST}
 
 echo ${OST}                                   # for the topology below
-rawstor info ost://192.168.0.11               # serving?
+rawstor info ost://192.168.0.11               # serving? (.12 on the other)
 journalctl -u rawstor-ost@${OST}              # log
 ```
 
@@ -101,20 +107,30 @@ journalctl -u rawstor-ost@${OST}              # log
 
 The MDS decides which OSTs hold each chunk of an object. It reads a topology
 file with one line per OST: the OST's id, the location clients reach it at, a
-weight, its roles and its place in the failure hierarchy. A single OST takes
-both the `data` and `witness` roles:
+weight, its roles and its place in the failure hierarchy. The two storage
+hosts are `data` members. The MDS lists itself too, as a `witness`: it serves
+the witness subset of the OST protocol on its own port, so its location is an
+`ost://` one with the MDS's port, `7776`, and it needs an id of its own:
 
 ```
-OST=<the id printed on the storage host>
+OST1=<the id printed on storage host 1>
+OST2=<the id printed on storage host 2>
+WITNESS=$(cat /proc/sys/kernel/random/uuid)
 CLUSTER=$(cat /proc/sys/kernel/random/uuid)
 
-echo "${OST} ost://192.168.0.11 100 data,witness dc1/row1/rack1/host1" \
-    | sudo tee /etc/rawstor/mds/${CLUSTER}.topology
+sudo tee /etc/rawstor/mds/${CLUSTER}.topology <<EOF
+${OST1} ost://192.168.0.11 100 data dc1/row1/rack1/host1
+${OST2} ost://192.168.0.12 100 data dc1/row1/rack2/host2
+${WITNESS} ost://192.168.0.13:7776 100 witness dc1/row1/rack3/host3
+EOF
 echo "BIND_ADDR=0.0.0.0" | sudo tee /etc/rawstor/mds/${CLUSTER}.conf
 sudo systemctl enable --now rawstor-mds@${CLUSTER}
 
-rawstor info mds://192.168.0.12               # serving?
+rawstor info mds://192.168.0.13               # serving?
 ```
+
+Each member sits on its own server, so a chunk's two copies and its witness
+never share a failure domain.
 
 After editing the topology file later, apply it with
 `sudo systemctl reload rawstor-mds@${CLUSTER}`. The package also ships a
@@ -122,13 +138,16 @@ commented example in `/usr/share/doc/rawstor-mds/topology.conf`.
 
 ### Hypervisor
 
-Create a 10 GiB object, split into 256 MiB chunks that the MDS places on the
-OSTs. `rawstor` prints the object's target, and the last path segment of that
-target is the object's UUID:
+Create a 10 GiB mirrored object, split into 256 MiB chunks. For every chunk
+the MDS places two copies on the two OSTs and, since the number of copies is
+even, a witness on its own host. `rawstor` prints the object's target, and the
+last path segment of that target is the object's UUID:
 
 ```
-OBJECT_TARGET=$(rawstor create mds://192.168.0.12 --size=10G --chunk-size=256M --mirrors=1)
+OBJECT_TARGET=$(rawstor create mds://192.168.0.13 --size=10G --chunk-size=256M --mirrors=2)
 OBJECT=${OBJECT_TARGET##*/}
+
+rawstor show -v ${OBJECT_TARGET}              # each copy's state, per chunk
 ```
 
 Expose the object as a vhost-user disk. The `rawstor-vhost@` instance is
@@ -137,7 +156,7 @@ opens `${LOCATION}/<object>`, with `LOCATION` taken from
 `/etc/rawstor-vhost.conf`, so point it at the MDS:
 
 ```
-echo "LOCATION=mds://192.168.0.12" | sudo tee /etc/rawstor-vhost.conf
+echo "LOCATION=mds://192.168.0.13" | sudo tee /etc/rawstor-vhost.conf
 sudo systemctl enable --now rawstor-vhost@${OBJECT}
 ```
 
@@ -162,23 +181,9 @@ qemu-system-x86_64 \
 
 A restarted `rawstor-vhost` instance picks up where it left off, so QEMU's
 `reconnect=1` is enough to survive it. Later, grow the disk with
-`rawstor resize ${OBJECT_TARGET} --size=20G`.
-
-### Without the MDS
-
-A whole object can also live on one OST, with no MDS host and no chunking.
-Create it on the OST and point `LOCATION` at the OST instead of the MDS
-(the default, `ost://127.0.0.1:7777`, is only right when the OST runs on the
-hypervisor itself):
-
-```
-OBJECT_TARGET=$(rawstor create ost://192.168.0.11 --size=10G --mirrors=1)
-echo "LOCATION=ost://192.168.0.11" | sudo tee /etc/rawstor-vhost.conf
-```
-
-The rest is the same. For more OSTs, give each its own id, address and store;
-the details of every service are in the
-[README](https://github.com/rawstor/librawstor#readme).
+`rawstor resize ${OBJECT_TARGET} --size=20G`. The details of every service
+are in the [README](https://github.com/rawstor/librawstor#readme), and how a
+mirror degrades and recovers is in [Mirroring](mirroring.md).
 
 ## Where to go next
 
