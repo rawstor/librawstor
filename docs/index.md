@@ -46,20 +46,82 @@ flowchart LR
 | `rawstor-vhost`, `rawstor-vduse` | Expose an object as a `virtio-blk` disk over vhost-user or VDUSE. |
 | `pyrawstor` | Python bindings. |
 
-## Try it
+## Getting started
 
-Start a server on a local directory and create an object on it:
+A single host serving a VM disk from a local directory, with every service
+run by systemd. Download the packages from [Downloads](downloads.md) first:
+`librawstor` (the `rawstor` CLI and the library), `rawstor-ost` and
+`rawstor-vhost`.
 
 ```
-mkdir -p /var/rawstor
-rawstor-ost --bind 127.0.0.1 file:///var/rawstor &
+VERSION=0.2.12
 
-rawstor create ost://127.0.0.1 --size=1G --mirrors=1
+# Debian/Ubuntu
+sudo apt install ./librawstor_${VERSION}_amd64.deb \
+                 ./rawstor-ost_${VERSION}_amd64.deb \
+                 ./rawstor-vhost_${VERSION}_amd64.deb
+
+# RHEL/AlmaLinux
+sudo dnf install ./librawstor-${VERSION}-0.x86_64.rpm \
+                 ./rawstor-ost-${VERSION}-0.x86_64.rpm \
+                 ./rawstor-vhost-${VERSION}-0.x86_64.rpm
 ```
 
-`rawstor create` prints the new object's target. Serve it to QEMU with
-`rawstor-vhost --socket-path=... TARGET`. The full walkthrough, including
-`rawstor-mds`, is in the
+Installing a package starts nothing. Each server is a systemd template unit,
+one instance per OST, named after its id and configured by an environment
+file. Start an OST that stores its data in `/var/lib/rawstor/ost/<id>`
+(created on start and owned by the `rawstor` user):
+
+```
+OST=$(cat /proc/sys/kernel/random/uuid)
+echo "BIND_ADDR=0.0.0.0:7777" | sudo tee /etc/rawstor/ost/${OST}.conf
+sudo systemctl enable --now rawstor-ost@${OST}
+
+rawstor info ost://127.0.0.1:7777               # serving?
+journalctl -u rawstor-ost@${OST}              # log
+```
+
+Create a 10 GiB object on it. `rawstor` prints the object's target, and the
+last path segment of that target is the object's UUID:
+
+```
+OBJECT_TARGET=$(rawstor create ost://127.0.0.1:7777 --size=10G --mirrors=1)
+OBJECT=${OBJECT_TARGET##*/}
+```
+
+Expose the object as a vhost-user disk. The `rawstor-vhost@` instance is
+named after the object and listens on `/run/rawstor/<object>.sock`; it reads
+the backend from `LOCATION` in `/etc/rawstor-vhost.conf` (default
+`ost://127.0.0.1:7777`):
+
+```
+sudo systemctl enable --now rawstor-vhost@${OBJECT}
+```
+
+QEMU only needs permission to connect to that socket, which is a matter of
+joining the `rawstor` group (`libvirt-qemu` on Debian/Ubuntu, `qemu` on
+Fedora/RHEL):
+
+```
+sudo usermod -aG rawstor libvirt-qemu
+```
+
+Then give the guest the disk:
+
+```
+qemu-system-x86_64 \
+    -enable-kvm -m 4G \
+    -machine accel=kvm,memory-backend=mem \
+    -object memory-backend-memfd,id=mem,size=4G,share=on \
+    -chardev socket,id=rawstor1,reconnect=1,path=/run/rawstor/${OBJECT}.sock \
+    -device vhost-user-blk-pci,chardev=rawstor1,num-queues=1,disable-legacy=on
+```
+
+A restarted `rawstor-vhost` instance picks up where it left off, so QEMU's
+`reconnect=1` is enough to survive it. For several OSTs on one host, give each
+its own id, port and store. For chunked objects placed across a cluster, run
+`rawstor-mds@` the same way and create the object on `mds://` instead. Both
+are covered in the
 [README](https://github.com/rawstor/librawstor#readme).
 
 ## Where to go next
