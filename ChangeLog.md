@@ -286,6 +286,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Uninitialized `sockaddr` and a descriptor leak after `mkstemp`.
 - A callback that throws no longer leaks its CQE data.
 
+## [0.1.0] - 2025-12-29
+
+### Added
+
+- `rawstor-vhost-qemu`, a vhost-user-blk server built on the qemu libvhost-user library.
+- `rawstor_fd_poll()`, `rawstor_fd_recvmsg()` and `rawstor_fd_sendmsg()` routines.
+
 ## [0.0.2] - 2026-05-26
 
 Maintenance release of 0.0.1.
@@ -306,13 +313,6 @@ Maintenance release of 0.0.1.
 - Error handling in `setup_fd` and in argument validation.
 - In-flight operations fail with the right size, and cleanup on terminate.
 - Handling of URI port parsing errors and the signal handler.
-
-## [0.1.0] - 2025-12-29
-
-### Added
-
-- `rawstor-vhost-qemu`, a vhost-user-blk server built on the qemu libvhost-user library.
-- `rawstor_fd_poll()`, `rawstor_fd_recvmsg()` and `rawstor_fd_sendmsg()` routines.
 
 ## [0.0.1] - 2025-12-26
 
