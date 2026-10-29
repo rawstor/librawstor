@@ -26,6 +26,7 @@
 
 #define DEFAULT_QUEUE_SIZE 4096
 #define DEFAULT_WORKERS 12
+#define DEFAULT_PORT 7777
 
 namespace {
 
@@ -99,8 +100,9 @@ void usage() {
               << std::endl
               << "required arguments:" << std::endl
               << "  -b, --bind ADDR       Bind address in the format "
-              << "<ip>:<port> " << std::endl
-              << "                        (e.g., 127.0.0.1:7777)." << std::endl
+              << "<ip>[:<port>] " << std::endl
+              << "                        (e.g., 127.0.0.1:7777; the port "
+              << "defaults to " << DEFAULT_PORT << ")." << std::endl
               << "  LOCATION              One rawstor backend location"
               << std::endl;
 }
@@ -230,7 +232,7 @@ void parse_addr(
         }
     } else {
         *name = addr;
-        *port = 0;
+        *port = DEFAULT_PORT;
     }
 }
 

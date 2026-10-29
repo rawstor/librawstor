@@ -30,6 +30,7 @@
 
 #define DEFAULT_QUEUE_SIZE 4096
 #define DEFAULT_WORKERS 4
+#define DEFAULT_PORT 7776
 
 namespace {
 
@@ -74,8 +75,10 @@ void usage() {
         << DEFAULT_WORKERS << ")" << std::endl
         << std::endl
         << "required arguments:" << std::endl
-        << "  -b, --bind ADDR       Bind address in the format <ip>:<port>"
+        << "  -b, --bind ADDR       Bind address in the format <ip>[:<port>]"
         << std::endl
+        << "                        (the port defaults to " << DEFAULT_PORT
+        << ")." << std::endl
         << "  -d, --db PATH         SQLite database file (created if missing)"
         << std::endl
         << "  -t, --topology PATH   Static topology config file "
@@ -436,7 +439,7 @@ void parse_addr(
         }
     } else {
         *name = addr;
-        *port = 0;
+        *port = DEFAULT_PORT;
     }
 }
 

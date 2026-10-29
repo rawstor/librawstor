@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `ost://` and `mds://` URIs without a port use 7777 and 7776 respectively.
+- `ost://` and `mds://` URIs, and the `--bind` address of `rawstor-ost` and `rawstor-mds`, default to port 7777 and 7776 respectively when no port is given.
 - `rawstor show -v` prints ancestor and current sync ids on one line, oldest first.
 - Native witnesses on MDS use `ost://` URIs; `mds://` URIs resolve logical objects and chunks.
 - `rawstor show -v` prints each chunk's physical target URI for recovery commands.

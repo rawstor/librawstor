@@ -31,7 +31,7 @@ OST_DATADIR=/var/rawstor
 mkdir -p ${OST_DATADIR}
 
 rawstor-ost \
-    --bind ${OST_HOST}:7777 \
+    --bind ${OST_HOST} \
     file://${OST_DATADIR}
 
 ##
@@ -47,7 +47,7 @@ $(cat /proc/sys/kernel/random/uuid) ost://${OST_HOST} 100 data,witness dc1/row1/
 EOF
 
 rawstor-mds \
-    --bind ${MDS_HOST}:7776 \
+    --bind ${MDS_HOST} \
     --db ${MDS_DATADIR}/mds.db \
     --topology ${MDS_DATADIR}/topology.conf
 
@@ -130,7 +130,7 @@ exits with `EX_CONFIG` (78), which the shipped systemd units do not restart.
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
 | `LOCATION` | Comma‑separated list of backend locations (e.g., `file:///path`, `ost://host:port`). |
-| `-b, --bind ADDR` | Bind address in `<ip>:<port>` format (e.g., `127.0.0.1:7777`). |
+| `-b, --bind ADDR` | Bind address in `<ip>[:<port>]` format (e.g., `127.0.0.1:7777`); the port defaults to 7777. |
 | `-w, --workers N` | Number of worker threads, each with its own client connections and I/O queue, all accepting on the same listening socket (default: `12`). |
 
 ### Examples
@@ -521,7 +521,7 @@ the placed OSTs directly once it has resolved an object's own chunk map.
 | Option | Description |
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
-| `-b, --bind ADDR` | Bind address in `<ip>:<port>` format (e.g., `127.0.0.1:7776`). |
+| `-b, --bind ADDR` | Bind address in `<ip>[:<port>]` format (e.g., `127.0.0.1:7776`); the port defaults to 7776. |
 | `-d, --db PATH` | SQLite database file holding the chunk map (created if missing). |
 | `-t, --topology PATH` | Static topology config file: one `<uuid> <location> <weight> <role> [[[<dc>/]<row>/]<rack>/]<server>` line per OST (required role: `data`, `witness` or both comma-separated; failure domains from the root down; only `<server>` is required), `<location>` being a single location URI (`ost://host:port`; a client-local one such as `file://` only makes sense on a single host; each `rawstor-ost` serves one backend location) (see [MDS design](https://github.com/rawstor/librawstor/blob/main/docs/mds.md)). |
 | `--queue-size SIZE` | RawIO queue (`io_uring`) depth. Default: `4096`. |
