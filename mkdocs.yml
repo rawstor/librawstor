@@ -1,0 +1,49 @@
+site_name: Rawstor
+site_description: Raw object storage exposed as block devices
+site_url: https://rawstor.github.io/librawstor/
+repo_url: https://github.com/rawstor/librawstor
+edit_uri: edit/main/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+nav:
+  - Home: README.md
+  - Concepts: concepts.md
+  - Architecture: architecture.md
+  - Protocol: protocol.md
+  - MDS design: mds.md
+  - Mirroring: mirroring.md
+  - CASPaxos: caspaxos.md
+  - Multi-attach: multiattach.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
