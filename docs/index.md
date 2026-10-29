@@ -48,75 +48,86 @@ flowchart LR
 
 ## Getting started
 
-A single host serving a VM disk: one OST that stores the data, one MDS that
-places the object's chunks on it, and a vhost-user disk for QEMU, all run by
-systemd. Download the packages from [Downloads](downloads.md) first:
-`librawstor` (the `rawstor` CLI and the library), `rawstor-ost`, `rawstor-mds`
-and `rawstor-vhost`.
+A virtual machine's disk served from three hosts, every service run by
+systemd:
+
+| Host | Address | Runs | Packages |
+|---|---|---|---|
+| storage | `192.168.0.11` | `rawstor-ost`, holds the data | `rawstor-ost` |
+| metadata | `192.168.0.12` | `rawstor-mds`, places the object's chunks on the OSTs | `rawstor-mds` |
+| hypervisor | any | `rawstor-vhost` and QEMU, the VM's disk | `rawstor-vhost` |
+
+The hypervisor talks to the metadata host to find an object's chunks and to
+the storage host to read and write them, and the metadata host talks to the
+storage host. Addresses in locations are IPs, not host names.
+
+Download the packages from [Downloads](downloads.md). Every host needs
+`librawstor` (the library and the `rawstor` CLI) next to its own package:
 
 ```
 VERSION=0.2.12
 
-# Debian/Ubuntu
+# Debian/Ubuntu, on the storage host; likewise rawstor-mds and
+# rawstor-vhost on the other two
 sudo apt install ./librawstor_${VERSION}_amd64.deb \
-                 ./rawstor-ost_${VERSION}_amd64.deb \
-                 ./rawstor-mds_${VERSION}_amd64.deb \
-                 ./rawstor-vhost_${VERSION}_amd64.deb
+                 ./rawstor-ost_${VERSION}_amd64.deb
 
 # RHEL/AlmaLinux
 sudo dnf install ./librawstor-${VERSION}-0.x86_64.rpm \
-                 ./rawstor-ost-${VERSION}-0.x86_64.rpm \
-                 ./rawstor-mds-${VERSION}-0.x86_64.rpm \
-                 ./rawstor-vhost-${VERSION}-0.x86_64.rpm
+                 ./rawstor-ost-${VERSION}-0.x86_64.rpm
 ```
 
 Installing a package starts nothing. Each server is a systemd template unit,
 one instance per OST or cluster, named after its id and configured by an
 environment file in `/etc/rawstor/`.
 
-### Object storage target
+### Storage host
 
 Start an OST that stores its data in `/var/lib/rawstor/ost/<id>` (created on
-start and owned by the `rawstor` user):
+start and owned by the `rawstor` user), and note its id, the metadata host
+needs it:
 
 ```
 OST=$(cat /proc/sys/kernel/random/uuid)
 echo "BIND_ADDR=0.0.0.0" | sudo tee /etc/rawstor/ost/${OST}.conf
 sudo systemctl enable --now rawstor-ost@${OST}
 
-rawstor info ost://127.0.0.1                  # serving?
+echo ${OST}                                   # for the topology below
+rawstor info ost://192.168.0.11               # serving?
 journalctl -u rawstor-ost@${OST}              # log
 ```
 
-### Metadata server
+### Metadata host
 
 The MDS decides which OSTs hold each chunk of an object. It reads a topology
-file with one line per OST: the OST's id (the one its instance is named
-after), its location, a weight, its roles and its place in the failure
-hierarchy. A single OST takes both the `data` and `witness` roles:
+file with one line per OST: the OST's id, the location clients reach it at, a
+weight, its roles and its place in the failure hierarchy. A single OST takes
+both the `data` and `witness` roles:
 
 ```
+OST=<the id printed on the storage host>
 CLUSTER=$(cat /proc/sys/kernel/random/uuid)
-echo "${OST} ost://127.0.0.1 100 data,witness dc1/row1/rack1/host1" \
+
+echo "${OST} ost://192.168.0.11 100 data,witness dc1/row1/rack1/host1" \
     | sudo tee /etc/rawstor/mds/${CLUSTER}.topology
 echo "BIND_ADDR=0.0.0.0" | sudo tee /etc/rawstor/mds/${CLUSTER}.conf
 sudo systemctl enable --now rawstor-mds@${CLUSTER}
 
-rawstor info mds://127.0.0.1                  # serving?
+rawstor info mds://192.168.0.12               # serving?
 ```
 
 After editing the topology file later, apply it with
 `sudo systemctl reload rawstor-mds@${CLUSTER}`. The package also ships a
 commented example in `/usr/share/doc/rawstor-mds/topology.conf`.
 
-### A disk for a virtual machine
+### Hypervisor
 
 Create a 10 GiB object, split into 256 MiB chunks that the MDS places on the
 OSTs. `rawstor` prints the object's target, and the last path segment of that
 target is the object's UUID:
 
 ```
-OBJECT_TARGET=$(rawstor create mds://127.0.0.1 --size=10G --chunk-size=256M --mirrors=1)
+OBJECT_TARGET=$(rawstor create mds://192.168.0.12 --size=10G --chunk-size=256M --mirrors=1)
 OBJECT=${OBJECT_TARGET##*/}
 ```
 
@@ -126,7 +137,7 @@ opens `${LOCATION}/<object>`, with `LOCATION` taken from
 `/etc/rawstor-vhost.conf`, so point it at the MDS:
 
 ```
-echo "LOCATION=mds://127.0.0.1" | sudo tee /etc/rawstor-vhost.conf
+echo "LOCATION=mds://192.168.0.12" | sudo tee /etc/rawstor-vhost.conf
 sudo systemctl enable --now rawstor-vhost@${OBJECT}
 ```
 
@@ -155,11 +166,14 @@ A restarted `rawstor-vhost` instance picks up where it left off, so QEMU's
 
 ### Without the MDS
 
-A whole object can also live on one OST, with no MDS and no chunking. Create
-it on the OST and leave `LOCATION` at its default, `ost://127.0.0.1:7777`:
+A whole object can also live on one OST, with no MDS host and no chunking.
+Create it on the OST and point `LOCATION` at the OST instead of the MDS
+(the default, `ost://127.0.0.1:7777`, is only right when the OST runs on the
+hypervisor itself):
 
 ```
-OBJECT_TARGET=$(rawstor create ost://127.0.0.1 --size=10G --mirrors=1)
+OBJECT_TARGET=$(rawstor create ost://192.168.0.11 --size=10G --mirrors=1)
+echo "LOCATION=ost://192.168.0.11" | sudo tee /etc/rawstor-vhost.conf
 ```
 
 The rest is the same. For more OSTs, give each its own id, address and store;
