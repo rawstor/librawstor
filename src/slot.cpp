@@ -919,8 +919,12 @@ rawstd::Task<T> Slot::_with_retry(
             }
 
             ++attempt;
-            if (!_transparent_retry || attempt >= rawstor_opts_io_attempts()) {
-                if (!_transparent_retry) {
+            // A connection left out of step by a request sent in part is
+            // replaced and the request repeated even on a mirror member:
+            // nothing the server acknowledged is in doubt.
+            const bool may_retry = _transparent_retry || be->desynced();
+            if (!may_retry || attempt >= rawstor_opts_io_attempts()) {
+                if (!may_retry) {
                     // A mirror member: the owning Chunk handles the
                     // failure (degrade, reconnect probe), so there is no
                     // retry budget here to report against.
@@ -1103,7 +1107,13 @@ rawstd::Task<void> Slot::_reconnect(std::shared_ptr<Backend> be) {
     std::shared_ptr<Backend> retired = new_backend;
     if (!eptr && _backend == be) {
         try {
-            co_await _lose_backend(be);
+            // Writes in flight on a connection left out of step by a
+            // request sent in part are repeated on the replacement, so
+            // none is left unaccounted for: the writer's new session takes
+            // over and the copy stays as it is.
+            if (!be->desynced()) {
+                co_await _lose_backend(be);
+            }
         } catch (...) {
             eptr = std::current_exception();
         }

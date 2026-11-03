@@ -3185,4 +3185,74 @@ TEST(MirrorOstTest, failed_leave_on_a_data_member_leaves_the_others_clean) {
     }
 }
 
+/*
+ * A write that goes out only in part leaves the connection out of step with
+ * the server, which drops it. The member is not at fault: its session is
+ * replaced, the write is repeated on the new one, and the member stays in
+ * the set with nothing marked lost. The server below takes the first
+ * megabyte of the first connection's write and drops it, so the client's
+ * send returns short.
+ */
+TEST(MirrorOstTest, a_write_sent_in_part_reconnects_the_member) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000b5");
+    const size_t size = 8u << 20;
+    RawstorObjectSpec spec{
+        .size = 16u << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObjectMeta replaced{};
+    ASSERT_EQ(target_meta(queue, members.target(1), &replaced), 0);
+    RawstorFrameMetaPayload meta{};
+    ASSERT_EQ(rawstor_frame_meta_encode(&meta, &replaced), 0);
+
+    rawstor::tests::Server server(8818, 256);
+    {
+        // Takes the first megabyte of the first write after its dirty gate
+        // and drops the connection, with the rest still on its way.
+        rawstor::tests::Session first(server);
+        first.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta);
+        first.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        first.cmd_meta(RAWSTOR_MAGIC, 2, 0, meta);
+        first.cmd_sync_prepare(RAWSTOR_MAGIC, 3, 0, meta);
+        first.cmd_sync_accept(RAWSTOR_MAGIC, 5, 0, meta);
+        server.read("PART OF WRITE <<<", 1u << 20, [](const void*) {});
+    }
+    {
+        // The replacement session: the object is set again, then the write
+        // that did not get through.
+        rawstor::tests::Session second(server);
+        second.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        second.cmd_meta(RAWSTOR_MAGIC, 1, 0, meta);
+        second.cmd_write(RAWSTOR_MAGIC, 2, static_cast<int32_t>(size));
+        second.cmd_flush(RAWSTOR_MAGIC, 3, 0);
+        second.cmd_leave(RAWSTOR_MAGIC, 4, 0);
+
+        std::string target =
+            members.target(0) +
+            ",ost://127.0.0.1:8818/00000000-0000-7000-8000-0000000000b5," +
+            members.target(2);
+        RawstorObject* object = nullptr;
+        ASSERT_EQ(target_open(queue, target, &object), 0);
+
+        testing::internal::CaptureStderr();
+        std::string data(size, 'S');
+        object_write(queue, object, data.data(), data.size(), 0, 0);
+        object_close_clean(queue, object);
+        std::string log = testing::internal::GetCapturedStderr();
+        EXPECT_EQ(log.find("Mirror member degraded"), std::string::npos) << log;
+    }
+
+    for (size_t i : {0, 2}) {
+        RawstorObjectMeta left{};
+        ASSERT_EQ(target_meta(queue, members.target(i), &left), 0);
+        EXPECT_EQ(left.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN) << i;
+    }
+}
+
 } // unnamed namespace

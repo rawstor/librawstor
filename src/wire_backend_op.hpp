@@ -191,6 +191,13 @@ public:
     void request_cb(int error) {
         RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "%s\n", "in-flight begin");
 
+        // validate_result() reports a request sent only in part as EAGAIN.
+        // Marked before the failure reaches the caller, so that it and
+        // every other request on this connection see it.
+        if (error == EAGAIN) {
+            _backend->mark_desynced();
+        }
+
         if (!error) {
             _t_send_done = rawstor::telemetry::now();
             rawstor::telemetry::record_slat(_t_send_done - _t_created);

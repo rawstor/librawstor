@@ -25,6 +25,7 @@ namespace rawstor {
 Backend::Backend(Private, rawio::Queue& queue, const rawstd::URI& location) :
     _location(location),
     _fd(-1),
+    _desynced(false),
     _queue(queue) {
 }
 

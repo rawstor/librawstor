@@ -35,6 +35,7 @@ class Backend : public std::enable_shared_from_this<Backend> {
 private:
     rawstd::URI _location;
     int _fd;
+    bool _desynced;
 
 protected:
     struct Private {
@@ -69,6 +70,14 @@ public:
     inline const rawstd::URI& location() const noexcept { return _location; }
 
     inline int fd() const noexcept { return _fd; }
+
+    // The connection's byte stream no longer ends on a frame boundary: a
+    // request went out only in part. The server did not apply that request
+    // and will drop the connection; the peer itself is alive, so replacing
+    // the connection is enough -- nothing it acknowledged is in doubt.
+    inline void mark_desynced() noexcept { _desynced = true; }
+
+    inline bool desynced() const noexcept { return _desynced; }
 
     // Tears down what _connect() set up. Not called implicitly by
     // ~Backend() (a coroutine can't run in a destructor) -- callers that

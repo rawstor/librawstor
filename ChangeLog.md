@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MDS object writes keep epoch fencing on physical chunks; unsupported operations fail without retries on macOS.
 - Malformed persisted member metadata fails with `EILSEQ` without retrying; wire protocol errors retain reconnect retries.
 - A client reconnecting after a short write or a dropped connection no longer leaves the copy `LOST`: the new connection takes over the writes of the one it replaces.
+- A write to a mirror member that went out only in part no longer degrades the member: the connection is replaced and the requests in flight on it are repeated, instead of every one of them failing and both arms of a busy mirror going down at once.
 - Persist LOST after failed mirror departure, select conflicting member geometry only with an agreeing configuration quorum, reject unknown metadata states, and fail short DATA reads instead of returning incomplete data.
 - OST shutdown terminates incomplete network requests before draining storage operations; snapshot creation skips an unavailable trailing witness without ignoring unavailable data members.
 - Multi-chunk `mds://` objects accept I/O beyond the first chunk while retaining object bounds checks.

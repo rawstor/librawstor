@@ -451,6 +451,13 @@ BackendOp* Backend::_find_op(uint16_t cid) {
 }
 
 void Backend::_add_op(const std::shared_ptr<BackendOp>& op) {
+    if (desynced()) {
+        // The byte stream stops in the middle of a request: nothing more
+        // goes out on it, or the server takes the next request for the
+        // rest of that one and drops the connection on its own, before the
+        // replacement has taken over the writer's session.
+        RAWSTD_THROW_SYSTEM_ERROR(EAGAIN);
+    }
     if (_read_event == nullptr) {
         // _recv_pump has already exited (e.g. the connection died right
         // after a previous op's response, before this one was ever
