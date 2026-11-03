@@ -1738,6 +1738,420 @@ TEST(MirrorResyncTest, resync_ends_when_its_lease_cannot_be_renewed) {
     ) << log;
 }
 
+namespace {
+
+// A writer that wrote the copy of one member and vanished: the copy is LOST
+// and holds a write no other copy has.
+void vanished_writer(
+    Queue& queue, Members& members, size_t member, uint64_t offset,
+    const std::string& data
+) {
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target(member), &object), 0);
+    object_write(queue, object, data.data(), data.size(), offset, 0);
+    ASSERT_EQ(
+        rawstor::tests::sync_run(
+            queue,
+            [&](auto cb, void* d) {
+                return rawstor_object_abandon(object, cb, d);
+            }
+        ),
+        0
+    );
+    RawstorObjectMeta meta{};
+    ASSERT_EQ(target_meta(queue, members.target(member), &meta), 0);
+    ASSERT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+}
+
+// Whether no member of the set is LOST and every copy holds what the first
+// one does.
+bool healed(Queue& queue, Members& members, size_t n) {
+    for (size_t i = 0; i < n; ++i) {
+        RawstorObjectMeta meta{};
+        if (target_meta(queue, members.target(i), &meta) != 0 ||
+            meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST ||
+            (meta.config.nroles == n &&
+             meta.config.roles[i] != RAWSTOR_OBJECT_MEMBER_IN_SYNC)) {
+            return false;
+        }
+        if (i > 0 && read_file(members.dat(i)) != read_file(members.dat(0))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+// A writer vanished while this one goes on, and left a copy LOST with a write
+// no other copy has. The copy is made equal to a copy that is not: excluded
+// and resynced while the writer goes on, which clears LOST.
+TEST(MirrorResyncTest, writer_goes_on_while_a_vanished_writers_copy_is_healed) {
+    ScopedLease lease(50, 30000);
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000e1");
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    std::string first = "first";
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+
+    vanished_writer(queue, members, 1, 4096, "unacknowledged");
+    ASSERT_NE(read_file(members.dat(1)), read_file(members.dat(0)));
+
+    const auto until =
+        std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (!healed(queue, members, 3) &&
+           std::chrono::steady_clock::now() < until) {
+        rawio_wait_timeout(queue, 10);
+    }
+    EXPECT_TRUE(healed(queue, members, 3));
+
+    std::string second = "second";
+    object_write(queue, object, second.data(), second.size(), 16, 0);
+    object_close_clean(queue, object);
+}
+
+// The writer wrote every copy before it vanished: all are LOST. They are
+// healed one at a time, so that two of the three stay in the set, and the
+// first one last.
+TEST(MirrorResyncTest, every_copy_of_a_vanished_writer_is_healed_in_turn) {
+    ScopedLease lease(50, 30000);
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000e2");
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    std::string first = "first";
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+
+    vanished_writer(queue, members, 0, 4096, "from the first");
+    vanished_writer(queue, members, 1, 8192, "from the second");
+    vanished_writer(queue, members, 2, 12288, "from the third");
+
+    const auto until =
+        std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (!healed(queue, members, 3) &&
+           std::chrono::steady_clock::now() < until) {
+        rawio_wait_timeout(queue, 10);
+    }
+    EXPECT_TRUE(healed(queue, members, 3));
+    object_close_clean(queue, object);
+}
+
+// Two writers find the same LOST copy: the other one excluded it first. This
+// writer takes the decision over and does not exclude it again.
+TEST(
+    MirrorResyncTest, a_lost_copy_another_writer_excluded_is_not_excluded_twice
+) {
+    ScopedLease lease(300, 30000);
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000e3");
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    std::string first = "first";
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+
+    vanished_writer(queue, members, 1, 4096, "unacknowledged");
+
+    // The other writer's decision: the LOST copy is out. The two members
+    // that stay take it.
+    RawstorObjectMeta before{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &before), 0);
+    RawstorObjectConfig decided = before.config;
+    ++decided.epoch;
+    decided.sync_id_history[0] = decided.sync_id;
+    decided.sync_id = 0x6161616161616161ull;
+    ASSERT_EQ(decided.nroles, 3);
+    decided.roles[1] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    ASSERT_EQ(target_set_config(queue, members.target(0), decided), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(2), decided), 0);
+
+    const auto until =
+        std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (!healed(queue, members, 3) &&
+           std::chrono::steady_clock::now() < until) {
+        rawio_wait_timeout(queue, 10);
+    }
+    EXPECT_TRUE(healed(queue, members, 3));
+
+    // The decision, the start of the resync, the rejoin: nothing else moved
+    // the register.
+    RawstorObjectMeta after{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &after), 0);
+    EXPECT_EQ(after.config.epoch, decided.epoch + 2);
+    object_close_clean(queue, object);
+}
+
+// A writer finds a LOST copy while the other writer has taken another copy
+// out: excluding this one too would leave one copy of three. It waits, and
+// the copies are healed one after the other, never two out at once.
+TEST(MirrorResyncTest, heal_waits_while_another_copy_is_out) {
+    ScopedLease lease(100, 30000);
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000e4");
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    std::string first = "first";
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+
+    vanished_writer(queue, members, 1, 4096, "unacknowledged");
+
+    // The other writer's decision: the last copy is out.
+    RawstorObjectMeta before{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &before), 0);
+    RawstorObjectConfig decided = before.config;
+    ++decided.epoch;
+    decided.sync_id_history[0] = decided.sync_id;
+    decided.sync_id = 0x6262626262626262ull;
+    ASSERT_EQ(decided.nroles, 3);
+    decided.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    ASSERT_EQ(target_set_config(queue, members.target(0), decided), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(1), decided), 0);
+
+    size_t most_out = 0;
+    const auto until =
+        std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (!healed(queue, members, 3) &&
+           std::chrono::steady_clock::now() < until) {
+        rawio_wait_timeout(queue, 10);
+        RawstorObjectMeta meta{};
+        if (target_meta(queue, members.target(0), &meta) == 0 &&
+            meta.config.nroles == 3) {
+            size_t out = 0;
+            for (size_t i = 0; i < 3; ++i) {
+                out += meta.config.roles[i] != RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+            }
+            most_out = std::max(most_out, out);
+        }
+    }
+    EXPECT_TRUE(healed(queue, members, 3));
+    EXPECT_EQ(most_out, 1u);
+
+    std::string second = "second";
+    object_write(queue, object, second.data(), second.size(), 16, 0);
+    object_close_clean(queue, object);
+}
+
+// A writer that runs no resync takes another writer's over at its first
+// write: the dirty gate it passes on top of the decision keeps the owner the
+// register names.
+TEST(MirrorResyncTest, dirty_gate_keeps_the_owner_of_another_writers_resync) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000e5");
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+
+    RawstorObjectMeta before{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &before), 0);
+    RawstorObjectConfig decided = before.config;
+    ++decided.epoch;
+    decided.roles[2] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+    decided.resync_owner = 0x77;
+    for (size_t i : {0, 1, 2}) {
+        ASSERT_EQ(target_set_config(queue, members.target(i), decided), 0);
+    }
+
+    std::string first = "first";
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+
+    for (size_t i : {0, 1}) {
+        RawstorObjectMeta meta{};
+        ASSERT_EQ(target_meta(queue, members.target(i), &meta), 0);
+        EXPECT_EQ(meta.config.epoch, decided.epoch) << i;
+        EXPECT_EQ(meta.config.roles[2], RAWSTOR_OBJECT_MEMBER_SYNCING) << i;
+        EXPECT_EQ(meta.config.resync_owner, 0x77u) << i;
+    }
+    object_close_clean(queue, object);
+}
+
+// The writer that heals a LOST copy vanishes in the middle: the copy is
+// syncing under its name and nobody sweeps. Another writer that goes on
+// excludes the copy once the lease is over, and heals it itself.
+TEST(MirrorResyncTest, a_vanished_healer_is_replaced_by_a_writer_that_goes_on) {
+    ScopedLease lease(50, 300);
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000e6");
+    RawstorObjectSpec spec{
+        .size = 1ull << 20,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    std::string first = "first";
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+
+    vanished_writer(queue, members, 1, 4096, "unacknowledged");
+
+    // The healer got as far as the start of the resync, under its name, and
+    // is gone.
+    RawstorObjectMeta before{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &before), 0);
+    RawstorObjectConfig decided = before.config;
+    ++decided.epoch;
+    decided.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+    decided.resync_owner = 0x77;
+    for (size_t i : {0, 1, 2}) {
+        ASSERT_EQ(target_set_config(queue, members.target(i), decided), 0);
+    }
+    std::string second = "second";
+    object_write(queue, object, second.data(), second.size(), 16, 0);
+
+    const auto until =
+        std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (!healed(queue, members, 3) &&
+           std::chrono::steady_clock::now() < until) {
+        rawio_wait_timeout(queue, 10);
+    }
+    EXPECT_TRUE(healed(queue, members, 3));
+    RawstorObjectMeta after{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &after), 0);
+    EXPECT_EQ(after.config.resync_owner, 0u);
+    object_close_clean(queue, object);
+}
+
+// The writer closes while the member it brings back takes the decision that
+// brings it back: the rejoin was decided, and releasing the resync does not
+// undo it.
+TEST(MirrorResyncTest, closing_during_the_rejoin_keeps_the_member) {
+    ScopedLease lease(60000, 30000);
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000e7");
+    RawstorObjectSpec spec{
+        .size = 4096,
+        .width = 3,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+    RawstorObjectConfig fresh{};
+    fresh.epoch = 2;
+    fresh.sync_id = 0x1111111111111111ull;
+    fresh.sync_id_history[0] = 0x2222222222222222ull;
+    ASSERT_EQ(target_set_config(queue, members.target(0), fresh), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(1), fresh), 0);
+
+    // The third member is the one brought back, and scripted: it is slow to
+    // answer the decision that brings it back.
+    rawstor::tests::Server server(8817, 256);
+    RawstorFrameMetaPayload stale = {
+        .size = spec.size,
+        .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
+        .width = 3,
+        .member_role = RAWSTOR_MEMBER_DATA,
+        .writers = 0,
+        .config =
+            {
+                .epoch = 1,
+                .sync_id = 0x2222222222222222ull,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
+    };
+    RawstorFrameMetaPayload syncing = stale;
+    syncing.config.nroles = 3;
+    syncing.config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    syncing.config.roles[1] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
+    syncing.config.roles[2] = RAWSTOR_OBJECT_MEMBER_SYNCING;
+    std::atomic<bool> rejoining(false);
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_meta(RAWSTOR_MAGIC, 0, 0, stale);
+        s.cmd_set_object(RAWSTOR_MAGIC, 1, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 2, 0, stale);
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 3, 0, stale);
+        s.cmd_meta(RAWSTOR_MAGIC, 5, 0, stale);
+        s.cmd_sync_accept_request();
+        s.cmd_sync_response(
+            RAWSTOR_CMD_SYNC_ACCEPT, RAWSTOR_MAGIC, 6, 0, true, syncing
+        );
+        s.cmd_write_zeroes(RAWSTOR_MAGIC, 7, spec.size);
+        s.cmd_flush(RAWSTOR_MAGIC, 8, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 9, 0, stale);
+        server.read(
+            "rejoin SYNC_ACCEPT <<<", sizeof(RawstorFrameSyncPropose),
+            [&rejoining](const void*) {
+                rejoining = true;
+                usleep(400 * 1000);
+            }
+        );
+        s.cmd_sync_response(
+            RAWSTOR_CMD_SYNC_ACCEPT, RAWSTOR_MAGIC, 10, 0, true, stale
+        );
+    }
+
+    std::string target =
+        members.target(0) + "," + members.target(1) +
+        ",ost://127.0.0.1:8817/00000000-0000-7000-8000-0000000000e7";
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, target, &object), 0);
+    for (int i = 0; i < 500 && !rejoining; ++i) {
+        rawio_wait_timeout(queue, 10);
+    }
+    ASSERT_TRUE(rejoining);
+    EXPECT_EQ(object_close(queue, object), 0);
+
+    RawstorObjectMeta meta{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &meta), 0);
+    ASSERT_EQ(meta.config.nroles, 3);
+    EXPECT_EQ(meta.config.roles[2], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
+    EXPECT_EQ(meta.config.resync_owner, 0u);
+}
+
 TEST(MirrorResyncTest, resync_under_concurrent_writes) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000a7");
