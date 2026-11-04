@@ -1376,6 +1376,19 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
         std::shared_ptr<CopyState> member = _copy_state(id, offset);
         co_await member->record.lock(_queue);
         RecordLockGuard guard{member->record};
+        if (member->writers == 0) {
+            // No session of this process writes the copy, yet it is marked
+            // DIRTY: whoever marked it is gone without a word, as when its
+            // server was restarted or its host went down, and may have left
+            // behind writes it acknowledged. The copy is LOST, like one
+            // whose writer's session ended. A backend that forwards the
+            // transition to its server leaves it to the server's own
+            // writer sessions, which do the same.
+            co_await transition_state(
+                *_get_backend(), id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
+                RAWSTOR_OBJECT_SYNC_STATE_LOST
+            );
+        }
         ++member->writers;
         member->sessions.push_back(this);
         _member = std::move(member);

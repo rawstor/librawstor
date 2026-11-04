@@ -136,6 +136,80 @@ TEST(MemberStateTest, unreachable_metadata_cannot_be_opened_for_io) {
     run(*queue, slot->close());
 }
 
+namespace {
+
+// A copy of one member created in `dir`, with nobody holding it open.
+struct DirtyCopy {
+    rawstor::tests::TmpDir dir;
+    RawstdUUID id = new_id();
+    rawstd::URI location{dir.uri()};
+};
+
+void mark_dirty(rawio::Queue& queue, const DirtyCopy& copy) {
+    auto backend = run(queue, rawstor::Backend::create(queue, copy.location));
+    run(queue, backend->set_state(
+                   copy.id, 0, RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+                   RAWSTOR_OBJECT_SYNC_STATE_DIRTY
+               ));
+    run(queue, backend->close());
+}
+
+std::unique_ptr<rawstor::Slot>
+create_copy(rawio::Queue& queue, const DirtyCopy& copy) {
+    auto slot = run(queue, rawstor::Slot::create(queue, copy.location));
+    RawstorObjectSpec spec{};
+    spec.size = 4096;
+    spec.width = 1;
+    run(queue, slot->create(copy.id, 0, spec, RAWSTOR_MEMBER_DATA));
+    return slot;
+}
+
+} // namespace
+
+// The first session to write a copy finds it marked DIRTY, with no writer
+// of this process to account for it: whoever marked it is gone, as when its
+// server was restarted, and the copy may lack writes it acknowledged.
+TEST(MemberStateTest, first_writer_loses_a_copy_left_dirty) {
+    auto queue = rawio::Queue::create(64);
+    DirtyCopy copy;
+    auto slot = create_copy(*queue, copy);
+    mark_dirty(*queue, copy);
+
+    RawstorObjectMeta meta =
+        run(*queue, slot->open({}, copy.id, 0, 0, RawstdUUID{}));
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_LOST);
+    run(*queue, slot->close());
+}
+
+// A session that finds the copy DIRTY while another one writes it has
+// nothing to lose: the mark is the writer's.
+TEST(MemberStateTest, a_second_writer_leaves_a_dirty_copy_alone) {
+    auto queue = rawio::Queue::create(64);
+    DirtyCopy copy;
+    auto first = create_copy(*queue, copy);
+    run(*queue, first->open({}, copy.id, 0, 0, RawstdUUID{}));
+    mark_dirty(*queue, copy);
+
+    auto second = run(*queue, rawstor::Slot::create(*queue, copy.location));
+    RawstorObjectMeta meta =
+        run(*queue, second->open({}, copy.id, 0, 0, RawstdUUID{}));
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+    run(*queue, second->close());
+    run(*queue, first->close());
+}
+
+TEST(MemberStateTest, a_read_only_open_leaves_a_dirty_copy_alone) {
+    auto queue = rawio::Queue::create(64);
+    DirtyCopy copy;
+    auto slot = create_copy(*queue, copy);
+    mark_dirty(*queue, copy);
+
+    RawstorObjectMeta meta =
+        run(*queue, slot->open({}, copy.id, 0, RAWSTOR_READONLY, RawstdUUID{}));
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+    run(*queue, slot->close());
+}
+
 TEST(MemberStateTest, first_write_dirties_and_clean_close_cleans) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(64);
     MemberObject f;
