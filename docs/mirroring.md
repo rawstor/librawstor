@@ -176,6 +176,14 @@ session: its `state` stays as created.
   or of the heal that makes the copies equal (F5) does, as a rule on the
   configuration the copy accepts, and `rawstor resolve`, for copies made
   consistent by hand.
+- A copy found `DIRTY` by the first session to open it for writing in a
+  process, with no writer of that process to account for the mark, is
+  marked `LOST` before the session joins: whoever marked it is gone without
+  a word -- its server was restarted, or its host went down -- and the
+  copy may lack writes it acknowledged. Opening it read-only, or while a
+  session of the process writes it, changes nothing. A backend that
+  forwards its state to a server (`ost://`) leaves this to the server,
+  whose own `Slot` opens the copy the same way.
 - A session that never wrote leaves the state as it is, cleanly or not.
 - A client that replaces a broken connection (a short write, a reset) opens
   the new one before closing the old, under the same session id (one per
@@ -443,7 +451,7 @@ naming other locations while the chunk is open fails with `-EINVAL`.
 | F3 | All mirrors failed | all connections dead | At open: refused with `ENOTCONN` (degenerate case of F4's below-quorum refusal). On an already-open chunk: `EIO` to the caller on the next write, chunk unavailable. Periodic reconnect attempts | — (no copy available) |
 | F4 | OST unreachable at open | connect failure | Reachable > N/2 → degraded open on the majority (it is guaranteed to contain the newest `sync_id`); on survivors `epoch`+1 / new `sync_id` **before the first write ack**. Reachable ≤ N/2 (N=2 with one down falls here) → **auto-start refused**, manual force-open only (not yet implemented) | F7 when it returns |
 | F5 | Client crash with writes in flight | at next open: all copies `DIRTY` or `LOST` with the same `sync_id` (`LOST` when the client reached them through `rawstor-ost`, which saw its sessions drop without `LEAVE`) | All copies are "valid" (they diverge only in unacknowledged regions) and stay in the set, voting and taking every write: writes go on at once. Reference: the first `CLEAN` copy, else the first copy in the target list (it may be the copy that lost acknowledged writes in the degrade-barrier window, see *Known limitation*); reads are served from it until the heal is done | Heal: a background sweep overwrites every other not-`CLEAN` data copy with the reference's content, one copy at a time, region by region, mutually exclusive with client writes (a full copy -- the main argument for a persistent bitmap in v2). The `LOST` marks are cleared once every copy is equal; an interrupted heal (close, crash) leaves them, and the next open starts it again. Not run while another session is open for writing on any copy |
-| F6 | OST crash/restart → acknowledged writes lost from page cache (data is not fsynced) | **not detectable from metadata** (the copy looks up to date) | **Conservative rule: any session loss to a mirror while the chunk is open `DIRTY` ⇒ that mirror is STALE (run the F1 procedure), even if it reconnects immediately.** We cannot know what it lost, so we do not trust it | Full resync (F7) overwrites whatever was lost |
+| F6 | OST crash/restart → acknowledged writes lost from page cache (data is not fsynced) | **not detectable from metadata** (the copy looks up to date) | **Conservative rule: any session loss to a mirror while the chunk is open `DIRTY` ⇒ that mirror is STALE (run the F1 procedure), even if it reconnects immediately.** We cannot know what it lost, so we do not trust it. A copy a restarted OST left `DIRTY` is marked `LOST` by the first writer to open it afterwards | Full resync (F7) overwrites whatever was lost |
 | F7 | A stale mirror returns (rejoin) | reconnect probe + `sync_id`/`epoch` comparison: ancestor → stale | Record the copy's role as syncing (fsync), start an **online resync** (algorithm below) without stopping client I/O | On completion: the IN-SYNC copies move to a new `sync_id`/`epoch` (fsync), then the copy adopts it, state `DIRTY` if the chunk is (fsync) → mirror is IN-SYNC, reads allowed |
 | F8 | Client/OST crash during resync | the copy is left with role syncing / an old `sync_id` | Copy is untrusted | Resync from scratch (v1; resumable with the persistent bitmap in v2) |
 | F9 | Split brain (disjoint write histories) | different `sync_id`s, neither in the other's history | **Excluded in automatic paths by the quorum rules.** Can only arise from a wrong manual force-open, an OST restored from backup, or a bug → then: open refused with a clear error, no automatic winner | Operator: `rawstor resolve TARGET --winner=N` (`rawstor show -v`'s own `slot[N]` index) → winner gets a new `sync_id`, the loser gets a full resync |
@@ -519,7 +527,9 @@ still held them. Metadata cannot tell this case from an ordinary client
 crash: both leave the copies `DIRTY` or `LOST` in one sync set. Refusing
 to heal when no copy is `CLEAN` would stop the heal in the one case it
 exists for, so it runs, and this stays an accepted risk until the
-following is done.
+following is done. An OST restart does leave the copies it held `LOST`
+(*DIRTY, CLEAN and LOST*), but a client crash does as well, so the reference
+cannot tell them apart.
 
 Planned (stage 4, *OST start identity*): every OST reports a start
 identity in `META`, a value fixed for one run of the server, and a copy
