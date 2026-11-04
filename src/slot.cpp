@@ -653,7 +653,7 @@ Slot::Slot(Private, rawio::Queue& queue, std::shared_ptr<Backend> backend) :
     _session_id{},
     _backend(std::move(backend)),
     _reconnecting(false),
-    _transparent_retry(true) {
+    _reconnects(0) {
 }
 
 class Slot::OperationGuard final {
@@ -782,10 +782,6 @@ rawstd::Task<void> Slot::_lose_backend(std::shared_ptr<Backend> be) {
         RAWSTOR_OBJECT_SYNC_STATE_LOST
     );
     _left = false;
-}
-
-void Slot::set_transparent_retry(bool enabled) noexcept {
-    _transparent_retry = enabled;
 }
 
 rawstd::Task<std::unique_ptr<Slot>>
@@ -919,24 +915,13 @@ rawstd::Task<T> Slot::_with_retry(
             }
 
             ++attempt;
-            if (!_transparent_retry || attempt >= rawstor_opts_io_attempts()) {
-                if (!_transparent_retry) {
-                    // A mirror member: the owning Chunk handles the
-                    // failure (degrade, reconnect probe), so there is no
-                    // retry budget here to report against.
-                    rawstd_warning(
-                        "IO %s: error on %s: %s; not retried (mirror "
-                        "member)\n",
-                        func_name, be->str().c_str(), std::strerror(error)
-                    );
-                } else {
-                    rawstd_error(
-                        "IO %s: error on %s: %s; attempt %u of %u; "
-                        "failing...\n",
-                        func_name, be->str().c_str(), std::strerror(error),
-                        attempt, rawstor_opts_io_attempts()
-                    );
-                }
+            if (attempt >= rawstor_opts_io_attempts()) {
+                rawstd_error(
+                    "IO %s: error on %s: %s; attempt %u of %u; "
+                    "failing...\n",
+                    func_name, be->str().c_str(), std::strerror(error), attempt,
+                    rawstor_opts_io_attempts()
+                );
                 // Not thrown here: `be` is presumed broken exactly like any
                 // other retryable failure and still needs closing below,
                 // or it leaks its recv-multishot registration -- but
@@ -1110,6 +1095,7 @@ rawstd::Task<void> Slot::_reconnect(std::shared_ptr<Backend> be) {
         if (!eptr && _backend == be) {
             retired = std::move(_backend);
             _backend = new_backend;
+            ++_reconnects;
         }
     }
 
