@@ -229,13 +229,14 @@ is rejected at startup with `EINVAL`; the client-side `Chunk` coordinates
 mirroring across servers.
 
 At the API level (`include/rawstor/target.h`), `rawstor_target_chunks()` returns
-physical chunk targets, including their explicit hexadecimal offsets.
+chunk targets, including their explicit hexadecimal offsets.
 `rawstor_target_meta()` reads every member's metadata from the addressed chunk
 URI; unavailable members are reported as `UNREACHABLE`.
 `rawstor_target_sync_prepare()` and `rawstor_target_sync_accept()` send the
 register's requests to the selected `member_index` of that same chunk. No
 operation takes a separate offset. Enumerate an MDS object's chunks before
-operating on individual members. Deciding a configuration by hand is an
+operating on individual members; `rawstor_target_slots()` gives the physical
+member URIs of a chunk. Deciding a configuration by hand is an
 operator recovery tool and can desynchronize copies if used incorrectly.
 
 ### Comparison rules (at open)

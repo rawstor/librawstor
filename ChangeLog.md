@@ -36,7 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ost://` and `mds://` URIs, and the `--bind` address of `rawstor-ost` and `rawstor-mds`, default to port 7777 and 7776 respectively when no port is given.
 - `rawstor show -v` prints ancestor and current sync ids on one line, oldest first.
 - Native witnesses on MDS use `ost://` URIs; `mds://` URIs resolve logical objects and chunks.
-- `rawstor show -v` prints each chunk's physical target URI for recovery commands.
+- `rawstor show -v` prints each chunk's target and each member's physical URI for recovery commands.
+- `rawstor_target_chunks()` returns `mds://host:port/UUID/OFFSET` for the chunks of an `mds://` object instead of resolving them to their members (one MDS request instead of one per chunk); `rawstor_target_slots()` gives the members.
 - Chunk metadata and recovery APIs address chunks by URI instead of a separate offset; chunk listing returns target strings, and MDS routing no longer probes for witness records.
 - A mirrored writable open heals copies a vanished writer may have left different from the first clean (else first) copy in the background while writes go on, and clears their `LOST` mark once they are equal. While other writers go on, a copy a vanished writer left `LOST` is excluded and resynced, one at a time, with the same effect.
 - All members share configuration, state and rejoin rules; writable mirrors require a strict majority even with two data copies and no witness.

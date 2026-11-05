@@ -848,7 +848,7 @@ static void command_resolve_usage(void) {
         "                        the copies to keep.\n"
         "\n"
         "command options:\n"
-        "  Use a physical chunk URI from show -v; an object target resolves "
+        "  Use a chunk_target from show -v; an object target resolves "
         "all chunks.\n" RAWSTOR_CLI_OUTPUT_USAGE
     );
 };

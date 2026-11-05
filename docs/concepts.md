@@ -355,9 +355,11 @@ out explicitly (one of the two physical shapes) since it's never
 is. Like the internal multi-chunk form above, this is built only by
 `mds::Backend` from its own chunk map and never something a caller
 types — `Target`'s own constructor reads it back out to reconstruct
-chunk grouping. `rawstor_target_chunks()` returns addressable physical chunk
-target strings, preserving their offset in each URI
-directly (a single entry, 0, for a plain, non-`mds://` target).
+chunk grouping. `rawstor_target_chunks()` returns one chunk target string per
+chunk, with its offset in the URI: `mds://host:port/UUID/OFFSET` for an
+`mds://` object, which is not resolved to its members (that is
+`rawstor_target_slots()`), and a single entry, 0, for a plain, non-`mds://`
+target.
 
 ---
 
@@ -404,8 +406,9 @@ map. `mds://host:port/UUID/OFFSET` selects a logical chunk through that map.
 A physical member always uses its native backend scheme: `ost://host:port/UUID/OFFSET`
 also addresses a witness stored on MDS, whose server speaks the member protocol.
 Routing follows the URI scheme, without probing for witness records.
-`rawstor_target_chunks()` returns physical chunk targets; Python `Target.chunks()`
-returns `Target` instances. Metadata and member-configuration operations take a
+`rawstor_target_chunks()` returns chunk targets (an `mds://` chunk as
+`mds://host:port/UUID/OFFSET`); Python `Target.chunks()` returns `Target`
+instances. Metadata and member-configuration operations take a
 chunk target and no separate offset. Read/write offsets remain offsets within
 an opened object.
 

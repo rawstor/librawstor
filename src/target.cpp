@@ -1574,6 +1574,35 @@ rawstd::Task<std::vector<Target>> Target::chunks(rawio::Queue& queue) const {
         }
         co_return targets;
     }
+    if (is_logical_chunk(_uris)) {
+        std::vector<Target> targets;
+        targets.emplace_back(_uris);
+        co_return targets;
+    }
+    auto offsets = co_await _offsets(queue);
+    std::vector<rawstd::URI> locations = locations_for(_uris, 0, true);
+    std::vector<Target> targets;
+    RawstdUUIDString id, version;
+    rawstd_uuid_to_string(&object_id(), &id);
+    rawstd_uuid_to_string(&_version_id, &version);
+    for (uint64_t offset : offsets) {
+        std::ostringstream path;
+        path << id << "/" << std::hex << offset;
+        if (!rawstd_uuid_is_nil(&_version_id)) {
+            path << "/" << version;
+        }
+        targets.emplace_back(
+            std::vector<rawstd::URI>{rawstd::URI(locations.front(), path.str())}
+        );
+    }
+    co_return targets;
+}
+
+rawstd::Task<std::vector<Target>>
+Target::_physical_chunks(rawio::Queue& queue) const {
+    if (!is_opaque(_uris)) {
+        co_return co_await chunks(queue);
+    }
     auto offsets = co_await _offsets(queue);
     std::vector<Target> targets;
     RawstdUUIDString id, version;
@@ -1599,7 +1628,7 @@ rawstd::Task<std::vector<Target>> Target::chunks(rawio::Queue& queue) const {
 }
 
 rawstd::Task<std::vector<Target>> Target::slots(rawio::Queue& queue) const {
-    auto chunks = co_await this->chunks(queue);
+    auto chunks = co_await this->_physical_chunks(queue);
     std::vector<Target> slots;
     for (const auto& chunk : chunks) {
         for (const auto& uri : chunk.uris()) {
@@ -1818,7 +1847,7 @@ Target::resize(rawio::Queue& queue, uint64_t new_size) const {
 rawstd::Task<std::unique_ptr<Object>>
 Target::open(rawio::Queue& queue, int flags) const {
     if (is_logical_chunk(_uris)) {
-        auto targets = co_await chunks(queue);
+        auto targets = co_await _physical_chunks(queue);
         co_return co_await targets.front().open(queue, flags);
     }
     if ((flags & ~(RAWSTOR_READONLY | RAWSTOR_FORCE)) != 0) {
