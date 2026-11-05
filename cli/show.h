@@ -1,13 +1,17 @@
 #ifndef RAWSTOR_CLI_SHOW_H
 #define RAWSTOR_CLI_SHOW_H
 
+#include "output.h"
+
 #include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-int rawstor_cli_show(const char* target, int verbose);
+int rawstor_cli_show(
+    const char* target, int verbose, const RawstorCliOutput* output
+);
 
 #ifdef __cplusplus
 }

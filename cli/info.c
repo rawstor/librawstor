@@ -1,5 +1,6 @@
 #include "info.h"
 
+#include "output.h"
 #include "rawio_sync.h"
 
 #include <rawstor.h>
@@ -45,9 +46,9 @@ static void info_progress_clear(int tty) {
  * have_logical is set, an extra "used (logical)" line (the sum of every
  * object's own declared size -- see info.h's own doc comment) is printed
  * right after "used", additional to it rather than replacing it. */
-static void info_print(
+static int info_print(
     const char* location, uint64_t used, uint64_t total, char unit,
-    int have_logical, uint64_t logical_used
+    int have_logical, uint64_t logical_used, const RawstorCliOutput* output
 ) {
     uint64_t avail = total > used ? total - used : 0;
 
@@ -77,17 +78,67 @@ static void info_print(
 
     double percent = total > 0 ? (double)used / (double)total * 100.0 : 0.0;
 
-    printf("location: %s\n", location);
-    printf("used: %s\n", used_buf);
+    char percent_buf[32];
+    snprintf(percent_buf, sizeof(percent_buf), "%.1f%%", percent);
+
+    RawstorCliCell location_cell = rawstor_cli_cell_string(location);
+    RawstorCliCell used_cell = rawstor_cli_cell_number(used_buf, used);
+    RawstorCliCell logical_cell =
+        rawstor_cli_cell_number(logical_buf, logical_used);
+    RawstorCliCell avail_cell = rawstor_cli_cell_number(avail_buf, avail);
+    RawstorCliCell total_cell = rawstor_cli_cell_number(total_buf, total);
+    RawstorCliCell percent_cell = rawstor_cli_cell_string(percent_buf);
+
+    /* "used_logical" is a column only when it was computed. */
+    RawstorCliTable* table;
+    RawstorCliCell cells[6];
     if (have_logical) {
-        printf("used (logical): %s\n", logical_buf);
+        static const char* const columns[] = {
+            "location",  "used",  "used_logical",
+            "available", "total", "use_percent",
+        };
+        static const enum RawstorCliColumnType types[] = {
+            RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_NUMBER,
+            RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
+            RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_STRING,
+        };
+        table = rawstor_cli_table_create("info", columns, types, 6);
+        cells[0] = location_cell;
+        cells[1] = used_cell;
+        cells[2] = logical_cell;
+        cells[3] = avail_cell;
+        cells[4] = total_cell;
+        cells[5] = percent_cell;
+    } else {
+        static const char* const columns[] = {
+            "location", "used", "available", "total", "use_percent",
+        };
+        static const enum RawstorCliColumnType types[] = {
+            RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_NUMBER,
+            RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
+            RAWSTOR_CLI_COLUMN_STRING,
+        };
+        table = rawstor_cli_table_create("info", columns, types, 5);
+        cells[0] = location_cell;
+        cells[1] = used_cell;
+        cells[2] = avail_cell;
+        cells[3] = total_cell;
+        cells[4] = percent_cell;
     }
-    printf("available: %s\n", avail_buf);
-    printf("total: %s\n", total_buf);
-    printf("use%%: %.1f%%\n", percent);
+    if (table == NULL || rawstor_cli_table_add_row(table, cells) < 0) {
+        fprintf(stderr, "Out of memory\n");
+        if (table != NULL) {
+            rawstor_cli_table_delete(table);
+        }
+        return EXIT_FAILURE;
+    }
+    int ret = rawstor_cli_output_print(output, &table, 1);
+    rawstor_cli_table_delete(table);
+    return ret;
 }
 
-static int info_physical(const char* location, char unit) {
+static int
+info_physical(const char* location, char unit, const RawstorCliOutput* output) {
     struct RawstorLocationInfo info;
 
     RawstorCliOp op;
@@ -110,9 +161,7 @@ static int info_physical(const char* location, char unit) {
         return rawstd_exitcode_for_errno((int)-result);
     }
 
-    info_print(location, info.used, info.total, unit, 0, 0);
-
-    return EXIT_SUCCESS;
+    return info_print(location, info.used, info.total, unit, 0, 0, output);
 }
 
 /* Sums every object's own declared size (one rawstor_target_spec() call per
@@ -120,7 +169,8 @@ static int info_physical(const char* location, char unit) {
  * see info.h's own doc comment for why the two can diverge. Reuses the
  * same op/queue across the whole list()+spec()+info() sequence, same as
  * rawstor_cli_list()'s own pagination loop. */
-static int info_logical(const char* location, char unit) {
+static int
+info_logical(const char* location, char unit, const RawstorCliOutput* output) {
     int tty = isatty(STDERR_FILENO);
 
     RawstorCliOp op;
@@ -197,14 +247,16 @@ static int info_logical(const char* location, char unit) {
         return rawstd_exitcode_for_errno((int)-info_result);
     }
 
-    info_print(location, info.used, info.total, unit, 1, logical_used);
-
-    return EXIT_SUCCESS;
+    return info_print(
+        location, info.used, info.total, unit, 1, logical_used, output
+    );
 }
 
-int rawstor_cli_info(const char* location, char unit, int logical) {
+int rawstor_cli_info(
+    const char* location, char unit, int logical, const RawstorCliOutput* output
+) {
     if (logical) {
-        return info_logical(location, unit);
+        return info_logical(location, unit, output);
     }
-    return info_physical(location, unit);
+    return info_physical(location, unit, output);
 }

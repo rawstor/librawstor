@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_CLI_INFO_H
 #define RAWSTOR_CLI_INFO_H
 
+#include "output.h"
+
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -21,7 +23,9 @@ extern "C" {
  * use% are unaffected either way: derived from physical "used", same as
  * without this flag.
  */
-int rawstor_cli_info(const char* location, char unit, int logical);
+int rawstor_cli_info(
+    const char* location, char unit, int logical, const RawstorCliOutput* output
+);
 
 #ifdef __cplusplus
 }

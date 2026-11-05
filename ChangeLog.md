@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rawstor list`, `list-versions`, `show` and `info` take `--format table|json|value` (default `table`, a bordered table wrapped to the terminal width) and `--column COL[,COL...]` to choose and order the columns.
 - New MDS chunks with an even DATA width automatically place one witness in an unused failure domain; topology requires a `role` column (`data`, `witness` or both), with MDS witnesses addressed through `ost://`.
 - `rawstor_target_slots()` and Python `Target.slots()` enumerate physical member URIs, also shown per mirror by `rawstor show -v`.
 - Metadata-only witness members on OST, MDS and local backends, with synchronous membership barriers and witness-assisted quorum for even numbers of data copies.

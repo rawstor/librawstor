@@ -1,5 +1,6 @@
 #include "show.h"
 
+#include "output.h"
 #include "rawio_sync.h"
 
 #include <rawstor.h>
@@ -44,17 +45,27 @@ role_to_string(const struct RawstorObjectConfig* config, ssize_t index) {
     }
 }
 
-/* Stored ancestors are newest first; display the lineage oldest first,
- * followed by the current sync id. All ids use hexadecimal notation. */
-static void print_sync_ids(const struct RawstorObjectConfig* config) {
-    printf("    sync_id:");
+/* Stored ancestors are newest first; the lineage is written oldest first,
+ * followed by the current sync id, space-separated. All ids use hexadecimal
+ * notation. */
+static void format_sync_ids(
+    const struct RawstorObjectConfig* config, char* buf, size_t size
+) {
+    size_t len = 0;
+    buf[0] = '\0';
     for (size_t i = RAWSTOR_OBJECT_SYNC_ID_HISTORY; i > 0; --i) {
         uint64_t id = config->sync_id_history[i - 1];
-        if (id != 0) {
-            printf(" %llx", (unsigned long long)id);
+        if (id != 0 && len < size) {
+            len += (size_t)snprintf(
+                buf + len, size - len, "%llx ", (unsigned long long)id
+            );
         }
     }
-    printf(" %llx\n", (unsigned long long)config->sync_id);
+    if (len < size) {
+        snprintf(
+            buf + len, size - len, "%llx", (unsigned long long)config->sync_id
+        );
+    }
 }
 
 /* rawstor_target_meta()'s own buffer capacity for one chunk's own
@@ -63,7 +74,8 @@ static void print_sync_ids(const struct RawstorObjectConfig* config) {
  * needs to cover one chunk's own width, not the whole object at once. */
 enum { MAX_MIRRORS = 256 };
 
-static int show_chunk_meta(RawstorCliOp* op, const char* target) {
+static int
+show_chunk_meta(RawstorCliOp* op, const char* target, RawstorCliTable* table) {
     uint64_t offset;
     int offset_res = rawstor_target_offset(target, &offset);
     if (offset_res < 0) {
@@ -115,28 +127,53 @@ static int show_chunk_meta(RawstorCliOp* op, const char* target) {
         return EXIT_FAILURE;
     }
 
-    printf("chunk[%llx]:\n", (unsigned long long)offset);
-    printf("  target: %s\n", target);
+    char chunk_buf[32];
+    snprintf(chunk_buf, sizeof(chunk_buf), "%llx", (unsigned long long)offset);
     const char** slot = rawstor_string_list_iter(slots);
     for (ssize_t i = 0; i < result;
          i++, slot = rawstor_string_list_next(slot)) {
         const struct RawstorObjectMeta* meta = &metas[i];
-        printf("  mirror[%zd]:\n", i);
-        printf("    target: %s\n", *slot);
+        RawstorCliCell cells[10] = {
+            rawstor_cli_cell_string(chunk_buf),
+            rawstor_cli_cell_string(target),
+            rawstor_cli_cell_number(NULL, (uint64_t)i),
+            rawstor_cli_cell_string(*slot),
+        };
+        char slot_buf[32];
+        snprintf(slot_buf, sizeof(slot_buf), "%zd", i);
+        cells[2].text = slot_buf;
+        char size_buf[256];
+        char epoch_buf[32];
+        char sync_buf[512];
         if (meta->state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
-            printf("    unreachable\n");
+            cells[4] = rawstor_cli_cell_string(NULL);
+            cells[5] = rawstor_cli_cell_number(NULL, 0);
+            cells[6] = rawstor_cli_cell_string("UNREACHABLE");
+            cells[7] = rawstor_cli_cell_string(NULL);
+            cells[8] = rawstor_cli_cell_number(NULL, 0);
+            cells[9] = rawstor_cli_cell_string(NULL);
         } else {
-            char buf[256];
-            rawstd_bytes_to_size(meta->spec.size, buf, sizeof(buf));
-            printf(
-                "    member: %s\n",
+            rawstd_bytes_to_size(meta->spec.size, size_buf, sizeof(size_buf));
+            snprintf(
+                epoch_buf, sizeof(epoch_buf), "%llu",
+                (unsigned long long)meta->config.epoch
+            );
+            format_sync_ids(&meta->config, sync_buf, sizeof(sync_buf));
+            cells[4] = rawstor_cli_cell_string(
                 meta->member_role == RAWSTOR_MEMBER_WITNESS ? "witness" : "data"
             );
-            printf("    size: %s\n", buf);
-            printf("    state: %s\n", sync_state_to_string(meta->state));
-            printf("    role: %s\n", role_to_string(&meta->config, i));
-            printf("    epoch: %llu\n", (unsigned long long)meta->config.epoch);
-            print_sync_ids(&meta->config);
+            cells[5] = rawstor_cli_cell_number(size_buf, meta->spec.size);
+            cells[6] =
+                rawstor_cli_cell_string(sync_state_to_string(meta->state));
+            cells[7] =
+                rawstor_cli_cell_string(role_to_string(&meta->config, i));
+            cells[8] = rawstor_cli_cell_number(epoch_buf, meta->config.epoch);
+            cells[9] = rawstor_cli_cell_string(sync_buf);
+        }
+        if (rawstor_cli_table_add_row(table, cells) < 0) {
+            fprintf(stderr, "Out of memory\n");
+            rawstor_string_list_delete(slots);
+            return EXIT_FAILURE;
         }
     }
 
@@ -144,7 +181,7 @@ static int show_chunk_meta(RawstorCliOp* op, const char* target) {
     return EXIT_SUCCESS;
 }
 
-static int show_meta(const char* target) {
+static int show_meta(const char* target, RawstorCliTable* table) {
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);
     if (res < 0) {
@@ -166,7 +203,7 @@ static int show_meta(const char* target) {
     int ret = EXIT_SUCCESS;
     for (const char** it = rawstor_string_list_iter(chunks); it != NULL;
          it = rawstor_string_list_next(it)) {
-        ret = show_chunk_meta(&op, *it);
+        ret = show_chunk_meta(&op, *it, table);
         if (ret != EXIT_SUCCESS) {
             break;
         }
@@ -177,7 +214,9 @@ static int show_meta(const char* target) {
     return ret;
 }
 
-int rawstor_cli_show(const char* target, int verbose) {
+int rawstor_cli_show(
+    const char* target, int verbose, const RawstorCliOutput* output
+) {
     struct RawstorObjectSpec spec;
 
     RawstorCliOp op;
@@ -198,16 +237,66 @@ int rawstor_cli_show(const char* target, int verbose) {
         return rawstd_exitcode_for_errno((int)-result);
     }
 
-    char buf[256];
-    rawstd_bytes_to_size(spec.size, buf, sizeof(buf));
+    static const char* const object_columns[] = {"target", "size", "mirrors"};
+    static const enum RawstorCliColumnType object_types[] = {
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_NUMBER,
+        RAWSTOR_CLI_COLUMN_NUMBER
+    };
+    static const char* const mirror_columns[] = {
+        "chunk", "chunk_target", "slot", "target", "member",
+        "size",  "state",        "role", "epoch",  "sync_id",
+    };
+    static const enum RawstorCliColumnType mirror_types[] = {
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+        RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_STRING,
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_NUMBER,
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+        RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_STRING,
+    };
 
-    printf("target: %s\n", target);
-    printf("size: %s\n", buf);
-    printf("mirrors: %u\n", spec.width);
-
-    if (!verbose) {
-        return EXIT_SUCCESS;
+    RawstorCliTable* tables[2] = {NULL, NULL};
+    size_t ntables = 1;
+    int ret = EXIT_FAILURE;
+    tables[0] =
+        rawstor_cli_table_create("object", object_columns, object_types, 3);
+    if (verbose) {
+        tables[1] = rawstor_cli_table_create(
+            "mirrors", mirror_columns, mirror_types, 10
+        );
+        ntables = 2;
+    }
+    if (tables[0] == NULL || (verbose && tables[1] == NULL)) {
+        fprintf(stderr, "Out of memory\n");
+        goto out;
     }
 
-    return show_meta(target);
+    char size_buf[256];
+    char mirrors_buf[32];
+    rawstd_bytes_to_size(spec.size, size_buf, sizeof(size_buf));
+    snprintf(mirrors_buf, sizeof(mirrors_buf), "%u", spec.width);
+    RawstorCliCell cells[3] = {
+        rawstor_cli_cell_string(target),
+        rawstor_cli_cell_number(size_buf, spec.size),
+        rawstor_cli_cell_number(mirrors_buf, spec.width),
+    };
+    if (rawstor_cli_table_add_row(tables[0], cells) < 0) {
+        fprintf(stderr, "Out of memory\n");
+        goto out;
+    }
+
+    if (verbose) {
+        ret = show_meta(target, tables[1]);
+        if (ret != EXIT_SUCCESS) {
+            goto out;
+        }
+    }
+    ret = rawstor_cli_output_print(output, tables, ntables);
+
+out:
+    for (size_t i = 0; i < 2; ++i) {
+        if (tables[i] != NULL) {
+            rawstor_cli_table_delete(tables[i]);
+        }
+    }
+    return ret;
 }
