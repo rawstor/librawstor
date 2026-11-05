@@ -709,11 +709,16 @@ jobs:
 
     strategy:
       matrix:
-        python-version:
-        - "3.9"
-        - "3.13"
+        include:
+        # setup-python has no Python 3.9 for ubuntu-26.04 (end of life), but
+        # the thin wheel is built for every Python >= 3.9, and librawstor.deb
+        # installs on both Ubuntu releases (deb-install).
+        - os: ubuntu-24.04
+          python-version: "3.9"
+        - os: ubuntu-26.04
+          python-version: "3.13"
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
 
     steps:
     - uses: actions/setup-python@v5
