@@ -1,3 +1,4 @@
+#include "chunks.h"
 #include "create.h"
 #include "create_version.h"
 #include "info.h"
@@ -7,6 +8,7 @@
 #include "resize.h"
 #include "resolve.h"
 #include "show.h"
+#include "slots.h"
 #include "testio.h"
 
 #include "config.h"
@@ -69,6 +71,8 @@ static void usage(void) {
         "  remove                Remove rawstor object or version\n"
         "  resize                Grow an mds:// object\n"
         "  show                  Show rawstor object or version\n"
+        "  chunks                List an object's chunks\n"
+        "  slots                 List the member slots of an object's chunks\n"
         "  info                  Show rawstor location info\n"
         "  resolve               Resolve a mirrored object's split brain\n"
         "  create-version        Create a version of an object\n"
@@ -737,20 +741,19 @@ static void command_show_usage(void) {
                 "create-version` or `rawstor list-versions`, e.g.\n"
                 "ost://host:port/<uuid>/<version_id>) shows that version "
                 "instead of\n"
-                "the live object.\n"
+                "the live object. `rawstor chunks` and `rawstor slots` "
+                "show its chunks and\n"
+                "their member slots.\n"
                 "\n"
                 "command options:\n"
-                "  -v, --verbose         Also show the mirror consistency "
-                "state\n"
                 "  -h, --help            Show this help message and "
                 "exit\n" RAWSTOR_CLI_OUTPUT_USAGE
     );
 };
 
 static int command_show(int argc, char** argv) {
-    const char* optstring = "vh";
+    const char* optstring = "h";
     struct option longopts[] = {
-        {"verbose", no_argument, NULL, 'v'},
         {"help", no_argument, NULL, 'h'},
         {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
         {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
@@ -759,7 +762,6 @@ static int command_show(int argc, char** argv) {
 
     char* target_arg = NULL;
     RawstorCliOutput output_arg = {.unit = global_unit};
-    int verbose_arg = 0;
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -768,10 +770,6 @@ static int command_show(int argc, char** argv) {
         }
 
         switch (c) {
-        case 'v':
-            verbose_arg = 1;
-            break;
-
         case 'h':
             command_show_usage();
             return EXIT_SUCCESS;
@@ -810,7 +808,7 @@ static int command_show(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_show(target_arg, verbose_arg, &output_arg);
+    return rawstor_cli_show(target_arg, &output_arg);
 }
 
 static void command_resolve_usage(void) {
@@ -843,12 +841,12 @@ static void command_resolve_usage(void) {
         "targets.\n"
         "  --winner N[,N...]      The targeted chunk's own N-th mirror(s) "
         "(0-based,\n"
-        "                        same order `rawstor show -v` labels "
-        "slot):\n"
+        "                        same order `rawstor slots` lists "
+        "them):\n"
         "                        the copies to keep.\n"
         "\n"
         "command options:\n"
-        "  Use a chunk_target from show -v; an object target resolves "
+        "  Use a chunk_target from `rawstor chunks`; an object target resolves "
         "all chunks.\n" RAWSTOR_CLI_OUTPUT_USAGE
     );
 };
@@ -1146,6 +1144,178 @@ static int command_list_versions(int argc, char** argv) {
     return rawstor_cli_list_versions(target_arg, &output_arg);
 }
 
+static void command_chunks_usage(void) {
+    fprintf(
+        stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
+                "\n"
+                "usage: rawstor [options] chunks TARGET "
+                "[command_options]\n"
+                "\n"
+                "  TARGET                The object whose chunks to list, "
+                "one row per chunk\n"
+                "                        in offset order: its chunk (offset, "
+                "hexadecimal),\n"
+                "                        chunk_target, size, mirrors (data "
+                "copies) and slots\n"
+                "                        (members, a witness included). "
+                "chunk_target can be\n"
+                "                        passed to the commands taking a "
+                "chunk.\n"
+                "\n"
+                "command options:\n"
+                "  -h, --help            Show this help message and "
+                "exit\n" RAWSTOR_CLI_OUTPUT_USAGE
+    );
+}
+
+static int command_chunks(int argc, char** argv) {
+    const char* optstring = "h";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
+        {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
+        {},
+    };
+
+    char* target_arg = NULL;
+    RawstorCliOutput output_arg = {.unit = global_unit};
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_chunks_usage();
+            return EXIT_SUCCESS;
+
+        case RAWSTOR_CLI_OPT_FORMAT:
+            if (rawstor_cli_output_set_format(&output_arg, optarg) != 0) {
+                fprintf(
+                    stderr, "Unknown format: %s (table, json or value)\n",
+                    optarg
+                );
+                return EX_USAGE;
+            }
+            break;
+
+        case RAWSTOR_CLI_OPT_COLUMN:
+            output_arg.columns = optarg;
+            break;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    if (optind < argc) {
+        target_arg = argv[optind];
+        optind++;
+    }
+
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EX_USAGE;
+    }
+
+    if (target_arg == NULL) {
+        fprintf(stderr, "target required\n");
+        return EX_USAGE;
+    }
+
+    return rawstor_cli_chunks(target_arg, &output_arg);
+}
+
+static void command_slots_usage(void) {
+    fprintf(
+        stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
+                "\n"
+                "usage: rawstor [options] slots TARGET "
+                "[command_options]\n"
+                "\n"
+                "  TARGET                The object whose chunks' member "
+                "slots to list, one\n"
+                "                        row per slot: the chunk it belongs "
+                "to, its slot index\n"
+                "                        (the N of `resolve --winner=N`) and "
+                "slot_target, and\n"
+                "                        what its own record holds: member "
+                "(data or witness),\n"
+                "                        size, state, role, writers, epoch, "
+                "sync_id,\n"
+                "                        resync_owner and the promised and "
+                "accepted ballots.\n"
+                "                        An unreachable slot has state "
+                "UNREACHABLE and nothing else.\n"
+                "\n"
+                "command options:\n"
+                "  -h, --help            Show this help message and "
+                "exit\n" RAWSTOR_CLI_OUTPUT_USAGE
+    );
+}
+
+static int command_slots(int argc, char** argv) {
+    const char* optstring = "h";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
+        {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
+        {},
+    };
+
+    char* target_arg = NULL;
+    RawstorCliOutput output_arg = {.unit = global_unit};
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_slots_usage();
+            return EXIT_SUCCESS;
+
+        case RAWSTOR_CLI_OPT_FORMAT:
+            if (rawstor_cli_output_set_format(&output_arg, optarg) != 0) {
+                fprintf(
+                    stderr, "Unknown format: %s (table, json or value)\n",
+                    optarg
+                );
+                return EX_USAGE;
+            }
+            break;
+
+        case RAWSTOR_CLI_OPT_COLUMN:
+            output_arg.columns = optarg;
+            break;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    if (optind < argc) {
+        target_arg = argv[optind];
+        optind++;
+    }
+
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EX_USAGE;
+    }
+
+    if (target_arg == NULL) {
+        fprintf(stderr, "target required\n");
+        return EX_USAGE;
+    }
+
+    return rawstor_cli_slots(target_arg, &output_arg);
+}
+
 static void command_testio_usage(void) {
     fprintf(
         stdout,
@@ -1317,6 +1487,10 @@ static int run_command(
         ret = command_list(argc, argv);
     } else if (strcmp(command, "show") == 0) {
         ret = command_show(argc, argv);
+    } else if (strcmp(command, "chunks") == 0) {
+        ret = command_chunks(argc, argv);
+    } else if (strcmp(command, "slots") == 0) {
+        ret = command_slots(argc, argv);
     } else if (strcmp(command, "info") == 0) {
         ret = command_info(argc, argv);
     } else if (strcmp(command, "resolve") == 0) {

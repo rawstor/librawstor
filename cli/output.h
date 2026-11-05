@@ -123,14 +123,6 @@ int rawstor_cli_table_add_row(
 
 void rawstor_cli_table_delete(RawstorCliTable* table);
 
-/* Makes the first `nkeys` columns of a table the key of a group: a table and
- * value print one flat row per line, but a json document lists one object per
- * run of rows with equal keys, holding the other columns of those rows as a
- * list named `members`. Without a selected key column the rows stay flat. */
-void rawstor_cli_table_group(
-    RawstorCliTable* table, size_t nkeys, const char* members
-);
-
 /* Checks that every column of `output` belongs to one of the tables, so a
  * command can reject a bad --column before it changes anything. Rows are not
  * needed. Returns 0, or a usage error reported on stderr. */

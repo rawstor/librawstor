@@ -497,7 +497,7 @@ URI schemes remain `ost://`, `mds://`, `file://`, `lvm://` or `zfs://`.
 With one more location than `--mirrors`, the last is the witness; the stored
 `META.member_role` identifies its type at subsequent opens. MDS stores its witness records durably in SQLite;
 ordinary `mds://` placement does not automatically attach a witness.
-`rawstor show -v` reports its member role and record state. See
+`rawstor slots` reports its member role and record state. See
 [Witness](docs/mds.md#witness) for voting and failure rules. Interprocess
 mirror coordination is multiattach stage 2 and is not implemented here.
 

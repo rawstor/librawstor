@@ -412,9 +412,12 @@ instances. Metadata and member-configuration operations take a
 chunk target and no separate offset. Read/write offsets remain offsets within
 an opened object.
 
-`rawstor show -v` prints a table with a row per chunk member (a list of `chunks` in json, each with its `members`); its
-`chunk_target` column can be passed directly to
-`rawstor resolve TARGET --winner=N`. Every listing command also takes
+`rawstor chunks TARGET` prints a table with a row per chunk (its offset, target,
+size, number of data copies and of slots), and `rawstor slots TARGET` a table
+with a row per member slot of every chunk (its URI, and what its own record
+holds: role, state, epoch, sync id, ballots). The `chunk_target` column of
+either can be passed directly to `rawstor resolve TARGET --winner=N`, where N
+is the `slot`. Every listing command also takes
 `--format table|json|value` and `--column COL[,COL...]`, e.g.
 `rawstor list LOCATION --format value --column target` prints one target per
 line.
@@ -430,7 +433,7 @@ A logical `mds://host:port/UUID/OFFSET` resolves to that chunk's physical slots.
 Without an offset, all chunks are enumerated in offset order, then member order.
 A physical comma-separated target is split without querying the members;
 unreachable slots remain in the result. Version suffixes are preserved.
-Witnesses on MDS use `ost://` at the MDS endpoint. `rawstor show -v` prints each
+Witnesses on MDS use `ost://` at the MDS endpoint. `rawstor slots` prints each
 slot's URI as `slot_target` in the row of its `slot` index, even when the
 member is unreachable.
 

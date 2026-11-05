@@ -340,8 +340,8 @@ static int resolve_chunk(
             return rawstd_exitcode_for_errno(-res);
         }
 
-        /* sync_id in hex, as rawstor show -v and meta_encode()'s on-disk
-         * encoding print it; epoch in decimal, as rawstor show -v prints
+        /* sync_id in hex, as rawstor slots and meta_encode()'s on-disk
+         * encoding print it; epoch in decimal, as rawstor slots prints
          * it. */
         char chunk_buf[32];
         char slot_buf[32];

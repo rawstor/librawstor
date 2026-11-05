@@ -148,7 +148,7 @@ two, tab-separated, ready for the shell:
 CREATED=$(rawstor create mds://192.168.0.13 --size=10G --chunk-size=256M --mirrors=2 --format value --column object_id,target)
 read -r OBJECT OBJECT_TARGET <<< "${CREATED}"
 
-rawstor show -v ${OBJECT_TARGET}              # each copy's state, per chunk
+rawstor slots ${OBJECT_TARGET}                # each copy's state, per chunk
 ```
 
 Expose the object as a vhost-user disk. The `rawstor-vhost@` instance is

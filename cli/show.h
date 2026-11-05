@@ -9,9 +9,7 @@
 extern "C" {
 #endif
 
-int rawstor_cli_show(
-    const char* target, int verbose, const RawstorCliOutput* output
-);
+int rawstor_cli_show(const char* target, const RawstorCliOutput* output);
 
 #ifdef __cplusplus
 }
