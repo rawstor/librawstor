@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `rawstor create`, `create-version`, `resolve`, `list`, `list-versions`, `show` and `info` print a table by default instead of plain lines; scripts that read a target from stdout use `--format value --column target`.
+- Sizes are bytes without a unit suffix: a bare number is accepted wherever a size is parsed (`--size`, `--chunk-size`, `--block-size`, `RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY`; `B` is still accepted), and bytes are printed without a `B`.
+- The size unit options `-b`/`-k`/`-m`/`-g`/`-t`/`-p`/`-e` (`--bytes`, `--kib`, ...) moved from `rawstor info` to before the command (`rawstor -g info LOCATION`), and apply to every command's `--format table` and `value` output.
 - `ost://` and `mds://` URIs, and the `--bind` address of `rawstor-ost` and `rawstor-mds`, default to port 7777 and 7776 respectively when no port is given.
 - `rawstor show -v` prints ancestor and current sync ids on one line, oldest first.
 - Native witnesses on MDS use `ost://` URIs; `mds://` URIs resolve logical objects and chunks.

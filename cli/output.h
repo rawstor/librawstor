@@ -39,6 +39,9 @@ typedef struct RawstorCliOutput {
     enum RawstorCliFormat format;
     /* Comma-separated column names, or NULL for every column. Not owned. */
     const char* columns;
+    /* The unit sizes are shown in, by table and value: one of "bkmgtpe", or 0
+     * for the column's own default. */
+    char unit;
 } RawstorCliOutput;
 
 /* Returns 0, or -1 when `name` is not a format. */
@@ -48,6 +51,13 @@ enum RawstorCliColumnType {
     RAWSTOR_CLI_COLUMN_STRING,
     /* Right-aligned in a table; a number in json and value. */
     RAWSTOR_CLI_COLUMN_NUMBER,
+    /* A byte count: the number in json, and in value unless a unit is chosen.
+     * A table shows it in the chosen unit, otherwise in the largest unit that
+     * holds it exactly (4096 is "4K"). */
+    RAWSTOR_CLI_COLUMN_SIZE,
+    /* Like SIZE, but without a chosen unit rounded to the largest unit under
+     * 1024, a rounded value prefixed with '~' (1500000000 is "~1G"). */
+    RAWSTOR_CLI_COLUMN_SIZE_HUMAN,
 };
 
 /* One table cell. `text` is what a table shows (NULL: an empty cell, null in
@@ -65,6 +75,13 @@ static inline RawstorCliCell rawstor_cli_cell_string(const char* text) {
 static inline RawstorCliCell
 rawstor_cli_cell_number(const char* text, uint64_t number) {
     RawstorCliCell cell = {text, number};
+    return cell;
+}
+
+/* A byte count for a SIZE or SIZE_HUMAN column; its text is made when the
+ * table is printed. */
+static inline RawstorCliCell rawstor_cli_cell_size(uint64_t bytes) {
+    RawstorCliCell cell = {"", bytes};
     return cell;
 }
 

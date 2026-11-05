@@ -84,10 +84,20 @@ TEST_F(EnvTest, bytes_defaults_and_units) {
     EXPECT_EQ(out, 123u);
 }
 
-TEST_F(EnvTest, bytes_rejects_bare_numbers_and_out_of_range_values) {
+TEST_F(EnvTest, bytes_accepts_bare_numbers_as_bytes) {
+    unsigned int out = 7;
+    setenv(env_name, "123", 1);
+    EXPECT_EQ(rawstd_env_bytes(env_name, 42, 0, UINT_MAX, &out), 0);
+    EXPECT_EQ(out, 123u);
+    setenv(env_name, "0", 1);
+    EXPECT_EQ(rawstd_env_bytes(env_name, 42, 0, UINT_MAX, &out), 0);
+    EXPECT_EQ(out, 0u);
+}
+
+TEST_F(EnvTest, bytes_rejects_malformed_and_out_of_range_values) {
     for (const char* bad :
-         {"", "123", "0", "4294967295", "-1K", "12Kjunk", "256MB", "4G",
-          "4294967296B", "999999999999999999999999K"}) {
+         {"", "-1K", "12Kjunk", "256MB", "4G", "4294967296B", "4294967296",
+          "999999999999999999999999K"}) {
         setenv(env_name, bad, 1);
         unsigned int out = 7;
         EXPECT_EQ(rawstd_env_bytes(env_name, 42, 0, UINT_MAX, &out), -EINVAL)

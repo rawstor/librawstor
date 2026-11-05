@@ -45,8 +45,13 @@ int rawstd_size_to_bytes(const char* s, uint64_t* out) {
     if (errno == ERANGE) {
         return -EOVERFLOW;
     }
-    // Exactly one unit character, nothing after it.
-    if (end[0] == '\0' || end[1] != '\0') {
+    // A bare number is bytes.
+    if (end[0] == '\0') {
+        *out = value;
+        return 0;
+    }
+    // Otherwise exactly one unit character, nothing after it.
+    if (end[1] != '\0') {
         return -EINVAL;
     }
 
@@ -74,6 +79,9 @@ int rawstd_bytes_to_size(uint64_t value, char* buf, size_t size) {
         }
         value >>= 10;
     }
+    if (i == 0) {
+        return snprintf(buf, size, "%llu", (unsigned long long int)value);
+    }
     return snprintf(
         buf, size, "%llu%c", (unsigned long long int)value, UNITS[i]
     );
@@ -85,6 +93,11 @@ static int bytes_to_size_shift(
     uint64_t divisor = (uint64_t)1 << shift;
     uint64_t rounded = (value + divisor / 2) / divisor;
     const char* prefix = (value % divisor) != 0 ? "~" : "";
+    if (shift == 0) {
+        return snprintf(
+            buf, size, "%s%llu", prefix, (unsigned long long int)rounded
+        );
+    }
     return snprintf(
         buf, size, "%s%llu%c", prefix, (unsigned long long int)rounded, unit
     );

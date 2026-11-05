@@ -44,8 +44,8 @@ static const char* const created_columns[] = {
 };
 static const enum RawstorCliColumnType created_types[] = {
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
-    RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
-    RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
+    RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_NUMBER,
+    RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_NUMBER,
     RAWSTOR_CLI_COLUMN_NUMBER,
 };
 enum { CREATED_COLUMNS = 7 };
@@ -73,14 +73,10 @@ static int print_created(
     const RawstorCliOutput* output, const char* target,
     const struct RawstorObjectSpec* spec
 ) {
-    char size_buf[256];
     char mirrors_buf[32];
-    char chunk_buf[256];
     char domain_buf[32];
     char stripe_buf[32];
-    rawstd_bytes_to_size(spec->size, size_buf, sizeof(size_buf));
     snprintf(mirrors_buf, sizeof(mirrors_buf), "%u", spec->width);
-    rawstd_bytes_to_size(spec->chunk_size, chunk_buf, sizeof(chunk_buf));
     snprintf(domain_buf, sizeof(domain_buf), "%u", spec->failure_domain);
     snprintf(
         stripe_buf, sizeof(stripe_buf), "%llu",
@@ -94,11 +90,10 @@ static int print_created(
     RawstorCliCell cells[] = {
         rawstor_cli_cell_optional(uuid),
         rawstor_cli_cell_string(target),
-        rawstor_cli_cell_number(size_buf, spec->size),
+        rawstor_cli_cell_size(spec->size),
         rawstor_cli_cell_number(mirrors_buf, spec->width),
-        rawstor_cli_cell_number(
-            spec->chunk_size != 0 ? chunk_buf : NULL, spec->chunk_size
-        ),
+        spec->chunk_size != 0 ? rawstor_cli_cell_size(spec->chunk_size)
+                              : rawstor_cli_cell_number(NULL, 0),
         rawstor_cli_cell_number(
             spec->failure_domain != 0 ? domain_buf : NULL, spec->failure_domain
         ),

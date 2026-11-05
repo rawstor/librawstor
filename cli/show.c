@@ -142,7 +142,6 @@ show_chunk_meta(RawstorCliOp* op, const char* target, RawstorCliTable* table) {
         char slot_buf[32];
         snprintf(slot_buf, sizeof(slot_buf), "%zd", i);
         cells[2].text = slot_buf;
-        char size_buf[256];
         char epoch_buf[32];
         char sync_buf[512];
         if (meta->state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
@@ -153,7 +152,6 @@ show_chunk_meta(RawstorCliOp* op, const char* target, RawstorCliTable* table) {
             cells[8] = rawstor_cli_cell_number(NULL, 0);
             cells[9] = rawstor_cli_cell_string(NULL);
         } else {
-            rawstd_bytes_to_size(meta->spec.size, size_buf, sizeof(size_buf));
             snprintf(
                 epoch_buf, sizeof(epoch_buf), "%llu",
                 (unsigned long long)meta->config.epoch
@@ -162,7 +160,7 @@ show_chunk_meta(RawstorCliOp* op, const char* target, RawstorCliTable* table) {
             cells[4] = rawstor_cli_cell_string(
                 meta->member_role == RAWSTOR_MEMBER_WITNESS ? "witness" : "data"
             );
-            cells[5] = rawstor_cli_cell_number(size_buf, meta->spec.size);
+            cells[5] = rawstor_cli_cell_size(meta->spec.size);
             cells[6] =
                 rawstor_cli_cell_string(sync_state_to_string(meta->state));
             cells[7] =
@@ -249,7 +247,7 @@ int rawstor_cli_show(
     };
     static const enum RawstorCliColumnType version_object_types[] = {
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
-        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_NUMBER,
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_SIZE,
         RAWSTOR_CLI_COLUMN_NUMBER
     };
     static const char* const live_object_columns[] = {
@@ -257,7 +255,7 @@ int rawstor_cli_show(
     };
     static const enum RawstorCliColumnType live_object_types[] = {
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
-        RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER
+        RAWSTOR_CLI_COLUMN_SIZE, RAWSTOR_CLI_COLUMN_NUMBER
     };
     static const char* const mirror_columns[] = {
         "chunk", "chunk_target", "slot", "slot_target", "member",
@@ -266,7 +264,7 @@ int rawstor_cli_show(
     static const enum RawstorCliColumnType mirror_types[] = {
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_STRING,
-        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_NUMBER,
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_SIZE,
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_STRING,
     };
@@ -298,9 +296,7 @@ int rawstor_cli_show(
         goto out;
     }
 
-    char size_buf[256];
     char mirrors_buf[32];
-    rawstd_bytes_to_size(spec.size, size_buf, sizeof(size_buf));
     snprintf(mirrors_buf, sizeof(mirrors_buf), "%u", spec.width);
     RawstorCliCell cells[5];
     size_t ncells = 0;
@@ -309,7 +305,7 @@ int rawstor_cli_show(
         cells[ncells++] = rawstor_cli_cell_string(version_id);
     }
     cells[ncells++] = rawstor_cli_cell_string(target);
-    cells[ncells++] = rawstor_cli_cell_number(size_buf, spec.size);
+    cells[ncells++] = rawstor_cli_cell_size(spec.size);
     cells[ncells++] = rawstor_cli_cell_number(mirrors_buf, spec.width);
     if (rawstor_cli_table_add_row(tables[0], cells) < 0) {
         fprintf(stderr, "Out of memory\n");

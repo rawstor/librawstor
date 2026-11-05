@@ -4,6 +4,8 @@
 
 #include <rawstor.h>
 
+#include <rawstd/units.h>
+
 #include <sys/ioctl.h>
 #include <sysexits.h>
 #include <unistd.h>
@@ -153,6 +155,39 @@ struct Column {
     size_t index;
 };
 
+bool is_numeric(RawstorCliColumnType type) {
+    return type != RAWSTOR_CLI_COLUMN_STRING;
+}
+
+bool is_size(RawstorCliColumnType type) {
+    return type == RAWSTOR_CLI_COLUMN_SIZE ||
+           type == RAWSTOR_CLI_COLUMN_SIZE_HUMAN;
+}
+
+/* The text of every size cell, in `unit` or in its column's own default. */
+void format_sizes(RawstorCliTable& table, char unit) {
+    for (size_t c = 0; c < table.names.size(); ++c) {
+        if (!is_size(table.types[c])) {
+            continue;
+        }
+        for (size_t r = 0; r < table.texts.size(); ++r) {
+            if (table.nulls[r][c]) {
+                continue;
+            }
+            char buf[64];
+            uint64_t bytes = table.numbers[r][c];
+            if (unit != 0) {
+                rawstd_bytes_to_size_unit(bytes, unit, buf, sizeof(buf));
+            } else if (table.types[c] == RAWSTOR_CLI_COLUMN_SIZE_HUMAN) {
+                rawstd_bytes_to_size_human(bytes, buf, sizeof(buf));
+            } else {
+                rawstd_bytes_to_size(bytes, buf, sizeof(buf));
+            }
+            table.texts[r][c] = buf;
+        }
+    }
+}
+
 std::vector<std::string> split_columns(const char* columns) {
     std::vector<std::string> out;
     std::stringstream ss(columns);
@@ -270,8 +305,7 @@ void print_table(
                 const std::string text = l < cells[c].size() ? cells[c][l] : "";
                 size_t pad =
                     widths[c] - std::min(widths[c], display_width(text));
-                bool right =
-                    !header && cols[c].type == RAWSTOR_CLI_COLUMN_NUMBER;
+                bool right = !header && is_numeric(cols[c].type);
                 line += " ";
                 line += right ? std::string(pad, ' ') + text
                               : text + std::string(pad, ' ');
@@ -335,7 +369,7 @@ json row_json(
     for (const Column& c : cols) {
         if (table.nulls[r][c.index]) {
             row[c.name] = nullptr;
-        } else if (c.type == RAWSTOR_CLI_COLUMN_NUMBER) {
+        } else if (is_numeric(c.type)) {
             row[c.name] = (unsigned long long)table.numbers[r][c.index];
         } else {
             row[c.name] = table.texts[r][c.index];
@@ -397,7 +431,7 @@ json table_json(const RawstorCliTable& table, const std::vector<Column>& cols) {
 }
 
 void print_values(
-    const RawstorCliTable& table, const std::vector<Column>& cols
+    const RawstorCliTable& table, const std::vector<Column>& cols, char unit
 ) {
     for (size_t r = 0; r < table.texts.size(); ++r) {
         std::string line;
@@ -408,7 +442,9 @@ void print_values(
             if (table.nulls[r][cols[c].index]) {
                 continue;
             }
-            if (cols[c].type == RAWSTOR_CLI_COLUMN_NUMBER) {
+            bool raw = is_numeric(cols[c].type) &&
+                       !(is_size(cols[c].type) && unit != 0);
+            if (raw) {
                 line += std::to_string(
                     (unsigned long long)table.numbers[r][cols[c].index]
                 );
@@ -564,6 +600,10 @@ int rawstor_cli_output_print(
             return checked;
         }
 
+        for (size_t t = 0; t < ntables; ++t) {
+            format_sizes(*tables[t], output->unit);
+        }
+
         json document = json::object();
         bool first = true;
         for (size_t t = 0; t < ntables; ++t) {
@@ -583,7 +623,7 @@ int rawstor_cli_output_print(
                 }
                 break;
             case RAWSTOR_CLI_FORMAT_VALUE:
-                print_values(*tables[t], cols);
+                print_values(*tables[t], cols, output->unit);
                 break;
             case RAWSTOR_CLI_FORMAT_JSON:
                 if (ntables == 1) {

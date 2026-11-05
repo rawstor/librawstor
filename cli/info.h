@@ -10,10 +10,10 @@ extern "C" {
 #endif
 
 /**
- * unit is 0 for a reasonable human-readable size (auto-picked, e.g. "141G"),
- * or one of "bBkKmMgGtTpPeE" to force a specific unit.
+ * Sizes are shown in a human-readable unit (auto-picked, e.g. "141G"), or in
+ * the unit of output->unit.
  *
- * logical, if nonzero, prints an extra "used (logical)" line -- the sum of
+ * logical, if nonzero, adds a "used_logical" field -- the sum of
  * every object's own declared size (RawstorObjectSpec::size, one
  * rawstor_target_spec() call per object) -- in addition to (not instead
  * of) the usual "used", which stays the location's actual physical usage.
@@ -24,7 +24,7 @@ extern "C" {
  * without this flag.
  */
 int rawstor_cli_info(
-    const char* location, char unit, int logical, const RawstorCliOutput* output
+    const char* location, int logical, const RawstorCliOutput* output
 );
 
 #ifdef __cplusplus
