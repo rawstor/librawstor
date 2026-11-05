@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char* const columns[] = {"uuid", "target"};
+static const char* const columns[] = {"object_id", "target"};
 static const enum RawstorCliColumnType types[] = {
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING
 };

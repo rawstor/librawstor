@@ -33,7 +33,9 @@ static ssize_t try_create_version(
     return result;
 }
 
-static const char* const version_columns[] = {"uuid", "version", "target"};
+static const char* const version_columns[] = {
+    "object_id", "version_id", "target"
+};
 static const enum RawstorCliColumnType version_types[] = {
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
     RAWSTOR_CLI_COLUMN_STRING
@@ -148,7 +150,7 @@ int rawstor_cli_list_versions(
         return rawstd_exitcode_for_errno((int)-result);
     }
 
-    static const char* const columns[] = {"uuid", "version", "target"};
+    static const char* const columns[] = {"object_id", "version_id", "target"};
     static const enum RawstorCliColumnType types[] = {
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_STRING

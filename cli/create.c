@@ -39,7 +39,7 @@ static void log_spec(FILE* output, const struct RawstorObjectSpec* spec) {
 }
 
 static const char* const created_columns[] = {
-    "uuid",       "target",         "size",         "mirrors",
+    "object_id",  "target",         "size",         "mirrors",
     "chunk_size", "failure_domain", "stripe_width",
 };
 static const enum RawstorCliColumnType created_types[] = {

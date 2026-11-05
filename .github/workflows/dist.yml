@@ -354,7 +354,7 @@ jobs:
       run: sudo apt install -y ./librawstor.deb/rawstor-vhost_*.deb
     - name: test-rawstor-vhost
       run: |
-        CREATED=$(rawstor create --size=1M --mirrors=1 ost://127.0.0.1:7777 --format value --column uuid,target)
+        CREATED=$(rawstor create --size=1M --mirrors=1 ost://127.0.0.1:7777 --format value --column object_id,target)
         read -r UUID TARGET <<< "${CREATED}"
         sudo systemctl enable --now rawstor-vhost@${UUID}.service
         sleep 1

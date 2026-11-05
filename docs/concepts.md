@@ -428,8 +428,8 @@ Without an offset, all chunks are enumerated in offset order, then member order.
 A physical comma-separated target is split without querying the members;
 unreachable slots remain in the result. Version suffixes are preserved.
 Witnesses on MDS use `ost://` at the MDS endpoint. `rawstor show -v` prints each
-slot's `target` in the row of its `slot` index, even when the member is
-unreachable.
+slot's URI as `slot_target` in the row of its `slot` index, even when the
+member is unreachable.
 
 
 For new MDS chunks with an even DATA width, placement adds a witness on an
