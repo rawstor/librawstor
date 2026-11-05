@@ -22,6 +22,8 @@
 struct RawstorCliTable {
     std::string name;
     bool record = false;
+    size_t group_keys = 0;
+    std::string group_members;
     std::vector<std::string> names;
     std::vector<RawstorCliColumnType> types;
     // Per row and column: the displayed text (nullopt-like flag in `nulls`)
@@ -326,20 +328,67 @@ void print_record(
     print_table(kv, select_columns(kv, {}), false);
 }
 
+json row_json(
+    const RawstorCliTable& table, size_t r, const std::vector<Column>& cols
+) {
+    json row = json::object();
+    for (const Column& c : cols) {
+        if (table.nulls[r][c.index]) {
+            row[c.name] = nullptr;
+        } else if (c.type == RAWSTOR_CLI_COLUMN_NUMBER) {
+            row[c.name] = (unsigned long long)table.numbers[r][c.index];
+        } else {
+            row[c.name] = table.texts[r][c.index];
+        }
+    }
+    return row;
+}
+
+/* The rows as a list of groups, one per run of rows with equal key columns,
+ * each holding its rows' other columns as a list. */
+json grouped_json(
+    const RawstorCliTable& table, const std::vector<Column>& keys,
+    const std::vector<Column>& rest
+) {
+    json groups = json::array();
+    std::vector<std::string> previous;
+    for (size_t r = 0; r < table.texts.size(); ++r) {
+        std::vector<std::string> key;
+        for (const Column& c : keys) {
+            key.push_back(
+                (table.nulls[r][c.index] ? "n" : "v") + table.texts[r][c.index]
+            );
+        }
+        if (groups.empty() || key != previous) {
+            groups.push_back(row_json(table, r, keys));
+            if (!rest.empty()) {
+                groups.back()[table.group_members] = json::array();
+            }
+            previous = key;
+        }
+        if (!rest.empty()) {
+            groups.back()[table.group_members].push_back(
+                row_json(table, r, rest)
+            );
+        }
+    }
+    return groups;
+}
+
 json table_json(const RawstorCliTable& table, const std::vector<Column>& cols) {
+    if (!table.record && table.group_keys > 0) {
+        std::vector<Column> keys;
+        std::vector<Column> rest;
+        for (const Column& c : cols) {
+            (c.index < table.group_keys ? keys : rest).push_back(c);
+        }
+        if (!keys.empty()) {
+            return grouped_json(table, keys, rest);
+        }
+    }
     json rows = json::array();
     for (size_t r = 0; r < table.texts.size(); ++r) {
-        json row = json::object();
-        for (const Column& c : cols) {
-            if (table.nulls[r][c.index]) {
-                row[c.name] = nullptr;
-            } else if (c.type == RAWSTOR_CLI_COLUMN_NUMBER) {
-                row[c.name] = (unsigned long long)table.numbers[r][c.index];
-            } else {
-                row[c.name] = table.texts[r][c.index];
-            }
-        }
-        rows.push_back(row);
+        rows.push_back(row_json(table, r, cols));
     }
     if (table.record) {
         return rows.empty() ? json::object() : rows[0];
@@ -400,6 +449,13 @@ int rawstor_cli_output_set_format(RawstorCliOutput* output, const char* name) {
         return -1;
     }
     return 0;
+}
+
+void rawstor_cli_table_group(
+    RawstorCliTable* table, size_t nkeys, const char* members
+) {
+    table->group_keys = nkeys;
+    table->group_members = members;
 }
 
 RawstorCliTable* rawstor_cli_record_create(

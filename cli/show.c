@@ -284,8 +284,13 @@ int rawstor_cli_show(
               );
     if (verbose) {
         tables[1] = rawstor_cli_table_create(
-            "members", mirror_columns, mirror_types, 10
+            "chunks", mirror_columns, mirror_types, 10
         );
+        if (tables[1] != NULL) {
+            /* chunk and chunk_target identify a chunk; the rest of a row
+             * is one of its members. */
+            rawstor_cli_table_group(tables[1], 2, "members");
+        }
         ntables = 2;
     }
     if (tables[0] == NULL || (verbose && tables[1] == NULL)) {

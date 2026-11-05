@@ -409,7 +409,7 @@ returns `Target` instances. Metadata and member-configuration operations take a
 chunk target and no separate offset. Read/write offsets remain offsets within
 an opened object.
 
-`rawstor show -v` prints a table with a row per chunk member (`members` in json); its
+`rawstor show -v` prints a table with a row per chunk member (a list of `chunks` in json, each with its `members`); its
 `chunk_target` column can be passed directly to
 `rawstor resolve TARGET --winner=N`. Every listing command also takes
 `--format table|json|value` and `--column COL[,COL...]`, e.g.
