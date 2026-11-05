@@ -933,22 +933,6 @@ void Chunk::_unlock() noexcept {
     _control->unlock_transition();
 }
 
-void Chunk::_disable_retry() noexcept {
-    if (_retry_disabled || !_control->dirty()) {
-        return;
-    }
-    // A reopened session may talk to a restarted backend that lost
-    // acknowledged writes: once DIRTY, failures must surface here and
-    // degrade the member instead of being retried transparently
-    // (docs/mirroring.md, case F6).
-    _retry_disabled = true;
-    for (Member& m : _members) {
-        if (m.slot) {
-            m.slot->set_transparent_retry(false);
-        }
-    }
-}
-
 // The heavy async work -- standing up a Slot per URI, meta()-ing each --
 // still lives in create() below, the one place that actually constructs
 // a Chunk (by analogy with Slot(Private, queue)): a constructor can't
@@ -971,7 +955,6 @@ Chunk::Chunk(
     _readonly(readonly),
     _skip_quorum(readonly && force),
     _control(std::move(control)),
-    _retry_disabled(false),
     _alive(std::make_shared<char>()),
     _closing(false),
     _background(0),
@@ -2082,8 +2065,6 @@ rawstd::Task<void> Chunk::_with_dirty() {
     if (!_control->dirty()) {
         co_await _run_dirty_barrier();
     }
-
-    _disable_retry();
 }
 
 /*
@@ -2921,11 +2902,10 @@ rawstd::Task<void> Chunk::_resync_attach(uint64_t generation, size_t idx) {
             co_return;
         }
         member.slot = std::move(slot);
+        member.reconnects_seen = 0;
+        member.read_trusted = true;
         member.reachable = true;
         member.probe_announced = false;
-        if (_retry_disabled) {
-            member.slot->set_transparent_retry(false);
-        }
     }
 
     std::lock_guard<std::mutex> lock(_control->mutex());
@@ -3822,6 +3802,8 @@ rawstd::DetachedTask Chunk::_lost_watch() {
                     .front();
             member.meta.state = meta.state;
             member.meta.writers = meta.writers;
+            member.reconnects_seen = member.slot->reconnects();
+            member.read_trusted = meta.state != RAWSTOR_OBJECT_SYNC_STATE_LOST;
             lost[k] = meta.state == RAWSTOR_OBJECT_SYNC_STATE_LOST;
             any |= lost[k];
         }
@@ -4009,12 +3991,34 @@ rawstd::DetachedTask Chunk::_probe_tick() {
     }
 
     _members[idx].slot = std::move(slot);
+    _members[idx].reconnects_seen = 0;
+    _members[idx].read_trusted = true;
     _members[idx].reachable = true;
     _members[idx].probe_announced = false;
-    if (_retry_disabled) {
-        _members[idx].slot->set_transparent_retry(false);
-    }
     _resync_maybe_start();
+}
+
+rawstd::Task<bool> Chunk::_read_trusted(size_t idx) {
+    Member& member = _members[idx];
+    if (!_control->dirty()) {
+        // A clean close flushes before marking CLEAN: nothing a restart
+        // could have lost.
+        co_return true;
+    }
+    const uint64_t reconnects = member.slot->reconnects();
+    if (reconnects == member.reconnects_seen) {
+        co_return member.read_trusted;
+    }
+    try {
+        RawstorObjectMeta meta =
+            (co_await member.slot->meta(_id, _offset, RawstdUUID{})).front();
+        member.meta.state = meta.state;
+        member.reconnects_seen = reconnects;
+        member.read_trusted = meta.state != RAWSTOR_OBJECT_SYNC_STATE_LOST;
+    } catch (const std::system_error&) {
+        // The read itself fails over to the next member.
+    }
+    co_return member.read_trusted;
 }
 
 /*
@@ -4041,6 +4045,18 @@ rawstd::Task<size_t> Chunk::_read(
         std::find(order.begin(), order.end(), _control->reference());
     if (reference != order.end()) {
         std::rotate(order.begin(), reference, reference + 1);
+    }
+    {
+        std::vector<size_t> trusted;
+        std::vector<size_t> suspect;
+        for (size_t idx : order) {
+            bool ok = co_await _read_trusted(idx);
+            (ok ? trusted : suspect).push_back(idx);
+        }
+        // A member that cannot be trusted serves only when no other does:
+        // were it a fallback for a trusted member that failed, stale data
+        // would be returned where an error is due.
+        order = trusted.empty() ? std::move(suspect) : std::move(trusted);
     }
 
     std::vector<std::pair<size_t, int>> failures;

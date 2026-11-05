@@ -2931,6 +2931,15 @@ TEST(MirrorOstTest, two_members_freeze_below_majority) {
         s.cmd_write_request(4);
         s.cmd_write_response(RAWSTOR_MAGIC, 6, -EIO);
     }
+    // The write is repeated on replacement sessions for the whole retry
+    // budget, and fails every time.
+    for (int attempt = 2; attempt <= 3; ++attempt) {
+        rawstor::tests::Session s(server1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_write_request(4);
+        s.cmd_write_response(RAWSTOR_MAGIC, 2, -EIO);
+    }
 
     {
         rawstor::tests::Session s(server2);
@@ -3040,15 +3049,11 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
  * DIRTY degrades the member durably, unlike an EPROTO (payload) failure,
  * which only triggers a read-repair of that one region.
  *
- * A single scripted failure is enough here, unlike
- * MirrorOstTest.read_failover_and_repair's own (CLEAN-object) member0
- * script, which needs 3 reconnect rounds to exhaust
- * Slot::_with_retry()'s transparent-retry budget:
- * Chunk::_run_dirty_barrier() turns transparent retry off for every
- * member the moment the object goes DIRTY (src/chunk.cpp, case F6's own
- * comment there), specifically so a transport failure surfaces
- * immediately instead of being silently retried once acknowledged writes
- * are on the line.
+ * The member is replaced and the read repeated for Slot::_with_retry()'s
+ * whole retry budget, as for a CLEAN object (MirrorOstTest.
+ * read_failover_and_repair): only when that is exhausted does it leave the
+ * set. A server restarted meanwhile does not go unnoticed by the
+ * replacement: the first writer to open its copy marks it LOST (case F6).
  */
 TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
     Queue queue(16);
@@ -3086,10 +3091,16 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         s.cmd_sync_accept(RAWSTOR_MAGIC, 4, 0, legacy);
         s.cmd_write(RAWSTOR_MAGIC, 6, 4);
         /* member0's session is "lost" (a transport-class error, not a
-         * payload one) right while the object is DIRTY; transparent retry
-         * is already off by this point, so _read() moves on to member1
-         * after this one failure. */
+         * payload one) right while the object is DIRTY. */
         s.cmd_read_error(RAWSTOR_MAGIC, 7, -EIO);
+    }
+    /* The read is repeated on replacement sessions for the whole retry
+     * budget, and fails every time: _read() then moves on to member1. */
+    for (int attempt = 2; attempt <= 3; ++attempt) {
+        rawstor::tests::Session s(server1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_read_error(RAWSTOR_MAGIC, 2, -EIO);
     }
     {
         rawstor::tests::Session s(server2);
@@ -3183,6 +3194,242 @@ TEST(MirrorOstTest, failed_leave_on_a_data_member_leaves_the_others_clean) {
         EXPECT_EQ(left.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN) << i;
         EXPECT_EQ(left.writers, 0u) << i;
     }
+}
+
+namespace {
+
+RawstorFrameMetaPayload clean_legacy_meta() {
+    return RawstorFrameMetaPayload{
+        .size = 1ull << 20,
+        .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        .chunk_shift = 0,
+        .width = 1,
+        .member_role = RAWSTOR_MEMBER_DATA,
+        .writers = 0,
+        .config =
+            {
+                .epoch = 0,
+                .sync_id = 0,
+                .sync_id_history = {},
+                .resync_owner = 0,
+                .nroles = 0,
+                .roles = {},
+            },
+        .promised = {},
+        .accepted = {},
+    };
+}
+
+} // namespace
+
+/*
+ * A DIRTY member that fails once is not given up: its session is replaced
+ * and the request repeated, so a live server that merely dropped one
+ * connection stays in the set, as for a CLEAN one. The write below fails on
+ * the first session and succeeds on the replacement.
+ */
+TEST(MirrorOstTest, a_dirty_member_that_fails_once_is_replaced) {
+    Queue queue(16);
+    rawstor::tests::Server server1(8840, 256);
+    rawstor::tests::Server server2(8841, 256);
+    std::string target =
+        "ost://127.0.0.1:8840/00000000-0000-7000-8000-0000000000c1,"
+        "ost://127.0.0.1:8841/00000000-0000-7000-8000-0000000000c1";
+    const RawstorFrameMetaPayload legacy = clean_legacy_meta();
+
+    {
+        rawstor::tests::Session s(server1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 4, 0, legacy);
+        s.cmd_write_request(4);
+        s.cmd_write_response(RAWSTOR_MAGIC, 6, -EIO);
+    }
+    {
+        rawstor::tests::Session s(server1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_write(RAWSTOR_MAGIC, 2, 4);
+        s.cmd_flush(RAWSTOR_MAGIC, 3, 0);
+        s.cmd_leave(RAWSTOR_MAGIC, 4, 0);
+    }
+    {
+        rawstor::tests::Session s(server2);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 4, 0, legacy);
+        s.cmd_write(RAWSTOR_MAGIC, 6, 4);
+        s.cmd_flush(RAWSTOR_MAGIC, 7, 0);
+        s.cmd_leave(RAWSTOR_MAGIC, 8, 0);
+    }
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, target, &object), 0);
+
+    testing::internal::CaptureStderr();
+    std::string ping = "ping";
+    object_write(queue, object, ping.data(), ping.size(), 0, 0);
+    object_close_clean(queue, object);
+    std::string log = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(log.find("Mirror member degraded"), std::string::npos) << log;
+}
+
+/*
+ * A member whose session was replaced while the chunk is DIRTY may belong to
+ * a server that restarted and lost writes it acknowledged: its copy is LOST
+ * (Slot::open()). Reads go to the other member until the heal has dealt with
+ * it. The first member below fails its write once, is reconnected, and says
+ * LOST when asked for its state; the read is served by the second.
+ */
+TEST(MirrorOstTest, a_reconnected_member_found_lost_is_not_read_first) {
+    Queue queue(16);
+    rawstor::tests::Server server1(8842, 256);
+    rawstor::tests::Server server2(8843, 256);
+    std::string target =
+        "ost://127.0.0.1:8842/00000000-0000-7000-8000-0000000000c2,"
+        "ost://127.0.0.1:8843/00000000-0000-7000-8000-0000000000c2";
+    const RawstorFrameMetaPayload legacy = clean_legacy_meta();
+    RawstorFrameMetaPayload lost = legacy;
+    lost.state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
+
+    {
+        rawstor::tests::Session s(server1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 4, 0, legacy);
+        s.cmd_write_request(4);
+        s.cmd_write_response(RAWSTOR_MAGIC, 6, -EIO);
+    }
+    {
+        // The replacement session takes the write, and then reports LOST.
+        // Nothing is read from it.
+        rawstor::tests::Session s(server1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_write(RAWSTOR_MAGIC, 2, 4);
+        s.cmd_meta(RAWSTOR_MAGIC, 3, 0, lost);
+        s.cmd_flush(RAWSTOR_MAGIC, 4, 0);
+        s.cmd_leave(RAWSTOR_MAGIC, 5, 0);
+    }
+    {
+        rawstor::tests::Session s(server2);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 4, 0, legacy);
+        s.cmd_write(RAWSTOR_MAGIC, 6, 4);
+        s.cmd_read(RAWSTOR_MAGIC, 7, "ping", 4);
+        s.cmd_flush(RAWSTOR_MAGIC, 8, 0);
+        s.cmd_leave(RAWSTOR_MAGIC, 9, 0);
+    }
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, target, &object), 0);
+
+    std::string ping = "ping";
+    object_write(queue, object, ping.data(), ping.size(), 0, 0);
+    std::string data(4, '\0');
+    object_read(queue, object, data.data(), data.size(), 0);
+    EXPECT_EQ(data, "ping");
+    object_close_clean(queue, object);
+}
+
+/*
+ * A member found LOST after its session was replaced is not a fallback for
+ * the member that was trusted: when that one fails the read, the read
+ * fails, instead of returning what a restarted server may have lost.
+ */
+TEST(
+    MirrorOstTest, a_reconnected_member_found_lost_does_not_serve_in_its_place
+) {
+    Queue queue(16);
+    rawstor::tests::Server server1(8844, 256);
+    rawstor::tests::Server server2(8845, 256);
+    std::string target =
+        "ost://127.0.0.1:8844/00000000-0000-7000-8000-0000000000c3,"
+        "ost://127.0.0.1:8845/00000000-0000-7000-8000-0000000000c3";
+    const RawstorFrameMetaPayload legacy = clean_legacy_meta();
+    RawstorFrameMetaPayload lost = legacy;
+    lost.state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
+
+    {
+        rawstor::tests::Session s(server1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 4, 0, legacy);
+        s.cmd_write_request(4);
+        s.cmd_write_response(RAWSTOR_MAGIC, 6, -EIO);
+    }
+    {
+        // After the write it reports LOST; nothing is read from it.
+        rawstor::tests::Session s(server1);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_write(RAWSTOR_MAGIC, 2, 4);
+        s.cmd_meta(RAWSTOR_MAGIC, 3, 0, lost);
+        s.cmd_flush(RAWSTOR_MAGIC, 4, 0);
+        s.cmd_leave(RAWSTOR_MAGIC, 5, 0);
+    }
+    {
+        rawstor::tests::Session s(server2);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, legacy);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 4, 0, legacy);
+        s.cmd_write(RAWSTOR_MAGIC, 6, 4);
+        s.cmd_read_error(RAWSTOR_MAGIC, 7, -EIO);
+    }
+    // The read is repeated on replacement sessions for the whole retry
+    // budget, and fails every time.
+    for (int attempt = 2; attempt <= 3; ++attempt) {
+        rawstor::tests::Session s(server2);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_read_error(RAWSTOR_MAGIC, 2, -EIO);
+    }
+    {
+        // The close finds the session gone, and replaces it.
+        rawstor::tests::Session s(server2);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, legacy);
+        s.cmd_flush(RAWSTOR_MAGIC, 2, 0);
+        s.cmd_leave(RAWSTOR_MAGIC, 3, 0);
+    }
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, target, &object), 0);
+
+    std::string ping = "ping";
+    object_write(queue, object, ping.data(), ping.size(), 0, 0);
+
+    bool completed = false;
+    int error = 0;
+    std::string data(4, '\0');
+    auto cb = std::make_unique<std::function<void(size_t, int)>>(
+        [&completed, &error](size_t, int e) {
+            error = e;
+            completed = true;
+        }
+    );
+    ASSERT_EQ(
+        rawstor_object_pread(
+            object, data.data(), data.size(), 0, callback, cb.get()
+        ),
+        0
+    );
+    cb.release();
+    const auto until =
+        std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (!completed && std::chrono::steady_clock::now() < until) {
+        rawio_wait_timeout(queue, 10);
+    }
+    ASSERT_TRUE(completed);
+    EXPECT_NE(error, 0);
+    object_close(queue, object);
 }
 
 } // unnamed namespace

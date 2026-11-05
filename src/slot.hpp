@@ -97,14 +97,8 @@ private:
     // comment.
     bool _reconnecting;
 
-    // When false, a retryable failure is not retried through
-    // _reconnect(): it surfaces to the caller immediately, same as
-    // a permanent rejection. A mirrored Chunk disables this once it is
-    // DIRTY -- a reconnected backend may be talking to a restarted server
-    // that lost acknowledged writes, so the caller must degrade the mirror
-    // arm instead of silently retrying through it (docs/mirroring.md, case
-    // F6).
-    bool _transparent_retry;
+    // How many times _reconnect() has replaced _backend.
+    uint64_t _reconnects;
 
     // Every data-path/metadata method's terminal path -- success or final
     // failure -- runs through here exactly once; records the cross-retry
@@ -179,9 +173,12 @@ public:
 
     Slot& operator=(const Slot&) = delete;
 
-    void set_transparent_retry(bool enabled) noexcept;
-
     const rawstd::URI* location() const noexcept;
+
+    // How many times the session to the backend has been replaced: a reader
+    // that trusts the copy only as far as the session it read the copy's
+    // state through checks that state again once this has changed.
+    uint64_t reconnects() const noexcept { return _reconnects; }
 
     // Metadata operations, routed through the same backend and
     // retry-with-invalidate-backend machinery (_with_retry()) as the

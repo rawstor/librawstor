@@ -66,6 +66,11 @@ private:
         bool probe_announced;
         bool witness;
         bool recreated;
+        // The session to the member had been replaced this many times when
+        // its copy's state was last read for a read (Slot::reconnects()),
+        // and whether that state allowed reading from it.
+        uint64_t reconnects_seen = 0;
+        bool read_trusted = true;
     };
 
     rawio::Queue& _queue;
@@ -124,10 +129,6 @@ private:
     // Chunk's own waiters, so only one of them at a time takes the
     // transition lock (_lock()).
     rawstd::Gate _meta_gate;
-
-    // Transparent retry is off on this Chunk's sessions: the chunk is
-    // DIRTY (docs/mirroring.md, case F6).
-    bool _retry_disabled;
 
     // Expires on destruction. Detached background work (read-repair,
     // resync, the reconnect probe, the degrade barriers they may trigger)
@@ -278,10 +279,6 @@ private:
     // Never blocks the queue.
     rawstd::Task<void> _lock();
     void _unlock() noexcept;
-
-    // Turns transparent retry off on this Chunk's sessions once the chunk
-    // is DIRTY.
-    void _disable_retry() noexcept;
 
     // `m`'s own chunk, as a target URI (location/id/offset), for logs.
     std::string _member_str(const Member& m) const;
@@ -437,6 +434,13 @@ private:
     // `issue`/`copy_to` are pread()/preadv()'s own doing -- see their own
     // call sites -- so this function itself never needs to know whether
     // it's serving a flat buffer or an iovec array.
+    // Whether reading from the in-sync member `idx` may be trusted: once the
+    // session to it has been replaced while the chunk is DIRTY, its copy may
+    // belong to a server that restarted and lost writes it acknowledged,
+    // which its LOST state tells (Slot::open()). A copy found LOST is not
+    // read while another member can be, until the writers' heal excludes and
+    // resyncs it.
+    rawstd::Task<bool> _read_trusted(size_t idx);
     rawstd::Task<size_t> _read(
         uint64_t offset, std::function<rawstd::Task<size_t>(Slot&)> issue,
         std::function<void(std::vector<char>&, size_t)> copy_to
