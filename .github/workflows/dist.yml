@@ -354,11 +354,8 @@ jobs:
       run: sudo apt install -y ./librawstor.deb/rawstor-vhost_*.deb
     - name: test-rawstor-vhost
       run: |
-        TARGET=$(rawstor create --size=1M --mirrors=1 ost://127.0.0.1:7777 --format value --column target)
-        # TARGET is ost://host:port/<uuid>/<offset> -- the uuid is the
-        # second-to-last path segment.
-        CHUNK=${TARGET%/*}
-        UUID=${CHUNK##*/}
+        CREATED=$(rawstor create --size=1M --mirrors=1 ost://127.0.0.1:7777 --format value --column uuid,target)
+        read -r UUID TARGET <<< "${CREATED}"
         sudo systemctl enable --now rawstor-vhost@${UUID}.service
         sleep 1
         systemctl is-active rawstor-vhost@${UUID}.service
