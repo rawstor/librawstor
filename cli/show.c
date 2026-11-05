@@ -261,10 +261,10 @@ int rawstor_cli_show(
     size_t ntables = 1;
     int ret = EXIT_FAILURE;
     tables[0] =
-        rawstor_cli_table_create("object", object_columns, object_types, 5);
+        rawstor_cli_record_create("object", object_columns, object_types, 5);
     if (verbose) {
         tables[1] = rawstor_cli_table_create(
-            "mirrors", mirror_columns, mirror_types, 10
+            "members", mirror_columns, mirror_types, 10
         );
         ntables = 2;
     }

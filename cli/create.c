@@ -91,7 +91,7 @@ static int print_created(
     };
 
     RawstorCliTable* table =
-        rawstor_cli_table_create("object", columns, types, 7);
+        rawstor_cli_record_create("object", columns, types, 7);
     if (table == NULL || rawstor_cli_table_add_row(table, cells) < 0) {
         fprintf(stderr, "Out of memory\n");
         if (table != NULL) {

@@ -21,6 +21,7 @@
 
 struct RawstorCliTable {
     std::string name;
+    bool record = false;
     std::vector<std::string> names;
     std::vector<RawstorCliColumnType> types;
     // Per row and column: the displayed text (nullopt-like flag in `nulls`)
@@ -182,7 +183,8 @@ std::vector<Column> select_columns(
 }
 
 void print_table(
-    const RawstorCliTable& table, const std::vector<Column>& cols
+    const RawstorCliTable& table, const std::vector<Column>& cols,
+    bool header = true
 ) {
     const Glyphs& g = (isatty(STDOUT_FILENO) && locale_is_utf8())
                           ? unicode_glyphs
@@ -195,7 +197,7 @@ void print_table(
         std::transform(h.begin(), h.end(), h.begin(), [](unsigned char ch) {
             return std::toupper(ch);
         });
-        headers.push_back(h);
+        headers.push_back(header ? h : "");
     }
 
     std::vector<size_t> widths(n);
@@ -295,8 +297,10 @@ void print_table(
     }
 
     rule(0);
-    print_row(head, true);
-    rule(1);
+    if (header) {
+        print_row(head, true);
+        rule(1);
+    }
     for (size_t r = 0; r < body.size(); ++r) {
         /* Without separators a wrapped row would run into its neighbours. */
         if (wrapped && r > 0) {
@@ -305,6 +309,21 @@ void print_table(
         print_row(body[r], false);
     }
     rule(2);
+}
+
+/* A card as a key/value table: one row per selected column. */
+void print_record(
+    const RawstorCliTable& record, const std::vector<Column>& cols
+) {
+    RawstorCliTable kv;
+    kv.names = {"key", "value"};
+    kv.types = {RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING};
+    for (const Column& c : cols) {
+        kv.texts.push_back({c.name, record.texts[0][c.index]});
+        kv.nulls.push_back({false, false});
+        kv.numbers.push_back({0, 0});
+    }
+    print_table(kv, select_columns(kv, {}), false);
 }
 
 json table_json(const RawstorCliTable& table, const std::vector<Column>& cols) {
@@ -321,6 +340,9 @@ json table_json(const RawstorCliTable& table, const std::vector<Column>& cols) {
             }
         }
         rows.push_back(row);
+    }
+    if (table.record) {
+        return rows.empty() ? json::object() : rows[0];
     }
     return rows;
 }
@@ -378,6 +400,18 @@ int rawstor_cli_output_set_format(RawstorCliOutput* output, const char* name) {
         return -1;
     }
     return 0;
+}
+
+RawstorCliTable* rawstor_cli_record_create(
+    const char* name, const char* const* names,
+    const enum RawstorCliColumnType* types, size_t ncolumns
+) {
+    RawstorCliTable* table =
+        rawstor_cli_table_create(name, names, types, ncolumns);
+    if (table != nullptr) {
+        table->record = true;
+    }
+    return table;
 }
 
 RawstorCliTable* rawstor_cli_table_create(
@@ -452,7 +486,7 @@ int rawstor_cli_output_print(
             }
         }
 
-        json document = ntables == 1 ? json::array() : json::object();
+        json document = json::object();
         bool first = true;
         for (size_t t = 0; t < ntables; ++t) {
             std::vector<Column> cols = select_columns(*tables[t], want);
@@ -464,7 +498,11 @@ int rawstor_cli_output_print(
                 if (!first) {
                     std::puts("");
                 }
-                print_table(*tables[t], cols);
+                if (tables[t]->record) {
+                    print_record(*tables[t], cols);
+                } else {
+                    print_table(*tables[t], cols);
+                }
                 break;
             case RAWSTOR_CLI_FORMAT_VALUE:
                 print_values(*tables[t], cols);
@@ -472,6 +510,11 @@ int rawstor_cli_output_print(
             case RAWSTOR_CLI_FORMAT_JSON:
                 if (ntables == 1) {
                     document = table_json(*tables[t], cols);
+                } else if (tables[t]->record) {
+                    json fields = table_json(*tables[t], cols);
+                    for (auto& field : fields.items()) {
+                        document[field.key()] = field.value();
+                    }
                 } else {
                     document[tables[t]->name] = table_json(*tables[t], cols);
                 }

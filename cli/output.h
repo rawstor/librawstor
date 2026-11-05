@@ -90,6 +90,14 @@ RawstorCliTable* rawstor_cli_table_create(
     const enum RawstorCliColumnType* types, size_t ncolumns
 );
 
+/* Like rawstor_cli_table_create(), but for a single object: the card has
+ * exactly one row, shown as a key/value table, as a json object, and merged
+ * into the top-level object of a document with several tables. */
+RawstorCliTable* rawstor_cli_record_create(
+    const char* name, const char* const* names,
+    const enum RawstorCliColumnType* types, size_t ncolumns
+);
+
 /* `cells` holds one cell per column; the text is copied. Returns 0 or
  * -ENOMEM. */
 int rawstor_cli_table_add_row(
@@ -99,7 +107,8 @@ int rawstor_cli_table_add_row(
 void rawstor_cli_table_delete(RawstorCliTable* table);
 
 /* Prints the tables to stdout. A json document is an array of row objects for
- * one table, or an object of such arrays keyed by table name for several. A
+ * one table, a single object for one record, or an object of such arrays keyed
+ * by table name for several, with the fields of a record at the top level. A
  * table none of the selected columns belongs to is skipped. Returns an exit
  * code; a column no table has is a usage error reported on stderr. */
 int rawstor_cli_output_print(

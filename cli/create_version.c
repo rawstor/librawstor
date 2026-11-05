@@ -80,7 +80,7 @@ int rawstor_cli_create_version(
         RAWSTOR_CLI_COLUMN_STRING
     };
     RawstorCliTable* table =
-        rawstor_cli_table_create("version", columns, types, 3);
+        rawstor_cli_record_create("version", columns, types, 3);
     char object_id[64];
     char version_id[64];
     rawstor_cli_target_ids(

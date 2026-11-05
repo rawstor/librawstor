@@ -102,7 +102,7 @@ static int info_print(
             RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
             RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_STRING,
         };
-        table = rawstor_cli_table_create("info", columns, types, 6);
+        table = rawstor_cli_record_create("info", columns, types, 6);
         cells[0] = location_cell;
         cells[1] = used_cell;
         cells[2] = logical_cell;
@@ -118,7 +118,7 @@ static int info_print(
             RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
             RAWSTOR_CLI_COLUMN_STRING,
         };
-        table = rawstor_cli_table_create("info", columns, types, 5);
+        table = rawstor_cli_record_create("info", columns, types, 5);
         cells[0] = location_cell;
         cells[1] = used_cell;
         cells[2] = avail_cell;
