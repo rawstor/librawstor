@@ -62,20 +62,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- MDS object writes keep epoch fencing on physical chunks; unsupported operations fail without retries on macOS.
-- Malformed persisted member metadata fails with `EILSEQ` without retrying; wire protocol errors retain reconnect retries.
-- A client reconnecting after a short write or a dropped connection no longer leaves the copy `LOST`: the new connection takes over the writes of the one it replaces.
-- A copy left `DIRTY` by a server that restarted or a host that went down is marked `LOST` when the first writer opens it, instead of being trusted as if nothing had been lost.
-- A mirror member that fails while the chunk is `DIRTY` is retried with the usual retry budget instead of being given up on the first failure: a short send or a reset on a live server no longer takes both arms of a busy mirror down.
-- Persist LOST after failed mirror departure, select conflicting member geometry only with an agreeing configuration quorum, reject unknown metadata states, and fail short DATA reads instead of returning incomplete data.
-- OST shutdown terminates incomplete network requests before draining storage operations; snapshot creation skips an unavailable trailing witness without ignoring unavailable data members.
-- Multi-chunk `mds://` objects accept I/O beyond the first chunk while retaining object bounds checks.
-- Resync preserves partial-sector client writes and clears `LOST` only after flushing the restored copy.
+- Unsupported operations fail without retries on macOS.
+- OST shutdown terminates incomplete network requests before draining storage operations.
 - With the `poll()` backend (`--without-liburing`, always on macOS), the next request after one that had exhausted its retries hung forever instead of reconnecting.
 - A restarted `rawstor-vduse` now resumes serving a device the driver is already using instead of leaving its I/O hanging, and starts each virtqueue from the driver-set ring state, so a guest that resets the device and sets it up again no longer hangs either.
 - `rawstor-vhost`/`rawstor-vduse` now let in-flight requests complete on `SIGINT`/`SIGTERM` instead of dropping them, so a planned restart is invisible to the guest.
 - `rawstor-vhost` killed outright left its socket file behind, and every restart then failed with "Address already in use"; a socket nothing listens on any more is now removed at startup, and a second instance started on the same socket now fails right away instead.
-- Object I/O now rejects ranges whose offset plus size would overflow, preventing access to the beginning of a multi-chunk object.
 - `rawstor-ost` now answers `-ENOSYS` for a command it doesn't recognize instead of just dropping the connection, so a newer client can tell "unsupported" apart from a transport failure.
 - The `rawstor-vduse` deb package (present since 0.2.10) was never actually built or published: CI's packaging job never copied its `.install`/`.postinst`/`.prerm` files into place.
 - With io_uring, a connection could hang forever when the kernel ended its multishot receive on its own (e.g. on a full completion ring); it now fails and reconnects.
