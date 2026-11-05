@@ -6,16 +6,27 @@ AM_CFLAGS = $(GENERIC_CFLAGS) \
             -I$(top_srcdir)/librawio/include \
             -I$(top_srcdir)/include
 
+AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
+              $(ASAN_CFLAGS) \
+              -I$(top_srcdir)/librawstd/include \
+              -I$(top_srcdir)/librawio/include \
+              -I$(top_srcdir)/include \
+              -I$(top_srcdir)/src/3rdparty
+
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-rawstor_SOURCES = create.c \
+rawstor_SOURCES = chunks.c \
+                  chunks.h \
+                  create.c \
                   create.h \
                   info.c \
                   info.h \
                   list.c \
                   list.h \
                   main.c \
+                  output.cpp \
+                  output.h \
                   rawio_sync.c \
                   rawio_sync.h \
                   remove.c \
@@ -25,6 +36,8 @@ rawstor_SOURCES = create.c \
                   resolve.c \
                   resolve.h \
                   show.c \
+                  slots.c \
+                  slots.h \
                   show.h \
                   create_version.c \
                   create_version.h \

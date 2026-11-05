@@ -1,6 +1,8 @@
 #ifndef RAWSTOR_CLI_RESOLVE_H
 #define RAWSTOR_CLI_RESOLVE_H
 
+#include "output.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -11,7 +13,8 @@ extern "C" {
 /* Winners are member indices within each addressed chunk. A whole-object
  * target resolves every chunk; a physical URI resolves that chunk only. */
 int rawstor_cli_resolve(
-    const char* target, const size_t* winners, size_t num_winners
+    const char* target, const size_t* winners, size_t num_winners,
+    const RawstorCliOutput* output
 );
 
 #ifdef __cplusplus

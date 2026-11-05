@@ -48,8 +48,8 @@ int rawstd_env_bytes(
         return 0;
     }
     rawstd_error(
-        "Invalid %s=\"%s\": expected a size with a unit (B, K, M, G, T, P, "
-        "E) from %uB to %uB\n",
+        "Invalid %s=\"%s\": expected a size in bytes, or with a unit (K, M, "
+        "G, T, P, E), from %u to %u bytes\n",
         name, value, min, max
     );
     return -EINVAL;

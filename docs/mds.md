@@ -1263,7 +1263,7 @@ Here `-m 2 --failure-domain server` places two DATA copies and a witness on
 host3. The MDS endpoint is explicit in the topology so its failure domain is
 known. It is health-probed like other candidates, but its reported aggregate
 capacity is not counted again as storage capacity. Returned physical witness
-URIs use `ost://host3:7776/UUID/OFFSET`, including in `rawstor show -v`.
+URIs use `ost://host3:7776/UUID/OFFSET`, including in `rawstor slots`.
 
 Witness slots are last in each live chunk map and are created and removed with
 their chunk. They take part in configuration barriers and quorum, but receive

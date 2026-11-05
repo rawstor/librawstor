@@ -18,9 +18,8 @@ int rawstd_env_uint(
 );
 
 /*
- * Same, for a size with a mandatory unit as rawstd_size_to_bytes() parses
- * it, e.g. 256M or 4096B; `min` and `max` are in bytes. A bare number is
- * malformed.
+ * Same, for a size as rawstd_size_to_bytes() parses it, e.g. 256M or 4096;
+ * `min` and `max` are in bytes. A bare number is bytes.
  */
 int rawstd_env_bytes(
     const char* name, unsigned int def, unsigned int min, unsigned int max,

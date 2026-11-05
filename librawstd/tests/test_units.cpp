@@ -14,6 +14,9 @@ TEST(UnitsTest, size_to_bytes_basics) {
     EXPECT_EQ(rawstd_size_to_bytes("0B", &out), 0);
     EXPECT_EQ(out, 0u);
 
+    EXPECT_EQ(rawstd_size_to_bytes("4096", &out), 0);
+    EXPECT_EQ(out, 4096u);
+
     EXPECT_EQ(rawstd_size_to_bytes("1K", &out), 0);
     EXPECT_EQ(out, 1024u);
 
@@ -43,10 +46,14 @@ TEST(UnitsTest, size_to_bytes_case_insensitive) {
     EXPECT_EQ(out, 7u);
 }
 
-TEST(UnitsTest, size_to_bytes_missing_unit) {
-    uint64_t out = 0;
-    EXPECT_EQ(rawstd_size_to_bytes("256", &out), -EINVAL);
-    EXPECT_EQ(rawstd_size_to_bytes("0", &out), -EINVAL);
+TEST(UnitsTest, size_to_bytes_bare_number_is_bytes) {
+    uint64_t out = 7;
+    EXPECT_EQ(rawstd_size_to_bytes("256", &out), 0);
+    EXPECT_EQ(out, 256u);
+    EXPECT_EQ(rawstd_size_to_bytes("0", &out), 0);
+    EXPECT_EQ(out, 0u);
+    EXPECT_EQ(rawstd_size_to_bytes("256B", &out), 0);
+    EXPECT_EQ(out, 256u);
 }
 
 TEST(UnitsTest, size_to_bytes_rejects_anything_around_number_and_unit) {
@@ -75,6 +82,9 @@ TEST(UnitsTest, size_to_bytes_overflow) {
     EXPECT_EQ(
         rawstd_size_to_bytes("99999999999999999999999B", &out), -EOVERFLOW
     );
+    EXPECT_EQ(
+        rawstd_size_to_bytes("99999999999999999999999", &out), -EOVERFLOW
+    );
 }
 
 TEST(UnitsTest, bytes_to_size_picks_largest_exact_unit) {
@@ -84,10 +94,10 @@ TEST(UnitsTest, bytes_to_size_picks_largest_exact_unit) {
     EXPECT_STREQ(buf, "256M");
 
     ASSERT_GT(rawstd_bytes_to_size(0, buf, sizeof(buf)), 0);
-    EXPECT_STREQ(buf, "0B");
+    EXPECT_STREQ(buf, "0");
 
     ASSERT_GT(rawstd_bytes_to_size(1023, buf, sizeof(buf)), 0);
-    EXPECT_STREQ(buf, "1023B");
+    EXPECT_STREQ(buf, "1023");
 }
 
 TEST(UnitsTest, bytes_to_size_human_exact) {
@@ -109,6 +119,16 @@ TEST(UnitsTest, bytes_to_size_unit_exact) {
 
     ASSERT_GT(rawstd_bytes_to_size_unit(1ull << 30, 'M', buf, sizeof(buf)), 0);
     EXPECT_STREQ(buf, "1024M");
+}
+
+TEST(UnitsTest, bytes_to_size_unit_bytes_have_no_suffix) {
+    char buf[256];
+
+    ASSERT_GT(rawstd_bytes_to_size_unit(1500, 'b', buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "1500");
+
+    ASSERT_GT(rawstd_bytes_to_size_human(500, buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "500");
 }
 
 TEST(UnitsTest, bytes_to_size_unit_invalid_unit) {

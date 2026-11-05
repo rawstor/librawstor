@@ -9,12 +9,16 @@ extern "C" {
 #endif
 
 /**
- * Parses a size like "256M" (a decimal number followed by exactly one of
- * "bBkKmMgGtTpPeE", binary/1024-based) into bytes. The unit is mandatory
- * -- plain bytes are "4096B" -- so a bare number is -EINVAL.
+ * Parses a size like "256M" (a decimal number, optionally followed by exactly
+ * one of "bBkKmMgGtTpPeE", binary/1024-based) into bytes. A bare number is
+ * bytes, so "4096" and "4096B" are the same.
  */
 int rawstd_size_to_bytes(const char* s, uint64_t* out);
 
+/**
+ * Format value in the largest unit that holds it exactly, e.g. "256M". Bytes
+ * have no unit character: "1023".
+ */
 int rawstd_bytes_to_size(uint64_t value, char* buf, size_t size);
 
 /**
@@ -25,8 +29,9 @@ int rawstd_bytes_to_size(uint64_t value, char* buf, size_t size);
 int rawstd_bytes_to_size_human(uint64_t value, char* buf, size_t size);
 
 /**
- * Format value rounded to the given unit (one of "bBkKmMgGtTpPeE").
- * Prefixes the result with '~' when the rounding wasn't exact.
+ * Format value rounded to the given unit (one of "bBkKmMgGtTpPeE"); bytes
+ * have no unit character. Prefixes the result with '~' when the rounding
+ * wasn't exact.
  */
 int rawstd_bytes_to_size_unit(
     uint64_t value, char unit, char* buf, size_t size

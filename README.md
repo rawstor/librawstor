@@ -57,9 +57,9 @@ rawstor-mds \
 # The port may be omitted: it defaults to 7777 for ost:// and 7776 for mds://.
 #
 # An object split into 256M chunks, placed across the OSTs by the MDS...
-OBJECT_TARGET=$(rawstor create mds://${MDS_HOST} --size=1G --chunk-size=256M --mirrors=1)
+OBJECT_TARGET=$(rawstor create mds://${MDS_HOST} --size=1G --chunk-size=256M --mirrors=1 --format value --column target)
 # ...or a plain object stored whole on one OST, no MDS needed:
-# OBJECT_TARGET=$(rawstor create ost://${OST_HOST} --size=1G --mirrors=1)
+# OBJECT_TARGET=$(rawstor create ost://${OST_HOST} --size=1G --mirrors=1 --format value --column target)
 
 VHOST_RUNDIR=${PREFIX}/var/run/rawstor
 
@@ -99,7 +99,7 @@ Default values are shown below.
 | `RAWSTOR_OPTS_TCP_USER_TIMEOUT` | `5000` | TCP user timeout, in milliseconds (ms) (Linux `TCP_USER_TIMEOUT`). Defines how long transmitted data may remain unacknowledged before the connection is closed. |
 | `RAWSTOR_OPTS_LIST_LIMIT` | `1000` | Server-side page size cap for list operations: the maximum number of objects returned in a single call, regardless of the caller-requested limit. Larger listings are paginated across multiple calls. |
 | `RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT` | `128` | Per-session cap on writes dispatched to a `file://` backing store without their completion arriving yet; writes past the cap wait for a dispatch slot instead of being sent immediately. |
-| `RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY` | `256M` | Per-session cap on writes queued behind `RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT` but not yet dispatched to a `file://` backing store; a write that would push the backlog over the cap fails with `EBUSY` instead of queuing. Takes a size with a mandatory unit suffix (`B`, `K`, `M`, `G`, `T`, `P`, `E`), e.g. `256M` or `4096B`; a bare number is rejected. |
+| `RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY` | `256M` | Per-session cap on writes queued behind `RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT` but not yet dispatched to a `file://` backing store; a write that would push the backlog over the cap fails with `EBUSY` instead of queuing. Takes a size in bytes, or with a unit suffix (`K`, `M`, `G`, `T`, `P`, `E`), e.g. `256M` or `4096`. |
 
 > **Note:** All timeout values are expressed in milliseconds unless stated otherwise.
 
@@ -497,7 +497,7 @@ URI schemes remain `ost://`, `mds://`, `file://`, `lvm://` or `zfs://`.
 With one more location than `--mirrors`, the last is the witness; the stored
 `META.member_role` identifies its type at subsequent opens. MDS stores its witness records durably in SQLite;
 ordinary `mds://` placement does not automatically attach a witness.
-`rawstor show -v` reports its member role and record state. See
+`rawstor slots` reports its member role and record state. See
 [Witness](docs/mds.md#witness) for voting and failure rules. Interprocess
 mirror coordination is multiattach stage 2 and is not implemented here.
 

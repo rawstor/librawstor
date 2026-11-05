@@ -1,5 +1,6 @@
 #include "create_version.h"
 
+#include "output.h"
 #include "rawio_sync.h"
 
 #include <rawstor.h>
@@ -32,7 +33,32 @@ static ssize_t try_create_version(
     return result;
 }
 
-int rawstor_cli_create_version(const char* target, const char* uuid) {
+static const char* const version_columns[] = {
+    "object_id", "version_id", "target"
+};
+static const enum RawstorCliColumnType version_types[] = {
+    RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+    RAWSTOR_CLI_COLUMN_STRING
+};
+
+int rawstor_cli_create_version(
+    const char* target, const char* uuid, const RawstorCliOutput* output
+) {
+    /* Rejects a bad --column before the version is created: afterwards the
+     * only thing left to report is its target, and a retry would create
+     * another version. */
+    RawstorCliTable* checked =
+        rawstor_cli_record_create("version", version_columns, version_types, 3);
+    if (checked == NULL) {
+        fprintf(stderr, "Out of memory\n");
+        return EXIT_FAILURE;
+    }
+    int check_ret = rawstor_cli_output_check(output, &checked, 1);
+    rawstor_cli_table_delete(checked);
+    if (check_ret != 0) {
+        return check_ret;
+    }
+
     fprintf(stderr, "Creating a version of: %s\n", target);
 
     /* `uuid` NULL: the version id is either already bound in `target`'s
@@ -70,14 +96,39 @@ int rawstor_cli_create_version(const char* target, const char* uuid) {
     }
 
     fprintf(stderr, "Version created\n");
-    fprintf(stdout, "%s\n", version_target);
+
+    RawstorCliTable* table =
+        rawstor_cli_record_create("version", version_columns, version_types, 3);
+    char object_id[64];
+    char version_id[64];
+    rawstor_cli_target_ids(
+        version_target, object_id, sizeof(object_id), version_id,
+        sizeof(version_id)
+    );
+    RawstorCliCell cells[] = {
+        rawstor_cli_cell_optional(object_id),
+        rawstor_cli_cell_optional(version_id),
+        rawstor_cli_cell_string(version_target),
+    };
+    if (table == NULL || rawstor_cli_table_add_row(table, cells) < 0) {
+        fprintf(stderr, "Out of memory\n");
+        if (table != NULL) {
+            rawstor_cli_table_delete(table);
+        }
+        free(version_target);
+        return EXIT_FAILURE;
+    }
+    int ret = rawstor_cli_output_print(output, &table, 1);
+    rawstor_cli_table_delete(table);
 
     free(version_target);
 
-    return EXIT_SUCCESS;
+    return ret;
 }
 
-int rawstor_cli_list_versions(const char* target) {
+int rawstor_cli_list_versions(
+    const char* target, const RawstorCliOutput* output
+) {
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);
     if (res < 0) {
@@ -99,10 +150,39 @@ int rawstor_cli_list_versions(const char* target) {
         return rawstd_exitcode_for_errno((int)-result);
     }
 
+    static const char* const columns[] = {"object_id", "version_id", "target"};
+    static const enum RawstorCliColumnType types[] = {
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+        RAWSTOR_CLI_COLUMN_STRING
+    };
+    RawstorCliTable* table =
+        rawstor_cli_table_create("versions", columns, types, 3);
+    if (table == NULL) {
+        fprintf(stderr, "Out of memory\n");
+        rawstor_string_list_delete(versions);
+        return EXIT_FAILURE;
+    }
     for (const char** it = rawstor_string_list_iter(versions); it != NULL;
          it = rawstor_string_list_next(it)) {
-        printf("%s\n", *it);
+        char uuid[64];
+        char version[64];
+        rawstor_cli_target_ids(
+            *it, uuid, sizeof(uuid), version, sizeof(version)
+        );
+        RawstorCliCell cells[] = {
+            rawstor_cli_cell_optional(uuid),
+            rawstor_cli_cell_optional(version),
+            rawstor_cli_cell_string(*it),
+        };
+        if (rawstor_cli_table_add_row(table, cells) < 0) {
+            fprintf(stderr, "Out of memory\n");
+            rawstor_string_list_delete(versions);
+            rawstor_cli_table_delete(table);
+            return EXIT_FAILURE;
+        }
     }
     rawstor_string_list_delete(versions);
-    return EXIT_SUCCESS;
+    int ret = rawstor_cli_output_print(output, &table, 1);
+    rawstor_cli_table_delete(table);
+    return ret;
 }

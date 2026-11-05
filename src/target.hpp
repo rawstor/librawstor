@@ -137,6 +137,10 @@ private:
     // it on demand instead).
     std::vector<rawstd::URI> _uris;
     rawstd::Task<std::vector<uint64_t>> _offsets(rawio::Queue& queue) const;
+    // Every chunk addressed by its members' own URIs: an mds:// chunk is
+    // resolved through the placement map to its backends' URIs.
+    rawstd::Task<std::vector<Target>>
+    _physical_chunks(rawio::Queue& queue) const;
 
     // The object's own identity -- the same for every URI in `_uris`,
     // across every chunk, not just within one (validated once, at
@@ -229,7 +233,10 @@ public:
     // Metadata for the addressed chunk; enumerate whole objects with chunks().
     rawstd::Task<std::vector<RawstorObjectMeta>>
     meta(rawio::Queue& queue) const;
-    // Physical chunk targets, resolving a whole MDS object's placement map.
+    // One target per chunk, in offset order. A chunk is not resolved to its
+    // members: a whole mds:// object lists its chunk offsets and yields
+    // mds://.../UUID/OFFSET, and a target that already names its chunks by
+    // their own URIs (or one logical chunk) yields them unchanged.
     rawstd::Task<std::vector<Target>> chunks(rawio::Queue& queue) const;
     // One physical member URI per target, in chunk offset/member order.
     rawstd::Task<std::vector<Target>> slots(rawio::Queue& queue) const;

@@ -24,7 +24,7 @@ numbers its stages separately.
 | Reconnect probe and automatic rejoin of STALE mirrors | 3 | ✅ | `src/chunk.cpp` (`_probe_watch()`) |
 | Several writable opens in one process (multiqueue) | 3 | ✅ | `src/chunk.cpp` (`MirrorControl`), `tests/test_multiqueue.cpp` |
 | Several writer processes (multi-attach) | — | 🟡 | [Multi-attach](multiattach.md): stage 1 (protocol, member side) done, stage 2 (several processes) not |
-| `rawstor show -v` per-chunk / per-mirror state | — | ✅ | `cli/show.c` |
+| `rawstor chunks` / `rawstor slots` per-chunk / per-slot state | — | ✅ | `cli/chunks.c`, `cli/slots.c` |
 | `rawstor resolve TARGET --winner=N` | — | ✅ | `cli/resolve.c` |
 | Force-open below quorum, read-only (`RAWSTOR_FORCE \| RAWSTOR_READONLY`; `--force` with `--readonly` in the exporters) | 2 | ✅ | `src/chunk.cpp` |
 | Force-open below quorum for writing (CLI / opts) | — | ❌ | — |
@@ -229,13 +229,14 @@ is rejected at startup with `EINVAL`; the client-side `Chunk` coordinates
 mirroring across servers.
 
 At the API level (`include/rawstor/target.h`), `rawstor_target_chunks()` returns
-physical chunk targets, including their explicit hexadecimal offsets.
+chunk targets, including their explicit hexadecimal offsets.
 `rawstor_target_meta()` reads every member's metadata from the addressed chunk
 URI; unavailable members are reported as `UNREACHABLE`.
 `rawstor_target_sync_prepare()` and `rawstor_target_sync_accept()` send the
 register's requests to the selected `member_index` of that same chunk. No
 operation takes a separate offset. Enumerate an MDS object's chunks before
-operating on individual members. Deciding a configuration by hand is an
+operating on individual members; `rawstor_target_slots()` gives the physical
+member URIs of a chunk. Deciding a configuration by hand is an
 operator recovery tool and can desynchronize copies if used incorrectly.
 
 ### Comparison rules (at open)
@@ -454,7 +455,7 @@ naming other locations while the chunk is open fails with `-EINVAL`.
 | F6 | OST crash/restart → acknowledged writes lost from page cache (data is not fsynced) | **not detectable from metadata** (the copy looks up to date) | **A failure of a mirror while the chunk is open `DIRTY` is retried like any other: the session is replaced and the request repeated, for the whole retry budget (`io_attempts`, with backoff); only when that is exhausted is the mirror STALE (run the F1 procedure).** A write waits for every in-sync mirror, so a dead one holds writes up for that long (about 38 s by default) before it leaves the set; a live one that merely dropped a connection (a short send, a reset) stays. A copy a restarted OST left `DIRTY` is marked `LOST` by the first writer to open it afterwards, which the replacement session does, and the writers' [heal of a `LOST` copy](#runtime-heal-of-a-lost-copy) excludes it and resyncs it; until then reads avoid it unless it is all there is: a member whose session was replaced while the chunk is `DIRTY` has its copy's state read again before it is read from, and is not read while another member can be | Full resync (F7) overwrites whatever was lost |
 | F7 | A stale mirror returns (rejoin) | reconnect probe + `sync_id`/`epoch` comparison: ancestor → stale | Record the copy's role as syncing (fsync), start an **online resync** (algorithm below) without stopping client I/O | On completion: the IN-SYNC copies move to a new `sync_id`/`epoch` (fsync), then the copy adopts it, state `DIRTY` if the chunk is (fsync) → mirror is IN-SYNC, reads allowed |
 | F8 | Client/OST crash during resync | the copy is left with role syncing / an old `sync_id` | Copy is untrusted | Resync from scratch (v1; resumable with the persistent bitmap in v2) |
-| F9 | Split brain (disjoint write histories) | different `sync_id`s, neither in the other's history | **Excluded in automatic paths by the quorum rules.** Can only arise from a wrong manual force-open, an OST restored from backup, or a bug → then: open refused with a clear error, no automatic winner | Operator: `rawstor resolve TARGET --winner=N` (`rawstor show -v`'s own `slot[N]` index) → winner gets a new `sync_id`, the loser gets a full resync |
+| F9 | Split brain (disjoint write histories) | different `sync_id`s, neither in the other's history | **Excluded in automatic paths by the quorum rules.** Can only arise from a wrong manual force-open, an OST restored from backup, or a bug → then: open refused with a clear error, no automatic winner | Operator: `rawstor resolve TARGET --winner=N` (`rawstor slots`' own `slot` index) → winner gets a new `sync_id`, the loser gets a full resync |
 | F10 | Chunk copy missing on one OST (disk lost, OST reprovisioned) | ENOENT when opening the copy (a `file://` location whose directory is gone altogether is unreachable instead, ENOTCONN -- e.g. an unmounted disk) | At open, recreate that copy blank (ALLOCATE, sized off a surviving copy's own META) and treat it as stale. Only when the surviving copies alone are a majority (> N/2): a blank copy never counts toward the quorum, or a survivor that fell behind could be opened as authoritative. So N=2 with one copy missing is not healed automatically: the open fails the quorum check, and the operator recreates it (`rawstor create` on its location) and records the chosen winner with `rawstor resolve` before reopening. Every copy missing is never recreated (nothing vouches the chunk held no data) and the open fails ENOENT. Not on a read-only open or a version | Full online resync for DATA; metadata rejoin with no data copy for WITNESS (F7) |
 | F11 | Copy size mismatch (mixed file/blkdev backends round up to extent/volblocksize — see `src/blk_backend.hpp`) | logical spec comparison at open | If reachable metadata disagrees on logical size, width or chunk size, the same strict majority must agree on both spec and configuration. Other shapes are stale and cannot vote, serve I/O or rejoin until their spec matches. Without an agreeing majority, open fails before any replacement is allocated. Physical allocation does not determine the logical size and is not checked at open; short DATA reads fail with EIO | — |
 | F12 | Silent on-disk corruption (bit rot) | the transport hash does **not** catch it (the server hashes already-rotten data). `zfs://` catches it by itself; `file://` has nothing | v1: documented limitation; a scrub tool (chunk-wise comparison of copies) detects divergence under `CLEAN` metadata but cannot tell which copy is right | v1: operator decision. Long term (v3): stored per-chunk checksums |
@@ -624,7 +625,7 @@ of a vote during a heal is accepted for now.
 - **`src/lvm_backend.cpp`/`src/zfs_backend.cpp`** — a raw block device has no `.spec` file and a reserved header/footer region is incompatible with objects already created (data occupies the device from byte 0). Logical size and copy metadata use each backend's own native, transactional storage: a ZFS user property (`rawstor:meta`, set/read via `zfs set`/`zfs get`) or an LVM tag (`rawstor.meta=...`, via `lvchange --addtag`/`--deltag` and `lvs -o lv_tags`), encoded as a compact colon-separated hex string (`meta_encode()`/`meta_decode()` in `src/blk_backend.{hpp,cpp}`). The logical size is persisted at creation and is independent of physical allocation; witnesses retain it too. Both mechanisms share the device/dataset's own failure domain and are set in the same command as creation, so there is never a window where the volume exists without one. A volume with no recorded value (created before this existed, or by something else) is **not** trusted as legacy-CLEAN the way an old `.spec` record is — it fails `meta()`, which the caller already treats as case F10 (untrusted member, needs a resync).
 - **`ost/session.cpp`** — handlers for the new opcodes.
 - **`src/chunk.cpp`** — per-mirror state machine (IN-SYNC/LEAVING/STALE/SYNCING per member, recorded as every member's role, in the chunk's `MirrorControl` shared by the opens of one process, *Writers*), quorum checks at open, degraded open, the degradation procedure (F1: suspend acks → bump survivors' metadata → resume), read failover + read-repair, the resync engine (bitmap + sweeper + per-chunk locks), reconnect probes for STALE mirrors. Cross-mirror logic lives in `Chunk`; `Slot` keeps only per-location retry/reopen.
-- **`cli/`** — `rawstor show -v` prints one `chunk[OFFSET]` block per chunk.
+- **`cli/`** — `rawstor chunks` prints one row per chunk and `rawstor slots` one row per chunk member (`offset`, `slot`).
   `rawstor resolve TARGET --winner=N[,N...]` declares the selected members
   authoritative: a whole-object target resolves every chunk; a physical chunk
   URI resolves only that chunk. The winners receive the same new dominant

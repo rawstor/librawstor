@@ -140,14 +140,15 @@ commented example in `/usr/share/doc/rawstor-mds/topology.conf`.
 
 Create a 10 GiB mirrored object, split into 256 MiB chunks. For every chunk
 the MDS places two copies on the two OSTs and, since the number of copies is
-even, a witness on its own host. `rawstor` prints the object's target, and the
-last path segment of that target is the object's UUID:
+even, a witness on its own host. `rawstor` prints a card with the object's
+id and target; `--format value --column object_id,target` prints just those
+two, tab-separated, ready for the shell:
 
 ```
-OBJECT_TARGET=$(rawstor create mds://192.168.0.13 --size=10G --chunk-size=256M --mirrors=2)
-OBJECT=${OBJECT_TARGET##*/}
+CREATED=$(rawstor create mds://192.168.0.13 --size=10G --chunk-size=256M --mirrors=2 --format value --column object_id,target)
+read -r OBJECT OBJECT_TARGET <<< "${CREATED}"
 
-rawstor show -v ${OBJECT_TARGET}              # each copy's state, per chunk
+rawstor slots ${OBJECT_TARGET}                # each copy's state, per chunk
 ```
 
 Expose the object as a vhost-user disk. The `rawstor-vhost@` instance is

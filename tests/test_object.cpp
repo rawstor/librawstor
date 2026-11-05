@@ -983,7 +983,8 @@ TEST(ObjectMetaTest, chunk_uris_do_not_probe_for_witness_records) {
     ASSERT_EQ(chunks.size(), 2u);
     for (size_t index = 0; index < chunks.size(); ++index) {
         const auto& chunk = chunks[index];
-        EXPECT_EQ(chunk.uris().front().scheme(), "ost");
+        EXPECT_EQ(chunk.uris().size(), 1u);
+        EXPECT_EQ(chunk.uris().front().scheme(), "mds");
         auto path =
             rawstor::parse_target_path(chunk.uris().front().path().str());
         EXPECT_TRUE(path.explicit_offset);
@@ -1014,7 +1015,10 @@ TEST(ObjectMetaTest, logical_chunk_uri_resolves_and_opens_only_its_chunk) {
     rawstor::Target chunk(rawstd::URI::uriv((uri + suffix.str()).c_str()));
     auto targets = run(*queue, chunk.chunks(*queue));
     ASSERT_EQ(targets.size(), 1u);
-    EXPECT_EQ(targets.front().uris().front().scheme(), "ost");
+    EXPECT_EQ(targets.front().uris().front().str(), chunk.uris().front().str());
+    auto slots = run(*queue, chunk.slots(*queue));
+    ASSERT_EQ(slots.size(), 1u);
+    EXPECT_EQ(slots.front().uris().front().scheme(), "ost");
     EXPECT_EQ(run(*queue, chunk.spec(*queue)).size, spec.chunk_size);
     EXPECT_EQ(run(*queue, chunk.meta(*queue)).size(), 1u);
     uint64_t offset = 0;

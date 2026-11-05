@@ -144,7 +144,7 @@ jobs:
     - name: create object file,ost
       run: |
         mkdir /tmp/file_objects
-        target=$(./${LIBRAWSTOR}/cli/rawstor create file:///tmp/file_objects,ost://127.0.0.1:7777 --size=1G --mirrors=2)
+        target=$(./${LIBRAWSTOR}/cli/rawstor create file:///tmp/file_objects,ost://127.0.0.1:7777 --size=1G --mirrors=2 --format value --column target)
         echo "TARGET=${target}" >> $GITHUB_ENV
         ./${LIBRAWSTOR}/cli/rawstor list file:///tmp/file_objects,ost://127.0.0.1:7777
     - name: testio file,ost
@@ -153,7 +153,7 @@ jobs:
         ./${LIBRAWSTOR}/cli/rawstor testio ${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
     - name: create object ost,file
       run: |
-        target=$(./${LIBRAWSTOR}/cli/rawstor create ost://127.0.0.1:7777,file:///tmp/file_objects --size=1G --mirrors=2)
+        target=$(./${LIBRAWSTOR}/cli/rawstor create ost://127.0.0.1:7777,file:///tmp/file_objects --size=1G --mirrors=2 --format value --column target)
         echo "TARGET=${target}" >> $GITHUB_ENV
         ./${LIBRAWSTOR}/cli/rawstor list ost://127.0.0.1:7777,file:///tmp/file_objects
     - name: testio ost,file
@@ -354,11 +354,8 @@ jobs:
       run: sudo apt install -y ./librawstor.deb/rawstor-vhost_*.deb
     - name: test-rawstor-vhost
       run: |
-        TARGET=$(rawstor create --size=1M --mirrors=1 ost://127.0.0.1:7777)
-        # TARGET is ost://host:port/<uuid>/<offset> -- the uuid is the
-        # second-to-last path segment.
-        CHUNK=${TARGET%/*}
-        UUID=${CHUNK##*/}
+        CREATED=$(rawstor create --size=1M --mirrors=1 ost://127.0.0.1:7777 --format value --column object_id,target)
+        read -r UUID TARGET <<< "${CREATED}"
         sudo systemctl enable --now rawstor-vhost@${UUID}.service
         sleep 1
         systemctl is-active rawstor-vhost@${UUID}.service

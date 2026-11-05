@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rawstor list`, `list-versions`, `show`, `chunks`, `slots`, `info`, `create`, `create-version` and `resolve` take `--format table|json|value` (default `table`, a bordered table wrapped to the terminal width) and `--column COL[,COL...]` to choose and order the columns.
 - New MDS chunks with an even DATA width automatically place one witness in an unused failure domain; topology requires a `role` column (`data`, `witness` or both), with MDS witnesses addressed through `ost://`.
-- `rawstor_target_slots()` and Python `Target.slots()` enumerate physical member URIs, also shown per mirror by `rawstor show -v`.
+- `rawstor_target_slots()` and Python `Target.slots()` enumerate physical member URIs, also shown per member by `rawstor slots`.
 - Metadata-only witness members on OST, MDS and local backends, with synchronous membership barriers and witness-assisted quorum for even numbers of data copies.
 - `rawstor-vhost` supports `VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD`, and `rawstor-vduse` keeps an equivalent in-flight log in `/dev/shm`, so requests in flight when the backend crashes are resubmitted after it restarts instead of never completing.
 - `rawstor-ost@<uuid>.service` systemd template (one instance per OST, configured by `/etc/rawstor/ost/<uuid>.conf`, serving `/var/lib/rawstor/ost/<uuid>` by default), so a host runs several OSTs; installing the package starts nothing and an upgrade restarts the running instances, of `rawstor-mds@` too.
@@ -18,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - N-way mirroring ([design](docs/mirroring.md)): quorum-gated open, degrade-and-continue writes, read failover and repair, and online resync of a stale, reconnected or missing member (a copy lost from one member is recreated at open while the remaining copies are still a majority), with each copy's own consistency state persisted by its backend (a `meta` file next to `file://`'s data, an LVM tag, a ZFS user property).
 - A mirrored object may be open for writing several times within one process (every virtqueue of a multiqueue `rawstor-vhost`/`rawstor-vduse` device), all opens sharing its mirror state; several writer processes (multi-attach) are not supported.
 - `rawstor create -m`/`--mirrors N` and the matching `RawstorObjectSpec.width`/pyrawstor `width` (both required); a width of 0 is `-EINVAL`, and witnesses are excluded from the data-copy count.
-- `rawstor show -v` (every copy's own consistency state and role, per chunk) and `rawstor resolve TARGET --winner=N[,N...] [--offset OFFSET]` for manual split-brain recovery, backed by the new `rawstor_target_meta()`/`rawstor_target_chunks()`/`rawstor_target_sync_prepare()`/`rawstor_target_sync_accept()` API (pyrawstor `Target.meta()`/`Target.sync_accept()`).
+- `rawstor chunks` (a row per chunk) and `rawstor slots` (a row per member slot of every chunk, with every copy's own consistency state and role), and `rawstor resolve TARGET --winner=N[,N...] [--offset OFFSET]` for manual split-brain recovery, backed by the new `rawstor_target_meta()`/`rawstor_target_chunks()`/`rawstor_target_sync_prepare()`/`rawstor_target_sync_accept()` API (pyrawstor `Target.meta()`/`Target.sync_accept()`).
 - Each copy of a mirrored chunk keeps its own `DIRTY`/`CLEAN` state from the sessions writing it, and goes `LOST` when one that wrote vanished without a clean close; `rawstor_object_abandon()` closes without one ([design](docs/mirroring.md#dirty-clean-and-lost)).
 - Multi-chunk objects: `RawstorObjectSpec.chunk_size`/`rawstor create --chunk-size` splits an object into equal chunks (its size must be a multiple of it) addressed by offset, one target routing I/O across all of them; `rawstor_location_create()` lays them out itself and `rawstor_location_list()` returns each such object as a single target.
 - `rawstor-mds` metadata server ([design](docs/mds.md); own deb/rpm package with the `rawstor-mds@<uuid>.service` template, one instance per cluster configured by `/etc/rawstor/mds/<uuid>.conf`, `--without-sqlite3` to skip it) with `-w`/`--workers N` threads (default `4`), and `mds://host:port/<id>` objects (`--chunk-size` required), whose chunks it places across a static OST topology, usable anywhere a target is and listed by `rawstor list mds://host:port`; plus `rawstor create --failure-domain`/`--stripe-width`, grow-only `rawstor resize` by whole chunks (`rawstor_target_resize()`), topology reload on `SIGHUP` (refused if it drops an OST still holding chunks, as is such a topology at startup) and `rawstor-mds --reconstruct` to rebuild a lost chunk map from the OSTs.
@@ -29,10 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rawstor create`, `create-version`, `resolve`, `list`, `list-versions`, `show` and `info` print a table by default instead of plain lines; scripts that read a target from stdout use `--format value --column target`. `rawstor show -v` is gone: `rawstor chunks` and `rawstor slots` list the chunks and the member slots.
+- Sizes are bytes without a unit suffix: a bare number is accepted wherever a size is parsed (`--size`, `--chunk-size`, `--block-size`, `RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY`; `B` is still accepted), and bytes are printed without a `B`.
+- The size unit options `-b`/`-k`/`-m`/`-g`/`-t`/`-p`/`-e` (`--bytes`, `--kib`, ...) moved from `rawstor info` to before the command (`rawstor -g info LOCATION`), and apply to every command's `--format table` and `value` output.
 - `ost://` and `mds://` URIs, and the `--bind` address of `rawstor-ost` and `rawstor-mds`, default to port 7777 and 7776 respectively when no port is given.
-- `rawstor show -v` prints ancestor and current sync ids on one line, oldest first.
+- `rawstor slots` prints ancestor and current sync ids on one line, oldest first.
 - Native witnesses on MDS use `ost://` URIs; `mds://` URIs resolve logical objects and chunks.
-- `rawstor show -v` prints each chunk's physical target URI for recovery commands.
+- `rawstor chunks` and `rawstor slots` print each chunk's target and each member's physical URI for recovery commands.
+- `rawstor_target_chunks()` returns `mds://host:port/UUID/OFFSET` for the chunks of an `mds://` object instead of resolving them to their members (one MDS request instead of one per chunk); `rawstor_target_slots()` gives the members.
 - Chunk metadata and recovery APIs address chunks by URI instead of a separate offset; chunk listing returns target strings, and MDS routing no longer probes for witness records.
 - A mirrored writable open heals copies a vanished writer may have left different from the first clean (else first) copy in the background while writes go on, and clears their `LOST` mark once they are equal. While other writers go on, a copy a vanished writer left `LOST` is excluded and resynced, one at a time, with the same effect.
 - All members share configuration, state and rejoin rules; writable mirrors require a strict majority even with two data copies and no witness.

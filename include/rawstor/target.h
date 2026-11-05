@@ -28,7 +28,8 @@
  * Logical chunk targets support metadata, configuration-register operations
  * and chunk-local I/O. Creating, removing, resizing or creating a version
  * of an MDS object requires a whole-object URI without a chunk offset.
- * Physical chunk targets are obtained with rawstor_target_chunks().
+ * Chunk targets are obtained with rawstor_target_chunks(), and their
+ * physical members with rawstor_target_slots().
  */
 
 #ifdef __cplusplus
@@ -304,7 +305,7 @@ int rawstor_target_spec(
  * MDS target, @c mds://host:7776/UUID, resolves the first chunk through MDS;
  * @c mds://host:7776/UUID/OFFSET resolves the specified logical chunk and
  * neither form returns metadata for every chunk. Use rawstor_target_chunks()
- * to enumerate physical chunk targets and call this function for each one.
+ * to enumerate chunk targets and call this function for each one.
  * A target containing several distinct chunk offsets is rejected.
  *
  * Every member is queried. A member that cannot be read has a zero-filled
@@ -723,24 +724,21 @@ int rawstor_target_location(
 /**
  * @brief Asynchronously enumerate addressable chunk targets.
  *
- * For an MDS target, query MDS for the placement map and resolve
- * each selected chunk to its physical member URIs, such as
- * @c ost://host:7777/UUID/40000000. A whole-object URI selects all chunks;
- * an explicit offset selects one logical chunk. A witness stored on MDS has an
- * explicit physical URI such as @c ost://host:7776/UUID/40000000. The returned
- * strings do not redirect ordinary data-chunk operations through the logical
- * MDS object. When @p target binds a version, the returned URIs bind that same
- * version and describe its placement.
+ * Each list entry addresses one chunk, in ascending byte offset order. The
+ * chunks are not resolved to their members: a whole-object MDS URI asks MDS
+ * for the object's chunk offsets and yields @c mds://host:7776/UUID/OFFSET for
+ * each (with the bound version appended when @p target binds one, listing
+ * that version's chunks), and an MDS URI with an explicit offset is that one
+ * logical chunk, returned unchanged. A physical target groups its existing
+ * URIs by offset without querying backends; a single chunk yields one entry,
+ * whose comma-separated URIs name that chunk's members in
+ * metadata/member-index order. Such a listing describes addresses and does
+ * not verify member reachability.
  *
- * Each list entry addresses one chunk; its comma-separated URIs name that
- * chunk's members in metadata/member-index order. Entries are ordered by
- * ascending byte offset. For a physical target, group its existing URIs by
- * offset without querying backends; a single chunk yields one entry. Such
- * a listing describes addresses and does not verify member reachability.
- *
- * The entries can be passed directly to rawstor_target_meta() or the
- * configuration-register operations. Read an entry's byte offset with
- * rawstor_target_offset().
+ * The entries can be passed directly to rawstor_target_meta(),
+ * rawstor_target_slots() or the configuration-register operations, which
+ * resolve a logical chunk through MDS themselves. Read an entry's byte offset
+ * with rawstor_target_offset().
  *
  * @param queue Queue used to drive the lookup; valid until completion.
  * @param target Non-NULL target string, parsed before this call returns.
@@ -839,7 +837,7 @@ int rawstor_target_slots(
  * offset denotes offset zero. A whole-object MDS URI without an explicit
  * offset is rejected, because it denotes a logical object rather than a
  * chunk; @c mds://host:7776/UUID/0 explicitly selects a logical chunk
- * at offset zero and is accepted. Use rawstor_target_chunks() to resolve
+ * at offset zero and is accepted. Use rawstor_target_slots() to resolve
  * its physical members; native witnesses on MDS use ost:// URIs.
  *
  * @param target Non-NULL target string identifying a single chunk, e.g. an

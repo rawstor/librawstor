@@ -1059,7 +1059,10 @@ TEST_F(
     rawstor::Target logical_chunk(
         {rawstd::URI(data.uris().front().str() + "/0")}
     );
-    auto physical = run(*queue, logical_chunk.chunks(*queue));
+    auto logical = run(*queue, logical_chunk.chunks(*queue));
+    ASSERT_EQ(logical.size(), 1u);
+    EXPECT_EQ(logical.front().uris().front().scheme(), "mds");
+    auto physical = run(*queue, logical_chunk.slots(*queue));
     ASSERT_EQ(physical.size(), 1u);
     EXPECT_EQ(physical.front().uris().front().scheme(), "ost");
     auto logical_metadata = run(*queue, logical_chunk.meta(*queue));
