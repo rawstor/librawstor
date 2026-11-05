@@ -398,41 +398,6 @@ int rawstor_cli_resolve(
     const char* target, const size_t* winners, size_t num_winners,
     const RawstorCliOutput* output
 ) {
-    RawstorCliOp op;
-    int res = rawstor_cli_op_init(&op);
-    if (res < 0) {
-        fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
-        return rawstd_exitcode_for_errno(-res);
-    }
-
-    struct RawstorObjectSpec spec;
-    int sres =
-        rawstor_target_spec(op.queue, target, &spec, rawstor_cli_op_cb, &op);
-    ssize_t result = rawstor_cli_op_wait(&op, sres);
-    rawstor_cli_op_destroy(&op);
-    if (result < 0) {
-        fprintf(
-            stderr, "rawstor_target_spec() failed: %s\n", strerror((int)-result)
-        );
-        return rawstd_exitcode_for_errno((int)-result);
-    }
-
-    res = rawstor_cli_op_init(&op);
-    if (res < 0) {
-        fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
-        return rawstd_exitcode_for_errno(-res);
-    }
-    RawstorStringList* chunks = NULL;
-    ssize_t chunk_count = rawstor_cli_op_chunks(&op, target, &chunks);
-    rawstor_cli_op_destroy(&op);
-    if (chunk_count < 0) {
-        fprintf(
-            stderr, "rawstor_target_chunks() failed: %s\n",
-            strerror((int)-chunk_count)
-        );
-        return rawstd_exitcode_for_errno((int)-chunk_count);
-    }
-
     /* One row per winner of every chunk resolved. */
     static const char* const columns[] = {
         "chunk",   "slot",           "previous_sync_id",
@@ -447,8 +412,53 @@ int rawstor_cli_resolve(
         rawstor_cli_table_create("resolved", columns, types, 6);
     if (table == NULL) {
         fprintf(stderr, "Out of memory\n");
-        rawstor_string_list_delete(chunks);
         return EXIT_FAILURE;
+    }
+    /* Rejects a bad --column before any mirror is changed: the report would
+     * be lost, and a retry would resolve the chunks again. */
+    int check_ret = rawstor_cli_output_check(output, &table, 1);
+    if (check_ret != 0) {
+        rawstor_cli_table_delete(table);
+        return check_ret;
+    }
+
+    RawstorCliOp op;
+    int res = rawstor_cli_op_init(&op);
+    if (res < 0) {
+        fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
+        rawstor_cli_table_delete(table);
+        return rawstd_exitcode_for_errno(-res);
+    }
+
+    struct RawstorObjectSpec spec;
+    int sres =
+        rawstor_target_spec(op.queue, target, &spec, rawstor_cli_op_cb, &op);
+    ssize_t result = rawstor_cli_op_wait(&op, sres);
+    rawstor_cli_op_destroy(&op);
+    if (result < 0) {
+        fprintf(
+            stderr, "rawstor_target_spec() failed: %s\n", strerror((int)-result)
+        );
+        rawstor_cli_table_delete(table);
+        return rawstd_exitcode_for_errno((int)-result);
+    }
+
+    res = rawstor_cli_op_init(&op);
+    if (res < 0) {
+        fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
+        rawstor_cli_table_delete(table);
+        return rawstd_exitcode_for_errno(-res);
+    }
+    RawstorStringList* chunks = NULL;
+    ssize_t chunk_count = rawstor_cli_op_chunks(&op, target, &chunks);
+    rawstor_cli_op_destroy(&op);
+    if (chunk_count < 0) {
+        fprintf(
+            stderr, "rawstor_target_chunks() failed: %s\n",
+            strerror((int)-chunk_count)
+        );
+        rawstor_cli_table_delete(table);
+        return rawstd_exitcode_for_errno((int)-chunk_count);
     }
 
     int ret = EXIT_SUCCESS;

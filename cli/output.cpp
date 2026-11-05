@@ -454,7 +454,7 @@ void rawstor_cli_table_delete(RawstorCliTable* table) {
     delete table;
 }
 
-int rawstor_cli_output_print(
+int rawstor_cli_output_check(
     const RawstorCliOutput* output, RawstorCliTable* const* tables,
     size_t ntables
 ) {
@@ -484,6 +484,28 @@ int rawstor_cli_output_print(
                 );
                 return EX_USAGE;
             }
+        }
+
+        return 0;
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "Output failed: %s\n", e.what());
+        return EXIT_FAILURE;
+    }
+}
+
+int rawstor_cli_output_print(
+    const RawstorCliOutput* output, RawstorCliTable* const* tables,
+    size_t ntables
+) {
+    try {
+        std::vector<std::string> want;
+        if (output->columns != nullptr) {
+            want = split_columns(output->columns);
+        }
+
+        int checked = rawstor_cli_output_check(output, tables, ntables);
+        if (checked != 0) {
+            return checked;
         }
 
         json document = json::object();

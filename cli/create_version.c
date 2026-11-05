@@ -33,9 +33,30 @@ static ssize_t try_create_version(
     return result;
 }
 
+static const char* const version_columns[] = {"uuid", "version", "target"};
+static const enum RawstorCliColumnType version_types[] = {
+    RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+    RAWSTOR_CLI_COLUMN_STRING
+};
+
 int rawstor_cli_create_version(
     const char* target, const char* uuid, const RawstorCliOutput* output
 ) {
+    /* Rejects a bad --column before the version is created: afterwards the
+     * only thing left to report is its target, and a retry would create
+     * another version. */
+    RawstorCliTable* checked =
+        rawstor_cli_record_create("version", version_columns, version_types, 3);
+    if (checked == NULL) {
+        fprintf(stderr, "Out of memory\n");
+        return EXIT_FAILURE;
+    }
+    int check_ret = rawstor_cli_output_check(output, &checked, 1);
+    rawstor_cli_table_delete(checked);
+    if (check_ret != 0) {
+        return check_ret;
+    }
+
     fprintf(stderr, "Creating a version of: %s\n", target);
 
     /* `uuid` NULL: the version id is either already bound in `target`'s
@@ -74,13 +95,8 @@ int rawstor_cli_create_version(
 
     fprintf(stderr, "Version created\n");
 
-    static const char* const columns[] = {"uuid", "version", "target"};
-    static const enum RawstorCliColumnType types[] = {
-        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
-        RAWSTOR_CLI_COLUMN_STRING
-    };
     RawstorCliTable* table =
-        rawstor_cli_record_create("version", columns, types, 3);
+        rawstor_cli_record_create("version", version_columns, version_types, 3);
     char object_id[64];
     char version_id[64];
     rawstor_cli_target_ids(

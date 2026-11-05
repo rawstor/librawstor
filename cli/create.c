@@ -38,6 +38,34 @@ static void log_spec(FILE* output, const struct RawstorObjectSpec* spec) {
     }
 }
 
+static const char* const created_columns[] = {
+    "uuid",       "target",         "size",         "mirrors",
+    "chunk_size", "failure_domain", "stripe_width",
+};
+static const enum RawstorCliColumnType created_types[] = {
+    RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+    RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
+    RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
+    RAWSTOR_CLI_COLUMN_NUMBER,
+};
+enum { CREATED_COLUMNS = 7 };
+
+/* Rejects a bad --column before an object is created: once it exists, the
+ * only thing left to report is its target, and a retry would create another
+ * object. */
+static int check_created_output(const RawstorCliOutput* output) {
+    RawstorCliTable* table = rawstor_cli_record_create(
+        "object", created_columns, created_types, CREATED_COLUMNS
+    );
+    if (table == NULL) {
+        fprintf(stderr, "Out of memory\n");
+        return EXIT_FAILURE;
+    }
+    int ret = rawstor_cli_output_check(output, &table, 1);
+    rawstor_cli_table_delete(table);
+    return ret;
+}
+
 /* Prints the created object's target together with its specification;
  * `--format value --column target` yields just the target. A policy that was
  * left at its default is an empty cell. */
@@ -45,17 +73,6 @@ static int print_created(
     const RawstorCliOutput* output, const char* target,
     const struct RawstorObjectSpec* spec
 ) {
-    static const char* const columns[] = {
-        "uuid",       "target",         "size",         "mirrors",
-        "chunk_size", "failure_domain", "stripe_width",
-    };
-    static const enum RawstorCliColumnType types[] = {
-        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
-        RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
-        RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
-        RAWSTOR_CLI_COLUMN_NUMBER,
-    };
-
     char size_buf[256];
     char mirrors_buf[32];
     char chunk_buf[256];
@@ -90,8 +107,9 @@ static int print_created(
         ),
     };
 
-    RawstorCliTable* table =
-        rawstor_cli_record_create("object", columns, types, 7);
+    RawstorCliTable* table = rawstor_cli_record_create(
+        "object", created_columns, created_types, CREATED_COLUMNS
+    );
     if (table == NULL || rawstor_cli_table_add_row(table, cells) < 0) {
         fprintf(stderr, "Out of memory\n");
         if (table != NULL) {
@@ -116,6 +134,11 @@ int rawstor_cli_create(
         .stripe_width = stripe_width,
         .failure_domain = failure_domain,
     };
+
+    int checked = check_created_output(output);
+    if (checked != 0) {
+        return checked;
+    }
 
     fprintf(stderr, "Creating object with specification:\n");
     log_spec(stderr, &spec);
@@ -178,6 +201,11 @@ int rawstor_cli_create_at(
         .stripe_width = stripe_width,
         .failure_domain = failure_domain,
     };
+
+    int checked = check_created_output(output);
+    if (checked != 0) {
+        return checked;
+    }
 
     fprintf(stderr, "Creating object with specification:\n");
     log_spec(stderr, &spec);

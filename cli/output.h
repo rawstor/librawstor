@@ -106,6 +106,14 @@ int rawstor_cli_table_add_row(
 
 void rawstor_cli_table_delete(RawstorCliTable* table);
 
+/* Checks that every column of `output` belongs to one of the tables, so a
+ * command can reject a bad --column before it changes anything. Rows are not
+ * needed. Returns 0, or a usage error reported on stderr. */
+int rawstor_cli_output_check(
+    const RawstorCliOutput* output, RawstorCliTable* const* tables,
+    size_t ntables
+);
+
 /* Prints the tables to stdout. A json document is an array of row objects for
  * one table, a single object for one record, or an object of such arrays keyed
  * by table name for several, with the fields of a record at the top level. A
