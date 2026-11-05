@@ -67,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A copy no longer goes `LOST` (and is no longer resynced) when `rawstor-ost` drops a writer's connection first, as after a short write: it waits two seconds for the writer's replacement connection.
 - Unsupported operations fail without retries on macOS.
 - OST shutdown terminates incomplete network requests before draining storage operations.
 - With the `poll()` backend (`--without-liburing`, always on macOS), the next request after one that had exhausted its retries hung forever instead of reconnecting.

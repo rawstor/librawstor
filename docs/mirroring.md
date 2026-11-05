@@ -191,7 +191,10 @@ session: its `state` stays as created.
   (`SET_OBJECT`, `docs/protocol.md`). The new connection takes over the
   old one's writes: the client replays every write it has not seen
   acknowledged, so the copy is not `LOST`. A connection the server finds
-  gone before its replacement has opened still leaves the copy `LOST`.
+  gone before its replacement has opened (it ended it itself, on a stream
+  out of step after a short write) keeps the copy `DIRTY` for two seconds,
+  the time the replacement is waited for; the copy is `LOST` only when none
+  has opened by then, or at once if the server is stopping.
 
 A copy marks itself `CLEAN` when its own last session leaves cleanly, so a
 failed `LEAVE` on one member leaves that copy not `CLEAN`, and an open heals

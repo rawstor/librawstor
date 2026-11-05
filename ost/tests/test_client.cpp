@@ -121,8 +121,11 @@ public:
 
     ~ClientCleanup() {
         _client.reset();
+        // A session that wrote and dropped without a LEAVE waits for a
+        // replacement of its writer before it ends, which takes the
+        // server's whole departure grace.
         unsigned int idle = 0;
-        for (unsigned int elapsed_ms = 0; elapsed_ms < 2000 && idle < 5;
+        for (unsigned int elapsed_ms = 0; elapsed_ms < 4000 && idle < 5;
              elapsed_ms += 20) {
             int res = rawio_wait_timeout(_queue, 20);
             if (res < 0 && res != -ETIME) {
@@ -649,6 +652,25 @@ RawstorObjectSyncStateValue stored_state(
     return meta.state;
 }
 
+// The state a copy settles in once the server has decided what a writer
+// that dropped without a LEAVE left behind: it waits for a replacement of
+// that writer for a while before it marks the copy LOST.
+RawstorObjectSyncStateValue wait_stored_state(
+    RawIOQueue* queue, const std::string& location, const RawstdUUID& id,
+    RawstorObjectSyncStateValue expected
+) {
+    RawstorObjectSyncStateValue state = stored_state(queue, location, id);
+    pump_until(
+        queue,
+        [&] {
+            state = stored_state(queue, location, id);
+            return state == expected;
+        },
+        10000
+    );
+    return state;
+}
+
 void write_and_wait(
     rawstor::ostserver::tests::Client& client, RawIOQueue* queue
 ) {
@@ -743,7 +765,8 @@ TEST(OstClientTest, leave_cleans_and_a_dropped_writer_loses) {
     // The server's Client goes away with the connection, closing the
     // object it set as an unclean departure.
     EXPECT_EQ(
-        stored_state(queue, dir.uri(), id), RAWSTOR_OBJECT_SYNC_STATE_LOST
+        wait_stored_state(queue, dir.uri(), id, RAWSTOR_OBJECT_SYNC_STATE_LOST),
+        RAWSTOR_OBJECT_SYNC_STATE_LOST
     );
 }
 
@@ -788,7 +811,11 @@ RawstorObjectSyncStateValue drop_first_writer(
         }));
         EXPECT_EQ(second.recv_response().body.res, 0);
     }
-    RawstorObjectSyncStateValue state = stored_state(queue, location, id);
+    RawstorObjectSyncStateValue state =
+        leave ? stored_state(queue, location, id)
+              : wait_stored_state(
+                    queue, location, id, RAWSTOR_OBJECT_SYNC_STATE_LOST
+                );
     if (leave) {
         second.send_leave();
         EXPECT_TRUE(pump_until(queue, [&] {

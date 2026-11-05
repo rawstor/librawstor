@@ -23,6 +23,7 @@
 
 #include <sys/socket.h>
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -33,6 +34,12 @@
 #include <cstring>
 
 namespace {
+
+// How long a writer's session that ended without LEAVE waits for the
+// writer's replacement connection before the copy is LOST. A writer opens
+// the replacement as soon as it notices the connection go, which on a
+// loaded server can be some time after the server noticed.
+const std::chrono::milliseconds departure_grace{2000};
 
 int validate_result(int fd, size_t size, size_t result) noexcept {
     if (result == size) {
@@ -1263,6 +1270,7 @@ rawstd::DetachedTask Client::_set_object(
     RawstorFrameSetObjectPayload payload
 ) {
     RawIOQueue* queue;
+    const bool* server_stopping;
     std::vector<rawstd::URI> locations;
     RawstdUUID id;
     memcpy(id.bytes, payload.object_id, sizeof(payload.object_id));
@@ -1276,6 +1284,7 @@ rawstd::DetachedTask Client::_set_object(
             co_return;
         }
         queue = client->_queue;
+        server_stopping = &client->_server._stop;
         locations = client->_server.locations();
     }
 
@@ -1289,6 +1298,9 @@ rawstd::DetachedTask Client::_set_object(
         slot = co_await rawstor::Slot::create(
             *static_cast<rawio::Queue*>(queue), locations.front()
         );
+        slot->set_departure_grace(departure_grace, [server_stopping]() {
+            return *server_stopping;
+        });
         RawstorObjectMeta meta = co_await slot->open(
             session_id, id, payload.offset, static_cast<int>(payload.val),
             version_id
