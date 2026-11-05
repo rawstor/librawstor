@@ -46,13 +46,14 @@ static int print_created(
     const struct RawstorObjectSpec* spec
 ) {
     static const char* const columns[] = {
-        "target",     "size",           "mirrors",
+        "uuid",       "target",         "size",         "mirrors",
         "chunk_size", "failure_domain", "stripe_width",
     };
     static const enum RawstorCliColumnType types[] = {
-        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_NUMBER,
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
         RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
+        RAWSTOR_CLI_COLUMN_NUMBER,
     };
 
     char size_buf[256];
@@ -68,7 +69,13 @@ static int print_created(
         stripe_buf, sizeof(stripe_buf), "%llu",
         (unsigned long long)spec->stripe_width
     );
+    char uuid[64];
+    char version[64];
+    rawstor_cli_target_ids(
+        target, uuid, sizeof(uuid), version, sizeof(version)
+    );
     RawstorCliCell cells[] = {
+        rawstor_cli_cell_optional(uuid),
         rawstor_cli_cell_string(target),
         rawstor_cli_cell_number(size_buf, spec->size),
         rawstor_cli_cell_number(mirrors_buf, spec->width),
@@ -84,7 +91,7 @@ static int print_created(
     };
 
     RawstorCliTable* table =
-        rawstor_cli_table_create("object", columns, types, 6);
+        rawstor_cli_table_create("object", columns, types, 7);
     if (table == NULL || rawstor_cli_table_add_row(table, cells) < 0) {
         fprintf(stderr, "Out of memory\n");
         if (table != NULL) {

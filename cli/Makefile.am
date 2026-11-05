@@ -9,6 +9,8 @@ AM_CFLAGS = $(GENERIC_CFLAGS) \
 AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(ASAN_CFLAGS) \
               -I$(top_srcdir)/librawstd/include \
+              -I$(top_srcdir)/librawio/include \
+              -I$(top_srcdir)/include \
               -I$(top_srcdir)/src/3rdparty
 
 AM_LDFLAGS = $(ASAN_LDFLAGS)

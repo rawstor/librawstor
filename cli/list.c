@@ -11,12 +11,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char* const columns[] = {"target"};
-static const enum RawstorCliColumnType types[] = {RAWSTOR_CLI_COLUMN_STRING};
+static const char* const columns[] = {"uuid", "target"};
+static const enum RawstorCliColumnType types[] = {
+    RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING
+};
 
 int rawstor_cli_list(const char* location, const RawstorCliOutput* output) {
     RawstorCliTable* table =
-        rawstor_cli_table_create("targets", columns, types, 1);
+        rawstor_cli_table_create("targets", columns, types, 2);
     if (table == NULL) {
         fprintf(stderr, "Out of memory\n");
         return EXIT_FAILURE;
@@ -49,8 +51,16 @@ int rawstor_cli_list(const char* location, const RawstorCliOutput* output) {
         }
         for (const char** it = rawstor_string_list_iter(targets); it != NULL;
              it = rawstor_string_list_next(it)) {
-            RawstorCliCell cell = rawstor_cli_cell_string(*it);
-            if (rawstor_cli_table_add_row(table, &cell) < 0) {
+            char uuid[64];
+            char version[64];
+            rawstor_cli_target_ids(
+                *it, uuid, sizeof(uuid), version, sizeof(version)
+            );
+            RawstorCliCell cells[] = {
+                rawstor_cli_cell_optional(uuid),
+                rawstor_cli_cell_string(*it),
+            };
+            if (rawstor_cli_table_add_row(table, cells) < 0) {
                 fprintf(stderr, "Out of memory\n");
                 rawstor_string_list_delete(targets);
                 rawstor_cli_op_destroy(&op);

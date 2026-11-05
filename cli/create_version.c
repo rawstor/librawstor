@@ -74,14 +74,25 @@ int rawstor_cli_create_version(
 
     fprintf(stderr, "Version created\n");
 
-    static const char* const columns[] = {"target"};
+    static const char* const columns[] = {"uuid", "version", "target"};
     static const enum RawstorCliColumnType types[] = {
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_STRING
     };
     RawstorCliTable* table =
-        rawstor_cli_table_create("version", columns, types, 1);
-    RawstorCliCell cell = rawstor_cli_cell_string(version_target);
-    if (table == NULL || rawstor_cli_table_add_row(table, &cell) < 0) {
+        rawstor_cli_table_create("version", columns, types, 3);
+    char object_id[64];
+    char version_id[64];
+    rawstor_cli_target_ids(
+        version_target, object_id, sizeof(object_id), version_id,
+        sizeof(version_id)
+    );
+    RawstorCliCell cells[] = {
+        rawstor_cli_cell_optional(object_id),
+        rawstor_cli_cell_optional(version_id),
+        rawstor_cli_cell_string(version_target),
+    };
+    if (table == NULL || rawstor_cli_table_add_row(table, cells) < 0) {
         fprintf(stderr, "Out of memory\n");
         if (table != NULL) {
             rawstor_cli_table_delete(table);
@@ -121,12 +132,13 @@ int rawstor_cli_list_versions(
         return rawstd_exitcode_for_errno((int)-result);
     }
 
-    static const char* const columns[] = {"target"};
+    static const char* const columns[] = {"uuid", "version", "target"};
     static const enum RawstorCliColumnType types[] = {
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_STRING
     };
     RawstorCliTable* table =
-        rawstor_cli_table_create("versions", columns, types, 1);
+        rawstor_cli_table_create("versions", columns, types, 3);
     if (table == NULL) {
         fprintf(stderr, "Out of memory\n");
         rawstor_string_list_delete(versions);
@@ -134,8 +146,17 @@ int rawstor_cli_list_versions(
     }
     for (const char** it = rawstor_string_list_iter(versions); it != NULL;
          it = rawstor_string_list_next(it)) {
-        RawstorCliCell cell = rawstor_cli_cell_string(*it);
-        if (rawstor_cli_table_add_row(table, &cell) < 0) {
+        char uuid[64];
+        char version[64];
+        rawstor_cli_target_ids(
+            *it, uuid, sizeof(uuid), version, sizeof(version)
+        );
+        RawstorCliCell cells[] = {
+            rawstor_cli_cell_optional(uuid),
+            rawstor_cli_cell_optional(version),
+            rawstor_cli_cell_string(*it),
+        };
+        if (rawstor_cli_table_add_row(table, cells) < 0) {
             fprintf(stderr, "Out of memory\n");
             rawstor_string_list_delete(versions);
             rawstor_cli_table_delete(table);

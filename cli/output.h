@@ -68,6 +68,20 @@ rawstor_cli_cell_number(const char* text, uint64_t number) {
     return cell;
 }
 
+/* An empty `text` is an empty cell (null in json). */
+static inline RawstorCliCell rawstor_cli_cell_optional(const char* text) {
+    RawstorCliCell cell = {text != NULL && text[0] != '\0' ? text : NULL, 0};
+    return cell;
+}
+
+/* The object UUID and the bound version UUID of `target`, read off its path
+ * without contacting a backend. `version` is empty for a live object, and
+ * both are empty when `target` cannot be parsed. */
+void rawstor_cli_target_ids(
+    const char* target, char* uuid, size_t uuid_size, char* version,
+    size_t version_size
+);
+
 typedef struct RawstorCliTable RawstorCliTable;
 
 /* `names` are the lowercase column names: json keys and --column values. */

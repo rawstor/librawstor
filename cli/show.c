@@ -237,8 +237,11 @@ int rawstor_cli_show(
         return rawstd_exitcode_for_errno((int)-result);
     }
 
-    static const char* const object_columns[] = {"target", "size", "mirrors"};
+    static const char* const object_columns[] = {
+        "uuid", "version", "target", "size", "mirrors"
+    };
     static const enum RawstorCliColumnType object_types[] = {
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_NUMBER,
         RAWSTOR_CLI_COLUMN_NUMBER
     };
@@ -258,7 +261,7 @@ int rawstor_cli_show(
     size_t ntables = 1;
     int ret = EXIT_FAILURE;
     tables[0] =
-        rawstor_cli_table_create("object", object_columns, object_types, 3);
+        rawstor_cli_table_create("object", object_columns, object_types, 5);
     if (verbose) {
         tables[1] = rawstor_cli_table_create(
             "mirrors", mirror_columns, mirror_types, 10
@@ -274,7 +277,14 @@ int rawstor_cli_show(
     char mirrors_buf[32];
     rawstd_bytes_to_size(spec.size, size_buf, sizeof(size_buf));
     snprintf(mirrors_buf, sizeof(mirrors_buf), "%u", spec.width);
-    RawstorCliCell cells[3] = {
+    char uuid[64];
+    char version[64];
+    rawstor_cli_target_ids(
+        target, uuid, sizeof(uuid), version, sizeof(version)
+    );
+    RawstorCliCell cells[5] = {
+        rawstor_cli_cell_optional(uuid),
+        rawstor_cli_cell_optional(version),
         rawstor_cli_cell_string(target),
         rawstor_cli_cell_number(size_buf, spec.size),
         rawstor_cli_cell_number(mirrors_buf, spec.width),

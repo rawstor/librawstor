@@ -2,6 +2,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <rawstor.h>
+
 #include <sys/ioctl.h>
 #include <sysexits.h>
 #include <unistd.h>
@@ -350,6 +352,20 @@ void print_values(
 } // namespace
 
 extern "C" {
+
+void rawstor_cli_target_ids(
+    const char* target, char* uuid, size_t uuid_size, char* version,
+    size_t version_size
+) {
+    uuid[0] = '\0';
+    version[0] = '\0';
+    if (rawstor_target_id(target, uuid, uuid_size) < 0) {
+        uuid[0] = '\0';
+    }
+    if (rawstor_target_version_id(target, version, version_size) < 0) {
+        version[0] = '\0';
+    }
+}
 
 int rawstor_cli_output_set_format(RawstorCliOutput* output, const char* name) {
     if (std::strcmp(name, "table") == 0) {
