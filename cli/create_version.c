@@ -33,7 +33,9 @@ static ssize_t try_create_version(
     return result;
 }
 
-int rawstor_cli_create_version(const char* target, const char* uuid) {
+int rawstor_cli_create_version(
+    const char* target, const char* uuid, const RawstorCliOutput* output
+) {
     fprintf(stderr, "Creating a version of: %s\n", target);
 
     /* `uuid` NULL: the version id is either already bound in `target`'s
@@ -71,11 +73,28 @@ int rawstor_cli_create_version(const char* target, const char* uuid) {
     }
 
     fprintf(stderr, "Version created\n");
-    fprintf(stdout, "%s\n", version_target);
+
+    static const char* const columns[] = {"target"};
+    static const enum RawstorCliColumnType types[] = {
+        RAWSTOR_CLI_COLUMN_STRING
+    };
+    RawstorCliTable* table =
+        rawstor_cli_table_create("version", columns, types, 1);
+    RawstorCliCell cell = rawstor_cli_cell_string(version_target);
+    if (table == NULL || rawstor_cli_table_add_row(table, &cell) < 0) {
+        fprintf(stderr, "Out of memory\n");
+        if (table != NULL) {
+            rawstor_cli_table_delete(table);
+        }
+        free(version_target);
+        return EXIT_FAILURE;
+    }
+    int ret = rawstor_cli_output_print(output, &table, 1);
+    rawstor_cli_table_delete(table);
 
     free(version_target);
 
-    return EXIT_SUCCESS;
+    return ret;
 }
 
 int rawstor_cli_list_versions(

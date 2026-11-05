@@ -144,7 +144,7 @@ even, a witness on its own host. `rawstor` prints the object's target, and the
 last path segment of that target is the object's UUID:
 
 ```
-OBJECT_TARGET=$(rawstor create mds://192.168.0.13 --size=10G --chunk-size=256M --mirrors=2)
+OBJECT_TARGET=$(rawstor create mds://192.168.0.13 --size=10G --chunk-size=256M --mirrors=2 --format value --column target)
 OBJECT=${OBJECT_TARGET##*/}
 
 rawstor show -v ${OBJECT_TARGET}              # each copy's state, per chunk

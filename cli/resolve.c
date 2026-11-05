@@ -1,5 +1,6 @@
 #include "resolve.h"
 
+#include "output.h"
 #include "rawio_sync.h"
 
 #include <rawstor.h>
@@ -126,8 +127,10 @@ static int accept_config(
  * `member_index` addresses (its own doc comment) -- so an index read
  * off one call names the same member in the other, for an ordinary
  * target and an mds:// one alike. */
-static int
-resolve_chunk(const char* target, const size_t* winners, size_t num_winners) {
+static int resolve_chunk(
+    const char* target, const size_t* winners, size_t num_winners,
+    RawstorCliTable* table
+) {
     uint64_t offset;
     int offset_res = rawstor_target_offset(target, &offset);
     if (offset_res < 0) {
@@ -340,17 +343,49 @@ resolve_chunk(const char* target, const size_t* winners, size_t num_winners) {
         /* sync_id in hex, as rawstor show -v and meta_encode()'s on-disk
          * encoding print it; epoch in decimal, as rawstor show -v prints
          * it. */
-        printf(
-            "chunk[%llx]: mirror[%zu] is now authoritative: sync_id %llx "
-            "-> %llx, epoch %llu -> %llu\n",
-            (unsigned long long)offset, winners[i],
-            (unsigned long long)metas[winners[i]].config.sync_id,
-            (unsigned long long)new_config.sync_id,
-            (unsigned long long)metas[winners[i]].config.epoch,
+        char chunk_buf[32];
+        char slot_buf[32];
+        char old_sync_buf[32];
+        char new_sync_buf[32];
+        char old_epoch_buf[32];
+        char new_epoch_buf[32];
+        snprintf(
+            chunk_buf, sizeof(chunk_buf), "%llx", (unsigned long long)offset
+        );
+        snprintf(slot_buf, sizeof(slot_buf), "%zu", winners[i]);
+        snprintf(
+            old_sync_buf, sizeof(old_sync_buf), "%llx",
+            (unsigned long long)metas[winners[i]].config.sync_id
+        );
+        snprintf(
+            new_sync_buf, sizeof(new_sync_buf), "%llx",
+            (unsigned long long)new_config.sync_id
+        );
+        snprintf(
+            old_epoch_buf, sizeof(old_epoch_buf), "%llu",
+            (unsigned long long)metas[winners[i]].config.epoch
+        );
+        snprintf(
+            new_epoch_buf, sizeof(new_epoch_buf), "%llu",
             (unsigned long long)new_config.epoch
         );
+        RawstorCliCell cells[] = {
+            rawstor_cli_cell_string(chunk_buf),
+            rawstor_cli_cell_number(slot_buf, winners[i]),
+            rawstor_cli_cell_string(old_sync_buf),
+            rawstor_cli_cell_string(new_sync_buf),
+            rawstor_cli_cell_number(
+                old_epoch_buf, metas[winners[i]].config.epoch
+            ),
+            rawstor_cli_cell_number(new_epoch_buf, new_config.epoch),
+        };
+        if (rawstor_cli_table_add_row(table, cells) < 0) {
+            fprintf(stderr, "Out of memory\n");
+            return EXIT_FAILURE;
+        }
     }
-    printf(
+    fprintf(
+        stderr,
         "chunk[%llx]: every other reachable mirror will resync on the "
         "next open.\n",
         (unsigned long long)offset
@@ -360,7 +395,8 @@ resolve_chunk(const char* target, const size_t* winners, size_t num_winners) {
 }
 
 int rawstor_cli_resolve(
-    const char* target, const size_t* winners, size_t num_winners
+    const char* target, const size_t* winners, size_t num_winners,
+    const RawstorCliOutput* output
 ) {
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);
@@ -397,14 +433,43 @@ int rawstor_cli_resolve(
         return rawstd_exitcode_for_errno((int)-chunk_count);
     }
 
+    /* One row per winner of every chunk resolved. */
+    static const char* const columns[] = {
+        "chunk",   "slot",           "previous_sync_id",
+        "sync_id", "previous_epoch", "epoch",
+    };
+    static const enum RawstorCliColumnType types[] = {
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_NUMBER,
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+        RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
+    };
+    RawstorCliTable* table =
+        rawstor_cli_table_create("resolved", columns, types, 6);
+    if (table == NULL) {
+        fprintf(stderr, "Out of memory\n");
+        rawstor_string_list_delete(chunks);
+        return EXIT_FAILURE;
+    }
+
     int ret = EXIT_SUCCESS;
+    size_t resolved = 0;
     for (const char** it = rawstor_string_list_iter(chunks); it != NULL;
          it = rawstor_string_list_next(it)) {
-        ret = resolve_chunk(*it, winners, num_winners);
+        ret = resolve_chunk(*it, winners, num_winners, table);
         if (ret != EXIT_SUCCESS) {
             break;
         }
+        resolved++;
     }
     rawstor_string_list_delete(chunks);
+
+    /* What was resolved before a failure is still worth reporting. */
+    if (ret == EXIT_SUCCESS || resolved > 0) {
+        int print_ret = rawstor_cli_output_print(output, &table, 1);
+        if (ret == EXIT_SUCCESS) {
+            ret = print_ret;
+        }
+    }
+    rawstor_cli_table_delete(table);
     return ret;
 }

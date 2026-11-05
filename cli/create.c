@@ -1,5 +1,6 @@
 #include "create.h"
 
+#include "output.h"
 #include "rawio_sync.h"
 
 #include <rawstor.h>
@@ -37,9 +38,69 @@ static void log_spec(FILE* output, const struct RawstorObjectSpec* spec) {
     }
 }
 
+/* Prints the created object's target together with its specification;
+ * `--format value --column target` yields just the target. A policy that was
+ * left at its default is an empty cell. */
+static int print_created(
+    const RawstorCliOutput* output, const char* target,
+    const struct RawstorObjectSpec* spec
+) {
+    static const char* const columns[] = {
+        "target",     "size",           "mirrors",
+        "chunk_size", "failure_domain", "stripe_width",
+    };
+    static const enum RawstorCliColumnType types[] = {
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_NUMBER,
+        RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
+        RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
+    };
+
+    char size_buf[256];
+    char mirrors_buf[32];
+    char chunk_buf[256];
+    char domain_buf[32];
+    char stripe_buf[32];
+    rawstd_bytes_to_size(spec->size, size_buf, sizeof(size_buf));
+    snprintf(mirrors_buf, sizeof(mirrors_buf), "%u", spec->width);
+    rawstd_bytes_to_size(spec->chunk_size, chunk_buf, sizeof(chunk_buf));
+    snprintf(domain_buf, sizeof(domain_buf), "%u", spec->failure_domain);
+    snprintf(
+        stripe_buf, sizeof(stripe_buf), "%llu",
+        (unsigned long long)spec->stripe_width
+    );
+    RawstorCliCell cells[] = {
+        rawstor_cli_cell_string(target),
+        rawstor_cli_cell_number(size_buf, spec->size),
+        rawstor_cli_cell_number(mirrors_buf, spec->width),
+        rawstor_cli_cell_number(
+            spec->chunk_size != 0 ? chunk_buf : NULL, spec->chunk_size
+        ),
+        rawstor_cli_cell_number(
+            spec->failure_domain != 0 ? domain_buf : NULL, spec->failure_domain
+        ),
+        rawstor_cli_cell_number(
+            spec->stripe_width != 0 ? stripe_buf : NULL, spec->stripe_width
+        ),
+    };
+
+    RawstorCliTable* table =
+        rawstor_cli_table_create("object", columns, types, 6);
+    if (table == NULL || rawstor_cli_table_add_row(table, cells) < 0) {
+        fprintf(stderr, "Out of memory\n");
+        if (table != NULL) {
+            rawstor_cli_table_delete(table);
+        }
+        return EXIT_FAILURE;
+    }
+    int ret = rawstor_cli_output_print(output, &table, 1);
+    rawstor_cli_table_delete(table);
+    return ret;
+}
+
 int rawstor_cli_create(
     const char* target, uint64_t size, uint64_t chunk_size,
-    unsigned int mirrors, unsigned int failure_domain, uint64_t stripe_width
+    unsigned int mirrors, unsigned int failure_domain, uint64_t stripe_width,
+    const RawstorCliOutput* output
 ) {
     struct RawstorObjectSpec spec = {
         .size = size,
@@ -72,9 +133,7 @@ int rawstor_cli_create(
     }
 
     fprintf(stderr, "Object created\n");
-    fprintf(stdout, "%s\n", target);
-
-    return EXIT_SUCCESS;
+    return print_created(output, target, &spec);
 }
 
 // One rawstor_location_create() attempt against a fresh queue, driven to
@@ -102,7 +161,8 @@ static ssize_t try_location_create(
 
 int rawstor_cli_create_at(
     const char* location, const char* uuid, uint64_t size, uint64_t chunk_size,
-    unsigned int mirrors, unsigned int failure_domain, uint64_t stripe_width
+    unsigned int mirrors, unsigned int failure_domain, uint64_t stripe_width,
+    const RawstorCliOutput* output
 ) {
     struct RawstorObjectSpec spec = {
         .size = size,
@@ -147,9 +207,9 @@ int rawstor_cli_create_at(
     }
 
     fprintf(stderr, "Object created\n");
-    fprintf(stdout, "%s\n", target);
+    int ret = print_created(output, target, &spec);
 
     free(target);
 
-    return EXIT_SUCCESS;
+    return ret;
 }

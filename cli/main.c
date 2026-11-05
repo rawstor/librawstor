@@ -132,6 +132,8 @@ static void command_create_usage(void) {
         "                        (default), 1 = object-local, K = spread "
         "across K\n"
         "                        OSTs.\n"
+        "\n"
+        "output (stdout; progress goes to stderr):\n" RAWSTOR_CLI_OUTPUT_USAGE
     );
 };
 
@@ -146,6 +148,8 @@ static int command_create(int argc, char** argv) {
         {"chunk-size", required_argument, NULL, 'C'},
         {"failure-domain", required_argument, NULL, 'F'},
         {"stripe-width", required_argument, NULL, 'K'},
+        {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
+        {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
         {},
     };
 
@@ -157,6 +161,7 @@ static int command_create(int argc, char** argv) {
     const char* chunk_size_arg = NULL;
     const char* failure_domain_arg = NULL;
     const char* stripe_width_arg = NULL;
+    RawstorCliOutput output_arg = {};
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -195,6 +200,20 @@ static int command_create(int argc, char** argv) {
 
         case 'K':
             stripe_width_arg = optarg;
+            break;
+
+        case RAWSTOR_CLI_OPT_FORMAT:
+            if (rawstor_cli_output_set_format(&output_arg, optarg) != 0) {
+                fprintf(
+                    stderr, "Unknown format: %s (table, json or value)\n",
+                    optarg
+                );
+                return EX_USAGE;
+            }
+            break;
+
+        case RAWSTOR_CLI_OPT_COLUMN:
+            output_arg.columns = optarg;
             break;
 
         default:
@@ -337,12 +356,13 @@ static int command_create(int argc, char** argv) {
 
     if (target_arg != NULL) {
         return rawstor_cli_create(
-            target_arg, size, chunk_size, mirrors, failure_domain, stripe_width
+            target_arg, size, chunk_size, mirrors, failure_domain, stripe_width,
+            &output_arg
         );
     } else {
         return rawstor_cli_create_at(
             location_arg, uuid_arg, size, chunk_size, mirrors, failure_domain,
-            stripe_width
+            stripe_width, &output_arg
         );
     }
 }
@@ -831,14 +851,12 @@ static void command_resolve_usage(void) {
         "  --winner N[,N...]      The targeted chunk's own N-th mirror(s) "
         "(0-based,\n"
         "                        same order `rawstor show -v` labels "
-        "mirror[N]\n"
-        "                        under that chunk's own chunk[N]): the "
-        "copies to\n"
-        "                        keep.\n"
+        "slot):\n"
+        "                        the copies to keep.\n"
         "\n"
         "command options:\n"
         "  Use a physical chunk URI from show -v; an object target resolves "
-        "all chunks.\n"
+        "all chunks.\n" RAWSTOR_CLI_OUTPUT_USAGE
     );
 };
 
@@ -847,11 +865,14 @@ static int command_resolve(int argc, char** argv) {
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"winner", required_argument, NULL, 'w'},
+        {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
+        {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
         {},
     };
 
     char* target_arg = NULL;
     const char* winner_arg = NULL;
+    RawstorCliOutput output_arg = {};
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -866,6 +887,20 @@ static int command_resolve(int argc, char** argv) {
 
         case 'w':
             winner_arg = optarg;
+            break;
+
+        case RAWSTOR_CLI_OPT_FORMAT:
+            if (rawstor_cli_output_set_format(&output_arg, optarg) != 0) {
+                fprintf(
+                    stderr, "Unknown format: %s (table, json or value)\n",
+                    optarg
+                );
+                return EX_USAGE;
+            }
+            break;
+
+        case RAWSTOR_CLI_OPT_COLUMN:
+            output_arg.columns = optarg;
             break;
 
         default:
@@ -932,7 +967,7 @@ static int command_resolve(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_resolve(target_arg, winners, num_winners);
+    return rawstor_cli_resolve(target_arg, winners, num_winners, &output_arg);
 }
 
 static void command_create_version_usage(void) {
@@ -969,7 +1004,8 @@ static void command_create_version_usage(void) {
         "                        UUIDv7 is generated.\n"
         "\n"
         "command options:\n"
-        "  -h, --help            Show this help message and exit\n"
+        "  -h, --help            Show this help message and "
+        "exit\n" RAWSTOR_CLI_OUTPUT_USAGE
     );
 };
 
@@ -978,11 +1014,14 @@ static int command_create_version(int argc, char** argv) {
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"uuid", required_argument, NULL, 'u'},
+        {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
+        {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
         {},
     };
 
     char* target_arg = NULL;
     const char* uuid_arg = NULL;
+    RawstorCliOutput output_arg = {};
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -997,6 +1036,20 @@ static int command_create_version(int argc, char** argv) {
 
         case 'u':
             uuid_arg = optarg;
+            break;
+
+        case RAWSTOR_CLI_OPT_FORMAT:
+            if (rawstor_cli_output_set_format(&output_arg, optarg) != 0) {
+                fprintf(
+                    stderr, "Unknown format: %s (table, json or value)\n",
+                    optarg
+                );
+                return EX_USAGE;
+            }
+            break;
+
+        case RAWSTOR_CLI_OPT_COLUMN:
+            output_arg.columns = optarg;
             break;
 
         default:
@@ -1019,7 +1072,7 @@ static int command_create_version(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_create_version(target_arg, uuid_arg);
+    return rawstor_cli_create_version(target_arg, uuid_arg, &output_arg);
 }
 
 static void command_list_versions_usage(void) {
