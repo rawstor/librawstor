@@ -343,15 +343,11 @@ static int resolve_chunk(
         /* sync_id in hex, as rawstor slots and meta_encode()'s on-disk
          * encoding print it; epoch in decimal, as rawstor slots prints
          * it. */
-        char chunk_buf[32];
         char slot_buf[32];
         char old_sync_buf[32];
         char new_sync_buf[32];
         char old_epoch_buf[32];
         char new_epoch_buf[32];
-        snprintf(
-            chunk_buf, sizeof(chunk_buf), "%llx", (unsigned long long)offset
-        );
         snprintf(slot_buf, sizeof(slot_buf), "%zu", winners[i]);
         snprintf(
             old_sync_buf, sizeof(old_sync_buf), "%llx",
@@ -370,7 +366,7 @@ static int resolve_chunk(
             (unsigned long long)new_config.epoch
         );
         RawstorCliCell cells[] = {
-            rawstor_cli_cell_string(chunk_buf),
+            rawstor_cli_cell_size(offset),
             rawstor_cli_cell_number(slot_buf, winners[i]),
             rawstor_cli_cell_string(old_sync_buf),
             rawstor_cli_cell_string(new_sync_buf),
@@ -400,11 +396,11 @@ int rawstor_cli_resolve(
 ) {
     /* One row per winner of every chunk resolved. */
     static const char* const columns[] = {
-        "chunk",   "slot",           "previous_sync_id",
+        "offset",  "slot",           "previous_sync_id",
         "sync_id", "previous_epoch", "epoch",
     };
     static const enum RawstorCliColumnType types[] = {
-        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_NUMBER,
+        RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_NUMBER,
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
     };

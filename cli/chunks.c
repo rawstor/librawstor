@@ -11,9 +11,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The row of one chunk: its offset, its target, its own size, how many data
- * copies it keeps and how many member slots it has (a witness is a slot but
- * not a copy). */
+/* The row of one chunk: its byte offset, its target, its own size, how many
+ * data copies it keeps and how many member slots it has (a witness is a slot
+ * but not a copy). */
 static int
 chunks_row(RawstorCliOp* op, const char* chunk, RawstorCliTable* table) {
     uint64_t offset;
@@ -53,14 +53,12 @@ chunks_row(RawstorCliOp* op, const char* chunk, RawstorCliTable* table) {
     }
     rawstor_string_list_delete(slots);
 
-    char chunk_buf[32];
     char mirrors_buf[32];
     char slots_buf[32];
-    snprintf(chunk_buf, sizeof(chunk_buf), "%llx", (unsigned long long)offset);
     snprintf(mirrors_buf, sizeof(mirrors_buf), "%u", spec.width);
     snprintf(slots_buf, sizeof(slots_buf), "%zd", slot_count);
     RawstorCliCell cells[] = {
-        rawstor_cli_cell_string(chunk_buf),
+        rawstor_cli_cell_size(offset),
         rawstor_cli_cell_string(chunk),
         rawstor_cli_cell_size(spec.size),
         rawstor_cli_cell_number(mirrors_buf, spec.width),
@@ -75,10 +73,10 @@ chunks_row(RawstorCliOp* op, const char* chunk, RawstorCliTable* table) {
 
 int rawstor_cli_chunks(const char* target, const RawstorCliOutput* output) {
     static const char* const columns[] = {
-        "chunk", "chunk_target", "size", "mirrors", "slots"
+        "offset", "chunk_target", "size", "mirrors", "slots"
     };
     static const enum RawstorCliColumnType types[] = {
-        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+        RAWSTOR_CLI_COLUMN_SIZE, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_SIZE, RAWSTOR_CLI_COLUMN_NUMBER,
         RAWSTOR_CLI_COLUMN_NUMBER
     };

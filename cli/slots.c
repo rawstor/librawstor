@@ -134,8 +134,6 @@ slots_chunk(RawstorCliOp* op, const char* target, RawstorCliTable* table) {
         return EXIT_FAILURE;
     }
 
-    char chunk_buf[32];
-    snprintf(chunk_buf, sizeof(chunk_buf), "%llx", (unsigned long long)offset);
     const char** slot = rawstor_string_list_iter(slots);
     for (ssize_t i = 0; i < result;
          i++, slot = rawstor_string_list_next(slot)) {
@@ -143,7 +141,7 @@ slots_chunk(RawstorCliOp* op, const char* target, RawstorCliTable* table) {
         char slot_buf[32];
         snprintf(slot_buf, sizeof(slot_buf), "%zd", i);
         RawstorCliCell cells[14] = {
-            rawstor_cli_cell_string(chunk_buf),
+            rawstor_cli_cell_size(offset),
             rawstor_cli_cell_string(target),
             rawstor_cli_cell_number(slot_buf, (uint64_t)i),
             rawstor_cli_cell_string(*slot),
@@ -244,12 +242,12 @@ static int slots_meta(const char* target, RawstorCliTable* table) {
 
 int rawstor_cli_slots(const char* target, const RawstorCliOutput* output) {
     static const char* const columns[] = {
-        "chunk",   "chunk_target", "slot",     "slot_target", "member",
+        "offset",  "chunk_target", "slot",     "slot_target", "member",
         "size",    "state",        "role",     "writers",     "epoch",
         "sync_id", "resync_owner", "promised", "accepted",
     };
     static const enum RawstorCliColumnType types[] = {
-        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+        RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_SIZE,
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,

@@ -412,7 +412,7 @@ instances. Metadata and member-configuration operations take a
 chunk target and no separate offset. Read/write offsets remain offsets within
 an opened object.
 
-`rawstor chunks TARGET` prints a table with a row per chunk (its offset, target,
+`rawstor chunks TARGET` prints a table with a row per chunk (its byte `offset`, target,
 size, number of data copies and of slots), and `rawstor slots TARGET` a table
 with a row per member slot of every chunk (its URI, and what its own record
 holds: role, state, epoch, sync id, ballots). The `chunk_target` column of
