@@ -33,10 +33,10 @@ flowchart TD
     vduse --> lib
     lib -->|"mds://"| mds["rawstor-mds"]
     lib -->|"ost://"| ost1["rawstor-ost"]
-    lib -->|"file://"| fs["local directory"]
+    lib -->|"file://"| fs1["local directory"]
     mds -. "places chunks" .-> ost1
     ost1 --> lib2["librawstor"]
-    lib2 -->|"file://"| fs
+    lib2 -->|"file://"| fs2["local directory"]
 ```
 
 ## Components
