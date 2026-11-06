@@ -35,6 +35,7 @@ test_all_SOURCES = main.cpp \
                    test_mirror.cpp \
                    test_multichunk.cpp \
                    test_multiqueue.cpp \
+                   test_object_errors.cpp \
                    test_opts.cpp \
                    test_pagination_token.cpp \
                    test_register.cpp \
