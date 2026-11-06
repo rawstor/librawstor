@@ -160,10 +160,13 @@ private:
                 _cv.notify_all();
                 continue;
             }
+            // Only the pairs that were polled have events to look at; one
+            // accepted now is polled on the next round.
+            size_t polled = pairs.size();
             if (fds[1].revents & POLLIN) {
                 _accept(pairs);
             }
-            for (size_t i = 0; i < pairs.size();) {
+            for (size_t i = 0; i < polled;) {
                 const short client_events = fds[2 + 2 * i].revents;
                 const short upstream_events = fds[3 + 2 * i].revents;
                 bool alive = true;
@@ -181,6 +184,7 @@ private:
                 ::close(pairs[i].upstream);
                 pairs.erase(pairs.begin() + i);
                 fds.erase(fds.begin() + 2 + 2 * i, fds.begin() + 4 + 2 * i);
+                --polled;
             }
         }
         _close_side(pairs, true);
