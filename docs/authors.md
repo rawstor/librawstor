@@ -10,6 +10,3 @@ Rawstor is developed by:
 - **Vasily Stepanov** (vasily.stepanov@gmail.com) -- the client library and
   tools, the OST and MDS servers, the wire protocol, vhost/VDUSE and the
   Python bindings.
-
-The full list of changes is in the git history and the
-[ChangeLog](https://github.com/rawstor/librawstor/blob/main/ChangeLog.md).
