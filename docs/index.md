@@ -29,6 +29,7 @@ flowchart TD
     vm["VM (QEMU or any vhost-user consumer)"] --> vhost["rawstor-vhost"]
     host["host (vDPA / virtio-blk device)"] --> vduse["rawstor-vduse"]
     cli["rawstor CLI"] --> lib["librawstor"]
+    py["pyrawstor (Python)"] --> lib
     vhost --> lib
     vduse --> lib
     lib -->|"mds://"| mds["rawstor-mds"]
