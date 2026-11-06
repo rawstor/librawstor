@@ -793,27 +793,29 @@ rawstd::Task<void> Slot::_expire_departure(
 ) {
     std::shared_ptr<CopyState> member = std::move(_orphan_member);
     std::shared_ptr<std::atomic<bool>> adopted = std::move(_orphan_adopted);
-    const RawstdUUID session_id = _session_id;
     const auto end = std::chrono::steady_clock::now() + _departure_grace;
     constexpr unsigned int slice_us = 20 * 1000;
     while (!adopted->load() && std::chrono::steady_clock::now() < end &&
            !(_departure_hurry && _departure_hurry())) {
         try {
             co_await _queue.timeout(slice_us);
-        } catch (const std::system_error& e) {
-            if (e.code().value() != ECANCELED) {
-                throw;
-            }
+        } catch (const std::system_error&) {
+            // A wait that cannot be kept (the queue is going away, or has
+            // no room for a timer) ends the grace: the writer's writes
+            // stay unaccounted for, so the copy is LOST.
             break;
         }
     }
+    if (adopted->load()) {
+        co_return;
+    }
     co_await member->record.lock(_queue);
     RecordLockGuard guard{member->record};
+    // Found by its own flag: a later departure of the same session, after
+    // this one was adopted, is another entry with the same session id.
     auto orphan = std::find_if(
         member->orphans.begin(), member->orphans.end(),
-        [&](const Slot::CopyState::Orphan& o) {
-            return rawstd_uuid_cmp(&o.session_id, &session_id) == 0;
-        }
+        [&](const Slot::CopyState::Orphan& o) { return o.adopted == adopted; }
     );
     if (orphan == member->orphans.end()) {
         co_return;

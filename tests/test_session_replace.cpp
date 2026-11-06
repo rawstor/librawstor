@@ -282,6 +282,42 @@ TEST(SessionReplaceTest, ost_session_replaced_after_server_drop_stays_dirty) {
     run(*queue, writer->close());
 }
 
+// A replacement that has taken over a dropped session and is dropped in
+// turn is itself awaited: the departure it follows must not end its wait.
+TEST(SessionReplaceTest, ost_replacement_dropped_in_turn_stays_dirty) {
+    rawstor::tests::ObjectEnv env(8856, 8857);
+    SeveringProxy proxy(8858, 8857);
+    auto queue = rawio::Queue::create(64);
+    const RawstdUUID id = new_id();
+    rawstor::Target via_proxy(
+        {rawstd::URI(rawstd::URI("ost://127.0.0.1:8858"), id_string(id))}
+    );
+    rawstor::Target direct(
+        {rawstd::URI(rawstd::URI("ost://127.0.0.1:8857"), id_string(id))}
+    );
+    RawstorObjectSpec spec{
+        .size = 1u << 20,
+        .width = 1,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    run(*queue, direct.create(*queue, spec));
+
+    auto writer = run(*queue, via_proxy.open(*queue, 0));
+    write_one(*queue, *writer);
+    for (int drop = 0; drop < 3; ++drop) {
+        proxy.sever();
+        write_one(*queue, *writer);
+    }
+
+    RawstorObjectMeta meta = run(*queue, direct.meta(*queue)).front();
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+    EXPECT_EQ(meta.writers, 1u);
+
+    run(*queue, writer->close());
+}
+
 // A writer that does not come back is not waited for forever: its writes
 // are unaccounted for, and the copy is LOST once the wait is over.
 TEST(SessionReplaceTest, ost_session_not_replaced_after_server_drop_is_lost) {
