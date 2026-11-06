@@ -835,7 +835,11 @@ public:
         _resync->announce();
         adopt_locked(config);
         _records[member] = config;
-        _states[member]->set(MemberState::SYNCING);
+        // Already SYNCING when a decision naming it so was taken over
+        // meanwhile.
+        if (state(member) != MemberState::SYNCING) {
+            _states[member]->set(MemberState::SYNCING);
+        }
         // The decision recorded the set the way the dirty barrier would.
         if (!needs_new_identity_locked()) {
             complete_dirty_barrier_locked();
@@ -2775,6 +2779,22 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
         // starts: a crash mid-resync must leave it recognizably untrusted
         // (docs/mirroring.md, case F8).
         co_await _lock();
+        // Releases the transition lock on every way out of this scope, an
+        // unexpected exception included: the lock is chunk-wide, and a
+        // leaked one stalls every write that has to retake it.
+        struct TransitionLock {
+            Chunk& chunk;
+            bool held = true;
+
+            void unlock() noexcept {
+                if (held) {
+                    held = false;
+                    chunk._unlock();
+                }
+            }
+
+            ~TransitionLock() { unlock(); }
+        } transition{*this};
         int error = 0;
         bool decided = false;
         std::vector<size_t> failed;
@@ -2784,7 +2804,6 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
                 std::lock_guard<std::mutex> lock(c.mutex());
                 MirrorResync* r = c.resync_locked();
                 if (r == nullptr || r->generation() != generation) {
-                    _unlock();
                     co_return;
                 }
                 for (size_t i = 0; i < _members.size(); ++i) {
@@ -2798,47 +2817,54 @@ rawstd::DetachedTask Chunk::_resync_maybe_start() {
             error = e.code().value();
         }
 
-        {
-            std::lock_guard<std::mutex> lock(c.mutex());
-            auto self = std::find(failed.begin(), failed.end(), idx);
-            if (self != failed.end()) {
-                error = error ? error : EIO;
-                failed.erase(self);
-            }
-            // What was decided stays decided, whatever became of the resync
-            // meanwhile: writes carry its epoch from now on, and the
-            // register names this process the owner of a resync until a
-            // release.
-            if (decided) {
-                c.adopt_locked(m);
-                _owned_syncing = idx;
-            }
-            MirrorResync* r = c.resync_locked();
-            if (r == nullptr || r->generation() != generation) {
-                // Aborted meanwhile (e.g. a writer that opened could not
-                // reach the member).
-                _unlock();
-                co_return;
-            }
-            if (error || _closing) {
-                // Not announced yet: nobody attached, nothing to wake.
-                c.discard_unannounced_resync_locked();
-                if (error) {
-                    rawstd_error(
-                        "Mirror resync: SYNCING mark failed: %s\n",
-                        strerror(error)
-                    );
-                    _members[idx].reachable = false;
+        try {
+            {
+                std::lock_guard<std::mutex> lock(c.mutex());
+                auto self = std::find(failed.begin(), failed.end(), idx);
+                if (self != failed.end()) {
+                    error = error ? error : EIO;
+                    failed.erase(self);
                 }
-            } else {
-                // Attach before notifying watchers, preserving the start
-                // ordering.
-                _resync_attach_locked(generation);
-                c.announce_resync_locked(m);
-                _owned_syncing = idx;
+                // What was decided stays decided, whatever became of the resync
+                // meanwhile: writes carry its epoch from now on, and the
+                // register names this process the owner of a resync until a
+                // release.
+                if (decided) {
+                    c.adopt_locked(m);
+                    _owned_syncing = idx;
+                }
+                MirrorResync* r = c.resync_locked();
+                if (r == nullptr || r->generation() != generation) {
+                    // Aborted meanwhile (e.g. a writer that opened could not
+                    // reach the member).
+                    co_return;
+                }
+                if (error || _closing) {
+                    // Not announced yet: nobody attached, nothing to wake.
+                    c.discard_unannounced_resync_locked();
+                    if (error) {
+                        rawstd_error(
+                            "Mirror resync: SYNCING mark failed: %s\n",
+                            strerror(error)
+                        );
+                        _members[idx].reachable = false;
+                    }
+                } else {
+                    // Attach before notifying watchers, preserving the start
+                    // ordering.
+                    _resync_attach_locked(generation);
+                    c.announce_resync_locked(m);
+                    _owned_syncing = idx;
+                }
             }
+        } catch (...) {
+            // The resync cannot be started: it must not stay claimed, or no
+            // other would ever be.
+            std::lock_guard<std::mutex> lock(c.mutex());
+            _resync_abort_locked(generation, "it failed to start");
+            throw;
         }
-        _unlock();
+        transition.unlock();
         if (!failed.empty()) {
             co_await _degrade(std::move(failed));
         }

@@ -916,6 +916,9 @@ rawstd::DetachedTask launch_targets_op_coro(
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
         result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
     }
     rawstor_string_list_delete(list);
     int res = cb(result, data);

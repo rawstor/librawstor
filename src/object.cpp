@@ -417,7 +417,7 @@ namespace {
 
 // C ABI adapters for the I/O group (rawstor_object_pread/_preadv/_pwrite/
 // _pwritev): launch a detached coroutine that co_await's the
-// already-submitted rawstd::Task, catches std::system_error, and invokes
+// already-submitted rawstd::Task, catches every exception, and invokes
 // the originally-passed completion callback with the translated result --
 // the same one-layer-up shape as librawio/src/rawio.cpp's
 // launch_size_op_coro(). A negative return from the C callback throws --
@@ -434,6 +434,14 @@ rawstd::DetachedTask launch_io_op_coro(
         result = co_await t;
     } catch (const std::system_error& e) {
         error = e.code().value();
+    } catch (const std::bad_alloc&) {
+        error = ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        error = EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        error = EINVAL;
     }
     int res = cb(result, error, data);
     if (res < 0) {
@@ -462,6 +470,14 @@ rawstd::DetachedTask launch_flush_op_coro(
         co_await t;
     } catch (const std::system_error& e) {
         result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
     }
     int res = cb(result, data);
     if (res < 0) {
@@ -492,6 +508,14 @@ rawstd::DetachedTask launch_close_op_coro(
         co_await t;
     } catch (const std::system_error& e) {
         result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
     }
     delete static_cast<rawstor::Object*>(object);
     int res = cb(result, data);
