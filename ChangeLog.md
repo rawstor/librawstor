@@ -67,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rawstor-ost` on ZFS and LVM no longer fails with `ENOMEM` on a host with little memory: the `zfs` and `lvm` commands are started with `posix_spawn()` instead of `fork()`, which could not account for a copy of the server's address space.
 - A copy no longer goes `LOST` (and is no longer resynced) when `rawstor-ost` drops a writer's connection first, as after a short write: it waits two seconds for the writer's replacement connection.
 - Unsupported operations fail without retries on macOS.
 - OST shutdown terminates incomplete network requests before draining storage operations.
