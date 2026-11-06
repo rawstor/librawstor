@@ -172,7 +172,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev libsqlite3-dev debhelper build-essential
+        sudo apt-get install -y libxxhash-dev liburing-dev libsqlite3-dev debhelper build-essential
     - uses: actions/download-artifact@v8
       with:
         name: sources
@@ -187,7 +187,7 @@ jobs:
       run: |
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure --without-python3
+        ./configure --without-python3 --disable-tests
         make deb/librawstor/changelog
     - name: dpkg-buildpackage
       run: |
@@ -262,7 +262,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev python3-build debhelper dh-python python3-all-dev build-essential pkg-config
+        sudo apt-get install -y libxxhash-dev liburing-dev python3-build debhelper dh-python python3-all-dev build-essential pkg-config
     - uses: actions/download-artifact@v8
     - name: install librawstor
       run: |
@@ -279,7 +279,7 @@ jobs:
       run: |
         tar -xzf sources/${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure --without-sqlite3
+        ./configure --without-sqlite3 --disable-tests
         make deb/python3-rawstor/changelog
     - name: dpkg-buildpackage
       run: |
@@ -409,7 +409,7 @@ jobs:
       run: |
         dnf -y install epel-release
         dnf config-manager --set-enabled crb
-        dnf -y install xxhash-devel liburing-devel gtest-devel sqlite-devel gcc-c++ make pkgconfig systemd-rpm-macros rpm-build rpmlint
+        dnf -y install xxhash-devel liburing-devel sqlite-devel gcc-c++ make pkgconfig systemd-rpm-macros rpm-build rpmlint
     - uses: actions/download-artifact@v8
       with:
         name: sources
@@ -424,7 +424,7 @@ jobs:
       run: |
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure --without-python3
+        ./configure --without-python3 --disable-tests
     - name: setuptree
       run: |
         mkdir -p ~/rpmbuild/SOURCES
@@ -475,7 +475,7 @@ jobs:
       run: |
         dnf -y install epel-release
         dnf config-manager --set-enabled crb
-        dnf -y install xxhash-devel liburing-devel gtest-devel gcc-c++ make pkgconfig python3-devel python3-rpm-macros python3-pip python3-wheel python3-build python3-setuptools rpm-build rpmlint
+        dnf -y install xxhash-devel liburing-devel gcc-c++ make pkgconfig python3-devel python3-rpm-macros python3-pip python3-wheel python3-build python3-setuptools rpm-build rpmlint
     - uses: actions/download-artifact@v8
     - name: install librawstor
       run: dnf -y install ./librawstor.rpm/librawstor-[0-9]*.rpm ./librawstor.rpm/librawstor-devel-*.rpm
@@ -490,7 +490,7 @@ jobs:
       run: |
         tar -xzf sources/${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure --without-sqlite3
+        ./configure --without-sqlite3 --disable-tests
     - name: setuptree
       run: |
         mkdir -p ~/rpmbuild/SOURCES
@@ -622,7 +622,7 @@ jobs:
       run: |
         dnf -y install epel-release
         dnf config-manager --set-enabled crb
-        dnf -y install xxhash-devel liburing-devel gtest-devel gcc-c++ make pkgconfig python3-devel python3-pip python3-wheel python3-build python3-setuptools patchelf
+        dnf -y install xxhash-devel liburing-devel gcc-c++ make pkgconfig python3-devel python3-pip python3-wheel python3-build python3-setuptools patchelf
         python3 -m pip install auditwheel
     - uses: actions/download-artifact@v8
     - name: install librawstor
@@ -638,7 +638,7 @@ jobs:
       run: |
         tar -xzf sources/${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure --without-sqlite3
+        ./configure --without-sqlite3 --disable-tests
     - name: build wheel and sdist
       # a single cp39-abi3 build works unmodified on every Python >= 3.9
       # (see pyrawstor/setup.py), so one wheel covers the whole matrix --

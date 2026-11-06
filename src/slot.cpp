@@ -280,6 +280,16 @@ struct Slot::CopyState {
     // The sessions counted in `writers`. Changed only with `record` held,
     // and by a Slot's destructor.
     std::vector<Slot*> sessions;
+    // Writers that ended without leave() and wait out their grace for a
+    // replacement (set_departure_grace()). Each is still counted in
+    // `writers`: its writes are unaccounted for until a session of the same
+    // writer takes them over, which raises `adopted`, or the wait ends.
+    // Changed only with `record` held.
+    struct Orphan {
+        RawstdUUID session_id;
+        std::shared_ptr<std::atomic<bool>> adopted;
+    };
+    std::vector<Orphan> orphans;
     // The record is known not to be CLEAN: a write needs no DIRTY mark of
     // its own. Read without the lock, set and cleared with it held.
     std::atomic<bool> dirty{false};
@@ -747,6 +757,15 @@ rawstd::Task<void> Slot::_depart(std::shared_ptr<Backend> be) {
                 co_return;
             }
         }
+        if (_departure_grace.count() > 0) {
+            // The writer may replace this connection in a moment: keep the
+            // copy DIRTY and its writes accounted for until it does.
+            _orphan_adopted = std::make_shared<std::atomic<bool>>(false);
+            member->orphans.push_back({_session_id, _orphan_adopted});
+            ++member->writers;
+            _orphan_member = member;
+            co_return;
+        }
     }
     if (!(_left ? remaining == 0 : _wrote.load())) {
         co_return;
@@ -764,6 +783,49 @@ rawstd::Task<void> Slot::_depart(std::shared_ptr<Backend> be) {
         *be, id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY, state
     );
     member->dirty.store(!_left, std::memory_order_release);
+}
+
+// Waits for a replacement of the writer that departed without leave(): unless
+// a session of the same writer took its writes over by the end of the wait,
+// the copy is LOST.
+rawstd::Task<void> Slot::_expire_departure(
+    std::shared_ptr<Backend> be, const RawstdUUID& id, uint64_t offset
+) {
+    std::shared_ptr<CopyState> member = std::move(_orphan_member);
+    std::shared_ptr<std::atomic<bool>> adopted = std::move(_orphan_adopted);
+    const auto end = std::chrono::steady_clock::now() + _departure_grace;
+    constexpr unsigned int slice_us = 20 * 1000;
+    while (!adopted->load() && std::chrono::steady_clock::now() < end &&
+           !(_departure_hurry && _departure_hurry())) {
+        try {
+            co_await _queue.timeout(slice_us);
+        } catch (const std::system_error&) {
+            // A wait that cannot be kept (the queue is going away, or has
+            // no room for a timer) ends the grace: the writer's writes
+            // stay unaccounted for, so the copy is LOST.
+            break;
+        }
+    }
+    if (adopted->load()) {
+        co_return;
+    }
+    co_await member->record.lock(_queue);
+    RecordLockGuard guard{member->record};
+    // Found by its own flag: a later departure of the same session, after
+    // this one was adopted, is another entry with the same session id.
+    auto orphan = std::find_if(
+        member->orphans.begin(), member->orphans.end(),
+        [&](const Slot::CopyState::Orphan& o) { return o.adopted == adopted; }
+    );
+    if (orphan == member->orphans.end()) {
+        co_return;
+    }
+    member->orphans.erase(orphan);
+    --member->writers;
+    co_await transition_state(
+        *be, id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
+        RAWSTOR_OBJECT_SYNC_STATE_LOST
+    );
 }
 
 // A replacement connection does not erase an unclean departure of the
@@ -1377,6 +1439,20 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
         }
         ++member->writers;
         member->sessions.push_back(this);
+        auto orphan = std::find_if(
+            member->orphans.begin(), member->orphans.end(),
+            [&](const CopyState::Orphan& o) {
+                return rawstd_uuid_cmp(&o.session_id, &_session_id) == 0;
+            }
+        );
+        if (orphan != member->orphans.end()) {
+            // This session replaces a writer that departed without leave():
+            // it takes over what that one wrote and answers for it.
+            orphan->adopted->store(true);
+            member->orphans.erase(orphan);
+            --member->writers;
+            _wrote = true;
+        }
         _member = std::move(member);
     }
 
@@ -1446,6 +1522,9 @@ rawstd::Task<void> Slot::close() {
     }
     try {
         co_await _depart(be);
+        if (_orphan_member) {
+            co_await _expire_departure(be, *_id, _offset);
+        }
     } catch (const std::exception& e) {
         rawstd_error("Slot::close(): departure: %s\n", e.what());
     }

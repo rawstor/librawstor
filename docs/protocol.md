@@ -338,7 +338,9 @@ the client session, which the client keeps when it replaces a broken
 connection. If another connection with the same session id is open on the
 copy when the departed one ends without `LEAVE`, it takes over what the
 departed one wrote instead of leaving the copy `LOST` and answers for it in
-turn.
+turn. So does a connection with the same session id that opens within two
+seconds after the departed one ended; the server leaves the copy `DIRTY` for
+that time and counts the departed writer in the `writers` of `META`.
 OST shutdown stops socket reception, including incomplete requests, then
 drains admitted requests and slot departures before destroying the I/O queue,
 allowing the final consistency state to reach storage.

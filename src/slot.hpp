@@ -15,6 +15,8 @@
 #include <rawstd/uuid.h>
 
 #include <atomic>
+#include <chrono>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <type_traits>
@@ -41,6 +43,20 @@ private:
     rawstd::Task<void> _mark_dirty();
     rawstd::Task<void> _depart(std::shared_ptr<Backend> be);
     rawstd::Task<void> _lose_backend(std::shared_ptr<Backend> be);
+
+    // How long a session that wrote and ended without leave() waits for a
+    // replacement of the same writer before its copy is LOST; zero marks
+    // the copy LOST at once.
+    std::chrono::milliseconds _departure_grace{0};
+    // Ends the wait early when it returns true.
+    std::function<bool()> _departure_hurry;
+    // Set by _depart() when it leaves the copy to wait for a replacement:
+    // the copy, and the flag a replacement raises when it takes over.
+    std::shared_ptr<CopyState> _orphan_member;
+    std::shared_ptr<std::atomic<bool>> _orphan_adopted;
+    rawstd::Task<void> _expire_departure(
+        std::shared_ptr<Backend> be, const RawstdUUID& id, uint64_t offset
+    );
 
     class Admission;
     class Resync;
@@ -267,6 +283,21 @@ public:
         const RawstdUUID& session_id, const RawstdUUID& id, uint64_t offset,
         int flags, const RawstdUUID& version_id
     );
+
+    // A server holding a session for a remote writer sets this: a dropped
+    // connection is the usual way such a writer replaces a broken one, and
+    // its replacement opens only after the server has seen the old
+    // connection go. A session that wrote and ends without leave() keeps
+    // its copy DIRTY for `grace`; a session of the same writer that opens
+    // the copy in that time takes over the writes, and otherwise the copy
+    // is LOST. The wait is part of close(); `hurry` returning true ends it
+    // early, as when the server is shutting down.
+    void set_departure_grace(
+        std::chrono::milliseconds grace, std::function<bool()> hurry
+    ) {
+        _departure_grace = grace;
+        _departure_hurry = std::move(hurry);
+    }
 
     // Stops new data I/O and drains outstanding operations before departure.
     // Not called implicitly by ~Slot() (a coroutine can't run in a

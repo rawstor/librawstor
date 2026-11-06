@@ -106,7 +106,7 @@ getent passwd rawstor >/dev/null || useradd -r -g rawstor -d /var/lib/rawstor -s
 %autosetup -n %{name}-@PACKAGE_VERSION@
 
 %build
-%configure --disable-static --without-python3
+%configure --disable-static --without-python3 --disable-tests
 make %{?_smp_mflags}
 
 %install
