@@ -25,14 +25,15 @@ object stored on the network.
   binary [wire protocol](protocol.md).
 
 ```mermaid
-flowchart LR
+flowchart TD
     vm["VM (QEMU or any vDPA consumer)"] --> vhost["rawstor-vhost / rawstor-vduse"]
     cli["rawstor CLI"] --> lib["librawstor"]
     vhost --> lib
     lib -->|"mds://"| mds["rawstor-mds"]
     lib -->|"ost://"| ost1["rawstor-ost"]
-    lib -->|"file://"| fs["local directory"]
     mds -. "places chunks" .-> ost1
+    ost1 --> lib2["librawstor"]
+    lib2 -->|"file://"| fs["local directory"]
 ```
 
 ## Components
