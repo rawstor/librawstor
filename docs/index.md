@@ -213,5 +213,6 @@ mirror degrades and recovers is in [Mirroring](mirroring.md).
 - [Mirroring](mirroring.md): the N-way mirror failure model and recovery.
 - [Multi-attach](multiattach.md) and [CASPaxos](caspaxos.md): several writers
   of one mirrored object.
+- [Authors](authors.md): who develops Rawstor.
 
 Source code: [rawstor/librawstor](https://github.com/rawstor/librawstor).
