@@ -26,9 +26,11 @@ object stored on the network.
 
 ```mermaid
 flowchart TD
-    vm["VM (QEMU or any vDPA consumer)"] --> vhost["rawstor-vhost / rawstor-vduse"]
+    vm["VM (QEMU or any vhost-user consumer)"] --> vhost["rawstor-vhost"]
+    host["host (vDPA / virtio-blk device)"] --> vduse["rawstor-vduse"]
     cli["rawstor CLI"] --> lib["librawstor"]
     vhost --> lib
+    vduse --> lib
     lib -->|"mds://"| mds["rawstor-mds"]
     lib -->|"ost://"| ost1["rawstor-ost"]
     lib -->|"file://"| fs["local directory"]
