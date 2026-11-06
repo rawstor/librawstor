@@ -1,7 +1,9 @@
 #include "object.hpp"
 #include "object_env.hpp"
 #include "opts.h"
+#include "slot.hpp"
 #include "target.hpp"
+#include "tmp_dir.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -19,6 +21,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -27,6 +30,8 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include <cerrno>
 
 /*
  * A writer that replaces a broken connection is still the same writer
@@ -286,8 +291,8 @@ TEST(SessionReplaceTest, ost_session_replaced_after_server_drop_stays_dirty) {
     run(*queue, writer->close());
 }
 
-// A replacement that has taken over a dropped session and is dropped in
-// turn is itself awaited: the departure it follows must not end its wait.
+// Repeated drops of one writer each keep the copy DIRTY until the next
+// replacement.
 TEST(SessionReplaceTest, ost_replacement_dropped_in_turn_stays_dirty) {
     rawstor::tests::ObjectEnv env(8856, 8857);
     SeveringProxy proxy(8858, 8857);
@@ -320,6 +325,99 @@ TEST(SessionReplaceTest, ost_replacement_dropped_in_turn_stays_dirty) {
     EXPECT_EQ(meta.writers, 1u);
 
     run(*queue, writer->close());
+}
+
+namespace {
+
+// One step of a queue the test drives by hand: waits up to `ms` for an event.
+void step(rawio::Queue& queue, unsigned int ms) {
+    try {
+        queue.wait_timeout(ms);
+    } catch (const std::system_error& e) {
+        if (e.code().value() != ETIME) {
+            throw;
+        }
+    }
+}
+
+void pump(rawio::Queue& queue, unsigned int ms) {
+    const auto end =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    while (std::chrono::steady_clock::now() < end) {
+        step(queue, 10);
+    }
+}
+
+} // namespace
+
+// The wait for a dropped writer's replacement ends once the replacement has
+// taken over, and does nothing to the copy then: a later departure of the same
+// writer is another wait's to end. Each side runs on its own queue and the
+// first wait is not resumed until the replacement has dropped in turn.
+TEST(SessionReplaceTest, adopted_departure_wait_leaves_the_next_departure) {
+    rawstor::tests::TmpDir dir;
+    auto first_queue = rawio::Queue::create(64);
+    auto second_queue = rawio::Queue::create(64);
+    const rawstd::URI location(dir.uri());
+    const RawstdUUID id = new_id();
+    const RawstdUUID session = new_id();
+    const std::chrono::milliseconds grace(2000);
+    const std::string data = "ping";
+
+    auto first =
+        run(*first_queue, rawstor::Slot::create(*first_queue, location));
+    RawstorObjectSpec spec{};
+    spec.size = 4096;
+    spec.width = 1;
+    run(*first_queue, first->create(id, 0, spec, RAWSTOR_MEMBER_DATA));
+    first->set_departure_grace(grace, nullptr);
+    run(*first_queue, first->open(session, id, 0, 0, RawstdUUID{}));
+    run(*first_queue, first->pwrite(data.data(), data.size(), 0, false, 0));
+    rawstd::Task<void> first_close = first->close();
+    pump(*first_queue, 100);
+    ASSERT_FALSE(first_close.done());
+
+    auto second =
+        run(*second_queue, rawstor::Slot::create(*second_queue, location));
+    second->set_departure_grace(grace, nullptr);
+    run(*second_queue, second->open(session, id, 0, 0, RawstdUUID{}));
+    run(*second_queue, second->pwrite(data.data(), data.size(), 0, false, 0));
+    rawstd::Task<void> second_close = second->close();
+    pump(*second_queue, 100);
+    ASSERT_FALSE(second_close.done());
+
+    // Only now does the first wait run: its replacement is gone, too.
+    for (unsigned int i = 0; i < 100 && !first_close.done(); ++i) {
+        step(*first_queue, 10);
+    }
+    ASSERT_TRUE(first_close.done());
+    first_close.get();
+
+    auto observer =
+        run(*first_queue, rawstor::Slot::create(*first_queue, location));
+    RawstorObjectMeta meta = run(*first_queue, observer->meta(id, 0)).front();
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+    EXPECT_EQ(meta.writers, 1u);
+
+    // The second departure is still waited for, and can still be taken over.
+    auto third =
+        run(*second_queue, rawstor::Slot::create(*second_queue, location));
+    run(*second_queue, third->open(session, id, 0, 0, RawstdUUID{}));
+    for (unsigned int i = 0; i < 100 && !second_close.done(); ++i) {
+        step(*second_queue, 10);
+    }
+    ASSERT_TRUE(second_close.done());
+    second_close.get();
+    meta = run(*first_queue, observer->meta(id, 0)).front();
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
+    EXPECT_EQ(meta.writers, 1u);
+
+    run(*second_queue, third->leave());
+    run(*second_queue, third->close());
+    meta = run(*first_queue, observer->meta(id, 0)).front();
+    EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
+    EXPECT_EQ(meta.writers, 0u);
+    run(*first_queue, observer->close());
 }
 
 // A writer that does not come back is not waited for forever: its writes
