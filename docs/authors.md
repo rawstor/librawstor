@@ -1,0 +1,4 @@
+# Authors
+
+- George Melikov (mail@gmelikov.ru)
+- Vasily Stepanov (vasily.stepanov@gmail.com)
