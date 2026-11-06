@@ -2,6 +2,7 @@
 
 #include <rawio/awaitable.hpp>
 
+#include <rawstd/gcc.h>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
 #include <rawstd/pipe.hpp>
@@ -9,6 +10,8 @@
 
 #include <sys/types.h>
 #include <sys/wait.h>
+
+#include <spawn.h>
 
 #include <poll.h>
 #include <unistd.h>
@@ -20,9 +23,24 @@
 #include <thread>
 #include <utility>
 
+#ifdef RAWSTD_ON_MACOS
+#include <crt_externs.h>
+#else
+extern char** environ;
+#endif
+
 namespace rawstor {
 
 namespace {
+
+char** current_environ() {
+#ifdef RAWSTD_ON_MACOS
+    // A shared library cannot refer to environ directly there.
+    return *_NSGetEnviron();
+#else
+    return environ;
+#endif
+}
 
 std::vector<char*> to_argv(const std::vector<std::string>& argv) {
     std::vector<char*> ret;
@@ -58,6 +76,62 @@ void wait_for_child(pid_t pid) {
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
+}
+
+// Starts argv[0], looked up in PATH, with `stdout_fd` and `stderr_fd` (when
+// not -1) as its standard output and error, and returns its pid.
+//
+// The command is started with posix_spawnp(), not fork() and exec: a
+// fork() accounts for a copy of the whole address space of the process,
+// which fails with ENOMEM in a process with a large address space on a
+// host with little memory, although the copy would be replaced by the
+// command at once and never used. posix_spawnp() shares the address space
+// until the command runs.
+//
+// A command that cannot be started at all (not found, not executable)
+// fails like one that exits non-zero: EIO. ENOENT is how a caller learns
+// that an object is missing, which it must not read from a missing binary.
+pid_t spawn(
+    const std::vector<std::string>& argv, const std::vector<char*>& args,
+    int stdout_fd, int stderr_fd
+) {
+    posix_spawn_file_actions_t actions;
+    int error = posix_spawn_file_actions_init(&actions);
+    if (error != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
+    }
+    struct ActionsGuard {
+        posix_spawn_file_actions_t& actions;
+        ~ActionsGuard() { posix_spawn_file_actions_destroy(&actions); }
+    } guard{actions};
+
+    if (stdout_fd != -1) {
+        error = posix_spawn_file_actions_adddup2(
+            &actions, stdout_fd, STDOUT_FILENO
+        );
+    }
+    if (error == 0 && stderr_fd != -1) {
+        error = posix_spawn_file_actions_adddup2(
+            &actions, stderr_fd, STDERR_FILENO
+        );
+    }
+    if (error != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
+    }
+
+    pid_t pid;
+    error = posix_spawnp(
+        &pid, args[0], &actions, nullptr, args.data(), current_environ()
+    );
+    if (error == ENOENT || error == EACCES || error == ENOEXEC ||
+        error == ENOTDIR) {
+        rawstd_error("%s: %s\n", join_argv(argv).c_str(), std::strerror(error));
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    if (error != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(error);
+    }
+    return pid;
 }
 
 // Logs argv and whatever the child wrote to stderr, if anything -- called
@@ -125,34 +199,28 @@ void drain_two(int out_fd, std::string& out, int err_fd, std::string& err) {
 }
 
 // Runs argv[0] to completion, blocking the calling thread. Throws
-// std::system_error on any failure (fork() itself failing, or the child
-// exiting non-zero/being killed by a signal). Only used from
-// run_command()'s detached thread below.
+// std::system_error on any failure (the command not starting, or exiting
+// non-zero/being killed by a signal). Only used from run_command()'s
+// detached thread below.
 void run_command_sync(const std::vector<std::string>& argv) {
     std::vector<char*> args = to_argv(argv);
 
     // CLOEXEC (rawstd::Pipe's constructor sets it on both ends -- Blocking
     // is what's wanted here, unlike the wake pipes in
-    // run_command()/run_command_capture() below): fork() below happens on
-    // a detached thread, so a concurrent fork() from
-    // run_command_capture_sync()'s own detached thread could otherwise inherit
-    // this pipe's fds into an unrelated lvcreate/zfs child.
+    // run_command()/run_command_capture() below): this runs on a detached
+    // thread, so a concurrent spawn from run_command_capture_sync()'s own
+    // detached thread could otherwise inherit this pipe's fds into an
+    // unrelated lvcreate/zfs child.
     rawstd::Pipe err_pipe(rawstd::Pipe::Mode::Blocking);
     int read_fd = err_pipe.read_fd();
     int write_fd = err_pipe.release_write();
 
-    pid_t pid = fork();
-    if (pid < 0) {
-        int error = errno;
+    pid_t pid;
+    try {
+        pid = spawn(argv, args, -1, write_fd);
+    } catch (...) {
         close(write_fd);
-        errno = error;
-        RAWSTD_THROW_ERRNO();
-    }
-    if (pid == 0) {
-        dup2(write_fd, STDERR_FILENO);
-        close(write_fd);
-        execvp(args[0], args.data());
-        _exit(127);
+        throw;
     }
     close(write_fd);
 
@@ -176,10 +244,10 @@ std::string run_command_capture_sync(const std::vector<std::string>& argv) {
 
     // CLOEXEC (rawstd::Pipe's constructor sets it on both ends -- Blocking
     // is what's wanted here, unlike the wake pipes in
-    // run_command()/run_command_capture() below): fork() below happens on
-    // a detached thread, so a concurrent fork() from run_command_sync()'s
-    // own detached thread could otherwise inherit these pipes' fds into an
-    // unrelated lvcreate/zfs child.
+    // run_command()/run_command_capture() below): this runs on a detached
+    // thread, so a concurrent spawn from run_command_sync()'s own detached
+    // thread could otherwise inherit these pipes' fds into an unrelated
+    // lvcreate/zfs child.
     rawstd::Pipe out_pipe(rawstd::Pipe::Mode::Blocking);
     rawstd::Pipe err_pipe(rawstd::Pipe::Mode::Blocking);
     int out_read_fd = out_pipe.read_fd();
@@ -187,21 +255,13 @@ std::string run_command_capture_sync(const std::vector<std::string>& argv) {
     int err_read_fd = err_pipe.read_fd();
     int err_write_fd = err_pipe.release_write();
 
-    pid_t pid = fork();
-    if (pid < 0) {
-        int error = errno;
+    pid_t pid;
+    try {
+        pid = spawn(argv, args, out_write_fd, err_write_fd);
+    } catch (...) {
         close(out_write_fd);
         close(err_write_fd);
-        errno = error;
-        RAWSTD_THROW_ERRNO();
-    }
-    if (pid == 0) {
-        dup2(out_write_fd, STDOUT_FILENO);
-        dup2(err_write_fd, STDERR_FILENO);
-        close(out_write_fd);
-        close(err_write_fd);
-        execvp(args[0], args.data());
-        _exit(127);
+        throw;
     }
     close(out_write_fd);
     close(err_write_fd);
