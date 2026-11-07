@@ -140,10 +140,6 @@ protected:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     );
 
-    rawstd::Task<std::vector<rawstd::URI>> _wire_resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
-    );
-
     rawstd::Task<void> _wire_leave();
 
     rawstd::Task<bool> _wire_sync_prepare(

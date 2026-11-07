@@ -108,13 +108,6 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
     ) override;
 
-    // Trivial (Backend::resolve_locations()'s own doc comment): this is a
-    // plain, single-copy backend, already the one real member of whatever
-    // offset it's asked about.
-    rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
-    ) override;
-
     rawstd::Task<void> _write_meta(
         const RawstdUUID& id, uint64_t offset,
         RawstorObjectSyncStateValue state, const RawstorObjectConfig& config,

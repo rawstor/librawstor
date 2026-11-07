@@ -199,10 +199,11 @@ public:
     // real chunk offset, it resolves that chunk's own real OST members
     // (via its own WireMap) and returns every one of their real bare
     // locations, in the same order meta() above reports their state in --
-    // for `version_id`'s own members when it's non-nil.
+    // for `version_id`'s own members when it's non-nil. The default is the
+    // single-copy answer, location() itself; only mds::Backend overrides it.
     virtual rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
-    ) = 0;
+    );
 
     // The multi-chunk target string (Target's own doc comment) of the
     // object `id` -- of its `version_id` version when that is not nil --

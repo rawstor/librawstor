@@ -73,6 +73,11 @@ Backend::create(rawio::Queue& queue, const rawstd::URI& location) {
 }
 
 rawstd::Task<std::vector<rawstd::URI>>
+Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
+    co_return std::vector<rawstd::URI>{location()};
+}
+
+rawstd::Task<std::vector<rawstd::URI>>
 Backend::resolve_targets(const RawstdUUID&, const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }

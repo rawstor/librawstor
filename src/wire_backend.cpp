@@ -1001,12 +1001,6 @@ Backend::_wire_list_versions(const RawstdUUID& id, uint64_t offset) {
     co_return ret;
 }
 
-rawstd::Task<std::vector<rawstd::URI>> Backend::_wire_resolve_locations(
-    const RawstdUUID&, uint64_t, const RawstdUUID&
-) {
-    co_return std::vector<rawstd::URI>{location()};
-}
-
 rawstd::Task<bool> Backend::_sync_request(
     const RawstorFrameSyncPropose& request, const char* op_name,
     RawstorObjectMeta& meta

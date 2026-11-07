@@ -94,12 +94,6 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     return _wire_meta(id, offset, version_id);
 }
 
-rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
-) {
-    return _wire_resolve_locations(id, offset, version_id);
-}
-
 rawstd::Task<void> Backend::leave() {
     return _wire_leave();
 }
