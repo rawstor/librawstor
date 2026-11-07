@@ -159,7 +159,7 @@ rawstd::URI chunk_slot_target(
 }
 
 // Every real member's own bare location of the chunk at `index` -- for
-// Backend::meta()/resolve_locations() below, unlike chunk_targets() below
+// Backend::meta() below, unlike chunk_targets() below
 // (identity-bearing target URIs, for the client-facing multi-chunk
 // Target build_target_uris() builds).
 std::vector<rawstd::URI> chunk_locations(const WireMap& map, uint64_t index) {
@@ -171,11 +171,10 @@ std::vector<rawstd::URI> chunk_locations(const WireMap& map, uint64_t index) {
     return ret;
 }
 
-// `offset` resolved to its own real chunk index -- shared by meta()/
-// resolve_locations() below. Not landing on a real chunk boundary (including a
-// WireMap whose own chunk_size is somehow 0) is -ENOENT, same as a plain
-// target's own chunk_uris_at_offset() (target.cpp) finding no chunk
-// there.
+// `offset` resolved to its own real chunk index, for meta() below. Not landing
+// on a real chunk boundary (including a WireMap whose own chunk_size is somehow
+// 0) is -ENOENT, same as a plain target's own chunk_uris_at_offset()
+// (target.cpp) finding no chunk there.
 uint64_t chunk_index_at(const WireMap& map, uint64_t offset) {
     if (map.chunk_size == 0 || offset % map.chunk_size != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
@@ -848,14 +847,6 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
 rawstd::Task<std::vector<RawstdUUID>>
 Backend::list_versions(const RawstdUUID& id, uint64_t) {
     co_return co_await _obj_list_versions(id);
-}
-
-rawstd::Task<std::vector<rawstd::URI>> Backend::resolve_locations(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
-) {
-    WireMap map = co_await _resolve(id, version_id);
-    uint64_t index = chunk_index_at(map, offset);
-    co_return chunk_locations(map, index);
 }
 
 rawstd::Task<bool> Backend::sync_prepare(

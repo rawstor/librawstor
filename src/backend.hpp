@@ -185,26 +185,6 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) = 0;
 
-    // Every real member's own bare location of the chunk at `offset` --
-    // for addressing one specific member directly (rawstor resolve's own
-    // --winner),
-    // without needing a target string that already names it (unlike a
-    // plain target's own flat URI list, an mds:// target's real members
-    // aren't nameable that way at all). Every backend but mds::Backend
-    // represents exactly one physical copy of its own -- this location()
-    // itself, unconditionally, with no I/O -- and this Backend/chunk was
-    // already asked about via the same `offset` given here, so there's
-    // nothing more to resolve. mds::Backend is the one case where a
-    // single Backend instance stands for a whole many-chunk object: at a
-    // real chunk offset, it resolves that chunk's own real OST members
-    // (via its own WireMap) and returns every one of their real bare
-    // locations, in the same order meta() above reports their state in --
-    // for `version_id`'s own members when it's non-nil. The default is the
-    // single-copy answer, location() itself; only mds::Backend overrides it.
-    virtual rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
-    );
-
     // The multi-chunk target string (Target's own doc comment) of the
     // object `id` -- of its `version_id` version when that is not nil --
     // whose layout this backend keeps: every chunk's member URIs, so the

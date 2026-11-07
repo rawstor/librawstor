@@ -232,10 +232,6 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     );
 
-    rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
-    );
-
     rawstd::Task<std::vector<rawstd::URI>>
     resolve_targets(const RawstdUUID& id, const RawstdUUID& version_id = {});
 

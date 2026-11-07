@@ -193,15 +193,6 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) override;
 
-    // Real: this chunk's own real members' own bare locations, off the
-    // same WireMap resolution meta() above uses (Backend::
-    // resolve_locations()'s own doc comment) -- addresses one specific
-    // real member directly (rawstor resolve's own --winner), which no
-    // target string naming this mds:// object could ever do on its own.
-    rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
-    ) override;
-
     // MDS holds no copy of its own: it votes in the register as a witness
     // only, and a chunk that is not one fails with ENOENT.
 

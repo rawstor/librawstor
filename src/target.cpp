@@ -452,29 +452,6 @@ rawstd::Task<std::vector<RawstdUUID>> versions_one(
     co_return ret;
 }
 
-// One location's worth of resolve_member_locations() below -- same
-// one-off shape as meta_one() above, for Slot::resolve_locations()
-// instead of Slot::meta().
-rawstd::Task<std::vector<rawstd::URI>> member_locations_one(
-    rawio::Queue& queue, rawstd::URI location, RawstdUUID id, uint64_t offset,
-    RawstdUUID version_id
-) {
-    std::unique_ptr<rawstor::Slot> slot =
-        co_await rawstor::Slot::create(queue, location);
-    std::vector<rawstd::URI> ret;
-    std::exception_ptr error;
-    try {
-        ret = co_await slot->resolve_locations(id, offset, version_id);
-    } catch (...) {
-        error = std::current_exception();
-    }
-    co_await slot->close();
-    if (error) {
-        std::rethrow_exception(error);
-    }
-    co_return ret;
-}
-
 // width is this chunk's own per-copy count: the chunk's own URI count
 // when it has more than one (an ordinary mirror set can only ever be
 // that -- no single URI in it is self-aware enough to say otherwise), or
@@ -596,33 +573,6 @@ rawstd::Task<std::vector<uint64_t>> resolve_chunks(
     for (const auto& location : locations) {
         try {
             co_return co_await chunks_one(queue, location, id, version_id);
-        } catch (const std::system_error& e) {
-            rawstd_warning("Mirror member unreachable: %s\n", e.what());
-            if (first_error == 0) {
-                first_error = e.code().value();
-            }
-        }
-    }
-
-    RAWSTD_THROW_SYSTEM_ERROR(first_error ? first_error : ENOTCONN);
-}
-
-// Every real member's own bare location of the chunk at `offset` -- same
-// one-off shape and first-reachable-wins fail-over as resolve_chunks()
-// above, for Target::sync_prepare()'s own request
-// (Backend::resolve_locations()'s own doc comment): every location of
-// one chunk answers the same either way, since this is a property of the
-// chunk as a whole, not of one particular copy.
-rawstd::Task<std::vector<rawstd::URI>> resolve_member_locations(
-    rawio::Queue& queue, std::vector<rawstd::URI> locations, RawstdUUID id,
-    uint64_t offset, RawstdUUID version_id
-) {
-    int first_error = 0;
-    for (const auto& location : locations) {
-        try {
-            co_return co_await member_locations_one(
-                queue, location, id, offset, version_id
-            );
         } catch (const std::system_error& e) {
             rawstd_warning("Mirror member unreachable: %s\n", e.what());
             if (first_error == 0) {
@@ -1628,26 +1578,16 @@ Target::_physical_chunks(rawio::Queue& queue) const {
     if (!is_opaque(_uris)) {
         co_return co_await chunks(queue);
     }
-    auto offsets = co_await _offsets(queue);
-    std::vector<Target> targets;
-    RawstdUUIDString id, version;
-    rawstd_uuid_to_string(&object_id(), &id);
-    rawstd_uuid_to_string(&_version_id, &version);
-    for (uint64_t offset : offsets) {
-        auto members = co_await resolve_member_locations(
-            queue, locations_for(_uris, offset, true), object_id(), offset,
-            _version_id
-        );
-        std::ostringstream path;
-        path << id << "/" << std::hex << offset;
-        if (!rawstd_uuid_is_nil(&_version_id)) {
-            path << "/" << version;
+    Target expanded = co_await _expand(queue);
+    std::vector<Target> targets = co_await expanded.chunks(queue);
+    if (is_logical_chunk(_uris)) {
+        uint64_t offset = extract_offset(_uris.front());
+        std::erase_if(targets, [&](const Target& t) {
+            return extract_offset(t._uris.front()) != offset;
+        });
+        if (targets.empty()) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
         }
-        std::vector<rawstd::URI> uris;
-        for (const auto& member : members) {
-            uris.emplace_back(member, path.str());
-        }
-        targets.emplace_back(uris);
     }
     co_return targets;
 }
@@ -1726,10 +1666,9 @@ Target::versions(rawio::Queue& queue) const {
 // -- never "every chunk"; a caller wanting that (e.g. rawstor resolve
 // with no explicit --offset) loops over every chunk's own offset itself.
 // Writes to exactly one real member: `member_index` into that chunk's
-// own real member list -- locations_for()'s own opaque branch (an
-// mds:// target) resolves it via resolve_member_locations() (a real
-// WireMap round trip, Backend::resolve_locations()'s own doc comment); a
-// non-opaque target's own member list is already fully described by
+// own real member list -- an opaque (mds://) target resolves it by
+// expanding to its real members first (_expand(), one WireMap round
+// trip); a non-opaque target's own member list is already fully described by
 // chunk_uris_at_offset() itself, no backend needed. Either way, this is
 // the same list rawstor_target_meta()'s own per-chunk result reports
 // state in, so `member_index` (rawstor resolve's own --winner) means the
@@ -1744,14 +1683,13 @@ rawstd::Task<rawstd::URI> Target::_member_location(
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
-    bool opaque = is_opaque(_uris);
-    RawstdUUID id = uuid_from_target(_uris.front());
-    std::vector<rawstd::URI> members =
-        opaque ? co_await resolve_member_locations(
-                     queue, locations_for(_uris, offset, true), id, offset,
-                     _version_id
-                 )
-               : locations_for(_uris, offset, false);
+    std::vector<rawstd::URI> members;
+    if (is_opaque(_uris)) {
+        Target expanded = co_await _expand(queue);
+        members = locations_for(expanded._uris, offset, false);
+    } else {
+        members = locations_for(_uris, offset, false);
+    }
 
     if (member_index >= members.size()) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);

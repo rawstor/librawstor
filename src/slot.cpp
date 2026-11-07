@@ -1490,7 +1490,7 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     // storage the same way, ost/src/client.cpp's _set_object()), so
     // this is the one place that needs to know. A read-only metadata
     // lookup (meta()/spec()/chunks(), target.cpp) never calls open() at
-    // all -- it talks to meta()/chunks()/resolve_locations() directly on
+    // all -- it talks to meta()/chunks()/resolve_targets() directly on
     // a Slot that was never open()ed -- so a witness stays fully
     // queryable; only a real data open is refused.
     if (answer->member_role == RAWSTOR_MEMBER_WITNESS) {
@@ -1827,27 +1827,6 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Slot::meta(
                 }
             }
         }
-        _finish(t_call);
-        co_return result;
-    } catch (...) {
-        _finish(t_call);
-        throw;
-    }
-}
-
-rawstd::Task<std::vector<rawstd::URI>> Slot::resolve_locations(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
-) {
-    const char* func_name = __FUNCTION__;
-    rawstd::TraceEvent trace_event =
-        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
-    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
-
-    try {
-        std::vector<rawstd::URI> result = co_await _with_retry(
-            func_name, trace_event, &Backend::resolve_locations, id, offset,
-            version_id
-        );
         _finish(t_call);
         co_return result;
     } catch (...) {
