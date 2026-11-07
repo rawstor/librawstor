@@ -643,6 +643,28 @@ remove_many(rawio::Queue& queue, const std::vector<rawstd::URI>& targets) {
     });
 }
 
+// One location's worth of Target::_expand() -- same one-off shape as
+// meta_one() above, for Slot::resolve_targets().
+rawstd::Task<std::vector<rawstd::URI>> targets_one(
+    rawio::Queue& queue, rawstd::URI location, RawstdUUID id,
+    RawstdUUID version_id
+) {
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, location);
+    std::vector<rawstd::URI> ret;
+    std::exception_ptr error;
+    try {
+        ret = co_await slot->resolve_targets(id, version_id);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    co_return ret;
+}
+
 // C ABI adapter for rawstor_target_open(): mirrors the rest of the
 // target/location group's ssize_t result/data callback shape (negative on
 // error, zero on success -- there's nothing else to report here, since
@@ -1630,6 +1652,13 @@ Target::_physical_chunks(rawio::Queue& queue) const {
     co_return targets;
 }
 
+rawstd::Task<Target> Target::_expand(rawio::Queue& queue) const {
+    std::vector<rawstd::URI> members = co_await targets_one(
+        queue, strip_path(_uris.front()), object_id(), _version_id
+    );
+    co_return Target(members);
+}
+
 rawstd::Task<std::vector<Target>> Target::slots(rawio::Queue& queue) const {
     auto chunks = co_await this->_physical_chunks(queue);
     std::vector<Target> slots;
@@ -1853,6 +1882,9 @@ Target::open(rawio::Queue& queue, int flags) const {
         auto targets = co_await _physical_chunks(queue);
         co_return co_await targets.front().open(queue, flags);
     }
+    if (is_opaque(_uris)) {
+        co_return co_await (co_await _expand(queue)).open(queue, flags);
+    }
     if ((flags & ~(RAWSTOR_READONLY | RAWSTOR_FORCE)) != 0) {
         rawstd_error("Unknown open flags: %x\n", flags);
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -1883,28 +1915,17 @@ Target::open(rawio::Queue& queue, int flags) const {
         chunk_locations.push_back(std::move(locations));
     }
 
-    // Fetched before any Chunk is opened, so a failure here has nothing
-    // to close.
-    uint64_t opaque_size = 0;
-    if (is_opaque(_uris)) {
-        RawstorObjectSpec whole = co_await spec(queue);
-        opaque_size = whole.size;
-    }
-
     RawstdUUID last_id = uuid_from_target(chunks.back().front());
     uint64_t last_offset = extract_offset(chunks.back().front());
     RawstdUUID last_version_id = extract_version_id(chunks.back().front());
     std::unique_ptr<Chunk> last = co_await Chunk::create(
         queue, chunk_locations.back(), last_id, last_offset, flags,
-        last_version_id,
-        is_opaque(_uris) ? std::optional<uint64_t>(opaque_size) : std::nullopt
+        last_version_id
     );
 
     uint64_t chunk_size = last->spec().chunk_size;
     uint64_t size = last->spec().size;
-    if (is_opaque(_uris)) {
-        size = opaque_size;
-    } else if (chunks.size() > 1) {
+    if (chunks.size() > 1) {
         size = chunk_size * chunks.size();
     }
 

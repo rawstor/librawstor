@@ -1221,7 +1221,7 @@ rawstd::Task<void> recreate_missing(
 rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     rawio::Queue& queue, const std::vector<rawstd::URI>& locations,
     const RawstdUUID& id, uint64_t offset, int flags,
-    const RawstdUUID& version_id, std::optional<uint64_t> logical_size
+    const RawstdUUID& version_id
 ) {
     if ((flags & ~(RAWSTOR_READONLY | RAWSTOR_FORCE)) != 0 ||
         (!rawstd_uuid_is_nil(&version_id) && (flags & RAWSTOR_READONLY) == 0)) {
@@ -1490,12 +1490,6 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
             }
         }
         RAWSTD_THROW_SYSTEM_ERROR(all_missing ? ENOENT : ENOTCONN);
-    }
-
-    // An opaque backend serves the entire logical resource through this
-    // Chunk. Its member metadata still describes physical copies.
-    if (logical_size) {
-        spec.size = *logical_size;
     }
 
     // Everything Chunk needs to exist is gathered -- deciding whether
@@ -4258,12 +4252,6 @@ Chunk::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
 }
 
 uint64_t Chunk::_epoch() const {
-    // An MDS slot routes a logical object, whose physical chunks each own
-    // a separate configuration register. The nested physical Chunk stamps
-    // its epoch; the logical wrapper has no member record to fence on.
-    if (_members.size() == 1 && _members.front().location.scheme() == "mds") {
-        return 0;
-    }
     return _control->epoch();
 }
 

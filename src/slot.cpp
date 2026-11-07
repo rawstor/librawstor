@@ -1856,6 +1856,25 @@ rawstd::Task<std::vector<rawstd::URI>> Slot::resolve_locations(
     }
 }
 
+rawstd::Task<std::vector<rawstd::URI>>
+Slot::resolve_targets(const RawstdUUID& id, const RawstdUUID& version_id) {
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        std::vector<rawstd::URI> result = co_await _with_retry(
+            func_name, trace_event, &Backend::resolve_targets, id, version_id
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
 rawstd::Task<bool> Slot::_sync_prepare(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
     RawstorObjectMeta& meta

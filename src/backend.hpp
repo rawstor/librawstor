@@ -204,6 +204,15 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) = 0;
 
+    // The multi-chunk target string (Target's own doc comment) of the
+    // object `id` -- of its `version_id` version when that is not nil --
+    // whose layout this backend keeps: every chunk's member URIs, so the
+    // caller can open the object's members directly instead of going
+    // through this backend. Only a placement authority (mds::Backend) has
+    // one to give; default: ENOTSUP.
+    virtual rawstd::Task<std::vector<rawstd::URI>>
+    resolve_targets(const RawstdUUID& id, const RawstdUUID& version_id = {});
+
     // The two requests of the chunk's configuration register
     // (docs/multiattach.md, "The register"), applied to this copy's record
     // with the rawstd::caspaxos acceptor rules and persisted before the

@@ -471,8 +471,7 @@ rawstd::Task<std::vector<WireVersionMember>> Backend::_obj_remove_version(
 }
 
 Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
-    wire::Backend(p, queue, location),
-    _left(false) {
+    wire::Backend(p, queue, location) {
 }
 
 rawstd::Task<void> Backend::_connect() {
@@ -876,124 +875,75 @@ rawstd::Task<bool> Backend::sync_accept(
     );
 }
 
-rawstd::Task<void> Backend::_set_object(
-    const RawstdUUID& id, const RawstdUUID& version_id, int flags
-) {
+rawstd::Task<void>
+Backend::set_object(const RawstdUUID&, const RawstdUUID&, uint64_t, int) {
+    co_return;
+}
+
+rawstd::Task<std::vector<rawstd::URI>>
+Backend::resolve_targets(const RawstdUUID& id, const RawstdUUID& version_id) {
     WireMap map = co_await _resolve(id, version_id);
-    std::vector<rawstd::URI> target_uris = build_target_uris(map, version_id);
-
-    // Replacing the object ends its session without a clean departure.
-    if (_object) {
-        co_await _object->close(false);
-        _object.reset();
-    }
-    _left = false;
-
-    // `flags` (RAWSTOR_READONLY or 0) rides straight down into the nested
-    // per-chunk open, where a version's chunks require READONLY.
-    _object = co_await Target(target_uris).open(_queue, flags);
-}
-
-rawstd::Task<void> Backend::set_object(
-    const RawstdUUID&, const RawstdUUID& id, uint64_t, int flags
-) {
-    co_await _set_object(id, RawstdUUID{}, flags);
-}
-
-rawstd::Task<void> Backend::set_version(
-    const RawstdUUID&, const RawstdUUID& object_id, uint64_t,
-    const RawstdUUID& version_id
-) {
-    // A version is only ever opened read-only (Target::open()'s own check).
-    co_await _set_object(object_id, version_id, RAWSTOR_READONLY);
-}
-
-Object& Backend::_opened() {
-    if (!_object) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
-    }
-    return *_object;
+    co_return build_target_uris(map, version_id);
 }
 
 rawstd::Task<void> Backend::close() {
-    if (_object) {
-        co_await _object->close(_left);
-        _object.reset();
-    }
     co_await _wire_close();
 }
 
 rawstd::Task<void> Backend::leave() {
-    _left = true;
     co_return;
 }
 
-rawstd::Task<size_t> Backend::pread(void* buf, size_t size, uint64_t offset) {
-    co_return co_await _opened().pread(buf, size, offset);
+// The MDS keeps no object data: it is a placement authority, and an
+// object's I/O goes to its members (resolve_targets()).
+rawstd::Task<size_t> Backend::pread(void*, size_t, uint64_t) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    co_return 0;
+}
+
+rawstd::Task<size_t> Backend::preadv(iovec*, unsigned int, size_t, uint64_t) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    co_return 0;
 }
 
 rawstd::Task<size_t>
-Backend::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
-    co_return co_await _opened().preadv(iov, niov, size, offset);
-}
-
-rawstd::Task<size_t> Backend::pwrite(
-    const void* buf, size_t size, uint64_t offset, bool sync, uint64_t epoch
-) {
-    if (epoch != 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
-    }
-
-    co_return co_await _opened().pwrite(buf, size, offset, sync);
+Backend::pwrite(const void*, size_t, uint64_t, bool, uint64_t) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    co_return 0;
 }
 
 rawstd::Task<size_t>
 Backend::resync_pwrite(const void*, size_t, uint64_t, bool, uint64_t) {
-    RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     co_return 0;
 }
 
-rawstd::Task<size_t> Backend::pwritev(
-    const iovec* iov, unsigned int niov, size_t size, uint64_t offset,
-    bool sync, uint64_t epoch
-) {
-    if (epoch != 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
-    }
-    co_return co_await _opened().pwritev(iov, niov, size, offset, sync);
+rawstd::Task<size_t>
+Backend::pwritev(const iovec*, unsigned int, size_t, uint64_t, bool, uint64_t) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    co_return 0;
+}
+
+rawstd::Task<size_t> Backend::discard(size_t, uint64_t, uint64_t) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    co_return 0;
 }
 
 rawstd::Task<size_t>
-Backend::discard(size_t size, uint64_t offset, uint64_t epoch) {
-    if (epoch != 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
-    }
-
-    co_return co_await _opened().discard(size, offset);
-}
-
-rawstd::Task<size_t> Backend::write_zeroes(
-    size_t size, uint64_t offset, bool unmap, bool sync, uint64_t epoch
-) {
-    if (epoch != 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
-    }
-
-    co_return co_await _opened().write_zeroes(size, offset, unmap, sync);
+Backend::write_zeroes(size_t, uint64_t, bool, bool, uint64_t) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    co_return 0;
 }
 
 rawstd::Task<size_t>
 Backend::resync_write_zeroes(size_t, uint64_t, bool, bool, uint64_t) {
-    RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     co_return 0;
 }
 
-rawstd::Task<void> Backend::flush(uint64_t epoch) {
-    if (epoch != 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
-    }
-
-    co_await _opened().flush();
+rawstd::Task<void> Backend::flush(uint64_t) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    co_return;
 }
 
 } // namespace mds

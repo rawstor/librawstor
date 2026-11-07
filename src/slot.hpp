@@ -236,6 +236,9 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     );
 
+    rawstd::Task<std::vector<rawstd::URI>>
+    resolve_targets(const RawstdUUID& id, const RawstdUUID& version_id = {});
+
     rawstd::Task<bool> sync_prepare(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, RawstorObjectMeta& meta

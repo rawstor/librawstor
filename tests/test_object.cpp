@@ -357,10 +357,10 @@ TEST(ObjectListTest, lists_mds_objects) {
     }
 }
 
-// An mds:// Backend left with no nested object -- closed, or its re-open
-// failed -- reports every data-path call as a retryable ENOTCONN, the way
-// a closed socket does, so Slot's retry reconnects instead of crashing.
-TEST(ObjectCloseTest, mds_backend_io_after_close_is_enotconn) {
+// An mds:// Backend is a control-plane client only: every data-path call
+// is a permanent ENOTSUP, which Slot never retries -- an object's I/O goes
+// to the members its target string expands to.
+TEST(ObjectCloseTest, mds_backend_has_no_data_path) {
     rawstor::tests::ObjectEnv env(8806, 8807);
     const char* uuid = "018f4e2a-3000-7000-8000-000000000060";
     std::string target = object_target(env, uuid);
@@ -376,21 +376,21 @@ TEST(ObjectCloseTest, mds_backend_io_after_close_is_enotconn) {
         run(*queue,
             rawstor::Backend::create(*queue, rawstd::URI(env.location())));
     run(*queue, backend->set_object({}, id, 0, 0));
-    run(*queue, backend->close());
 
-    auto expect_enotconn = [&](auto task) {
+    auto expect_enotsup = [&](auto task) {
         try {
             run(*queue, std::move(task));
             ADD_FAILURE() << "no error";
         } catch (const std::system_error& e) {
-            EXPECT_EQ(e.code().value(), ENOTCONN);
+            EXPECT_EQ(e.code().value(), ENOTSUP);
         }
     };
     char buf[4096] = {};
-    expect_enotconn(backend->flush(0));
-    expect_enotconn(backend->pread(buf, sizeof(buf), 0));
-    expect_enotconn(backend->pwrite(buf, sizeof(buf), 0, false, 0));
+    expect_enotsup(backend->flush(0));
+    expect_enotsup(backend->pread(buf, sizeof(buf), 0));
+    expect_enotsup(backend->pwrite(buf, sizeof(buf), 0, false, 0));
 
+    run(*queue, backend->close());
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
