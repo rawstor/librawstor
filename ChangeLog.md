@@ -68,6 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rawstor-vhost` and `rawstor-vduse` no longer crash (use after free) when a mirror member comes back while writes to it are still in flight: the broken connection it replaces is now closed after those writes finish instead of being freed under them.
+- A mirror member that reconnects after its OST restarted is no longer left `LOST` and resynced a second time: the new connection takes over the session of the one it replaces.
 - A mirrored object's writes no longer hang forever when starting a resync of a member fails unexpectedly: the chunk's transition lock was left held, and every write that got `ESTALE` waited for it.
 - `rawstor-ost` on ZFS and LVM no longer fails with `ENOMEM` on a host with little memory: the `zfs` and `lvm` commands are started with `posix_spawn()` instead of `fork()`, which could not account for a copy of the server's address space.
 - A copy no longer goes `LOST` (and is no longer resynced) when `rawstor-ost` drops a writer's connection first, as after a short write: it waits two seconds for the writer's replacement connection.

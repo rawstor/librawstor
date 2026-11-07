@@ -196,6 +196,11 @@ public:
     // state through checks that state again once this has changed.
     uint64_t reconnects() const noexcept { return _reconnects; }
 
+    // The session this Slot serves (nil before open()): a Slot that
+    // replaces this one opens under the same id, so the copy takes it
+    // for the same writer and does not go LOST when this one ends.
+    const RawstdUUID& session_id() const noexcept { return _session_id; }
+
     // Metadata operations, routed through the same backend and
     // retry-with-invalidate-backend machinery (_with_retry()) as the
     // data-path methods below -- same shape as the matching Backend
