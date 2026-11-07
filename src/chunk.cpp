@@ -1122,10 +1122,12 @@ inspect_member(Slot& slot, const RawstdUUID& id, uint64_t offset) {
 
 rawstd::Task<RawstorObjectMeta> open_member(
     Slot& slot, const RawstdUUID& id, uint64_t offset, int flags,
-    const RawstdUUID& version_id, bool data_io
+    const RawstdUUID& version_id, bool data_io,
+    const RawstdUUID& session_id = {}
 ) {
-    auto meta = data_io ? co_await slot.open({}, id, offset, flags, version_id)
-                        : co_await inspect_member(slot, id, offset);
+    auto meta =
+        data_io ? co_await slot.open(session_id, id, offset, flags, version_id)
+                : co_await inspect_member(slot, id, offset);
     if (meta.member_role !=
         (data_io ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS)) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
@@ -2898,12 +2900,15 @@ void Chunk::_resync_attach_locked(uint64_t generation) {
 rawstd::Task<void> Chunk::_resync_attach(uint64_t generation, size_t idx) {
     Member& member = _members[idx];
     if (!member.slot || !member.reachable) {
+        // The replacement serves the session of the Slot it replaces.
+        const RawstdUUID session =
+            member.slot ? member.slot->session_id() : RawstdUUID{};
         std::unique_ptr<Slot> slot;
         int error = 0;
         try {
             slot = co_await Slot::create(_queue, member.location);
             member.meta = co_await open_member(
-                *slot, _id, _offset, 0, RawstdUUID{}, !member.witness
+                *slot, _id, _offset, 0, RawstdUUID{}, !member.witness, session
             );
             if (!same_spec(member.meta.spec, _spec)) {
                 RAWSTD_THROW_SYSTEM_ERROR(ENOTRECOVERABLE);
@@ -2921,7 +2926,7 @@ rawstd::Task<void> Chunk::_resync_attach(uint64_t generation, size_t idx) {
             _resync_abort(generation, "a writer cannot reach the member");
             co_return;
         }
-        member.slot = std::move(slot);
+        _install_slot(member, std::move(slot));
         member.reconnects_seen = 0;
         member.read_trusted = true;
         member.reachable = true;
@@ -3912,6 +3917,26 @@ rawstd::DetachedTask Chunk::_probe_watch(std::weak_ptr<void> alive) {
     }
 }
 
+void Chunk::_install_slot(Member& member, std::unique_ptr<Slot> slot) {
+    std::unique_ptr<Slot> retired = std::move(member.slot);
+    member.slot = std::move(slot);
+    if (retired) {
+        _retire_slot(std::move(retired));
+    }
+}
+
+rawstd::DetachedTask Chunk::_retire_slot(std::unique_ptr<Slot> slot) {
+    BackgroundGuard guard(*this);
+    // Declared after the guard so it is destroyed before it: the Slot is
+    // gone by the time close() may free the Chunk.
+    std::unique_ptr<Slot> retired = std::move(slot);
+    try {
+        co_await retired->close();
+    } catch (const std::exception& e) {
+        rawstd_warning("Retired Slot::close(): %s\n", e.what());
+    }
+}
+
 rawstd::DetachedTask Chunk::_probe_tick() {
     std::weak_ptr<void> alive = _alive;
 
@@ -3948,6 +3973,9 @@ rawstd::DetachedTask Chunk::_probe_tick() {
     uint64_t offset = _offset;
     const bool data_io = !_members[idx].witness;
     const RawstorObjectSpec spec = _spec;
+    // The replacement serves the session of the Slot it replaces.
+    const RawstdUUID session =
+        _members[idx].slot ? _members[idx].slot->session_id() : RawstdUUID{};
 
     std::unique_ptr<Slot> slot;
     int error = 0;
@@ -3962,7 +3990,7 @@ rawstd::DetachedTask Chunk::_probe_tick() {
         bool missing = false;
         try {
             meta = co_await open_member(
-                *slot, id, offset, 0, RawstdUUID{}, data_io
+                *slot, id, offset, 0, RawstdUUID{}, data_io, session
             );
         } catch (const std::system_error& e) {
             if (e.code().value() != ENOENT) {
@@ -3982,7 +4010,7 @@ rawstd::DetachedTask Chunk::_probe_tick() {
                 data_io ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS
             );
             meta = co_await open_member(
-                *slot, id, offset, 0, RawstdUUID{}, data_io
+                *slot, id, offset, 0, RawstdUUID{}, data_io, session
             );
         }
         if (!same_spec(meta.spec, spec)) {
@@ -4010,7 +4038,7 @@ rawstd::DetachedTask Chunk::_probe_tick() {
         co_return;
     }
 
-    _members[idx].slot = std::move(slot);
+    _install_slot(_members[idx], std::move(slot));
     _members[idx].reconnects_seen = 0;
     _members[idx].read_trusted = true;
     _members[idx].reachable = true;

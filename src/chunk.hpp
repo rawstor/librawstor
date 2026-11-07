@@ -427,6 +427,13 @@ private:
     rawstd::DetachedTask _probe_watch(std::weak_ptr<void> alive);
     rawstd::DetachedTask _probe_tick();
 
+    // Gives `member` a freshly connected Slot. The one it had (an
+    // unreachable member keeps its broken one) may still carry operations
+    // another coroutine issued on it, so it is not destroyed here but
+    // closed by _retire_slot(), which lets those finish first.
+    void _install_slot(Member& member, std::unique_ptr<Slot> slot);
+    rawstd::DetachedTask _retire_slot(std::unique_ptr<Slot> slot);
+
     // Read failover across in-sync members, in target-list order; a payload
     // error (EPROTO) triggers a detached read-repair of the region
     // through the dirty gate once another member served the data, a

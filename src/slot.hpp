@@ -125,10 +125,11 @@ private:
     void _finish(rawstor::telemetry::TimePoint t_call);
 
     // Replaces `be` with a freshly connected backend (set_object()-ed
-    // again if open() has run), retrying up to rawstor_opts_io_attempts()
-    // times, then close()s `be`. A no-op if `be` is no longer _backend
-    // (already replaced, or the Slot closed) or another _reconnect() is
-    // already in flight.
+    // again if open() has run) in one attempt, then close()s `be`; a
+    // failure propagates, and the caller's own retry loop (_with_retry(),
+    // open()) decides whether and when to try again. A no-op if `be` is no
+    // longer _backend (already replaced, or the Slot closed) or another
+    // _reconnect() is already in flight.
     rawstd::Task<void> _reconnect(std::shared_ptr<Backend> be);
 
     // _backend, or throws once close() has dropped it.
@@ -195,6 +196,11 @@ public:
     // that trusts the copy only as far as the session it read the copy's
     // state through checks that state again once this has changed.
     uint64_t reconnects() const noexcept { return _reconnects; }
+
+    // The session this Slot serves (nil before open()): a Slot that
+    // replaces this one opens under the same id, so the copy takes it
+    // for the same writer and does not go LOST when this one ends.
+    const RawstdUUID& session_id() const noexcept { return _session_id; }
 
     // Metadata operations, routed through the same backend and
     // retry-with-invalidate-backend machinery (_with_retry()) as the

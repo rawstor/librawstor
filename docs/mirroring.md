@@ -194,7 +194,10 @@ session: its `state` stays as created.
   gone before its replacement has opened (it ended it itself, on a stream
   out of step after a short write) keeps the copy `DIRTY` for two seconds,
   the time the replacement is waited for; the copy is `LOST` only when none
-  has opened by then, or at once if the server is stopping.
+  has opened by then, or at once if the server is stopping. A chunk that
+  reconnects a member it had lost (the reconnect probe, or a resync another
+  writer started) opens the new connection under the session of the one it
+  replaces, which is closed once its operations have finished.
 
 A copy marks itself `CLEAN` when its own last session leaves cleanly, so a
 failed `LEAVE` on one member leaves that copy not `CLEAN`, and an open heals

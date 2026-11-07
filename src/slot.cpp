@@ -192,75 +192,36 @@ rawstd::Task<void> set_object_or_version(
     }
 }
 
-// Retries `attempt()` up to rawstor_opts_io_attempts() times, sharing the
-// same "log and retry, or log and rethrow on the last one" shape across
-// every bounded-retry loop in this file that doesn't need the
-// EBUSY-vs-reconnect policy: _reconnect()'s backend replacement.
-// `attempt()` returns a Task<T> that this coroutine itself co_await's, so
-// retrying composes as an ordinary suspension/resumption instead of a
-// nested synchronous pump -- unlike the old callback-based retry_n() this
-// replaces, nothing here ever needs a private Queue of its own to drive
-// `attempt()` to completion. The data-path/metadata methods
-// (pread/preadv/pwrite/pwritev/flush/list/create/remove/meta/info) each
-// go through _with_retry() instead -- same overall shape, but with the
-// extra EBUSY-vs-reconnect policy and no set-up/tear-down step, so
-// sharing this one wouldn't fit them without a callback out for it.
-template <typename F>
-auto retry_n_async(rawio::Queue& queue, const char* func_name, F&& attempt)
-    -> decltype(attempt()) {
-    for (unsigned int i = 1; i <= rawstor_opts_io_attempts(); ++i) {
-        try {
-            co_return co_await attempt();
-        } catch (const std::exception& e) {
-            // A cancellation was asked for: stop, and nothing to report.
-            auto* error = dynamic_cast<const std::system_error*>(&e);
-            if (error != nullptr && error->code().value() == ECANCELED) {
-                throw;
-            }
-            if (i == rawstor_opts_io_attempts()) {
-                rawstd_error(
-                    "%s: error: %s; attempt: %u of %u; failing...\n", func_name,
-                    e.what(), i, rawstor_opts_io_attempts()
-                );
-                throw;
-            }
-            rawstd_warning(
-                "%s: error: %s; attempt: %u of %u; retrying...\n", func_name,
-                e.what(), i, rawstor_opts_io_attempts()
-            );
-        }
-
-        // Same backoff _with_retry() waits between its own retries (see
-        // backoff_delay_ms() above) -- without it, a transient failure
-        // that clears within a fraction of a second (e.g. the brief
-        // ECONNREFUSED window while the remote OST is mid-restart) can
-        // still burn through every attempt here, all within the same
-        // instant, before it has a chance to clear.
-        unsigned int delay_ms = backoff_delay_ms(
-            i, rawstor_opts_io_retry_backoff_base(),
-            rawstor_opts_io_retry_backoff_max(),
-            rawstor_opts_io_retry_backoff_jitter()
-        );
-        if (delay_ms != 0) {
-            // The backoff wait is itself best-effort: failing to even
-            // submit it (e.g. ENOBUFS from a saturated queue -- the same
-            // kind of transient pressure this retry budget exists to
-            // ride out) must not burn the whole budget in one shot on a
-            // failure that has nothing to do with `attempt()` itself.
-            // Skip the wait and retry immediately instead.
-            // A cancelled wait is a cancelled retry, not a failed timer.
-            try {
-                co_await queue.timeout(delay_ms * 1000u);
-            } catch (const std::system_error& e) {
-                if (e.code().value() == ECANCELED) {
-                    throw;
-                }
-            } catch (const std::exception&) {
-            }
-        }
+// Waits out the backoff before the retry that follows the failed attempt
+// number `attempt` (backoff_delay_ms() above). Slot's retry loops
+// (_with_retry(), open()) all wait through this: without it, a transient
+// failure that clears within a fraction of a second (e.g. the brief
+// ECONNREFUSED window while the remote OST is mid-restart) can burn
+// through every attempt within the same instant, before it has a chance
+// to clear.
+//
+// The wait is best-effort: failing to even submit it (e.g. ENOBUFS from a
+// saturated queue -- the same kind of transient pressure the retry budget
+// exists to ride out) must not cut the budget short, so the retry just
+// goes ahead immediately. A cancelled wait is a cancelled retry, not a
+// failed timer.
+rawstd::Task<void> wait_backoff(rawio::Queue& queue, unsigned int attempt) {
+    unsigned int delay_ms = backoff_delay_ms(
+        attempt, rawstor_opts_io_retry_backoff_base(),
+        rawstor_opts_io_retry_backoff_max(),
+        rawstor_opts_io_retry_backoff_jitter()
+    );
+    if (delay_ms == 0) {
+        co_return;
     }
-    // Only reachable if rawstor_opts_io_attempts() == 0.
-    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    try {
+        co_await queue.timeout(delay_ms * 1000u);
+    } catch (const std::system_error& e) {
+        if (e.code().value() == ECANCELED) {
+            throw;
+        }
+    } catch (const std::exception&) {
+    }
 }
 
 } // namespace
@@ -1035,6 +996,12 @@ rawstd::Task<T> Slot::_with_retry(
                     if (is_permanent_backend_error(e2.code().value())) {
                         throw;
                     }
+                    rawstd_warning(
+                        "IO %s: reconnect of %s failed: %s; attempt: %u of "
+                        "%u; retrying...\n",
+                        func_name, be->str().c_str(), e2.what(), attempt,
+                        rawstor_opts_io_attempts()
+                    );
                 } catch (const std::exception& e2) {
                     rawstd_error(
                         "IO %s: exception on %s: %s; attempt %u of %u; "
@@ -1046,26 +1013,7 @@ rawstd::Task<T> Slot::_with_retry(
                 }
             }
 
-            unsigned int delay_ms = backoff_delay_ms(
-                attempt, rawstor_opts_io_retry_backoff_base(),
-                rawstor_opts_io_retry_backoff_max(),
-                rawstor_opts_io_retry_backoff_jitter()
-            );
-            if (delay_ms != 0) {
-                // Same "the wait is best-effort" reasoning as
-                // retry_n_async()'s own backoff wait above: don't let a
-                // failure to submit the timer itself (e.g. ENOBUFS under
-                // the same queue pressure this budget exists to ride
-                // out) cut the retry budget short.
-                try {
-                    co_await _queue.timeout(delay_ms * 1000u);
-                } catch (const std::system_error& e) {
-                    if (e.code().value() == ECANCELED) {
-                        throw;
-                    }
-                } catch (const std::exception&) {
-                }
-            }
+            co_await wait_backoff(_queue, attempt);
         }
     }
 }
@@ -1095,52 +1043,51 @@ rawstd::Task<void> Slot::_reconnect(std::shared_ptr<Backend> be) {
     std::shared_ptr<Backend> new_backend;
     std::exception_ptr eptr;
     try {
-        new_backend = co_await retry_n_async(
-            _queue, "Slot::_reconnect",
+        auto open_replacement =
             [&]() -> rawstd::Task<std::shared_ptr<Backend>> {
-                std::shared_ptr<Backend> backend =
-                    co_await Backend::create(_queue, be->location());
-                // _id is only set once open() has run (see its own doc
-                // comment) -- a Slot used purely for metadata
-                // (list/create/remove/meta/info) never calls open(), so
-                // _id stays unset and there's no id to set_object() this
-                // replacement backend to in the first place. Metadata
-                // ops don't need SET_OBJECT first, so just skip it here.
-                if (_id) {
-                    // A backend that fails set_object() never becomes
-                    // _backend, so nothing else will ever close() it --
-                    // do that here before rethrowing, or it leaks its
-                    // recv-multishot registration.
-                    std::exception_ptr set_eptr;
-                    try {
-                        co_await set_object_or_version(
-                            _session_id, *backend, *_id, _offset, _flags,
-                            _version_id
-                        );
-                        // The result is unused -- this is purely to keep
-                        // the same SET_OBJECT+META wire round trip every
-                        // set_object() caller gets (see
-                        // Backend::set_object()'s own doc comment).
-                        co_await backend->meta(*_id, _offset, _version_id);
-                    } catch (...) {
-                        set_eptr = std::current_exception();
-                    }
-                    if (set_eptr) {
-                        try {
-                            co_await backend->close();
-                        } catch (const std::exception& e) {
-                            rawstd_warning(
-                                "Slot::_reconnect(): close after failed "
-                                "set_object(): %s\n",
-                                e.what()
-                            );
-                        }
-                        std::rethrow_exception(set_eptr);
-                    }
+            std::shared_ptr<Backend> backend =
+                co_await Backend::create(_queue, be->location());
+            // _id is only set once open() has run (see its own doc
+            // comment) -- a Slot used purely for metadata
+            // (list/create/remove/meta/info) never calls open(), so
+            // _id stays unset and there's no id to set_object() this
+            // replacement backend to in the first place. Metadata
+            // ops don't need SET_OBJECT first, so just skip it here.
+            if (_id) {
+                // A backend that fails set_object() never becomes
+                // _backend, so nothing else will ever close() it --
+                // do that here before rethrowing, or it leaks its
+                // recv-multishot registration.
+                std::exception_ptr set_eptr;
+                try {
+                    co_await set_object_or_version(
+                        _session_id, *backend, *_id, _offset, _flags,
+                        _version_id
+                    );
+                    // The result is unused -- this is purely to keep
+                    // the same SET_OBJECT+META wire round trip every
+                    // set_object() caller gets (see
+                    // Backend::set_object()'s own doc comment).
+                    co_await backend->meta(*_id, _offset, _version_id);
+                } catch (...) {
+                    set_eptr = std::current_exception();
                 }
-                co_return backend;
+                if (set_eptr) {
+                    try {
+                        co_await backend->close();
+                    } catch (const std::exception& e) {
+                        rawstd_warning(
+                            "Slot::_reconnect(): close after failed "
+                            "set_object(): %s\n",
+                            e.what()
+                        );
+                    }
+                    std::rethrow_exception(set_eptr);
+                }
             }
-        );
+            co_return backend;
+        };
+        new_backend = co_await open_replacement();
     } catch (...) {
         eptr = std::current_exception();
     }
@@ -1414,10 +1361,30 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
     }
 
     if (failed) {
-        // _reconnect() has its own retry (rawstor_opts_io_attempts()
-        // attempts); if that still fails, its exception propagates
-        // straight out.
-        co_await _reconnect(be);
+        // _reconnect() is a single attempt; this is the only retry loop
+        // on this path (open() is not inside _with_retry()), so the
+        // budget is spent here. A failure of the last attempt propagates.
+        for (unsigned int attempt = 1;; ++attempt) {
+            std::exception_ptr reconnect_error;
+            try {
+                co_await _reconnect(be);
+            } catch (const std::system_error& e) {
+                if (is_permanent_backend_error(e.code().value()) ||
+                    attempt >= rawstor_opts_io_attempts()) {
+                    throw;
+                }
+                rawstd_warning(
+                    "Slot::open(): reconnect: %s; attempt: %u of %u; "
+                    "retrying...\n",
+                    e.what(), attempt, rawstor_opts_io_attempts()
+                );
+                reconnect_error = std::current_exception();
+            }
+            if (!reconnect_error) {
+                break;
+            }
+            co_await wait_backoff(_queue, attempt);
+        }
     }
 
     if ((flags & RAWSTOR_READONLY) == 0 && rawstd_uuid_is_nil(&version_id)) {
