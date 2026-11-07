@@ -125,10 +125,11 @@ private:
     void _finish(rawstor::telemetry::TimePoint t_call);
 
     // Replaces `be` with a freshly connected backend (set_object()-ed
-    // again if open() has run), retrying up to rawstor_opts_io_attempts()
-    // times, then close()s `be`. A no-op if `be` is no longer _backend
-    // (already replaced, or the Slot closed) or another _reconnect() is
-    // already in flight.
+    // again if open() has run) in one attempt, then close()s `be`; a
+    // failure propagates, and the caller's own retry loop (_with_retry(),
+    // open()) decides whether and when to try again. A no-op if `be` is no
+    // longer _backend (already replaced, or the Slot closed) or another
+    // _reconnect() is already in flight.
     rawstd::Task<void> _reconnect(std::shared_ptr<Backend> be);
 
     // _backend, or throws once close() has dropped it.
