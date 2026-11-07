@@ -208,7 +208,7 @@ public:
         RawstorObjectMeta& meta
     ) override;
 
-    // The MDS connection serves every object; there is nothing to bind.
+    // The MDS holds no object to open: the connection serves them all.
     rawstd::Task<void> set_object(
         const RawstdUUID& session_id, const RawstdUUID& id, uint64_t offset,
         int flags

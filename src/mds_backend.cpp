@@ -868,6 +868,7 @@ rawstd::Task<bool> Backend::sync_accept(
 
 rawstd::Task<void>
 Backend::set_object(const RawstdUUID&, const RawstdUUID&, uint64_t, int) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     co_return;
 }
 

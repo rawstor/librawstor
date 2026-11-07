@@ -375,7 +375,6 @@ TEST(ObjectCloseTest, mds_backend_has_no_data_path) {
     std::shared_ptr<rawstor::Backend> backend =
         run(*queue,
             rawstor::Backend::create(*queue, rawstd::URI(env.location())));
-    run(*queue, backend->set_object({}, id, 0, 0));
 
     auto expect_enotsup = [&](auto task) {
         try {
@@ -386,6 +385,7 @@ TEST(ObjectCloseTest, mds_backend_has_no_data_path) {
         }
     };
     char buf[4096] = {};
+    expect_enotsup(backend->set_object({}, id, 0, 0));
     expect_enotsup(backend->flush(0));
     expect_enotsup(backend->pread(buf, sizeof(buf), 0));
     expect_enotsup(backend->pwrite(buf, sizeof(buf), 0, false, 0));
