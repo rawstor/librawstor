@@ -40,18 +40,6 @@ flowchart TD
     lib2 -->|"file://"| fs2["local directory"]
 ```
 
-What a caller types, and what the library builds from it (see
-[Concepts](concepts.md)):
-
-```mermaid
-flowchart TD
-    loc["Location<br/>names a backend store"] -->|"holds"| target["Target<br/>Location + object UUID"]
-    target -->|"open()"| obj["Object<br/>a virtual disk"]
-    obj -->|"routes I/O by offset"| chunk["Chunk<br/>a mirrored range of the object"]
-    chunk -->|"one per mirror"| slot["Slot<br/>one copy of the chunk"]
-    slot -->|"one connection"| backend["Backend<br/>file, lvm, zfs, ost, mds"]
-```
-
 ## Components
 
 | Component | What it is |
