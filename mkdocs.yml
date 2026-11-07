@@ -39,6 +39,7 @@ nav:
   - Mirroring: mirroring.md
   - CASPaxos: caspaxos.md
   - Multi-attach: multiattach.md
+  - Authors: authors.md
 
 extra_css:
   - assets/extra.css

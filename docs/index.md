@@ -25,14 +25,31 @@ object stored on the network.
   binary [wire protocol](protocol.md).
 
 ```mermaid
-flowchart LR
-    vm["VM (QEMU or any vDPA consumer)"] --> vhost["rawstor-vhost / rawstor-vduse"]
+flowchart TD
+    vm["VM (QEMU or any vhost-user consumer)"] --> vhost["rawstor-vhost"]
+    host["host (vDPA / virtio-blk device)"] --> vduse["rawstor-vduse"]
     cli["rawstor CLI"] --> lib["librawstor"]
+    py["pyrawstor (Python)"] --> lib
     vhost --> lib
+    vduse --> lib
     lib -->|"mds://"| mds["rawstor-mds"]
     lib -->|"ost://"| ost1["rawstor-ost"]
-    lib -->|"file://"| fs["local directory"]
+    lib -->|"file://"| fs1["local directory"]
     mds -. "places chunks" .-> ost1
+    ost1 --> lib2["librawstor"]
+    lib2 -->|"file://"| fs2["local directory"]
+```
+
+What a caller types, and what the library builds from it (see
+[Concepts](concepts.md)):
+
+```mermaid
+flowchart TD
+    loc["Location<br/>names a backend store"] -->|"holds"| target["Target<br/>Location + object UUID"]
+    target -->|"open()"| obj["Object<br/>a virtual disk"]
+    obj -->|"routes I/O by offset"| chunk["Chunk<br/>a mirrored range of the object"]
+    chunk -->|"one per mirror"| slot["Slot<br/>one copy of the chunk"]
+    slot -->|"one connection"| backend["Backend<br/>file, lvm, zfs, ost, mds"]
 ```
 
 ## Components
@@ -196,5 +213,6 @@ mirror degrades and recovers is in [Mirroring](mirroring.md).
 - [Mirroring](mirroring.md): the N-way mirror failure model and recovery.
 - [Multi-attach](multiattach.md) and [CASPaxos](caspaxos.md): several writers
   of one mirrored object.
+- [Authors](authors.md): who develops Rawstor.
 
 Source code: [rawstor/librawstor](https://github.com/rawstor/librawstor).

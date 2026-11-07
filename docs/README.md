@@ -7,3 +7,4 @@
 - [Mirroring](mirroring.md) -- N-way mirror failure model and recovery.
 - [CASPaxos](caspaxos.md) -- a replicated register without a leader: acceptors and coroutine-based proposers.
 - [Multi-attach](multiattach.md) -- several writer processes of one mirrored object, in stages.
+- [Authors](authors.md) -- who wrote Rawstor.

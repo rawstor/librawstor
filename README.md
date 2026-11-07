@@ -9,7 +9,8 @@
 > [MDS design](docs/mds.md) ·
 > [Mirroring](docs/mirroring.md) ·
 > [Multi-attach](docs/multiattach.md) ·
-> [CASPaxos](docs/caspaxos.md)
+> [CASPaxos](docs/caspaxos.md) ·
+> [Authors](docs/authors.md)
 
 ## TL;DR
 ```
