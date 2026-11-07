@@ -1,7 +1,6 @@
 #ifndef RAWSTOR_MDS_BACKEND_HPP
 #define RAWSTOR_MDS_BACKEND_HPP
 
-#include "object.hpp"
 #include "wire_backend.hpp"
 
 #include <rawio/queue.hpp>
@@ -13,7 +12,6 @@
 #include <rawstor/location.h>
 #include <rawstor/target.h>
 
-#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -52,23 +50,18 @@ struct WireVersionMember {
 };
 
 /*
- * mds:// object storage backend.
+ * mds:// object storage backend: the control-plane client of one MDS.
  *
  * Location URI: mds://host:port
  *
- * A peer of file/lvm/ost/zfs::Backend, not a special case Target/Object
- * dispatch around them (docs/concepts.md, docs/mds.md):
- * `mds://host:port/<id>` is, from Target's own point of view, an
- * ordinary single-URI target whose one "chunk" happens to be an entire
- * MDS-orchestrated object. Opening it (set_object()) fetches the
- * object's current WireMap from the MDS and builds the same internal
- * multi-chunk Target string Target::open() already knows how to parse
- * (see target.hpp) -- recursing into Target/Object/Chunk/Slot
- * again, the same way ost::Backend's own client recurses into a fresh
- * Target/Backend pair on the far end of the wire (ost/src/client.cpp) --
- * just intra-process here instead of across a socket. The nested Object
- * this produces (`_object` below) is what every data-path method
- * delegates to.
+ * A peer of file/lvm/ost/zfs::Backend as far as Slot is concerned, but it
+ * holds no data and serves no data-path I/O (every such method fails with
+ * ENOTSUP). `mds://host:port/<id>` names a whole object whose chunk map
+ * lives on the MDS: resolve_targets() turns it into the ordinary
+ * multi-chunk target string of that object's real members (see target.hpp),
+ * which Target::open() then opens like any other -- the object's I/O never
+ * passes through this backend. Whole-object operations (create, resize,
+ * remove, versions) are MDS commands plus a fan-out to the members.
  */
 class Backend final : public wire::Backend {
 private:
@@ -112,11 +105,6 @@ private:
         const RawstdUUID& version_id
     );
 
-    std::unique_ptr<Object> _object;
-    // leave() was called: close() closes the nested Object cleanly, so its
-    // chunks leave their members in turn.
-    bool _left;
-
     rawstd::Task<void> _connect() override;
 
     // Shared by remove_version() below.
@@ -124,16 +112,6 @@ private:
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         const RawstdUUID& version_id
     );
-
-    // Shared by set_object()/set_version() below.
-    rawstd::Task<void>
-    _set_object(const RawstdUUID& id, const RawstdUUID& version_id, int flags);
-
-    // The nested Object every data-path method delegates to. Throws
-    // ENOTCONN when there is none (after close(), or a re-open that
-    // failed), the same retryable "not connected" failure a closed
-    // socket gives -- Slot's retry reconnects through a fresh Backend.
-    Object& _opened();
 
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
@@ -215,15 +193,6 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) override;
 
-    // Real: this chunk's own real members' own bare locations, off the
-    // same WireMap resolution meta() above uses (Backend::
-    // resolve_locations()'s own doc comment) -- addresses one specific
-    // real member directly (rawstor resolve's own --winner), which no
-    // target string naming this mds:// object could ever do on its own.
-    rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
-    ) override;
-
     // MDS holds no copy of its own: it votes in the register as a witness
     // only, and a chunk that is not one fails with ENOENT.
 
@@ -239,27 +208,22 @@ public:
         RawstorObjectMeta& meta
     ) override;
 
-    // Fetches the object's current (live) WireMap and opens the nested
-    // multi-chunk Object it describes (see this class's own doc comment),
-    // via _set_object() above. `offset` is always 0, same reason as
-    // resize() above.
+    // The MDS holds no object to open: the connection serves them all.
     rawstd::Task<void> set_object(
-        const RawstdUUID&, const RawstdUUID& id, uint64_t offset, int flags
+        const RawstdUUID& session_id, const RawstdUUID& id, uint64_t offset,
+        int flags
     ) override;
 
-    // Same as set_object() above, for one previously committed version:
-    // `version_id` is folded into every chunk slot's own URI (its own
-    // trailing path segment, chunk_slot_target()'s own convention in
-    // mds_backend.cpp), not passed down any other way.
-    rawstd::Task<void> set_version(
-        const RawstdUUID& session_id, const RawstdUUID& object_id,
-        uint64_t offset, const RawstdUUID& version_id
+    // The whole object's current WireMap (that of `version_id` when it is
+    // not nil) as the multi-chunk target string of its real members: every
+    // chunk's own member URIs, each one "<ost>/<id>/<offset>[/<version_id>]"
+    // (chunk_slot_target() in mds_backend.cpp).
+    rawstd::Task<std::vector<rawstd::URI>> resolve_targets(
+        const RawstdUUID& id, const RawstdUUID& version_id = {}
     ) override;
 
     rawstd::Task<void> close() override;
 
-    // The session's clean departure, passed on to the nested Object's
-    // chunks by close().
     rawstd::Task<void> leave() override;
 
     rawstd::Task<size_t>

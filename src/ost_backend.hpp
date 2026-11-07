@@ -52,10 +52,6 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
     ) override;
 
-    rawstd::Task<std::vector<rawstd::URI>> resolve_locations(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
-    ) override;
-
     rawstd::Task<void> leave() override;
 
     rawstd::Task<bool> sync_prepare(

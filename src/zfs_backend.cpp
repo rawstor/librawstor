@@ -551,11 +551,6 @@ Backend::list_versions(const RawstdUUID& id, uint64_t offset) {
     co_return ret;
 }
 
-rawstd::Task<std::vector<rawstd::URI>>
-Backend::resolve_locations(const RawstdUUID&, uint64_t, const RawstdUUID&) {
-    co_return std::vector<rawstd::URI>{location()};
-}
-
 rawstd::Task<void> Backend::_write_meta(
     const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
     const RawstorObjectConfig& config, const RawstorObjectBallot& promised,

@@ -78,13 +78,16 @@ The client-side `mds::Backend` and `ost::Backend` inherit their shared network
 transport and member commands from `wire::Backend` (`src/wire_backend.*`).
 MDS encodes object commands and decodes their responses directly in
 `mds::Backend`, using that same connection and CID response dispatcher. MDS overrides whole-object operations to resolve
-its chunk map and route data to the nested object; native witness metadata
+its chunk map; `Target::open()` expands an `mds://` target through
+`Backend::resolve_targets()` into the ordinary multi-chunk target of the
+object's real members and opens that, so the MDS is not involved in the
+object's I/O after open. Native witness metadata
 uses the protected nonvirtual wire requests directly. OST implements its
 virtual member operations by forwarding to those same requests. Shared
 `set_state` and `info` implementations are final in the wire
 base class. OST data I/O (`READ`, `WRITE`,
 `DISCARD`, `WRITE_ZEROES`, `FLUSH`) is implemented in `ost::Backend`
-(`src/ost_backend.cpp`); MDS data I/O routes to its nested object.
+(`src/ost_backend.cpp`); `mds::Backend` serves no data I/O (`ENOTSUP`).
 
 ## Requirements, in priority order
 

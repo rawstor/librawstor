@@ -142,6 +142,11 @@ private:
     rawstd::Task<std::vector<Target>>
     _physical_chunks(rawio::Queue& queue) const;
 
+    // An opaque (mds://) target as the ordinary multi-chunk target of its
+    // real members, off the placement map -- one MDS round trip, after
+    // which the MDS is no longer involved in the object's I/O.
+    rawstd::Task<Target> _expand(rawio::Queue& queue) const;
+
     // The object's own identity -- the same for every URI in `_uris`,
     // across every chunk, not just within one (validated once, at
     // construction: the constructor's own comment, target.cpp). id/
