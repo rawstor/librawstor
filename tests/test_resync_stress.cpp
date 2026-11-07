@@ -13,6 +13,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -197,7 +198,12 @@ TEST(ResyncStressTest, writers_survive_member_restarts) {
     std::atomic<unsigned long> writes{0};
     std::atomic<unsigned long> failures{0};
     std::atomic<unsigned long> errors[256] = {};
-    std::atomic<unsigned long> ok_per_sec[4096] = {};
+    constexpr unsigned int counters = 4096;
+    std::atomic<unsigned long> ok_per_sec[counters] = {};
+    // Successful writes of each queue, and how many queues opened.
+    std::vector<std::atomic<unsigned long>> queue_ok(nqueues);
+    std::atomic<unsigned int> opened{0};
+    std::atomic<unsigned int> open_failed{0};
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> writers;
     for (unsigned int q = 0; q < nqueues; ++q) {
@@ -211,9 +217,10 @@ TEST(ResyncStressTest, writers_survive_member_restarts) {
                     );
                 });
             if (res < 0) {
-                failures += 1000000;
+                open_failed += 1;
                 return;
             }
+            opened += 1;
             std::mt19937_64 rng(q + 1);
             std::vector<char> buf(512 << 10, static_cast<char>('a' + q));
             while (!stop) {
@@ -229,7 +236,8 @@ TEST(ResyncStressTest, writers_survive_member_restarts) {
                                    std::chrono::steady_clock::now() - t0
                     )
                                    .count();
-                    ok_per_sec[sec & 4095] += 1;
+                    ok_per_sec[std::min<unsigned long>(sec, counters - 1)] += 1;
+                    queue_ok[q] += 1;
                 }
             }
             rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
@@ -238,11 +246,30 @@ TEST(ResyncStressTest, writers_survive_member_restarts) {
         });
     }
 
+    auto finish_writers = [&]() {
+        stop = true;
+        for (auto& t : writers) {
+            if (t.joinable()) {
+                t.join();
+            }
+        }
+    };
+
+    // Every writer must have opened before the outages start: a queue that
+    // did not would leave the others to carry the progress checks.
+    while (opened + open_failed < nqueues) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (opened != nqueues) {
+        finish_writers();
+        FAIL() << open_failed << " of " << nqueues << " writers did not open";
+    }
+
     std::mt19937_64 rng(12345);
     auto deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
     const unsigned int settle_ms = env_uint("RAWSTOR_STRESS_SETTLE_MS", 6000);
-    unsigned long ok_at_check = 0;
+    std::vector<unsigned long> ok_at_check(nqueues, 0);
     unsigned int dead_windows = 0;
     while (std::chrono::steady_clock::now() < deadline) {
         unsigned int victim = static_cast<unsigned int>(rng() % 2);
@@ -259,14 +286,16 @@ TEST(ResyncStressTest, writers_survive_member_restarts) {
         // One outage at a time: the returned member gets its resync before
         // the next one goes down, and writes must be going on again.
         std::this_thread::sleep_for(std::chrono::milliseconds(settle_ms));
-        unsigned long ok_now = 0;
-        for (int i = 0; i < 4096; ++i) {
-            ok_now += ok_per_sec[i];
+        // Every queue, not just the sum of them, must have written since
+        // the last check.
+        for (unsigned int q = 0; q < nqueues; ++q) {
+            unsigned long ok_now = queue_ok[q];
+            if (ok_now == ok_at_check[q]) {
+                ++dead_windows;
+                std::cerr << "queue " << q << " made no progress" << std::endl;
+            }
+            ok_at_check[q] = ok_now;
         }
-        if (ok_now == ok_at_check) {
-            ++dead_windows;
-        }
-        ok_at_check = ok_now;
     }
     static const char* names[] = {"UNREACHABLE", "CLEAN", "DIRTY", "LOST"};
     auto read_meta = [&](RawstorObjectMeta* metas) {
@@ -307,10 +336,7 @@ TEST(ResyncStressTest, writers_survive_member_restarts) {
     print_meta("after outages", metas);
     EXPECT_TRUE(settled) << "members did not settle";
 
-    stop = true;
-    for (auto& t : writers) {
-        t.join();
-    }
+    finish_writers();
     ASSERT_TRUE(read_meta(metas));
     print_meta("after close", metas);
     for (int m = 0; m < 3; ++m) {
@@ -326,7 +352,7 @@ TEST(ResyncStressTest, writers_survive_member_restarts) {
         }
     }
     std::cerr << "ok per second:";
-    for (unsigned int i = 0; i < seconds + 3; ++i) {
+    for (unsigned int i = 0; i < std::min(seconds + 3, counters); ++i) {
         std::cerr << " " << ok_per_sec[i];
     }
     std::cerr << std::endl;
