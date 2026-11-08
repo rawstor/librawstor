@@ -86,6 +86,9 @@ rawstd::Task<void> FreezeGate::freeze(
             Member& member = _members[key];
             if (!member.frozen ||
                 rawstd_uuid_cmp(&member.token, &token) == 0) {
+                // A renewal keeps what the first freeze already drained.
+                member.drained =
+                    member.frozen && member.drained && member.inflight == 0;
                 member.frozen = true;
                 member.token = token;
                 member.deadline = now + lease;
@@ -110,6 +113,7 @@ rawstd::Task<void> FreezeGate::freeze(
                 // The lease ran out under us, and someone else may hold it.
                 failed = true;
             } else if (it->second.inflight == 0) {
+                it->second.drained = true;
                 co_return;
             } else if (Clock::now() >= it->second.deadline) {
                 it->second.frozen = false;
@@ -146,7 +150,7 @@ bool FreezeGate::held_by(
     std::lock_guard<std::mutex> guard(_mu);
     _expire_locked(key, Clock::now());
     auto it = _members.find(key);
-    return it != _members.end() && it->second.frozen &&
+    return it != _members.end() && it->second.frozen && it->second.drained &&
            rawstd_uuid_cmp(&it->second.token, &token) == 0;
 }
 

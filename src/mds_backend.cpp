@@ -740,25 +740,27 @@ rawstd::Task<void> Backend::create_version(
     }
 
     /* Writers resume whether or not the version was taken. */
-    bool lease_lost = false;
+    std::exception_ptr thaw_error;
     for (size_t i : frozen) {
         try {
             co_await barrier[i].thaw(_queue);
-        } catch (const std::system_error& e) {
-            rawstd_error("Version thaw: %s\n", e.what());
-            lease_lost = lease_lost || e.code().value() == ESTALE;
         } catch (const std::exception& e) {
             rawstd_error("Version thaw: %s\n", e.what());
+            if (!thaw_error) {
+                thaw_error = std::current_exception();
+            }
         }
     }
 
     if (error) {
         std::rethrow_exception(error);
     }
-    if (lease_lost) {
+    if (thaw_error) {
         /*
-         * Writes were let through before every copy existed: not a
-         * consistent point. Unregister it and report the failure.
+         * A THAW that did not succeed -- the lease ran out (ESTALE), or the
+         * member could not be asked at all -- leaves it unknown whether
+         * writes were let through before every copy existed: not a
+         * verified consistent point. Unregister it and report the failure.
          */
         try {
             RawstdUUID key;
@@ -768,7 +770,7 @@ rawstd::Task<void> Backend::create_version(
         } catch (const std::exception& e) {
             rawstd_error("Version rollback: %s\n", e.what());
         }
-        RAWSTD_THROW_SYSTEM_ERROR(ESTALE);
+        std::rethrow_exception(thaw_error);
     }
 }
 

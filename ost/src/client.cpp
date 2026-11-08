@@ -1017,7 +1017,24 @@ rawstd::DetachedTask Client::_create_version(
         result = -error.code().value();
     }
     if (own_freeze) {
-        gate->thaw(uuid, payload.offset, version_id);
+        int thawed = gate->thaw(uuid, payload.offset, version_id);
+        if (thawed != 0 && result == 0) {
+            // The lease ran out before the version existed, so writes were
+            // let through meanwhile: not a consistent point. Take it back.
+            result = -thawed;
+            try {
+                co_await with_slot(
+                    client->_queue, client->_server.locations(),
+                    [&](rawstor::Slot& slot) -> rawstd::Task<void> {
+                        co_await slot.remove_version(
+                            uuid, payload.offset, version_id
+                        );
+                    }
+                );
+            } catch (const std::exception& e) {
+                rawstd_error("Failed to remove the version: %s\n", e.what());
+            }
+        }
     }
 
     bool send_failed = false;
@@ -1076,6 +1093,11 @@ rawstd::DetachedTask Client::_freeze_thaw(
                     co_await slot.flush_copy(uuid, payload.offset);
                 }
             );
+            // A flush that outlasts the lease let writers through: the
+            // member is not quiet, so it must not be reported as frozen.
+            if (!gate->held_by(uuid, payload.offset, token)) {
+                RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
+            }
         }
     } catch (const std::system_error& error) {
         result = -error.code().value();

@@ -84,9 +84,14 @@ TEST(FreezeGateTest, freeze_drains_admitted_and_holds_new_writes) {
     rawstd::Task<void> late = gate.enter(*queue, id, 0);
     EXPECT_FALSE(run_for(*queue, late, 50)) << "a new write got past";
 
+    // A freeze that is still waiting for writes does not hold the member yet:
+    // a version must not be taken under it.
+    EXPECT_FALSE(gate.held_by(id, 0, token));
+
     gate.leave(id, 0);
     EXPECT_TRUE(run_for(*queue, freeze, 1000));
     freeze.get();
+    EXPECT_TRUE(gate.held_by(id, 0, token));
     EXPECT_FALSE(run_for(*queue, late, 50)) << "a write got past a frozen gate";
 
     EXPECT_EQ(gate.thaw(id, 0, token), 0);

@@ -46,6 +46,8 @@ private:
     struct Member {
         size_t inflight = 0;
         bool frozen = false;
+        // Set once the writes admitted before the freeze are done.
+        bool drained = false;
         RawstdUUID token = {};
         Clock::time_point deadline = {};
     };
@@ -80,6 +82,8 @@ public:
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& token
     ) noexcept;
 
+    // Whether `token` holds the member with every earlier write drained --
+    // a freeze still waiting for them does not count.
     bool held_by(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& token
     ) noexcept;

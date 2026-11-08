@@ -806,8 +806,11 @@ of one member may be connected to any of them.
   `WRITE_ZEROES` and `DISCARD` (resync writes too) to that member *wait*: they
   neither fail nor are lost, the writer just sees latency. Reads, `META` and
   `FLUSH` are not held. `FREEZE` answers once the writes admitted before it
-  are done and the member is flushed; if that takes longer than the lease it
-  lifts the barrier and answers `-ETIMEDOUT`. A `FREEZE` by the token that
+  are done and the member is flushed; if draining and flushing take longer
+  than the lease it lifts the barrier and answers `-ETIMEDOUT` (the lease is
+  checked again after the flush, so a frozen member is always a quiet one). A
+  `FREEZE` still draining does not count as holding the member: a
+  `CREATE_VERSION` naming its token does not start under it. A `FREEZE` by the token that
   already holds the member renews its lease; one by another token waits its
   turn, so two snapshots of one chunk are serialized.
 - **`THAW`** (same `token`) lifts it, and the waiting writes go through. It
@@ -824,14 +827,17 @@ of one member may be connected to any of them.
   meanwhile — and only then starts the descending-index CoW, so the version is
   one point in time across the object and not one per chunk (a write acked on
   chunk 1 before a write to chunk 0 is in the version only if the
-  second one is too). It thaws after `OBJ_COMMIT_VERSION`, on failure too, and
-  when a `THAW` answers `-ESTALE` it removes the version it just registered
-  and fails with `-ESTALE`. A failed freeze of any member thaws the ones
-  already frozen and fails the version before anything is CoW'd.
+  second one is too). It thaws after `OBJ_COMMIT_VERSION`, on failure too. A
+  `THAW` that does not succeed -- `-ESTALE` (the lease ran out) or any other
+  error (the member could not be asked, so it is unknown whether the lease
+  held) -- leaves the version unverified: it removes the version it just
+  registered and fails with that error. A failed freeze of any member thaws
+  the ones already frozen and fails the version before anything is CoW'd.
 - **A bare `CREATE_VERSION`** (no `FREEZE` before it, e.g. an older client)
   takes the same barrier itself for the length of the call, so the OST never
   snapshots under a write either way; only the cross-member and cross-chunk
-  cut is then up to the caller.
+  cut is then up to the caller. If its lease ran out before the version
+  existed, the OST removes the version again and answers `-ESTALE`.
 - Backends reached in process (`file://`, `lvm://`, `zfs://` used directly)
   have no other writer to stop: `freeze`/`thaw` are no-ops there.
 
@@ -890,8 +896,11 @@ of one member may be connected to any of them.
   version proves itself, because index 0 exists only when every higher
   index was already done. Complete versions found by the scan are
   registered even if the commit never landed — they are indistinguishable
-  from committed ones and just as consistent (the write barrier preceded
-  the CoWs); holed versions stay unregistered garbage.
+  from committed ones; holed versions stay unregistered garbage. The scan
+  cannot tell whether the write barrier outlived the CoWs (a holder that
+  died after its lease ran out leaves a complete set that is not a
+  consistent point), so a version registered this way is crash-consistent
+  per member only, not guaranteed point-in-time across them.
 - **Object deletion order matches version deletion**: the MDS
   unregisters the map first — which is also where "the object still has
   versions" refuses with `-EBUSY` *before* any data is touched — then
