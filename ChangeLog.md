@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rawstor-vhost` and `rawstor-vduse` no longer freeze or crash when an OST that was down for longer than the retries last comes back: a replaced member connection is now closed only after every call on it has finished, its metadata and register calls included.
 - `rawstor-vhost` and `rawstor-vduse` no longer crash (use after free) when a mirror member comes back while writes to it are still in flight: the broken connection it replaces is now closed after those writes finish instead of being freed under them.
 - A failing operation no longer retries its reconnect inside its own retries: reconnects share the one `io_attempts` budget, instead of up to its square with a backoff each.
 - A mirror member that reconnects after its OST restarted is no longer left `LOST` and resynced a second time: the new connection takes over the session of the one it replaces.
