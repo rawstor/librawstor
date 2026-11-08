@@ -143,9 +143,8 @@ rawstd::Task<void> Backend::freeze(
     return _wire_freeze(id, offset, token, lease_ms);
 }
 
-rawstd::Task<void> Backend::thaw(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& token
-) {
+rawstd::Task<void>
+Backend::thaw(const RawstdUUID& id, uint64_t offset, const RawstdUUID& token) {
     return _wire_thaw(id, offset, token);
 }
 

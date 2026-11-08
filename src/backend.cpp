@@ -95,9 +95,8 @@ rawstd::Task<void> Backend::create_version(
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
-rawstd::Task<void> Backend::freeze(
-    const RawstdUUID&, uint64_t, const RawstdUUID&, uint64_t
-) {
+rawstd::Task<void>
+Backend::freeze(const RawstdUUID&, uint64_t, const RawstdUUID&, uint64_t) {
     co_return;
 }
 

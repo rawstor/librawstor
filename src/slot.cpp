@@ -2028,8 +2028,7 @@ rawstd::Task<void> Slot::_flush_copy(const RawstdUUID& id, uint64_t offset) {
     }
 }
 
-rawstd::Task<void>
-Slot::flush_copy(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<void> Slot::flush_copy(const RawstdUUID& id, uint64_t offset) {
     OperationGuard operation(*this);
     co_await _flush_copy(id, offset);
 }
@@ -2063,9 +2062,8 @@ rawstd::Task<void> Slot::freeze(
     }
 }
 
-rawstd::Task<void> Slot::thaw(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& token
-) {
+rawstd::Task<void>
+Slot::thaw(const RawstdUUID& id, uint64_t offset, const RawstdUUID& token) {
     OperationGuard operation(*this);
 
     const char* func_name = __FUNCTION__;

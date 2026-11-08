@@ -1553,9 +1553,7 @@ Target::create_version(rawio::Queue& queue, bool frozen) const {
     // The write barrier covers every member for the whole of the CoW, unless
     // the caller holds it already. Writes wait, they do not fail.
     if (!frozen) {
-        co_await freeze_many(
-            queue, members, _version_id, version_freeze_lease
-        );
+        co_await freeze_many(queue, members, _version_id, version_freeze_lease);
     }
 
     std::vector<rawstd::Task<void>> tasks;

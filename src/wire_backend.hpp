@@ -182,9 +182,8 @@ protected:
         uint64_t lease_ms
     );
 
-    rawstd::Task<void> _wire_thaw(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& token
-    );
+    rawstd::Task<void>
+    _wire_thaw(const RawstdUUID& id, uint64_t offset, const RawstdUUID& token);
 
 public:
     // Encoded object commands use the same CID dispatcher as member requests.

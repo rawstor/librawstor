@@ -221,8 +221,7 @@ TEST(FreezeGateTest, admission_leaves_with_its_scope) {
     RawstdUUID token = make_uuid();
     {
         FreezeAdmission admission;
-        rawstd::Task<void> acquire =
-            admission.acquire(gate, *queue, id, 0);
+        rawstd::Task<void> acquire = admission.acquire(gate, *queue, id, 0);
         ASSERT_TRUE(run_for(*queue, acquire, 1000));
         acquire.get();
     }

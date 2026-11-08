@@ -40,9 +40,8 @@ void FreezeGate::_expire_locked(const Key& key, Clock::time_point now) {
     }
 }
 
-rawstd::Task<void> FreezeGate::enter(
-    rawio::Queue& queue, const RawstdUUID& id, uint64_t offset
-) {
+rawstd::Task<void>
+FreezeGate::enter(rawio::Queue& queue, const RawstdUUID& id, uint64_t offset) {
     const Key key{id, offset};
     for (;;) {
         {
@@ -84,8 +83,7 @@ rawstd::Task<void> FreezeGate::freeze(
             Clock::time_point now = Clock::now();
             _expire_locked(key, now);
             Member& member = _members[key];
-            if (!member.frozen ||
-                rawstd_uuid_cmp(&member.token, &token) == 0) {
+            if (!member.frozen || rawstd_uuid_cmp(&member.token, &token) == 0) {
                 // A renewal keeps what the first freeze already drained.
                 member.drained =
                     member.frozen && member.drained && member.inflight == 0;

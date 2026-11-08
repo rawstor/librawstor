@@ -706,9 +706,11 @@ rawstd::Task<void> Backend::create_version(
                  slot.slot_index == map.policy.width)) {
                 continue;
             }
-            barrier.emplace_back(std::vector<rawstd::URI>{
-                chunk_slot_target(map.id, i, slot, map.chunk_size, version_id)
-            });
+            barrier.emplace_back(
+                std::vector<rawstd::URI>{chunk_slot_target(
+                    map.id, i, slot, map.chunk_size, version_id
+                )}
+            );
         }
     }
     std::vector<rawstd::Task<void>> freezes;
