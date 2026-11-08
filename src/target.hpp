@@ -167,6 +167,11 @@ private:
         rawio::Queue& queue, uint64_t offset, size_t member_index
     ) const;
 
+    // The members freeze()/thaw()/create_version() act on: the target's own
+    // URIs, minus a trailing witness that is unreachable (it holds no data).
+    rawstd::Task<std::vector<rawstd::URI>>
+    _data_members(rawio::Queue& queue) const;
+
 public:
     explicit Target(const std::vector<rawstd::URI>& uris);
 
@@ -250,11 +255,6 @@ public:
     rawstd::Task<void>
     freeze(rawio::Queue& queue, std::chrono::milliseconds lease) const;
     rawstd::Task<void> thaw(rawio::Queue& queue) const;
-
-    // The members freeze()/create_version() act on: the target's own URIs,
-    // minus a trailing witness (it holds no data).
-    rawstd::Task<std::vector<rawstd::URI>>
-    data_members(rawio::Queue& queue) const;
 
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue) const;
     // Metadata for the addressed chunk; enumerate whole objects with chunks().

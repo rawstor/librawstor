@@ -1476,7 +1476,7 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
 }
 
 rawstd::Task<std::vector<rawstd::URI>>
-Target::data_members(rawio::Queue& queue) const {
+Target::_data_members(rawio::Queue& queue) const {
     std::vector<rawstd::URI> members;
     for (const auto& uris : chunk_uris_by_offset(_uris)) {
         bool skip_last = false;
@@ -1511,7 +1511,7 @@ Target::freeze(rawio::Queue& queue, std::chrono::milliseconds lease) const {
     if (is_logical_chunk(_uris) || rawstd_uuid_is_nil(&_version_id)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    std::vector<rawstd::URI> members = co_await data_members(queue);
+    std::vector<rawstd::URI> members = co_await _data_members(queue);
     co_await freeze_many(queue, members, _version_id, lease);
 }
 
@@ -1519,7 +1519,7 @@ rawstd::Task<void> Target::thaw(rawio::Queue& queue) const {
     if (is_logical_chunk(_uris) || rawstd_uuid_is_nil(&_version_id)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    std::vector<rawstd::URI> members = co_await data_members(queue);
+    std::vector<rawstd::URI> members = co_await _data_members(queue);
     std::exception_ptr error;
     co_await thaw_many(queue, members, _version_id, error);
     if (error) {
@@ -1548,7 +1548,7 @@ Target::create_version(rawio::Queue& queue, bool frozen) const {
     // leave versions behind that nobody knows about. The URI that
     // failed is not rolled back, since it may name a pre-existing
     // version this call didn't create.
-    std::vector<rawstd::URI> members = co_await data_members(queue);
+    std::vector<rawstd::URI> members = co_await _data_members(queue);
 
     // The write barrier covers every member for the whole of the CoW, unless
     // the caller holds it already. Writes wait, they do not fail.
