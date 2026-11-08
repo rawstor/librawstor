@@ -31,7 +31,6 @@ test_all_SOURCES = main.cpp \
                    test_location_info.cpp \
                    test_member_state.cpp \
                    test_subprocess.cpp \
-                   test_barrier.cpp \
                    test_session_replace.cpp \
                    test_mirror.cpp \
                    test_multichunk.cpp \
@@ -55,6 +54,7 @@ AM_CXXFLAGS += -pthread \
 AM_LDFLAGS += -pthread
 test_all_SOURCES += object_env.cpp \
                     object_env.hpp \
+                    test_barrier.cpp \
                     test_object.cpp \
                     test_resync_stress.cpp \
                     test_witness.cpp
