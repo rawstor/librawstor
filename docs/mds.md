@@ -845,8 +845,15 @@ of one member may be connected to any of them.
   snapshots under a write either way; only the cross-member and cross-chunk
   cut is then up to the caller. If its lease ran out before the version
   existed, the OST removes the version again and answers `-ESTALE`.
-- Backends reached in process (`file://`, `lvm://`, `zfs://` used directly)
-  have no other writer to stop: `freeze`/`thaw` are no-ops there.
+- **Only members served by `rawstor-ost` have a barrier.** A member reached in
+  process (`file://`, `lvm://`, `zfs://` as a location the client opens
+  itself, e.g. a topology entry that is not an `ost://`) has no server that
+  sees every writer: `freeze`/`thaw` are no-ops there. For a `zfs://` member
+  that is a real gap, since `zfs snapshot` works: a version taken by one
+  process (the CLI) while another process (a vhost on the same host) writes
+  the zvol directly is not a consistent point, and nothing stops those
+  writes. Serve such a zvol through `rawstor-ost` (an `ost://` location backed
+  by `zfs://`) to get the barrier, or stop the writers first.
 
 ### Confirming a version (not implemented)
 
