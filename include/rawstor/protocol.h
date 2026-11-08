@@ -102,6 +102,23 @@ extern "C" {
  */
 #define RAWSTOR_CMD_SYNC_PREPARE 0x10
 #define RAWSTOR_CMD_SYNC_ACCEPT 0x11
+/*
+ * Write barrier for a consistent version (docs/mds.md, "Versions"). Both
+ * ride RawstorFrameBasicPayload: object_id/offset address the chunk member,
+ * version_id is the holder's token (the version being taken). FREEZE: `val`
+ * is the lease in milliseconds (0 = the server default). The server stops
+ * admitting new WRITE/WRITE_ZEROES/DISCARD for that member (they wait, they
+ * do not fail), waits for the ones already admitted, FLUSHes the member and
+ * only then answers; if that takes longer than the lease, it lifts the
+ * barrier and answers -ETIMEDOUT. FREEZE with the token already holding the
+ * barrier renews its lease; with another token it waits its turn. The
+ * barrier lifts by THAW with the same token, or by itself when the lease
+ * runs out, so a dead holder never wedges the writers. THAW answers -ESTALE
+ * when the barrier it names is no longer held (lease expired): the version
+ * taken under it is not a consistent point and the caller must discard it.
+ */
+#define RAWSTOR_CMD_FREEZE 0x12
+#define RAWSTOR_CMD_THAW 0x13
 
 /*
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/resolve/

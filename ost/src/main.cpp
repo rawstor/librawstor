@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <system_error>
 #include <thread>
@@ -182,6 +183,10 @@ void ost(
         );
     }
 
+    // One write barrier for all workers: the writers of a chunk member may
+    // be connected to any of them.
+    auto gate = std::make_shared<rawstor::ostserver::FreezeGate>();
+
     std::vector<std::exception_ptr> errors(workers);
     std::vector<std::thread> threads;
     threads.reserve(workers);
@@ -192,9 +197,12 @@ void ost(
         // every one of them before this function returns -- Server never
         // closes it, see its own constructor doc comment.
         threads.emplace_back([&errors, i, queue_size, fd = listen_fd.get(),
-                              location, wake_fd = wake_read_fds[i].get()]() {
+                              location, gate,
+                              wake_fd = wake_read_fds[i].get()]() {
             try {
-                rawstor::ostserver::Server s(queue_size, fd, location, wake_fd);
+                rawstor::ostserver::Server s(
+                    queue_size, fd, location, wake_fd, gate
+                );
                 s.loop();
             } catch (...) {
                 errors[i] = std::current_exception();

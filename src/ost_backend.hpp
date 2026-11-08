@@ -82,6 +82,15 @@ public:
         uint64_t offset, const RawstdUUID& version_id
     ) override;
 
+    rawstd::Task<void> freeze(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& token,
+        uint64_t lease_ms
+    ) override;
+
+    rawstd::Task<void> thaw(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& token
+    ) override;
+
     rawstd::Task<size_t>
     pread(void* buf, size_t size, uint64_t offset) override;
 

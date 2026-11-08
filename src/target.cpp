@@ -37,6 +37,10 @@
 
 namespace {
 
+// How long a version's write barrier may stand if its holder dies
+// (docs/mds.md, "Versions").
+const std::chrono::milliseconds version_freeze_lease{30000};
+
 // An optional witness occupies the last location beyond the data width.
 bool has_witness(const RawstorObjectSpec& spec, size_t members) noexcept {
     return members == spec.width + 1;
@@ -344,6 +348,97 @@ rawstd::Task<void> create_version_one(
     }
     co_await slot->close();
     if (error) {
+        std::rethrow_exception(error);
+    }
+}
+
+rawstd::Task<void> freeze_one(
+    rawio::Queue& queue, const rawstd::URI& target, const RawstdUUID& token,
+    std::chrono::milliseconds lease
+) {
+    RawstdUUID id = uuid_from_target(target);
+    uint64_t offset = extract_offset(target);
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, strip_path(target));
+    std::exception_ptr error;
+    try {
+        co_await slot->freeze(id, offset, token, lease);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+}
+
+rawstd::Task<void> thaw_one(
+    rawio::Queue& queue, const rawstd::URI& target, const RawstdUUID& token
+) {
+    RawstdUUID id = uuid_from_target(target);
+    uint64_t offset = extract_offset(target);
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, strip_path(target));
+    std::exception_ptr error;
+    try {
+        co_await slot->thaw(id, offset, token);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+}
+
+// Thaws every member, each attempted; the first error is left in `first`
+// instead of thrown, so a caller already unwinding can use it.
+rawstd::Task<void> thaw_many(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& members,
+    const RawstdUUID& token, std::exception_ptr& first
+) {
+    std::vector<rawstd::Task<void>> tasks;
+    tasks.reserve(members.size());
+    for (const auto& uri : members) {
+        tasks.push_back(thaw_one(queue, uri, token));
+    }
+    for (auto& task : tasks) {
+        try {
+            co_await task;
+        } catch (...) {
+            if (!first) {
+                first = std::current_exception();
+            }
+        }
+    }
+}
+
+// Freezes every member or none: on a failure the ones already frozen are
+// thawed before it is rethrown.
+rawstd::Task<void> freeze_many(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& members,
+    const RawstdUUID& token, std::chrono::milliseconds lease
+) {
+    std::vector<rawstd::Task<void>> tasks;
+    tasks.reserve(members.size());
+    for (const auto& uri : members) {
+        tasks.push_back(freeze_one(queue, uri, token, lease));
+    }
+    std::vector<rawstd::URI> frozen;
+    std::exception_ptr error;
+    for (size_t i = 0; i < members.size(); ++i) {
+        try {
+            co_await tasks[i];
+            frozen.push_back(members[i]);
+        } catch (...) {
+            if (!error) {
+                error = std::current_exception();
+            }
+        }
+    }
+    if (error) {
+        std::exception_ptr ignored;
+        co_await thaw_many(queue, frozen, token, ignored);
         std::rethrow_exception(error);
     }
 }
@@ -1380,26 +1475,8 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
     }
 }
 
-rawstd::Task<void> Target::create_version(rawio::Queue& queue) const {
-    if (is_logical_chunk(_uris)) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-
-    if (rawstd_uuid_is_nil(&_version_id)) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-
-    // Create the CoW version with that exact id on every URI, so the
-    // version covers the whole chunk. ENOTSUP on a backend without native
-    // CoW (file://, classic LVM).
-    //
-    // Every URI is attempted even if an earlier one fails, the first
-    // error encountered reported -- but this can't just gather() them:
-    // on failure, the URIs THIS call did create it on are rolled back (same
-    // reasoning as create()'s own rollback), or a partial failure would
-    // leave versions behind that nobody knows about. The URI that
-    // failed is not rolled back, since it may name a pre-existing
-    // version this call didn't create.
+rawstd::Task<std::vector<rawstd::URI>>
+Target::data_members(rawio::Queue& queue) const {
     std::vector<rawstd::URI> members;
     for (const auto& uris : chunk_uris_by_offset(_uris)) {
         bool skip_last = false;
@@ -1426,6 +1503,60 @@ rawstd::Task<void> Target::create_version(rawio::Queue& queue) const {
         }
         members.insert(members.end(), uris.begin(), uris.end() - skip_last);
     }
+    co_return members;
+}
+
+rawstd::Task<void>
+Target::freeze(rawio::Queue& queue, std::chrono::milliseconds lease) const {
+    if (is_logical_chunk(_uris) || rawstd_uuid_is_nil(&_version_id)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    std::vector<rawstd::URI> members = co_await data_members(queue);
+    co_await freeze_many(queue, members, _version_id, lease);
+}
+
+rawstd::Task<void> Target::thaw(rawio::Queue& queue) const {
+    if (is_logical_chunk(_uris) || rawstd_uuid_is_nil(&_version_id)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    std::vector<rawstd::URI> members = co_await data_members(queue);
+    std::exception_ptr error;
+    co_await thaw_many(queue, members, _version_id, error);
+    if (error) {
+        std::rethrow_exception(error);
+    }
+}
+
+rawstd::Task<void>
+Target::create_version(rawio::Queue& queue, bool frozen) const {
+    if (is_logical_chunk(_uris)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    if (rawstd_uuid_is_nil(&_version_id)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    // Create the CoW version with that exact id on every URI, so the
+    // version covers the whole chunk. ENOTSUP on a backend without native
+    // CoW (file://, classic LVM).
+    //
+    // Every URI is attempted even if an earlier one fails, the first
+    // error encountered reported -- but this can't just gather() them:
+    // on failure, the URIs THIS call did create it on are rolled back (same
+    // reasoning as create()'s own rollback), or a partial failure would
+    // leave versions behind that nobody knows about. The URI that
+    // failed is not rolled back, since it may name a pre-existing
+    // version this call didn't create.
+    std::vector<rawstd::URI> members = co_await data_members(queue);
+
+    // The write barrier covers every member for the whole of the CoW, unless
+    // the caller holds it already. Writes wait, they do not fail.
+    if (!frozen) {
+        co_await freeze_many(
+            queue, members, _version_id, version_freeze_lease
+        );
+    }
 
     std::vector<rawstd::Task<void>> tasks;
     tasks.reserve(members.size());
@@ -1445,6 +1576,17 @@ rawstd::Task<void> Target::create_version(rawio::Queue& queue) const {
             if (!eptr) {
                 eptr = std::current_exception();
             }
+        }
+    }
+
+    // Writers resume as soon as the copies exist. A lease that ran out
+    // meanwhile means they did not wait for all of them: not a consistent
+    // point, so it counts as a failure and is rolled back like one.
+    if (!frozen) {
+        std::exception_ptr thaw_error;
+        co_await thaw_many(queue, members, _version_id, thaw_error);
+        if (thaw_error && !eptr) {
+            eptr = thaw_error;
         }
     }
 

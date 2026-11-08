@@ -2028,6 +2028,68 @@ rawstd::Task<void> Slot::_flush_copy(const RawstdUUID& id, uint64_t offset) {
     }
 }
 
+rawstd::Task<void>
+Slot::flush_copy(const RawstdUUID& id, uint64_t offset) {
+    OperationGuard operation(*this);
+    co_await _flush_copy(id, offset);
+}
+
+rawstd::Task<void> Slot::freeze(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& token,
+    std::chrono::milliseconds lease
+) {
+    OperationGuard operation(*this);
+
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        auto records = co_await _with_retry(
+            func_name, trace_event, &Backend::meta, id, offset, RawstdUUID{}
+        );
+        if (!(records.size() == 1 &&
+              records.front().member_role == RAWSTOR_MEMBER_WITNESS)) {
+            co_await _with_retry(
+                func_name, trace_event, &Backend::freeze, id, offset, token,
+                static_cast<uint64_t>(lease.count())
+            );
+        }
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void> Slot::thaw(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& token
+) {
+    OperationGuard operation(*this);
+
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        auto records = co_await _with_retry(
+            func_name, trace_event, &Backend::meta, id, offset, RawstdUUID{}
+        );
+        if (!(records.size() == 1 &&
+              records.front().member_role == RAWSTOR_MEMBER_WITNESS)) {
+            co_await _with_retry(
+                func_name, trace_event, &Backend::thaw, id, offset, token
+            );
+        }
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
 rawstd::Task<void> Slot::flush(uint64_t epoch) {
     OperationGuard operation(*this);
 

@@ -1265,3 +1265,148 @@ TEST(
         );
     }
 }
+
+namespace {
+
+// Allocates and opens a fresh single-copy object on `client`.
+void open_fresh_object(
+    RawIOQueue* queue, rawstor::ostserver::tests::Client& client,
+    const RawstdUUID& id
+) {
+    client.send_allocate(id, 4096, 1);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    EXPECT_EQ(client.recv_response().body.res, 0);
+    client.send_set_object(id);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    EXPECT_EQ(client.recv_response().body.res, 0);
+}
+
+void expect_response(
+    RawIOQueue* queue, rawstor::ostserver::tests::Client& client,
+    RawstorCommandType cmd, int32_t res
+) {
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    RawstorFrameResponse response = client.recv_response();
+    EXPECT_EQ(response.head.cmd, cmd);
+    EXPECT_EQ(response.body.res, res);
+}
+
+} // namespace
+
+// The write barrier of a consistent version: while a member is frozen, its
+// writes wait (they neither fail nor get lost) and go through on THAW.
+TEST(OstClientTest, freeze_holds_writes_until_thaw) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    RawstdUUID token;
+    ASSERT_EQ(rawstd_uuid7_init(&token), 0);
+    open_fresh_object(queue, client, id);
+
+    client.send_freeze_thaw(RAWSTOR_CMD_FREEZE, id, 0, token, 60000);
+    expect_response(queue, client, RAWSTOR_CMD_FREEZE, 0);
+
+    std::string payload = "ping";
+    client.send_write(0, payload.data(), payload.size(), false);
+    EXPECT_FALSE(pump_until(
+        queue,
+        [&] {
+            return client.bytes_available() >= sizeof(RawstorFrameResponse);
+        },
+        200
+    )) << "a write was answered while its member was frozen";
+
+    // Reads are not held.
+    client.send_read(0, 4);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse) + 4;
+    }));
+    char buf[4];
+    RawstorFrameResponse read = client.recv_response(buf, sizeof(buf));
+    EXPECT_EQ(read.head.cmd, RAWSTOR_CMD_READ);
+
+    client.send_freeze_thaw(RAWSTOR_CMD_THAW, id, 0, token);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= 2 * sizeof(RawstorFrameResponse);
+    }));
+    bool thawed = false;
+    bool written = false;
+    for (int i = 0; i < 2; ++i) {
+        RawstorFrameResponse response = client.recv_response();
+        if (response.head.cmd == RAWSTOR_CMD_THAW) {
+            EXPECT_EQ(response.body.res, 0);
+            thawed = true;
+        } else if (response.head.cmd == RAWSTOR_CMD_WRITE) {
+            EXPECT_EQ(response.body.res, static_cast<int32_t>(payload.size()));
+            written = true;
+        }
+    }
+    EXPECT_TRUE(thawed);
+    EXPECT_TRUE(written);
+
+    // A barrier that is not held cannot be thawed: the caller learns that
+    // the version it took was not a consistent point.
+    client.send_freeze_thaw(RAWSTOR_CMD_THAW, id, 0, token);
+    expect_response(queue, client, RAWSTOR_CMD_THAW, -ESTALE);
+}
+
+// A holder that never thaws does not wedge the writers: the lease ends it.
+TEST(OstClientTest, freeze_lease_expiry_releases_writes) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    RawstdUUID token;
+    ASSERT_EQ(rawstd_uuid7_init(&token), 0);
+    open_fresh_object(queue, client, id);
+
+    client.send_freeze_thaw(RAWSTOR_CMD_FREEZE, id, 0, token, 200);
+    expect_response(queue, client, RAWSTOR_CMD_FREEZE, 0);
+
+    std::string payload = "ping";
+    client.send_write(0, payload.data(), payload.size(), false);
+    expect_response(
+        queue, client, RAWSTOR_CMD_WRITE, static_cast<int32_t>(payload.size())
+    );
+
+    client.send_freeze_thaw(RAWSTOR_CMD_THAW, id, 0, token);
+    expect_response(queue, client, RAWSTOR_CMD_THAW, -ESTALE);
+}
+
+// A FREEZE needs a holder to name.
+TEST(OstClientTest, freeze_without_a_token_is_invalid) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    client.send_freeze_thaw(RAWSTOR_CMD_FREEZE, id, 0, RawstdUUID{});
+    expect_response(queue, client, RAWSTOR_CMD_FREEZE, -EINVAL);
+}

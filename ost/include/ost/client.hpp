@@ -6,6 +6,10 @@
 #include <rawstor/protocol.h>
 #include <rawstor/rawio.h>
 
+#include <ost/freeze_gate.hpp>
+
+#include <rawio/queue.hpp>
+
 #include <rawstd/coro.hpp>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
@@ -34,6 +38,18 @@ private:
     RawIOEvent* _recv_event;
     std::shared_ptr<Slot> _slot;
     uint64_t _size = 0;
+    // The chunk member `_slot` is bound to: the key of the write barrier.
+    RawstdUUID _id = {};
+    uint64_t _offset = 0;
+
+    // What a write needs to pass the write barrier of this client's member.
+    struct GateRef {
+        std::shared_ptr<FreezeGate> gate;
+        rawio::Queue* queue = nullptr;
+        RawstdUUID id = {};
+        uint64_t offset = 0;
+    };
+    GateRef _gate_ref() const;
 
     // Drives this Client's whole request-dispatch lifetime: registers the
     // multishot recv, then loops co_awaiting one length-prefixed frame at
@@ -97,6 +113,10 @@ private:
         RawstorFrameBasicPayload payload
     );
     static rawstd::DetachedTask _create_version(
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameBasicPayload payload
+    );
+    static rawstd::DetachedTask _freeze_thaw(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameBasicPayload payload
     );

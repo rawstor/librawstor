@@ -26,6 +26,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Session: `SET_OBJECT` | ✅ | OST `ost/src/client.cpp`, MDS `mds/src/client.cpp` |
 | Data: `READ` `WRITE` `DISCARD` `ALLOCATE` `RELEASE` `FLUSH` `WRITE_ZEROES` | ✅ | OST server + `src/ost_backend.cpp` (I/O), `src/wire_backend.cpp` (member lifecycle) |
 | Metadata: `META` `LEAVE` `CREATE_VERSION` `LIST_VERSIONS` | ✅ | OST server + `src/wire_backend.cpp` |
+| Write barrier: `FREEZE` `THAW` | ✅ | OST `ost/src/freeze_gate.cpp`, `ost/src/client.cpp` + `src/wire_backend.cpp` |
 | `LIST`, `LOCATION_INFO` | ✅ | OST and MDS servers, both clients |
 | Object: `OBJ_CREATE` `RESOLVE` `OBJ_RESIZE` `OBJ_REMOVE` | ✅ | MDS server + `src/mds_backend.cpp` |
 | Object versions: `OBJ_COMMIT_VERSION` `OBJ_REMOVE_VERSION` | ✅ | MDS server + `src/mds_backend.cpp` |
@@ -105,6 +106,8 @@ role), `0x01..0x1f` data (OST), `0x20..0x3f` metadata shared by OST and MDS,
 | `0x0f` | `LEAVE` | OST | Basic (unused) | — |
 | `0x10` | `SYNC_PREPARE` | OST / MDS (witness only) | SyncPropose (`ballot` only) | SyncReply |
 | `0x11` | `SYNC_ACCEPT` | OST / MDS (witness only) | SyncPropose | SyncReply |
+| `0x12` | `FREEZE` | OST | Basic (`offset` = chunk offset, `version_id` = the holder's token, `val` = lease in ms) | — |
+| `0x13` | `THAW` | OST | Basic (`offset` = chunk offset, `version_id` = the holder's token) | — |
 | `0x40` | `OBJ_CREATE` | MDS | ObjCreate | ObjCreated |
 | `0x41` | `RESOLVE` | MDS | Basic (`version_id`, nil = live) | ObjDescriptor + chunks |
 | `0x42` | `OBJ_RESIZE` | MDS | ObjOp (`val` = new size) | ObjResized |
@@ -158,11 +161,22 @@ follows right after.
 ### Basic — 48 bytes
 
 Shared by every command that only names an object: `RELEASE`,
-`CREATE_VERSION`, `META`, `LOCATION_INFO`, `FLUSH` and the MDS's `RESOLVE`.
-`offset` is the chunk offset of the object `object_id` names (0 for a plain
-object); `version_id` binds a version for `RELEASE`, `CREATE_VERSION`, `META`
-and `RESOLVE` (nil = live); `val` is command-specific: `FLUSH` carries the
-writer's epoch in it, as IO does.
+`CREATE_VERSION`, `META`, `LOCATION_INFO`, `FLUSH`, `FREEZE`, `THAW` and the
+MDS's `RESOLVE`. `offset` is the chunk offset of the object `object_id` names
+(0 for a plain object); `version_id` binds a version for `RELEASE`,
+`CREATE_VERSION`, `META` and `RESOLVE` (nil = live), and is the holder's token
+for `FREEZE`/`THAW`; `val` is command-specific: `FLUSH` carries the writer's
+epoch in it, as IO does, `FREEZE` the lease in milliseconds.
+
+`FREEZE`/`THAW` are the write barrier of a consistent version
+([design](mds.md#the-write-barrier)). `FREEZE` makes the OST hold new `WRITE`,
+`WRITE_ZEROES` and `DISCARD` to the member (they wait, they do not fail), wait
+for the ones already admitted, `FLUSH` the member and only then answer; it
+answers `-ETIMEDOUT`, with the barrier lifted, if that outlasts the lease
+(`val`, 0 = 30 s, capped at 10 min) and `-EINVAL` for a nil token. A `FREEZE`
+by the token already holding the member renews the lease, another token's waits
+its turn. `THAW` lifts the barrier; it answers `-ESTALE` when the token holds
+none any more -- the lease ran out and the barrier lifted itself.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7

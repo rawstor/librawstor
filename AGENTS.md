@@ -79,7 +79,9 @@ librawstor/
 │                     kept in one place regardless of how many components use each, rather than
 │                     split per-component
 ├── cli/              rawstor command-line client (create/list/show/remove/testio)
-├── ost/              rawstor-ost — the OST protocol server (serves file://, proxies/mirrors to ost://)
+├── ost/              rawstor-ost — the OST protocol server (serves file://, proxies/mirrors to ost://);
+│                     `FreezeGate` (ost/include/ost/freeze_gate.hpp) is the process-wide per-member
+│                     write barrier behind FREEZE/THAW, taken around a version (docs/mds.md "The write barrier")
 ├── vhost/             rawstor-vhost — native vhost-user-blk backend (no qemu library dependency)
 │   ├── include/vhost/  public headers vhost/tests needs: protocol.h, ring.hpp, virtqueue.hpp
 │   ├── src/          device/devregion/ring/server/virtqueue implementation + main.cpp

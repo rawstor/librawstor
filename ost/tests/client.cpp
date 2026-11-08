@@ -127,6 +127,21 @@ uint16_t Client::send_meta(const RawstdUUID& id, uint64_t chunk_offset) {
     return cid;
 }
 
+uint16_t Client::send_freeze_thaw(
+    RawstorCommandType cmd, const RawstdUUID& id, uint64_t chunk_offset,
+    const RawstdUUID& token, uint64_t lease_ms
+) {
+    uint16_t cid = _next_cid++;
+    RawstorFrameBasic frame{};
+    frame.head = {.magic = RAWSTOR_MAGIC, .cmd = cmd, .cid = cid};
+    std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));
+    frame.payload.offset = chunk_offset;
+    std::memcpy(frame.payload.version_id, token.bytes, sizeof(token.bytes));
+    frame.payload.val = lease_ms;
+    send_all(_fd, &frame, sizeof(frame));
+    return cid;
+}
+
 uint16_t Client::send_sync(RawstorFrameSyncPropose frame) {
     uint16_t cid = _next_cid++;
     frame.head.magic = RAWSTOR_MAGIC;

@@ -5,6 +5,8 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(ASAN_CFLAGS) \
               $(GTEST_CFLAGS) \
               -I$(top_srcdir)/librawstd/include \
+              -I$(top_srcdir)/librawio/include \
+              -I$(top_srcdir)/librawthread/include \
               -I$(top_srcdir)/include \
               -I$(top_srcdir)/ost/include
 
@@ -18,6 +20,7 @@ test_all_SOURCES = client.cpp \
                    queue.cpp \
                    queue.hpp \
                    test_client.cpp \
+                   test_freeze_gate.cpp \
                    tmp_dir.cpp \
                    tmp_dir.hpp
 test_all_LDADD = $(top_builddir)/ost/src/libost.la \

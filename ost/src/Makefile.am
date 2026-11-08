@@ -18,6 +18,8 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) \
 
 libost_la_SOURCES = $(top_srcdir)/ost/include/ost/server.hpp \
                     $(top_srcdir)/ost/include/ost/client.hpp \
+                    $(top_srcdir)/ost/include/ost/freeze_gate.hpp \
+                    freeze_gate.cpp \
                     server.cpp \
                     client.cpp
 
