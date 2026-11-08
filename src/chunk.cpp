@@ -483,6 +483,21 @@ public:
     }
     void set_healing_locked(bool healing) noexcept { _healing = healing; }
     uint64_t proposer_id() const noexcept { return _proposer_id; }
+    // What `resync_owner` names while a resync or a heal runs: this writer
+    // (the high 48 bits) and the run (the low 16, the number of the resync
+    // started last). A member that records a configuration naming it
+    // syncing under another owner than before is at the start of a new
+    // run, whoever ran the one before.
+    static constexpr uint64_t owner_run_mask = 0xffff;
+    uint64_t resync_owner_locked() const noexcept {
+        return (_proposer_id & ~owner_run_mask) |
+               (_resync_generation & owner_run_mask);
+    }
+    // Whether `owner` names a run of this writer.
+    bool owns(uint64_t owner) const noexcept {
+        return owner != 0 &&
+               (owner & ~owner_run_mask) == (_proposer_id & ~owner_run_mask);
+    }
     rawstd::Task<void> lock_transition(rawio::Queue& queue) {
         co_await _transition.lock(queue);
     }
@@ -660,7 +675,7 @@ public:
         // resync for its own, nor for nobody's.
         config.resync_owner = 0;
         if (!joining && (_resync || _healing)) {
-            config.resync_owner = _proposer_id;
+            config.resync_owner = resync_owner_locked();
         } else if (!joining) {
             for (size_t i = 0; i < config.nroles; ++i) {
                 if (config.roles[i] == RAWSTOR_OBJECT_MEMBER_SYNCING) {
@@ -3506,14 +3521,13 @@ rawstd::Task<void> Chunk::_exclude_syncing(size_t idx, bool own) {
         *this, accepting, std::vector<bool>(_members.size(), false)
     };
     const size_t n = _members.size();
-    const uint64_t me = c.proposer_id();
     RawstorObjectConfig decided = co_await c.proposer().change(
         transport,
         [&](const RawstorObjectConfig& current)
             -> std::optional<RawstorObjectConfig> {
             if (current.nroles != n ||
                 current.roles[idx] != RAWSTOR_OBJECT_MEMBER_SYNCING ||
-                (own && current.resync_owner != me)) {
+                (own && !c.owns(current.resync_owner))) {
                 return std::nullopt;
             }
             RawstorObjectConfig next = current;

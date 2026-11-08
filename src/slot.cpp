@@ -296,10 +296,14 @@ struct Slot::CopyState {
      */
 
     // Called with `record` held whenever the copy records a
-    // configuration, with the copy's own role in it. Becoming SYNCING
-    // starts an empty record (a resync starts: nothing is known to be
-    // written yet); staying SYNCING keeps it; any other role drops it.
-    void follow_role(RawstorObjectMemberRole role) noexcept;
+    // configuration, with the copy's own role in it and the resync owner
+    // it names. Becoming SYNCING, or being named syncing under another
+    // owner, starts an empty record (a resync starts: nothing is known to
+    // be written yet, and what an earlier run recorded is not what this one
+    // must preserve, the writes since then having missed the copy);
+    // staying SYNCING under the same owner keeps it; any other role drops
+    // it.
+    void follow_role(RawstorObjectMemberRole role, uint64_t owner) noexcept;
 
     // Before a client write of [offset, offset + size) goes out: waits for
     // an overlapping RESYNC write still in flight, then records the
@@ -325,6 +329,7 @@ private:
     rawthread::Condition _drain_waiters;
 
     std::atomic<bool> _syncing{false};
+    uint64_t _owner = 0;
     std::mutex _resync_mu;
     // Disjoint byte ranges, merged when overlapping or adjacent. Bound
     // fragmentation so sparse writes cannot exhaust the process's memory.
@@ -393,16 +398,20 @@ Slot::CopyState::raise_epoch(rawio::Queue& queue, uint64_t epoch) {
     co_return true;
 }
 
-void Slot::CopyState::follow_role(RawstorObjectMemberRole role) noexcept {
+void Slot::CopyState::follow_role(
+    RawstorObjectMemberRole role, uint64_t owner
+) noexcept {
     std::lock_guard<std::mutex> guard(_resync_mu);
     if (role == RAWSTOR_OBJECT_MEMBER_SYNCING) {
-        if (!_syncing.load()) {
+        if (!_syncing.load() || owner != _owner) {
             _written.clear();
             _syncing.store(true);
+            _owner = owner;
         }
     } else {
         _syncing.store(false);
         _written.clear();
+        _owner = 0;
     }
 }
 
@@ -1941,7 +1950,8 @@ rawstd::Task<bool> Slot::_sync_accept(
                 ? static_cast<RawstorObjectMemberRole>(
                       meta.config.roles[member_index]
                   )
-                : RAWSTOR_OBJECT_MEMBER_UNKNOWN
+                : RAWSTOR_OBJECT_MEMBER_UNKNOWN,
+            meta.config.resync_owner
         );
     }
     if (accepted && clear_lost) {

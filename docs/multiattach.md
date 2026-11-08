@@ -171,7 +171,7 @@ Every copy's record keeps, next to its own `state`:
 | value: `epoch` | Configuration version; changes with every transition |
 | value: `sync_id`, `sync_id_history[4]` | The sync set, as in [Mirroring](mirroring.md#per-copy-metadata); changes together with `epoch` |
 | value: `roles` | One per member of the chunk, in member order: in-sync, syncing, excluded (`RawstorObjectMemberRole`) |
-| value: `resync_owner` | Proposer running the resync of the syncing member, 0 when none |
+| value: `resync_owner` | The resync's owner, 0 when none: the proposer running it (high 48 bits) and the number of the run (low 16 bits), which is new with every resync that starts |
 
 The value is `RawstorObjectConfig`; the ballots are `RawstorObjectMeta`'s
 `promised` and `accepted`.
@@ -364,7 +364,11 @@ For two data copies, see below.
   flight waits for it. The sweep therefore never overwrites a fresher
   client write of any writer, with no lock between writers (A4). A
   `RESYNC` write still answers with its full length. A configuration that
-  keeps m syncing keeps the record; any other role drops it.
+  keeps m syncing under the same `resync_owner` keeps the record; any
+  other role, or another owner, drops it. The owner differs with every run,
+  so a resync that starts after one that was aborted, or whose writer is
+  gone, begins from an empty record: the writes since then missed m, and
+  ranges the earlier run recorded must be copied like any other.
 - **Rejoin** is a transition "m → in-sync, `resync_owner` = 0". Stage 1
   flushes the restored copy before clearing `LOST` in this transition.
 - The owner renews the register on a timer of its own while the resync
