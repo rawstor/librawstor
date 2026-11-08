@@ -57,6 +57,12 @@
  *       RAWSTOR_OPTS_IO_ATTEMPTS=10 RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE=100 \
  *       unshare -n sh -c 'ip link set lo up && \
  *       ./test_all --gtest_filter=ResyncStressTest.*'
+ *
+ * With RAWSTOR_OPTS_IO_ATTEMPTS=3, RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE=0 and
+ * short outages (RAWSTOR_STRESS_DOWN_MS=0) a member is excluded within
+ * milliseconds and resyncs are aborted and started again often, which is
+ * what makes a resync trust what an aborted one recorded (the verifying
+ * reads fail then).
  */
 
 namespace {
