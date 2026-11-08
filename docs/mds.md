@@ -27,6 +27,9 @@ numbers its stages separately.
 | `OBJ_COMMIT_VERSION` / `OBJ_REMOVE_VERSION` / `LIST_VERSIONS` | 2 | ✅ | `mds/src/client.cpp`, `src/mds_backend.cpp` |
 | Client-generated `version_id`, CoW in descending chunk order | 2 | ✅ | `src/mds_backend.cpp` |
 | Write barrier across a version: `FREEZE`/`THAW` on every DATA member of every chunk, with a lease | 2 | ✅ | `ost/src/freeze_gate.cpp`, `src/target.cpp`, `src/mds_backend.cpp` |
+| Version confirmation: `PENDING`/`VALID`, `OBJ_CONFIRM_VERSION` | 2 | ❌ | [plan](#confirming-a-version-not-implemented) |
+| Collecting expired `PENDING` versions | 2 | ❌ | [plan](#confirming-a-version-not-implemented) |
+| Native copies marked confirmed, so `--reconstruct` registers only those | 2 | ❌ | [plan](#confirming-a-version-not-implemented) |
 | Native CoW: `zfs://` | 2 | ✅ | `src/zfs_backend.cpp` |
 | Native CoW: `lvm://` (thin) | 2 | ❌ | `-ENOTSUP` |
 | `file://` versions refused with `-ENOTSUP` | 2 | ✅ | `src/file_backend.cpp` |
@@ -844,6 +847,40 @@ of one member may be connected to any of them.
   existed, the OST removes the version again and answers `-ESTALE`.
 - Backends reached in process (`file://`, `lvm://`, `zfs://` used directly)
   have no other writer to stop: `freeze`/`thaw` are no-ops there.
+
+### Confirming a version (not implemented)
+
+A version is registered by `OBJ_COMMIT_VERSION` *before* the members are
+thawed, so a version whose barrier turns out not to have held is registered for
+a moment and then removed again. That removal is best effort: if it fails (the
+MDS is unreachable, the caller dies), the version stays registered although it
+is not one consistent point in time, and nothing tells it from a good one.
+
+The plan closes this with a state on the version, so that a version is only
+visible once the orchestrator has verified its barrier:
+
+- **`PENDING` / `VALID`.** `OBJ_COMMIT_VERSION` registers the version as
+  `PENDING`: `list-versions`, `SET_OBJECT` of its `version_id` and `RESOLVE`
+  do not see it. After every member answered `THAW` successfully the
+  orchestrator sends `OBJ_CONFIRM_VERSION` (idempotent, like the other
+  mutations) and the version becomes `VALID`. A `THAW` that failed or answered
+  `-ESTALE` leaves it `PENDING`; the orchestrator removes it at once if it can.
+- **Collecting `PENDING`.** A `PENDING` version older than a threshold above
+  the longest lease (the OST caps one at 10 min; the plan uses 15 min) is
+  garbage, whoever left it: a dead orchestrator, a failed rollback, a barrier
+  that did not hold. Collecting it means unregistering it on the MDS and
+  destroying its native copies on the members, as `OBJ_REMOVE_VERSION` and the
+  fan-out destroy already do. The MDS does not talk to OSTs for data, so the
+  executor is the client: every `create-version`, and a `rawstor` command for
+  the purpose, sweep the expired `PENDING` versions they find. Having the MDS
+  do the destroy itself is the alternative, and changes what the MDS is.
+- **Reconstruct.** `--reconstruct` rebuilds the version records from the OSTs
+  when the MDS database is gone, and cannot tell a version whose barrier held
+  from one whose lease ran out. After `OBJ_CONFIRM_VERSION` the orchestrator
+  marks each native copy (a user property on the ZFS snapshot, next to
+  `snapdev`) as confirmed, and the scan registers only the marked ones. A crash
+  between the confirmation on the MDS and the marks leaves a valid version
+  unmarked: reconstruct then leaves it out, which is the safe side.
 
 - **`version` in chunk identity = `version_id`** (nil = live). One namespace, no
   separate counter.
