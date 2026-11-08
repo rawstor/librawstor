@@ -1138,6 +1138,8 @@ rawstd::Task<void> Slot::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
     RawstdUUID& token, RawstdUUID version_id
 ) {
+    OperationGuard operation(*this);
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -1171,6 +1173,8 @@ rawstd::Task<void> Slot::_create_version(
 rawstd::Task<void> Slot::create_version(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
+    OperationGuard operation(*this);
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -1211,6 +1215,8 @@ rawstd::Task<void> Slot::create(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
     RawstorMemberRole member_role
 ) {
+    OperationGuard operation(*this);
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -1229,6 +1235,8 @@ rawstd::Task<void> Slot::create(
 }
 
 rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t offset) {
+    OperationGuard operation(*this);
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -1262,6 +1270,8 @@ rawstd::Task<void> Slot::_remove_version(
 rawstd::Task<void> Slot::remove_version(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
+    OperationGuard operation(*this);
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -1299,6 +1309,8 @@ Slot::list_versions(const RawstdUUID& id, uint64_t offset) {
 }
 
 rawstd::Task<RawstorLocationInfo> Slot::info() {
+    OperationGuard operation(*this);
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -1776,6 +1788,8 @@ rawstd::Task<size_t> Slot::resync_write_zeroes(
 rawstd::Task<std::vector<RawstorObjectMeta>> Slot::meta(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
+    OperationGuard operation(*this);
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -1851,6 +1865,8 @@ rawstd::Task<bool> Slot::sync_prepare(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
     RawstorObjectMeta& meta
 ) {
+    OperationGuard operation(*this);
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
@@ -1948,6 +1964,8 @@ rawstd::Task<bool> Slot::sync_accept(
     const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
     const RawstorObjectConfig& config, RawstorObjectMeta& meta
 ) {
+    OperationGuard operation(*this);
+
     const char* func_name = __FUNCTION__;
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
