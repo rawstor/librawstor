@@ -1003,7 +1003,7 @@ rawstd::DetachedTask Client::_create_version(
             co_await with_slot(
                 client->_queue, client->_server.locations(),
                 [&](rawstor::Slot& slot) -> rawstd::Task<void> {
-                    co_await slot.flush_copy(uuid, payload.offset);
+                    co_await slot.flush_member(uuid, payload.offset);
                 }
             );
         }
@@ -1090,7 +1090,7 @@ rawstd::DetachedTask Client::_freeze_thaw(
             co_await with_slot(
                 client->_queue, client->_server.locations(),
                 [&](rawstor::Slot& slot) -> rawstd::Task<void> {
-                    co_await slot.flush_copy(uuid, payload.offset);
+                    co_await slot.flush_member(uuid, payload.offset);
                 }
             );
             // A flush that outlasts the lease let writers through: the

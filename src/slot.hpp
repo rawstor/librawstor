@@ -102,7 +102,7 @@ private:
     rawstd::Barrier _drained;
     class OperationGuard;
     void _check_write() const;
-    rawstd::Task<void> _flush_copy(const RawstdUUID& id, uint64_t offset);
+    rawstd::Task<void> _flush_member(const RawstdUUID& id, uint64_t offset);
     RawstdUUID _version_id;
     // Set by open(); kept across _reconnect().
     RawstdUUID _session_id;
@@ -344,7 +344,7 @@ public:
 
     // Flushes the stored copy of `id`/`offset` through a session of its own,
     // for a Slot that never opened it (the server side of FREEZE).
-    rawstd::Task<void> flush_copy(const RawstdUUID& id, uint64_t offset);
+    rawstd::Task<void> flush_member(const RawstdUUID& id, uint64_t offset);
 
     // The write barrier of a consistent version (docs/mds.md, "Versions"):
     // stops new writes to the member, waits for the admitted ones and

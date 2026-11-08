@@ -1933,7 +1933,7 @@ rawstd::Task<bool> Slot::_sync_accept(
     }
     if (clear_lost) {
         // The copy is made durable before it stops being LOST.
-        co_await _flush_copy(id, offset);
+        co_await _flush_member(id, offset);
     }
     if (ok) {
         meta.promised = ballot_to(state.promised());
@@ -2005,7 +2005,7 @@ rawstd::Task<void> Slot::leave() {
 
 // Flush the addressed copy even for a metadata-only Slot. The temporary
 // backend is not a writer session of this Slot and holds no record lock.
-rawstd::Task<void> Slot::_flush_copy(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<void> Slot::_flush_member(const RawstdUUID& id, uint64_t offset) {
     std::shared_ptr<Backend> be = _get_backend();
     if (!_left && _id && rawstd_uuid_cmp(&*_id, &id) == 0 &&
         _offset == offset && rawstd_uuid_is_nil(&_version_id)) {
@@ -2028,9 +2028,9 @@ rawstd::Task<void> Slot::_flush_copy(const RawstdUUID& id, uint64_t offset) {
     }
 }
 
-rawstd::Task<void> Slot::flush_copy(const RawstdUUID& id, uint64_t offset) {
+rawstd::Task<void> Slot::flush_member(const RawstdUUID& id, uint64_t offset) {
     OperationGuard operation(*this);
-    co_await _flush_copy(id, offset);
+    co_await _flush_member(id, offset);
 }
 
 rawstd::Task<void> Slot::freeze(
