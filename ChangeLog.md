@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rawstor ls`, `rm` and `lsv` are aliases for `list`, `remove` and `list-versions`; usage shows them as `list(ls)`, `remove(rm)` and `list-versions(lsv)`.
 - `rawstor list`, `list-versions`, `show`, `chunks`, `slots`, `info`, `create`, `create-version` and `resolve` take `--format table|json|value` (default `table`, a bordered table wrapped to the terminal width) and `--column COL[,COL...]` to choose and order the columns.
 - New MDS chunks with an even DATA width automatically place one witness in an unused failure domain; topology requires a `role` column (`data`, `witness` or both), with MDS witnesses addressed through `ost://`.
 - `rawstor_target_slots()` and Python `Target.slots()` enumerate physical member URIs, also shown per member by `rawstor slots`.

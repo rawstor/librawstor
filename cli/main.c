@@ -66,9 +66,9 @@ static void usage(void) {
         "                        arguments such as --size.\n"
         "\n"
         "command:\n"
-        "  list                  List rawstor objects\n"
+        "  list(ls)              List rawstor objects\n"
         "  create                Create rawstor object\n"
-        "  remove                Remove rawstor object or version\n"
+        "  remove(rm)            Remove rawstor object or version\n"
         "  resize                Grow an mds:// object\n"
         "  show                  Show rawstor object or version\n"
         "  chunks                List an object's chunks\n"
@@ -76,7 +76,7 @@ static void usage(void) {
         "  info                  Show rawstor location info\n"
         "  resolve               Resolve a mirrored object's split brain\n"
         "  create-version        Create a version of an object\n"
-        "  list-versions         List an object's versions\n"
+        "  list-versions(lsv)    List an object's versions\n"
         "  testio                Test rawstor IO routines\n"
         "\n"
         "versions:               A version is addressed as TARGET/VERSION_ID, "
@@ -396,7 +396,7 @@ static void command_remove_usage(void) {
     fprintf(
         stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
                 "\n"
-                "usage: rawstor [options] remove TARGET [command_options]\n"
+                "usage: rawstor [options] remove(rm) TARGET [command_options]\n"
                 "\n"
                 "A TARGET naming a bound version (as printed by "
                 "`rawstor\n"
@@ -551,7 +551,7 @@ static void command_list_usage(void) {
     fprintf(
         stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
                 "\n"
-                "usage: rawstor [options] list LOCATION [command_options]\n"
+                "usage: rawstor [options] list(ls) LOCATION [command_options]\n"
                 "\n"
                 "  LOCATION              Comma-separated list of rawstor "
                 "backend locations.\n"
@@ -1070,7 +1070,7 @@ static void command_list_versions_usage(void) {
     fprintf(
         stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
                 "\n"
-                "usage: rawstor [options] list-versions TARGET "
+                "usage: rawstor [options] list-versions(lsv) TARGET "
                 "[command_options]\n"
                 "\n"
                 "  TARGET                The object whose versions to list; "
@@ -1480,11 +1480,11 @@ static int run_command(
     int ret;
     if (strcmp(command, "create") == 0) {
         ret = command_create(argc, argv);
-    } else if (strcmp(command, "remove") == 0) {
+    } else if (strcmp(command, "remove") == 0 || strcmp(command, "rm") == 0) {
         ret = command_remove(argc, argv);
     } else if (strcmp(command, "resize") == 0) {
         ret = command_resize(argc, argv);
-    } else if (strcmp(command, "list") == 0) {
+    } else if (strcmp(command, "list") == 0 || strcmp(command, "ls") == 0) {
         ret = command_list(argc, argv);
     } else if (strcmp(command, "show") == 0) {
         ret = command_show(argc, argv);
@@ -1496,7 +1496,8 @@ static int run_command(
         ret = command_info(argc, argv);
     } else if (strcmp(command, "resolve") == 0) {
         ret = command_resolve(argc, argv);
-    } else if (strcmp(command, "list-versions") == 0) {
+    } else if (strcmp(command, "list-versions") == 0 ||
+               strcmp(command, "lsv") == 0) {
         ret = command_list_versions(argc, argv);
     } else if (strcmp(command, "create-version") == 0) {
         ret = command_create_version(argc, argv);
