@@ -33,6 +33,7 @@
 
 #include <pthread.h>
 #include <signal.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 /*
@@ -163,25 +164,42 @@ public:
     // is not answered, until it is powered on again and answers every
     // connection of its previous life with a reset. Needs root, iptables and
     // a network namespace of its own (the rules drop the port's traffic).
-    void power_off() {
-        _rules('I');
+    // Both return false when a firewall rule could not be installed or
+    // removed: the run is then not what it claims to be, or leaves rules
+    // behind, and the test must fail.
+    bool power_off() {
+        if (!_rules('I')) {
+            _rules('D');
+            return false;
+        }
         stop();
+        return true;
     }
 
-    void power_on() {
-        _rules('D');
+    bool power_on() {
+        bool removed = _rules('D');
         start();
+        return removed;
     }
 
 private:
-    void _rules(char op) {
-        std::ostringstream cmd;
+    // One rule per direction of the port's traffic; every command must exit
+    // with status 0. All of them are run even after a failure, so that a
+    // removal takes out whatever is there.
+    bool _rules(char op) {
+        bool ok = true;
         for (const char* side : {"--dport", "--sport"}) {
+            std::ostringstream cmd;
             cmd << "iptables -w -" << op << " INPUT -p tcp " << side << " "
-                << _port << " -j DROP >/dev/null 2>&1; ";
+                << _port << " -j DROP >/dev/null 2>&1";
+            int status = std::system(cmd.str().c_str());
+            if (status == -1 || !WIFEXITED(status) ||
+                WEXITSTATUS(status) != 0) {
+                std::cerr << "iptables failed: " << cmd.str() << std::endl;
+                ok = false;
+            }
         }
-        int res = std::system(cmd.str().c_str());
-        (void)res;
+        return ok;
     }
 };
 
@@ -519,6 +537,11 @@ TEST(ResyncStressTest, writers_survive_member_restarts) {
             }
         }
     });
+    auto end_run = [&]() {
+        finish_writers();
+        watching = false;
+        watchdog.join();
+    };
     while (std::chrono::steady_clock::now() < deadline) {
         unsigned int victim = static_cast<unsigned int>(rng() % 2);
         std::this_thread::sleep_for(
@@ -526,7 +549,11 @@ TEST(ResyncStressTest, writers_survive_member_restarts) {
         );
         std::cerr << "CHAOS stop arm " << victim << std::endl;
         if (blackhole) {
-            arms[victim]->power_off();
+            if (!arms[victim]->power_off()) {
+                end_run();
+                FAIL() << "could not install the firewall rules of arm "
+                       << victim;
+            }
         } else {
             arms[victim]->stop();
         }
@@ -537,7 +564,11 @@ TEST(ResyncStressTest, writers_survive_member_restarts) {
         );
         std::cerr << "CHAOS start arm " << victim << std::endl;
         if (blackhole) {
-            arms[victim]->power_on();
+            if (!arms[victim]->power_on()) {
+                end_run();
+                FAIL() << "could not remove the firewall rules of arm "
+                       << victim;
+            }
         } else {
             arms[victim]->start();
         }
