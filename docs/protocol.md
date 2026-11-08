@@ -284,7 +284,8 @@ stamped or `RESYNC` request with `-EOPNOTSUPP`.
 ### Config — 312 bytes
 
 The chunk's configuration (`RawstorObjectConfig`): its sync set, the
-writer running the resync of the syncing member (`resync_owner`, 0 when
+writer running the resync of the syncing member and its run (`resync_owner`:
+the proposer in the high 48 bits, the number of the run in the low 16, 0 when
 none) and every member's role, `nroles` entries of `enum RawstorObjectMemberRole` (0
 unknown, 1 in-sync, 2 syncing, 3 excluded), the rest zero. Carried in
 SyncPropose and Meta; see [mirroring](mirroring.md#states-and-roles).
