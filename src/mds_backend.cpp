@@ -23,8 +23,12 @@
 namespace {
 
 // How long a version's write barrier may stand if its holder dies
-// (docs/mds.md, "Versions").
-const std::chrono::milliseconds version_freeze_lease{30000};
+// (docs/mds.md, "Versions"): a base, plus time for the CoW of every chunk,
+// which runs one after another. The OST caps a lease at ten minutes.
+std::chrono::milliseconds version_freeze_lease(size_t chunks) {
+    const uint64_t ms = 30000 + 2000 * static_cast<uint64_t>(chunks);
+    return std::chrono::milliseconds(std::min<uint64_t>(ms, 600000));
+}
 
 using rawstor::mds::WireMap;
 using rawstor::mds::WireSlot;
@@ -716,7 +720,9 @@ rawstd::Task<void> Backend::create_version(
     std::vector<rawstd::Task<void>> freezes;
     freezes.reserve(barrier.size());
     for (const Target& t : barrier) {
-        freezes.push_back(t.freeze(_queue, version_freeze_lease));
+        freezes.push_back(
+            t.freeze(_queue, version_freeze_lease(map.chunks.size()))
+        );
     }
     std::vector<size_t> frozen;
     std::exception_ptr error;

@@ -817,6 +817,10 @@ of one member may be connected to any of them.
   answers `-ESTALE` when the barrier is no longer held, which means its lease
   ran out and writes were let through before every copy existed: the version
   is not a consistent point.
+- **The lease length** of a whole object is 30 s plus 2 s per chunk (the CoW
+  of the chunks runs one after another), at most the server's 10 min cap; an
+  object so large that its CoW outlasts that fails with `-ESTALE` and its
+  version is removed (renewing the lease in flight is not implemented).
 - **The lease** is what keeps a holder that died between `FREEZE` and `THAW`
   from stopping the writers for good: when it runs out the member thaws by
   itself, and the late `THAW` reports it.
