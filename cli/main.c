@@ -76,7 +76,7 @@ static void usage(void) {
         "  info                  Show rawstor location info\n"
         "  resolve               Resolve a mirrored object's split brain\n"
         "  create-version        Create a version of an object\n"
-        "  list-versions         List an object's versions\n"
+        "  list-versions(lsv)    List an object's versions\n"
         "  testio                Test rawstor IO routines\n"
         "\n"
         "versions:               A version is addressed as TARGET/VERSION_ID, "
@@ -1070,7 +1070,7 @@ static void command_list_versions_usage(void) {
     fprintf(
         stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
                 "\n"
-                "usage: rawstor [options] list-versions TARGET "
+                "usage: rawstor [options] list-versions(lsv) TARGET "
                 "[command_options]\n"
                 "\n"
                 "  TARGET                The object whose versions to list; "
@@ -1496,7 +1496,8 @@ static int run_command(
         ret = command_info(argc, argv);
     } else if (strcmp(command, "resolve") == 0) {
         ret = command_resolve(argc, argv);
-    } else if (strcmp(command, "list-versions") == 0) {
+    } else if (strcmp(command, "list-versions") == 0 ||
+               strcmp(command, "lsv") == 0) {
         ret = command_list_versions(argc, argv);
     } else if (strcmp(command, "create-version") == 0) {
         ret = command_create_version(argc, argv);
