@@ -97,6 +97,9 @@ private:
     int _wake_fd;
     int _resize_fd;
     bool _resize_pending;
+    /* The front-end has not yet been sent the CONFIG_CHANGE for the
+     * current `_config.capacity`; the next size refresh retries. */
+    bool _config_notify_pending;
 
     /* VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD shared memory: one
      * InflightRegion per virtqueue index below _inflight_num_queues,
@@ -143,7 +146,9 @@ private:
     void _refresh_size();
 
     /* Tell the front-end its GET_CONFIG result changed, if it negotiated
-     * BACKEND_REQ and CONFIG. Best effort. */
+     * BACKEND_REQ and CONFIG. Clears `_config_notify_pending` once sent
+     * (or when the front-end can't be told at all); a failed send leaves
+     * it set. */
     void _notify_config_change();
 
 public:

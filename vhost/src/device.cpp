@@ -1252,6 +1252,7 @@ Device::Device(
     _wake_fd(wake_fd),
     _resize_fd(resize_fd),
     _resize_pending(false),
+    _config_notify_pending(false),
     _inflight_fd(-1),
     _inflight_addr(nullptr),
     _inflight_size(0),
@@ -1427,6 +1428,7 @@ void Device::_notify_config_change() {
             "Front-end can't be notified of the new size: it did not "
             "negotiate backend requests and config\n"
         );
+        _config_notify_pending = false;
         return;
     }
 
@@ -1444,7 +1446,9 @@ void Device::_notify_config_change() {
             "Failed to send CONFIG_CHANGE to front-end: %s\n",
             res < 0 ? strerror(errno) : "short send"
         );
+        return;
     }
+    _config_notify_pending = false;
 }
 
 void Device::_refresh_size() {
@@ -1474,6 +1478,9 @@ void Device::_refresh_size() {
 
     uint64_t capacity = spec.size >> VIRTIO_BLK_SECTOR_BITS;
     if (capacity == _config.capacity) {
+        if (_config_notify_pending) {
+            _notify_config_change();
+        }
         return;
     }
     if (capacity < _config.capacity) {
@@ -1508,6 +1515,7 @@ void Device::_refresh_size() {
     }
 
     _set_capacity(spec.size);
+    _config_notify_pending = true;
     _notify_config_change();
 }
 

@@ -106,6 +106,12 @@ class TestTarget(unittest.TestCase):
 
             target.remove()
 
+    def test_resize_size_out_of_range(self):
+        target = rawstor.Target(
+            "file:///nonexistent/00000000-0000-0000-0000-00000000000c")
+        with self.assertRaises(OverflowError):
+            target.resize(1 << 64)
+
     def test_meta(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             target = rawstor.Target(

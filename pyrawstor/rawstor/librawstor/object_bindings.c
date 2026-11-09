@@ -1248,8 +1248,13 @@ PyObject* py_rawstor_object_remove(PyObject* Py_UNUSED(self), PyObject* args) {
 
 PyObject* py_rawstor_object_resize(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
-    unsigned long long new_size;
-    if (!PyArg_ParseTuple(args, "sK", &target, &new_size)) {
+    PyObject* size_obj;
+    if (!PyArg_ParseTuple(args, "sO", &target, &size_obj)) {
+        return NULL;
+    }
+    // "K" would silently truncate to 64 bits.
+    unsigned long long new_size = PyLong_AsUnsignedLongLong(size_obj);
+    if (new_size == (unsigned long long)-1 && PyErr_Occurred()) {
         return NULL;
     }
 

@@ -220,6 +220,7 @@ Device::Device(
     _resize_fd(resize_fd),
     _resize_pending(false),
     _config{},
+    _config_irq_pending(false),
     _stop_requested(false) {
     int ires = rawio_queue_create(queue_size, &_queue);
     if (ires) {
@@ -949,6 +950,7 @@ void Device::_refresh_size() {
 
     uint64_t capacity = spec.size >> VIRTIO_BLK_SECTOR_BITS;
     if (capacity == _config.capacity) {
+        _inject_config_irq();
         return;
     }
     if (capacity < _config.capacity) {
@@ -989,6 +991,12 @@ void Device::_refresh_size() {
     config.max_write_zeroes_sectors =
         static_cast<uint32_t>(std::min<uint64_t>(capacity, UINT32_MAX));
 
+    if (_publish_config(config)) {
+        _inject_config_irq();
+    }
+}
+
+bool Device::_publish_config(const virtio_blk_config& config) {
     std::vector<uint8_t> buf(
         offsetof(vduse_config_data, buffer) + sizeof(config)
     );
@@ -1002,17 +1010,26 @@ void Device::_refresh_size() {
         rawstd_error(
             "vduse: failed to update config space: %s\n", strerror(errsv)
         );
-        return;
+        return false;
     }
     _config = config;
+    _config_irq_pending = true;
+    return true;
+}
 
+void Device::_inject_config_irq() {
+    if (!_config_irq_pending) {
+        return;
+    }
     if (ioctl(_fd, VDUSE_DEV_INJECT_CONFIG_IRQ)) {
         int errsv = errno;
         errno = 0;
         rawstd_error(
             "vduse: failed to inject config interrupt: %s\n", strerror(errsv)
         );
+        return;
     }
+    _config_irq_pending = false;
 }
 
 void Device::loop() {
@@ -1024,6 +1041,11 @@ void Device::loop() {
     // ~Device()). If the driver isn't that far yet, no queue is ready and
     // its own DRIVER_OK later starts them as usual.
     if (_reattached) {
+        // The kernel kept the previous instance's config space, which may
+        // predate a resize while no instance was running.
+        if (_publish_config(_config)) {
+            _inject_config_irq();
+        }
         _start_dataplane(true);
     }
 

@@ -122,6 +122,9 @@ private:
     bool _resize_pending;
     /* The device's config space as last published to the kernel. */
     virtio_blk_config _config;
+    /* A config interrupt for `_config` has not yet been injected; the
+     * next size refresh (or loop() start) retries. */
+    bool _config_irq_pending;
     bool _stop_requested;
     /* Set (along with _stop_requested) when DRIVER_OK handling fails;
      * rethrown by loop(). */
@@ -176,6 +179,13 @@ private:
      * object.
      */
     void _refresh_size();
+
+    /* Write `config` to the kernel's config space; on success it becomes
+     * `_config` and a config interrupt is owed. */
+    bool _publish_config(const virtio_blk_config& config);
+
+    /* Inject the owed config interrupt, if any; a failure leaves it owed. */
+    void _inject_config_irq();
 
 public:
     /**
