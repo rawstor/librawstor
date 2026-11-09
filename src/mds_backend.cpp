@@ -598,14 +598,45 @@ rawstd::Task<void> Backend::remove(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t
 ) {
     /*
-     * Unregister first (docs/mds.md, deletion order): the MDS is where
-     * "the object still has versions" refuses with EBUSY -- before any
-     * data is touched, not after -- and an unregistered map means no new
-     * opens while the chunks below are destroyed. A crash in between
-     * leaves unregistered chunk objects: the same garbage class as a
-     * crashed version removal. The map to destroy comes back with the
-     * reply -- also on a retry whose first reply got lost, when the
-     * object is already gone (the MDS replays it by idempotency_key).
+     * The versions go first, each exactly as remove_version() removes it:
+     * unregistered at the MDS, then destroyed on the members it recorded,
+     * which are found through the object's map -- still there at this
+     * point. A crash in between leaves the object registered with the
+     * versions that remain, and a retry removes those.
+     */
+    std::vector<RawstdUUID> versions;
+    try {
+        versions = co_await _obj_list_versions(id);
+    } catch (const std::system_error& e) {
+        /* Already gone: _obj_remove() below replays or reports it. */
+        if (e.code().value() != ENOENT) {
+            throw;
+        }
+    }
+    for (const RawstdUUID& version_id : versions) {
+        RawstdUUID key;
+        if (rawstd_uuid7_init(&key) != 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+        try {
+            co_await _remove_version(key, id, version_id);
+        } catch (const std::system_error& e) {
+            if (e.code().value() != ENOENT) {
+                throw;
+            }
+        }
+    }
+
+    /*
+     * Then unregister the object (docs/mds.md, deletion order): an
+     * unregistered map means no new opens while the chunks below are
+     * destroyed. The MDS still refuses with EBUSY -- before any data is
+     * touched -- if a version was created since the versions above were
+     * removed. A crash in between leaves unregistered chunk objects: the
+     * same garbage class as a crashed version removal. The map to destroy
+     * comes back with the reply -- also on a retry whose first reply got
+     * lost, when the object is already gone (the MDS replays it by
+     * idempotency_key).
      */
     WireMap map = co_await _obj_remove(idempotency_key, id);
 

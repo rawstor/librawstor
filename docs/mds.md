@@ -31,9 +31,10 @@ numbers its stages separately.
 | Collecting expired `PENDING` versions | 2 | ❌ | [plan](#confirming-a-version-not-implemented) |
 | Native copies marked confirmed, so `--reconstruct` registers only those | 2 | ❌ | [plan](#confirming-a-version-not-implemented) |
 | Native CoW: `zfs://` | 2 | ✅ | `src/zfs_backend.cpp` |
-| Native CoW: `lvm://` (thin) | 2 | ❌ | `-ENOTSUP` |
+| Native CoW: `lvm://` (classic snapshot) | 2 | ✅ | `src/lvm_backend.cpp` |
+| Native CoW: `lvm://` (thin) | 2 | ❌ | — |
 | `file://` fake snapshots (full copy of `data`) | 2 | ✅ | `src/file_backend.cpp` |
-| Object removal refused with `-EBUSY` while versions exist | 2 | ✅ | `mds/src/store.cpp` |
+| Object removal removes its versions; the MDS refuses with `-EBUSY` only for a version created meanwhile | 2 | ✅ | `src/mds_backend.cpp`, `mds/src/store.cpp` |
 | Version redundancy status surfacing | 2 | ❌ | TODO |
 | vhost/QEMU flush hook for versions | 2 | ❌ | the CLI assumes no concurrent writer |
 | Backend health / `LOCATION_INFO` collector | — | ✅ | `mds/src/monitor.cpp`, `mds/src/opts.cpp` |
@@ -225,7 +226,7 @@ number:
 | Backend | Slot home + metadata | Versions (`version_id`) |
 |---------|----------------------|----------------------|
 | `file://` | dir `<id>/<offset>/`, `data` + `meta` inside it | fake snapshot: copy of `data` in `<id>/<offset>/<version_id>/data` |
-| `lvm://`  | thin LV `<id>-<offset>`, meta in LVM tags | thin snapshot LV |
+| `lvm://`  | LV `<id>-<offset>`, meta in LVM tags | read-only snapshot LV `<id>-<offset>-s<version_id>`, carrying the live LV's tag as of the version |
 | `zfs://`  | zvol `<id>:<offset>`, meta in user properties | `@s<version_id>` |
 
 (The physical `<offset>` is never omitted, even "0" -- unlike the
@@ -743,7 +744,7 @@ mirroring layer — defense in depth, not the primary guard.
 
 ## Versions (stage 2)
 
-Versions are **OST-side CoW** (native zfs/lvm-thin); the MDS only registers
+Versions are **OST-side CoW** (native zfs/lvm); the MDS only registers
 them. Coordination is **client-driven**, per the mirroring identity model:
 a write barrier first, so a version is a crash-consistent point across all
 members and all chunks, and only IN-SYNC members participate. The barrier is
@@ -910,15 +911,19 @@ visible once the orchestrator has verified its barrier:
   synced; it is staged in files unique to the attempt and renamed into place
   (`data` last), so a half copy is never taken for a version and concurrent
   attempts at one version do not touch each other's files. Such a version
-  opens read-only like any other. Removing the live chunk fails with
-  `-EBUSY` while it has versions.
+  opens read-only like any other. Removing the live chunk removes its
+  versions with it.
 
 **v1 notes (shipped):**
 
-- **Classic LVM is `-ENOTSUP` too.** This section says lvm-*thin* for a
-  reason: a classic LVM snapshot needs a preallocated COW area — a hidden
-  full-size copy is exactly the fallback ruled out above. CoW on LVM waits
-  for an lvm-thin backend. zfs is the v1 CoW backend: versions are
+- **LVM versions are classic (non-thin) snapshots.** A version is a
+  read-only `lvcreate --snapshot` named `<id>-<offset>-s<version_id>`, created
+  with `-l 100%ORIGIN`: the preallocated COW area holds every block of the
+  origin being rewritten, so a version is never invalidated by overflow, at
+  the price of reserving the origin's full size in the VG per version. The
+  snapshot carries the live LV's `rawstor.meta` tag as of the version
+  (`lvcreate` does not copy tags). Removing the live LV removes its
+  snapshots. A thin backend is not implemented. zfs versions are
   `<parent>/<uuid>@s<version_id>` (the `@s<id>` name *is* the version key —
   nothing stored twice; `snapdev=visible` is set with every version so
   each one that exists is also openable), read via
@@ -955,10 +960,14 @@ visible once the orchestrator has verified its barrier:
   died after its lease ran out leaves a complete set that is not a
   consistent point), so a version registered this way is crash-consistent
   per member only, not guaranteed point-in-time across them.
-- **Object deletion order matches version deletion**: the MDS
-  unregisters the map first — which is also where "the object still has
-  versions" refuses with `-EBUSY` *before* any data is touched — then
-  the chunk objects are destroyed.
+- **Object deletion removes the versions first**: the client removes each
+  of the object's versions as `remove_version` does (unregistered at the
+  MDS, then destroyed on the members it recorded, found through the
+  object's still-present map), then the MDS unregisters the map, then the
+  chunk objects are destroyed. The MDS still refuses with `-EBUSY` *before*
+  any data is touched if a version was created after the client removed
+  them; a retry removes it. A crash in between leaves the object
+  registered with the versions that remain.
 - **Concurrent writers are safe**: the write barrier above is held by the
   OSTs, so a version may be taken while a vhost/vduse device writes the
   object. Version redundancy status surfacing is still TODO.

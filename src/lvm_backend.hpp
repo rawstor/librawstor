@@ -31,6 +31,11 @@ namespace lvm {
  * hex, like every other offset this codebase carries in a physical name
  * or a target URI's own path segment. Device path: /dev/<vg>/<uuid>-<offset>.
  *
+ * A non-nil `version_id` names that version's own classic snapshot LV:
+ * <uuid>-<offset>-s<version_id>, read-only, carrying the live LV's tag as of
+ * the version. Not thin: the snapshot's COW area is preallocated at the
+ * origin's full size.
+ *
  * Requires lvcreate/lvremove/lvs/vgs to be available in PATH and sufficient
  * privileges.
  */
@@ -38,12 +43,23 @@ class Backend final : public rawstor::blk::Backend {
 private:
     std::string _vg_name;
 
-    std::string _lv_name(const RawstdUUID& id, uint64_t offset) const;
-    std::string _device_path(const RawstdUUID& id, uint64_t offset) const;
+    // A non-nil `version_id` names that version's own snapshot LV:
+    // "<uuid>-<offset>-s<version_id>" -- the "-s<id>" suffix is the version
+    // key itself (docs/mds.md, "Versions"), nothing stored twice.
+    std::string _lv_name(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+    ) const;
+    std::string _device_path(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
+    ) const;
     std::string _device_path_for_name(const std::string& name) const;
 
     rawstd::Task<int>
     _open_object(const RawstdUUID& id, uint64_t offset, int flags) override;
+
+    rawstd::Task<int> _open_version(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    ) override;
 
     // Removes any leftover "<uuid>.creating" staging LVs in this VG (see
     // create()'s own doc comment for why they can exist). Runs at most
@@ -78,7 +94,15 @@ public:
         const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
     ) override;
 
+    rawstd::Task<void> remove_version(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& version_id
+    ) override;
+
     rawstd::Task<RawstorLocationInfo> info() override;
+
+    rawstd::Task<std::vector<RawstdUUID>>
+    list_versions(const RawstdUUID& id, uint64_t offset) override;
 
     // Native per-copy mirror metadata, stored in the LV's own
     // "rawstor.meta=..." tag -- see blk::Backend::meta_encode().
@@ -90,6 +114,14 @@ public:
         const RawstdUUID& id, uint64_t offset,
         RawstorObjectSyncStateValue state, const RawstorObjectConfig& config,
         const RawstorObjectBallot& promised, const RawstorObjectBallot& accepted
+    ) override;
+
+    // The CoW version (docs/mds.md, "Versions"): a classic (non-thin)
+    // lvcreate --snapshot of the LV, read-only, with its copy-on-write area
+    // sized to the whole origin so the version cannot overflow.
+    rawstd::Task<void> create_version(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& version_id
     ) override;
 };
 

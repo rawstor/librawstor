@@ -373,10 +373,6 @@ TEST(FileLifecycleTest, create_version_copies_data) {
     });
     ASSERT_GT(res, 0);
 
-    // Not allowed to remove the live chunk while a version of it exists.
-    EXPECT_EQ(target_remove(*queue, live), -EBUSY);
-    EXPECT_TRUE(std::filesystem::exists(chunk_dir / "data"));
-
     std::string snapshot_bytes;
     {
         std::ifstream in(chunk_dir / "data", std::ios::binary);
@@ -450,6 +446,39 @@ TEST(FileLifecycleTest, create_version_copies_data) {
     EXPECT_TRUE(std::filesystem::exists(chunk_dir / "data"));
 
     EXPECT_EQ(target_remove(*queue, live), 0);
+}
+
+// Removing the live chunk removes its versions with it, like the other
+// backends with native versions do.
+TEST(FileLifecycleTest, remove_removes_versions) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
+    std::string uuid = "00000000-0000-7000-8000-0000000000e1";
+    std::string live = rawstd::URI(location_uri, uuid).str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    spec.width = 1;
+    ASSERT_EQ(target_create(*queue, live, spec), 0);
+
+    std::string created(65536, '\0');
+    for (const char* version_id :
+         {"00000000-0000-7000-8000-0000000000e2",
+          "00000000-0000-7000-8000-0000000000e3"}) {
+        ssize_t res =
+            rawstor::tests::sync_run(&*queue, [&](auto cb, void* data) {
+                return rawstor_target_create_version(
+                    queue.get(), live.c_str(), version_id, created.data(),
+                    created.size(), cb, data
+                );
+            });
+        ASSERT_GT(res, 0);
+    }
+
+    EXPECT_EQ(target_remove(*queue, live), 0);
+    EXPECT_FALSE(std::filesystem::exists(dir.path() / uuid));
 }
 
 // With RAWSTOR_READONLY a version opens for reading, and reads back the
