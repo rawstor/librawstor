@@ -436,6 +436,15 @@ TEST(FileLifecycleTest, create_version_copies_data) {
             << "x";
     }
 
+    // A leftover that cannot be removed fails the removal instead of
+    // reporting a version that is still on disk as removed.
+    std::filesystem::create_directories(
+        chunk_dir / version_id / "data.partial.2.2" / "stuck"
+    );
+    EXPECT_LT(target_remove(*queue, version_target), 0);
+    EXPECT_TRUE(std::filesystem::exists(chunk_dir / version_id));
+    std::filesystem::remove_all(chunk_dir / version_id / "data.partial.2.2");
+
     EXPECT_EQ(target_remove(*queue, version_target), 0);
     EXPECT_FALSE(std::filesystem::exists(chunk_dir / version_id));
     EXPECT_TRUE(std::filesystem::exists(chunk_dir / "data"));

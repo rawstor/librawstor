@@ -719,8 +719,14 @@ rawstd::Task<void> copy_blocks(
     int out_fd = -1;
     std::exception_ptr eptr;
     try {
+        // The staging name is this attempt's own, so whatever is there is a
+        // leftover (possibly one with looser permissions than a file made
+        // now would get): replaced, never reopened.
+        if (unlink(target.c_str()) == -1 && errno != ENOENT) {
+            RAWSTD_THROW_ERRNO();
+        }
         out_fd = co_await queue.open(
-            target.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+            target.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
             S_IRUSR | S_IWUSR
         );
         if (ftruncate(out_fd, st.st_size) == -1) {
@@ -891,9 +897,16 @@ rawstd::Task<void> Backend::remove_version(
             staging.push_back(entry.path());
         }
     }
-    ec.clear();
+    // No directory at all is a version that is not there (ENOENT below).
+    if (ec && ec != std::errc::no_such_file_or_directory) {
+        RAWSTD_THROW_SYSTEM_ERROR(ec.value());
+    }
     for (const auto& path : staging) {
+        ec.clear();
         found = std::filesystem::remove(path, ec) || found;
+        if (ec) {
+            RAWSTD_THROW_SYSTEM_ERROR(ec.value());
+        }
     }
     ec.clear();
     found = std::filesystem::remove(version_dir + "/data", ec) || found;
@@ -906,6 +919,9 @@ rawstd::Task<void> Backend::remove_version(
     }
     if (rmdir(version_dir.c_str()) == 0) {
         found = true;
+    } else if (errno != ENOENT) {
+        // Something unexpected is left in it: not removed.
+        RAWSTD_THROW_ERRNO();
     }
     errno = 0;
     if (!found) {
