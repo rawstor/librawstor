@@ -4,6 +4,7 @@
 #include "iovaregion.hpp"
 
 #include <stdheaders/linux/vduse.h>
+#include <stdheaders/linux/virtio_blk.h>
 #include <vduse/inflight.hpp>
 #include <vduse/virtqueue.hpp>
 
@@ -117,6 +118,10 @@ private:
     std::atomic<uint64_t> _features;
     bool _write_cache_enabled;
     int _wake_fd;
+    int _resize_fd;
+    bool _resize_pending;
+    /* The device's config space as last published to the kernel. */
+    virtio_blk_config _config;
     bool _stop_requested;
     /* Set (along with _stop_requested) when DRIVER_OK handling fails;
      * rethrown by loop(). */
@@ -153,6 +158,25 @@ private:
      */
     rawstd::DetachedTask _wake_task();
 
+    /**
+     * Only launched from loop() when `_resize_fd` holds a real fd: sets
+     * `_resize_pending` each time a byte arrives (main.cpp's SIGHUP
+     * handler), for loop() to act on between waits -- re-reading the size
+     * spins `_queue`, so it can't run from inside this task.
+     */
+    rawstd::DetachedTask _resize_task();
+
+    /**
+     * Re-read the target's size. If it grew, reopen every started
+     * VirtQueue's object (drained first) so I/O can reach the new space,
+     * then publish the new capacity to the kernel (VDUSE_DEV_SET_CONFIG)
+     * and raise a config interrupt (VDUSE_DEV_INJECT_CONFIG_IRQ) so the
+     * driver re-reads it. Control-plane thread only, never from inside a
+     * dispatch of `_queue`. Throws if a VirtQueue could not reopen its
+     * object.
+     */
+    void _refresh_size();
+
 public:
     /**
      * `target` names exactly one rawstor object (or a mirrored/cached set
@@ -164,11 +188,14 @@ public:
      * readable -- see _wake_task(). Device only ever reads it, never
      * closes it -- the caller (main.cpp, via its own rawstd::Pipe) must
      * keep it open for at least as long as this Device runs.
+     * `resize_fd`, if not -1, requests a re-read of the object size each
+     * time it becomes readable -- see _resize_task(); same ownership
+     * rules as `wake_fd`.
      */
     Device(
         unsigned int queue_size, unsigned int num_queues,
         const std::string& target, bool write_cache_enabled, bool readonly,
-        bool force, int wake_fd = -1
+        bool force, int wake_fd = -1, int resize_fd = -1
     );
     Device(const Device&) = delete;
     Device(Device&&) = delete;

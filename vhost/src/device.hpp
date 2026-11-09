@@ -95,6 +95,8 @@ private:
     std::atomic<bool> _wce_enabled;
     bool _postcopy_listening;
     int _wake_fd;
+    int _resize_fd;
+    bool _resize_pending;
 
     /* VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD shared memory: one
      * InflightRegion per virtqueue index below _inflight_num_queues,
@@ -127,6 +129,23 @@ private:
      */
     VirtQueue& _vq(size_t index);
 
+    /* Set the virtio-blk config fields derived from the object size. */
+    void _set_capacity(uint64_t size) noexcept;
+
+    /**
+     * Re-read the target's size. If it grew, reopen every started
+     * VirtQueue's object (drained first) so I/O can reach the new space,
+     * publish the new capacity in `_config` and tell the front-end via
+     * VHOST_USER_BACKEND_CONFIG_CHANGE_MSG. Control-plane thread only,
+     * and never from inside a dispatch of `_queue` (it spins `_queue`).
+     * Throws if a VirtQueue could not reopen its object.
+     */
+    void _refresh_size();
+
+    /* Tell the front-end its GET_CONFIG result changed, if it negotiated
+     * BACKEND_REQ and CONFIG. Best effort. */
+    void _notify_config_change();
+
 public:
     /**
      * Upper bound on virtqueues a front-end may ask for, reported via
@@ -145,10 +164,15 @@ public:
      * Queue::wait() on a second one. Device only ever reads it, never
      * closes it -- the caller (main.cpp, via its own rawstd::Pipe) must
      * keep it open for at least as long as this Device runs.
+     *
+     * `resize_fd`, if not -1, requests a re-read of the object size each
+     * time it becomes readable (main.cpp's SIGHUP handler writes to it);
+     * same ownership rules as `wake_fd`.
      */
     Device(
         unsigned int queue_size, const std::string& target, int fd,
-        bool write_cache_enabled, bool readonly, bool force, int wake_fd = -1
+        bool write_cache_enabled, bool readonly, bool force, int wake_fd = -1,
+        int resize_fd = -1
     );
 
     Device(const Device&) = delete;

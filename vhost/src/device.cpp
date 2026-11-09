@@ -145,6 +145,21 @@ rawstd::DetachedTask wake_task(RawIOQueue* queue, int wake_fd, bool& done) {
     done = true;
 }
 
+// Marks `pending` each time a resize request is written to resize_fd;
+// Device::loop() acts on it between reactor waits, since re-reading the
+// size spins the same queue and so can't run from inside this callback.
+rawstd::DetachedTask resize_task(RawIOQueue* queue, int fd, bool& pending) {
+    char buf[64];
+    try {
+        while (true) {
+            co_await co_read(queue, fd, buf, sizeof(buf));
+            pending = true;
+        }
+    } catch (const std::system_error&) {
+        // Cancelled by ~Device().
+    }
+}
+
 // Fire-and-forget notification -- unlike every reply above, nothing
 // awaits this (it's a best-effort "in case of I/O hang after
 // reconnecting" poke, not part of the request/response flow itself), so
@@ -1209,7 +1224,8 @@ namespace vhost {
 
 Device::Device(
     unsigned int queue_size, const std::string& target, int fd,
-    bool write_cache_enabled, bool readonly, bool force, int wake_fd
+    bool write_cache_enabled, bool readonly, bool force, int wake_fd,
+    int resize_fd
 ) :
     _fd(fd),
     _queue(nullptr),
@@ -1234,6 +1250,8 @@ Device::Device(
     _wce_enabled(write_cache_enabled),
     _postcopy_listening(false),
     _wake_fd(wake_fd),
+    _resize_fd(resize_fd),
+    _resize_pending(false),
     _inflight_fd(-1),
     _inflight_addr(nullptr),
     _inflight_size(0),
@@ -1252,8 +1270,6 @@ Device::Device(
         // since nothing on Device itself does data-plane I/O against the
         // target: each VirtQueue opens its own RawstorObject (see _vq()).
         RawstorObjectSpec spec = spec_object(_queue, target);
-
-        _config.capacity = spec.size >> VIRTIO_BLK_SECTOR_BITS;
 
         _config.size_max = 1 << 16; // VIRTIO_BLK_F_SIZE_MAX
 
@@ -1279,10 +1295,7 @@ Device::Device(
         // discard_task()'s own per-segment dispatch loop,
         // virtqueue_worker.cpp, which handles more than one only
         // defensively); capped to UINT32_MAX sectors since the field
-        // itself is 32 bits.
-        _config.max_discard_sectors = static_cast<uint32_t>(
-            std::min<uint64_t>(_config.capacity, UINT32_MAX)
-        );
+        // itself is 32 bits (see _set_capacity()).
         _config.max_discard_seg = 1;
         _config.discard_sector_alignment =
             _config.blk_size >> VIRTIO_BLK_SECTOR_BITS;
@@ -1291,9 +1304,6 @@ Device::Device(
         // as discard above; write_zeroes_may_unmap advertises that this
         // device may deallocate storage for a range the guest flags
         // UNMAP (see write_zeroes_task()'s own use of the flag).
-        _config.max_write_zeroes_sectors = static_cast<uint32_t>(
-            std::min<uint64_t>(_config.capacity, UINT32_MAX)
-        );
         _config.max_write_zeroes_seg = 1;
         _config.write_zeroes_may_unmap = 1;
 
@@ -1303,6 +1313,8 @@ Device::Device(
         _config.secure_erase_sector_alignment = 0;
 
         _config.zoned = {}; // VIRTIO_BLK_F_ZONED (unsupported)
+
+        _set_capacity(spec.size);
     } catch (...) {
         // _wake_fd itself needs no cleanup here: wake_task() (which is
         // what would ever arm a read on it) is only ever launched from
@@ -1365,6 +1377,15 @@ Device::~Device() {
         }
     }
 
+    if (_resize_fd != -1) {
+        int rcres = rawio_cancel_all(_queue, _resize_fd);
+        if (rcres && rcres != -ENOENT) {
+            rawstd_error(
+                "Failed to cancel pending resize fd ops: %s\n", strerror(-rcres)
+            );
+        }
+    }
+
     rawio_queue_delete(_queue);
 
     if (_backend_fd != -1) {
@@ -1388,6 +1409,106 @@ Device::~Device() {
         oss << "Failed to close socket: " << e.what();
         rawstd_error("%s\n", oss.str().c_str());
     }
+}
+
+void Device::_set_capacity(uint64_t size) noexcept {
+    _config.capacity = size >> VIRTIO_BLK_SECTOR_BITS;
+    _config.max_discard_sectors =
+        static_cast<uint32_t>(std::min<uint64_t>(_config.capacity, UINT32_MAX));
+    _config.max_write_zeroes_sectors =
+        static_cast<uint32_t>(std::min<uint64_t>(_config.capacity, UINT32_MAX));
+}
+
+void Device::_notify_config_change() {
+    constexpr uint64_t required = 1ull << VHOST_USER_PROTOCOL_F_BACKEND_REQ |
+                                  1ull << VHOST_USER_PROTOCOL_F_CONFIG;
+    if (_backend_fd == -1 || (_protocol_features & required) != required) {
+        rawstd_info(
+            "Front-end can't be notified of the new size: it did not "
+            "negotiate backend requests and config\n"
+        );
+        return;
+    }
+
+    VhostUserHeader header{};
+    header.request =
+        static_cast<VhostUserRequest>(VHOST_USER_BACKEND_CONFIG_CHANGE_MSG);
+    header.flags = VHOST_USER_VERSION;
+    header.size = 0;
+
+    ssize_t res = send(
+        _backend_fd, &header, sizeof(header), MSG_DONTWAIT | RAWSTD_MSG_NOSIGNAL
+    );
+    if (res != static_cast<ssize_t>(sizeof(header))) {
+        rawstd_error(
+            "Failed to send CONFIG_CHANGE to front-end: %s\n",
+            res < 0 ? strerror(errno) : "short send"
+        );
+    }
+}
+
+void Device::_refresh_size() {
+    RawstorObjectSpec spec{};
+    Result result;
+    int res =
+        rawstor_target_spec(_queue, _target.c_str(), &spec, result_cb, &result);
+    if (res < 0) {
+        rawstd_error("Failed to read object size: %s\n", strerror(-res));
+        return;
+    }
+    while (!result.done) {
+        int wres = rawio_wait(_queue);
+        if (wres == -EINTR) {
+            continue;
+        }
+        if (wres < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-wres);
+        }
+    }
+    if (result.error) {
+        rawstd_error(
+            "Failed to read object size: %s\n", strerror(result.error)
+        );
+        return;
+    }
+
+    uint64_t capacity = spec.size >> VIRTIO_BLK_SECTOR_BITS;
+    if (capacity == _config.capacity) {
+        return;
+    }
+    if (capacity < _config.capacity) {
+        rawstd_error(
+            "Object shrank from %llu to %llu sectors, ignoring\n",
+            (unsigned long long)_config.capacity, (unsigned long long)capacity
+        );
+        return;
+    }
+
+    rawstd_info(
+        "Object size changed: %llu -> %llu sectors\n",
+        (unsigned long long)_config.capacity, (unsigned long long)capacity
+    );
+
+    // A VirtQueue that fails to reopen has no object: the exception
+    // fails the whole connection, like any other dispatch error.
+    for (auto& vq : _vqs) {
+        if (vq != nullptr) {
+            vq->pause();
+        }
+    }
+    for (auto& vq : _vqs) {
+        if (vq != nullptr) {
+            vq->reopen();
+        }
+    }
+    for (auto& vq : _vqs) {
+        if (vq != nullptr) {
+            vq->resume();
+        }
+    }
+
+    _set_capacity(spec.size);
+    _notify_config_change();
 }
 
 void Device::notify_reconnect_hint(int fd) {
@@ -1752,16 +1873,30 @@ void Device::loop() {
     if (_wake_fd != -1) {
         wake_task(_queue, _wake_fd, done);
     }
+    if (_resize_fd != -1) {
+        resize_task(_queue, _resize_fd, _resize_pending);
+    }
     rawstd::DetachedTask::rethrow_if_pending();
 
     while (!done) {
         int res = rawio_wait(_queue);
         if (res == -EINTR) {
-            return;
+            // With a wake pipe, SIGINT/SIGTERM has already written to it
+            // and the next wait reads it; any other signal (SIGHUP)
+            // must not end the connection.
+            if (_wake_fd == -1) {
+                return;
+            }
+            continue;
         }
 
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+
+        if (_resize_pending && !done) {
+            _resize_pending = false;
+            _refresh_size();
         }
     }
 }

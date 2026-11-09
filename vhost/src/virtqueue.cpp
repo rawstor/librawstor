@@ -343,6 +343,13 @@ void VirtQueue::resume() {
     _post(Resume{});
 }
 
+void VirtQueue::reopen() {
+    Reopen cmd;
+    std::future<void> f = cmd.reply.promise.get_future();
+    _post(std::move(cmd));
+    f.get();
+}
+
 void VirtQueue::post_run(std::function<void()> fn) {
     _post(RunTask{std::move(fn)});
 }
@@ -415,6 +422,10 @@ void VirtQueue::_apply(Resume&& /*cmd*/) {
     } catch (const std::exception& e) {
         rawstd_error("vhost: error processing virtqueue: %s\n", e.what());
     }
+}
+
+void VirtQueue::_apply(Reopen&& cmd) {
+    _pending_reopens.push_back(std::move(cmd.reply));
 }
 
 void VirtQueue::_apply(RunTask&& cmd) {

@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <exception>
 #include <future>
 #include <memory>
 #include <stdexcept>
@@ -648,6 +649,28 @@ void VirtQueue::_run(
 
     while (!_stop_requested) {
         int res = rawio_wait(_queue);
+        // Outside any dispatch of _queue, so close_object()/
+        // open_object() may spin it.
+        if (!_pending_reopens.empty() && _inflight == 0) {
+            std::vector<Reply<void>> replies = std::move(_pending_reopens);
+            _pending_reopens.clear();
+            std::exception_ptr error;
+            try {
+                RawstorObject* old = _object;
+                _object = nullptr;
+                close_object(_queue, old);
+                _object = open_object(_queue, target, readonly, force);
+            } catch (...) {
+                error = std::current_exception();
+            }
+            for (Reply<void>& reply : replies) {
+                if (error) {
+                    reply.promise.set_exception(error);
+                } else {
+                    reply.promise.set_value();
+                }
+            }
+        }
         if (res == -EINTR) {
             // Mirrors Device::loop()'s own EINTR handling in intent, but
             // not in effect: a signal reaching this worker thread rather
@@ -686,7 +709,9 @@ void VirtQueue::_run(
     }
 
     try {
-        close_object(_queue, _object);
+        if (_object != nullptr) {
+            close_object(_queue, _object);
+        }
     } catch (const std::exception& e) {
         rawstd_error(
             "vhost: vq %zu: failed to close object: %s\n", _index, e.what()

@@ -148,6 +148,12 @@ typedef enum VhostUserRequest {
     VHOST_USER_MAX
 } VhostUserRequest;
 
+/* Back-end to front-end requests, sent over the fd handed in
+ * VHOST_USER_SET_BACKEND_REQ_FD. */
+typedef enum VhostUserBackendRequest {
+    VHOST_USER_BACKEND_CONFIG_CHANGE_MSG = 2,
+} VhostUserBackendRequest;
+
 typedef struct {
     VhostUserRequest request;
 

@@ -167,7 +167,7 @@ namespace vhost {
 Server::Server(
     unsigned int queue_size, const std::string& target,
     const std::string& socket_path, bool write_cache_enabled, bool readonly,
-    bool force, int wake_fd
+    bool force, int wake_fd, int resize_fd
 ) :
     _queue_size(queue_size),
     _target(target),
@@ -177,7 +177,8 @@ Server::Server(
     _force(force),
     _lock_fd(lock_socket_path(_socket_path)),
     _fd(-1),
-    _wake_fd(wake_fd) {
+    _wake_fd(wake_fd),
+    _resize_fd(resize_fd) {
     try {
         _fd = open_unix_socket(_socket_path);
     } catch (...) {
@@ -229,7 +230,7 @@ void Server::loop() {
 
     Device device(
         _queue_size, _target, fd, _write_cache_enabled, _readonly, _force,
-        _wake_fd
+        _wake_fd, _resize_fd
     );
     device.loop();
 }

@@ -303,7 +303,12 @@ with `reconnect=1` on the QEMU chardev and an external supervisor (e.g.
 survive guest-side reconnects. Send `SIGINT`/`SIGTERM` to stop it: it
 first waits for every request already in flight to complete, so QEMU,
 reconnecting to the restarted backend, carries on exactly where it left
-off. It also negotiates `VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD`: every
+off. After growing the object (`rawstor resize`), send `SIGHUP`: the
+backend re-reads the size, reopens its connections to the target so I/O
+reaches the new space, and sends `VHOST_USER_BACKEND_CONFIG_CHANGE_MSG` so
+the front-end re-reads the config and tells the guest (QEMU updates the
+disk capacity and raises a config interrupt). A size that did not grow is
+ignored. It also negotiates `VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD`: every
 request is logged in shared memory QEMU keeps across backend restarts, so
 after a crash the restarted backend resubmits whatever was left in
 flight, in its original order.
@@ -451,6 +456,12 @@ there is no per-connection front-end to disconnect from, since the kernel
 is always "connected". Attaching the created device to the vDPA bus (`vdpa
 dev add name UUID mgmtdev vduse`) and, if applicable, driving it from a
 VMM, are separate, external steps.
+
+After growing the object (`rawstor resize`), send `SIGHUP`: the process
+re-reads the size, reopens its connections to the target so I/O reaches
+the new space, updates the device's config space and raises a config
+interrupt, so the guest sees the new capacity. A size that did not grow is
+ignored.
 
 On `SIGINT`/`SIGTERM` it first waits for every request already in flight
 to complete. A device still bound to the vDPA bus outlives the process; a

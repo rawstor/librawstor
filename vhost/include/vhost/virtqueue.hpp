@@ -112,6 +112,12 @@ private:
         Reply<void> reply;
     };
     struct Resume {};
+    // Closes and reopens this VirtQueue's RawstorObject on its own
+    // thread, so the object picks up the target's current size and
+    // chunk map. Sent only while paused and drained.
+    struct Reopen {
+        Reply<void> reply;
+    };
     // Runs `fn` on this VirtQueue's own owning thread once drained --
     // the general-purpose escape hatch for anything a foreign thread
     // needs done there without itself blocking on the result (unlike
@@ -129,7 +135,7 @@ private:
     using Command = std::variant<
         SetVringSize, SetVringBase, SetKickFd, SetCallFd, SetErrFd,
         SetVringAddr, SetEnabled, SetInflight, GetVringBase, Pause, Resume,
-        RunTask, Shutdown>;
+        Reopen, RunTask, Shutdown>;
 
     Ring _ring;
 
@@ -216,6 +222,7 @@ private:
     bool _paused;
     unsigned int _inflight;
     std::vector<Reply<void>> _pending_pauses;
+    std::vector<Reply<void>> _pending_reopens;
     bool _stop_requested;
 
     /**
@@ -243,6 +250,7 @@ private:
     void _apply(GetVringBase&& cmd);
     void _apply(Pause&& cmd);
     void _apply(Resume&& cmd);
+    void _apply(Reopen&& cmd);
     void _apply(RunTask&& cmd);
     void _apply(Shutdown&& cmd);
 
@@ -412,6 +420,15 @@ public:
      * guaranteed to arrive to trigger that on its own).
      */
     void resume();
+
+    /**
+     * Close and reopen this VirtQueue's RawstorObject, blocking the
+     * calling (control-plane) thread until done; throws what the reopen
+     * threw. Must be called between pause() and resume(): nothing may be
+     * in flight. On failure the VirtQueue has no object and must not be
+     * resumed.
+     */
+    void reopen();
 
     /**
      * Run `fn` on this VirtQueue's own owning thread once drained, then

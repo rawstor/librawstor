@@ -21,6 +21,7 @@ private:
     int _lock_fd;
     int _fd;
     int _wake_fd;
+    int _resize_fd;
 
 public:
     /**
@@ -28,12 +29,12 @@ public:
      * each accepted connection (see loop()) -- see Device's own
      * constructor doc comment for what it's for. Neither Server nor
      * Device ever closes it; the caller (main.cpp) owns it for as long
-     * as this Server runs.
+     * as this Server runs. `resize_fd` is Device's own `resize_fd`.
      */
     Server(
         unsigned int queue_size, const std::string& target,
         const std::string& socket_path, bool write_cache_enabled, bool readonly,
-        bool force, int wake_fd = -1
+        bool force, int wake_fd = -1, int resize_fd = -1
     );
     Server(const Server&) = delete;
     Server(Server&&) = delete;

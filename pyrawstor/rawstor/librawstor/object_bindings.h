@@ -33,6 +33,8 @@ PyObject* py_rawstor_object_sync_accept(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_remove(PyObject* self, PyObject* args);
 
+PyObject* py_rawstor_object_resize(PyObject* self, PyObject* args);
+
 PyObject* py_rawstor_object_chunks(PyObject* self, PyObject* args);
 PyObject* py_rawstor_object_slots(PyObject* self, PyObject* args);
 
