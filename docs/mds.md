@@ -904,10 +904,14 @@ visible once the orchestrator has verified its barrier:
   the two steps (an unreferenced version found on an OST is garbage,
   collectable).
 - **`file://` backend has no CoW** → its versions are fake snapshots: under the
-  write barrier, `create-version` copies each member's `data` file to
-  `<id>/<offset>/<version_id>/data` (full size, no sharing; written as
-  `data.partial` and renamed, so a half copy is never taken for a version).
-  Such a version opens read-only like any other.
+  write barrier, `create-version` copies each member's `data` and `meta` to
+  `<id>/<offset>/<version_id>/` (no sharing). The copy runs on the member's
+  event loop one 1 MiB block at a time, keeps the source's holes, and is
+  synced; it is staged in files unique to the attempt and renamed into place
+  (`data` last), so a half copy is never taken for a version and concurrent
+  attempts at one version do not touch each other's files. Such a version
+  opens read-only like any other. Removing the live chunk fails with
+  `-EBUSY` while it has versions.
 
 **v1 notes (shipped):**
 

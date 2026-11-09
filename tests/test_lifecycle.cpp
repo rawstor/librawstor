@@ -27,6 +27,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <vector>
@@ -332,7 +333,9 @@ TEST(FileLifecycleTest, open_version_without_readonly_is_einval) {
 
 // A file:// version is a fake snapshot: a copy of the chunk's `data` taken
 // when the version is created, which later writes to the live chunk do not
-// reach, and which is gone once removed.
+// reach, and which is gone once removed. The object is bigger than the
+// copy's block, with data on both sides of a block boundary and at the very
+// end, so every block of the copy is exercised, zero ones included.
 TEST(FileLifecycleTest, create_version_copies_data) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location_uri(dir.uri());
@@ -345,15 +348,21 @@ TEST(FileLifecycleTest, create_version_copies_data) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     RawstorObjectSpec spec{};
-    spec.size = 1ull << 20;
+    spec.size = (3ull << 20) + 12345;
     spec.width = 1;
     ASSERT_EQ(target_create(*queue, live, spec), 0);
 
     std::filesystem::path chunk_dir = dir.path() / uuid / "0";
-    {
-        std::ofstream data(chunk_dir / "data", std::ios::binary | std::ios::in);
-        data.write("before", 6);
-    }
+    auto put = [&](uint64_t pos, const std::string& bytes) {
+        std::fstream data(
+            chunk_dir / "data", std::ios::binary | std::ios::in | std::ios::out
+        );
+        data.seekp(static_cast<std::streamoff>(pos));
+        data.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    };
+    put(0, "before");
+    put((1ull << 20) - 3, "straddle");
+    put(spec.size - 3, "end");
 
     std::string created(65536, '\0');
     ssize_t res = rawstor::tests::sync_run(&*queue, [&](auto cb, void* data) {
@@ -364,10 +373,18 @@ TEST(FileLifecycleTest, create_version_copies_data) {
     });
     ASSERT_GT(res, 0);
 
+    // Not allowed to remove the live chunk while a version of it exists.
+    EXPECT_EQ(target_remove(*queue, live), -EBUSY);
+    EXPECT_TRUE(std::filesystem::exists(chunk_dir / "data"));
+
+    std::string snapshot_bytes;
     {
-        std::ofstream data(chunk_dir / "data", std::ios::binary | std::ios::in);
-        data.write("after!", 6);
+        std::ifstream in(chunk_dir / "data", std::ios::binary);
+        snapshot_bytes.assign(
+            std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()
+        );
     }
+    put(0, "after!");
 
     auto read_head = [](const std::filesystem::path& path) {
         std::ifstream in(path, std::ios::binary);
@@ -377,9 +394,23 @@ TEST(FileLifecycleTest, create_version_copies_data) {
     };
     EXPECT_EQ(read_head(chunk_dir / version_id / "data"), "before");
     EXPECT_EQ(read_head(chunk_dir / "data"), "after!");
-    EXPECT_EQ(
-        std::filesystem::file_size(chunk_dir / version_id / "data"), spec.size
-    );
+    {
+        std::ifstream in(chunk_dir / version_id / "data", std::ios::binary);
+        std::string copy(
+            (std::istreambuf_iterator<char>(in)),
+            std::istreambuf_iterator<char>()
+        );
+        EXPECT_EQ(copy.size(), spec.size);
+        EXPECT_TRUE(copy == snapshot_bytes);
+    }
+    // No staging file is left behind.
+    for (const auto& entry :
+         std::filesystem::directory_iterator(chunk_dir / version_id)) {
+        EXPECT_TRUE(
+            entry.path().filename() == "data" ||
+            entry.path().filename() == "meta"
+        ) << entry.path();
+    }
 
     // The version has its own meta: the shape of the chunk as of the version.
     RawstorObjectMeta version_meta{};

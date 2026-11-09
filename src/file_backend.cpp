@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -27,6 +28,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -76,6 +78,28 @@ std::string get_target_meta_path(
     uint64_t offset, const RawstdUUID& version_id = {}
 ) {
     return get_target_dir(location_path, uuid, offset, version_id) + "/meta";
+}
+
+// The versions kept in a chunk's directory: the UUID-named subdirectories
+// that hold a `data` file (one still being created has none yet).
+std::vector<RawstdUUID> versions_in(const std::string& target_dir) {
+    std::vector<RawstdUUID> ret;
+    for (const auto& entry : std::filesystem::directory_iterator(target_dir)) {
+        if (!entry.is_directory()) {
+            continue;
+        }
+        RawstdUUID version_id;
+        if (rawstd_uuid_from_string(
+                &version_id, entry.path().filename().string().c_str()
+            ) < 0) {
+            continue;
+        }
+        if (!std::filesystem::exists(entry.path() / "data")) {
+            continue;
+        }
+        ret.push_back(version_id);
+    }
+    return ret;
 }
 
 // Creates `path` if it doesn't already exist -- shared by create()'s own
@@ -489,6 +513,16 @@ Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
 
     std::string target_dir = get_target_dir(location_path, uuid_string, offset);
 
+    // The versions are copies of this chunk: they go first
+    // (remove_version()), or an object created later under the same id would
+    // show them as its own. Checked before anything is unlinked, so a retry
+    // is safe.
+    std::error_code versions_error;
+    if (std::filesystem::is_directory(target_dir, versions_error) &&
+        !versions_in(target_dir).empty()) {
+        RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
+    }
+
     // Either file may already be gone: a Slot retries remove() after a
     // transient failure (e.g. ENOBUFS from a saturated queue), possibly
     // one that hit between the two unlinks below. The chunk is missing
@@ -662,6 +696,96 @@ rawstd::Task<void> Backend::_write_meta(
     }
 }
 
+namespace {
+
+// The fake snapshot is copied one block at a time through the Queue, so the
+// event loop keeps serving other requests between blocks.
+constexpr size_t copy_block_size = 1u << 20;
+
+bool all_zero(const char* data, size_t size) {
+    return size == 0 || (data[0] == 0 && memcmp(data, data + 1, size - 1) == 0);
+}
+
+// Copies `source` to a new file `target`, synced before it returns. The
+// copy keeps the source's holes: it is the source's size first, and a block
+// that reads back as zeros is never written.
+rawstd::Task<void> copy_blocks(
+    rawio::Queue& queue, const std::string& source, const std::string& target
+) {
+    struct stat st;
+    co_await queue.stat(source.c_str(), &st);
+
+    int in_fd = co_await queue.open(source.c_str(), O_RDONLY | O_CLOEXEC, 0);
+    int out_fd = -1;
+    std::exception_ptr eptr;
+    try {
+        out_fd = co_await queue.open(
+            target.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644
+        );
+        if (ftruncate(out_fd, st.st_size) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+
+        std::vector<char> block(copy_block_size);
+        off_t pos = 0;
+        while (pos < st.st_size) {
+            size_t want = static_cast<size_t>(
+                std::min<off_t>(block.size(), st.st_size - pos)
+            );
+            size_t got = co_await queue.pread(in_fd, block.data(), want, pos);
+            if (got == 0) {
+                // The source ended before its size said it would.
+                RAWSTD_THROW_SYSTEM_ERROR(EIO);
+            }
+            if (!all_zero(block.data(), got)) {
+                size_t done = 0;
+                while (done < got) {
+                    done += co_await queue.pwrite(
+                        out_fd, block.data() + done, got - done, pos + done,
+                        false
+                    );
+                }
+            }
+            pos += static_cast<off_t>(got);
+        }
+        co_await queue.fsync(out_fd, false);
+    } catch (...) {
+        eptr = std::current_exception();
+    }
+    if (out_fd != -1) {
+        co_await queue.close(out_fd);
+    }
+    co_await queue.close(in_fd);
+    if (eptr) {
+        std::rethrow_exception(eptr);
+    }
+}
+
+rawstd::Task<void> sync_dir(rawio::Queue& queue, const std::string& path) {
+    int fd = co_await queue.open(path.c_str(), O_RDONLY | O_CLOEXEC, 0);
+    std::exception_ptr eptr;
+    try {
+        co_await queue.fsync(fd, false);
+    } catch (...) {
+        eptr = std::current_exception();
+    }
+    co_await queue.close(fd);
+    if (eptr) {
+        std::rethrow_exception(eptr);
+    }
+}
+
+// Staging files of one create_version() attempt, named apart from every
+// other attempt's, so that attempts at the same version neither share a
+// half-written file nor clean up each other's.
+std::string staging_suffix() {
+    static std::atomic<uint64_t> counter{0};
+    return ".partial." + std::to_string(getpid()) + "." +
+           std::to_string(counter.fetch_add(1));
+}
+
+} // namespace
+
 rawstd::Task<void> Backend::create_version(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
     const RawstdUUID& version_id
@@ -677,13 +801,16 @@ rawstd::Task<void> Backend::create_version(
     rawstd_uuid_to_string(&id, &uuid_string);
 
     std::string source = get_target_path(location_path, uuid_string, offset);
+    std::string target_dir = get_target_dir(location_path, uuid_string, offset);
     std::string version_dir =
         get_target_dir(location_path, uuid_string, offset, version_id);
     std::string target = version_dir + "/data";
-    std::string partial = version_dir + "/data.partial";
     std::string meta_source =
         get_target_meta_path(location_path, uuid_string, offset);
     std::string meta_target = version_dir + "/meta";
+    std::string suffix = staging_suffix();
+    std::string partial = target + suffix;
+    std::string meta_partial = meta_target + suffix;
 
     // A retry after a completed copy finds the version already there.
     std::error_code ec;
@@ -696,30 +823,35 @@ rawstd::Task<void> Backend::create_version(
 
     mkdir_or_exist(version_dir);
 
-    // TODO: std::filesystem::copy_file() blocks the event loop for the
-    // whole copy -- io_uring has no copy opcode. The copy goes to a
-    // partial file renamed into place afterwards, so a crash never leaves
-    // a truncated `data` that a later retry would take for a finished one.
+    // Both files are staged and synced first; `data` is renamed last, since
+    // a version exists once it has one, and the directories are synced after
+    // the renames, so a version that was reported created survives a crash.
+    std::exception_ptr eptr;
     try {
-        std::filesystem::copy_file(
-            source, partial, std::filesystem::copy_options::overwrite_existing
-        );
-        // `data` is renamed last: a version exists once it has one, so its
-        // `meta` is already in place by then.
-        std::filesystem::copy_file(
-            meta_source, meta_target,
-            std::filesystem::copy_options::overwrite_existing
-        );
-        std::filesystem::rename(partial, target);
-    } catch (const std::filesystem::filesystem_error& e) {
-        rawstd_error("file: failed to copy %s: %s\n", source.c_str(), e.what());
-        std::filesystem::remove(partial, ec);
-        std::filesystem::remove(meta_target, ec);
+        co_await copy_blocks(_queue, source, partial);
+        co_await copy_blocks(_queue, meta_source, meta_partial);
+        if (rename(meta_partial.c_str(), meta_target.c_str()) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+        if (rename(partial.c_str(), target.c_str()) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+        co_await sync_dir(_queue, version_dir);
+        co_await sync_dir(_queue, target_dir);
+    } catch (...) {
+        eptr = std::current_exception();
+    }
+    if (eptr) {
+        // Only this attempt's own files, and the `meta` only while no
+        // attempt has published the version's `data`.
+        unlink(partial.c_str());
+        unlink(meta_partial.c_str());
+        if (!std::filesystem::exists(target, ec)) {
+            unlink(meta_target.c_str());
+        }
         rmdir(version_dir.c_str());
         errno = 0;
-        RAWSTD_THROW_SYSTEM_ERROR(
-            e.code().value() != 0 ? e.code().value() : EIO
-        );
+        std::rethrow_exception(eptr);
     }
 
     co_return;
@@ -774,23 +906,7 @@ Backend::list_versions(const RawstdUUID& id, uint64_t offset) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
 
-    std::vector<RawstdUUID> ret;
-    for (const auto& entry : std::filesystem::directory_iterator(target_dir)) {
-        if (!entry.is_directory()) {
-            continue;
-        }
-        RawstdUUID version_id;
-        if (rawstd_uuid_from_string(
-                &version_id, entry.path().filename().string().c_str()
-            ) < 0) {
-            continue;
-        }
-        if (!std::filesystem::exists(entry.path() / "data")) {
-            continue;
-        }
-        ret.push_back(version_id);
-    }
-    co_return ret;
+    co_return versions_in(target_dir);
 }
 
 rawstd::Task<RawstorLocationInfo> Backend::info() {
