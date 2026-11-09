@@ -395,10 +395,9 @@ TEST(FileLifecycleTest, create_version_copies_data) {
     EXPECT_EQ(target_remove(*queue, live), 0);
 }
 
-// With RAWSTOR_READONLY the open goes ahead and reaches the backend. A
-// version that does not exist has no meta there (ENOENT); one that does
-// exists only as a copy, which file:// cannot open (ENOTSUP) -- Chunk::
-// create() then reports the lone member as unavailable, i.e. ENOTCONN.
+// With RAWSTOR_READONLY a version opens for reading, and reads back the
+// data as of its creation. A version that does not exist has no meta
+// (ENOENT).
 TEST(FileLifecycleTest, open_version_readonly_reaches_backend) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location_uri(dir.uri());
@@ -418,6 +417,12 @@ TEST(FileLifecycleTest, open_version_readonly_reaches_backend) {
     EXPECT_EQ(target_open(*queue, target, RAWSTOR_READONLY, &object), -ENOENT);
 
     std::string created(65536, '\0');
+    std::filesystem::path data_path = dir.path() / uuid / "0" / "data";
+    {
+        std::ofstream data(data_path, std::ios::binary | std::ios::in);
+        data.write("before", 6);
+    }
+    // Created after the write above, so the version holds "before".
     ASSERT_GT(
         rawstor::tests::sync_run(
             queue.get(),
@@ -430,9 +435,11 @@ TEST(FileLifecycleTest, open_version_readonly_reaches_backend) {
         ),
         0
     );
-    EXPECT_EQ(
-        target_open(*queue, target, RAWSTOR_READONLY, &object), -ENOTCONN
-    );
+    EXPECT_EQ(target_open(*queue, target, RAWSTOR_READONLY, &object), 0);
+    char head[6] = {};
+    EXPECT_EQ(object_pread(*queue, object, head, sizeof(head), 0), 6);
+    EXPECT_EQ(std::string(head, 6), "before");
+    EXPECT_EQ(object_close(*queue, object), 0);
 
     EXPECT_EQ(target_remove(*queue, target), 0);
     EXPECT_EQ(target_remove(*queue, live), 0);

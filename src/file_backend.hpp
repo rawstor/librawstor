@@ -23,6 +23,10 @@ private:
     rawstd::Task<int>
     _open_object(const RawstdUUID& id, uint64_t offset, int flags) override;
 
+    rawstd::Task<int> _open_version(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    ) override;
+
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 

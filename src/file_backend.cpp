@@ -45,11 +45,9 @@ namespace {
 // listing and its own meta record read the same way. `version_id`, when
 // bound, is one directory deeper still: a file:// version is a fake
 // snapshot, a full copy of `data` and `meta` made by create_version(). It
-// is never opened (_open_object() below has no version_id parameter, and
-// _open_version() keeps blk::Backend's ENOTSUP default), only described by
-// meta(). Two files live directly under a chunk's or a version's directory:
-// `data` (the object's own bytes) and `meta` (get_target_meta_path()
-// below).
+// is opened read-only by _open_version() below and described by meta(). Two
+// files live directly under a chunk's or a version's directory: `data` (the
+// object's own bytes) and `meta` (get_target_meta_path() below).
 std::string get_target_dir(
     const std::string& location_path, const RawstdUUIDString& uuid,
     uint64_t offset, const RawstdUUID& version_id = {}
@@ -160,6 +158,23 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
         }
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
+    co_return fd;
+}
+
+rawstd::Task<int> Backend::_open_version(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+) {
+    std::string location_path = get_location_path(location());
+
+    RawstdUUIDString id_string;
+    rawstd_uuid_to_string(&id, &id_string);
+
+    // O_RDONLY: a version is a read-only copy. A missing one is ENOENT
+    // (meta() has already answered for it by the time this runs).
+    int fd = co_await _queue.open(
+        get_target_path(location_path, id_string, offset, version_id).c_str(),
+        O_RDONLY | O_NONBLOCK | O_CLOEXEC, 0
+    );
     co_return fd;
 }
 

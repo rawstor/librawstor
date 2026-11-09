@@ -907,7 +907,7 @@ visible once the orchestrator has verified its barrier:
   write barrier, `create-version` copies each member's `data` file to
   `<id>/<offset>/<version_id>/data` (full size, no sharing; written as
   `data.partial` and renamed, so a half copy is never taken for a version).
-  Such a version cannot be opened.
+  Such a version opens read-only like any other.
 
 **v1 notes (shipped):**
 
