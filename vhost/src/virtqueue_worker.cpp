@@ -183,7 +183,7 @@ public:
     void push(unsigned char status, size_t size) {
         _in->status = status;
         _vq.complete_request(
-            _chain->head, static_cast<uint32_t>(size + sizeof(virtio_blk_inhdr))
+            *_chain, static_cast<uint32_t>(size + sizeof(virtio_blk_inhdr))
         );
     }
 };
@@ -762,11 +762,16 @@ void VirtQueue::process_queue() {
     );
 }
 
-void VirtQueue::complete_request(uint16_t head, uint32_t len) {
+void VirtQueue::complete_request(const DescChain& chain, uint32_t len) {
+    const uint16_t head = chain.head;
     rawstd_debug(
         "vhost: complete_request(%zu): head %u len %u\n", _index, head, len
     );
-    push(head, len);
+    std::shared_ptr<DirtyLog> log = _device->dirty_log();
+    if (log != nullptr) {
+        log_chain(*log, chain);
+    }
+    push(head, len, log.get());
     notify(_device->event_idx_negotiated());
 
     if (--_inflight == 0 && !_pending_pauses.empty()) {

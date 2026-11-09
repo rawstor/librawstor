@@ -1,5 +1,6 @@
 #include "device.hpp"
 
+#include <stdheaders/linux/vhost_types.h>
 #include <stdheaders/linux/virtio_blk.h>
 #include <stdheaders/linux/virtio_config.h>
 #include <stdheaders/linux/virtio_ring.h>
@@ -46,6 +47,7 @@
 
 /* VhostSetConfigType: who is asking to change the config space. */
 #define VHOST_SET_CONFIG_TYPE_FRONTEND 0
+#define VHOST_SET_CONFIG_TYPE_MIGRATION 1
 
 #define VIRTIO_BLK_SECTOR_BITS 9
 
@@ -866,6 +868,45 @@ std::unique_ptr<Reply> rem_mem_reg(DeviceOp& op) {
 }
 
 /**
+ * Hands over the shared dirty page bitmap (VHOST_USER_PROTOCOL_F_LOG_SHMFD):
+ * the front-end passes the fd and waits for the acknowledgement.
+ */
+std::unique_ptr<Reply> set_log_base(DeviceOp& op) {
+    VhostUserFds& fds = op.fds();
+    const VhostUserLog log = op.payload().log;
+
+    if (fds.fd_num != 1) {
+        rawstd_error("Invalid set_log_base message (%u fd's)\n", fds.fd_num);
+        close_fds(fds);
+        throw std::runtime_error("Invalid set_log_base message");
+    }
+
+    rawstd_debug(
+        "set_log_base: mmap_size=%" PRIu64 " mmap_offset=%" PRIu64 "\n",
+        log.mmap_size, log.mmap_offset
+    );
+
+    try {
+        op.device().set_log_base(fds.fds[0], log.mmap_size, log.mmap_offset);
+    } catch (...) {
+        close(fds.fds[0]);
+        throw;
+    }
+    close(fds.fds[0]);
+
+    return std::make_unique<U64Reply>(op, log.mmap_size);
+}
+
+/**
+ * The fd the front-end watches for log updates is not needed: the bitmap
+ * is shared memory, so there is nothing to signal.
+ */
+std::unique_ptr<Reply> set_log_fd(DeviceOp& op) {
+    close_fds(op.fds());
+    return nullptr;
+}
+
+/**
  * Reset feature negotiation; sent rarely by modern front-ends. We simply
  * acknowledge it.
  */
@@ -897,6 +938,10 @@ std::unique_ptr<Reply> response(DeviceOp& op) {
         return set_vring_call(op);
     case VHOST_USER_SET_VRING_ERR:
         return set_vring_err(op);
+    case VHOST_USER_SET_LOG_BASE:
+        return set_log_base(op);
+    case VHOST_USER_SET_LOG_FD:
+        return set_log_fd(op);
     case VHOST_USER_SET_VRING_ENABLE:
         return set_vring_enable(op);
     case VHOST_USER_GET_PROTOCOL_FEATURES:
@@ -1232,7 +1277,7 @@ Device::Device(
         1ull << VIRTIO_BLK_F_CONFIG_WCE | 1ull << VIRTIO_BLK_F_DISCARD |
         1ull << VIRTIO_BLK_F_WRITE_ZEROES | 1ull << VIRTIO_F_VERSION_1 |
         1ull << VIRTIO_RING_F_INDIRECT_DESC | 1ull << VIRTIO_RING_F_EVENT_IDX |
-        1ull << VHOST_USER_F_PROTOCOL_FEATURES |
+        1ull << VHOST_USER_F_PROTOCOL_FEATURES | 1ull << VHOST_F_LOG_ALL |
         (readonly ? 1ull << VIRTIO_BLK_F_RO : 0)
     ),
     _protocol_features(0),
@@ -1557,6 +1602,10 @@ void Device::notify_reconnect_hint(int fd) {
     notify_eventfd(_queue, fd, 1);
 }
 
+void Device::set_log_base(int fd, uint64_t size, uint64_t offset) {
+    _dirty_log.store(std::make_shared<DirtyLog>(fd, size, offset));
+}
+
 void Device::set_features(uint64_t features) {
     if (!(features & (1ull << VIRTIO_F_VERSION_1))) {
         throw std::runtime_error("virtio legacy devices are not supported");
@@ -1577,6 +1626,7 @@ void Device::set_features(uint64_t features) {
 
 uint64_t Device::get_protocol_features() const noexcept {
     return (1ull << VHOST_USER_PROTOCOL_F_MQ |
+            1ull << VHOST_USER_PROTOCOL_F_LOG_SHMFD |
             1ull << VHOST_USER_PROTOCOL_F_BACKEND_REQ |
             1ull << VHOST_USER_PROTOCOL_F_REPLY_ACK |
             1ull << VHOST_USER_PROTOCOL_F_CONFIGURE_MEM_SLOTS |
@@ -1699,7 +1749,20 @@ void* Device::guest_phys_to_va(uint64_t gpa) const noexcept {
 void Device::set_config(
     const uint8_t* data, uint32_t offset, uint32_t size, uint32_t flags
 ) {
-    /* don't support live migration */
+    /*
+     * The front-end of a live migration destination replays the config
+     * it got from the source; only the write cache enable field is
+     * writable, anything else in it is ignored.
+     */
+    if (flags == VHOST_SET_CONFIG_TYPE_MIGRATION) {
+        constexpr uint32_t wce_offset = offsetof(virtio_blk_config, wce);
+        if (offset <= wce_offset && wce_offset - offset < size) {
+            _config.wce = data[wce_offset - offset];
+            _wce_enabled.store(_config.wce != 0, std::memory_order_relaxed);
+        }
+        return;
+    }
+
     if (flags != VHOST_SET_CONFIG_TYPE_FRONTEND) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }

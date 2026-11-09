@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 
@@ -581,6 +582,10 @@ std::unique_ptr<DescChain> VirtQueue::pop(const Device& device) {
      */
     if (chain && device.event_idx_negotiated()) {
         _ring.set_avail_event(RAWSTD_LE16TOH(_last_avail_idx));
+        std::shared_ptr<DirtyLog> log = device.dirty_log();
+        if (log != nullptr) {
+            _ring.log_avail_event(*log);
+        }
     }
 
     return chain;
@@ -695,6 +700,7 @@ VirtQueue::_read_chain(uint16_t head, const AddressTranslator& translate) {
 
             if (flags & VRING_DESC_F_WRITE) {
                 chain->writable.push_back(iov);
+                chain->writable_gpa.emplace_back(addr, len);
             } else {
                 chain->readable.push_back(iov);
             }
@@ -713,7 +719,13 @@ VirtQueue::_read_chain(uint16_t head, const AddressTranslator& translate) {
     return chain;
 }
 
-void VirtQueue::push(uint16_t head, uint32_t len) {
+void VirtQueue::log_chain(DirtyLog& log, const DescChain& chain) noexcept {
+    for (const auto& [gpa, len] : chain.writable_gpa) {
+        log.mark(gpa, len);
+    }
+}
+
+void VirtQueue::push(uint16_t head, uint32_t len, DirtyLog* log) {
     if (_inflight_log != nullptr) {
         _inflight_log->last_batch_head = head;
         std::atomic_thread_fence(std::memory_order_release);
@@ -725,6 +737,10 @@ void VirtQueue::push(uint16_t head, uint32_t len) {
         pos, RAWSTD_LE32TOH(static_cast<uint32_t>(head)), RAWSTD_LE32TOH(len)
     );
 
+    if (log != nullptr) {
+        _ring.log_used_elem(*log, pos);
+    }
+
     _used_idx = static_cast<uint16_t>(_used_idx + 1);
 
     /*
@@ -734,6 +750,10 @@ void VirtQueue::push(uint16_t head, uint32_t len) {
      */
     __sync_synchronize();
     _ring.set_used_idx(RAWSTD_LE16TOH(_used_idx));
+
+    if (log != nullptr) {
+        _ring.log_used_idx(*log);
+    }
 
     if (_inflight_log != nullptr) {
         std::atomic_thread_fence(std::memory_order_release);

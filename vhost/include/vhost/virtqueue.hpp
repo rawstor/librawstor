@@ -41,6 +41,9 @@ struct DescChain {
     uint16_t head;
     std::vector<iovec> readable;
     std::vector<iovec> writable;
+    /* Guest physical address and length of every writable buffer, for
+     * dirty page logging. */
+    std::vector<std::pair<uint64_t, uint32_t>> writable_gpa;
 };
 
 /**
@@ -329,9 +332,10 @@ public:
 
     /**
      * Publish a completion for the descriptor chain starting at `head`
-     * with `len` bytes written into the writable buffers.
+     * with `len` bytes written into the writable buffers. With a `log`,
+     * the used ring writes are marked dirty in it.
      */
-    void push(uint16_t head, uint32_t len);
+    void push(uint16_t head, uint32_t len, DirtyLog* log = nullptr);
 
     /**
      * Whether the driver currently needs to be signalled (via call_fd),
@@ -484,6 +488,12 @@ public:
      */
     std::unique_ptr<DescChain> pop(const Device& device);
 
+    /**
+     * Marks every writable buffer of `chain` dirty in `log`; call after
+     * the device wrote them and before push().
+     */
+    static void log_chain(DirtyLog& log, const DescChain& chain) noexcept;
+
     /** This VirtQueue's own backing object -- see the class comment. */
     inline RawstorObject* object() const noexcept { return _object; }
 
@@ -508,10 +518,12 @@ public:
 
     /**
      * Publish a completion (used-ring push + notify) for the
-     * descriptor chain identified by `head`, and account for one fewer
-     * in-flight request (see pause()).
+     * descriptor chain `chain`, and account for one fewer in-flight
+     * request (see pause()). While the front-end has dirty page logging
+     * on, the chain's writable buffers and the used ring writes are
+     * marked dirty before the completion is visible to the driver.
      */
-    void complete_request(uint16_t head, uint32_t len);
+    void complete_request(const DescChain& chain, uint32_t len);
 };
 
 } // namespace vhost

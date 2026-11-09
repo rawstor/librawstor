@@ -1,10 +1,14 @@
 #include <stdheaders/linux/virtio_ring.h>
+#include <vhost/dirty_log.hpp>
 #include <vhost/ring.hpp>
 #include <vhost/virtqueue.hpp>
 
 #include <gtest/gtest.h>
 
+#include <unistd.h>
+
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -12,6 +16,7 @@ namespace {
 
 using rawstor::vhost::AddressTranslator;
 using rawstor::vhost::DescChain;
+using rawstor::vhost::DirtyLog;
 using rawstor::vhost::inflight_region_size;
 using rawstor::vhost::InflightRegion;
 using rawstor::vhost::VirtQueue;
@@ -410,6 +415,103 @@ TEST_F(VirtQueueInflightTest, LogSmallerThanRingIsIgnored) {
     ASSERT_NE(chain, nullptr);
     EXPECT_EQ(chain->head, 7);
     EXPECT_EQ(log.region->version, 0);
+}
+
+/**
+ * A ring whose used ring sits at guest physical address `used_gpa`, with a
+ * dirty log over a temporary file.
+ */
+class VirtQueueDirtyLogTest : public ::testing::Test {
+protected:
+    static constexpr uint64_t log_size = 16;
+    static constexpr uint64_t used_gpa = 4 * DirtyLog::page_size;
+
+    FakeQueueMemory mem{kQueueSize};
+    VirtQueue vq;
+    FILE* file = nullptr;
+    std::unique_ptr<DirtyLog> log;
+
+    void SetUp() override {
+        file = tmpfile();
+        ASSERT_NE(file, nullptr);
+        ASSERT_EQ(ftruncate(fileno(file), log_size), 0);
+        log = std::make_unique<DirtyLog>(fileno(file), log_size, 0);
+        vq.set_vring_size(kQueueSize);
+    }
+
+    void TearDown() override {
+        log.reset();
+        if (file != nullptr) {
+            fclose(file);
+        }
+    }
+
+    void set_addr(uint32_t flags) {
+        vhost_vring_addr vra = mem.addr();
+        vra.flags = flags;
+        vra.log_guest_addr = used_gpa;
+        vq.set_vring_addr(IdentityTranslator(), vra);
+    }
+
+    uint8_t bits(size_t byte) {
+        uint8_t value = 0;
+        EXPECT_EQ(pread(fileno(file), &value, 1, byte), 1);
+        return value;
+    }
+};
+
+TEST_F(VirtQueueDirtyLogTest, PushMarksUsedRingWhenRingLogsWrites) {
+    set_addr(1u << VHOST_VRING_F_LOG);
+
+    vq.push(1, 8, log.get());
+
+    // The first used entry and used->idx share the used ring's page.
+    EXPECT_EQ(bits(0), 1u << 4);
+}
+
+TEST_F(VirtQueueDirtyLogTest, PushKeepsAllEntriesOnTheUsedRingPage) {
+    set_addr(1u << VHOST_VRING_F_LOG);
+
+    // Entry `pos` sits at used_gpa + 4 + 8 * pos: entries 0..510 share a
+    // page, so a ring of 8 never leaves it.
+    for (unsigned int i = 0; i < kQueueSize; ++i) {
+        vq.push(static_cast<uint16_t>(i), 1, log.get());
+    }
+
+    EXPECT_EQ(bits(0), 1u << 4);
+    EXPECT_EQ(bits(1), 0);
+}
+
+TEST_F(VirtQueueDirtyLogTest, PushDoesNotMarkUsedRingWithoutLogFlag) {
+    set_addr(0);
+
+    vq.push(1, 8, log.get());
+
+    EXPECT_EQ(bits(0), 0);
+}
+
+TEST_F(VirtQueueDirtyLogTest, PushWithoutLogMarksNothing) {
+    set_addr(1u << VHOST_VRING_F_LOG);
+
+    vq.push(1, 8);
+
+    EXPECT_EQ(bits(0), 0);
+}
+
+TEST_F(VirtQueueDirtyLogTest, PopRecordsWritableGuestRanges) {
+    set_addr(0);
+
+    uint8_t out_buf[8] = {};
+    uint8_t in_buf[4] = {};
+    mem.set_desc(0, out_buf, sizeof(out_buf), VRING_DESC_F_NEXT, 1);
+    mem.set_desc(1, in_buf, sizeof(in_buf), VRING_DESC_F_WRITE);
+    mem.publish_avail(0);
+
+    std::unique_ptr<DescChain> chain = vq.pop(IdentityTranslator());
+    ASSERT_NE(chain, nullptr);
+    ASSERT_EQ(chain->writable_gpa.size(), 1u);
+    EXPECT_EQ(chain->writable_gpa[0].first, reinterpret_cast<uint64_t>(in_buf));
+    EXPECT_EQ(chain->writable_gpa[0].second, sizeof(in_buf));
 }
 
 } // namespace
