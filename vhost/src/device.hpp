@@ -96,8 +96,9 @@ private:
     int _backend_fd;
     std::atomic<uint64_t> _features;
     /* Dirty page bitmap from SET_LOG_BASE. Read by every VirtQueue
-     * thread; replaced only by the control-plane thread. */
-    std::atomic<std::shared_ptr<DirtyLog>> _dirty_log;
+     * thread while logging is on; replaced by the control-plane thread. */
+    mutable std::mutex _dirty_log_mutex;
+    std::shared_ptr<DirtyLog> _dirty_log;
     uint64_t _protocol_features;
     virtio_blk_config _config;
     std::atomic<bool> _wce_enabled;
@@ -245,7 +246,8 @@ public:
               (1ull << VHOST_F_LOG_ALL))) {
             return nullptr;
         }
-        return _dirty_log.load();
+        std::lock_guard<std::mutex> lock(_dirty_log_mutex);
+        return _dirty_log;
     }
 
     uint64_t get_protocol_features() const noexcept;

@@ -1603,7 +1603,10 @@ void Device::notify_reconnect_hint(int fd) {
 }
 
 void Device::set_log_base(int fd, uint64_t size, uint64_t offset) {
-    _dirty_log.store(std::make_shared<DirtyLog>(fd, size, offset));
+    std::shared_ptr<DirtyLog> log =
+        std::make_shared<DirtyLog>(fd, size, offset);
+    std::lock_guard<std::mutex> lock(_dirty_log_mutex);
+    _dirty_log = std::move(log);
 }
 
 void Device::set_features(uint64_t features) {
