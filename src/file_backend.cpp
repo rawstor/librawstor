@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -27,6 +28,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -43,13 +45,11 @@ namespace {
 // path segment (parse_target_path()'s own doc comment) and every
 // numeric field meta_encode() persists alongside it, so a directory
 // listing and its own meta record read the same way. `version_id`, when
-// bound, is one directory deeper still -- file:// never actually creates
-// one (its own _open_object() below has no version_id parameter at all,
-// and it never overrides _open_version(), whose blk::Backend default
-// rejects every call with ENOTSUP -- no native CoW), but the layout is
-// already shaped for a backend that could. Two
-// files live directly under this directory: `data` (the object's own
-// bytes) and `meta` (get_target_meta_path() below).
+// bound, is one directory deeper still: a file:// version is a fake
+// snapshot, a full copy of `data` and `meta` made by create_version(). It
+// is opened read-only by _open_version() below and described by meta(). Two
+// files live directly under a chunk's or a version's directory: `data` (the
+// object's own bytes) and `meta` (get_target_meta_path() below).
 std::string get_target_dir(
     const std::string& location_path, const RawstdUUIDString& uuid,
     uint64_t offset, const RawstdUUID& version_id = {}
@@ -68,16 +68,38 @@ std::string get_target_dir(
 
 std::string get_target_path(
     const std::string& location_path, const RawstdUUIDString& uuid,
-    uint64_t offset
+    uint64_t offset, const RawstdUUID& version_id = {}
 ) {
-    return get_target_dir(location_path, uuid, offset) + "/data";
+    return get_target_dir(location_path, uuid, offset, version_id) + "/data";
 }
 
 std::string get_target_meta_path(
     const std::string& location_path, const RawstdUUIDString& uuid,
-    uint64_t offset
+    uint64_t offset, const RawstdUUID& version_id = {}
 ) {
-    return get_target_dir(location_path, uuid, offset) + "/meta";
+    return get_target_dir(location_path, uuid, offset, version_id) + "/meta";
+}
+
+// The versions kept in a chunk's directory: the UUID-named subdirectories
+// that hold a `data` file (one still being created has none yet).
+std::vector<RawstdUUID> versions_in(const std::string& target_dir) {
+    std::vector<RawstdUUID> ret;
+    for (const auto& entry : std::filesystem::directory_iterator(target_dir)) {
+        if (!entry.is_directory()) {
+            continue;
+        }
+        RawstdUUID version_id;
+        if (rawstd_uuid_from_string(
+                &version_id, entry.path().filename().string().c_str()
+            ) < 0) {
+            continue;
+        }
+        if (!std::filesystem::exists(entry.path() / "data")) {
+            continue;
+        }
+        ret.push_back(version_id);
+    }
+    return ret;
 }
 
 // Creates `path` if it doesn't already exist -- shared by create()'s own
@@ -163,13 +185,29 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
     co_return fd;
 }
 
+rawstd::Task<int> Backend::_open_version(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+) {
+    std::string location_path = get_location_path(location());
+
+    RawstdUUIDString id_string;
+    rawstd_uuid_to_string(&id, &id_string);
+
+    // O_RDONLY: a version is a read-only copy. A missing one is ENOENT
+    // (meta() has already answered for it by the time this runs).
+    int fd = co_await _queue.open(
+        get_target_path(location_path, id_string, offset, version_id).c_str(),
+        O_RDONLY | O_NONBLOCK | O_CLOEXEC, 0
+    );
+    co_return fd;
+}
+
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
     RawstdUUID& token, RawstdUUID version_id
 ) {
     if (!rawstd_uuid_is_nil(&version_id)) {
-        // No versions on this backend (Backend::remove_version()'s own
-        // default).
+        // A version is described by meta() only; its chunks are not listed.
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
     // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc
@@ -475,6 +513,16 @@ Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
 
     std::string target_dir = get_target_dir(location_path, uuid_string, offset);
 
+    // The versions are copies of this chunk: they go first
+    // (remove_version()), or an object created later under the same id would
+    // show them as its own. Checked before anything is unlinked, so a retry
+    // is safe.
+    std::error_code versions_error;
+    if (std::filesystem::is_directory(target_dir, versions_error) &&
+        !versions_in(target_dir).empty()) {
+        RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
+    }
+
     // Either file may already be gone: a Slot retries remove() after a
     // transient failure (e.g. ENOBUFS from a saturated queue), possibly
     // one that hit between the two unlinks below. The chunk is missing
@@ -521,11 +569,6 @@ Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
-    if (!rawstd_uuid_is_nil(&version_id)) {
-        // No versions on this backend (Backend::remove_version()'s own
-        // default).
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
-    }
     std::string location_path = get_location_path(location());
 
     std::error_code location_error;
@@ -537,9 +580,9 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     rawstd_uuid_to_string(&id, &uuid_string);
 
     std::string target_path =
-        get_target_path(location_path, uuid_string, offset);
+        get_target_path(location_path, uuid_string, offset, version_id);
     std::string meta_path =
-        get_target_meta_path(location_path, uuid_string, offset);
+        get_target_meta_path(location_path, uuid_string, offset, version_id);
 
     struct stat st;
     co_await _queue.stat(target_path.c_str(), &st);
@@ -651,6 +694,256 @@ rawstd::Task<void> Backend::_write_meta(
     if (eptr) {
         std::rethrow_exception(eptr);
     }
+}
+
+namespace {
+
+// The fake snapshot is copied one block at a time through the Queue, so the
+// event loop keeps serving other requests between blocks.
+constexpr size_t copy_block_size = 1u << 20;
+
+bool all_zero(const char* data, size_t size) {
+    return size == 0 || (data[0] == 0 && memcmp(data, data + 1, size - 1) == 0);
+}
+
+// Copies `source` to a new file `target`, synced before it returns. The
+// copy keeps the source's holes: it is the source's size first, and a block
+// that reads back as zeros is never written.
+rawstd::Task<void> copy_blocks(
+    rawio::Queue& queue, const std::string& source, const std::string& target
+) {
+    struct stat st;
+    co_await queue.stat(source.c_str(), &st);
+
+    int in_fd = co_await queue.open(source.c_str(), O_RDONLY | O_CLOEXEC, 0);
+    int out_fd = -1;
+    std::exception_ptr eptr;
+    try {
+        // The staging name is this attempt's own, so whatever is there is a
+        // leftover (possibly one with looser permissions than a file made
+        // now would get): replaced, never reopened.
+        if (unlink(target.c_str()) == -1 && errno != ENOENT) {
+            RAWSTD_THROW_ERRNO();
+        }
+        out_fd = co_await queue.open(
+            target.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
+            S_IRUSR | S_IWUSR
+        );
+        if (ftruncate(out_fd, st.st_size) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+
+        std::vector<char> block(copy_block_size);
+        off_t pos = 0;
+        while (pos < st.st_size) {
+            size_t want = static_cast<size_t>(
+                std::min<off_t>(block.size(), st.st_size - pos)
+            );
+            size_t got = co_await queue.pread(in_fd, block.data(), want, pos);
+            if (got == 0) {
+                // The source ended before its size said it would.
+                RAWSTD_THROW_SYSTEM_ERROR(EIO);
+            }
+            if (!all_zero(block.data(), got)) {
+                size_t done = 0;
+                while (done < got) {
+                    done += co_await queue.pwrite(
+                        out_fd, block.data() + done, got - done, pos + done,
+                        false
+                    );
+                }
+            }
+            pos += static_cast<off_t>(got);
+        }
+        co_await queue.fsync(out_fd, false);
+    } catch (...) {
+        eptr = std::current_exception();
+    }
+    if (out_fd != -1) {
+        co_await queue.close(out_fd);
+    }
+    co_await queue.close(in_fd);
+    if (eptr) {
+        std::rethrow_exception(eptr);
+    }
+}
+
+rawstd::Task<void> sync_dir(rawio::Queue& queue, const std::string& path) {
+    int fd = co_await queue.open(path.c_str(), O_RDONLY | O_CLOEXEC, 0);
+    std::exception_ptr eptr;
+    try {
+        co_await queue.fsync(fd, false);
+    } catch (...) {
+        eptr = std::current_exception();
+    }
+    co_await queue.close(fd);
+    if (eptr) {
+        std::rethrow_exception(eptr);
+    }
+}
+
+// Staging files of one create_version() attempt, named apart from every
+// other attempt's, so that attempts at the same version neither share a
+// half-written file nor clean up each other's.
+std::string staging_suffix() {
+    static std::atomic<uint64_t> counter{0};
+    return ".partial." + std::to_string(getpid()) + "." +
+           std::to_string(counter.fetch_add(1));
+}
+
+} // namespace
+
+rawstd::Task<void> Backend::create_version(
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& version_id
+) {
+    if (rawstd_uuid_is_nil(&version_id)) {
+        // nil is the live version, never a created one.
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    std::string location_path = get_location_path(location());
+
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    std::string source = get_target_path(location_path, uuid_string, offset);
+    std::string target_dir = get_target_dir(location_path, uuid_string, offset);
+    std::string version_dir =
+        get_target_dir(location_path, uuid_string, offset, version_id);
+    std::string target = version_dir + "/data";
+    std::string meta_source =
+        get_target_meta_path(location_path, uuid_string, offset);
+    std::string meta_target = version_dir + "/meta";
+    std::string suffix = staging_suffix();
+    std::string partial = target + suffix;
+    std::string meta_partial = meta_target + suffix;
+
+    // A retry after a completed copy finds the version already there --
+    // possibly one whose attempt failed after the rename and before the
+    // directories were synced, so they are synced here too before it is
+    // reported.
+    std::error_code ec;
+    if (std::filesystem::exists(target, ec)) {
+        co_await sync_dir(_queue, version_dir);
+        co_await sync_dir(_queue, target_dir);
+        co_return;
+    }
+
+    struct stat st;
+    co_await _queue.stat(source.c_str(), &st);
+
+    mkdir_or_exist(version_dir);
+
+    // Both files are staged and synced first; `data` is renamed last, since
+    // a version exists once it has one, and the directories are synced after
+    // the renames, so a version that was reported created survives a crash.
+    std::exception_ptr eptr;
+    try {
+        co_await copy_blocks(_queue, source, partial);
+        co_await copy_blocks(_queue, meta_source, meta_partial);
+        if (rename(meta_partial.c_str(), meta_target.c_str()) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+        if (rename(partial.c_str(), target.c_str()) == -1) {
+            RAWSTD_THROW_ERRNO();
+        }
+        co_await sync_dir(_queue, version_dir);
+        co_await sync_dir(_queue, target_dir);
+    } catch (...) {
+        eptr = std::current_exception();
+    }
+    if (eptr) {
+        // Only this attempt's own staging files: a published `meta` may be
+        // another attempt's, whose `data` is still to come. One left without
+        // `data` is replaced by the next attempt and removed by
+        // remove_version().
+        unlink(partial.c_str());
+        unlink(meta_partial.c_str());
+        rmdir(version_dir.c_str());
+        errno = 0;
+        std::rethrow_exception(eptr);
+    }
+
+    co_return;
+}
+
+rawstd::Task<void> Backend::remove_version(
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& version_id
+) {
+    if (rawstd_uuid_is_nil(&version_id)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    std::string location_path = get_location_path(location());
+
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    std::string version_dir =
+        get_target_dir(location_path, uuid_string, offset, version_id);
+
+    std::error_code ec;
+    bool found = false;
+    // Staging files an interrupted create_version() left behind go with the
+    // version.
+    std::vector<std::filesystem::path> staging;
+    for (const auto& entry :
+         std::filesystem::directory_iterator(version_dir, ec)) {
+        std::string name = entry.path().filename().string();
+        if (name.rfind("data.partial.", 0) == 0 ||
+            name.rfind("meta.partial.", 0) == 0) {
+            staging.push_back(entry.path());
+        }
+    }
+    // No directory at all is a version that is not there (ENOENT below).
+    if (ec && ec != std::errc::no_such_file_or_directory) {
+        RAWSTD_THROW_SYSTEM_ERROR(ec.value());
+    }
+    for (const auto& path : staging) {
+        ec.clear();
+        found = std::filesystem::remove(path, ec) || found;
+        if (ec) {
+            RAWSTD_THROW_SYSTEM_ERROR(ec.value());
+        }
+    }
+    ec.clear();
+    found = std::filesystem::remove(version_dir + "/data", ec) || found;
+    if (ec) {
+        RAWSTD_THROW_SYSTEM_ERROR(ec.value());
+    }
+    found = std::filesystem::remove(version_dir + "/meta", ec) || found;
+    if (ec) {
+        RAWSTD_THROW_SYSTEM_ERROR(ec.value());
+    }
+    if (rmdir(version_dir.c_str()) == 0) {
+        found = true;
+    } else if (errno != ENOENT) {
+        // Something unexpected is left in it: not removed.
+        RAWSTD_THROW_ERRNO();
+    }
+    errno = 0;
+    if (!found) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+
+    co_return;
+}
+
+rawstd::Task<std::vector<RawstdUUID>>
+Backend::list_versions(const RawstdUUID& id, uint64_t offset) {
+    std::string location_path = get_location_path(location());
+
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    std::string target_dir = get_target_dir(location_path, uuid_string, offset);
+    if (!std::filesystem::exists(target_dir + "/data")) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+
+    co_return versions_in(target_dir);
 }
 
 rawstd::Task<RawstorLocationInfo> Backend::info() {

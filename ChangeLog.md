@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rawstor create-version` works on `file://` members as a fake snapshot: the member's data file is copied into a per-version subdirectory under the write barrier.
 - A write barrier across `rawstor create-version`: the OSTs hold new writes to every DATA member of every chunk (`FREEZE`/`THAW`, [design](docs/mds.md#the-write-barrier)), drain and flush the admitted ones, and release them once the version is registered, so a version is one consistent point in time even with a live writer; a lease releases them by itself if the caller dies.
 - `rawstor ls`, `rm` and `lsv` are aliases for `list`, `remove` and `list-versions`; usage shows them as `list(ls)`, `remove(rm)` and `list-versions(lsv)`.
 - `rawstor list`, `list-versions`, `show`, `chunks`, `slots`, `info`, `create`, `create-version` and `resolve` take `--format table|json|value` (default `table`, a bordered table wrapped to the terminal width) and `--column COL[,COL...]` to choose and order the columns.

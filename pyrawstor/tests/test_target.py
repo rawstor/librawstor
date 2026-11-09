@@ -157,8 +157,7 @@ class TestTarget(unittest.TestCase):
             finally:
                 target.remove()
 
-    # file:// has no versions, so the listing is empty rather than an
-    # error.
+    # An object nobody took a version of lists none.
     def test_versions_empty(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             target = rawstor.Target(
@@ -181,52 +180,52 @@ class TestTarget(unittest.TestCase):
 
             target.remove()
 
-    # file:// has no native CoW (OSError/ENOTSUP once the attempt actually
-    # reaches the backend), so these only exercise create_version()'s own
-    # version id resolution (all three modes -- see its own docstring) --
-    # the id is resolved before the doomed backend attempt, so that part is
-    # fully testable without a CoW-capable backend at all.
+    # file:// versions are fake snapshots (a copy of the chunk): these
+    # exercise create_version()'s own version id resolution (all three
+    # modes -- see its own docstring) against a backend that takes the
+    # version for real.
     def test_create_version_generates_fresh_id_for_plain_target(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             target = rawstor.Target(
                 f"file://{temp_dir}/00000000-0000-0000-0000-000000000005")
+            target.create(size=1 << 20, width=1)
 
-            rawstor.Target(
-                f"file://{temp_dir}/00000000-0000-0000-0000-000000000005"
-            ).create(size=1 << 20, width=1)
+            version = target.create_version()
+            self.assertTrue(version.uri.startswith(target.uri + "/"))
+            self.assertEqual(len(version.uri), len(target.uri) + 1 + 36)
+            self.assertEqual(
+                [v.uri for v in target.versions()], [version.uri])
 
-            with self.assertRaises(OSError) as cm:
-                target.create_version()
-            self.assertEqual(cm.exception.errno, errno.ENOTSUP)
+            version.remove()
+            self.assertEqual(list(target.versions()), [])
+            target.remove()
 
     def test_create_version_uses_id_already_bound_in_target(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             version_id = "00000000-0000-0000-0000-000000000006"
-            target = rawstor.Target(
-                f"file://{temp_dir}/00000000-0000-0000-0000-000000000005/"
-                f"{version_id}")
+            live = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000005")
+            live.create(size=1 << 20, width=1)
+            target = rawstor.Target(f"{live.uri}/{version_id}")
 
-            rawstor.Target(
-                f"file://{temp_dir}/00000000-0000-0000-0000-000000000005"
-            ).create(size=1 << 20, width=1)
+            version = target.create_version()
+            self.assertEqual(version.uri, target.uri)
 
-            with self.assertRaises(OSError) as cm:
-                target.create_version()
-            self.assertEqual(cm.exception.errno, errno.ENOTSUP)
+            version.remove()
+            live.remove()
 
     def test_create_version_uses_explicit_id_for_plain_target(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             target = rawstor.Target(
                 f"file://{temp_dir}/00000000-0000-0000-0000-000000000005")
+            target.create(size=1 << 20, width=1)
             version_id = str(uuid.uuid4())
 
-            rawstor.Target(
-                f"file://{temp_dir}/00000000-0000-0000-0000-000000000005"
-            ).create(size=1 << 20, width=1)
+            version = target.create_version(version_id)
+            self.assertEqual(version.uri, f"{target.uri}/{version_id}")
 
-            with self.assertRaises(OSError) as cm:
-                target.create_version(version_id)
-            self.assertEqual(cm.exception.errno, errno.ENOTSUP)
+            version.remove()
+            target.remove()
 
     def test_create_version_explicit_id_on_bound_target_is_einval(self):
         with tempfile.TemporaryDirectory() as temp_dir:
