@@ -1246,6 +1246,37 @@ PyObject* py_rawstor_object_remove(PyObject* Py_UNUSED(self), PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* py_rawstor_object_resize(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* target;
+    PyObject* size_obj;
+    if (!PyArg_ParseTuple(args, "sO", &target, &size_obj)) {
+        return NULL;
+    }
+    // "K" would silently truncate to 64 bits.
+    unsigned long long new_size = PyLong_AsUnsignedLongLong(size_obj);
+    if (new_size == (unsigned long long)-1 && PyErr_Occurred()) {
+        return NULL;
+    }
+
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres = rawstor_target_resize(
+        op.queue, target, new_size, rawstor_sync_op_cb, &op
+    );
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
+    if (res < 0) {
+        set_os_error((int)-res);
+        return NULL;
+    }
+
+    Py_RETURN_NONE;
+}
+
 typedef int (*TargetListFunction)(
     RawIOQueue*, const char*, RawstorStringList**, int (*)(ssize_t, void*),
     void*

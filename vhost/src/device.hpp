@@ -10,12 +10,16 @@
 #include <rawstor/object.h>
 #include <rawstor/rawio.h>
 
+#include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
+#include <rawstd/pipe.hpp>
 
 #include <unistd.h>
 
 #include <atomic>
+#include <exception>
 #include <memory>
+#include <mutex>
 #include <shared_mutex>
 #include <string>
 #include <vector>
@@ -95,6 +99,23 @@ private:
     std::atomic<bool> _wce_enabled;
     bool _postcopy_listening;
     int _wake_fd;
+    int _resize_fd;
+    /* The front-end has not yet been sent the CONFIG_CHANGE for the
+     * current `_config.capacity`; the next size refresh retries. */
+    bool _config_notify_pending;
+
+    /* A size refresh reopens every VirtQueue's object on that
+     * VirtQueue's own thread. Each finished reopen calls _reopen_done();
+     * the last one writes to `_reopen_pipe`, whose read end the
+     * control-plane thread awaits, so the reactor is never blocked.
+     * `_reopen_error` (first failure) is guarded by `_reopen_mutex`. */
+    rawstd::Pipe _reopen_pipe;
+    std::atomic<size_t> _reopen_outstanding;
+    std::mutex _reopen_mutex;
+    std::exception_ptr _reopen_error;
+    /* Set (along with loop()'s `done`) when a reopen fails; rethrown by
+     * loop(). */
+    std::exception_ptr _fatal_error;
 
     /* VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD shared memory: one
      * InflightRegion per virtqueue index below _inflight_num_queues,
@@ -127,6 +148,33 @@ private:
      */
     VirtQueue& _vq(size_t index);
 
+    /* Set the virtio-blk config fields derived from the object size. */
+    void _set_capacity(uint64_t size) noexcept;
+
+    /**
+     * Re-read the target's size. If it grew, reopen every started
+     * VirtQueue's object (each drains its in-flight requests first) so
+     * I/O can reach the new space, then publish the new capacity in
+     * `_config` and tell the front-end via
+     * VHOST_USER_BACKEND_CONFIG_CHANGE_MSG. Runs on the control-plane
+     * thread and suspends instead of blocking while it waits. If a
+     * VirtQueue could not reopen its object, sets `_fatal_error` and
+     * `done`.
+     */
+    rawstd::Task<void> _refresh_size(bool& done);
+
+    /* Re-reads the size each time `_resize_fd` becomes readable. */
+    rawstd::DetachedTask _resize_task(bool& done);
+
+    /* Called on a VirtQueue's own thread when its reopen finished. */
+    void _reopen_done(std::exception_ptr error);
+
+    /* Tell the front-end its GET_CONFIG result changed, if it negotiated
+     * BACKEND_REQ and CONFIG. Clears `_config_notify_pending` once sent
+     * (or when the front-end can't be told at all); a failed send leaves
+     * it set. */
+    void _notify_config_change();
+
 public:
     /**
      * Upper bound on virtqueues a front-end may ask for, reported via
@@ -145,10 +193,15 @@ public:
      * Queue::wait() on a second one. Device only ever reads it, never
      * closes it -- the caller (main.cpp, via its own rawstd::Pipe) must
      * keep it open for at least as long as this Device runs.
+     *
+     * `resize_fd`, if not -1, requests a re-read of the object size each
+     * time it becomes readable (main.cpp's SIGHUP handler writes to it);
+     * same ownership rules as `wake_fd`.
      */
     Device(
         unsigned int queue_size, const std::string& target, int fd,
-        bool write_cache_enabled, bool readonly, bool force, int wake_fd = -1
+        bool write_cache_enabled, bool readonly, bool force, int wake_fd = -1,
+        int resize_fd = -1
     );
 
     Device(const Device&) = delete;

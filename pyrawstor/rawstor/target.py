@@ -122,6 +122,15 @@ class Target:
             self._uri, config, counter, proposer, member_index,
             next_counter, next_proposer)
 
+    def resize(self, size: int) -> None:
+        """Grow this mds:// object to `size` bytes (a multiple of its
+        chunk size; see rawstor_target_resize(), <rawstor/target.h>).
+        Raises OSError: ENOTSUP if the backend can't grow (e.g. file://),
+        EINVAL for a smaller or misaligned size."""
+        if size < 0:
+            raise ValueError("size cannot be negative")
+        librawstor.object_resize(self._uri, size)
+
     def chunks(self) -> list["Target"]:
         """Addressable physical chunk targets, in ascending offset order."""
         return [Target(uri) for uri in librawstor.object_chunks(self._uri)]

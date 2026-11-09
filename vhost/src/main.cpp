@@ -40,6 +40,11 @@ struct sigaction sact = {};
 // signal can ever land on.
 int wake_write_fd = -1;
 
+// Write end of the pipe SIGHUP signals through: Device::loop() re-reads
+// the object size when the other end becomes readable. Set up like
+// wake_write_fd.
+int resize_write_fd = -1;
+
 void usage() {
     std::cout << "Rawstor VHOST " << PACKAGE_VERSION << std::endl
               << std::endl
@@ -105,14 +110,23 @@ void sact_handler(int) {
     (void)n;
 }
 
+void sighup_handler(int) {
+    if (resize_write_fd == -1) {
+        return;
+    }
+    char byte = 0;
+    ssize_t n = write(resize_write_fd, &byte, 1);
+    (void)n;
+}
+
 void server(
     unsigned int queue_size, const std::string& target,
     const std::string& socket_path, bool write_cache_enabled, bool readonly,
-    bool force, int wake_fd
+    bool force, int wake_fd, int resize_fd
 ) {
     rawstor::vhost::Server s(
         queue_size, target, socket_path, write_cache_enabled, readonly, force,
-        wake_fd
+        wake_fd, resize_fd
     );
     s.loop();
 }
@@ -248,6 +262,8 @@ int main(int argc, char** argv) {
     try {
         rawstd::Pipe wake_pipe(rawstd::Pipe::Mode::NonBlocking);
         wake_write_fd = wake_pipe.write_fd();
+        rawstd::Pipe resize_pipe(rawstd::Pipe::Mode::NonBlocking);
+        resize_write_fd = resize_pipe.write_fd();
 
         sact.sa_handler = sact_handler;
         sigemptyset(&sact.sa_mask);
@@ -266,9 +282,23 @@ int main(int argc, char** argv) {
             return rawstd_exitcode_for_errno(errsv);
         }
 
+        // SA_RESTART so a SIGHUP outside rawio_wait() (e.g. a blocking
+        // accept()) doesn't fail the call with EINTR.
+        struct sigaction hup_sact = {};
+        hup_sact.sa_handler = sighup_handler;
+        hup_sact.sa_flags = SA_RESTART;
+        sigemptyset(&hup_sact.sa_mask);
+        if (sigaction(SIGHUP, &hup_sact, nullptr) == -1) {
+            int errsv = errno;
+            errno = 0;
+            std::cerr << "Failed to register SIGHUP handler: "
+                      << strerror(errsv) << std::endl;
+            return rawstd_exitcode_for_errno(errsv);
+        }
+
         server(
             queue_size, target_arg, socket_path_arg, write_cache_enabled,
-            readonly, force, wake_pipe.read_fd()
+            readonly, force, wake_pipe.read_fd(), resize_pipe.read_fd()
         );
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;

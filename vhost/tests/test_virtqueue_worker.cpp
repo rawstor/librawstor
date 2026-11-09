@@ -18,10 +18,13 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
+#include <future>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -194,6 +197,27 @@ TEST_F(VirtQueueWorkerTest, GetVringBaseRoundTripsAcrossWorkerThread) {
 
     vq.post_set_vring_base(7);
     EXPECT_EQ(vq.get_vring_base(), 7);
+
+    vq.stop();
+}
+
+TEST_F(VirtQueueWorkerTest, ReopenReopensObjectOnWorkerThread) {
+    VirtQueue vq;
+    vq.start(scratch.target(), kQueueSize, false);
+
+    std::promise<std::exception_ptr> done;
+    std::thread::id worker;
+    vq.reopen([&done, &worker](std::exception_ptr error) {
+        worker = std::this_thread::get_id();
+        done.set_value(error);
+    });
+    std::future<std::exception_ptr> f = done.get_future();
+    EXPECT_EQ(f.get(), nullptr);
+    EXPECT_NE(worker, std::this_thread::get_id());
+
+    // The worker is still serving commands with its new object.
+    vq.post_set_vring_base(3);
+    EXPECT_EQ(vq.get_vring_base(), 3);
 
     vq.stop();
 }

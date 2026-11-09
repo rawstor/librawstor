@@ -13,6 +13,7 @@
 #include <sys/uio.h>
 
 #include <deque>
+#include <exception>
 #include <functional>
 #include <future>
 #include <memory>
@@ -112,6 +113,13 @@ private:
         Reply<void> reply;
     };
     struct Resume {};
+    // Closes and reopens this VirtQueue's RawstorObject on its own
+    // thread, so the object picks up the target's current size and
+    // chunk map. `done` runs on that thread once the reopen finished
+    // (or failed).
+    struct Reopen {
+        std::function<void(std::exception_ptr)> done;
+    };
     // Runs `fn` on this VirtQueue's own owning thread once drained --
     // the general-purpose escape hatch for anything a foreign thread
     // needs done there without itself blocking on the result (unlike
@@ -129,7 +137,7 @@ private:
     using Command = std::variant<
         SetVringSize, SetVringBase, SetKickFd, SetCallFd, SetErrFd,
         SetVringAddr, SetEnabled, SetInflight, GetVringBase, Pause, Resume,
-        RunTask, Shutdown>;
+        Reopen, RunTask, Shutdown>;
 
     Ring _ring;
 
@@ -216,6 +224,7 @@ private:
     bool _paused;
     unsigned int _inflight;
     std::vector<Reply<void>> _pending_pauses;
+    std::vector<std::function<void(std::exception_ptr)>> _pending_reopens;
     bool _stop_requested;
 
     /**
@@ -243,6 +252,7 @@ private:
     void _apply(GetVringBase&& cmd);
     void _apply(Pause&& cmd);
     void _apply(Resume&& cmd);
+    void _apply(Reopen&& cmd);
     void _apply(RunTask&& cmd);
     void _apply(Shutdown&& cmd);
 
@@ -412,6 +422,17 @@ public:
      * guaranteed to arrive to trigger that on its own).
      */
     void resume();
+
+    /**
+     * Close and reopen this VirtQueue's RawstorObject without blocking
+     * the caller: the VirtQueue stops popping descriptors, waits for
+     * its in-flight requests to complete, reopens, and resumes popping.
+     * `done` is then called, on this VirtQueue's own thread, with the
+     * exception the reopen threw (null on success). On failure the
+     * VirtQueue has no object and stays idle; `done` must not touch
+     * the Device's reactor.
+     */
+    void reopen(std::function<void(std::exception_ptr)> done);
 
     /**
      * Run `fn` on this VirtQueue's own owning thread once drained, then

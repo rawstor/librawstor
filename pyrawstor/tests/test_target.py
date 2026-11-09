@@ -92,6 +92,26 @@ class TestTarget(unittest.TestCase):
             target.create(size=1 << 20, width=1, failure_domain="rack")
             target.remove()
 
+    def test_resize_plain_target(self):
+        # Only mds:// objects can grow; a file:// backend has no resize.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-00000000000b")
+            target.create(size=1 << 20, width=1)
+
+            with self.assertRaises(OSError) as cm:
+                target.resize(2 << 20)
+            self.assertEqual(cm.exception.errno, errno.ENOTSUP)
+            self.assertEqual(target.spec().size, 1 << 20)
+
+            target.remove()
+
+    def test_resize_size_out_of_range(self):
+        target = rawstor.Target(
+            "file:///nonexistent/00000000-0000-0000-0000-00000000000c")
+        with self.assertRaises(OverflowError):
+            target.resize(1 << 64)
+
     def test_meta(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             target = rawstor.Target(

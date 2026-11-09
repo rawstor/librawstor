@@ -198,7 +198,8 @@ namespace vduse {
 
 Device::Device(
     unsigned int queue_size, unsigned int num_queues, const std::string& target,
-    bool write_cache_enabled, bool readonly, bool force, int wake_fd
+    bool write_cache_enabled, bool readonly, bool force, int wake_fd,
+    int resize_fd
 ) :
     _ctrl_fd(-1),
     _fd(-1),
@@ -216,6 +217,12 @@ Device::Device(
     _features(0),
     _write_cache_enabled(write_cache_enabled),
     _wake_fd(wake_fd),
+    _resize_fd(resize_fd),
+    _reopen_pipe(rawstd::Pipe::Mode::NonBlocking),
+    _reopen_outstanding(0),
+    _config{},
+    _config_irq_pending(false),
+    _config_stale(false),
     _stop_requested(false) {
     int ires = rawio_queue_create(queue_size, &_queue);
     if (ires) {
@@ -280,6 +287,7 @@ Device::Device(
         );
         config.max_write_zeroes_seg = 1;
         config.write_zeroes_may_unmap = 1;
+        _config = config;
         // wce is left zero: see the VIRTIO_BLK_F_CONFIG_WCE comment below.
 
         uint64_t init_features =
@@ -464,6 +472,15 @@ Device::~Device() {
         }
     }
 
+    if (_resize_fd != -1) {
+        int rcres = rawio_cancel_all(_queue, _resize_fd);
+        if (rcres && rcres != -ENOENT) {
+            rawstd_error(
+                "Failed to cancel pending resize fd ops: %s\n", strerror(-rcres)
+            );
+        }
+    }
+
     // Only cancels whatever _wake_task() read may still be outstanding on
     // _wake_fd (needed before rawio_queue_delete() below regardless of
     // ownership) -- Device never owns this fd, so there is nothing to
@@ -475,6 +492,13 @@ Device::~Device() {
                 "Failed to cancel pending wake fd ops: %s\n", strerror(-cres)
             );
         }
+    }
+
+    int rdres = rawio_cancel_all(_queue, _reopen_pipe.read_fd());
+    if (rdres && rdres != -ENOENT) {
+        rawstd_error(
+            "Failed to cancel pending reopen pipe ops: %s\n", strerror(-rdres)
+        );
     }
 
     rawio_queue_delete(_queue);
@@ -895,6 +919,161 @@ rawstd::DetachedTask Device::_wake_task() {
     _stop_requested = true;
 }
 
+rawstd::DetachedTask Device::_resize_task() {
+    char buf[64];
+    try {
+        while (!_stop_requested) {
+            co_await co_read(_queue, _resize_fd, buf, sizeof(buf));
+            co_await _refresh_size();
+        }
+    } catch (const std::system_error&) {
+        // Cancelled by ~Device().
+    }
+}
+
+void Device::_reopen_done(std::exception_ptr error) {
+    if (error) {
+        std::lock_guard<std::mutex> lock(_reopen_mutex);
+        if (!_reopen_error) {
+            _reopen_error = error;
+        }
+    }
+    if (_reopen_outstanding.fetch_sub(1) == 1) {
+        char byte = 0;
+        ssize_t n = write(_reopen_pipe.write_fd(), &byte, 1);
+        (void)n;
+    }
+}
+
+rawstd::Task<void> Device::_refresh_size() {
+    RawstorObjectSpec spec{};
+    {
+        rawstd::CallbackAwaitable<void> awaiter;
+        int res = rawstor_target_spec(
+            _queue, _target.c_str(), &spec, wake_read_trampoline, &awaiter
+        );
+        if (res < 0) {
+            rawstd_error(
+                "vduse: failed to read object size: %s\n", strerror(-res)
+            );
+            co_return;
+        }
+        try {
+            co_await awaiter;
+        } catch (const std::system_error& e) {
+            rawstd_error("vduse: failed to read object size: %s\n", e.what());
+            co_return;
+        }
+    }
+
+    uint64_t capacity = spec.size >> VIRTIO_BLK_SECTOR_BITS;
+    if (capacity == _config.capacity) {
+        _flush_config();
+        co_return;
+    }
+    if (capacity < _config.capacity) {
+        rawstd_error(
+            "vduse: object shrank from %llu to %llu sectors, ignoring\n",
+            (unsigned long long)_config.capacity, (unsigned long long)capacity
+        );
+        co_return;
+    }
+
+    rawstd_info(
+        "vduse: object size changed: %llu -> %llu sectors\n",
+        (unsigned long long)_config.capacity, (unsigned long long)capacity
+    );
+
+    // A VirtQueue started after this point opens its object against the
+    // already grown target, so only the ones running now need a reopen.
+    std::vector<VirtQueue*> started;
+    for (auto& vq : _vqs) {
+        if (vq != nullptr) {
+            started.push_back(vq.get());
+        }
+    }
+    if (!started.empty()) {
+        _reopen_error = nullptr;
+        _reopen_outstanding = started.size();
+        for (VirtQueue* vq : started) {
+            vq->reopen([this](std::exception_ptr error) {
+                _reopen_done(error);
+            });
+        }
+
+        char byte;
+        co_await co_read(_queue, _reopen_pipe.read_fd(), &byte, sizeof(byte));
+
+        std::exception_ptr error;
+        {
+            std::lock_guard<std::mutex> lock(_reopen_mutex);
+            error = _reopen_error;
+        }
+        if (error) {
+            // A VirtQueue that failed to reopen has no object: the whole
+            // device fails, like any other fatal control-plane error.
+            _fatal_error = error;
+            _stop_requested = true;
+            co_return;
+        }
+    }
+
+    virtio_blk_config config = _config;
+    config.capacity = capacity;
+    config.max_discard_sectors =
+        static_cast<uint32_t>(std::min<uint64_t>(capacity, UINT32_MAX));
+    config.max_write_zeroes_sectors =
+        static_cast<uint32_t>(std::min<uint64_t>(capacity, UINT32_MAX));
+
+    if (_publish_config(config)) {
+        _inject_config_irq();
+    }
+}
+
+bool Device::_publish_config(const virtio_blk_config& config) {
+    std::vector<uint8_t> buf(
+        offsetof(vduse_config_data, buffer) + sizeof(config)
+    );
+    vduse_config_data* data = reinterpret_cast<vduse_config_data*>(buf.data());
+    data->offset = 0;
+    data->length = sizeof(config);
+    std::memcpy(data->buffer, &config, sizeof(config));
+    if (ioctl(_fd, VDUSE_DEV_SET_CONFIG, data)) {
+        int errsv = errno;
+        errno = 0;
+        rawstd_error(
+            "vduse: failed to update config space: %s\n", strerror(errsv)
+        );
+        return false;
+    }
+    _config = config;
+    _config_stale = false;
+    _config_irq_pending = true;
+    return true;
+}
+
+void Device::_flush_config() {
+    if (_config_stale && !_publish_config(_config)) {
+        return;
+    }
+    _inject_config_irq();
+}
+
+void Device::_inject_config_irq() {
+    if (!_config_irq_pending) {
+        return;
+    }
+    if (ioctl(_fd, VDUSE_DEV_INJECT_CONFIG_IRQ)) {
+        int errsv = errno;
+        errno = 0;
+        rawstd_error(
+            "vduse: failed to inject config interrupt: %s\n", strerror(errsv)
+        );
+        return;
+    }
+    _config_irq_pending = false;
+}
+
 void Device::loop() {
     // A reattached device may already be in use: the driver has seen
     // DRIVER_OK from it once and won't send VDUSE_SET_STATUS again, so
@@ -904,6 +1083,10 @@ void Device::loop() {
     // ~Device()). If the driver isn't that far yet, no queue is ready and
     // its own DRIVER_OK later starts them as usual.
     if (_reattached) {
+        // The kernel kept the previous instance's config space, which may
+        // predate a resize while no instance was running.
+        _config_stale = true;
+        _flush_config();
         _start_dataplane(true);
     }
 
@@ -911,10 +1094,19 @@ void Device::loop() {
     if (_wake_fd != -1) {
         _wake_task();
     }
+    if (_resize_fd != -1) {
+        _resize_task();
+    }
     rawstd::DetachedTask::rethrow_if_pending();
 
     while (!_stop_requested) {
         int res = rawio_wait(_queue);
+        if (res == -EINTR && _wake_fd != -1) {
+            // SIGINT/SIGTERM has already written to the wake pipe, which
+            // the next wait reads; any other signal (SIGHUP) must not
+            // stop the device.
+            continue;
+        }
         if (res == -EPIPE || res == -EINTR) {
             break;
         }

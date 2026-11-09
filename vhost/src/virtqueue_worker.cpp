@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <exception>
 #include <future>
 #include <memory>
 #include <stdexcept>
@@ -648,6 +649,37 @@ void VirtQueue::_run(
 
     while (!_stop_requested) {
         int res = rawio_wait(_queue);
+        // process_queue() is suppressed while a reopen is pending, so
+        // _inflight only drains from here. Outside any dispatch of
+        // _queue, so close_object()/open_object() may spin it.
+        if (!_pending_reopens.empty() && _inflight == 0) {
+            auto dones = std::move(_pending_reopens);
+            _pending_reopens.clear();
+            std::exception_ptr error;
+            try {
+                RawstorObject* old = _object;
+                _object = nullptr;
+                close_object(_queue, old);
+                _object = open_object(_queue, target, readonly, force);
+            } catch (...) {
+                error = std::current_exception();
+            }
+            if (!error) {
+                // Whatever accumulated on the ring meanwhile has no kick
+                // of its own to be popped by.
+                try {
+                    process_queue();
+                } catch (const std::exception& e) {
+                    rawstd_error(
+                        "%s: vq %zu: error processing virtqueue: %s\n", "vhost",
+                        _index, e.what()
+                    );
+                }
+            }
+            for (auto& done : dones) {
+                done(error);
+            }
+        }
         if (res == -EINTR) {
             // Mirrors Device::loop()'s own EINTR handling in intent, but
             // not in effect: a signal reaching this worker thread rather
@@ -686,7 +718,9 @@ void VirtQueue::_run(
     }
 
     try {
-        close_object(_queue, _object);
+        if (_object != nullptr) {
+            close_object(_queue, _object);
+        }
     } catch (const std::exception& e) {
         rawstd_error(
             "vhost: vq %zu: failed to close object: %s\n", _index, e.what()
@@ -699,7 +733,8 @@ void VirtQueue::_run(
 }
 
 void VirtQueue::process_queue() {
-    if (_paused) {
+    // No object: a reopen failed. Waiting reopen: drain first.
+    if (_paused || _object == nullptr || !_pending_reopens.empty()) {
         return;
     }
 

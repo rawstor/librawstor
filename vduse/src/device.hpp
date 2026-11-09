@@ -4,10 +4,12 @@
 #include "iovaregion.hpp"
 
 #include <stdheaders/linux/vduse.h>
+#include <stdheaders/linux/virtio_blk.h>
 #include <vduse/inflight.hpp>
 #include <vduse/virtqueue.hpp>
 
 #include <rawstd/coro.hpp>
+#include <rawstd/pipe.hpp>
 
 #include <rawstor/object.h>
 #include <rawstor/rawio.h>
@@ -15,6 +17,7 @@
 #include <atomic>
 #include <exception>
 #include <memory>
+#include <mutex>
 #include <shared_mutex>
 #include <string>
 #include <vector>
@@ -117,6 +120,25 @@ private:
     std::atomic<uint64_t> _features;
     bool _write_cache_enabled;
     int _wake_fd;
+    int _resize_fd;
+    /* A size refresh reopens every VirtQueue's object on that
+     * VirtQueue's own thread. Each finished reopen calls _reopen_done();
+     * the last one writes to `_reopen_pipe`, whose read end the
+     * control-plane thread awaits, so the reactor is never blocked.
+     * `_reopen_error` (first failure) is guarded by `_reopen_mutex`. */
+    rawstd::Pipe _reopen_pipe;
+    std::atomic<size_t> _reopen_outstanding;
+    std::mutex _reopen_mutex;
+    std::exception_ptr _reopen_error;
+    /* The device's config space as last published to the kernel. */
+    virtio_blk_config _config;
+    /* A config interrupt for `_config` has not yet been injected; the
+     * next size refresh (or loop() start) retries. */
+    bool _config_irq_pending;
+    /* `_config` has not yet been written to the kernel's config space (a
+     * reattached device holds the previous instance's); the next size
+     * refresh retries. */
+    bool _config_stale;
     bool _stop_requested;
     /* Set (along with _stop_requested) when DRIVER_OK handling fails;
      * rethrown by loop(). */
@@ -153,6 +175,39 @@ private:
      */
     rawstd::DetachedTask _wake_task();
 
+    /**
+     * Only launched from loop() when `_resize_fd` holds a real fd: runs
+     * _refresh_size() each time a byte arrives (main.cpp's SIGHUP
+     * handler).
+     */
+    rawstd::DetachedTask _resize_task();
+
+    /* Called on a VirtQueue's own thread when its reopen finished. */
+    void _reopen_done(std::exception_ptr error);
+
+    /**
+     * Re-read the target's size. If it grew, reopen every started
+     * VirtQueue's object (each drains its in-flight requests first) so
+     * I/O can reach the new space, then publish the new capacity to the
+     * kernel (VDUSE_DEV_SET_CONFIG) and raise a config interrupt
+     * (VDUSE_DEV_INJECT_CONFIG_IRQ) so the driver re-reads it. Runs on
+     * the control-plane thread and suspends instead of blocking while it
+     * waits. If a VirtQueue could not reopen its object, sets
+     * `_fatal_error` and `_stop_requested`.
+     */
+    rawstd::Task<void> _refresh_size();
+
+    /* Write `config` to the kernel's config space; on success it becomes
+     * `_config` and a config interrupt is owed. */
+    bool _publish_config(const virtio_blk_config& config);
+
+    /* Inject the owed config interrupt, if any; a failure leaves it owed. */
+    void _inject_config_irq();
+
+    /* Retry whatever of the config update is still owed: the config-space
+     * write, then the interrupt. */
+    void _flush_config();
+
 public:
     /**
      * `target` names exactly one rawstor object (or a mirrored/cached set
@@ -164,11 +219,14 @@ public:
      * readable -- see _wake_task(). Device only ever reads it, never
      * closes it -- the caller (main.cpp, via its own rawstd::Pipe) must
      * keep it open for at least as long as this Device runs.
+     * `resize_fd`, if not -1, requests a re-read of the object size each
+     * time it becomes readable -- see _resize_task(); same ownership
+     * rules as `wake_fd`.
      */
     Device(
         unsigned int queue_size, unsigned int num_queues,
         const std::string& target, bool write_cache_enabled, bool readonly,
-        bool force, int wake_fd = -1
+        bool force, int wake_fd = -1, int resize_fd = -1
     );
     Device(const Device&) = delete;
     Device(Device&&) = delete;
