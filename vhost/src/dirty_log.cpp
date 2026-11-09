@@ -3,10 +3,12 @@
 #include <rawstd/gpp.hpp>
 
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <atomic>
 #include <cerrno>
+#include <cstdint>
 #include <system_error>
 
 namespace rawstor {
@@ -20,9 +22,23 @@ DirtyLog::DirtyLog(int fd, uint64_t size, uint64_t offset) :
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
+    // size and offset come from the front-end: the mapping must lie inside
+    // the file, or touching a page past its end raises SIGBUS.
+    struct stat st;
+    if (fstat(fd, &st) != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(errno);
+    }
+    const uint64_t file_size = static_cast<uint64_t>(st.st_size);
+    if (st.st_size < 0 || offset > file_size || size > file_size - offset) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     // The front-end's offset is not necessarily page aligned.
     const uint64_t page = static_cast<uint64_t>(sysconf(_SC_PAGESIZE));
     const uint64_t skew = offset % page;
+    if (size > SIZE_MAX - skew) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
+    }
     _map_size = static_cast<size_t>(size + skew);
 
     void* addr = mmap(
