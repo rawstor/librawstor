@@ -60,6 +60,11 @@ const char* const lvm_config =
 // "rawstor.meta=version=1:state=0:epoch=0:...".
 const char* const rawstor_tag_prefix = "rawstor.meta=";
 
+// Separates a version snapshot LV's chunk name from its version_id:
+// "<uuid>-<offset>-s<version_id>". Never part of a live chunk's name, so
+// list_chunks() already skips a snapshot LV when listing live chunks.
+const char* const version_infix = "-s";
+
 // Suffix a staging LV carries between lvcreate and the lvrename that
 // reveals it under its real (UUID) name -- see Backend::create()'s own
 // doc comment for why. Never a valid UUID string, so list()'s
@@ -154,7 +159,9 @@ std::string Backend::_device_path_for_name(const std::string& name) const {
     return oss.str();
 }
 
-std::string Backend::_lv_name(const RawstdUUID& id, uint64_t offset) const {
+std::string Backend::_lv_name(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+) const {
     RawstdUUIDString uuid_str;
     rawstd_uuid_to_string(&id, &uuid_str);
     // Hex, not decimal -- see parse_target_path()'s own doc comment
@@ -162,11 +169,19 @@ std::string Backend::_lv_name(const RawstdUUID& id, uint64_t offset) const {
     // codebase agrees on one base.
     char offset_str[17];
     snprintf(offset_str, sizeof(offset_str), "%" PRIx64, offset);
-    return std::string(uuid_str) + "-" + offset_str;
+    std::string name = std::string(uuid_str) + "-" + offset_str;
+    if (!rawstd_uuid_is_nil(&version_id)) {
+        RawstdUUIDString version_str;
+        rawstd_uuid_to_string(&version_id, &version_str);
+        name += std::string(version_infix) + version_str;
+    }
+    return name;
 }
 
-std::string Backend::_device_path(const RawstdUUID& id, uint64_t offset) const {
-    return _device_path_for_name(_lv_name(id, offset));
+std::string Backend::_device_path(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+) const {
+    return _device_path_for_name(_lv_name(id, offset, version_id));
 }
 
 rawstd::Task<int>
@@ -186,21 +201,39 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
     co_return fd;
 }
 
+rawstd::Task<int> Backend::_open_version(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+) {
+    std::string path = _device_path(id, offset, version_id);
+
+    // O_RDONLY: a version device is read-only at the device level too
+    // (docs/mds.md, "Versions"). See _open_object() for O_CLOEXEC.
+    int fd = co_await _queue.open(path.c_str(), O_RDONLY | O_CLOEXEC, 0);
+    co_return fd;
+}
+
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
     RawstdUUID& token, RawstdUUID version_id
 ) {
-    if (!rawstd_uuid_is_nil(&version_id)) {
-        // No versions on this backend (Backend::remove_version()'s own
-        // default).
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
-    }
     co_await _cleanup_staging_lvs();
 
     // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc
     // comment): every other uuid's own LVs are skipped while grouping,
-    // and `token` plays no part.
+    // and `token` plays no part. A non-nil `version_id` lists that
+    // version's own snapshot LVs ("<uuid>-<offset>-s<version_id>")
+    // instead of the live LVs.
     bool filtered = !rawstd_uuid_is_nil(&id);
+    bool version = !rawstd_uuid_is_nil(&version_id);
+    if (version && !filtered) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    std::string version_suffix;
+    if (version) {
+        RawstdUUIDString version_str;
+        rawstd_uuid_to_string(&version_id, &version_str);
+        version_suffix = std::string(version_infix) + version_str;
+    }
     RawstdUUID input_token = filtered ? RawstdUUID{} : token;
     chunks.clear();
     token = {};
@@ -237,6 +270,13 @@ rawstd::Task<void> Backend::list_chunks(
         nlohmann::json parsed = nlohmann::json::parse(output);
         for (const auto& lv : parsed.at("report").at(0).at("lv")) {
             std::string name = lv.at("lv_name").get<std::string>();
+
+            if (version) {
+                if (!name.ends_with(version_suffix)) {
+                    continue;
+                }
+                name.resize(name.size() - version_suffix.size());
+            }
 
             // A UUID's own string form is always exactly 36 characters
             // (RawstdUUIDString) -- a fixed prefix, since the UUID itself
@@ -586,6 +626,8 @@ Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
 
     rawstd_info("lvm: removing LV %s\n", path.c_str());
 
+    // -f also removes the snapshots of the LV (an origin can't outlive
+    // its snapshots), and removing an object removes every version of it.
     std::vector<std::string> argv = {
         "lvremove", "--config", lvm_config, "-f", path
     };
@@ -683,12 +725,13 @@ rawstd::Task<std::string> Backend::_lv_tags(const std::string& path) {
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
-    if (!rawstd_uuid_is_nil(&version_id)) {
-        // No versions on this backend (Backend::remove_version()'s own
-        // default).
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    // A version's own snapshot LV answers the same tag query as the live
+    // LV: it carries the record the live LV had when it was taken.
+    std::string path = _device_path(id, offset, version_id);
+    if (!rawstd_uuid_is_nil(&version_id) && !co_await _exists(path)) {
+        rawstd_error("lvm: LV %s does not exist\n", path.c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
-    std::string path = _device_path(id, offset);
     std::string tags = co_await _lv_tags(path);
     std::string tag = find_tag(tags, rawstor_tag_prefix);
 
@@ -767,6 +810,167 @@ rawstd::Task<void> Backend::_write_meta(
     }
 
     co_return;
+}
+
+// Every snapshot LV of this chunk's own LV that this backend itself took
+// ("<uuid>-<offset>-s<version_id>", _lv_name()'s naming); any other
+// snapshot of it (e.g. one taken by hand) is skipped.
+rawstd::Task<std::vector<RawstdUUID>>
+Backend::list_versions(const RawstdUUID& id, uint64_t offset) {
+    // Same ENOENT convention as remove(): a nonexistent LV is permanent,
+    // not the retryable EIO lvs itself would produce.
+    std::string path = _device_path(id, offset);
+    if (!co_await _exists(path)) {
+        rawstd_error("lvm: LV %s does not exist\n", path.c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+
+    std::string origin = _lv_name(id, offset);
+
+    // See list_chunks()'s own comment on this GCC 13 ICE workaround.
+    std::vector<std::string> argv = {
+        "lvs", "--config",       lvm_config, "--reportformat",     "json",
+        "-o",  "lv_name,origin", "--select", "vg_name=" + _vg_name
+    };
+    std::string output;
+    try {
+        output = co_await rawstor::run_command_capture(_queue, std::move(argv));
+    } catch (const std::system_error& e) {
+        rawstd_error(
+            "lvm: failed to list snapshots of %s: %s\n", path.c_str(), e.what()
+        );
+        throw;
+    }
+
+    std::string prefix = origin + version_infix;
+    std::vector<RawstdUUID> ret;
+    try {
+        nlohmann::json parsed = nlohmann::json::parse(output);
+        for (const auto& lv : parsed.at("report").at(0).at("lv")) {
+            if (lv.at("origin").get<std::string>() != origin) {
+                continue;
+            }
+            std::string name = lv.at("lv_name").get<std::string>();
+            if (name.compare(0, prefix.size(), prefix) != 0) {
+                continue;
+            }
+            RawstdUUID version_id;
+            if (rawstd_uuid_from_string(
+                    &version_id, name.c_str() + prefix.size()
+                ) < 0) {
+                continue;
+            }
+            ret.push_back(version_id);
+        }
+    } catch (const std::exception& e) {
+        rawstd_error(
+            "lvm: failed to parse lvs JSON output for %s: %s\n", path.c_str(),
+            e.what()
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    co_return ret;
+}
+
+rawstd::Task<void> Backend::create_version(
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& version_id
+) {
+    if (rawstd_uuid_is_nil(&version_id)) {
+        /* nil is the live version, never a created one. */
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    std::string origin_path = _device_path(id, offset);
+    if (!co_await _exists(origin_path)) {
+        rawstd_error("lvm: LV %s does not exist\n", origin_path.c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+
+    // Same O_EXCL convention as create(): a version a previous,
+    // unacknowledged attempt already took is EEXIST (permanent, and what
+    // a retried object version counts as already taken), not the
+    // generic, pointlessly retried error lvcreate would give.
+    std::string name = _lv_name(id, offset, version_id);
+    std::string path = _device_path_for_name(name);
+    if (co_await _exists(path)) {
+        rawstd_error("lvm: snapshot %s already exists\n", path.c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(EEXIST);
+    }
+
+    // lvcreate does not copy tags to a snapshot: the version carries the
+    // record the live LV has right now, set by the same lvcreate so the
+    // snapshot never exists without one.
+    std::string origin_tags = co_await _lv_tags(origin_path);
+    std::string tag = find_tag(origin_tags, rawstor_tag_prefix);
+    if (tag.empty()) {
+        rawstd_error(
+            "lvm: no recorded mirror state on %s\n", origin_path.c_str()
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+
+    rawstd_info("lvm: creating snapshot %s\n", path.c_str());
+
+    // A classic (non-thin) snapshot has a preallocated copy-on-write area
+    // that is invalidated, together with the version, once it fills up.
+    // 100%ORIGIN sizes it to hold every block of the origin being
+    // rewritten (plus the exception-store metadata), so a version is never
+    // lost to overflow. Read-only, like every version device.
+    //
+    // See create()'s own comment on this GCC 13 ICE workaround.
+    std::vector<std::string> argv = {
+        "lvcreate",
+        "--config",
+        lvm_config,
+        "--yes",
+        "--snapshot",
+        "-l",
+        "100%ORIGIN",
+        "--permission",
+        "r",
+        "-n",
+        name,
+        "--addtag",
+        std::string(rawstor_tag_prefix) + tag,
+        origin_path
+    };
+    try {
+        co_await rawstor::run_command(_queue, std::move(argv));
+    } catch (const std::system_error& e) {
+        rawstd_error(
+            "lvm: failed to create snapshot %s: %s\n", path.c_str(), e.what()
+        );
+        throw;
+    }
+}
+
+rawstd::Task<void> Backend::remove_version(
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& version_id
+) {
+    std::string path = _device_path(id, offset, version_id);
+
+    // Same ENOENT convention as remove(): a nonexistent version is
+    // permanent, not the retryable EIO lvremove would produce.
+    if (rawstd_uuid_is_nil(&version_id) || !co_await _exists(path)) {
+        rawstd_error("lvm: snapshot %s does not exist\n", path.c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+
+    rawstd_info("lvm: removing snapshot %s\n", path.c_str());
+
+    std::vector<std::string> argv = {
+        "lvremove", "--config", lvm_config, "-f", path
+    };
+    try {
+        co_await rawstor::run_command(_queue, std::move(argv));
+    } catch (const std::system_error& e) {
+        rawstd_error(
+            "lvm: failed to remove snapshot %s: %s\n", path.c_str(), e.what()
+        );
+        throw;
+    }
 }
 
 } // namespace lvm
