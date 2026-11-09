@@ -34,7 +34,7 @@ numbers its stages separately.
 | Native CoW: `lvm://` (classic snapshot) | 2 | ✅ | `src/lvm_backend.cpp` |
 | Native CoW: `lvm://` (thin) | 2 | ❌ | — |
 | `file://` fake snapshots (full copy of `data`) | 2 | ✅ | `src/file_backend.cpp` |
-| Object removal refused with `-EBUSY` while versions exist | 2 | ✅ | `mds/src/store.cpp` |
+| Object removal removes its versions; the MDS refuses with `-EBUSY` only for a version created meanwhile | 2 | ✅ | `src/mds_backend.cpp`, `mds/src/store.cpp` |
 | Version redundancy status surfacing | 2 | ❌ | TODO |
 | vhost/QEMU flush hook for versions | 2 | ❌ | the CLI assumes no concurrent writer |
 | Backend health / `LOCATION_INFO` collector | — | ✅ | `mds/src/monitor.cpp`, `mds/src/opts.cpp` |
@@ -960,10 +960,14 @@ visible once the orchestrator has verified its barrier:
   died after its lease ran out leaves a complete set that is not a
   consistent point), so a version registered this way is crash-consistent
   per member only, not guaranteed point-in-time across them.
-- **Object deletion order matches version deletion**: the MDS
-  unregisters the map first — which is also where "the object still has
-  versions" refuses with `-EBUSY` *before* any data is touched — then
-  the chunk objects are destroyed.
+- **Object deletion removes the versions first**: the client removes each
+  of the object's versions as `remove_version` does (unregistered at the
+  MDS, then destroyed on the members it recorded, found through the
+  object's still-present map), then the MDS unregisters the map, then the
+  chunk objects are destroyed. The MDS still refuses with `-EBUSY` *before*
+  any data is touched if a version was created after the client removed
+  them; a retry removes it. A crash in between leaves the object
+  registered with the versions that remain.
 - **Concurrent writers are safe**: the write barrier above is held by the
   OSTs, so a version may be taken while a vhost/vduse device writes the
   object. Version redundancy status surfacing is still TODO.

@@ -287,6 +287,36 @@ TEST(ObjectVersionTest, version_leaves_object_intact) {
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
 
+// Removing an object removes its versions with it: they are unregistered
+// and destroyed, so neither a version nor the object resolves afterwards.
+TEST(ObjectVersionTest, remove_removes_versions) {
+    rawstor::tests::ObjectEnv env(18110, 18111);
+    std::string target =
+        object_target(env, "018f4e2a-3000-7000-8000-0000000000a1");
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    ASSERT_EQ(target_create(*queue, target, spec), 0);
+
+    std::string first_version_target;
+    std::string second_version_target;
+    ASSERT_GT(
+        object_create_version(*queue, target, nullptr, &first_version_target), 0
+    );
+    ASSERT_GT(
+        object_create_version(*queue, target, nullptr, &second_version_target),
+        0
+    );
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+
+    RawstorObjectSpec read_spec{};
+    EXPECT_LT(target_spec(*queue, target, &read_spec), 0);
+    EXPECT_LT(target_spec(*queue, first_version_target, &read_spec), 0);
+    EXPECT_LT(target_spec(*queue, second_version_target, &read_spec), 0);
+}
+
 // remove_version() on an id nothing ever committed fails cleanly with
 // -ENOENT (the MDS's own rejection), not a hang or a crash -- this is
 // the same case a crash mid-fan-out (before OBJ_COMMIT_VERSION) leaves
