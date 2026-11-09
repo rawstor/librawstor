@@ -12,6 +12,7 @@
 #include <sys/uio.h>
 
 #include <deque>
+#include <exception>
 #include <functional>
 #include <future>
 #include <memory>
@@ -118,9 +119,10 @@ private:
     struct Resume {};
     // Closes and reopens this VirtQueue's RawstorObject on its own
     // thread, so the object picks up the target's current size and
-    // chunk map. Sent only while paused and drained.
+    // chunk map. `done` runs on that thread once the reopen finished
+    // (or failed).
     struct Reopen {
-        Reply<void> reply;
+        std::function<void(std::exception_ptr)> done;
     };
     // Runs `fn` on this VirtQueue's own owning thread once drained --
     // the general-purpose escape hatch for anything a foreign thread
@@ -211,7 +213,7 @@ private:
     bool _paused;
     unsigned int _inflight;
     std::vector<Reply<void>> _pending_pauses;
-    std::vector<Reply<void>> _pending_reopens;
+    std::vector<std::function<void(std::exception_ptr)>> _pending_reopens;
     bool _stop_requested;
 
     void _set_kick_fd(int fd);
@@ -427,13 +429,15 @@ public:
     void resume();
 
     /**
-     * Close and reopen this VirtQueue's RawstorObject, blocking the
-     * calling (control-plane) thread until done; throws what the reopen
-     * threw. Must be called between pause() and resume(): nothing may be
-     * in flight. On failure the VirtQueue has no object and must not be
-     * resumed.
+     * Close and reopen this VirtQueue's RawstorObject without blocking
+     * the caller: the VirtQueue stops popping descriptors, waits for
+     * its in-flight requests to complete, reopens, and resumes popping.
+     * `done` is then called, on this VirtQueue's own thread, with the
+     * exception the reopen threw (null on success). On failure the
+     * VirtQueue has no object and stays idle; `done` must not touch
+     * the Device's reactor.
      */
-    void reopen();
+    void reopen(std::function<void(std::exception_ptr)> done);
 
     /**
      * Run `fn` on this VirtQueue's own owning thread once drained, then

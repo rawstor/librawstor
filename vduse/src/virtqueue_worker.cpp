@@ -607,10 +607,11 @@ void VirtQueue::_run(
 
     while (!_stop_requested) {
         int res = rawio_wait(_queue);
-        // Outside any dispatch of _queue, so close_object()/
-        // open_object() may spin it.
+        // process_queue() is suppressed while a reopen is pending, so
+        // _inflight only drains from here. Outside any dispatch of
+        // _queue, so close_object()/open_object() may spin it.
         if (!_pending_reopens.empty() && _inflight == 0) {
-            std::vector<Reply<void>> replies = std::move(_pending_reopens);
+            auto dones = std::move(_pending_reopens);
             _pending_reopens.clear();
             std::exception_ptr error;
             try {
@@ -621,12 +622,20 @@ void VirtQueue::_run(
             } catch (...) {
                 error = std::current_exception();
             }
-            for (Reply<void>& reply : replies) {
-                if (error) {
-                    reply.promise.set_exception(error);
-                } else {
-                    reply.promise.set_value();
+            if (!error) {
+                // Whatever accumulated on the ring meanwhile has no kick
+                // of its own to be popped by.
+                try {
+                    process_queue();
+                } catch (const std::exception& e) {
+                    rawstd_error(
+                        "%s: vq %zu: error processing virtqueue: %s\n", "vduse",
+                        _index, e.what()
+                    );
                 }
+            }
+            for (auto& done : dones) {
+                done(error);
             }
         }
         if (res == -EINTR) {
@@ -673,7 +682,8 @@ void VirtQueue::_run(
 }
 
 void VirtQueue::process_queue() {
-    if (_paused) {
+    // No object: a reopen failed. Waiting reopen: drain first.
+    if (_paused || _object == nullptr || !_pending_reopens.empty()) {
         return;
     }
 

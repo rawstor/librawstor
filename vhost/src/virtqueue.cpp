@@ -343,11 +343,8 @@ void VirtQueue::resume() {
     _post(Resume{});
 }
 
-void VirtQueue::reopen() {
-    Reopen cmd;
-    std::future<void> f = cmd.reply.promise.get_future();
-    _post(std::move(cmd));
-    f.get();
+void VirtQueue::reopen(std::function<void(std::exception_ptr)> done) {
+    _post(Reopen{std::move(done)});
 }
 
 void VirtQueue::post_run(std::function<void()> fn) {
@@ -425,7 +422,7 @@ void VirtQueue::_apply(Resume&& /*cmd*/) {
 }
 
 void VirtQueue::_apply(Reopen&& cmd) {
-    _pending_reopens.push_back(std::move(cmd.reply));
+    _pending_reopens.push_back(std::move(cmd.done));
 }
 
 void VirtQueue::_apply(RunTask&& cmd) {

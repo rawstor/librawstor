@@ -218,7 +218,8 @@ Device::Device(
     _write_cache_enabled(write_cache_enabled),
     _wake_fd(wake_fd),
     _resize_fd(resize_fd),
-    _resize_pending(false),
+    _reopen_pipe(rawstd::Pipe::Mode::NonBlocking),
+    _reopen_outstanding(0),
     _config{},
     _config_irq_pending(false),
     _config_stale(false),
@@ -491,6 +492,13 @@ Device::~Device() {
                 "Failed to cancel pending wake fd ops: %s\n", strerror(-cres)
             );
         }
+    }
+
+    int rdres = rawio_cancel_all(_queue, _reopen_pipe.read_fd());
+    if (rdres && rdres != -ENOENT) {
+        rawstd_error(
+            "Failed to cancel pending reopen pipe ops: %s\n", strerror(-rdres)
+        );
     }
 
     rawio_queue_delete(_queue);
@@ -914,52 +922,61 @@ rawstd::DetachedTask Device::_wake_task() {
 rawstd::DetachedTask Device::_resize_task() {
     char buf[64];
     try {
-        while (true) {
-            size_t n = co_await co_read(_queue, _resize_fd, buf, sizeof(buf));
-            (void)n;
-            _resize_pending = true;
+        while (!_stop_requested) {
+            co_await co_read(_queue, _resize_fd, buf, sizeof(buf));
+            co_await _refresh_size();
         }
     } catch (const std::system_error&) {
         // Cancelled by ~Device().
     }
 }
 
-void Device::_refresh_size() {
+void Device::_reopen_done(std::exception_ptr error) {
+    if (error) {
+        std::lock_guard<std::mutex> lock(_reopen_mutex);
+        if (!_reopen_error) {
+            _reopen_error = error;
+        }
+    }
+    if (_reopen_outstanding.fetch_sub(1) == 1) {
+        char byte = 0;
+        ssize_t n = write(_reopen_pipe.write_fd(), &byte, 1);
+        (void)n;
+    }
+}
+
+rawstd::Task<void> Device::_refresh_size() {
     RawstorObjectSpec spec{};
-    Result result;
-    int res =
-        rawstor_target_spec(_queue, _target.c_str(), &spec, result_cb, &result);
-    if (res < 0) {
-        rawstd_error("vduse: failed to read object size: %s\n", strerror(-res));
-        return;
-    }
-    while (!result.done) {
-        int wres = rawio_wait(_queue);
-        if (wres == -EINTR) {
-            continue;
-        }
-        if (wres < 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(-wres);
-        }
-    }
-    if (result.error) {
-        rawstd_error(
-            "vduse: failed to read object size: %s\n", strerror(result.error)
+    {
+        rawstd::CallbackAwaitable<void> awaiter;
+        int res = rawstor_target_spec(
+            _queue, _target.c_str(), &spec, wake_read_trampoline, &awaiter
         );
-        return;
+        if (res < 0) {
+            rawstd_error(
+                "vduse: failed to read object size: %s\n", strerror(-res)
+            );
+            co_return;
+        }
+        try {
+            co_await awaiter;
+        } catch (const std::system_error& e) {
+            rawstd_error("vduse: failed to read object size: %s\n", e.what());
+            co_return;
+        }
     }
 
     uint64_t capacity = spec.size >> VIRTIO_BLK_SECTOR_BITS;
     if (capacity == _config.capacity) {
         _flush_config();
-        return;
+        co_return;
     }
     if (capacity < _config.capacity) {
         rawstd_error(
             "vduse: object shrank from %llu to %llu sectors, ignoring\n",
             (unsigned long long)_config.capacity, (unsigned long long)capacity
         );
-        return;
+        co_return;
     }
 
     rawstd_info(
@@ -967,21 +984,37 @@ void Device::_refresh_size() {
         (unsigned long long)_config.capacity, (unsigned long long)capacity
     );
 
-    // A VirtQueue that fails to reopen has no object: the exception
-    // fails the whole device, like any other fatal control-plane error.
+    // A VirtQueue started after this point opens its object against the
+    // already grown target, so only the ones running now need a reopen.
+    std::vector<VirtQueue*> started;
     for (auto& vq : _vqs) {
         if (vq != nullptr) {
-            vq->pause();
+            started.push_back(vq.get());
         }
     }
-    for (auto& vq : _vqs) {
-        if (vq != nullptr) {
-            vq->reopen();
+    if (!started.empty()) {
+        _reopen_error = nullptr;
+        _reopen_outstanding = started.size();
+        for (VirtQueue* vq : started) {
+            vq->reopen([this](std::exception_ptr error) {
+                _reopen_done(error);
+            });
         }
-    }
-    for (auto& vq : _vqs) {
-        if (vq != nullptr) {
-            vq->resume();
+
+        char byte;
+        co_await co_read(_queue, _reopen_pipe.read_fd(), &byte, sizeof(byte));
+
+        std::exception_ptr error;
+        {
+            std::lock_guard<std::mutex> lock(_reopen_mutex);
+            error = _reopen_error;
+        }
+        if (error) {
+            // A VirtQueue that failed to reopen has no object: the whole
+            // device fails, like any other fatal control-plane error.
+            _fatal_error = error;
+            _stop_requested = true;
+            co_return;
         }
     }
 
@@ -1080,11 +1113,6 @@ void Device::loop() {
 
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
-        }
-
-        if (_resize_pending && !_stop_requested) {
-            _resize_pending = false;
-            _refresh_size();
         }
     }
 

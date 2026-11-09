@@ -9,6 +9,7 @@
 #include <vduse/virtqueue.hpp>
 
 #include <rawstd/coro.hpp>
+#include <rawstd/pipe.hpp>
 
 #include <rawstor/object.h>
 #include <rawstor/rawio.h>
@@ -16,6 +17,7 @@
 #include <atomic>
 #include <exception>
 #include <memory>
+#include <mutex>
 #include <shared_mutex>
 #include <string>
 #include <vector>
@@ -119,7 +121,15 @@ private:
     bool _write_cache_enabled;
     int _wake_fd;
     int _resize_fd;
-    bool _resize_pending;
+    /* A size refresh reopens every VirtQueue's object on that
+     * VirtQueue's own thread. Each finished reopen calls _reopen_done();
+     * the last one writes to `_reopen_pipe`, whose read end the
+     * control-plane thread awaits, so the reactor is never blocked.
+     * `_reopen_error` (first failure) is guarded by `_reopen_mutex`. */
+    rawstd::Pipe _reopen_pipe;
+    std::atomic<size_t> _reopen_outstanding;
+    std::mutex _reopen_mutex;
+    std::exception_ptr _reopen_error;
     /* The device's config space as last published to the kernel. */
     virtio_blk_config _config;
     /* A config interrupt for `_config` has not yet been injected; the
@@ -166,23 +176,26 @@ private:
     rawstd::DetachedTask _wake_task();
 
     /**
-     * Only launched from loop() when `_resize_fd` holds a real fd: sets
-     * `_resize_pending` each time a byte arrives (main.cpp's SIGHUP
-     * handler), for loop() to act on between waits -- re-reading the size
-     * spins `_queue`, so it can't run from inside this task.
+     * Only launched from loop() when `_resize_fd` holds a real fd: runs
+     * _refresh_size() each time a byte arrives (main.cpp's SIGHUP
+     * handler).
      */
     rawstd::DetachedTask _resize_task();
 
+    /* Called on a VirtQueue's own thread when its reopen finished. */
+    void _reopen_done(std::exception_ptr error);
+
     /**
      * Re-read the target's size. If it grew, reopen every started
-     * VirtQueue's object (drained first) so I/O can reach the new space,
-     * then publish the new capacity to the kernel (VDUSE_DEV_SET_CONFIG)
-     * and raise a config interrupt (VDUSE_DEV_INJECT_CONFIG_IRQ) so the
-     * driver re-reads it. Control-plane thread only, never from inside a
-     * dispatch of `_queue`. Throws if a VirtQueue could not reopen its
-     * object.
+     * VirtQueue's object (each drains its in-flight requests first) so
+     * I/O can reach the new space, then publish the new capacity to the
+     * kernel (VDUSE_DEV_SET_CONFIG) and raise a config interrupt
+     * (VDUSE_DEV_INJECT_CONFIG_IRQ) so the driver re-reads it. Runs on
+     * the control-plane thread and suspends instead of blocking while it
+     * waits. If a VirtQueue could not reopen its object, sets
+     * `_fatal_error` and `_stop_requested`.
      */
-    void _refresh_size();
+    rawstd::Task<void> _refresh_size();
 
     /* Write `config` to the kernel's config space; on success it becomes
      * `_config` and a config interrupt is owed. */
