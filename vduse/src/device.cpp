@@ -221,6 +221,7 @@ Device::Device(
     _resize_pending(false),
     _config{},
     _config_irq_pending(false),
+    _config_stale(false),
     _stop_requested(false) {
     int ires = rawio_queue_create(queue_size, &_queue);
     if (ires) {
@@ -950,7 +951,7 @@ void Device::_refresh_size() {
 
     uint64_t capacity = spec.size >> VIRTIO_BLK_SECTOR_BITS;
     if (capacity == _config.capacity) {
-        _inject_config_irq();
+        _flush_config();
         return;
     }
     if (capacity < _config.capacity) {
@@ -1013,8 +1014,16 @@ bool Device::_publish_config(const virtio_blk_config& config) {
         return false;
     }
     _config = config;
+    _config_stale = false;
     _config_irq_pending = true;
     return true;
+}
+
+void Device::_flush_config() {
+    if (_config_stale && !_publish_config(_config)) {
+        return;
+    }
+    _inject_config_irq();
 }
 
 void Device::_inject_config_irq() {
@@ -1043,9 +1052,8 @@ void Device::loop() {
     if (_reattached) {
         // The kernel kept the previous instance's config space, which may
         // predate a resize while no instance was running.
-        if (_publish_config(_config)) {
-            _inject_config_irq();
-        }
+        _config_stale = true;
+        _flush_config();
         _start_dataplane(true);
     }
 

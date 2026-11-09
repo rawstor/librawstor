@@ -125,6 +125,10 @@ private:
     /* A config interrupt for `_config` has not yet been injected; the
      * next size refresh (or loop() start) retries. */
     bool _config_irq_pending;
+    /* `_config` has not yet been written to the kernel's config space (a
+     * reattached device holds the previous instance's); the next size
+     * refresh retries. */
+    bool _config_stale;
     bool _stop_requested;
     /* Set (along with _stop_requested) when DRIVER_OK handling fails;
      * rethrown by loop(). */
@@ -186,6 +190,10 @@ private:
 
     /* Inject the owed config interrupt, if any; a failure leaves it owed. */
     void _inject_config_irq();
+
+    /* Retry whatever of the config update is still owed: the config-space
+     * write, then the interrupt. */
+    void _flush_config();
 
 public:
     /**
