@@ -107,6 +107,13 @@ private:
 
     rawstd::Task<void> _connect() override;
 
+    // create_version() below with every member's write barrier already held
+    // by the caller: the CoW of each chunk, then the commit.
+    rawstd::Task<void> _create_version_frozen(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        const RawstdUUID& version_id, const WireMap& map
+    );
+
     // Shared by remove_version() below.
     rawstd::Task<void> _remove_version(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
@@ -167,9 +174,18 @@ public:
     // indices -- the reconstruct scan tells that apart from a
     // legitimately shorter, pre-resize version), then registers the
     // surviving membership. v1 caveat (see the design doc): assumes no
-    // concurrent writer -- draining/flushing an in-flight write session
-    // is the writing client's own duty, not this call's. `offset`
+    // concurrent writer -- see below. `offset`
     // is always 0, same reason as resize() above.
+    //
+    // The write barrier: before any chunk is touched, every DATA member of
+    // every chunk is frozen (RAWSTOR_CMD_FREEZE, Target::freeze()) with the
+    // version id as the holder's token -- new writes wait, admitted ones are
+    // drained and flushed -- and they are thawed once the version is
+    // committed (or the attempt failed). All chunks are frozen before the
+    // first one is CoW'd, so the version is one point in time across the
+    // object, not one per chunk. If a freeze lease ran out meanwhile (THAW
+    // answers ESTALE) the version is not such a point: it is removed again
+    // and the call fails.
     rawstd::Task<void> create_version(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstdUUID& version_id

@@ -95,6 +95,16 @@ rawstd::Task<void> Backend::create_version(
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
+rawstd::Task<void>
+Backend::freeze(const RawstdUUID&, uint64_t, const RawstdUUID&, uint64_t) {
+    co_return;
+}
+
+rawstd::Task<void>
+Backend::thaw(const RawstdUUID&, uint64_t, const RawstdUUID&) {
+    co_return;
+}
+
 rawstd::Task<std::vector<RawstdUUID>>
 Backend::list_versions(const RawstdUUID&, uint64_t) {
     co_return std::vector<RawstdUUID>{};

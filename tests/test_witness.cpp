@@ -1198,22 +1198,26 @@ TEST_F(WitnessTest, snapshot_skips_unreachable_trailing_witness) {
             session.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta);
             server->wait_close("META peer closed");
         }
-        {
+        // The write barrier brackets the CoW: FREEZE, CREATE_VERSION, THAW,
+        // each on a connection of its own.
+        for (RawstorCommandType cmd :
+             {RAWSTOR_CMD_FREEZE, RAWSTOR_CMD_CREATE_VERSION,
+              RAWSTOR_CMD_THAW}) {
             rawstor::tests::Session session(*server);
             session.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta);
             server->read(
-                "CREATE_VERSION", sizeof(RawstorFrameBasic),
-                [](const void* data) {
+                "snapshot command", sizeof(RawstorFrameBasic),
+                [cmd](const void* data) {
                     const auto* frame =
                         static_cast<const RawstorFrameBasic*>(data);
-                    EXPECT_EQ(frame->head.cmd, RAWSTOR_CMD_CREATE_VERSION);
+                    EXPECT_EQ(frame->head.cmd, cmd);
                 }
             );
             RawstorFrameResponse response{};
             response.head.magic = RAWSTOR_MAGIC;
-            response.head.cmd = RAWSTOR_CMD_CREATE_VERSION;
+            response.head.cmd = cmd;
             response.head.cid = 1;
-            server->write("CREATE_VERSION reply", &response, sizeof(response));
+            server->write("snapshot reply", &response, sizeof(response));
             server->wait_close("snapshot peer closed");
         }
     }

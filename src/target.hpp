@@ -13,6 +13,7 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -166,6 +167,11 @@ private:
         rawio::Queue& queue, uint64_t offset, size_t member_index
     ) const;
 
+    // The members freeze()/thaw()/create_version() act on: the target's own
+    // URIs, minus a trailing witness that is unreachable (it holds no data).
+    rawstd::Task<std::vector<rawstd::URI>>
+    _data_members(rawio::Queue& queue) const;
+
 public:
     explicit Target(const std::vector<rawstd::URI>& uris);
 
@@ -232,7 +238,23 @@ public:
     // own chunks in ascending offset order, so this method has no way to
     // express that descending order even if it did fan out across every
     // chunk.
-    rawstd::Task<void> create_version(rawio::Queue& queue) const;
+    // `frozen` says the caller already holds the write barrier of every
+    // member (freeze() below, as mds::Backend does across all of an object's
+    // chunks); otherwise this call takes and lifts it itself.
+    rawstd::Task<void>
+    create_version(rawio::Queue& queue, bool frozen = false) const;
+
+    // The write barrier of a consistent version (docs/mds.md, "Versions"):
+    // on every DATA member of the target, stops new writes, waits for the
+    // admitted ones and flushes, all-or-nothing. The version id this target
+    // is bound to is the holder's token; `lease` bounds the freeze should
+    // the holder die. thaw() lifts it on every member, every one attempted,
+    // and throws ESTALE if any lease had already run out -- a version taken
+    // under it is then not a consistent point. Throws EINVAL for an unbound
+    // target.
+    rawstd::Task<void>
+    freeze(rawio::Queue& queue, std::chrono::milliseconds lease) const;
+    rawstd::Task<void> thaw(rawio::Queue& queue) const;
 
     rawstd::Task<RawstorObjectSpec> spec(rawio::Queue& queue) const;
     // Metadata for the addressed chunk; enumerate whole objects with chunks().

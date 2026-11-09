@@ -950,6 +950,35 @@ rawstd::Task<void> Backend::_wire_create_version(
     co_return;
 }
 
+rawstd::Task<void> Backend::_wire_freeze(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& token,
+    uint64_t lease_ms
+) {
+    try {
+        co_await _basic_request(
+            RAWSTOR_CMD_FREEZE, "freeze", id, offset, lease_ms, token
+        );
+    } catch (const std::system_error&) {
+        throw;
+    } catch (...) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    co_return;
+}
+
+rawstd::Task<void> Backend::_wire_thaw(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& token
+) {
+    try {
+        co_await _basic_request(RAWSTOR_CMD_THAW, "thaw", id, offset, 0, token);
+    } catch (const std::system_error&) {
+        throw;
+    } catch (...) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    co_return;
+}
+
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::_wire_meta(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {

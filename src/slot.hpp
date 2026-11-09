@@ -102,7 +102,7 @@ private:
     rawstd::Barrier _drained;
     class OperationGuard;
     void _check_write() const;
-    rawstd::Task<void> _flush_copy(const RawstdUUID& id, uint64_t offset);
+    rawstd::Task<void> _flush_member(const RawstdUUID& id, uint64_t offset);
     RawstdUUID _version_id;
     // Set by open(); kept across _reconnect().
     RawstdUUID _session_id;
@@ -341,6 +341,28 @@ public:
     );
 
     rawstd::Task<void> flush(uint64_t epoch);
+
+    // Flushes the stored copy of `id`/`offset` through a session of its own,
+    // for a Slot that never opened it (the server side of FREEZE).
+    rawstd::Task<void> flush_member(const RawstdUUID& id, uint64_t offset);
+
+    // The write barrier of a consistent version (docs/mds.md, "Versions"):
+    // stops new writes to the member, waits for the admitted ones and
+    // flushes it. `token` names the holder (the version being taken), `lease`
+    // bounds how long the member stays frozen if the holder never thaws it.
+    // A backend that no other writer can reach (file, lvm, zfs used in
+    // process) has nothing to stop: a no-op there. A witness holds no data:
+    // also a no-op.
+    rawstd::Task<void> freeze(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& token,
+        std::chrono::milliseconds lease
+    );
+
+    // Lifts the barrier `token` holds. Throws ESTALE if it no longer holds
+    // it -- its lease ran out, so a version taken under it is not a
+    // consistent point and must be discarded.
+    rawstd::Task<void>
+    thaw(const RawstdUUID& id, uint64_t offset, const RawstdUUID& token);
 };
 
 } // namespace rawstor

@@ -44,6 +44,10 @@ public:
     uint16_t send_meta(const RawstdUUID& id, uint64_t chunk_offset);
     uint16_t send_leave();
     // SYNC_PREPARE/SYNC_ACCEPT (`frame.head.cmd`); the cid is filled in.
+    uint16_t send_freeze_thaw(
+        RawstorCommandType cmd, const RawstdUUID& id, uint64_t chunk_offset,
+        const RawstdUUID& token, uint64_t lease_ms = 0
+    );
     uint16_t send_sync(RawstorFrameSyncPropose frame);
     // WRITE/FLUSH stamped with the writer's configuration epoch, WRITE
     // with RAWSTOR_FLAG_* `flags`.

@@ -8,6 +8,7 @@
 #include <rawstd/uuid.h>
 
 #include <algorithm>
+#include <chrono>
 #include <exception>
 #include <memory>
 #include <sstream>
@@ -20,6 +21,14 @@
 #include <cstring>
 
 namespace {
+
+// How long a version's write barrier may stand if its holder dies
+// (docs/mds.md, "Versions"): a base, plus time for the CoW of every chunk,
+// which runs one after another. The OST caps a lease at ten minutes.
+std::chrono::milliseconds version_freeze_lease(size_t chunks) {
+    const uint64_t ms = 30000 + 2000 * static_cast<uint64_t>(chunks);
+    return std::chrono::milliseconds(std::min<uint64_t>(ms, 600000));
+}
 
 using rawstor::mds::WireMap;
 using rawstor::mds::WireSlot;
@@ -689,6 +698,96 @@ rawstd::Task<void> Backend::create_version(
     WireMap map = co_await _resolve(id, RawstdUUID{});
 
     /*
+     * The write barrier (docs/mds.md, "Versions"): every DATA member of
+     * every chunk, frozen in parallel -- their leases tick meanwhile -- all
+     * or none.
+     */
+    std::vector<Target> barrier;
+    for (uint64_t i = 0; i < map.chunks.size(); ++i) {
+        for (const WireSlot& slot : map.chunks[i]) {
+            if (slot.location.empty() ||
+                (map.policy.width % 2 == 0 &&
+                 slot.slot_index == map.policy.width)) {
+                continue;
+            }
+            barrier.emplace_back(
+                std::vector<rawstd::URI>{chunk_slot_target(
+                    map.id, i, slot, map.chunk_size, version_id
+                )}
+            );
+        }
+    }
+    std::vector<rawstd::Task<void>> freezes;
+    freezes.reserve(barrier.size());
+    for (const Target& t : barrier) {
+        freezes.push_back(
+            t.freeze(_queue, version_freeze_lease(map.chunks.size()))
+        );
+    }
+    std::vector<size_t> frozen;
+    std::exception_ptr error;
+    for (size_t i = 0; i < barrier.size(); ++i) {
+        try {
+            co_await freezes[i];
+            frozen.push_back(i);
+        } catch (...) {
+            if (!error) {
+                error = std::current_exception();
+            }
+        }
+    }
+
+    if (!error) {
+        try {
+            co_await _create_version_frozen(
+                idempotency_key, id, version_id, map
+            );
+        } catch (...) {
+            error = std::current_exception();
+        }
+    }
+
+    /* Writers resume whether or not the version was taken. */
+    std::exception_ptr thaw_error;
+    for (size_t i : frozen) {
+        try {
+            co_await barrier[i].thaw(_queue);
+        } catch (const std::exception& e) {
+            rawstd_error("Version thaw: %s\n", e.what());
+            if (!thaw_error) {
+                thaw_error = std::current_exception();
+            }
+        }
+    }
+
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    if (thaw_error) {
+        /*
+         * A THAW that did not succeed -- the lease ran out (ESTALE), or the
+         * member could not be asked at all -- leaves it unknown whether
+         * writes were let through before every copy existed: not a
+         * verified consistent point. Unregister it and report the failure.
+         */
+        try {
+            RawstdUUID key;
+            if (rawstd_uuid7_init(&key) == 0) {
+                co_await _remove_version(key, id, version_id);
+            }
+        } catch (const std::exception& e) {
+            rawstd_error("Version rollback: %s\n", e.what());
+        }
+        std::rethrow_exception(thaw_error);
+    }
+}
+
+rawstd::Task<void> Backend::_create_version_frozen(
+    const RawstdUUID& idempotency_key, const RawstdUUID& id,
+    const RawstdUUID& version_id, const WireMap& map
+) {
+
+    /*
      * Chunks are CoW'd in descending index order (docs/mds.md): a crash
      * midway always leaves a hole at the low indices, so the reconstruct
      * scan can never mistake a partial leftover for a complete
@@ -713,7 +812,7 @@ rawstd::Task<void> Backend::create_version(
                 // never create() (create() is only ever for a fresh
                 // object, this class's own doc comment).
                 try {
-                    co_await t.create_version(_queue);
+                    co_await t.create_version(_queue, /*frozen=*/true);
                 } catch (const std::system_error& e) {
                     // Taken by an earlier attempt of this same call:
                     // version_id is unique to it.

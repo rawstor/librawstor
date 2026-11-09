@@ -266,6 +266,21 @@ public:
         uint64_t offset, const RawstdUUID& version_id
     );
 
+    // The write barrier of a consistent version (RAWSTOR_CMD_FREEZE/THAW,
+    // docs/mds.md "Versions"): freeze() stops new writes to `id`/`offset`,
+    // waits for the admitted ones and flushes it; `token` names the holder
+    // and `lease_ms` bounds the freeze if nobody thaws it. thaw() lifts it
+    // and throws ESTALE if the lease already ran out. Default: nothing to
+    // stop -- a backend used in process has no other writer than its own
+    // caller; ost::Backend asks its server.
+    virtual rawstd::Task<void> freeze(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& token,
+        uint64_t lease_ms
+    );
+
+    virtual rawstd::Task<void>
+    thaw(const RawstdUUID& id, uint64_t offset, const RawstdUUID& token);
+
     // Every version (version_id) `id`/`offset` has,
     // in no particular order. Default: an empty list, covering
     // file::Backend and lvm::Backend, which hold no versions; zfs::Backend

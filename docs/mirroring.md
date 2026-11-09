@@ -216,6 +216,27 @@ Witnesses have no data snapshots. Removing a snapshot from a witness Slot
 succeeds without changing its live metadata record. Target dispatches snapshot removal
 to every member; the Slot handles metadata-only members locally.
 
+### Versions and the write barrier
+
+A version of a mirrored object is taken on the IN-SYNC data copies only
+([docs/mds.md](mds.md#versions-stage-2)). While it is taken, each of those
+copies holds its new writes at its OST (`FREEZE`/`THAW`, [the write
+barrier](mds.md#the-write-barrier)).
+
+The barrier is not a copy state. It is held in the memory of the OST process
+serving the copy, shared by all its sessions, and appears in no record: the
+copy stays `DIRTY` or `CLEAN` by the rules above, and a restarted OST holds
+nothing (a lease that ran out is the same thing). It is also not the *freeze writes* of F1 and the quorum rule: that one
+stops a chunk whose survivors are too few, and fails the writes; the barrier
+only delays them.
+
+For the writer a held copy is a slow mirror. A write is acknowledged once every
+IN-SYNC copy has completed it, so its latency becomes the length of the hold
+(at most the lease, 30 s plus 2 s per chunk of the object, 10 min at the
+most), and nothing fails or is excluded: no copy goes `STALE` for being held,
+as only an error from the connection layer does (F1). A hold of 7 s with the
+default socket timeouts of 5 s is tested; a longer one is not.
+
 Creating a mirrored chunk records the same initial configuration on every
 member: epoch 1, a new sync ID, all roles IN_SYNC, and state CLEAN. Members
 are recorded in location order, so an optional last witness becomes a voter

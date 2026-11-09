@@ -136,6 +136,18 @@ rawstd::Task<void> Backend::create_version(
     return _wire_create_version(idempotency_key, id, offset, version_id);
 }
 
+rawstd::Task<void> Backend::freeze(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& token,
+    uint64_t lease_ms
+) {
+    return _wire_freeze(id, offset, token, lease_ms);
+}
+
+rawstd::Task<void>
+Backend::thaw(const RawstdUUID& id, uint64_t offset, const RawstdUUID& token) {
+    return _wire_thaw(id, offset, token);
+}
+
 class BackendOpRead final : public BackendOp {
 private:
     void* _buf;

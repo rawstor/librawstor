@@ -23,6 +23,7 @@
 
 #include <sys/socket.h>
 
+#include <algorithm>
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -40,6 +41,11 @@ namespace {
 // the replacement as soon as it notices the connection go, which on a
 // loaded server can be some time after the server noticed.
 const std::chrono::milliseconds departure_grace{2000};
+
+// The lease of a write barrier whose FREEZE named none, and the longest one
+// a FREEZE may ask for.
+const std::chrono::milliseconds default_freeze_lease{30000};
+const uint64_t max_freeze_lease_ms = 600000;
 
 int validate_result(int fd, size_t size, size_t result) noexcept {
     if (result == size) {
@@ -320,6 +326,10 @@ Client::Client(Private, RawIOQueue* queue, Server& server, int fd) :
     ++_server._live_clients;
 }
 
+Client::GateRef Client::_gate_ref() const {
+    return GateRef{_member, static_cast<rawio::Queue*>(_queue)};
+}
+
 Client::~Client() noexcept {
     // Fallback cleanup for whichever of _slot/_recv_event/_fd
     // close() (see there) didn't already get to -- each is cleared as
@@ -518,6 +528,21 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                     co_return;
                 }
                 _create_version(weak, head, basic);
+                rawstd::DetachedTask::rethrow_if_pending();
+                break;
+            }
+            case RAWSTOR_CMD_FREEZE:
+            case RAWSTOR_CMD_THAW: {
+                RawstorFrameBasicPayload basic;
+                co_await recv_frame(
+                    stream, &basic, sizeof(basic), fd, "request payload",
+                    &stream_failed
+                );
+                client = weak.lock();
+                if (client == nullptr) {
+                    co_return;
+                }
+                _freeze_thaw(weak, head, basic);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
@@ -939,7 +964,10 @@ rawstd::DetachedTask Client::_release(
     }
 }
 
-// Create a native version of the one member served by this OST.
+// Create a native version of the one member served by this OST. The caller
+// normally holds the member's write barrier already (FREEZE, with the version
+// id as its token); a caller that does not gets the barrier for the length of
+// this call, so a version never races a write either way.
 rawstd::DetachedTask Client::_create_version(
     std::weak_ptr<Client> weak, RawstorFrameHead head,
     RawstorFrameBasicPayload payload
@@ -957,10 +985,25 @@ rawstd::DetachedTask Client::_create_version(
     RawstdUUID version_id;
     memcpy(version_id.bytes, payload.version_id, sizeof(payload.version_id));
 
+    std::shared_ptr<FreezeGate> gate = client->_server._gate;
+    rawio::Queue& queue = *static_cast<rawio::Queue*>(client->_queue);
+    bool own_freeze = false;
     int result = 0;
     try {
         if (rawstd_uuid_is_nil(&version_id)) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        if (!gate->held_by(uuid, payload.offset, version_id)) {
+            co_await gate->freeze(
+                queue, uuid, payload.offset, version_id, default_freeze_lease
+            );
+            own_freeze = true;
+            co_await with_slot(
+                client->_queue, client->_server.locations(),
+                [&](rawstor::Slot& slot) -> rawstd::Task<void> {
+                    co_await slot.flush_member(uuid, payload.offset);
+                }
+            );
         }
         co_await with_slot(
             client->_queue, client->_server.locations(),
@@ -971,12 +1014,99 @@ rawstd::DetachedTask Client::_create_version(
     } catch (const std::system_error& error) {
         result = -error.code().value();
     }
+    if (own_freeze) {
+        int thawed = gate->thaw(uuid, payload.offset, version_id);
+        if (thawed != 0 && result == 0) {
+            // The lease ran out before the version existed, so writes were
+            // let through meanwhile: not a consistent point. Take it back.
+            result = -thawed;
+            try {
+                co_await with_slot(
+                    client->_queue, client->_server.locations(),
+                    [&](rawstor::Slot& slot) -> rawstd::Task<void> {
+                        co_await slot.remove_version(
+                            uuid, payload.offset, version_id
+                        );
+                    }
+                );
+            } catch (const std::exception& e) {
+                rawstd_error("Failed to remove the version: %s\n", e.what());
+            }
+        }
+    }
 
     bool send_failed = false;
     try {
         co_await client->_send_response(
             RAWSTOR_CMD_CREATE_VERSION, head.cid, result, 0
         );
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        send_failed = true;
+    }
+    if (send_failed) {
+        co_await client->_server.del_client(client->_fd);
+    }
+}
+
+// FREEZE / THAW of the member `payload` names (RAWSTOR_CMD_FREEZE). FREEZE
+// answers once the writes admitted before it are done and the member is
+// flushed.
+rawstd::DetachedTask Client::_freeze_thaw(
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameBasicPayload payload
+) {
+    std::shared_ptr<Client> client = weak.lock();
+    if (client == nullptr) {
+        co_return;
+    }
+
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
+    RawstdUUID token;
+    memcpy(token.bytes, payload.version_id, sizeof(payload.version_id));
+
+    std::shared_ptr<FreezeGate> gate = client->_server._gate;
+    rawio::Queue& queue = *static_cast<rawio::Queue*>(client->_queue);
+    int result = 0;
+    bool frozen = false;
+    try {
+        if (rawstd_uuid_is_nil(&token)) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        if (head.cmd == RAWSTOR_CMD_THAW) {
+            result = -gate->thaw(uuid, payload.offset, token);
+        } else {
+            std::chrono::milliseconds lease = default_freeze_lease;
+            if (payload.val != 0) {
+                lease = std::chrono::milliseconds(
+                    std::min(payload.val, max_freeze_lease_ms)
+                );
+            }
+            co_await gate->freeze(queue, uuid, payload.offset, token, lease);
+            frozen = true;
+            co_await with_slot(
+                client->_queue, client->_server.locations(),
+                [&](rawstor::Slot& slot) -> rawstd::Task<void> {
+                    co_await slot.flush_member(uuid, payload.offset);
+                }
+            );
+            // A flush that outlasts the lease let writers through: the
+            // member is not quiet, so it must not be reported as frozen.
+            if (!gate->held_by(uuid, payload.offset, token)) {
+                RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
+            }
+        }
+    } catch (const std::system_error& error) {
+        result = -error.code().value();
+        if (frozen) {
+            gate->thaw(uuid, payload.offset, token);
+        }
+    }
+
+    bool send_failed = false;
+    try {
+        co_await client->_send_response(head.cmd, head.cid, result, 0);
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
         send_failed = true;
@@ -1330,6 +1460,7 @@ rawstd::DetachedTask Client::_set_object(
     if (!error) {
         client->_slot = std::move(slot);
         client->_size = size;
+        client->_member = client->_server._gate->member(id, payload.offset);
     }
     bool send_failed = false;
     try {
@@ -1498,6 +1629,7 @@ rawstd::DetachedTask Client::_dispatch_write(
 ) {
     std::shared_ptr<rawstor::Slot> slot;
     uint64_t capacity = 0;
+    GateRef gate_ref;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
@@ -1505,6 +1637,7 @@ rawstd::DetachedTask Client::_dispatch_write(
         }
         slot = client->_slot;
         capacity = client->_size;
+        gate_ref = client->_gate_ref();
     }
 
     bool sync = (flags & RAWSTOR_FLAG_SYNC) != 0;
@@ -1516,6 +1649,10 @@ rawstd::DetachedTask Client::_dispatch_write(
             RAWSTD_THROW_SYSTEM_ERROR(EBADF);
         }
         check_copy_range(offset, data->size(), capacity);
+        FreezeAdmission admission;
+        if (!admission.try_enter(*gate_ref.member)) {
+            co_await admission.wait(*gate_ref.member, *gate_ref.queue);
+        }
         if ((flags & RAWSTOR_FLAG_RESYNC) != 0) {
             result = co_await slot->resync_pwrite(
                 data->data(), data->size(), offset, sync, epoch
@@ -1616,6 +1753,7 @@ rawstd::DetachedTask Client::_discard(
 ) {
     std::shared_ptr<rawstor::Slot> slot;
     uint64_t capacity = 0;
+    GateRef gate_ref;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
@@ -1638,6 +1776,7 @@ rawstd::DetachedTask Client::_discard(
         }
         slot = client->_slot;
         capacity = client->_size;
+        gate_ref = client->_gate_ref();
     }
 
     size_t result = 0;
@@ -1647,6 +1786,10 @@ rawstd::DetachedTask Client::_discard(
             RAWSTD_THROW_SYSTEM_ERROR(EBADF);
         }
         check_copy_range(payload.offset, payload.len, capacity);
+        FreezeAdmission admission;
+        if (!admission.try_enter(*gate_ref.member)) {
+            co_await admission.wait(*gate_ref.member, *gate_ref.queue);
+        }
         result =
             co_await slot->discard(payload.len, payload.offset, payload.epoch);
     } catch (const std::system_error& e) {
@@ -1681,6 +1824,7 @@ rawstd::DetachedTask Client::_write_zeroes(
 ) {
     std::shared_ptr<rawstor::Slot> slot;
     uint64_t capacity = 0;
+    GateRef gate_ref;
     {
         std::shared_ptr<Client> client = weak.lock();
         if (client == nullptr) {
@@ -1703,6 +1847,7 @@ rawstd::DetachedTask Client::_write_zeroes(
         }
         slot = client->_slot;
         capacity = client->_size;
+        gate_ref = client->_gate_ref();
     }
 
     bool unmap = (payload.flags & RAWSTOR_FLAG_UNMAP) != 0;
@@ -1715,6 +1860,10 @@ rawstd::DetachedTask Client::_write_zeroes(
             RAWSTD_THROW_SYSTEM_ERROR(EBADF);
         }
         check_copy_range(payload.offset, payload.len, capacity);
+        FreezeAdmission admission;
+        if (!admission.try_enter(*gate_ref.member)) {
+            co_await admission.wait(*gate_ref.member, *gate_ref.queue);
+        }
         if ((payload.flags & RAWSTOR_FLAG_RESYNC) != 0) {
             result = co_await slot->resync_write_zeroes(
                 payload.len, payload.offset, unmap, sync, payload.epoch

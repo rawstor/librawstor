@@ -307,9 +307,11 @@ never creates a version -- it rejects a target that carries one with
 `-EINVAL`. There is no separate "assign" mode, mds:// included: two
 independent mechanisms use the same id, at different layers:
 
-- **mds:// object-level**: CoW-every-chunk/`OBJ_COMMIT_VERSION`
+- **mds:// object-level**: write barrier on every chunk, then
+  CoW-every-chunk/`OBJ_COMMIT_VERSION`
   (docs/mds.md, "Versions (stage 2)") registers the caller's id against
-  the whole object, driven by `mds::Backend::create_version()`.
+  the whole object, driven by `mds::Backend::create_version()`; writers
+  to the object wait meanwhile instead of failing.
 - **Per-slot native CoW**: a single backend's own thin-clone/version
   primitive (zfs::Backend today), addressed directly by target/chunk-
   slot URI with the version appended as a trailing path segment, in

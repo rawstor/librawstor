@@ -177,6 +177,14 @@ protected:
         uint64_t offset, const RawstdUUID& version_id
     );
 
+    rawstd::Task<void> _wire_freeze(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& token,
+        uint64_t lease_ms
+    );
+
+    rawstd::Task<void>
+    _wire_thaw(const RawstdUUID& id, uint64_t offset, const RawstdUUID& token);
+
 public:
     // Encoded object commands use the same CID dispatcher as member requests.
     // max_size bounds the response body before allocation.
