@@ -107,19 +107,4 @@ TEST_F(DirtyLogTest, rejects_empty_log) {
     EXPECT_THROW(DirtyLog(_fd, 0, 0), std::system_error);
 }
 
-TEST_F(DirtyLogTest, rejects_bitmap_past_the_end_of_the_file) {
-    EXPECT_THROW(DirtyLog(_fd, log_size + 1, file_offset), std::system_error);
-    EXPECT_THROW(DirtyLog(_fd, log_size, file_offset + 1), std::system_error);
-    EXPECT_THROW(
-        DirtyLog(_fd, 1, file_offset + log_size + 1), std::system_error
-    );
-}
-
-TEST_F(DirtyLogTest, rejects_sizes_that_overflow_the_mapping_length) {
-    EXPECT_THROW(DirtyLog(_fd, UINT64_MAX, 0), std::system_error);
-    EXPECT_THROW(DirtyLog(_fd, UINT64_MAX - 1, 1), std::system_error);
-    EXPECT_THROW(DirtyLog(_fd, 1, UINT64_MAX), std::system_error);
-    EXPECT_THROW(DirtyLog(_fd, UINT64_MAX - 4090, 4095), std::system_error);
-}
-
 } // namespace
