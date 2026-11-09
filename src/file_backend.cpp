@@ -513,14 +513,16 @@ Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
 
     std::string target_dir = get_target_dir(location_path, uuid_string, offset);
 
-    // The versions are copies of this chunk: they go first
-    // (remove_version()), or an object created later under the same id would
-    // show them as its own. Checked before anything is unlinked, so a retry
-    // is safe.
+    // The versions are copies of this chunk and go with it: they are
+    // removed first (remove_version()), or an object created later under
+    // the same id would show them as its own. Nothing of the live chunk is
+    // unlinked until they are all gone, so a retry after a failure finishes
+    // the job.
     std::error_code versions_error;
-    if (std::filesystem::is_directory(target_dir, versions_error) &&
-        !versions_in(target_dir).empty()) {
-        RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
+    if (std::filesystem::is_directory(target_dir, versions_error)) {
+        for (const RawstdUUID& version_id : versions_in(target_dir)) {
+            co_await remove_version({}, id, offset, version_id);
+        }
     }
 
     // Either file may already be gone: a Slot retries remove() after a

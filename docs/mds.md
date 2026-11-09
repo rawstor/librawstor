@@ -911,8 +911,8 @@ visible once the orchestrator has verified its barrier:
   synced; it is staged in files unique to the attempt and renamed into place
   (`data` last), so a half copy is never taken for a version and concurrent
   attempts at one version do not touch each other's files. Such a version
-  opens read-only like any other. Removing the live chunk fails with
-  `-EBUSY` while it has versions.
+  opens read-only like any other. Removing the live chunk removes its
+  versions with it.
 
 **v1 notes (shipped):**
 
