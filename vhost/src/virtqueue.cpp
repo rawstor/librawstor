@@ -401,7 +401,30 @@ void VirtQueue::_apply(SetInflight&& cmd) {
 
 void VirtQueue::_apply(GetVringBase&& cmd) {
     _set_enabled(false);
-    cmd.reply.promise.set_value(_last_avail_idx);
+    // The front-end hands the ring to another back-end (live migration)
+    // or restarts it with the index we report; a request still running
+    // here would neither be resubmitted there nor stay out of the way of
+    // the writes it makes, so the answer waits for every one of them to
+    // complete and publish.
+    if (_inflight == 0) {
+        cmd.reply.promise.set_value(_last_avail_idx);
+    } else {
+        _pending_vring_bases.push_back(std::move(cmd.reply));
+    }
+}
+
+void VirtQueue::_release_drain_waiters() {
+    if (_inflight != 0) {
+        return;
+    }
+    for (Reply<void>& reply : _pending_pauses) {
+        reply.promise.set_value();
+    }
+    _pending_pauses.clear();
+    for (Reply<uint16_t>& reply : _pending_vring_bases) {
+        reply.promise.set_value(_last_avail_idx);
+    }
+    _pending_vring_bases.clear();
 }
 
 void VirtQueue::_apply(Pause&& cmd) {

@@ -754,6 +754,7 @@ void VirtQueue::process_queue() {
         } catch (const std::exception& e) {
             rawstd_error("%s\n", e.what());
             --_inflight;
+            _release_drain_waiters();
         }
     }
 
@@ -774,12 +775,8 @@ void VirtQueue::complete_request(const DescChain& chain, uint32_t len) {
     push(head, len, log.get());
     notify(_device->event_idx_negotiated());
 
-    if (--_inflight == 0 && !_pending_pauses.empty()) {
-        for (Reply<void>& reply : _pending_pauses) {
-            reply.promise.set_value();
-        }
-        _pending_pauses.clear();
-    }
+    --_inflight;
+    _release_drain_waiters();
 }
 
 } // namespace vhost

@@ -223,10 +223,11 @@ private:
      * thread): whether kick-driven descriptor popping is currently
      * suppressed (see pause()/resume()), how many Request objects are
      * currently in flight, and replies to Pause commands waiting for
-     * that count to reach zero. */
+     * that count to reach zero (and, likewise, to GetVringBase). */
     bool _paused;
     unsigned int _inflight;
     std::vector<Reply<void>> _pending_pauses;
+    std::vector<Reply<uint16_t>> _pending_vring_bases;
     std::vector<std::function<void(std::exception_ptr)>> _pending_reopens;
     bool _stop_requested;
 
@@ -253,6 +254,9 @@ private:
     void _apply(SetEnabled&& cmd);
     void _apply(SetInflight&& cmd);
     void _apply(GetVringBase&& cmd);
+    /* Answers every Pause and GetVringBase waiting for _inflight to
+     * reach zero. */
+    void _release_drain_waiters();
     void _apply(Pause&& cmd);
     void _apply(Resume&& cmd);
     void _apply(Reopen&& cmd);
