@@ -318,9 +318,11 @@ flight, in its original order.
 is copying memory, QEMU shares a dirty page bitmap and the backend marks
 every guest page it writes (the buffers of each completed request and the
 used ring) before the completion reaches the guest. On the source,
-`GET_VRING_BASE` stops each ring once its in-flight requests are done;
-the destination's `rawstor-vhost` opens the same object, so both ends
-write it only across the hand-over ([multi-attach](docs/multiattach.md)).
+`GET_VRING_BASE` stops each ring and is answered only once its in-flight
+requests are done. The destination's `rawstor-vhost` opens the same object
+ahead of time but writes only after that hand-over; both processes
+holding the object open meanwhile is what [multi-attach](docs/multiattach.md)
+stage 2 covers for mirrored objects.
 `rawstor-vhost-qemu` gets this from libvhost-user; `rawstor-vduse` has no
 dirty page logging.
 
