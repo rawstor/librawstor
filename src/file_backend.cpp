@@ -720,7 +720,8 @@ rawstd::Task<void> copy_blocks(
     std::exception_ptr eptr;
     try {
         out_fd = co_await queue.open(
-            target.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644
+            target.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+            S_IRUSR | S_IWUSR
         );
         if (ftruncate(out_fd, st.st_size) == -1) {
             RAWSTD_THROW_ERRNO();
@@ -812,9 +813,14 @@ rawstd::Task<void> Backend::create_version(
     std::string partial = target + suffix;
     std::string meta_partial = meta_target + suffix;
 
-    // A retry after a completed copy finds the version already there.
+    // A retry after a completed copy finds the version already there --
+    // possibly one whose attempt failed after the rename and before the
+    // directories were synced, so they are synced here too before it is
+    // reported.
     std::error_code ec;
     if (std::filesystem::exists(target, ec)) {
+        co_await sync_dir(_queue, version_dir);
+        co_await sync_dir(_queue, target_dir);
         co_return;
     }
 
@@ -842,13 +848,12 @@ rawstd::Task<void> Backend::create_version(
         eptr = std::current_exception();
     }
     if (eptr) {
-        // Only this attempt's own files, and the `meta` only while no
-        // attempt has published the version's `data`.
+        // Only this attempt's own staging files: a published `meta` may be
+        // another attempt's, whose `data` is still to come. One left without
+        // `data` is replaced by the next attempt and removed by
+        // remove_version().
         unlink(partial.c_str());
         unlink(meta_partial.c_str());
-        if (!std::filesystem::exists(target, ec)) {
-            unlink(meta_target.c_str());
-        }
         rmdir(version_dir.c_str());
         errno = 0;
         std::rethrow_exception(eptr);
@@ -874,8 +879,24 @@ rawstd::Task<void> Backend::remove_version(
         get_target_dir(location_path, uuid_string, offset, version_id);
 
     std::error_code ec;
-    std::filesystem::remove(version_dir + "/data.partial", ec);
-    bool found = std::filesystem::remove(version_dir + "/data", ec);
+    bool found = false;
+    // Staging files an interrupted create_version() left behind go with the
+    // version.
+    std::vector<std::filesystem::path> staging;
+    for (const auto& entry :
+         std::filesystem::directory_iterator(version_dir, ec)) {
+        std::string name = entry.path().filename().string();
+        if (name.rfind("data.partial.", 0) == 0 ||
+            name.rfind("meta.partial.", 0) == 0) {
+            staging.push_back(entry.path());
+        }
+    }
+    ec.clear();
+    for (const auto& path : staging) {
+        found = std::filesystem::remove(path, ec) || found;
+    }
+    ec.clear();
+    found = std::filesystem::remove(version_dir + "/data", ec) || found;
     if (ec) {
         RAWSTD_THROW_SYSTEM_ERROR(ec.value());
     }

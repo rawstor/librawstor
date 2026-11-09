@@ -419,6 +419,23 @@ TEST(FileLifecycleTest, create_version_copies_data) {
     EXPECT_EQ(version_meta.spec.width, spec.width);
     EXPECT_TRUE(std::filesystem::exists(chunk_dir / version_id / "meta"));
 
+    // The copies are as private as the live files.
+    for (const char* name : {"data", "meta"}) {
+        EXPECT_EQ(
+            std::filesystem::status(chunk_dir / version_id / name)
+                .permissions(),
+            std::filesystem::status(chunk_dir / name).permissions()
+        ) << name;
+    }
+
+    // Staging files an interrupted copy left behind go with the version.
+    {
+        std::ofstream((chunk_dir / version_id / "data.partial.1.1").string())
+            << "x";
+        std::ofstream((chunk_dir / version_id / "meta.partial.1.1").string())
+            << "x";
+    }
+
     EXPECT_EQ(target_remove(*queue, version_target), 0);
     EXPECT_FALSE(std::filesystem::exists(chunk_dir / version_id));
     EXPECT_TRUE(std::filesystem::exists(chunk_dir / "data"));
