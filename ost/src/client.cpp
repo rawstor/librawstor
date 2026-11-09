@@ -327,9 +327,7 @@ Client::Client(Private, RawIOQueue* queue, Server& server, int fd) :
 }
 
 Client::GateRef Client::_gate_ref() const {
-    return GateRef{
-        _server._gate, static_cast<rawio::Queue*>(_queue), _id, _offset
-    };
+    return GateRef{_member, static_cast<rawio::Queue*>(_queue)};
 }
 
 Client::~Client() noexcept {
@@ -1462,8 +1460,7 @@ rawstd::DetachedTask Client::_set_object(
     if (!error) {
         client->_slot = std::move(slot);
         client->_size = size;
-        client->_id = id;
-        client->_offset = payload.offset;
+        client->_member = client->_server._gate->member(id, payload.offset);
     }
     bool send_failed = false;
     try {
@@ -1653,9 +1650,9 @@ rawstd::DetachedTask Client::_dispatch_write(
         }
         check_copy_range(offset, data->size(), capacity);
         FreezeAdmission admission;
-        co_await admission.acquire(
-            *gate_ref.gate, *gate_ref.queue, gate_ref.id, gate_ref.offset
-        );
+        if (!admission.try_enter(*gate_ref.member)) {
+            co_await admission.wait(*gate_ref.member, *gate_ref.queue);
+        }
         if ((flags & RAWSTOR_FLAG_RESYNC) != 0) {
             result = co_await slot->resync_pwrite(
                 data->data(), data->size(), offset, sync, epoch
@@ -1790,9 +1787,9 @@ rawstd::DetachedTask Client::_discard(
         }
         check_copy_range(payload.offset, payload.len, capacity);
         FreezeAdmission admission;
-        co_await admission.acquire(
-            *gate_ref.gate, *gate_ref.queue, gate_ref.id, gate_ref.offset
-        );
+        if (!admission.try_enter(*gate_ref.member)) {
+            co_await admission.wait(*gate_ref.member, *gate_ref.queue);
+        }
         result =
             co_await slot->discard(payload.len, payload.offset, payload.epoch);
     } catch (const std::system_error& e) {
@@ -1864,9 +1861,9 @@ rawstd::DetachedTask Client::_write_zeroes(
         }
         check_copy_range(payload.offset, payload.len, capacity);
         FreezeAdmission admission;
-        co_await admission.acquire(
-            *gate_ref.gate, *gate_ref.queue, gate_ref.id, gate_ref.offset
-        );
+        if (!admission.try_enter(*gate_ref.member)) {
+            co_await admission.wait(*gate_ref.member, *gate_ref.queue);
+        }
         if ((payload.flags & RAWSTOR_FLAG_RESYNC) != 0) {
             result = co_await slot->resync_write_zeroes(
                 payload.len, payload.offset, unmap, sync, payload.epoch

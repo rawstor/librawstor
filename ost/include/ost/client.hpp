@@ -38,16 +38,14 @@ private:
     RawIOEvent* _recv_event;
     std::shared_ptr<Slot> _slot;
     uint64_t _size = 0;
-    // The chunk member `_slot` is bound to: the key of the write barrier.
-    RawstdUUID _id = {};
-    uint64_t _offset = 0;
+    // The write barrier of the chunk member `_slot` is bound to, looked up
+    // once when it is bound so that a write does not have to.
+    FreezeGate::MemberRef _member;
 
     // What a write needs to pass the write barrier of this client's member.
     struct GateRef {
-        std::shared_ptr<FreezeGate> gate;
+        FreezeGate::MemberRef member;
         rawio::Queue* queue = nullptr;
-        RawstdUUID id = {};
-        uint64_t offset = 0;
     };
     GateRef _gate_ref() const;
 

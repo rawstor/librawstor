@@ -4,6 +4,7 @@
 
 #include <rawstd/logging.hpp>
 
+#include <algorithm>
 #include <system_error>
 
 #include <cerrno>
@@ -22,57 +23,32 @@ bool FreezeGate::KeyLess::operator()(
     return a.second < b.second;
 }
 
-void FreezeGate::_release_idle_locked(const Key& key) {
-    auto it = _members.find(key);
-    if (it != _members.end() && it->second.inflight == 0 &&
-        !it->second.frozen) {
-        _members.erase(it);
-    }
-}
-
-void FreezeGate::_expire_locked(const Key& key, Clock::time_point now) {
-    auto it = _members.find(key);
-    if (it != _members.end() && it->second.frozen &&
-        now >= it->second.deadline) {
+void FreezeGate::Member::_expire_locked(Clock::time_point now) {
+    uint64_t word = _word.load(std::memory_order_acquire);
+    if ((word & frozen_bit) != 0 && now >= _deadline) {
         rawstd_warning("freeze of a chunk member expired, thawing it\n");
-        it->second.frozen = false;
-        _release_idle_locked(key);
+        _word.fetch_and(~frozen_bit, std::memory_order_acq_rel);
+        _drained = false;
     }
 }
 
-rawstd::Task<void>
-FreezeGate::enter(rawio::Queue& queue, const RawstdUUID& id, uint64_t offset) {
-    const Key key{id, offset};
+rawstd::Task<void> FreezeGate::Member::wait(rawio::Queue& queue) {
     for (;;) {
         {
             std::lock_guard<std::mutex> guard(_mu);
-            _expire_locked(key, Clock::now());
-            Member& member = _members[key];
-            if (!member.frozen) {
-                ++member.inflight;
-                co_return;
-            }
+            _expire_locked(Clock::now());
+        }
+        if (try_enter()) {
+            co_return;
         }
         co_await queue.timeout(poll_usec);
     }
 }
 
-void FreezeGate::leave(const RawstdUUID& id, uint64_t offset) noexcept {
-    const Key key{id, offset};
-    std::lock_guard<std::mutex> guard(_mu);
-    auto it = _members.find(key);
-    if (it == _members.end() || it->second.inflight == 0) {
-        return;
-    }
-    --it->second.inflight;
-    _release_idle_locked(key);
-}
-
-rawstd::Task<void> FreezeGate::freeze(
-    rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
-    const RawstdUUID& token, std::chrono::milliseconds lease
+rawstd::Task<void> FreezeGate::Member::freeze(
+    rawio::Queue& queue, const RawstdUUID& token,
+    std::chrono::milliseconds lease
 ) {
-    const Key key{id, offset};
     const Clock::time_point give_up = Clock::now() + lease;
 
     // Take the member.
@@ -81,15 +57,15 @@ rawstd::Task<void> FreezeGate::freeze(
         {
             std::lock_guard<std::mutex> guard(_mu);
             Clock::time_point now = Clock::now();
-            _expire_locked(key, now);
-            Member& member = _members[key];
-            if (!member.frozen || rawstd_uuid_cmp(&member.token, &token) == 0) {
+            _expire_locked(now);
+            uint64_t word = _word.load(std::memory_order_acquire);
+            bool frozen = (word & frozen_bit) != 0;
+            if (!frozen || rawstd_uuid_cmp(&_token, &token) == 0) {
                 // A renewal keeps what the first freeze already drained.
-                member.drained =
-                    member.frozen && member.drained && member.inflight == 0;
-                member.frozen = true;
-                member.token = token;
-                member.deadline = now + lease;
+                _drained = frozen && _drained && (word & ~frozen_bit) == 0;
+                _token = token;
+                _deadline = now + lease;
+                _word.fetch_or(frozen_bit, std::memory_order_acq_rel);
                 break;
             }
             failed = now >= give_up;
@@ -105,16 +81,17 @@ rawstd::Task<void> FreezeGate::freeze(
         bool failed = false;
         {
             std::lock_guard<std::mutex> guard(_mu);
-            auto it = _members.find(key);
-            if (it == _members.end() || !it->second.frozen ||
-                rawstd_uuid_cmp(&it->second.token, &token) != 0) {
+            uint64_t word = _word.load(std::memory_order_acquire);
+            if ((word & frozen_bit) == 0 ||
+                rawstd_uuid_cmp(&_token, &token) != 0) {
                 // The lease ran out under us, and someone else may hold it.
                 failed = true;
-            } else if (it->second.inflight == 0) {
-                it->second.drained = true;
+            } else if ((word & ~frozen_bit) == 0) {
+                _drained = true;
                 co_return;
-            } else if (Clock::now() >= it->second.deadline) {
-                it->second.frozen = false;
+            } else if (Clock::now() >= _deadline) {
+                _word.fetch_and(~frozen_bit, std::memory_order_acq_rel);
+                _drained = false;
                 failed = true;
             }
         }
@@ -125,31 +102,106 @@ rawstd::Task<void> FreezeGate::freeze(
     }
 }
 
+int FreezeGate::Member::thaw(const RawstdUUID& token) noexcept {
+    std::lock_guard<std::mutex> guard(_mu);
+    _expire_locked(Clock::now());
+    uint64_t word = _word.load(std::memory_order_acquire);
+    if ((word & frozen_bit) == 0 || rawstd_uuid_cmp(&_token, &token) != 0) {
+        return ESTALE;
+    }
+    _word.fetch_and(~frozen_bit, std::memory_order_acq_rel);
+    _drained = false;
+    return 0;
+}
+
+bool FreezeGate::Member::held_by(const RawstdUUID& token) noexcept {
+    std::lock_guard<std::mutex> guard(_mu);
+    _expire_locked(Clock::now());
+    uint64_t word = _word.load(std::memory_order_acquire);
+    return (word & frozen_bit) != 0 && _drained &&
+           rawstd_uuid_cmp(&_token, &token) == 0;
+}
+
+void FreezeGate::_sweep_locked() {
+    const Clock::time_point now = Clock::now();
+    for (auto it = _members.begin(); it != _members.end();) {
+        Member& member = *it->second;
+        // Only the registry holds it: nobody can take another reference
+        // without `_mu`, which is held.
+        if (it->second.use_count() == 1) {
+            // A freeze nobody touches any more still has to run out. The
+            // lock is let go of before the member can be erased with it.
+            {
+                std::unique_lock<std::mutex> guard(
+                    member._mu, std::try_to_lock
+                );
+                if (guard.owns_lock()) {
+                    member._expire_locked(now);
+                }
+            }
+            if (member._word.load(std::memory_order_acquire) == 0) {
+                it = _members.erase(it);
+                continue;
+            }
+        }
+        ++it;
+    }
+    _sweep_at = std::max<size_t>(64, 2 * _members.size());
+}
+
+FreezeGate::MemberRef
+FreezeGate::member(const RawstdUUID& id, uint64_t offset) {
+    const Key key{id, offset};
+    std::lock_guard<std::mutex> guard(_mu);
+    auto it = _members.find(key);
+    if (it != _members.end()) {
+        return it->second;
+    }
+    if (_members.size() >= _sweep_at) {
+        _sweep_locked();
+    }
+    MemberRef created = std::make_shared<Member>();
+    _members.emplace(key, created);
+    return created;
+}
+
+rawstd::Task<void> FreezeGate::freeze(
+    rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& token, std::chrono::milliseconds lease
+) {
+    // Held for the whole call, so a sweep cannot drop it before it is frozen.
+    MemberRef held = member(id, offset);
+    co_await held->freeze(queue, token, lease);
+}
+
 int FreezeGate::thaw(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& token
 ) noexcept {
-    const Key key{id, offset};
-    std::lock_guard<std::mutex> guard(_mu);
-    _expire_locked(key, Clock::now());
-    auto it = _members.find(key);
-    if (it == _members.end() || !it->second.frozen ||
-        rawstd_uuid_cmp(&it->second.token, &token) != 0) {
-        return ESTALE;
+    MemberRef held;
+    {
+        std::lock_guard<std::mutex> guard(_mu);
+        auto it = _members.find(Key{id, offset});
+        if (it == _members.end()) {
+            return ESTALE;
+        }
+        held = it->second;
     }
-    it->second.frozen = false;
-    _release_idle_locked(key);
-    return 0;
+    return held->thaw(token);
 }
 
 bool FreezeGate::held_by(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& token
 ) noexcept {
-    const Key key{id, offset};
-    std::lock_guard<std::mutex> guard(_mu);
-    _expire_locked(key, Clock::now());
-    auto it = _members.find(key);
-    return it != _members.end() && it->second.frozen && it->second.drained &&
-           rawstd_uuid_cmp(&it->second.token, &token) == 0;
+    MemberRef held;
+    {
+        std::lock_guard<std::mutex> guard(_mu);
+        auto it = _members.find(Key{id, offset});
+        if (it == _members.end()) {
+            return false;
+        }
+        held = it->second;
+    }
+    return held->held_by(token);
 }
 
 } // namespace ostserver

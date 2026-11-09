@@ -7,10 +7,12 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <system_error>
 #include <thread>
+#include <vector>
 
 #include <cerrno>
 
@@ -55,14 +57,22 @@ int error_of(rawstd::Task<void>& task) {
 } // namespace
 
 TEST(FreezeGateTest, writes_pass_while_not_frozen) {
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(8);
+    FreezeGate gate;
+    FreezeGate::MemberRef member = gate.member(make_uuid(), 0);
+
+    // The fast path: no queue, no coroutine.
+    EXPECT_TRUE(member->try_enter());
+    member->leave();
+}
+
+// The same member is the same object for everyone, so a session that looked
+// it up once sees a freeze taken by name.
+TEST(FreezeGateTest, a_member_is_shared_by_name) {
     FreezeGate gate;
     RawstdUUID id = make_uuid();
-
-    rawstd::Task<void> enter = gate.enter(*queue, id, 0);
-    EXPECT_TRUE(run_for(*queue, enter, 1000));
-    enter.get();
-    gate.leave(id, 0);
+    EXPECT_EQ(gate.member(id, 0), gate.member(id, 0));
+    EXPECT_NE(gate.member(id, 0), gate.member(id, 4096));
+    EXPECT_NE(gate.member(id, 0), gate.member(make_uuid(), 0));
 }
 
 // The barrier: freeze waits for the admitted write, a write that comes
@@ -72,23 +82,24 @@ TEST(FreezeGateTest, freeze_drains_admitted_and_holds_new_writes) {
     FreezeGate gate;
     RawstdUUID id = make_uuid();
     RawstdUUID token = make_uuid();
+    FreezeGate::MemberRef member = gate.member(id, 0);
 
-    rawstd::Task<void> admitted = gate.enter(*queue, id, 0);
-    ASSERT_TRUE(run_for(*queue, admitted, 1000));
+    ASSERT_TRUE(member->try_enter());
 
     rawstd::Task<void> freeze =
         gate.freeze(*queue, id, 0, token, milliseconds(10000));
     EXPECT_FALSE(run_for(*queue, freeze, 50))
         << "frozen with a write in flight";
 
-    rawstd::Task<void> late = gate.enter(*queue, id, 0);
+    EXPECT_FALSE(member->try_enter()) << "a new write got past";
+    rawstd::Task<void> late = member->wait(*queue);
     EXPECT_FALSE(run_for(*queue, late, 50)) << "a new write got past";
 
     // A freeze that is still waiting for writes does not hold the member yet:
     // a version must not be taken under it.
     EXPECT_FALSE(gate.held_by(id, 0, token));
 
-    gate.leave(id, 0);
+    member->leave();
     EXPECT_TRUE(run_for(*queue, freeze, 1000));
     freeze.get();
     EXPECT_TRUE(gate.held_by(id, 0, token));
@@ -97,7 +108,33 @@ TEST(FreezeGateTest, freeze_drains_admitted_and_holds_new_writes) {
     EXPECT_EQ(gate.thaw(id, 0, token), 0);
     EXPECT_TRUE(run_for(*queue, late, 1000));
     late.get();
-    gate.leave(id, 0);
+    member->leave();
+}
+
+// A frozen member nobody holds a reference to is still frozen: the gate keeps
+// it, so a session that opens it later finds the barrier.
+TEST(FreezeGateTest, a_frozen_member_outlives_its_sessions) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(8);
+    FreezeGate gate;
+    RawstdUUID id = make_uuid();
+    RawstdUUID token = make_uuid();
+
+    rawstd::Task<void> freeze =
+        gate.freeze(*queue, id, 0, token, milliseconds(10000));
+    ASSERT_TRUE(run_for(*queue, freeze, 1000));
+    freeze.get();
+
+    // Enough other members to make the gate sweep the idle ones.
+    for (int i = 0; i < 300; ++i) {
+        gate.member(make_uuid(), 0);
+    }
+
+    FreezeGate::MemberRef member = gate.member(id, 0);
+    EXPECT_FALSE(member->try_enter());
+    EXPECT_TRUE(gate.held_by(id, 0, token));
+    EXPECT_EQ(gate.thaw(id, 0, token), 0);
+    EXPECT_TRUE(member->try_enter());
+    member->leave();
 }
 
 TEST(FreezeGateTest, other_members_are_not_held) {
@@ -112,12 +149,10 @@ TEST(FreezeGateTest, other_members_are_not_held) {
     ASSERT_TRUE(run_for(*queue, freeze, 1000));
     freeze.get();
 
-    rawstd::Task<void> same_object_other_chunk = gate.enter(*queue, id, 4096);
-    EXPECT_TRUE(run_for(*queue, same_object_other_chunk, 1000));
-    gate.leave(id, 4096);
-    rawstd::Task<void> other_object = gate.enter(*queue, other, 0);
-    EXPECT_TRUE(run_for(*queue, other_object, 1000));
-    gate.leave(other, 0);
+    EXPECT_TRUE(gate.member(id, 4096)->try_enter());
+    gate.member(id, 4096)->leave();
+    EXPECT_TRUE(gate.member(other, 0)->try_enter());
+    gate.member(other, 0)->leave();
 
     EXPECT_EQ(gate.thaw(id, 0, token), 0);
 }
@@ -128,16 +163,17 @@ TEST(FreezeGateTest, lease_expiry_thaws_by_itself) {
     FreezeGate gate;
     RawstdUUID id = make_uuid();
     RawstdUUID token = make_uuid();
+    FreezeGate::MemberRef member = gate.member(id, 0);
 
     rawstd::Task<void> freeze =
         gate.freeze(*queue, id, 0, token, milliseconds(100));
     ASSERT_TRUE(run_for(*queue, freeze, 1000));
     freeze.get();
 
-    rawstd::Task<void> write = gate.enter(*queue, id, 0);
+    rawstd::Task<void> write = member->wait(*queue);
     EXPECT_TRUE(run_for(*queue, write, 2000)) << "the lease never expired";
     write.get();
-    gate.leave(id, 0);
+    member->leave();
 
     // The version taken under that barrier is not a consistent point.
     EXPECT_EQ(gate.thaw(id, 0, token), ESTALE);
@@ -148,9 +184,9 @@ TEST(FreezeGateTest, freeze_times_out_when_writes_never_drain) {
     FreezeGate gate;
     RawstdUUID id = make_uuid();
     RawstdUUID token = make_uuid();
+    FreezeGate::MemberRef member = gate.member(id, 0);
 
-    rawstd::Task<void> admitted = gate.enter(*queue, id, 0);
-    ASSERT_TRUE(run_for(*queue, admitted, 1000));
+    ASSERT_TRUE(member->try_enter());
 
     rawstd::Task<void> freeze =
         gate.freeze(*queue, id, 0, token, milliseconds(100));
@@ -159,10 +195,9 @@ TEST(FreezeGateTest, freeze_times_out_when_writes_never_drain) {
 
     // It lifted the barrier on the way out.
     EXPECT_FALSE(gate.held_by(id, 0, token));
-    rawstd::Task<void> write = gate.enter(*queue, id, 0);
-    EXPECT_TRUE(run_for(*queue, write, 1000));
-    gate.leave(id, 0);
-    gate.leave(id, 0);
+    EXPECT_TRUE(member->try_enter());
+    member->leave();
+    member->leave();
 }
 
 TEST(FreezeGateTest, a_second_holder_waits_its_turn) {
@@ -212,6 +247,7 @@ TEST(FreezeGateTest, the_same_token_renews_its_freeze) {
 TEST(FreezeGateTest, thaw_without_freeze_is_stale) {
     FreezeGate gate;
     EXPECT_EQ(gate.thaw(make_uuid(), 0, make_uuid()), ESTALE);
+    EXPECT_FALSE(gate.held_by(make_uuid(), 0, make_uuid()));
 }
 
 TEST(FreezeGateTest, admission_leaves_with_its_scope) {
@@ -219,15 +255,79 @@ TEST(FreezeGateTest, admission_leaves_with_its_scope) {
     FreezeGate gate;
     RawstdUUID id = make_uuid();
     RawstdUUID token = make_uuid();
+    FreezeGate::MemberRef member = gate.member(id, 0);
     {
         FreezeAdmission admission;
-        rawstd::Task<void> acquire = admission.acquire(gate, *queue, id, 0);
-        ASSERT_TRUE(run_for(*queue, acquire, 1000));
-        acquire.get();
+        ASSERT_TRUE(admission.try_enter(*member));
+    }
+    {
+        // The slow path, taken by a write that met a frozen member.
+        rawstd::Task<void> freeze =
+            gate.freeze(*queue, id, 0, token, milliseconds(10000));
+        ASSERT_TRUE(run_for(*queue, freeze, 1000));
+        freeze.get();
+
+        FreezeAdmission admission;
+        EXPECT_FALSE(admission.try_enter(*member));
+        rawstd::Task<void> wait = admission.wait(*member, *queue);
+        EXPECT_FALSE(run_for(*queue, wait, 50));
+        EXPECT_EQ(gate.thaw(id, 0, token), 0);
+        ASSERT_TRUE(run_for(*queue, wait, 1000));
+        wait.get();
     }
     rawstd::Task<void> freeze =
         gate.freeze(*queue, id, 0, token, milliseconds(10000));
     EXPECT_TRUE(run_for(*queue, freeze, 1000)) << "the admission leaked";
     freeze.get();
     EXPECT_EQ(gate.thaw(id, 0, token), 0);
+}
+
+// Writers on several threads against a freeze/thaw cycle: whenever the freeze
+// answers, no write is in flight and none starts until the thaw.
+TEST(FreezeGateTest, concurrent_writers_never_overlap_a_frozen_member) {
+    FreezeGate gate;
+    RawstdUUID id = make_uuid();
+    FreezeGate::MemberRef member = gate.member(id, 0);
+    std::atomic<bool> stop{false};
+    std::atomic<int> inside{0};
+    std::atomic<int> violations{0};
+    std::atomic<bool> held{false};
+
+    std::vector<std::thread> writers;
+    for (int t = 0; t < 3; ++t) {
+        writers.emplace_back([&]() {
+            while (!stop.load()) {
+                if (member->try_enter()) {
+                    inside.fetch_add(1);
+                    if (held.load()) {
+                        violations.fetch_add(1);
+                    }
+                    inside.fetch_sub(1);
+                    member->leave();
+                }
+            }
+        });
+    }
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(8);
+    for (int round = 0; round < 50; ++round) {
+        RawstdUUID token = make_uuid();
+        rawstd::Task<void> freeze =
+            gate.freeze(*queue, id, 0, token, milliseconds(10000));
+        ASSERT_TRUE(run_for(*queue, freeze, 5000));
+        freeze.get();
+        held.store(true);
+        // The freeze answered: nothing is in flight and nothing may start.
+        EXPECT_EQ(inside.load(), 0);
+        std::this_thread::sleep_for(milliseconds(2));
+        EXPECT_EQ(inside.load(), 0);
+        held.store(false);
+        EXPECT_EQ(gate.thaw(id, 0, token), 0);
+        std::this_thread::sleep_for(milliseconds(1));
+    }
+    stop.store(true);
+    for (auto& w : writers) {
+        w.join();
+    }
+    EXPECT_EQ(violations.load(), 0);
 }
