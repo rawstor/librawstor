@@ -43,13 +43,13 @@ namespace {
 // path segment (parse_target_path()'s own doc comment) and every
 // numeric field meta_encode() persists alongside it, so a directory
 // listing and its own meta record read the same way. `version_id`, when
-// bound, is one directory deeper still -- file:// never actually creates
-// one (its own _open_object() below has no version_id parameter at all,
-// and it never overrides _open_version(), whose blk::Backend default
-// rejects every call with ENOTSUP -- no native CoW), but the layout is
-// already shaped for a backend that could. Two
-// files live directly under this directory: `data` (the object's own
-// bytes) and `meta` (get_target_meta_path() below).
+// bound, is one directory deeper still: a file:// version is a fake
+// snapshot, a full copy of `data` and `meta` made by create_version(). It
+// is never opened (_open_object() below has no version_id parameter, and
+// _open_version() keeps blk::Backend's ENOTSUP default), only described by
+// meta(). Two files live directly under a chunk's or a version's directory:
+// `data` (the object's own bytes) and `meta` (get_target_meta_path()
+// below).
 std::string get_target_dir(
     const std::string& location_path, const RawstdUUIDString& uuid,
     uint64_t offset, const RawstdUUID& version_id = {}
@@ -68,16 +68,16 @@ std::string get_target_dir(
 
 std::string get_target_path(
     const std::string& location_path, const RawstdUUIDString& uuid,
-    uint64_t offset
+    uint64_t offset, const RawstdUUID& version_id = {}
 ) {
-    return get_target_dir(location_path, uuid, offset) + "/data";
+    return get_target_dir(location_path, uuid, offset, version_id) + "/data";
 }
 
 std::string get_target_meta_path(
     const std::string& location_path, const RawstdUUIDString& uuid,
-    uint64_t offset
+    uint64_t offset, const RawstdUUID& version_id = {}
 ) {
-    return get_target_dir(location_path, uuid, offset) + "/meta";
+    return get_target_dir(location_path, uuid, offset, version_id) + "/meta";
 }
 
 // Creates `path` if it doesn't already exist -- shared by create()'s own
@@ -168,8 +168,7 @@ rawstd::Task<void> Backend::list_chunks(
     RawstdUUID& token, RawstdUUID version_id
 ) {
     if (!rawstd_uuid_is_nil(&version_id)) {
-        // No versions on this backend (Backend::remove_version()'s own
-        // default).
+        // A version is described by meta() only; its chunks are not listed.
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
     // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc
@@ -521,11 +520,6 @@ Backend::remove(const RawstdUUID&, const RawstdUUID& id, uint64_t offset) {
 rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
-    if (!rawstd_uuid_is_nil(&version_id)) {
-        // No versions on this backend (Backend::remove_version()'s own
-        // default).
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
-    }
     std::string location_path = get_location_path(location());
 
     std::error_code location_error;
@@ -537,9 +531,9 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     rawstd_uuid_to_string(&id, &uuid_string);
 
     std::string target_path =
-        get_target_path(location_path, uuid_string, offset);
+        get_target_path(location_path, uuid_string, offset, version_id);
     std::string meta_path =
-        get_target_meta_path(location_path, uuid_string, offset);
+        get_target_meta_path(location_path, uuid_string, offset, version_id);
 
     struct stat st;
     co_await _queue.stat(target_path.c_str(), &st);
@@ -651,6 +645,137 @@ rawstd::Task<void> Backend::_write_meta(
     if (eptr) {
         std::rethrow_exception(eptr);
     }
+}
+
+rawstd::Task<void> Backend::create_version(
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& version_id
+) {
+    if (rawstd_uuid_is_nil(&version_id)) {
+        // nil is the live version, never a created one.
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    std::string location_path = get_location_path(location());
+
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    std::string source = get_target_path(location_path, uuid_string, offset);
+    std::string version_dir =
+        get_target_dir(location_path, uuid_string, offset, version_id);
+    std::string target = version_dir + "/data";
+    std::string partial = version_dir + "/data.partial";
+    std::string meta_source =
+        get_target_meta_path(location_path, uuid_string, offset);
+    std::string meta_target = version_dir + "/meta";
+
+    // A retry after a completed copy finds the version already there.
+    std::error_code ec;
+    if (std::filesystem::exists(target, ec)) {
+        co_return;
+    }
+
+    struct stat st;
+    co_await _queue.stat(source.c_str(), &st);
+
+    mkdir_or_exist(version_dir);
+
+    // TODO: std::filesystem::copy_file() blocks the event loop for the
+    // whole copy -- io_uring has no copy opcode. The copy goes to a
+    // partial file renamed into place afterwards, so a crash never leaves
+    // a truncated `data` that a later retry would take for a finished one.
+    try {
+        std::filesystem::copy_file(
+            source, partial, std::filesystem::copy_options::overwrite_existing
+        );
+        // `data` is renamed last: a version exists once it has one, so its
+        // `meta` is already in place by then.
+        std::filesystem::copy_file(
+            meta_source, meta_target,
+            std::filesystem::copy_options::overwrite_existing
+        );
+        std::filesystem::rename(partial, target);
+    } catch (const std::filesystem::filesystem_error& e) {
+        rawstd_error("file: failed to copy %s: %s\n", source.c_str(), e.what());
+        std::filesystem::remove(partial, ec);
+        std::filesystem::remove(meta_target, ec);
+        rmdir(version_dir.c_str());
+        errno = 0;
+        RAWSTD_THROW_SYSTEM_ERROR(
+            e.code().value() != 0 ? e.code().value() : EIO
+        );
+    }
+
+    co_return;
+}
+
+rawstd::Task<void> Backend::remove_version(
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& version_id
+) {
+    if (rawstd_uuid_is_nil(&version_id)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    std::string location_path = get_location_path(location());
+
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    std::string version_dir =
+        get_target_dir(location_path, uuid_string, offset, version_id);
+
+    std::error_code ec;
+    std::filesystem::remove(version_dir + "/data.partial", ec);
+    bool found = std::filesystem::remove(version_dir + "/data", ec);
+    if (ec) {
+        RAWSTD_THROW_SYSTEM_ERROR(ec.value());
+    }
+    found = std::filesystem::remove(version_dir + "/meta", ec) || found;
+    if (ec) {
+        RAWSTD_THROW_SYSTEM_ERROR(ec.value());
+    }
+    if (rmdir(version_dir.c_str()) == 0) {
+        found = true;
+    }
+    errno = 0;
+    if (!found) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+
+    co_return;
+}
+
+rawstd::Task<std::vector<RawstdUUID>>
+Backend::list_versions(const RawstdUUID& id, uint64_t offset) {
+    std::string location_path = get_location_path(location());
+
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    std::string target_dir = get_target_dir(location_path, uuid_string, offset);
+    if (!std::filesystem::exists(target_dir + "/data")) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+
+    std::vector<RawstdUUID> ret;
+    for (const auto& entry : std::filesystem::directory_iterator(target_dir)) {
+        if (!entry.is_directory()) {
+            continue;
+        }
+        RawstdUUID version_id;
+        if (rawstd_uuid_from_string(
+                &version_id, entry.path().filename().string().c_str()
+            ) < 0) {
+            continue;
+        }
+        if (!std::filesystem::exists(entry.path() / "data")) {
+            continue;
+        }
+        ret.push_back(version_id);
+    }
+    co_return ret;
 }
 
 rawstd::Task<RawstorLocationInfo> Backend::info() {

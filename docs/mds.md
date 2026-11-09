@@ -32,7 +32,7 @@ numbers its stages separately.
 | Native copies marked confirmed, so `--reconstruct` registers only those | 2 | ❌ | [plan](#confirming-a-version-not-implemented) |
 | Native CoW: `zfs://` | 2 | ✅ | `src/zfs_backend.cpp` |
 | Native CoW: `lvm://` (thin) | 2 | ❌ | `-ENOTSUP` |
-| `file://` versions refused with `-ENOTSUP` | 2 | ✅ | `src/file_backend.cpp` |
+| `file://` fake snapshots (full copy of `data`) | 2 | ✅ | `src/file_backend.cpp` |
 | Object removal refused with `-EBUSY` while versions exist | 2 | ✅ | `mds/src/store.cpp` |
 | Version redundancy status surfacing | 2 | ❌ | TODO |
 | vhost/QEMU flush hook for versions | 2 | ❌ | the CLI assumes no concurrent writer |
@@ -224,7 +224,7 @@ number:
 
 | Backend | Slot home + metadata | Versions (`version_id`) |
 |---------|----------------------|----------------------|
-| `file://` | dir `<id>/<offset>/`, `data` + `meta` inside it | `-ENOTSUP` in v1 |
+| `file://` | dir `<id>/<offset>/`, `data` + `meta` inside it | fake snapshot: copy of `data` in `<id>/<offset>/<version_id>/data` |
 | `lvm://`  | thin LV `<id>-<offset>`, meta in LVM tags | thin snapshot LV |
 | `zfs://`  | zvol `<id>:<offset>`, meta in user properties | `@s<version_id>` |
 
@@ -903,9 +903,11 @@ visible once the orchestrator has verified its barrier:
   on members; the reconstruct scan reconciles leftovers from a crash between
   the two steps (an unreferenced version found on an OST is garbage,
   collectable).
-- **`file://` backend has no CoW** → `create-version` on an object with `file://`
-  members fails with `-ENOTSUP` in v1 (no fallback copies behind the caller's
-  back).
+- **`file://` backend has no CoW** → its versions are fake snapshots: under the
+  write barrier, `create-version` copies each member's `data` file to
+  `<id>/<offset>/<version_id>/data` (full size, no sharing; written as
+  `data.partial` and renamed, so a half copy is never taken for a version).
+  Such a version cannot be opened.
 
 **v1 notes (shipped):**
 
@@ -1255,7 +1257,7 @@ Interprocess mirror coordination remains multiattach stage 2.
    `LIST` + per-object `META` reconstruct scan.
 2. **Versions**: `CMD_OBJ_COMMIT_VERSION/REMOVE_VERSION/LIST_VERSIONS`, client-generated UUID
    `version`/`version_id` in chunk identity, member-set registry, deletion,
-   `-ENOTSUP` on `file://`.
+   fake snapshots (data copy) on `file://`.
 3. **Witness**: metadata-only member in the target list, durable member states
    + voting rules in the client quorum logic, synchronous membership barriers,
    re-attach.

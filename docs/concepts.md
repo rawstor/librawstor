@@ -19,7 +19,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Per-slot native CoW version: `zfs://` | ✅ | `src/zfs_backend.cpp` |
 | Per-slot native CoW version: `ost://` (relayed to the server's backend) | ✅ | `src/wire_backend.cpp` |
 | Per-slot native CoW version: `lvm://` | ❌ | `-ENOTSUP` (waits for an lvm-thin backend) |
-| Per-slot native CoW version: `file://` | ❌ | `-ENOTSUP` by design (no CoW) |
+| Per-slot version: `file://` | ✅ | fake snapshot: a full copy of `data` (no CoW) |
 
 ## Overview
 

@@ -60,6 +60,25 @@ public:
         const RawstorObjectBallot& promised, const RawstorObjectBallot& accepted
     ) override;
 
+    // Fake snapshots: a plain copy of the live `data` and `meta` files into
+    // the version's own "<uuid>/<offset>/<version_id>" directory; meta()
+    // with that version_id reads the copied record. There is no
+    // CoW here, so the copy costs the full object size; the caller holds
+    // the write barrier for the duration (docs/mds.md, "The write
+    // barrier"), which is what makes the copy a consistent point.
+    rawstd::Task<void> create_version(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& version_id
+    ) override;
+
+    rawstd::Task<void> remove_version(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& version_id
+    ) override;
+
+    rawstd::Task<std::vector<RawstdUUID>>
+    list_versions(const RawstdUUID& id, uint64_t offset) override;
+
     rawstd::Task<RawstorLocationInfo> info() override;
 };
 

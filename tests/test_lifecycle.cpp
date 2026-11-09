@@ -330,9 +330,75 @@ TEST(FileLifecycleTest, open_version_without_readonly_is_einval) {
     EXPECT_EQ(target_open(*queue, target, 0, &object), -EINVAL);
 }
 
-// With RAWSTOR_READONLY the open goes ahead and reaches the backend, which
-// (file:// has no native CoW) answers ENOTSUP -- Chunk::create() then
-// reports the lone member as unavailable, i.e. ENOTCONN.
+// A file:// version is a fake snapshot: a copy of the chunk's `data` taken
+// when the version is created, which later writes to the live chunk do not
+// reach, and which is gone once removed.
+TEST(FileLifecycleTest, create_version_copies_data) {
+    rawstor::tests::TmpDir dir;
+    rawstd::URI location_uri(dir.uri());
+    std::string uuid = "00000000-0000-7000-8000-00000000000c";
+    std::string version_id = "00000000-0000-7000-8000-00000000000d";
+    std::string live = rawstd::URI(location_uri, uuid).str();
+    std::string version_target =
+        rawstd::URI(rawstd::URI(live), version_id).str();
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    spec.width = 1;
+    ASSERT_EQ(target_create(*queue, live, spec), 0);
+
+    std::filesystem::path chunk_dir = dir.path() / uuid / "0";
+    {
+        std::ofstream data(chunk_dir / "data", std::ios::binary | std::ios::in);
+        data.write("before", 6);
+    }
+
+    std::string created(65536, '\0');
+    ssize_t res = rawstor::tests::sync_run(&*queue, [&](auto cb, void* data) {
+        return rawstor_target_create_version(
+            queue.get(), live.c_str(), version_id.c_str(), created.data(),
+            created.size(), cb, data
+        );
+    });
+    ASSERT_GT(res, 0);
+
+    {
+        std::ofstream data(chunk_dir / "data", std::ios::binary | std::ios::in);
+        data.write("after!", 6);
+    }
+
+    auto read_head = [](const std::filesystem::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        std::string head(6, '\0');
+        in.read(head.data(), head.size());
+        return head;
+    };
+    EXPECT_EQ(read_head(chunk_dir / version_id / "data"), "before");
+    EXPECT_EQ(read_head(chunk_dir / "data"), "after!");
+    EXPECT_EQ(
+        std::filesystem::file_size(chunk_dir / version_id / "data"), spec.size
+    );
+
+    // The version has its own meta: the shape of the chunk as of the version.
+    RawstorObjectMeta version_meta{};
+    ASSERT_EQ(target_meta(*queue, version_target, &version_meta), 0);
+    EXPECT_EQ(version_meta.spec.size, spec.size);
+    EXPECT_EQ(version_meta.spec.width, spec.width);
+    EXPECT_TRUE(std::filesystem::exists(chunk_dir / version_id / "meta"));
+
+    EXPECT_EQ(target_remove(*queue, version_target), 0);
+    EXPECT_FALSE(std::filesystem::exists(chunk_dir / version_id));
+    EXPECT_TRUE(std::filesystem::exists(chunk_dir / "data"));
+
+    EXPECT_EQ(target_remove(*queue, live), 0);
+}
+
+// With RAWSTOR_READONLY the open goes ahead and reaches the backend. A
+// version that does not exist has no meta there (ENOENT); one that does
+// exists only as a copy, which file:// cannot open (ENOTSUP) -- Chunk::
+// create() then reports the lone member as unavailable, i.e. ENOTCONN.
 TEST(FileLifecycleTest, open_version_readonly_reaches_backend) {
     rawstor::tests::TmpDir dir;
     rawstd::URI location_uri(dir.uri());
@@ -349,10 +415,26 @@ TEST(FileLifecycleTest, open_version_readonly_reaches_backend) {
     ASSERT_EQ(target_create(*queue, live, spec), 0);
 
     RawstorObject* object = nullptr;
+    EXPECT_EQ(target_open(*queue, target, RAWSTOR_READONLY, &object), -ENOENT);
+
+    std::string created(65536, '\0');
+    ASSERT_GT(
+        rawstor::tests::sync_run(
+            queue.get(),
+            [&](auto cb, void* data) {
+                return rawstor_target_create_version(
+                    queue.get(), live.c_str(), version_id.c_str(),
+                    created.data(), created.size(), cb, data
+                );
+            }
+        ),
+        0
+    );
     EXPECT_EQ(
         target_open(*queue, target, RAWSTOR_READONLY, &object), -ENOTCONN
     );
 
+    EXPECT_EQ(target_remove(*queue, target), 0);
     EXPECT_EQ(target_remove(*queue, live), 0);
 }
 
