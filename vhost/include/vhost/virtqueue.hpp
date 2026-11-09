@@ -41,6 +41,9 @@ struct DescChain {
     uint16_t head;
     std::vector<iovec> readable;
     std::vector<iovec> writable;
+    /* Guest physical address and length of every writable buffer, for
+     * dirty page logging. */
+    std::vector<std::pair<uint64_t, uint32_t>> writable_gpa;
 };
 
 /**
@@ -220,10 +223,11 @@ private:
      * thread): whether kick-driven descriptor popping is currently
      * suppressed (see pause()/resume()), how many Request objects are
      * currently in flight, and replies to Pause commands waiting for
-     * that count to reach zero. */
+     * that count to reach zero (and, likewise, to GetVringBase). */
     bool _paused;
     unsigned int _inflight;
     std::vector<Reply<void>> _pending_pauses;
+    std::vector<Reply<uint16_t>> _pending_vring_bases;
     std::vector<std::function<void(std::exception_ptr)>> _pending_reopens;
     bool _stop_requested;
 
@@ -250,6 +254,9 @@ private:
     void _apply(SetEnabled&& cmd);
     void _apply(SetInflight&& cmd);
     void _apply(GetVringBase&& cmd);
+    /* Answers every Pause and GetVringBase waiting for _inflight to
+     * reach zero. */
+    void _release_drain_waiters();
     void _apply(Pause&& cmd);
     void _apply(Resume&& cmd);
     void _apply(Reopen&& cmd);
@@ -329,9 +336,10 @@ public:
 
     /**
      * Publish a completion for the descriptor chain starting at `head`
-     * with `len` bytes written into the writable buffers.
+     * with `len` bytes written into the writable buffers. With a `log`,
+     * the used ring writes are marked dirty in it.
      */
-    void push(uint16_t head, uint32_t len);
+    void push(uint16_t head, uint32_t len, DirtyLog* log = nullptr);
 
     /**
      * Whether the driver currently needs to be signalled (via call_fd),
@@ -484,6 +492,12 @@ public:
      */
     std::unique_ptr<DescChain> pop(const Device& device);
 
+    /**
+     * Marks every writable buffer of `chain` dirty in `log`; call after
+     * the device wrote them and before push().
+     */
+    static void log_chain(DirtyLog& log, const DescChain& chain) noexcept;
+
     /** This VirtQueue's own backing object -- see the class comment. */
     inline RawstorObject* object() const noexcept { return _object; }
 
@@ -508,10 +522,12 @@ public:
 
     /**
      * Publish a completion (used-ring push + notify) for the
-     * descriptor chain identified by `head`, and account for one fewer
-     * in-flight request (see pause()).
+     * descriptor chain `chain`, and account for one fewer in-flight
+     * request (see pause()). While the front-end has dirty page logging
+     * on, the chain's writable buffers and the used ring writes are
+     * marked dirty before the completion is visible to the driver.
      */
-    void complete_request(uint16_t head, uint32_t len);
+    void complete_request(const DescChain& chain, uint32_t len);
 };
 
 } // namespace vhost

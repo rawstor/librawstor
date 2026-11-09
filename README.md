@@ -313,6 +313,19 @@ request is logged in shared memory QEMU keeps across backend restarts, so
 after a crash the restarted backend resubmits whatever was left in
 flight, in its original order.
 
+`rawstor-vhost` supports QEMU live migration of the VM. It negotiates
+`VHOST_USER_PROTOCOL_F_LOG_SHMFD` and `VHOST_F_LOG_ALL`: while a migration
+is copying memory, QEMU shares a dirty page bitmap and the backend marks
+every guest page it writes (the buffers of each completed request and the
+used ring) before the completion reaches the guest. On the source,
+`GET_VRING_BASE` stops each ring and is answered only once its in-flight
+requests are done. The destination's `rawstor-vhost` opens the same object
+ahead of time but writes only after that hand-over; both processes
+holding the object open meanwhile is what [multi-attach](docs/multiattach.md)
+stage 2 covers for mirrored objects.
+`rawstor-vhost-qemu` gets this from libvhost-user; `rawstor-vduse` has no
+dirty page logging.
+
 ### Packaging and QEMU access
 
 `rawstor-vhost` ships in its own `rawstor-vhost` deb/rpm package (separate

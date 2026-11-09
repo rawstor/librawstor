@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rawstor-vhost` supports QEMU live migration: it logs the guest pages it writes (`VHOST_USER_PROTOCOL_F_LOG_SHMFD`, `VHOST_F_LOG_ALL`) and accepts the migration-time `SET_CONFIG`.
 - `rawstor create-version` works on `lvm://` members as a classic (non-thin) read-only snapshot LV whose COW area is sized to the whole origin.
 - `SIGHUP` makes `rawstor-vhost` and `rawstor-vduse` pick up a grown object and tell the guest its disk got bigger (`VHOST_USER_BACKEND_CONFIG_CHANGE_MSG`, VDUSE config interrupt).
 - Python `Target.resize()` grows an `mds://` object.

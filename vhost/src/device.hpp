@@ -3,6 +3,7 @@
 
 #include "devregion.hpp"
 #include <stdheaders/linux/virtio_blk.h>
+#include <vhost/dirty_log.hpp>
 #include <vhost/inflight.hpp>
 #include <vhost/user_protocol.h>
 #include <vhost/virtqueue.hpp>
@@ -94,6 +95,10 @@ private:
     std::vector<std::unique_ptr<VirtQueue>> _vqs;
     int _backend_fd;
     std::atomic<uint64_t> _features;
+    /* Dirty page bitmap from SET_LOG_BASE. Read by every VirtQueue
+     * thread while logging is on; replaced by the control-plane thread. */
+    mutable std::mutex _dirty_log_mutex;
+    std::shared_ptr<DirtyLog> _dirty_log;
     uint64_t _protocol_features;
     virtio_blk_config _config;
     std::atomic<bool> _wce_enabled;
@@ -224,6 +229,25 @@ public:
     inline bool event_idx_negotiated() const noexcept {
         return _features.load(std::memory_order_relaxed) &
                (1ull << VIRTIO_RING_F_EVENT_IDX);
+    }
+
+    /**
+     * Installs the dirty page bitmap the front-end shares for live
+     * migration, replacing any previous one.
+     */
+    void set_log_base(int fd, uint64_t size, uint64_t offset);
+
+    /**
+     * The dirty page bitmap while the front-end has logging on
+     * (VHOST_F_LOG_ALL negotiated), otherwise nullptr.
+     */
+    std::shared_ptr<DirtyLog> dirty_log() const noexcept {
+        if (!(_features.load(std::memory_order_relaxed) &
+              (1ull << VHOST_F_LOG_ALL))) {
+            return nullptr;
+        }
+        std::lock_guard<std::mutex> lock(_dirty_log_mutex);
+        return _dirty_log;
     }
 
     uint64_t get_protocol_features() const noexcept;

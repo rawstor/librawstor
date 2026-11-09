@@ -3,10 +3,12 @@
 
 #include <stdheaders/linux/vhost_types.h>
 #include <stdheaders/linux/virtio_ring.h>
+#include <vhost/dirty_log.hpp>
 #include <vhost/user_protocol.h>
 
 #include <functional>
 
+#include <cstddef>
 #include <cstdint>
 
 namespace rawstor {
@@ -95,6 +97,48 @@ public:
      */
     inline void set_avail_event(uint16_t idx) noexcept {
         vring_avail_event_set(_num, _used, idx);
+    }
+
+    /**
+     * Whether the front-end asked for writes to the used ring to be
+     * logged (VHOST_VRING_F_LOG in the last vring addr message).
+     */
+    inline bool log_used() const noexcept {
+        return _flags & (1u << VHOST_VRING_F_LOG);
+    }
+
+    /**
+     * Marks the used ring entry at `pos` dirty in `log`; call after
+     * set_used().
+     */
+    inline void log_used_elem(DirtyLog& log, uint16_t pos) const noexcept {
+        if (log_used()) {
+            log.mark(
+                _log_guest_addr + offsetof(vring_used, ring) +
+                    (pos % _num) * sizeof(vring_used_elem_t),
+                sizeof(vring_used_elem_t)
+            );
+        }
+    }
+
+    /** Marks used->idx dirty in `log`; call after set_used_idx(). */
+    inline void log_used_idx(DirtyLog& log) const noexcept {
+        if (log_used()) {
+            log.mark(
+                _log_guest_addr + offsetof(vring_used, idx), sizeof(uint16_t)
+            );
+        }
+    }
+
+    /** Marks avail_event dirty in `log`; call after set_avail_event(). */
+    inline void log_avail_event(DirtyLog& log) const noexcept {
+        if (log_used()) {
+            log.mark(
+                _log_guest_addr + offsetof(vring_used, ring) +
+                    _num * sizeof(vring_used_elem_t),
+                sizeof(uint16_t)
+            );
+        }
     }
 };
 
