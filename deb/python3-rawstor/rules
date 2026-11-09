@@ -3,5 +3,6 @@
 %:
 	dh $@ --with python3 --buildsystem=pybuild
 
+# The tests run in the sources jobs (make test); the package job only checks
+# that the package builds and imports.
 override_dh_auto_test:
-	dh_auto_test
