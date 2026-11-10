@@ -31,22 +31,26 @@ theme:
 
 nav:
   - Home: index.md
+  - Quick start: quickstart.md
   - Downloads: downloads.md
-  - Quick start from source: quickstart.md
   - Concepts: concepts.md
   - Architecture: architecture.md
+  - Services:
+      - rawstor-ost: ost.md
+      - rawstor-mds: mds-server.md
+      - rawstor-vhost: vhost.md
+      - rawstor-vduse: vduse.md
+      - Configuration: configuration.md
+      - Witness members: witness.md
+  - Design:
+      - Protocol: protocol.md
+      - MDS design: mds.md
+      - Mirroring: mirroring.md
+      - Multi-attach: multiattach.md
+      - CASPaxos: caspaxos.md
+  - Development:
+      - Building from source: building.md
   - Known limitations: limitations.md
-  - Configuration: configuration.md
-  - rawstor-ost: ost.md
-  - rawstor-mds: mds-server.md
-  - rawstor-vhost: vhost.md
-  - rawstor-vduse: vduse.md
-  - Witness members: witness.md
-  - Protocol: protocol.md
-  - MDS design: mds.md
-  - Mirroring: mirroring.md
-  - CASPaxos: caspaxos.md
-  - Multi-attach: multiattach.md
   - Troubleshooting: troubleshooting.md
   - Authors: authors.md
 

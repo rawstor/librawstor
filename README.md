@@ -44,36 +44,28 @@ flowchart TD
 
 ## Quick start
 
-```
-./autogen.sh
-./configure --prefix=${HOME}/local
-make -j$(nproc)
-make install
-```
-
-Then run the servers and attach a disk to a VM: see
-[Quick start from source](docs/quickstart.md) for a single machine, or
-[Getting started](docs/index.md#getting-started) for packages and systemd
-units across several hosts. Before relying on Rawstor, read the
-[known limitations](docs/limitations.md).
+The [Quick start](docs/quickstart.md) sets up a mirrored virtual machine disk
+from packages on four hosts, every service run by systemd. To build from a
+checkout instead, see [Building from source](docs/building.md). Before relying
+on Rawstor, read the [known limitations](docs/limitations.md).
 
 ## Documentation
 
 | | |
 |---|---|
-| [Quick start from source](docs/quickstart.md) | Build and run every service by hand on one machine. |
+| [Quick start](docs/quickstart.md) | A mirrored VM disk from packages, every service run by systemd. |
 | [Concepts](docs/concepts.md) | Location and Target: the addressing model. |
 | [Architecture](docs/architecture.md) | The components and their roles. |
-| [Known limitations](docs/limitations.md) | What is not implemented yet and the risks accepted for now. |
-| [Configuration](docs/configuration.md) | Environment variables of the client and servers. |
-| [rawstor-ost](docs/ost.md) | Object storage server: options, systemd instances. |
-| [rawstor-mds](docs/mds-server.md) | Metadata server: options, topology, systemd instances. |
+| [rawstor-ost](docs/ost.md), [rawstor-mds](docs/mds-server.md) | Object storage and metadata servers: options, systemd instances. |
 | [rawstor-vhost](docs/vhost.md), [rawstor-vduse](docs/vduse.md) | Expose an object as a `virtio-blk` disk. |
+| [Configuration](docs/configuration.md) | Environment variables of the client and servers. |
 | [Witness members](docs/witness.md) | A metadata-only vote for an even number of data copies. |
 | [Protocol](docs/protocol.md) | Commands and frame layouts of the wire protocol. |
 | [MDS design](docs/mds.md) | Placement, chunk allocation, versions. |
 | [Mirroring](docs/mirroring.md) | The N-way mirror failure model and recovery. |
 | [Multi-attach](docs/multiattach.md), [CASPaxos](docs/caspaxos.md) | Several writers of one mirrored object. |
+| [Building from source](docs/building.md) | For developers: build and run every service by hand on one machine. |
+| [Known limitations](docs/limitations.md) | What is not implemented yet and the risks accepted for now. |
 | [Troubleshooting](docs/troubleshooting.md) | `io_uring` problems and how to tell them apart. |
 | [Authors](docs/authors.md) | Who wrote Rawstor. |
 
