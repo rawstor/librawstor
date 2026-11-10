@@ -26,6 +26,7 @@
 #include <vector>
 
 #include <cerrno>
+#include <cstring>
 
 namespace {
 
@@ -437,6 +438,9 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     c.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
     c.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
     c.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    for (size_t i = 0; i < sizeof(c.user_data); ++i) {
+        c.user_data[i] = static_cast<uint8_t>(0xa0 + i);
+    }
     promised = {0x12, 0x34};
     accepted = {0x56, 0x78};
 
@@ -475,6 +479,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     EXPECT_EQ(d.roles[0], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
     EXPECT_EQ(d.roles[1], RAWSTOR_OBJECT_MEMBER_SYNCING);
     EXPECT_EQ(d.roles[2], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
+    EXPECT_EQ(memcmp(d.user_data, c.user_data, sizeof(c.user_data)), 0);
     EXPECT_EQ(decoded_identity.member_role, identity.member_role);
     EXPECT_EQ(decoded_identity.width, identity.width);
     EXPECT_EQ(decoded_identity.chunk_size, identity.chunk_size);
@@ -502,6 +507,7 @@ TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
     for (uint8_t& r : c.roles) {
         r = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     }
+    memset(c.user_data, 0xff, sizeof(c.user_data));
     rawstor::blk::Backend::ChunkIdentity identity{
         RAWSTOR_MEMBER_WITNESS, 255, ~0ull, ~0ull
     };
@@ -519,6 +525,74 @@ TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
         &decoded_accepted, &decoded_identity
     );
     EXPECT_EQ(decoded_config.nroles, RAWSTOR_OBJECT_MAX_WIDTH);
+    EXPECT_EQ(
+        memcmp(decoded_config.user_data, c.user_data, sizeof(c.user_data)), 0
+    );
+}
+
+// A configuration without user data is encoded without the field, and a
+// record without it decodes to zero user data.
+TEST(BlkBackendTest, meta_encode_omits_zero_user_data) {
+    RawstorObjectConfig config{};
+    config.epoch = 3;
+    rawstor::blk::Backend::ChunkIdentity identity{};
+    identity.member_role = RAWSTOR_MEMBER_DATA;
+    identity.width = 2;
+
+    std::string encoded = MetadataBackend::meta_encode(
+        RAWSTOR_OBJECT_SYNC_STATE_CLEAN, config, {}, {}, identity
+    );
+    EXPECT_EQ(encoded.find("user_data"), std::string::npos);
+
+    RawstorObjectSyncStateValue state{};
+    RawstorObjectConfig decoded{};
+    RawstorObjectBallot promised{};
+    RawstorObjectBallot accepted{};
+    rawstor::blk::Backend::ChunkIdentity decoded_identity;
+    decoded.user_data[0] = 1;
+    MetadataBackend::meta_decode(
+        encoded, &state, &decoded, &promised, &accepted, &decoded_identity
+    );
+    EXPECT_EQ(decoded.epoch, 3u);
+    for (uint8_t byte : decoded.user_data) {
+        EXPECT_EQ(byte, 0);
+    }
+}
+
+TEST(BlkBackendTest, meta_decode_rejects_malformed_user_data) {
+    RawstorObjectConfig config{};
+    rawstor::blk::Backend::ChunkIdentity identity{};
+    identity.member_role = RAWSTOR_MEMBER_DATA;
+    identity.width = 2;
+    config.user_data[0] = 0x5a;
+    const std::string good = MetadataBackend::meta_encode(
+        RAWSTOR_OBJECT_SYNC_STATE_CLEAN, config, {}, {}, identity
+    );
+
+    auto decode = [](const std::string& value) {
+        RawstorObjectSyncStateValue state{};
+        RawstorObjectConfig decoded{};
+        RawstorObjectBallot promised{};
+        RawstorObjectBallot accepted{};
+        rawstor::blk::Backend::ChunkIdentity decoded_identity;
+        MetadataBackend::meta_decode(
+            value, &state, &decoded, &promised, &accepted, &decoded_identity
+        );
+    };
+    EXPECT_NO_THROW(decode(good));
+    // Too short, too long, a non-hex digit, an upper-case digit and an
+    // unknown trailing field.
+    EXPECT_THROW(decode(good.substr(0, good.size() - 2)), std::system_error);
+    EXPECT_THROW(decode(good + "00"), std::system_error);
+    std::string bad = good;
+    bad.back() = 'g';
+    EXPECT_THROW(decode(bad), std::system_error);
+    bad.back() = 'A';
+    EXPECT_THROW(decode(bad), std::system_error);
+    EXPECT_THROW(
+        decode(good.substr(0, good.find(":user_data=")) + ":other=1"),
+        std::system_error
+    );
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_empty_string) {

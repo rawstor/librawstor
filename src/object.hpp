@@ -99,6 +99,14 @@ protected:
         }
     }
 
+    // A request that names a chunk rather than a byte range must name a
+    // byte of the object.
+    void _check_offset(uint64_t offset) const {
+        if (offset >= _size) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
+
 public:
     Object(const Object&) = delete;
     Object(Object&&) = delete;
@@ -126,6 +134,16 @@ public:
     write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) = 0;
 
     virtual rawstd::Task<void> flush() = 0;
+
+    // The user data of the chunk that holds `offset`
+    // (rawstor_object_user_data_get()/_cas()).
+    virtual rawstd::Task<void>
+    user_data_get(uint64_t offset, uint8_t* value, uint64_t* epoch) = 0;
+
+    virtual rawstd::Task<bool> user_data_cas(
+        uint64_t offset, const uint8_t* expected, const uint8_t* desired,
+        uint8_t* current, uint64_t* epoch
+    ) = 0;
 
     // `clean`: the writer is done cleanly (Chunk::close()); false for a
     // writer gone mid-flight -- rawstor_object_abandon().
@@ -177,6 +195,14 @@ public:
     write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) override;
 
     rawstd::Task<void> flush() override;
+
+    rawstd::Task<void>
+    user_data_get(uint64_t offset, uint8_t* value, uint64_t* epoch) override;
+
+    rawstd::Task<bool> user_data_cas(
+        uint64_t offset, const uint8_t* expected, const uint8_t* desired,
+        uint8_t* current, uint64_t* epoch
+    ) override;
 
     rawstd::Task<void> close(bool clean = true) override;
 };
@@ -317,6 +343,14 @@ public:
     write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) override;
 
     rawstd::Task<void> flush() override;
+
+    rawstd::Task<void>
+    user_data_get(uint64_t offset, uint8_t* value, uint64_t* epoch) override;
+
+    rawstd::Task<bool> user_data_cas(
+        uint64_t offset, const uint8_t* expected, const uint8_t* desired,
+        uint8_t* current, uint64_t* epoch
+    ) override;
 
     rawstd::Task<void> close(bool clean = true) override;
 };

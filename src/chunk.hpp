@@ -115,6 +115,10 @@ private:
     // no sign of life for the lease.
     rawstd::DetachedTask _resync_watch();
     rawstd::Task<void> _adopt();
+    rawstd::Task<bool> _user_data_change(
+        const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+        uint64_t* epoch
+    );
     rawstd::Task<void> _decide(
         const RawstorObjectConfig& value, const std::vector<bool>& accepting,
         std::vector<size_t>& failed
@@ -540,6 +544,22 @@ public:
     // member -- without the wait, a flush() racing an in-flight write
     // could report success before that write's data is actually durable.
     rawstd::Task<void> flush();
+
+    // The application's bytes in the chunk's configuration register
+    // (RawstorObjectConfig::user_data, RAWSTOR_OBJECT_USER_DATA_SIZE long)
+    // and the epoch they were decided at. Both go through the register: the
+    // answer is the value a majority of the members decided, so another
+    // writer's latest change is seen. EROFS for a read-only open.
+    //
+    // user_data_cas() sets `desired` if the register holds `expected` and
+    // returns true; otherwise nothing changes and it returns false. Either
+    // way `current` receives the value the register holds after the call.
+    // Setting a value other than the one held moves the epoch.
+    rawstd::Task<void> user_data_get(uint8_t* data, uint64_t* epoch);
+    rawstd::Task<bool> user_data_cas(
+        const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+        uint64_t* epoch
+    );
 
     // flush()es (see above); for a mirrored object that is DIRTY, also
     // durably marks the in-sync members CLEAN with the current epoch/sync_id

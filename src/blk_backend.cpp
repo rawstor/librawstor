@@ -37,6 +37,29 @@ std::string trim(const std::string& s) {
     return s.substr(begin, end - begin + 1);
 }
 
+// The record carries the user data as a trailing field, only when it is set:
+// a record without it holds none.
+const char* const user_data_field = ":user_data=";
+
+bool user_data_is_zero(const RawstorObjectConfig& config) noexcept {
+    for (uint8_t byte : config.user_data) {
+        if (byte != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int hex_digit(char c) noexcept {
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+        return c - 'a' + 10;
+    }
+    return -1;
+}
+
 #if defined(RAWSTD_ON_LINUX)
 // Either errno a fallocate() mode can fail with when the underlying
 // filesystem/backing store just doesn't implement it -- distinct from a
@@ -281,7 +304,19 @@ std::string Backend::meta_encode(
     if (n < 0 || static_cast<size_t>(n) >= sizeof(buf)) {
         RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
     }
-    return std::string(buf, static_cast<size_t>(n));
+    std::string encoded(buf, static_cast<size_t>(n));
+    if (!user_data_is_zero(c)) {
+        encoded += user_data_field;
+        static const char digits[] = "0123456789abcdef";
+        for (uint8_t byte : c.user_data) {
+            encoded += digits[byte >> 4];
+            encoded += digits[byte & 0xf];
+        }
+    }
+    if (encoded.size() >= META_MAX_SIZE) {
+        RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
+    }
+    return encoded;
 }
 
 void Backend::meta_decode(
@@ -316,13 +351,31 @@ void Backend::meta_decode(
         &(*accepted).counter, &(*accepted).proposer, roles, &member_role,
         &width, &identity->chunk_size, &identity->size, &consumed
     );
-    if (n != 18 || static_cast<size_t>(consumed) != v.size() ||
-        version != META_FORMAT_VERSION ||
+    if (n != 18 || version != META_FORMAT_VERSION ||
         parsed_state > RAWSTOR_OBJECT_SYNC_STATE_LOST || width == 0 ||
         width > UINT8_MAX ||
         (member_role != RAWSTOR_MEMBER_DATA &&
          member_role != RAWSTOR_MEMBER_WITNESS)) {
         RAWSTD_THROW_SYSTEM_ERROR(EILSEQ);
+    }
+
+    // What follows is nothing, or the user data: written only when set.
+    const char* tail = v.c_str() + consumed;
+    if (*tail != '\0') {
+        const size_t prefix = strlen(user_data_field);
+        if (strncmp(tail, user_data_field, prefix) != 0 ||
+            strlen(tail + prefix) != 2 * sizeof(c.user_data)) {
+            RAWSTD_THROW_SYSTEM_ERROR(EILSEQ);
+        }
+        tail += prefix;
+        for (size_t i = 0; i < sizeof(c.user_data); ++i) {
+            int hi = hex_digit(tail[2 * i]);
+            int lo = hex_digit(tail[2 * i + 1]);
+            if (hi < 0 || lo < 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(EILSEQ);
+            }
+            c.user_data[i] = static_cast<uint8_t>(hi << 4 | lo);
+        }
     }
 
     size_t nroles = 0;

@@ -49,6 +49,7 @@ const RawstorFrameMetaPayload clean_meta_1mb = {
             .resync_owner = 0,
             .nroles = 0,
             .roles = {},
+            .user_data = {},
         },
     .promised = {},
     .accepted = {},

@@ -759,6 +759,8 @@ TEST(ProtocolTest, metadata_round_trip_preserves_members_and_register) {
         input.config.resync_owner = 11;
         input.config.nroles = 255;
         input.config.roles[254] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+        input.config.user_data[0] = 0xa5;
+        input.config.user_data[RAWSTOR_OBJECT_USER_DATA_SIZE - 1] = 0x5a;
         input.promised = {5, 7};
         input.accepted = {3, 9};
         RawstorFrameMetaPayload wire{};
@@ -777,6 +779,10 @@ TEST(ProtocolTest, metadata_round_trip_preserves_members_and_register) {
         EXPECT_EQ(output.config.resync_owner, 11u);
         EXPECT_EQ(output.config.nroles, 255);
         EXPECT_EQ(output.config.roles[254], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
+        EXPECT_EQ(output.config.user_data[0], 0xa5);
+        EXPECT_EQ(
+            output.config.user_data[RAWSTOR_OBJECT_USER_DATA_SIZE - 1], 0x5a
+        );
         EXPECT_EQ(output.promised.counter, 5u);
         EXPECT_EQ(output.promised.proposer, 7u);
         EXPECT_EQ(output.accepted.counter, 3u);

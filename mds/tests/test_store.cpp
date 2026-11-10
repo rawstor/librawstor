@@ -790,6 +790,8 @@ TEST_F(
     config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
     config.roles[1] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     config.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    config.user_data[0] = 0xa5;
+    config.user_data[RAWSTOR_OBJECT_USER_DATA_SIZE - 1] = 0x5a;
     {
         ObjectStore store = make_store();
         store.create_witness(id, chunk_size, spec);
@@ -812,6 +814,12 @@ TEST_F(
     EXPECT_EQ(meta.config.resync_owner, config.resync_owner);
     EXPECT_EQ(meta.config.sync_id_history[0], 42u);
     EXPECT_EQ(meta.config.roles[0], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
+    EXPECT_EQ(
+        memcmp(
+            meta.config.user_data, config.user_data, sizeof(config.user_data)
+        ),
+        0
+    );
     store.remove_witness(id, chunk_size);
     EXPECT_THROW(store.witness_meta(id, chunk_size), std::system_error);
 }

@@ -41,6 +41,13 @@ private:
         throw std::runtime_error("unexpected failure");
     }
 
+    rawstd::Task<bool> _fail_bool() {
+        if (_suspend) {
+            co_await _queue.timeout(1000);
+        }
+        throw std::runtime_error("unexpected failure");
+    }
+
 public:
     FailingObject(rawio::Queue& queue, bool suspend, bool* destroyed) :
         rawstor::Object(queue, RawstdUUID{}, RawstdUUID{}, 4096),
@@ -76,6 +83,16 @@ public:
     }
 
     rawstd::Task<void> flush() override { return _fail_void(); }
+
+    rawstd::Task<void> user_data_get(uint64_t, uint8_t*, uint64_t*) override {
+        return _fail_void();
+    }
+
+    rawstd::Task<bool> user_data_cas(
+        uint64_t, const uint8_t*, const uint8_t*, uint8_t*, uint64_t*
+    ) override {
+        return _fail_bool();
+    }
 
     rawstd::Task<void> close(bool) override { return _fail_void(); }
 };
@@ -153,6 +170,34 @@ TEST_P(ObjectErrorsTest, pread_reports_unexpected_exception) {
 TEST_P(ObjectErrorsTest, flush_reports_unexpected_exception) {
     Result r;
     ASSERT_EQ(rawstor_object_flush(object.get(), callback, &r), 0);
+    wait(r);
+    EXPECT_EQ(r.result, -EINVAL);
+}
+
+TEST_P(ObjectErrorsTest, user_data_get_reports_unexpected_exception) {
+    uint8_t value[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    Result r;
+    ASSERT_EQ(
+        rawstor_object_user_data_get(
+            object.get(), 0, value, nullptr, callback, &r
+        ),
+        0
+    );
+    wait(r);
+    EXPECT_EQ(r.result, -EINVAL);
+}
+
+TEST_P(ObjectErrorsTest, user_data_cas_reports_unexpected_exception) {
+    uint8_t expected[RAWSTOR_OBJECT_USER_DATA_SIZE] = {};
+    uint8_t desired[RAWSTOR_OBJECT_USER_DATA_SIZE] = {1};
+    uint8_t current[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    Result r;
+    ASSERT_EQ(
+        rawstor_object_user_data_cas(
+            object.get(), 0, expected, desired, current, nullptr, callback, &r
+        ),
+        0
+    );
     wait(r);
     EXPECT_EQ(r.result, -EINVAL);
 }

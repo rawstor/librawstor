@@ -28,6 +28,7 @@ separately.
 | Resync across processes (`resync_owner`, sweep with `RESYNC`, lease of a silent owner) | 2 | ✅ | `src/chunk.cpp` (`_resync_run()`, `_resync_renew()`, `_lease_watch()`, `_resync_release()`) |
 | `LOST` cleared by a rule on the accepted value | 2 | ✅ | [Clearing `LOST`](#clearing-lost), `src/slot.cpp` (`clears_lost()`) |
 | `SET_CONFIG` and `rawstor_target_set_member_config()` removed; `rawstor resolve` decides through the register | 2 | ✅ | `cli/resolve.c` |
+| Application user data in the register's value: `rawstor_object_user_data_get()` / `_cas()` | 2 | ✅ | [User data](#user-data), `src/chunk.cpp` (`Chunk::_user_data_change()`) |
 | The client keeps the register value once per chunk, not per member | 2 | ✅ | `MirrorControl` (the decided configuration and the `Proposer`), [The register](#the-register-caspaxos) |
 | OST serves one backend Slot; mirroring is coordinated by the client | 1 | ✅ | [Mirroring](mirroring.md#one-copy-per-server) |
 | Witness participation in the configuration register for N = 2 | Before 2 | ✅ | `SYNC_PREPARE` / `SYNC_ACCEPT` on OST, file, LVM, ZFS and MDS (SQLite) witnesses; [MDS design](mds.md#witness) |
@@ -297,6 +298,39 @@ the members hold.
 The value carries no `state` of the copy itself: `DIRTY`, `CLEAN` and
 `LOST` stay the copy's own ([Mirroring](mirroring.md#states-and-roles)).
 
+### User data
+
+The value also carries `user_data`: `RAWSTOR_OBJECT_USER_DATA_SIZE` (64) opaque
+bytes of the application, zero until first set. They are part of the decided
+value, so they are replicated on every member of the chunk with the roles and
+the sync set, and are read and changed under the register's rules. A chunk has
+its own, as it has its own register: with several chunks, the one an offset
+falls in is the one addressed.
+
+- `rawstor_object_user_data_get()` reads them through the register, so the
+  answer is what a majority of the members decided, not what this process saw
+  last. It answers with the `epoch` the value was decided at.
+- `rawstor_object_user_data_cas()` sets `desired` if the register holds
+  `expected`, as one change of the register (`Chunk::_user_data_change()`): the
+  change is a function of the value the register has decided, so a value
+  another writer decided is answered, not overwritten, and the answer is the
+  value held after the call. Both need a writable open.
+- A change moves the `epoch`; the sync set and the roles stay. Writers stamp
+  their writes with the epoch they know, so a writer whose user data another
+  writer replaced is refused with `-ESTALE` at its next write and takes the
+  decision over ([Epoch on writes](#epoch-on-writes)). Setting the value held
+  moves nothing, but still goes through the register.
+- The other transitions keep the bytes: they are copied from the decided value
+  into every configuration a transition builds, and `rawstor resolve` keeps
+  those of the first winner.
+- A member that does not take the decision is excluded like one that fails a
+  write.
+
+The chunk's epoch fences writes to that chunk only. User data that is to fence
+an object's data -- a lock whose holder alone may write, say -- therefore
+belongs on an object of one chunk (`chunk_size` 0), where one epoch covers
+every write.
+
 ## Epoch on writes
 
 `WRITE`, `WRITE_ZEROES`, `DISCARD` and `FLUSH` carry the `epoch` of the
@@ -521,17 +555,21 @@ record or frames, so both change in place. Details in
     `-ESTALE` from a copy past it; flag `RESYNC` on
     `WRITE`/`WRITE_ZEROES`.
 - `include/rawstor/target.h`: `RawstorObjectConfig` carries
-  `resync_owner`, `RawstorObjectMeta` the ballots (`RawstorObjectBallot`).
+  `resync_owner` and `user_data`, `RawstorObjectMeta` the ballots
+  (`RawstorObjectBallot`).
   `rawstor_target_sync_prepare()` and `rawstor_target_sync_accept()` apply
   the requests to one member of a target, with `member_index` as its
   position.
+- `include/rawstor/object.h`: `rawstor_object_user_data_get()` and
+  `rawstor_object_user_data_cas()` ([User data](#user-data)).
 - The epoch and the `RESYNC` flag need no C API: `rawstor-ost` checks them
   in the server's `Slot`.
 - `src/blk_backend.cpp`: the record's encoding carries the ballots and
   `resync_owner` -- colon-separated fields, valid in an LVM tag and a ZFS
-  property. `META_MAX_SIZE` is 1024: a width-255 record with every field
-  at its largest fits (`tests/test_blk_backend.cpp`), well within a ZFS
-  user property's 8192 bytes.
+  property -- and, only when it is not all zero, the user data as a trailing
+  `user_data` field of hex digits. `META_MAX_SIZE` is 1024: a width-255
+  record with every field at its largest fits (`tests/test_blk_backend.cpp`),
+  well within a ZFS user property's 8192 bytes.
 
 ## Implementation stages
 

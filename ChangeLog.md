@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Host names work wherever an IPv4 address did: `ost://`/`mds://` locations, topology files and the `rawstor-ost`/`rawstor-mds` listen address are resolved (IPv4 only).
+- `rawstor_object_user_data_get()` and `rawstor_object_user_data_cas()` keep 64 application bytes in a chunk's configuration register, read and swapped with the register's own consistency; a change moves the epoch, so the writer it replaces is refused with `-ESTALE` ([design](docs/multiattach.md#user-data)).
 - `rawstor-vhost` supports QEMU live migration: it logs the guest pages it writes (`VHOST_USER_PROTOCOL_F_LOG_SHMFD`, `VHOST_F_LOG_ALL`) and accepts the migration-time `SET_CONFIG`.
 - `rawstor create-version` works on `lvm://` members as a classic (non-thin) read-only snapshot LV whose COW area is sized to the whole origin.
 - `SIGHUP` makes `rawstor-vhost` and `rawstor-vduse` pick up a grown object and tell the guest its disk got bigger (`VHOST_USER_BACKEND_CONFIG_CHANGE_MSG`, VDUSE config interrupt).

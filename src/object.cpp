@@ -71,6 +71,21 @@ rawstd::Task<void> SingleChunkObject::flush() {
     co_await _chunk->flush();
 }
 
+rawstd::Task<void> SingleChunkObject::user_data_get(
+    uint64_t offset, uint8_t* value, uint64_t* epoch
+) {
+    _check_offset(offset);
+    co_await _chunk->user_data_get(value, epoch);
+}
+
+rawstd::Task<bool> SingleChunkObject::user_data_cas(
+    uint64_t offset, const uint8_t* expected, const uint8_t* desired,
+    uint8_t* current, uint64_t* epoch
+) {
+    _check_offset(offset);
+    co_return co_await _chunk->user_data_cas(expected, desired, current, epoch);
+}
+
 rawstd::Task<void> SingleChunkObject::close(bool clean) {
     co_await _chunk->close(clean);
     _chunk.reset();
@@ -401,6 +416,23 @@ rawstd::Task<void> MultiChunkObject::flush() {
     });
 }
 
+rawstd::Task<void> MultiChunkObject::user_data_get(
+    uint64_t offset, uint8_t* value, uint64_t* epoch
+) {
+    _check_offset(offset);
+    Chunk* chunk = co_await _chunk(static_cast<uint32_t>(offset / _chunk_size));
+    co_await chunk->user_data_get(value, epoch);
+}
+
+rawstd::Task<bool> MultiChunkObject::user_data_cas(
+    uint64_t offset, const uint8_t* expected, const uint8_t* desired,
+    uint8_t* current, uint64_t* epoch
+) {
+    _check_offset(offset);
+    Chunk* chunk = co_await _chunk(static_cast<uint32_t>(offset / _chunk_size));
+    co_return co_await chunk->user_data_cas(expected, desired, current, epoch);
+}
+
 rawstd::Task<void> MultiChunkObject::close(bool clean) {
     std::vector<Chunk*> chunks = _open_chunks();
     co_await rawstd::gather(chunks.size(), [&](size_t i) {
@@ -489,6 +521,39 @@ void launch_flush_op(
     rawstd::Task<void> t, int (*cb)(ssize_t result, void* data), void* data
 ) {
     launch_flush_op_coro(std::move(t), cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
+// C ABI adapter for rawstor_object_user_data_cas(): same launch pattern as
+// launch_flush_op_coro(), reporting whether the value was swapped as 1 or 0
+// instead of a plain zero.
+rawstd::DetachedTask launch_swap_op_coro(
+    rawstd::Task<bool> t, int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        result = co_await t ? 1 : 0;
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+void launch_swap_op(
+    rawstd::Task<bool> t, int (*cb)(ssize_t result, void* data), void* data
+) {
+    launch_swap_op_coro(std::move(t), cb, data);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
@@ -709,6 +774,63 @@ int rawstor_object_write_zeroes(
                 size, offset, unmap, sync
             ),
             cb, data
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_user_data_get(
+    RawstorObject* object, uint64_t offset, uint8_t* value, uint64_t* epoch,
+    int (*cb)(ssize_t result, void* data), void* arg
+) noexcept {
+    if (value == nullptr) {
+        return -EINVAL;
+    }
+    try {
+        launch_flush_op(
+            static_cast<rawstor::Object*>(object)->user_data_get(
+                offset, value, epoch
+            ),
+            cb, arg
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_object_user_data_cas(
+    RawstorObject* object, uint64_t offset, const uint8_t* expected,
+    const uint8_t* desired, uint8_t* current, uint64_t* epoch,
+    int (*cb)(ssize_t result, void* data), void* arg
+) noexcept {
+    if (expected == nullptr || desired == nullptr || current == nullptr) {
+        return -EINVAL;
+    }
+    try {
+        launch_swap_op(
+            static_cast<rawstor::Object*>(object)->user_data_cas(
+                offset, expected, desired, current, epoch
+            ),
+            cb, arg
         );
         return 0;
     } catch (const std::system_error& e) {

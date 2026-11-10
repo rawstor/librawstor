@@ -321,6 +321,104 @@ int rawstor_object_flush(
     RawstorObject* object, int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
+/** Size of the user data a chunk keeps in its configuration register. */
+#define RAWSTOR_OBJECT_USER_DATA_SIZE 64
+
+/**
+ * @brief Asynchronously read the user data of the chunk that holds @p offset.
+ *
+ * Every chunk's configuration register carries RAWSTOR_OBJECT_USER_DATA_SIZE
+ * opaque bytes for the application, replicated on all the chunk's members and
+ * zero until first set. The read goes through the register, so the answer is
+ * the value a majority of the members decided -- another writer's latest
+ * change included -- not what this process saw last.
+ *
+ * A change of the user data moves the chunk's configuration epoch. Writes
+ * carry the epoch of the configuration they were issued under, and a member
+ * refuses one below its own with @c -ESTALE: a writer that kept using the
+ * chunk after another one replaced the user data is stopped at its next write
+ * (and takes the new value over, for any I/O it issues afterwards). That is
+ * what makes the user data usable as a lock held by one writer at a time, a
+ * leader's identity and the like.
+ *
+ * @param object  Open object handle obtained from rawstor_target_open(),
+ *                opened for writing: the read is a decision of the register.
+ * @param offset  Byte offset within the object; selects the chunk the same
+ *                way I/O offsets do. It must lie within the object.
+ * @param value   Receives RAWSTOR_OBJECT_USER_DATA_SIZE bytes. Must remain
+ *                valid until @p cb is invoked.
+ * @param epoch   Receives the configuration epoch the value was decided at;
+ *                may be NULL. Must remain valid until @p cb is invoked.
+ * @param cb      Callback invoked on completion.
+ *                - @p result is zero on success, or a negative errno on
+ *                  failure (@c -EROFS for an object opened
+ *                  RAWSTOR_READONLY, @c -EINVAL for an offset outside the
+ *                  object, @c -EIO when no majority of the members could be
+ *                  reached).
+ *                - @p data is the same pointer passed as @p arg below.
+ *                - Return zero on success. A negative errno value signals an
+ *                  error back into the I/O completion machinery.
+ * @param arg     User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the read was successfully queued; negative errno on immediate
+ *         failure (in which case @p cb is never invoked).
+ *
+ * @see rawstor_object_user_data_cas
+ */
+int rawstor_object_user_data_get(
+    RawstorObject* object, uint64_t offset, uint8_t* value, uint64_t* epoch,
+    int (*cb)(ssize_t result, void* data), void* arg
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously set the user data of the chunk that holds @p offset
+ *        if it is @p expected (compare and swap).
+ *
+ * The register changes only when it holds @p expected at the moment a
+ * majority of the members decide the change; otherwise nothing is written.
+ * Concurrent callers, in this process or others, are ordered by the
+ * register: at most one of several that expect the same value succeeds, and
+ * the others learn the value that won. See rawstor_object_user_data_get()
+ * for what the epoch makes of a change.
+ *
+ * Setting the value the register already holds (@p expected equal to
+ * @p desired) writes nothing the other writers could tell apart and leaves
+ * the epoch where it is; the call still goes through the register, so it
+ * confirms the value is the one a majority holds.
+ *
+ * @param object    Open object handle obtained from rawstor_target_open(),
+ *                  opened for writing.
+ * @param offset    Byte offset within the object; selects the chunk. It must
+ *                  lie within the object.
+ * @param expected  RAWSTOR_OBJECT_USER_DATA_SIZE bytes the register must
+ *                  hold. Must remain valid until @p cb is invoked.
+ * @param desired   RAWSTOR_OBJECT_USER_DATA_SIZE bytes to set. Must remain
+ *                  valid until @p cb is invoked.
+ * @param current   Receives the value the register holds after the call:
+ *                  @p desired on success, the value that was there when it
+ *                  did not match. Must remain valid until @p cb is invoked.
+ * @param epoch     Receives the epoch of that value; may be NULL. Must
+ *                  remain valid until @p cb is invoked.
+ * @param cb        Callback invoked on completion.
+ *                  - @p result is 1 if the value was set, 0 if the register
+ *                    held another one (not an I/O error), or a negative
+ *                    errno on failure, as for rawstor_object_user_data_get().
+ *                  - @p data is the same pointer passed as @p arg below.
+ *                  - Return zero on success. A negative errno value signals
+ *                    an error back into the I/O completion machinery.
+ * @param arg       User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the change was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked).
+ *
+ * @see rawstor_object_user_data_get
+ */
+int rawstor_object_user_data_cas(
+    RawstorObject* object, uint64_t offset, const uint8_t* expected,
+    const uint8_t* desired, uint8_t* current, uint64_t* epoch,
+    int (*cb)(ssize_t result, void* data), void* arg
+) RAWSTOR_NOEXCEPT;
+
 #ifdef __cplusplus
 }
 #endif
