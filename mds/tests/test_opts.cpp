@@ -39,6 +39,10 @@ TEST(MdsOptsTest, defaults_and_overrides) {
     auto defaults = rawstor::mdsserver::Opts::from_env();
     EXPECT_EQ(defaults.info_interval, 300000u);
     EXPECT_EQ(defaults.info_concurrency, 128u);
+    EXPECT_EQ(defaults.info_refresh_delay, 5000u);
+    setenv("RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY", "50", 1);
+    EXPECT_EQ(rawstor::mdsserver::Opts::from_env().info_refresh_delay, 50u);
+    unsetenv("RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY");
     setenv("RAWSTOR_MDS_OPTS_INFO_INTERVAL", "2500", 1);
     setenv("RAWSTOR_MDS_OPTS_INFO_CONCURRENCY", "32", 1);
     auto overridden = rawstor::mdsserver::Opts::from_env();

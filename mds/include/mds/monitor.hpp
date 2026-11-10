@@ -12,6 +12,8 @@
 #include <chrono>
 #include <exception>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -34,6 +36,9 @@ private:
         TopologyOST ost;
         bool alive = true;
         rawio::Event* timer = nullptr;
+        // A probe asked for ahead of the regular slot; touched only by the
+        // control and probe-loop coroutines.
+        std::optional<Clock::time_point> refresh_due;
         rawstd::Task<void> task;
     };
 
@@ -47,6 +52,9 @@ private:
     // Set by reload()/stop() from any thread; the pipe only wakes _control().
     std::atomic<bool> _reload_requested{false};
     std::atomic<bool> _stop_requested{false};
+    std::atomic<bool> _refresh_requested{false};
+    std::mutex _refresh_mutex;
+    std::vector<RawstdUUID> _refresh_ids;
     std::exception_ptr _error;
     rawio::Event* _wake_event = nullptr;
     std::shared_ptr<const Topology> _topology;
@@ -62,6 +70,7 @@ private:
     rawstd::Task<void> _wake_up(std::vector<Watch*> watches);
     rawstd::Task<void> _retire(std::vector<Watch*> watches);
     rawstd::Task<void> _reload();
+    rawstd::Task<void> _refresh();
     rawstd::Task<void> _control();
 
 public:
@@ -88,6 +97,11 @@ public:
      * probes kept OSTs that are unavailable without waiting for their
      * next slot. */
     void reload();
+    /* Probes the given OSTs again `info_refresh_delay` after now, ahead of
+     * their regular slot: their space has just changed (an object was
+     * created, grown or removed). Requests for an OST already waiting for
+     * its refresh coalesce. Cheap; may be called from any thread. */
+    void refresh(const std::vector<RawstdUUID>& osts);
     void stop();
 };
 

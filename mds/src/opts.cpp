@@ -20,7 +20,11 @@ Opts Opts::from_env() {
         "RAWSTOR_MDS_OPTS_INFO_CONCURRENCY", opts.info_concurrency, 1,
         max_info_concurrency, &opts.info_concurrency
     );
-    if (interval != 0 || concurrency != 0) {
+    int refresh = rawstd_env_uint(
+        "RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY", opts.info_refresh_delay, 0,
+        UINT_MAX, &opts.info_refresh_delay
+    );
+    if (interval != 0 || concurrency != 0 || refresh != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     return opts;

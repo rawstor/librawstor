@@ -1300,6 +1300,13 @@ topology. They are physical backend counters, without dividing by mirror
 width. An OST without a sample contributes zero; an unavailable OST keeps
 its last successful counters, so losing connectivity does not erase its
 space usage from the report. A request never polls OSTs synchronously.
+The MDS never computes the space a slot takes: that is the OST's business
+(sparse files, compression and so on). Creating, growing or removing an object
+only records the map; the client creates or deletes the chunk objects on the
+OSTs after the reply. Every OST holding a slot of that object is therefore
+probed again `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY` after the mutation, ahead
+of its regular slot, so the report catches up well before the next regular
+probe. Requests for an OST already waiting for its refresh coalesce.
 
 One collector runs for the whole MDS. It polls each configured backend
 through librawstor's `Location::info()` and `Slot`, including their existing
@@ -1314,6 +1321,7 @@ available OSTs; existing chunk maps and version members are unchanged.
 |---|---|---|
 | `RAWSTOR_MDS_OPTS_INFO_INTERVAL` | `300000` | Milliseconds between consecutive probes of one OST. Must be positive. |
 | `RAWSTOR_MDS_OPTS_INFO_CONCURRENCY` | `128` | Maximum in-flight probes, including retries (1–1024). |
+| `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY` | `5000` | Milliseconds after a create, grow or remove before the OSTs it touched are probed again. `0` probes at once. |
 
 The 5-minute default avoids continuous metadata/space scans while still
 refreshing availability regularly. Each OST is probed as soon as it appears

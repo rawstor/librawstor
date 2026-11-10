@@ -157,13 +157,28 @@ rawstd::Task<void> Monitor::_watch(Watch& watch) {
             if (!watch.alive) {
                 break;
             }
-            co_await _sleep_until(
-                watch,
-                next_due(
-                    _epoch, phase(watch.ost, _opts.info_interval),
-                    std::chrono::milliseconds(_opts.info_interval), Clock::now()
-                )
+            auto regular = next_due(
+                _epoch, phase(watch.ost, _opts.info_interval),
+                std::chrono::milliseconds(_opts.info_interval), Clock::now()
             );
+            // Sleeps to the regular slot, or to a requested refresh when
+            // that comes first; a wake-up that changes neither goes back to
+            // sleep.
+            while (watch.alive) {
+                auto due = regular;
+                if (watch.refresh_due && *watch.refresh_due < due) {
+                    due = *watch.refresh_due;
+                }
+                co_await _sleep_until(watch, due);
+                auto now = Clock::now();
+                if (watch.refresh_due && now >= *watch.refresh_due) {
+                    watch.refresh_due.reset();
+                    break;
+                }
+                if (now >= regular) {
+                    break;
+                }
+            }
             if (!watch.alive) {
                 break;
             }
@@ -208,6 +223,7 @@ rawstd::Task<void> Monitor::_reload() {
         auto found = _watches.find(key);
         if (found != _watches.end()) {
             if (!_store.backend_available(ost.id)) {
+                found->second->refresh_due = Clock::now();
                 unavailable.push_back(found->second.get());
             }
             continue;
@@ -235,6 +251,35 @@ rawstd::Task<void> Monitor::_reload() {
     });
 }
 
+rawstd::Task<void> Monitor::_refresh() {
+    std::vector<RawstdUUID> ids;
+    {
+        std::lock_guard<std::mutex> lock(_refresh_mutex);
+        ids.swap(_refresh_ids);
+    }
+    std::unordered_set<std::string> wanted;
+    for (const RawstdUUID& id : ids) {
+        wanted.emplace(
+            reinterpret_cast<const char*>(id.bytes), sizeof(id.bytes)
+        );
+    }
+    auto due =
+        Clock::now() + std::chrono::milliseconds(_opts.info_refresh_delay);
+    std::vector<Watch*> woken;
+    for (auto& [key, watch] : _watches) {
+        std::string id(
+            reinterpret_cast<const char*>(watch->ost.id.bytes),
+            sizeof(watch->ost.id.bytes)
+        );
+        if (!wanted.contains(id) || watch->refresh_due) {
+            continue;
+        }
+        watch->refresh_due = due;
+        woken.push_back(watch.get());
+    }
+    co_await _wake_up(std::move(woken));
+}
+
 rawstd::Task<void> Monitor::_control() {
     co_await _reload();
     char wake_ups[64];
@@ -257,6 +302,9 @@ rawstd::Task<void> Monitor::_control() {
         }
         if (_reload_requested.exchange(false)) {
             co_await _reload();
+        }
+        if (_refresh_requested.exchange(false)) {
+            co_await _refresh();
         }
     }
 
@@ -320,6 +368,15 @@ void Monitor::loop() {
 
 void Monitor::reload() {
     _reload_requested = true;
+    _wake_up_control();
+}
+
+void Monitor::refresh(const std::vector<RawstdUUID>& osts) {
+    {
+        std::lock_guard<std::mutex> lock(_refresh_mutex);
+        _refresh_ids.insert(_refresh_ids.end(), osts.begin(), osts.end());
+    }
+    _refresh_requested = true;
     _wake_up_control();
 }
 

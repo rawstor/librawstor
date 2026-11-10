@@ -13,6 +13,7 @@
 #include <rawstor/target.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -98,7 +99,11 @@ private:
     // set_topology().
     std::shared_ptr<const Topology> _topology;
 
+    std::function<void(const std::vector<RawstdUUID>&)> _on_space_change;
+
     void _sync_backends(const Topology& topology);
+    // The caller holds _mutex and has committed.
+    void _notify_space_change(std::vector<RawstdUUID> osts);
     Topology _available_topology();
     void _check_topology(const Topology& topology);
     ObjectDescriptor _descriptor(const RawstdUUID& id);
@@ -154,6 +159,14 @@ public:
      * the last successful sample but disables new placement. */
     void
     update_backend(const TopologyOST& ost, const RawstorLocationInfo* info);
+
+    /* Called, under the store's lock, with the OSTs whose `used` a
+     * create/resize/remove has just given or taken a slot. The space they
+     * now use is unknown until probed. It must be quick and must
+     * not call back into the store. Set before serving requests. */
+    void set_space_change_listener(
+        std::function<void(const std::vector<RawstdUUID>&)> listener
+    );
     void reset_backend_availability();
     bool backend_available(const RawstdUUID& id);
 

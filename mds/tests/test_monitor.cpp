@@ -12,6 +12,7 @@
 #include <deque>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <string>
 #include <thread>
@@ -57,6 +58,10 @@ public:
     ~RunningMonitor() { stop(); }
 
     void reload() { _monitor.reload(); }
+
+    void refresh(const std::vector<RawstdUUID>& osts) {
+        _monitor.refresh(osts);
+    }
 
     void stop() {
         if (_thread.joinable()) {
@@ -120,6 +125,44 @@ TEST(MonitorTest, follows_reload_failure_and_recovery) {
     EXPECT_EQ(store.info().total, 0u);
     monitor.check();
     EXPECT_EQ(store.info().total, 0u);
+}
+
+// An object mutation has the OSTs it touched probed again after the refresh
+// delay, long before the regular slot.
+TEST(MonitorTest, mutation_triggers_a_refresh_probe) {
+    tests::TmpDir dir;
+    auto ost_dir = std::filesystem::path(dir.db_path()).parent_path();
+    auto ost = ost_at("file://" + ost_dir.string());
+    Topology topology;
+    topology.add(ost);
+    ObjectStore store(dir.db_path(), topology);
+    constexpr uint64_t chunk_size = 1 << 20;
+    // Regular slots are a minute apart; only the refresh can explain a probe.
+    RunningMonitor monitor(store, Opts{60000, 2, 100});
+    store.set_space_change_listener([&monitor](
+                                        const std::vector<RawstdUUID>& osts
+                                    ) { monitor.refresh(osts); });
+    ASSERT_TRUE(eventually([&]() { return store.backend_available(ost.id); }));
+    const uint64_t base = store.info().used;
+
+    // Stands for the chunk the client creates on the OST after the MDS
+    // replies; nothing probes the OST until the mutation below.
+    {
+        std::ofstream chunk(ost_dir / "chunk", std::ios::binary);
+        chunk << std::string(chunk_size, 'x');
+    }
+    RawstdUUID id{};
+    ASSERT_GE(rawstd_uuid7_init(&id), 0);
+    store.create(
+        RawstdUUID{}, id, chunk_size, chunk_size,
+        PlacementPolicy{1, Level::OST, 1, 0}
+    );
+    // Not guessed: unchanged until the probe reads the OST's own figure.
+    EXPECT_EQ(store.info().used, base);
+    EXPECT_TRUE(eventually([&]() {
+        return store.info().used >= base + chunk_size;
+    }));
+    monitor.check();
 }
 
 TEST(MonitorTest, phases_spread_over_interval) {
