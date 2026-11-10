@@ -1340,7 +1340,7 @@ OSTs are unavailable, retries consume probe slots and can delay the next
 probe beyond the configured interval; loops waiting for a slot get it in the
 order they asked. On shutdown the collector stops all loops and cancels the
 calls in flight, retries included, without recording their outcome.
-Retry budgets and timeouts use the `RAWSTOR_OPTS_*` knobs documented in README.
+Retry budgets and timeouts use the `RAWSTOR_OPTS_*` knobs documented in [Configuration](configuration.md).
 OST connections start with a 32KiB receive ring. Binding an object or a
 version grows it to the data-path size; variable-sized listings also grow
 it before sending a request. INFO polling needs only the initial ring.

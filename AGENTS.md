@@ -267,8 +267,8 @@ store is either a local `file://` directory or a `rawstor-ost`
   field the kernel places after it, silently breaking the ioctl ABI.
   VDUSE itself is Linux-only (`--disable-vduse-backend` at `configure`
   time, or auto-disabled on non-Linux hosts) and needs the `vduse` kernel
-  module plus `/dev/vduse/control` access at runtime — see the top-level
-  README's "rawstor-vduse" section.
+  module plus `/dev/vduse/control` access at runtime — see
+  `docs/vduse.md`.
 - virtio `EVENT_IDX` is a *bidirectional* suppression handshake:
   `used_event` (driver→device, suppresses interrupts) and `avail_event`
   (device→driver, suppresses kicks) are independent and both must be

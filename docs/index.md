@@ -188,7 +188,7 @@ qemu-system-x86_64 \
 A restarted `rawstor-vhost` instance picks up where it left off, so QEMU's
 `reconnect=1` is enough to survive it. Later, grow the disk with
 `rawstor resize ${OBJECT_TARGET} --size=20G`. The details of every service
-are in the [README](https://github.com/rawstor/librawstor#readme), and how a
+are in the reference pages ([rawstor-ost](ost.md), [rawstor-mds](mds-server.md), [rawstor-vhost](vhost.md), [rawstor-vduse](vduse.md)), and how a
 mirror degrades and recovers is in [Mirroring](mirroring.md).
 
 ## Where to go next
@@ -196,6 +196,9 @@ mirror degrades and recovers is in [Mirroring](mirroring.md).
 - [Downloads](downloads.md): packages and sources of every release.
 - [Concepts](concepts.md): Location and Target, the addressing model.
 - [Architecture](architecture.md): the components and their roles.
+- [Known limitations](limitations.md): what is not implemented yet.
+- [Configuration](configuration.md): environment variables.
+- [Troubleshooting](troubleshooting.md): `io_uring` problems.
 - [Protocol](protocol.md): commands and frame layouts.
 - [MDS design](mds.md): placement, chunk allocation, versions.
 - [Mirroring](mirroring.md): the N-way mirror failure model and recovery.

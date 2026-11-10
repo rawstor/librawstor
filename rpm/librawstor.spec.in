@@ -125,7 +125,7 @@ install -m 644 udev/60-rawstor-vduse.rules %{buildroot}/usr/lib/udev/rules.d/60-
 
 %post -n rawstor-ost
 # Nothing is started on install: an instance runs only once
-# /etc/rawstor/ost/<uuid>.conf exists and it is enabled (README.md).
+# /etc/rawstor/ost/<uuid>.conf exists and it is enabled (docs/ost.md).
 # Upgrade: restart the running instances so they pick up the new binary.
 if [ "$1" -gt 1 ] && [ -d /run/systemd/system ]; then
     systemctl daemon-reload >/dev/null 2>&1 || :
@@ -145,7 +145,7 @@ fi
 
 %post -n rawstor-mds
 # Nothing is started on install: an instance runs only once
-# /etc/rawstor/mds/<uuid>.conf exists and it is enabled (README.md).
+# /etc/rawstor/mds/<uuid>.conf exists and it is enabled (docs/mds-server.md).
 # Upgrade: restart the running instances so they pick up the new binary.
 if [ "$1" -gt 1 ] && [ -d /run/systemd/system ]; then
     systemctl daemon-reload >/dev/null 2>&1 || :
