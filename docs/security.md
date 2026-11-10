@@ -131,7 +131,8 @@ published pages, to be re-checked when the choice is made):
 - **SPIRE** (latest release listed on spiffe.io: 1.15.2). A server plus an
   agent per host. The agent attests the *process* asking for an identity (the
   Unix workload attestor offers selectors such as `unix:uid`, `unix:gid`, and
-  the binary path and `sha256` when path discovery is enabled) and issues a
+  the binary path and `sha256` when path discovery is enabled; the systemd one
+  offers `systemd:id`, the unit name, and `systemd:fragment_path`) and issues a
   short-lived X.509-SVID; registration entries map selectors to a SPIFFE ID.
   Node attestors cover Kubernetes, AWS, Azure and others. This is the closest
   match for per-attachment identities: a `rawstor-vhost` process on a
@@ -163,6 +164,79 @@ published pages, to be re-checked when the choice is made):
   everywhere, start issuing from it, remove the old CA.
 - Clients re-read their certificate on every reconnect, so a renewal agent
   needs only to replace the files.
+
+## External certificate source
+
+Rawstor never talks to a CA. It reads a certificate, a key and a CA bundle
+from files and reloads them on a signal; everything that decides *who gets
+which certificate* lives outside it. This section shows what an operator
+sets up with an external source and what changes for security.
+
+### What a source must provide
+
+- Exactly one URI SAN, `spiffe://<trust_domain>/...`, whose path **the CA
+  chooses**, not the requester (see [Identity](#identity-mtls)).
+- `extendedKeyUsage` with both `serverAuth` and `clientAuth`: a process is a
+  client towards one peer and a server towards another.
+- The CA bundle as a file that is updated when the CA rotates.
+- A short lifetime. SPIRE's X.509-SVID default is commonly quoted as one
+  hour, renewed at about half of it. SPIRE relies on expiry rather than
+  revocation (forced revocation has been a long-standing roadmap item there),
+  so with it the exposure window after a compromise is the certificate
+  lifetime plus the token lifetime, hours plus minutes. Vault PKI and step-ca
+  can publish a CRL, which rawstor reloads with the other files.
+
+### With SPIRE
+
+1. A SPIRE server for the trust domain, an agent on every host (OST, MDS,
+   hypervisors). `spiffe-helper` next to each rawstor service writes
+   `cert.pem`, `key.pem` and `bundle.pem` and signals the service on every
+   renewal.
+2. Services are started with the paths of those three files. An OST or MDS
+   has a fixed registration entry, for example `/ost/<ost_uuid>` for the unit
+   `rawstor-ost@<name>`.
+3. On attach, the control plane creates one registration entry for the
+   volume's process and starts the unit; on detach it deletes the entry, and
+   the certificate is not renewed again:
+
+   ```bash
+   spire-server entry create \
+       -parentID  <SPIFFE ID of this hypervisor's agent> \
+       -spiffeID  spiffe://cloud1.example/tenant/acme/client/vm42-disk0 \
+       -selector  systemd:id:rawstor-vhost@<object_id>.service
+   ```
+
+   (Illustrative: check the exact flags and selector format against the
+   installed release.) The systemd attestor is what tells apart the
+   instances of one template unit that run the same binary as the same user;
+   with only the Unix attestor every instance would need a uid of its own.
+   Under Kubernetes the k8s attestor does the same per pod.
+
+### With Vault PKI, step-ca or cert-manager
+
+There is no attestation: the control plane asks the CA for a certificate
+with the wanted URI SAN, puts the files beside the process and starts it.
+Renewal is done by an agent or by cert-manager, and the service reloads on
+`SIGHUP`. Anything that lets a caller request an arbitrary path for itself
+defeats the model, so the CA's issuing policy must allow a caller only the
+paths it is entitled to.
+
+### What changes for security
+
+- **The CA's registration interface becomes the tenant boundary.** The MDS
+  believes the tenant in the SPIFFE ID, so whoever can create a SPIRE entry
+  or request a certificate under `/tenant/acme/` can act as `acme`. Only
+  the control plane may have that right; a deployment guide must say so.
+- **CA says who, MDS says what.** Roles (`reader`, `writer`, `manager`) stay
+  in MDS records created by the same control plane through the admin API.
+  A certificate without a matching principal gets `-EACCES` on every
+  command that needs one.
+- **The trust domain and the CA bundle are configuration of every service.**
+  A bundle from federation or a second CA is accepted only if listed.
+- **Failure of the CA does not stop IO.** Established connections and
+  tokens keep working until their lifetime ends; new volumes cannot be
+  attached and expired certificates are not renewed. Certificate lifetime
+  is therefore also the time an operator has to bring a CA back.
 
 ## Authorization: capability tokens
 
