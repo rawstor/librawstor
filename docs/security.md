@@ -173,7 +173,7 @@ MDS on the IO path.
 1. The client sends `RESOLVE` / `OBJ_*` to the MDS. The MDS checks the
    principal's tenant and role against the object's tenant.
 2. `RESOLVE` returns, with each chunk location, a **token**:
-   `{tenant_id, object_id, rights (read | write | discard | admin),
+   `{tenant_id, object_id, rights (read | write | discard | manage),
    not_after, client certificate fingerprint}`, signed by the MDS.
 3. The client sends the token in `SET_OBJECT` to the OST. The OST verifies the
    signature, the expiry, that the fingerprint equals that of the connection's
@@ -225,10 +225,64 @@ Choices:
   protocol page); an expired token on an open connection fails new
   commands with `-EACCES` and the client re-resolves.
 - `FREEZE`/`THAW` and the other lease holders keep their own tokens; they
-  additionally require the `admin` right.
+  additionally require the `manage` right.
 
-Which commands need which right is a table in the protocol page; it is a
-closed list per command.
+### Roles and rights per command
+
+Two kinds of principals, told apart by the path of their SPIFFE ID:
+
+- **Tenant principals** (`/tenant/<id>/client/...`) hold one role inside
+  their own tenant; the role bounds the rights `RESOLVE` puts into a token:
+  `reader` → `read`; `writer` → `read`, `write`, `discard`; `manager` →
+  those plus `manage` (structural changes: allocate, release, versions,
+  freeze). Rights on a single object narrower than the role may be granted
+  per object (stage 3).
+- **Provider principals**: `mds` (`/mds/...`), `admin` (`/admin/...`). They
+  are not tenant-scoped and authorize by role, not by token.
+
+The list is closed: a command that is not in the table is refused with
+`-EACCES`. `—` means the role may not use the command.
+
+OST commands:
+
+| Command | Tenant principal: token right | `mds` | `admin` |
+|---|---|---|---|
+| `SET_OBJECT` | any right in the token; `RAWSTOR_READONLY` needs `read`, a read-write open needs `write` | role | role |
+| `READ`, `META`, `LIST_VERSIONS` | `read` | role | role |
+| `WRITE`, `FLUSH`, `LEAVE` | `write` | — | — |
+| `DISCARD`, `WRITE_ZEROES` with `UNMAP` | `discard` | — | — |
+| `WRITE_ZEROES` without `UNMAP` | `write` | — | — |
+| `ALLOCATE`, `RELEASE`, `CREATE_VERSION`, `FREEZE`, `THAW` | `manage` | — | role |
+| `LIST` | — | role | role |
+| `LOCATION_INFO` | — | role | role |
+
+MDS commands:
+
+| Command | Tenant principal: role | `mds` | `admin` |
+|---|---|---|---|
+| `SET_OBJECT` (plain handshake) | any | — | role |
+| `RESOLVE` | `reader`; the token carries at most the rights of the role | — | role |
+| `LIST_VERSIONS` | `reader` | — | role |
+| `LIST` | any, answers only the tenant of the certificate | — | role: any tenant or all |
+| `OBJ_CREATE`, `OBJ_RESIZE`, `OBJ_REMOVE`, `OBJ_COMMIT_VERSION`, `OBJ_REMOVE_VERSION` | `manager` | — | role |
+| `ALLOCATE`, `RELEASE`, `META`, `SYNC_PREPARE`, `SYNC_ACCEPT` on a witness hosted by the MDS | as the same command on an OST, by token | — | as on an OST |
+| `LOCATION_INFO` | — | — | role |
+| tenant, principal and role management (admin API) | — | — | role |
+
+Rules that apply to every row:
+
+- The tenant is taken from the certificate, never from the request. A tenant
+  principal whose request names another `tenant_id` is refused as if the
+  object did not exist.
+- An object of another tenant is `-ENOENT`, in every command, so a tenant
+  cannot probe for ids. A known object of its own tenant that the role does
+  not allow is `-EACCES`.
+- "role" for `mds` and `admin` means no token is needed; the OST decides
+  by the identity in the certificate. A tenant principal always needs a
+  token for an OST command, except `LIST` and `LOCATION_INFO`, which no
+  tenant principal may call on an OST.
+- `LIST` on an OST names every chunk of every tenant, which is why it is
+  reserved for `mds` and `admin`; rows carry `tenant_id`.
 
 ## Tenants
 
@@ -257,7 +311,12 @@ Groundwork that is cheap now and expensive later (stage 1):
 - the protocol carries `tenant_id` where `object_id` is carried, and the
   `SET_OBJECT` handshake advertises a protocol version and feature bits so
   a mixed cluster can be upgraded;
-- `LIST` and `--reconstruct` take a tenant and never cross tenants.
+- `LIST` on an MDS is scoped to the tenant of the caller's certificate (an
+  `admin` may name a tenant or ask for all); its pagination cursor is an id
+  inside that tenant. `LIST` on an OST is reserved for `mds` and `admin` and
+  returns rows with `tenant_id`;
+- `--reconstruct` is a provider operation: it runs as `mds`, scans `LIST` and
+  `META` of every OST and rebuilds the objects of all tenants at once.
 
 Quotas, rate limits and noisy-neighbour control are a separate task.
 
