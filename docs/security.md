@@ -41,6 +41,37 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
   Unlike an ordinary SDS client, the identity therefore belongs to a
   **volume attachment**, not to the host.
 
+### Trust zones
+
+```mermaid
+flowchart LR
+    subgraph tenant["Tenant (untrusted)"]
+        guest["Guest VM"]
+    end
+    subgraph hv["Hypervisor (provider)"]
+        vhost["rawstor-vhost / vduse<br/>client library"]
+    end
+    subgraph infra["Storage infrastructure (provider)"]
+        mds["rawstor-mds"]
+        ost["rawstor-ost"]
+    end
+    subgraph mgmt["Management plane"]
+        cp["Control plane"]
+        ca["CA: SPIRE / Vault / rawstor pki"]
+        kms["KMS (stage 6)"]
+    end
+
+    guest -- "virtio-blk, no rawstor protocol" --> vhost
+    vhost -- "mTLS: RESOLVE, token" --> mds
+    vhost -- "mTLS: SET_OBJECT + token, IO" --> ost
+    cp -- "tenants, principals (admin API)" --> mds
+    cp -- "registers attachment" --> ca
+    ca -. "short-lived SPIFFE certificate" .-> vhost
+    ca -. "certificates" .-> mds
+    ca -. "certificates" .-> ost
+    kms -. "unwraps data key" .-> vhost
+```
+
 ## Identity: mTLS
 
 Every connection, whatever the role at the other end, is TLS 1.3 with mutual
@@ -153,6 +184,35 @@ MDS on the IO path.
    in the connection's Slot. The token is verified once per connection, not
    per request.
 
+### Request flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CP as Control plane
+    participant CA as CA
+    participant C as Client (vhost)
+    participant M as MDS
+    participant O as OST
+
+    CP->>M: create tenant, principal, object (admin API)
+    CP->>CA: register attachment (tenant, volume)
+    CA-->>C: certificate, SPIFFE ID under /tenant/T/
+    C->>M: mTLS handshake (client verifies expected MDS ID)
+    C->>M: RESOLVE(object)
+    M->>M: principal's tenant and role vs object's tenant
+    M-->>C: chunk locations + signed token per chunk
+    C->>O: mTLS handshake (client verifies spiffe://.../ost/ost_id)
+    C->>O: SET_OBJECT(tenant, object, token)
+    O->>O: signature, expiry, certificate fingerprint, tenant + object
+    O-->>C: ok, rights cached in the Slot
+    loop IO
+        C->>O: READ / WRITE (no token check per request)
+        O-->>C: data
+    end
+    Note over C,O: token expiry: new commands get -EACCES, client re-resolves
+```
+
 Choices:
 
 - **Ed25519 signature, not HMAC.** The OSTs hold only the MDS public key, so
@@ -248,6 +308,17 @@ encrypted by the client library before it leaves the process, so an OST stores
 ciphertext and never holds a key. This matches the project's principle that
 any data transformation belongs in the client.
 
+```mermaid
+flowchart LR
+    guest["Guest write"] --> xts["AES-256-XTS<br/>tweak = object, offset"]
+    dek["Data key (per object)"] --> xts
+    xts --> tls["TLS 1.3"]
+    tls --> ost["OST: stores ciphertext<br/>no key"]
+    mds["MDS: wrapped data key<br/>crypto_params"] -- "wrapped" --> unwrap["unwrap"]
+    kms["KMS: tenant KEK"] --> unwrap
+    unwrap --> dek
+```
+
 - Cipher: **AES-256-XTS**, as dm-crypt and LUKS use for block devices: no
   size expansion, in-place overwrite, chunk size unchanged.
 - Tweak: derived from `(object_id, logical offset)`, never from a physical
@@ -283,6 +354,18 @@ Consequences that need to be accepted or handled:
 - Encryption costs CPU on the client (hypervisor), not on the OST.
 
 ## Implementation stages
+
+```mermaid
+flowchart TD
+    s0["0. Benchmark: TLS mode"] --> s2
+    s1["1. Protocol groundwork:<br/>version, tenant_id, crypto_params"] --> s2["2. Transport: mTLS"]
+    s1 --> s3
+    s2 --> s3["3. Authorization: tenants, tokens"]
+    s2 --> s4["4. PKI tooling"]
+    s1 --> s6
+    s3 --> s6["6. At-rest, client side"]
+    s5["5. At-rest, server side<br/>(documentation)"]
+```
 
 Each stage is shippable and leaves the cluster working. Later stages do not
 require re-doing earlier ones.
