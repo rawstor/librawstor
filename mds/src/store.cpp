@@ -234,10 +234,12 @@ void validate_geometry(uint64_t logical_size, uint64_t chunk_size) {
     }
 }
 
+/* Appends to `touched` every OST that gets a slot. */
 void insert_chunks(
     sqlite3* db, const rawstor::mdsserver::Topology& topology,
     const RawstdUUID& id, uint64_t first_index, uint64_t end_index,
-    uint64_t chunk_size, const PlacementPolicy& policy
+    uint64_t chunk_size, const PlacementPolicy& policy,
+    std::vector<RawstdUUID>& touched
 ) {
     (void)chunk_size;
     Stmt insert(
@@ -256,6 +258,7 @@ void insert_chunks(
                 .bind_int64(3, slot.slot_index)
                 .bind_blob(4, slot.ost_id.bytes, sizeof(slot.ost_id.bytes))
                 .step();
+            touched.push_back(slot.ost_id);
         }
     }
 }
@@ -786,6 +789,33 @@ void ObjectStore::update_backend(
     update.bind_text(pos, ost.location).step();
 }
 
+void ObjectStore::set_space_change_listener(
+    std::function<void(const std::vector<RawstdUUID>&)> listener
+) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _on_space_change = std::move(listener);
+}
+
+void ObjectStore::_notify_space_change(std::vector<RawstdUUID> osts) {
+    if (!_on_space_change || osts.empty()) {
+        return;
+    }
+    auto less = [](const RawstdUUID& a, const RawstdUUID& b) {
+        return memcmp(a.bytes, b.bytes, sizeof(a.bytes)) < 0;
+    };
+    std::sort(osts.begin(), osts.end(), less);
+    osts.erase(
+        std::unique(
+            osts.begin(), osts.end(),
+            [](const RawstdUUID& a, const RawstdUUID& b) {
+                return memcmp(a.bytes, b.bytes, sizeof(a.bytes)) == 0;
+            }
+        ),
+        osts.end()
+    );
+    _on_space_change(osts);
+}
+
 bool ObjectStore::backend_available(const RawstdUUID& id) {
     std::lock_guard<std::mutex> lock(_mutex);
     Stmt select(_db, "SELECT available FROM backends WHERE id = ?;");
@@ -876,11 +906,15 @@ ObjectDescriptor ObjectStore::create(
             .step();
     }
 
-    insert_chunks(_db, available, ret.id, 0, nchunks, chunk_size, ret.policy);
+    std::vector<RawstdUUID> touched;
+    insert_chunks(
+        _db, available, ret.id, 0, nchunks, chunk_size, ret.policy, touched
+    );
 
     record_mutation(_db, idempotency_key, MutationKind::create, id, {});
 
     tx.commit();
+    _notify_space_change(std::move(touched));
 
     return ret;
 }
@@ -986,9 +1020,10 @@ ResizeResult ObjectStore::resize(
             .step();
     }
 
+    std::vector<RawstdUUID> touched;
     insert_chunks(
         _db, _available_topology(), id, old_chunks, new_chunks,
-        descriptor.chunk_size, descriptor.policy
+        descriptor.chunk_size, descriptor.policy, touched
     );
 
     record_mutation(
@@ -997,6 +1032,7 @@ ResizeResult ObjectStore::resize(
     );
 
     tx.commit();
+    _notify_space_change(std::move(touched));
 
     return ResizeResult{.map_epoch = map_epoch, .old_nchunks = old_chunks};
 }
@@ -1196,11 +1232,19 @@ ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
         del.bind_blob(1, id.bytes, sizeof(id.bytes)).step();
     }
 
+    std::vector<RawstdUUID> touched;
+    for (const auto& chunk : ret.chunks) {
+        for (const PlacementSlot& slot : chunk) {
+            touched.push_back(slot.ost_id);
+        }
+    }
+
     record_mutation(
         _db, idempotency_key, MutationKind::remove, id, encode_map(ret)
     );
 
     tx.commit();
+    _notify_space_change(std::move(touched));
 
     return ret;
 }

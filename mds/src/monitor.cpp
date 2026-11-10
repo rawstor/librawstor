@@ -17,6 +17,7 @@
 
 #include <cerrno>
 #include <climits>
+#include <cstring>
 
 namespace rawstor {
 namespace mdsserver {
@@ -72,6 +73,7 @@ Monitor::Clock::time_point Monitor::next_due(
 }
 
 rawstd::Task<void> Monitor::_probe(const TopologyOST& ost) {
+    const uint64_t seq = ++_probe_seq;
     RawstorLocationInfo info{};
     bool available = false;
     try {
@@ -88,6 +90,11 @@ rawstd::Task<void> Monitor::_probe(const TopologyOST& ost) {
             "MDS info probe for %s failed: %s\n", ost.location.c_str(), e.what()
         );
     }
+    uint64_t& applied = _probe_applied[_key(ost)];
+    if (seq < applied) {
+        co_return;
+    }
+    applied = seq;
     _store.update_backend(ost, available ? &info : nullptr);
 }
 
@@ -225,6 +232,7 @@ rawstd::Task<void> Monitor::_reload() {
             continue;
         }
         removed.push_back(it->second.get());
+        _probe_applied.erase(it->first);
         _retired.push_back(std::move(it->second));
         it = _watches.erase(it);
     }
@@ -233,6 +241,81 @@ rawstd::Task<void> Monitor::_reload() {
     std::erase_if(_retired, [](const auto& watch) {
         return watch->task.done();
     });
+}
+
+rawstd::Task<void> Monitor::_refresh_probe(TopologyOST ost, std::string key) {
+    try {
+        // A request that came in while sleeping moves the deadline: its
+        // client is only starting, and a probe before it is done sees half
+        // of it. So the probe runs one delay after the latest request.
+        while (true) {
+            auto left = _refresh_due[key] - Clock::now();
+            if (left <= Clock::duration::zero()) {
+                break;
+            }
+            auto usec = std::min<int64_t>(
+                std::chrono::ceil<std::chrono::microseconds>(left).count(),
+                UINT_MAX
+            );
+            try {
+                co_await _queue->timeout(static_cast<unsigned int>(usec));
+            } catch (const std::system_error& e) {
+                _refresh_due.erase(key);
+                if (e.code().value() == ECANCELED) {
+                    co_return;
+                }
+                throw;
+            }
+        }
+        _refresh_due.erase(key);
+        // The OST may have left the topology meanwhile.
+        if (_stop || !_watches.contains(key)) {
+            co_return;
+        }
+        co_await _slots.acquire();
+        std::exception_ptr error;
+        try {
+            co_await _probe(ost);
+        } catch (...) {
+            error = std::current_exception();
+        }
+        _slots.release();
+        if (error) {
+            std::rethrow_exception(error);
+        }
+    } catch (...) {
+        _fail(std::current_exception());
+    }
+}
+
+void Monitor::_refresh() {
+    std::vector<RawstdUUID> ids;
+    {
+        std::lock_guard<std::mutex> lock(_refresh_mutex);
+        ids.swap(_refresh_ids);
+    }
+    std::unordered_set<std::string> wanted;
+    for (const RawstdUUID& id : ids) {
+        wanted.emplace(
+            reinterpret_cast<const char*>(id.bytes), sizeof(id.bytes)
+        );
+    }
+    std::erase_if(_refreshes, [](const auto& task) { return task.done(); });
+    const auto delay = std::chrono::milliseconds(_opts.info_refresh_delay);
+    for (const auto& [key, watch] : _watches) {
+        std::string id(
+            reinterpret_cast<const char*>(watch->ost.id.bytes),
+            sizeof(watch->ost.id.bytes)
+        );
+        if (!wanted.contains(id)) {
+            continue;
+        }
+        auto [pending, fresh] = _refresh_due.try_emplace(key);
+        pending->second = Clock::now() + delay;
+        if (fresh) {
+            _refreshes.push_back(_refresh_probe(watch->ost, key));
+        }
+    }
 }
 
 rawstd::Task<void> Monitor::_control() {
@@ -258,6 +341,9 @@ rawstd::Task<void> Monitor::_control() {
         if (_reload_requested.exchange(false)) {
             co_await _reload();
         }
+        if (_refresh_requested.exchange(false)) {
+            _refresh();
+        }
     }
 
     _stop = true;
@@ -276,9 +362,14 @@ rawstd::Task<void> Monitor::_control() {
     // what was cancelled (the poll() backend would otherwise keep
     // dispatching one cancellation after another and never reach them).
     auto all_returned = [this]() {
-        return std::all_of(_retired.begin(), _retired.end(), [](auto& watch) {
-            return watch->task.done();
-        });
+        return std::all_of(
+                   _retired.begin(), _retired.end(),
+                   [](auto& watch) { return watch->task.done(); }
+               ) &&
+               std::all_of(
+                   _refreshes.begin(), _refreshes.end(),
+                   [](auto& task) { return task.done(); }
+               );
     };
     while (!all_returned()) {
         try {
@@ -298,6 +389,10 @@ rawstd::Task<void> Monitor::_control() {
         rawstd::Task<void>& task = watch->task;
         co_await task;
     }
+    for (rawstd::Task<void>& task : _refreshes) {
+        co_await task;
+    }
+    _refreshes.clear();
     _retired.clear();
 }
 
@@ -320,6 +415,15 @@ void Monitor::loop() {
 
 void Monitor::reload() {
     _reload_requested = true;
+    _wake_up_control();
+}
+
+void Monitor::refresh(const std::vector<RawstdUUID>& osts) {
+    {
+        std::lock_guard<std::mutex> lock(_refresh_mutex);
+        _refresh_ids.insert(_refresh_ids.end(), osts.begin(), osts.end());
+    }
+    _refresh_requested = true;
     _wake_up_control();
 }
 

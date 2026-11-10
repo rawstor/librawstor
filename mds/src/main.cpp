@@ -356,6 +356,9 @@ void mds(
     }
 
     rawstor::mdsserver::Monitor monitor(store, opts);
+    store.set_space_change_listener([&monitor](
+                                        const std::vector<RawstdUUID>& osts
+                                    ) { monitor.refresh(osts); });
     rawstd_info(
         "MDS backend info: interval=%u ms, concurrency=%u\n",
         opts.info_interval, opts.info_concurrency

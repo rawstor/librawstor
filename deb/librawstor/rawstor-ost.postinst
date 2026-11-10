@@ -11,7 +11,7 @@ case "$1" in
         fi
         # Instance configs (/etc/rawstor/ost/<uuid>.conf) are written by the
         # admin; nothing is started here -- an instance runs only once it
-        # is configured and enabled (README.md).
+        # is configured and enabled (docs/ost.md).
         mkdir -p /etc/rawstor/ost
 
         # Upgrade: restart the instances that are running, so they pick up

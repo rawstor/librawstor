@@ -12,6 +12,7 @@
 #include <chrono>
 #include <exception>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -47,11 +48,22 @@ private:
     // Set by reload()/stop() from any thread; the pipe only wakes _control().
     std::atomic<bool> _reload_requested{false};
     std::atomic<bool> _stop_requested{false};
+    std::atomic<bool> _refresh_requested{false};
+    std::mutex _refresh_mutex;
+    std::vector<RawstdUUID> _refresh_ids;
     std::exception_ptr _error;
     rawio::Event* _wake_event = nullptr;
     std::shared_ptr<const Topology> _topology;
     std::unordered_map<std::string, std::unique_ptr<Watch>> _watches;
     std::vector<std::unique_ptr<Watch>> _retired;
+    // Delayed probes after a mutation: one coroutine per OST with a refresh
+    // pending, and _refresh_due is when the latest request lets it probe.
+    std::unordered_map<std::string, Clock::time_point> _refresh_due;
+    std::vector<rawstd::Task<void>> _refreshes;
+    // Probes of one OST can overlap (regular and refresh): a sample is
+    // applied only if no probe that started later has been applied.
+    uint64_t _probe_seq = 0;
+    std::unordered_map<std::string, uint64_t> _probe_applied;
 
     static std::string _key(const TopologyOST& ost);
     void _wake_up_control();
@@ -62,6 +74,8 @@ private:
     rawstd::Task<void> _wake_up(std::vector<Watch*> watches);
     rawstd::Task<void> _retire(std::vector<Watch*> watches);
     rawstd::Task<void> _reload();
+    rawstd::Task<void> _refresh_probe(TopologyOST ost, std::string key);
+    void _refresh();
     rawstd::Task<void> _control();
 
 public:
@@ -88,6 +102,11 @@ public:
      * probes kept OSTs that are unavailable without waiting for their
      * next slot. */
     void reload();
+    /* Probes the given OSTs again `info_refresh_delay` after now, ahead of
+     * their regular slot: their space has just changed (an object was
+     * created, grown or removed). A request for an OST already waiting for
+     * its refresh restarts the wait. Cheap; may be called from any thread. */
+    void refresh(const std::vector<RawstdUUID>& osts);
     void stop();
 };
 

@@ -86,7 +86,7 @@ named `test_all` in its `tests/` directory; to run a single test:
 CI runs the tests with both RawIO backends, so if you touch `librawio` or
 anything I/O-related, also check a `--without-liburing` build. If tests fail
 with `io_uring` errors before reaching your code, see
-[Troubleshooting](README.md#troubleshooting).
+[Troubleshooting](docs/troubleshooting.md).
 
 Please add tests for new functionality and a regression test for bug fixes
 where practical.
@@ -122,7 +122,8 @@ where practical.
 Update documentation in the same pull request as the change:
 
 * command-line options and environment variables are documented in
-  [README.md](README.md);
+  [docs/configuration.md](docs/configuration.md) and the page of the service
+  (`docs/ost.md`, `docs/mds-server.md`, `docs/vhost.md`, `docs/vduse.md`);
 * the wire protocol is defined by `include/rawstor/protocol.h`, and
   [docs/protocol.md](docs/protocol.md) must be kept in sync with it;
 * design changes go to the matching document under [docs/](docs/README.md).

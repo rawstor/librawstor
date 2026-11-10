@@ -11,6 +11,9 @@ struct Opts {
 
     unsigned int info_interval = 300000; // milliseconds
     unsigned int info_concurrency = 128;
+    // How long after a create/grow/remove the OSTs it touched are probed
+    // again, giving the client time to finish its work on them.
+    unsigned int info_refresh_delay = 5000; // milliseconds
 
     static Opts from_env();
 };
