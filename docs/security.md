@@ -153,7 +153,7 @@ Groundwork that is cheap now and expensive later (stage 1):
 
 Quotas, rate limits and noisy-neighbour control are a separate task.
 
-## Plaintext mode and the cost of TLS
+## The cost of TLS on the hot path
 
 The hot path is the question here, and the answer should come from a
 measurement (stage 0), not from an assumption.
