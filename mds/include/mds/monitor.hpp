@@ -13,7 +13,6 @@
 #include <exception>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -36,9 +35,6 @@ private:
         TopologyOST ost;
         bool alive = true;
         rawio::Event* timer = nullptr;
-        // A probe asked for ahead of the regular slot; touched only by the
-        // control and probe-loop coroutines.
-        std::optional<Clock::time_point> refresh_due;
         rawstd::Task<void> task;
     };
 
@@ -60,6 +56,10 @@ private:
     std::shared_ptr<const Topology> _topology;
     std::unordered_map<std::string, std::unique_ptr<Watch>> _watches;
     std::vector<std::unique_ptr<Watch>> _retired;
+    // Delayed probes after a mutation, one per request. The latest request
+    // for an OST (its generation in _refresh_gen) is the one that probes.
+    std::unordered_map<std::string, uint64_t> _refresh_gen;
+    std::vector<rawstd::Task<void>> _refreshes;
 
     static std::string _key(const TopologyOST& ost);
     void _wake_up_control();
@@ -70,7 +70,9 @@ private:
     rawstd::Task<void> _wake_up(std::vector<Watch*> watches);
     rawstd::Task<void> _retire(std::vector<Watch*> watches);
     rawstd::Task<void> _reload();
-    rawstd::Task<void> _refresh();
+    rawstd::Task<void>
+    _refresh_probe(TopologyOST ost, std::string key, uint64_t generation);
+    void _refresh();
     rawstd::Task<void> _control();
 
 public:
