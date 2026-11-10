@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The service reference moved out of `README.md` into `docs/` (`rawstor-ost`, `rawstor-mds`, `rawstor-vhost`, `rawstor-vduse`, configuration, witness members, troubleshooting, building from source), a quick start from packages and a new page of known limitations; the README keeps the key ideas and an index.
+- The service reference moved out of `README.md` into `docs/` (`rawstor-ost`, `rawstor-mds`, `rawstor-vhost`, `rawstor-vduse`, configuration, witness members, troubleshooting, building from source), a quick start from packages and a new page of known limitations; the README keeps the key ideas and an index, and the source tarball, the `librawstor` deb and rpm ship `docs/` next to it (under `/usr/share/doc/librawstor/`).
 - An open `mds://` object talks to its OSTs directly: the MDS is read once at open, and I/O errors no longer re-resolve the map or reopen the object.
 - `rawstor create`, `create-version`, `resolve`, `list`, `list-versions`, `show` and `info` print a table by default instead of plain lines; scripts that read a target from stdout use `--format value --column target`. `rawstor show -v` is gone: `rawstor chunks` and `rawstor slots` list the chunks and the member slots.
 - Sizes are bytes without a unit suffix: a bare number is accepted wherever a size is parsed (`--size`, `--chunk-size`, `--block-size`, `RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY`; `B` is still accepted), and bytes are printed without a `B`.

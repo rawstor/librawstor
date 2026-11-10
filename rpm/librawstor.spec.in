@@ -166,7 +166,7 @@ fi
 %files
 %{_bindir}/rawstor
 %{_libdir}/librawstor.so.*
-%doc COPYING ChangeLog.md README.md
+%doc COPYING ChangeLog.md README.md docs
 
 %files devel
 %{_includedir}/*
