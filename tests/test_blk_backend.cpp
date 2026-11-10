@@ -487,47 +487,73 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
 }
 
 // The widest record -- every field at its widest, every member's role --
-// still fits a file:// copy's fixed-size record (META_MAX_SIZE).
-TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
-    RawstorObjectSyncStateValue state{};
-    RawstorObjectConfig config{};
-    RawstorObjectBallot promised{};
-    RawstorObjectBallot accepted{};
-    state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
-    RawstorObjectConfig& c = config;
+// fits a file:// copy's fixed-size record (META_MAX_SIZE) as long as the
+// user data is unset; with it set, a chunk of up to META_MAX_SIZE's room
+// for roles (158 members) does, and a wider one is refused rather than
+// truncated.
+namespace {
+
+RawstorObjectConfig widest_config(uint8_t members, bool user_data) {
+    RawstorObjectConfig c{};
     c.epoch = ~0ull;
     c.sync_id = ~0ull;
     for (uint64_t& h : c.sync_id_history) {
         h = ~0ull;
     }
     c.resync_owner = ~0ull;
-    promised = {~0ull, ~0ull};
-    accepted = {~0ull, ~0ull};
-    c.nroles = RAWSTOR_OBJECT_MAX_WIDTH;
-    for (uint8_t& r : c.roles) {
-        r = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    c.nroles = members;
+    for (uint8_t i = 0; i < members; ++i) {
+        c.roles[i] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     }
-    memset(c.user_data, 0xff, sizeof(c.user_data));
+    if (user_data) {
+        memset(c.user_data, 0xff, sizeof(c.user_data));
+    }
+    return c;
+}
+
+std::string encode_widest(const RawstorObjectConfig& config) {
     rawstor::blk::Backend::ChunkIdentity identity{
         RAWSTOR_MEMBER_WITNESS, 255, ~0ull, ~0ull
     };
+    return MetadataBackend::meta_encode(
+        RAWSTOR_OBJECT_SYNC_STATE_LOST, config, {~0ull, ~0ull}, {~0ull, ~0ull},
+        identity
+    );
+}
 
-    std::string encoded = MetadataBackend::meta_encode(
-        state, config, promised, accepted, identity
-    );
-    RawstorObjectSyncStateValue decoded_state{};
-    RawstorObjectConfig decoded_config{};
-    RawstorObjectBallot decoded_promised{};
-    RawstorObjectBallot decoded_accepted{};
-    rawstor::blk::Backend::ChunkIdentity decoded_identity;
+RawstorObjectConfig decode_widest(const std::string& encoded) {
+    RawstorObjectSyncStateValue state{};
+    RawstorObjectConfig config{};
+    RawstorObjectBallot promised{};
+    RawstorObjectBallot accepted{};
+    rawstor::blk::Backend::ChunkIdentity identity;
     MetadataBackend::meta_decode(
-        encoded, &decoded_state, &decoded_config, &decoded_promised,
-        &decoded_accepted, &decoded_identity
+        encoded, &state, &config, &promised, &accepted, &identity
     );
-    EXPECT_EQ(decoded_config.nroles, RAWSTOR_OBJECT_MAX_WIDTH);
+    return config;
+}
+
+} // namespace
+
+TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
+    RawstorObjectConfig config = widest_config(RAWSTOR_OBJECT_MAX_WIDTH, false);
     EXPECT_EQ(
-        memcmp(decoded_config.user_data, c.user_data, sizeof(c.user_data)), 0
+        decode_widest(encode_widest(config)).nroles, RAWSTOR_OBJECT_MAX_WIDTH
     );
+}
+
+TEST(BlkBackendTest, meta_encode_fits_user_data_up_to_158_members) {
+    RawstorObjectConfig config = widest_config(158, true);
+    RawstorObjectConfig decoded = decode_widest(encode_widest(config));
+    EXPECT_EQ(decoded.nroles, 158);
+    EXPECT_EQ(
+        memcmp(decoded.user_data, config.user_data, sizeof(config.user_data)), 0
+    );
+}
+
+TEST(BlkBackendTest, meta_encode_refuses_a_record_beyond_its_room) {
+    RawstorObjectConfig config = widest_config(159, true);
+    EXPECT_THROW(encode_widest(config), std::system_error);
 }
 
 // A configuration without user data is encoded without the field, and a

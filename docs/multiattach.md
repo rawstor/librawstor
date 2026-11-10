@@ -300,7 +300,7 @@ The value carries no `state` of the copy itself: `DIRTY`, `CLEAN` and
 
 ### User data
 
-The value also carries `user_data`: `RAWSTOR_OBJECT_USER_DATA_SIZE` (64) opaque
+The value also carries `user_data`: `RAWSTOR_OBJECT_USER_DATA_SIZE` (256) opaque
 bytes of the application, zero until first set. They are part of the decided
 value, so they are replicated on every member of the chunk with the roles and
 the sync set, and are read and changed under the register's rules. A chunk has
@@ -326,10 +326,20 @@ falls in is the one addressed.
 - A member that does not take the decision is excluded like one that fails a
   write.
 
-The chunk's epoch fences writes to that chunk only. User data that is to fence
-an object's data -- a lock whose holder alone may write, say -- therefore
-belongs on an object of one chunk (`chunk_size` 0), where one epoch covers
-every write.
+A chunk's epoch fences the writes to that chunk, and only those: the registers
+of an object's chunks are independent. A lock whose holder alone may write is
+therefore taken on the chunk it is about to write -- the holder sets the user
+data of every chunk it writes to, and a writer it replaces is stopped on that
+chunk at its next write. An object made of chunks is locked chunk by chunk;
+a writer that takes several takes them in ascending offset order, so that two
+of them never wait for each other.
+
+There are two ways to read the bytes, with different guarantees. The call
+above is the register's own read, made through an object opened for writing.
+`rawstor_target_meta()` returns each member's own record -- its replica, with
+the ballots, per member and without opening the object -- which can lag
+behind the decided value on a member that missed a decision. It is how a
+reader that cannot open the object for writing sees the bytes.
 
 ## Epoch on writes
 
@@ -568,8 +578,10 @@ record or frames, so both change in place. Details in
   `resync_owner` -- colon-separated fields, valid in an LVM tag and a ZFS
   property -- and, only when it is not all zero, the user data as a trailing
   `user_data` field of hex digits. `META_MAX_SIZE` is 1024: a width-255
-  record with every field at its largest fits (`tests/test_blk_backend.cpp`),
-  well within a ZFS user property's 8192 bytes.
+  record with every field at its largest fits while the user data is unset,
+  and with it set up to 158 members do; a wider chunk's record is refused
+  with `EOVERFLOW` rather than truncated (`tests/test_blk_backend.cpp`). A
+  ZFS user property takes 8192 bytes.
 
 ## Implementation stages
 

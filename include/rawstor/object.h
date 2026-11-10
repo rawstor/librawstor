@@ -322,7 +322,7 @@ int rawstor_object_flush(
 ) RAWSTOR_NOEXCEPT;
 
 /** Size of the user data a chunk keeps in its configuration register. */
-#define RAWSTOR_OBJECT_USER_DATA_SIZE 64
+#define RAWSTOR_OBJECT_USER_DATA_SIZE 256
 
 /**
  * @brief Asynchronously read the user data of the chunk that holds @p offset.

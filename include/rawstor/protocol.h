@@ -335,7 +335,7 @@ struct RawstorFrameConfig {
     uint64_t resync_owner;
     uint8_t nroles;
     uint8_t roles[255];
-    uint8_t user_data[64];
+    uint8_t user_data[256];
 } RAWSTOR_PACKED;
 
 /*
@@ -766,12 +766,12 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 32);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameVersionEntry, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 29);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorObjectBallot, 16);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameConfig, 376);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncProposePayload, 433);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameConfig, 568);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncProposePayload, 625);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAllocatePayload, 44);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameResponseBody, 12);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 424);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncReplyPayload, 425);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 616);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncReplyPayload, 617);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjPolicy, 19);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjCreatePayload, 60);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjOpPayload, 56);
