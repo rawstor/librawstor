@@ -11,7 +11,7 @@ case "$1" in
         fi
         # Instance configs (/etc/rawstor/mds/<uuid>.conf) are written by the
         # admin; nothing is started here -- an instance runs only once it
-        # is configured and enabled (README.md).
+        # is configured and enabled (docs/mds-server.md).
         mkdir -p /etc/rawstor/mds
 
         # Upgrade: restart the instances that are running, so they pick up
