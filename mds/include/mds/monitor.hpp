@@ -99,8 +99,8 @@ public:
     void reload();
     /* Probes the given OSTs again `info_refresh_delay` after now, ahead of
      * their regular slot: their space has just changed (an object was
-     * created, grown or removed). Requests for an OST already waiting for
-     * its refresh coalesce. Cheap; may be called from any thread. */
+     * created, grown or removed). A request for an OST already waiting for
+     * its refresh restarts the wait. Cheap; may be called from any thread. */
     void refresh(const std::vector<RawstdUUID>& osts);
     void stop();
 };

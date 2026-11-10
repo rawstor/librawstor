@@ -271,9 +271,12 @@ rawstd::Task<void> Monitor::_refresh() {
             reinterpret_cast<const char*>(watch->ost.id.bytes),
             sizeof(watch->ost.id.bytes)
         );
-        if (!wanted.contains(id) || watch->refresh_due) {
+        if (!wanted.contains(id)) {
             continue;
         }
+        // A pending refresh moves out too: the client of this mutation is
+        // only starting, and a probe before it finishes would see half of
+        // its work. The regular slot still bounds the wait.
         watch->refresh_due = due;
         woken.push_back(watch.get());
     }

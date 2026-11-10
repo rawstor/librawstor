@@ -165,6 +165,37 @@ TEST(MonitorTest, mutation_triggers_a_refresh_probe) {
     monitor.check();
 }
 
+// A second mutation touching an OST that waits for its refresh moves the
+// probe out: it must follow the last client, not the first.
+TEST(MonitorTest, refresh_restarts_the_wait) {
+    using namespace std::chrono_literals;
+    tests::TmpDir dir;
+    auto ost_dir = std::filesystem::path(dir.db_path()).parent_path();
+    auto ost = ost_at("file://" + ost_dir.string());
+    Topology topology;
+    topology.add(ost);
+    ObjectStore store(dir.db_path(), topology);
+    constexpr uint64_t chunk_size = 1 << 20;
+    RunningMonitor monitor(store, Opts{60000, 2, 1000});
+    ASSERT_TRUE(eventually([&]() { return store.backend_available(ost.id); }));
+    const uint64_t base = store.info().used;
+
+    // Deadlines: first t+1000 ms, then t+1600 ms. The "client" finishes at
+    // t+1300 ms, between them.
+    monitor.refresh({ost.id});
+    std::this_thread::sleep_for(600ms);
+    monitor.refresh({ost.id});
+    std::this_thread::sleep_for(700ms);
+    {
+        std::ofstream chunk(ost_dir / "chunk", std::ios::binary);
+        chunk << std::string(chunk_size, 'x');
+    }
+    EXPECT_TRUE(eventually([&]() {
+        return store.info().used >= base + chunk_size;
+    }));
+    monitor.check();
+}
+
 TEST(MonitorTest, phases_spread_over_interval) {
     constexpr unsigned interval = 300000;
     constexpr unsigned buckets = 10;

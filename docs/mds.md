@@ -1306,7 +1306,9 @@ only records the map; the client creates or deletes the chunk objects on the
 OSTs after the reply. Every OST holding a slot of that object is therefore
 probed again `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY` after the mutation, ahead
 of its regular slot, so the report catches up well before the next regular
-probe. Requests for an OST already waiting for its refresh coalesce.
+probe. A further mutation touching an OST already waiting for its refresh
+restarts the wait, so the probe follows the last client to finish; the regular
+slot still bounds it.
 
 One collector runs for the whole MDS. It polls each configured backend
 through librawstor's `Location::info()` and `Slot`, including their existing
