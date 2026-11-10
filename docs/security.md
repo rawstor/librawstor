@@ -58,6 +58,14 @@ only requirement on a CA is that it can put a URI SAN into a certificate. The
 certificate proves *who* the peer is; it carries no permissions (stage 3), so
 rights can change without reissuing it.
 
+A client never accepts "any certificate from the trusted CA" as the server.
+Every connection has an **expected server identity** that comes from trusted
+configuration, not from the peer: for an MDS, the identity configured next to
+its address; for an OST, `rawstor://<tenant_id>/ost/<ost_id>` where `ost_id` is
+the one the MDS returns in `RESOLVE` (the topology's OST UUID). A handshake
+whose peer SAN differs fails. Servers verify the client the same way against
+the tenant and role rules of stage 3.
+
 Services verify the peer chain against a configured CA bundle, check
 `extendedKeyUsage`, and take the identity from the SAN. A server role
 (`ost`, `mds`) in a certificate is what stops a client from impersonating an
@@ -90,7 +98,10 @@ MDS on the IO path.
    not_after, client certificate fingerprint}`, signed by the MDS.
 3. The client sends the token in `SET_OBJECT` to the OST. The OST verifies the
    signature, the expiry, that the fingerprint equals that of the connection's
-   TLS peer, and that `object_id` matches the one bound. The result is cached
+   TLS peer, and that **both** `tenant_id` and `object_id` match those in the
+   `SET_OBJECT` (object ids are only unique within a tenant, so the pair is the
+   key). The tenant of the token must also equal the tenant in the peer's
+   certificate. The result is cached
    in the connection's Slot. The token is verified once per connection, not
    per request.
 
@@ -162,19 +173,18 @@ structural:
   per chunk slot today) are the numbers to look at. Session resumption and
   connection reuse are the mitigations.
 
-Decision rules for stage 0: kTLS at line rate with an acceptable CPU share
-and p99 latency regression → TLS is mandatory everywhere, no plaintext mode.
-Otherwise:
+Decision rule for stage 0: it decides **how** TLS is done (kTLS or userspace,
+connection reuse, minimum kernel), not **whether**. TLS is mandatory on every
+port, the OST data path included. An integrity-only mode is rejected: until
+client-side encryption exists, and for every plain volume after it, the data
+on the wire is tenant data, and TLS 1.3 has no null cipher anyway. If the
+measurement shows an unacceptable cost, the answer is engineering (kTLS,
+hardware, fewer handshakes), not weaker transport.
 
-- the **control path** (MDS) is always TLS;
-- the **data path** (OST) stays mTLS-authenticated but may be configured with
-  an `integrity-only` option, only if a measured need exists, because TLS 1.3
-  has no null cipher and this would be a second protocol, not a switch;
-- a plain TCP mode exists only as an explicit, loudly-logged
-  `--insecure` flag for development and tests, never as a default and never
-  accepted by a service that has a certificate configured.
+The one exception is an explicit, loudly-logged `--insecure` flag for
+development and tests: never a default, and never accepted by a service that
+has a certificate configured.
 
-Until stage 0 is done, the working assumption is *TLS mandatory*.
 
 ## At-rest encryption
 
@@ -232,7 +242,7 @@ require re-doing earlier ones.
 0. **Benchmark.** A throwaway harness comparing plain TCP, userspace
    OpenSSL TLS 1.3, and kTLS on the existing io_uring data path: 4 KiB and 1 MiB
    IO, queue depths 1 and 32, handshake rate, CPU per GB, p50/p99 latency.
-   Output: the plaintext-mode decision above and the minimum kernel.
+   Output: the TLS mode (kTLS or userspace) and the minimum kernel.
 1. **Protocol groundwork.** Version + feature bits in the handshake;
    `tenant_id` in protocol, MDS store, OST slot key, `LIST`; `crypto_params`
    reserved in the object record. Single `default` tenant; behaviour unchanged.
