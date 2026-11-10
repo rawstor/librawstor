@@ -56,10 +56,14 @@ private:
     std::shared_ptr<const Topology> _topology;
     std::unordered_map<std::string, std::unique_ptr<Watch>> _watches;
     std::vector<std::unique_ptr<Watch>> _retired;
-    // Delayed probes after a mutation, one per request. The latest request
-    // for an OST (its generation in _refresh_gen) is the one that probes.
+    // Delayed probes after a mutation: one coroutine per OST with a refresh
+    // pending, and _refresh_gen counts the requests it has to wait out.
     std::unordered_map<std::string, uint64_t> _refresh_gen;
     std::vector<rawstd::Task<void>> _refreshes;
+    // Probes of one OST can overlap (regular and refresh): a sample is
+    // applied only if no probe that started later has been applied.
+    uint64_t _probe_seq = 0;
+    std::unordered_map<std::string, uint64_t> _probe_applied;
 
     static std::string _key(const TopologyOST& ost);
     void _wake_up_control();
@@ -70,8 +74,7 @@ private:
     rawstd::Task<void> _wake_up(std::vector<Watch*> watches);
     rawstd::Task<void> _retire(std::vector<Watch*> watches);
     rawstd::Task<void> _reload();
-    rawstd::Task<void>
-    _refresh_probe(TopologyOST ost, std::string key, uint64_t generation);
+    rawstd::Task<void> _refresh_probe(TopologyOST ost, std::string key);
     void _refresh();
     rawstd::Task<void> _control();
 

@@ -73,6 +73,7 @@ Monitor::Clock::time_point Monitor::next_due(
 }
 
 rawstd::Task<void> Monitor::_probe(const TopologyOST& ost) {
+    const uint64_t seq = ++_probe_seq;
     RawstorLocationInfo info{};
     bool available = false;
     try {
@@ -89,6 +90,11 @@ rawstd::Task<void> Monitor::_probe(const TopologyOST& ost) {
             "MDS info probe for %s failed: %s\n", ost.location.c_str(), e.what()
         );
     }
+    uint64_t& applied = _probe_applied[_key(ost)];
+    if (seq < applied) {
+        co_return;
+    }
+    applied = seq;
     _store.update_backend(ost, available ? &info : nullptr);
 }
 
@@ -226,6 +232,7 @@ rawstd::Task<void> Monitor::_reload() {
             continue;
         }
         removed.push_back(it->second.get());
+        _probe_applied.erase(it->first);
         _retired.push_back(std::move(it->second));
         it = _watches.erase(it);
     }
@@ -236,25 +243,29 @@ rawstd::Task<void> Monitor::_reload() {
     });
 }
 
-rawstd::Task<void>
-Monitor::_refresh_probe(TopologyOST ost, std::string key, uint64_t generation) {
+rawstd::Task<void> Monitor::_refresh_probe(TopologyOST ost, std::string key) {
     try {
         auto usec = std::min<uint64_t>(
             static_cast<uint64_t>(_opts.info_refresh_delay) * 1000, UINT_MAX
         );
-        try {
-            co_await _queue->timeout(static_cast<unsigned int>(usec));
-        } catch (const std::system_error& e) {
-            if (e.code().value() == ECANCELED) {
-                co_return;
+        // A request that came in while sleeping restarts the wait: its
+        // client is only starting, and a probe before it is done sees half
+        // of it. Requests meanwhile only bump the counter.
+        uint64_t seen;
+        do {
+            seen = _refresh_gen[key];
+            try {
+                co_await _queue->timeout(static_cast<unsigned int>(usec));
+            } catch (const std::system_error& e) {
+                _refresh_gen.erase(key);
+                if (e.code().value() == ECANCELED) {
+                    co_return;
+                }
+                throw;
             }
-            throw;
-        }
-        // Superseded by a later mutation, or the OST left the topology.
-        if (_refresh_gen[key] != generation) {
-            co_return;
-        }
+        } while (_refresh_gen[key] != seen);
         _refresh_gen.erase(key);
+        // The OST may have left the topology meanwhile.
         if (_stop || !_watches.contains(key)) {
             co_return;
         }
@@ -280,17 +291,25 @@ void Monitor::_refresh() {
         std::lock_guard<std::mutex> lock(_refresh_mutex);
         ids.swap(_refresh_ids);
     }
-    std::erase_if(_refreshes, [](const auto& task) { return task.done(); });
+    std::unordered_set<std::string> wanted;
     for (const RawstdUUID& id : ids) {
-        for (const auto& [key, watch] : _watches) {
-            if (memcmp(watch->ost.id.bytes, id.bytes, sizeof(id.bytes)) != 0) {
-                continue;
-            }
-            // A later mutation restarts the wait: its client is only
-            // starting, and a probe before it is done sees half of it.
-            _refreshes.push_back(
-                _refresh_probe(watch->ost, key, ++_refresh_gen[key])
-            );
+        wanted.emplace(
+            reinterpret_cast<const char*>(id.bytes), sizeof(id.bytes)
+        );
+    }
+    std::erase_if(_refreshes, [](const auto& task) { return task.done(); });
+    for (const auto& [key, watch] : _watches) {
+        std::string id(
+            reinterpret_cast<const char*>(watch->ost.id.bytes),
+            sizeof(watch->ost.id.bytes)
+        );
+        if (!wanted.contains(id)) {
+            continue;
+        }
+        auto [pending, fresh] = _refresh_gen.try_emplace(key, 0);
+        ++pending->second;
+        if (fresh) {
+            _refreshes.push_back(_refresh_probe(watch->ost, key));
         }
     }
 }
