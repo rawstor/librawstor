@@ -47,35 +47,83 @@ Every connection, whatever the role at the other end, is TLS 1.3 with mutual
 authentication, implemented with OpenSSL. This gives transport encryption and
 peer authentication in one mechanism and avoids a home-made handshake.
 
-The identity of a peer is a URI SAN in its certificate:
+The identity of a peer is a [SPIFFE ID](https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE-ID.md)
+in the certificate, as defined by the
+[X509-SVID](https://github.com/spiffe/spiffe/blob/master/standards/X509-SVID.md)
+standard: exactly one URI SAN, scheme `spiffe`. Rawstor uses the standard
+format and invents none:
 
 ```text
-rawstor://<tenant_id>/<kind>/<name>      kind: client | ost | mds | admin
+spiffe://<trust_domain>/ost/<ost_id>               OST      (provider infrastructure)
+spiffe://<trust_domain>/mds/<name>                 MDS      (provider infrastructure)
+spiffe://<trust_domain>/admin/<name>               operator / control plane
+spiffe://<trust_domain>/tenant/<tenant_id>/client/<name>   a tenant's client
 ```
 
-The scheme works with the project's own CA and with an external one: the
-only requirement on a CA is that it can put a URI SAN into a certificate. The
-certificate proves *who* the peer is; it carries no permissions (stage 3), so
-rights can change without reissuing it.
+- `<trust_domain>` names the cluster or cloud (lowercase letters, digits,
+  `.`, `-`, `_`, at most 255 bytes). A service accepts only IDs of its own
+  trust domain, so a certificate from another cluster is rejected even if the
+  same CA signed it.
+- Path segments are letters, digits, `.`, `-`, `_`, case-sensitive; the whole
+  ID is at most 2048 bytes. Ids are UUIDs in their canonical text form.
+- Only clients carry a tenant. OSTs and MDSs belong to the provider, so
+  their IDs have none. A tenant's client can never present an ID under
+  `/ost/`, `/mds/` or `/admin/`: the issuing side decides the path, the
+  service only parses it.
+- The ID is taken from the URI SAN alone, never from the subject or a DNS
+  name. A certificate with zero or several URI SANs is rejected.
+
+Any CA that can write a URI SAN fits: SPIRE, Vault PKI, step-ca, cert-manager
+or the project's own helper (stage 4). See [Issuing certificates](#issuing-certificates).
+The certificate proves *who* the peer is; it carries no permissions (stage 3),
+so rights can change without reissuing it.
 
 A client never accepts "any certificate from the trusted CA" as the server.
 Every connection has an **expected server identity** that comes from trusted
 configuration, not from the peer: for an MDS, the identity configured next to
-its address; for an OST, `rawstor://<tenant_id>/ost/<ost_id>` where `ost_id` is
+its address; for an OST, `spiffe://<trust_domain>/ost/<ost_id>` where `ost_id` is
 the one the MDS returns in `RESOLVE` (the topology's OST UUID). A handshake
 whose peer SAN differs fails. Servers verify the client the same way against
 the tenant and role rules of stage 3.
 
 Services verify the peer chain against a configured CA bundle, check
-`extendedKeyUsage`, and take the identity from the SAN. A server role
-(`ost`, `mds`) in a certificate is what stops a client from impersonating an
+`extendedKeyUsage`, and take the identity from the URI SAN. A server role
+(`/ost/`, `/mds/` in the path) is what stops a client from impersonating an
 OST.
+
+### Issuing certificates
+
+Rawstor consumes certificates from files and does not depend on how they are
+produced. Tools that fit (versions as of November 2026, from the projects'
+published pages, to be re-checked when the choice is made):
+
+- **SPIRE** (latest release listed on spiffe.io: 1.15.2). A server plus an
+  agent per host. The agent attests the *process* asking for an identity (the
+  Unix workload attestor offers selectors such as `unix:uid`, `unix:gid`, and
+  the binary path and `sha256` when path discovery is enabled) and issues a
+  short-lived X.509-SVID; registration entries map selectors to a SPIFFE ID.
+  Node attestors cover Kubernetes, AWS, Azure and others. This is the closest
+  match for per-attachment identities: a `rawstor-vhost` process on a
+  hypervisor gets an ID under its tenant. The control plane must create a
+  registration entry per attach, which is integration work outside rawstor.
+- **spiffe-helper** (latest release I could confirm: v0.9.1, January 2025;
+  check for newer). Fetches X.509-SVIDs and bundles from the agent's Workload
+  API and writes them to disk; on renewal it sends a configurable signal
+  (default `SIGUSR1`) to a managed process or to the PID in a file. It does
+  not forward signals or exit codes, so the service runs under systemd and
+  is signalled by pid file. Rawstor therefore needs to reload on that signal
+  as well as on `SIGHUP`, and needs no SPIFFE client library.
+- **Vault PKI**, **step-ca**, **cert-manager**: issue a certificate with a
+  URI SAN on request or by ACME, without attestation. Adequate when the
+  deployment tool already knows which process gets which tenant.
+- The project's own `rawstor pki` (stage 4) for installations with none of
+  the above.
 
 ### Rotation without downtime
 
 - Certificates are short-lived (hours to days). Revocation is by expiry, plus
   an optional CRL file reloaded with the rest.
-- On `SIGHUP` a service rebuilds its `SSL_CTX` (certificate, key, CA bundle,
+- On `SIGHUP` (and `SIGUSR1`, which spiffe-helper sends by default) a service rebuilds its `SSL_CTX` (certificate, key, CA bundle,
   CRL) and uses the new one for **new** connections. Established connections
   keep their session until they close or reach a configured maximum age, after
   which the peer reconnects. The client already survives reconnects (see
@@ -254,8 +302,8 @@ require re-doing earlier ones.
    API; capability tokens in `RESOLVE`, verified by the OST; per-command rights
    table; `-EACCES` / `-ENOENT` semantics (a foreign object is `-ENOENT`).
 4. **PKI tooling.** `rawstor pki` to run a small CA (init, issue, renew) for
-   deployments that have none; documentation for external CAs and for a
-   renewal agent.
+   deployments that have none; documentation for SPIRE (with spiffe-helper)
+   and other external CAs.
 5. **At-rest, server side.** Documented ZFS/dm-crypt deployments; checks in
    `LOCATION_INFO` that the backend reports encryption, if useful.
 6. **At-rest, client side.** AES-XTS in the client library, KMS plugin
