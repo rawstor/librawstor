@@ -207,12 +207,15 @@ Consequences that need to be accepted or handled:
   replay sectors undetected. The xxh3 in the protocol is not cryptographic.
   An AEAD mode needs per-sector metadata and a changed chunk layout; it is a
   possible later stage, not part of this plan.
-- An unwritten, discarded or `WRITE_ZEROES`'d area reads from the OST as
-  zeros, which decrypts to garbage. `WRITE_ZEROES` must therefore be turned
-  into an explicit write of encrypted zeros by the client (losing sparseness
-  for that range); `DISCARD` may return garbage, as a block device allows;
-  reads of never-written areas return garbage rather than zeros. This is a
-  limitation of every XTS volume and goes to [Known limitations](limitations.md).
+- Zeros must survive encryption. An unwritten, discarded or `WRITE_ZEROES`'d
+  area reads from the OST as zeros, which XTS would decrypt to garbage. The
+  client therefore treats a sector whose ciphertext is all zeros as plaintext
+  zeros and returns zeros without decrypting. `WRITE_ZEROES` and `DISCARD` go to
+  the OST unchanged, sparseness is kept, and never-written areas read as zeros,
+  as on a plain disk. A genuine ciphertext of all zeros has probability
+  2^-128 per sector and is ignored. The only disclosure is "this sector is
+  zero", which `DISCARD` and a sparse backend reveal anyway. The cost is a
+  zero check per sector on read.
 - Encryption costs CPU on the client (hypervisor), not on the OST.
 
 ## Implementation stages
@@ -241,7 +244,7 @@ require re-doing earlier ones.
    `LOCATION_INFO` that the backend reports encryption, if useful.
 6. **At-rest, client side.** AES-XTS in the client library, KMS plugin
    interface, wrapped keys on the MDS, `rawstor create --encrypt`, the
-   zero-write handling.
+   all-zero-ciphertext rule.
 
 ## Open questions
 
