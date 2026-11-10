@@ -32,7 +32,9 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
   tenant's objects, and must not learn that they exist.
 - An OST/MDS host administrator (or someone who steals a disk) is untrusted
   with respect to tenant **data** (stage 6). They are trusted with
-  availability and with metadata.
+  availability and with metadata. Integrity of encrypted data is not
+  protected (see [At-rest encryption](#at-rest-encryption)): such an
+  administrator can corrupt or roll back sectors.
 - Clients (`rawstor-vhost`, `rawstor-vduse`, the CLI) run on hypervisors that
   the provider operates. A guest VM never speaks the rawstor protocol itself,
   so a compromised guest reaches rawstor only through the volume it owns.
@@ -207,15 +209,19 @@ Consequences that need to be accepted or handled:
   replay sectors undetected. The xxh3 in the protocol is not cryptographic.
   An AEAD mode needs per-sector metadata and a changed chunk layout; it is a
   possible later stage, not part of this plan.
-- Zeros must survive encryption. An unwritten, discarded or `WRITE_ZEROES`'d
-  area reads from the OST as zeros, which XTS would decrypt to garbage. The
-  client therefore treats a sector whose ciphertext is all zeros as plaintext
-  zeros and returns zeros without decrypting. `WRITE_ZEROES` and `DISCARD` go to
-  the OST unchanged, sparseness is kept, and never-written areas read as zeros,
-  as on a plain disk. A genuine ciphertext of all zeros has probability
-  2^-128 per sector and is ignored. The only disclosure is "this sector is
-  zero", which `DISCARD` and a sparse backend reveal anyway. The cost is a
-  zero check per sector on read.
+- Encryption is a property of the volume, chosen at creation
+  (`rawstor create --encrypt`) and fixed for its life: an object has
+  `crypto_params` or it has not. Plain volumes are unchanged. There is no
+  sparseness optimisation for encrypted ones, so the OST can never be asked
+  to "forge" a zero sector and the semantics are those of dm-crypt/LUKS:
+  - `WRITE_ZEROES` is turned by the client into an ordinary write of encrypted
+    zeros; the range stops being sparse on the OST;
+  - `DISCARD` is not advertised to the guest, so it writes zeros itself
+    (an `allow_discards` option may follow, with the dm-crypt caveat that
+    freed blocks become visible);
+  - a never-written area reads from the OST as zeros, which decrypt to garbage.
+    Guests do not depend on the content of blocks they have not written; this
+    goes to [Known limitations](limitations.md) when implemented.
 - Encryption costs CPU on the client (hypervisor), not on the OST.
 
 ## Implementation stages
@@ -244,7 +250,7 @@ require re-doing earlier ones.
    `LOCATION_INFO` that the backend reports encryption, if useful.
 6. **At-rest, client side.** AES-XTS in the client library, KMS plugin
    interface, wrapped keys on the MDS, `rawstor create --encrypt`, the
-   all-zero-ciphertext rule.
+   write-zeroes emulation and no `DISCARD`.
 
 ## Open questions
 
