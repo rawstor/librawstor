@@ -355,10 +355,10 @@ int rawstor_object_flush(
  *                  RAWSTOR_READONLY, @c -EINVAL for an offset outside the
  *                  object, @c -EIO when no majority of the members could be
  *                  reached).
- *                - @p data is the same pointer passed as @p arg below.
+ *                - @p data is the same pointer passed as @p data below.
  *                - Return zero on success. A negative errno value signals an
  *                  error back into the I/O completion machinery.
- * @param arg     User-defined context pointer passed unchanged to @p cb.
+ * @param data    User-defined context pointer passed unchanged to @p cb.
  *
  * @return 0 if the read was successfully queued; negative errno on immediate
  *         failure (in which case @p cb is never invoked).
@@ -367,7 +367,7 @@ int rawstor_object_flush(
  */
 int rawstor_object_user_data_get(
     RawstorObject* object, uint64_t offset, uint8_t* value, uint64_t* epoch,
-    int (*cb)(ssize_t result, void* data), void* arg
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -403,10 +403,10 @@ int rawstor_object_user_data_get(
  *                  - @p result is 1 if the value was set, 0 if the register
  *                    held another one (not an I/O error), or a negative
  *                    errno on failure, as for rawstor_object_user_data_get().
- *                  - @p data is the same pointer passed as @p arg below.
+ *                  - @p data is the same pointer passed as @p data below.
  *                  - Return zero on success. A negative errno value signals
  *                    an error back into the I/O completion machinery.
- * @param arg       User-defined context pointer passed unchanged to @p cb.
+ * @param data      User-defined context pointer passed unchanged to @p cb.
  *
  * @return 0 if the change was successfully queued; negative errno on
  *         immediate failure (in which case @p cb is never invoked).
@@ -416,7 +416,7 @@ int rawstor_object_user_data_get(
 int rawstor_object_user_data_cas(
     RawstorObject* object, uint64_t offset, const uint8_t* expected,
     const uint8_t* desired, uint8_t* current, uint64_t* epoch,
-    int (*cb)(ssize_t result, void* data), void* arg
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 #ifdef __cplusplus

@@ -791,7 +791,7 @@ int rawstor_object_write_zeroes(
 
 int rawstor_object_user_data_get(
     RawstorObject* object, uint64_t offset, uint8_t* value, uint64_t* epoch,
-    int (*cb)(ssize_t result, void* data), void* arg
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     if (value == nullptr) {
         return -EINVAL;
@@ -801,7 +801,7 @@ int rawstor_object_user_data_get(
             static_cast<rawstor::Object*>(object)->user_data_get(
                 offset, value, epoch
             ),
-            cb, arg
+            cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -820,7 +820,7 @@ int rawstor_object_user_data_get(
 int rawstor_object_user_data_cas(
     RawstorObject* object, uint64_t offset, const uint8_t* expected,
     const uint8_t* desired, uint8_t* current, uint64_t* epoch,
-    int (*cb)(ssize_t result, void* data), void* arg
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     if (expected == nullptr || desired == nullptr || current == nullptr) {
         return -EINVAL;
@@ -830,7 +830,7 @@ int rawstor_object_user_data_cas(
             static_cast<rawstor::Object*>(object)->user_data_cas(
                 offset, expected, desired, current, epoch
             ),
-            cb, arg
+            cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
