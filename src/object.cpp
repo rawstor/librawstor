@@ -71,11 +71,10 @@ rawstd::Task<void> SingleChunkObject::flush() {
     co_await _chunk->flush();
 }
 
-rawstd::Task<void> SingleChunkObject::user_data_get(
-    uint64_t offset, uint8_t* value, uint64_t* epoch
-) {
+rawstd::Task<void>
+SingleChunkObject::user_data(uint64_t offset, uint8_t* value, uint64_t* epoch) {
     _check_offset(offset);
-    co_await _chunk->user_data_get(value, epoch);
+    co_await _chunk->user_data(value, epoch);
 }
 
 rawstd::Task<bool> SingleChunkObject::user_data_cas(
@@ -416,12 +415,11 @@ rawstd::Task<void> MultiChunkObject::flush() {
     });
 }
 
-rawstd::Task<void> MultiChunkObject::user_data_get(
-    uint64_t offset, uint8_t* value, uint64_t* epoch
-) {
+rawstd::Task<void>
+MultiChunkObject::user_data(uint64_t offset, uint8_t* value, uint64_t* epoch) {
     _check_offset(offset);
     Chunk* chunk = co_await _chunk(static_cast<uint32_t>(offset / _chunk_size));
-    co_await chunk->user_data_get(value, epoch);
+    co_await chunk->user_data(value, epoch);
 }
 
 rawstd::Task<bool> MultiChunkObject::user_data_cas(
@@ -789,7 +787,7 @@ int rawstor_object_write_zeroes(
     }
 }
 
-int rawstor_object_user_data_get(
+int rawstor_object_user_data(
     RawstorObject* object, uint64_t offset, uint8_t* value, uint64_t* epoch,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
@@ -798,7 +796,7 @@ int rawstor_object_user_data_get(
     }
     try {
         launch_flush_op(
-            static_cast<rawstor::Object*>(object)->user_data_get(
+            static_cast<rawstor::Object*>(object)->user_data(
                 offset, value, epoch
             ),
             cb, data

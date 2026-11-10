@@ -28,7 +28,7 @@ separately.
 | Resync across processes (`resync_owner`, sweep with `RESYNC`, lease of a silent owner) | 2 | ✅ | `src/chunk.cpp` (`_resync_run()`, `_resync_renew()`, `_lease_watch()`, `_resync_release()`) |
 | `LOST` cleared by a rule on the accepted value | 2 | ✅ | [Clearing `LOST`](#clearing-lost), `src/slot.cpp` (`clears_lost()`) |
 | `SET_CONFIG` and `rawstor_target_set_member_config()` removed; `rawstor resolve` decides through the register | 2 | ✅ | `cli/resolve.c` |
-| Application user data in the register's value: `rawstor_object_user_data_get()` / `_cas()` | 2 | ✅ | [User data](#user-data), `src/chunk.cpp` (`Chunk::_user_data_change()`) |
+| Application user data in the register's value: `rawstor_object_user_data()` / `_cas()` | 2 | ✅ | [User data](#user-data), `src/chunk.cpp` (`Chunk::_user_data_change()`) |
 | The client keeps the register value once per chunk, not per member | 2 | ✅ | `MirrorControl` (the decided configuration and the `Proposer`), [The register](#the-register-caspaxos) |
 | OST serves one backend Slot; mirroring is coordinated by the client | 1 | ✅ | [Mirroring](mirroring.md#one-copy-per-server) |
 | Witness participation in the configuration register for N = 2 | Before 2 | ✅ | `SYNC_PREPARE` / `SYNC_ACCEPT` on OST, file, LVM, ZFS and MDS (SQLite) witnesses; [MDS design](mds.md#witness) |
@@ -307,7 +307,7 @@ the sync set, and are read and changed under the register's rules. A chunk has
 its own, as it has its own register: with several chunks, the one an offset
 falls in is the one addressed.
 
-- `rawstor_object_user_data_get()` reads them through the register, so the
+- `rawstor_object_user_data()` reads them through the register, so the
   answer is what a majority of the members decided, not what this process saw
   last. It answers with the `epoch` the value was decided at.
 - `rawstor_object_user_data_cas()` sets `desired` if the register holds
@@ -570,7 +570,7 @@ record or frames, so both change in place. Details in
   `rawstor_target_sync_prepare()` and `rawstor_target_sync_accept()` apply
   the requests to one member of a target, with `member_index` as its
   position.
-- `include/rawstor/object.h`: `rawstor_object_user_data_get()` and
+- `include/rawstor/object.h`: `rawstor_object_user_data()` and
   `rawstor_object_user_data_cas()` ([User data](#user-data)).
 - The epoch and the `RESYNC` flag need no C API: `rawstor-ost` checks them
   in the server's `Slot`.

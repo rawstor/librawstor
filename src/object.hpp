@@ -136,9 +136,9 @@ public:
     virtual rawstd::Task<void> flush() = 0;
 
     // The user data of the chunk that holds `offset`
-    // (rawstor_object_user_data_get()/_cas()).
+    // (rawstor_object_user_data()/_cas()).
     virtual rawstd::Task<void>
-    user_data_get(uint64_t offset, uint8_t* value, uint64_t* epoch) = 0;
+    user_data(uint64_t offset, uint8_t* value, uint64_t* epoch) = 0;
 
     virtual rawstd::Task<bool> user_data_cas(
         uint64_t offset, const uint8_t* expected, const uint8_t* desired,
@@ -197,7 +197,7 @@ public:
     rawstd::Task<void> flush() override;
 
     rawstd::Task<void>
-    user_data_get(uint64_t offset, uint8_t* value, uint64_t* epoch) override;
+    user_data(uint64_t offset, uint8_t* value, uint64_t* epoch) override;
 
     rawstd::Task<bool> user_data_cas(
         uint64_t offset, const uint8_t* expected, const uint8_t* desired,
@@ -345,7 +345,7 @@ public:
     rawstd::Task<void> flush() override;
 
     rawstd::Task<void>
-    user_data_get(uint64_t offset, uint8_t* value, uint64_t* epoch) override;
+    user_data(uint64_t offset, uint8_t* value, uint64_t* epoch) override;
 
     rawstd::Task<bool> user_data_cas(
         uint64_t offset, const uint8_t* expected, const uint8_t* desired,

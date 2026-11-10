@@ -84,7 +84,7 @@ public:
 
     rawstd::Task<void> flush() override { return _fail_void(); }
 
-    rawstd::Task<void> user_data_get(uint64_t, uint8_t*, uint64_t*) override {
+    rawstd::Task<void> user_data(uint64_t, uint8_t*, uint64_t*) override {
         return _fail_void();
     }
 
@@ -174,13 +174,11 @@ TEST_P(ObjectErrorsTest, flush_reports_unexpected_exception) {
     EXPECT_EQ(r.result, -EINVAL);
 }
 
-TEST_P(ObjectErrorsTest, user_data_get_reports_unexpected_exception) {
+TEST_P(ObjectErrorsTest, user_data_reports_unexpected_exception) {
     uint8_t value[RAWSTOR_OBJECT_USER_DATA_SIZE];
     Result r;
     ASSERT_EQ(
-        rawstor_object_user_data_get(
-            object.get(), 0, value, nullptr, callback, &r
-        ),
+        rawstor_object_user_data(object.get(), 0, value, nullptr, callback, &r),
         0
     );
     wait(r);

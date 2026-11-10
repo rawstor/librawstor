@@ -365,7 +365,7 @@ int rawstor_object_flush(
  *
  * @see rawstor_object_user_data_cas
  */
-int rawstor_object_user_data_get(
+int rawstor_object_user_data(
     RawstorObject* object, uint64_t offset, uint8_t* value, uint64_t* epoch,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
@@ -378,7 +378,7 @@ int rawstor_object_user_data_get(
  * majority of the members decide the change; otherwise nothing is written.
  * Concurrent callers, in this process or others, are ordered by the
  * register: at most one of several that expect the same value succeeds, and
- * the others learn the value that won. See rawstor_object_user_data_get()
+ * the others learn the value that won. See rawstor_object_user_data()
  * for what the epoch makes of a change.
  *
  * Setting the value the register already holds (@p expected equal to
@@ -402,7 +402,7 @@ int rawstor_object_user_data_get(
  * @param cb        Callback invoked on completion.
  *                  - @p result is 1 if the value was set, 0 if the register
  *                    held another one (not an I/O error), or a negative
- *                    errno on failure, as for rawstor_object_user_data_get().
+ *                    errno on failure, as for rawstor_object_user_data().
  *                  - @p data is the same pointer passed as @p data below.
  *                  - Return zero on success. A negative errno value signals
  *                    an error back into the I/O completion machinery.
@@ -411,7 +411,7 @@ int rawstor_object_user_data_get(
  * @return 0 if the change was successfully queued; negative errno on
  *         immediate failure (in which case @p cb is never invoked).
  *
- * @see rawstor_object_user_data_get
+ * @see rawstor_object_user_data
  */
 int rawstor_object_user_data_cas(
     RawstorObject* object, uint64_t offset, const uint8_t* expected,

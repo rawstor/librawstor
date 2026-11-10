@@ -1912,7 +1912,7 @@ rawstd::Task<bool> Chunk::_user_data_change(
     co_return matched;
 }
 
-rawstd::Task<void> Chunk::user_data_get(uint8_t* data, uint64_t* epoch) {
+rawstd::Task<void> Chunk::user_data(uint8_t* data, uint64_t* epoch) {
     co_await _user_data_change(nullptr, nullptr, data, epoch);
 }
 

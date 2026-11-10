@@ -555,7 +555,7 @@ public:
     // returns true; otherwise nothing changes and it returns false. Either
     // way `current` receives the value the register holds after the call.
     // Setting a value other than the one held moves the epoch.
-    rawstd::Task<void> user_data_get(uint8_t* data, uint64_t* epoch);
+    rawstd::Task<void> user_data(uint8_t* data, uint64_t* epoch);
     rawstd::Task<bool> user_data_cas(
         const uint8_t* expected, const uint8_t* desired, uint8_t* current,
         uint64_t* epoch

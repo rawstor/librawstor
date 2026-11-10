@@ -3444,7 +3444,7 @@ TEST(
 
 /*
  * The user data of a chunk's configuration register
- * (rawstor_object_user_data_get()/_cas()).
+ * (rawstor_object_user_data()/_cas()).
  */
 using UserData = std::array<uint8_t, RAWSTOR_OBJECT_USER_DATA_SIZE>;
 
@@ -3456,12 +3456,12 @@ UserData user_data_of(uint8_t seed) {
     return value;
 }
 
-ssize_t object_user_data_get(
+ssize_t object_user_data(
     Queue& queue, RawstorObject* object, uint64_t offset, UserData& value,
     uint64_t* epoch
 ) {
     return rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
-        return rawstor_object_user_data_get(
+        return rawstor_object_user_data(
             object, offset, value.data(), epoch, cb, data
         );
     });
@@ -3504,7 +3504,7 @@ TEST(MirrorUserDataTest, cas_sets_the_value_on_every_member) {
     const UserData zero{};
     UserData value = user_data_of(1);
     uint64_t first_epoch = 0;
-    ASSERT_EQ(object_user_data_get(queue, object, 0, value, &first_epoch), 0);
+    ASSERT_EQ(object_user_data(queue, object, 0, value, &first_epoch), 0);
     EXPECT_EQ(value, zero);
 
     const UserData a = user_data_of(10);
@@ -3533,7 +3533,7 @@ TEST(MirrorUserDataTest, cas_sets_the_value_on_every_member) {
     EXPECT_EQ(object_user_data_cas(queue, object, 0, a, b, current, &epoch), 1);
     EXPECT_EQ(current, b);
     EXPECT_EQ(epoch, first_epoch + 2);
-    ASSERT_EQ(object_user_data_get(queue, object, 0, value, &epoch), 0);
+    ASSERT_EQ(object_user_data(queue, object, 0, value, &epoch), 0);
     EXPECT_EQ(value, b);
 
     // A write goes on under the new epoch.
@@ -3575,9 +3575,7 @@ TEST(MirrorUserDataTest, value_survives_reopen_and_a_membership_change) {
 
     UserData value{};
     uint64_t reopened_epoch = 0;
-    ASSERT_EQ(
-        object_user_data_get(queue, object, 0, value, &reopened_epoch), 0
-    );
+    ASSERT_EQ(object_user_data(queue, object, 0, value, &reopened_epoch), 0);
     EXPECT_EQ(value, a);
     EXPECT_GT(reopened_epoch, epoch);
     object_close_clean(queue, object);
@@ -3610,7 +3608,7 @@ TEST(MirrorUserDataTest, single_copy_object) {
 
     ASSERT_EQ(target_open(queue, members.target(0), &object), 0);
     UserData value{};
-    ASSERT_EQ(object_user_data_get(queue, object, 0, value, nullptr), 0);
+    ASSERT_EQ(object_user_data(queue, object, 0, value, nullptr), 0);
     EXPECT_EQ(value, a);
     object_close_clean(queue, object);
 }
@@ -3673,7 +3671,7 @@ TEST(MirrorUserDataTest, refusals) {
     uint64_t epoch = 0;
     // An offset outside the object names no chunk.
     EXPECT_EQ(
-        object_user_data_get(queue, object, 1ull << 20, value, &epoch), -EINVAL
+        object_user_data(queue, object, 1ull << 20, value, &epoch), -EINVAL
     );
     EXPECT_EQ(
         object_user_data_cas(
@@ -3683,7 +3681,7 @@ TEST(MirrorUserDataTest, refusals) {
     );
     // Missing buffers are refused before anything is queued.
     EXPECT_EQ(
-        rawstor_object_user_data_get(
+        rawstor_object_user_data(
             object, 0, nullptr, &epoch, [](ssize_t, void*) -> int { return 0; },
             nullptr
         ),
@@ -3695,7 +3693,7 @@ TEST(MirrorUserDataTest, refusals) {
     ASSERT_EQ(
         target_open(queue, members.target_all(), &object, RAWSTOR_READONLY), 0
     );
-    EXPECT_EQ(object_user_data_get(queue, object, 0, value, &epoch), -EROFS);
+    EXPECT_EQ(object_user_data(queue, object, 0, value, &epoch), -EROFS);
     EXPECT_EQ(
         object_user_data_cas(
             queue, object, 0, UserData{}, user_data_of(1), value, &epoch
