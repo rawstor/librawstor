@@ -57,8 +57,8 @@ private:
     std::unordered_map<std::string, std::unique_ptr<Watch>> _watches;
     std::vector<std::unique_ptr<Watch>> _retired;
     // Delayed probes after a mutation: one coroutine per OST with a refresh
-    // pending, and _refresh_gen counts the requests it has to wait out.
-    std::unordered_map<std::string, uint64_t> _refresh_gen;
+    // pending, and _refresh_due is when the latest request lets it probe.
+    std::unordered_map<std::string, Clock::time_point> _refresh_due;
     std::vector<rawstd::Task<void>> _refreshes;
     // Probes of one OST can overlap (regular and refresh): a sample is
     // applied only if no probe that started later has been applied.

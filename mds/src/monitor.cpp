@@ -245,26 +245,29 @@ rawstd::Task<void> Monitor::_reload() {
 
 rawstd::Task<void> Monitor::_refresh_probe(TopologyOST ost, std::string key) {
     try {
-        auto usec = std::min<uint64_t>(
-            static_cast<uint64_t>(_opts.info_refresh_delay) * 1000, UINT_MAX
-        );
-        // A request that came in while sleeping restarts the wait: its
+        // A request that came in while sleeping moves the deadline: its
         // client is only starting, and a probe before it is done sees half
-        // of it. Requests meanwhile only bump the counter.
-        uint64_t seen;
-        do {
-            seen = _refresh_gen[key];
+        // of it. So the probe runs one delay after the latest request.
+        while (true) {
+            auto left = _refresh_due[key] - Clock::now();
+            if (left <= Clock::duration::zero()) {
+                break;
+            }
+            auto usec = std::min<int64_t>(
+                std::chrono::ceil<std::chrono::microseconds>(left).count(),
+                UINT_MAX
+            );
             try {
                 co_await _queue->timeout(static_cast<unsigned int>(usec));
             } catch (const std::system_error& e) {
-                _refresh_gen.erase(key);
+                _refresh_due.erase(key);
                 if (e.code().value() == ECANCELED) {
                     co_return;
                 }
                 throw;
             }
-        } while (_refresh_gen[key] != seen);
-        _refresh_gen.erase(key);
+        }
+        _refresh_due.erase(key);
         // The OST may have left the topology meanwhile.
         if (_stop || !_watches.contains(key)) {
             co_return;
@@ -298,6 +301,7 @@ void Monitor::_refresh() {
         );
     }
     std::erase_if(_refreshes, [](const auto& task) { return task.done(); });
+    const auto delay = std::chrono::milliseconds(_opts.info_refresh_delay);
     for (const auto& [key, watch] : _watches) {
         std::string id(
             reinterpret_cast<const char*>(watch->ost.id.bytes),
@@ -306,8 +310,8 @@ void Monitor::_refresh() {
         if (!wanted.contains(id)) {
             continue;
         }
-        auto [pending, fresh] = _refresh_gen.try_emplace(key, 0);
-        ++pending->second;
+        auto [pending, fresh] = _refresh_due.try_emplace(key);
+        pending->second = Clock::now() + delay;
         if (fresh) {
             _refreshes.push_back(_refresh_probe(watch->ost, key));
         }
