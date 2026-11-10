@@ -12,7 +12,7 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 
 | Feature | Stage | Status | Where |
 |---|---|---|---|
-| Benchmark: TLS 1.3 / kTLS on the io_uring hot path | 0 | ❌ | — |
+| Benchmark: TLS 1.3 / kTLS on the io_uring hot path | 0 | ✅ | `bench/tls/` ([results](https://github.com/rawstor/librawstor/blob/main/bench/tls/RESULTS.md)) |
 | Protocol version + feature bits in the `SET_OBJECT` handshake | 1 | ❌ | also planned in [MDS design](mds.md) |
 | `tenant_id` in the protocol and in the MDS store (single `default` tenant) | 1 | ❌ | — |
 | mTLS (OpenSSL) on every port: OST, MDS, witness, client side | 2 | ❌ | — |
@@ -407,12 +407,54 @@ structural:
   breaks io_uring zero-copy receive of data into the caller's buffer;
 - **kTLS** moves the record layer to the kernel after an userspace
   handshake, so the existing io_uring `send`/`recv` code mostly keeps working.
-  Whether `SEND_ZC`, multishot receive and registered buffers still work, and
-  what kernel versions are required, is what stage 0 establishes;
+  which `io_uring` operations still work on a kTLS socket is in
+  [Measurements](#measurements);
 - latency of small IO (4 KiB) matters more than bulk bandwidth for block
   storage; TLS record overhead and a handshake per connection (one connection
   per chunk slot today) are the numbers to look at. Session resumption and
   connection reuse are the mitigations.
+
+### Measurements
+
+Stage 0 is [`bench/tls`](https://github.com/rawstor/librawstor/tree/main/bench/tls):
+plain TCP, kTLS, userspace OpenSSL over memory BIOs and userspace OpenSSL on
+the socket, all over loopback with mutual TLS 1.3, driven by `io_uring`. The
+figures below are medians of three runs on an 8-vCPU VM without VAES (AES-GCM
+about 3.2 GB/s per core), so the absolute numbers are conservative. Small-IO
+runs vary by ±30-50% between repetitions; see `RESULTS.md` there.
+
+| Measurement | plain TCP | TLS (any transport) |
+|---|---|---|
+| 1 MiB stream, one connection | 3.1-3.4 GB/s | 1.0-1.5 GB/s (30-45%) |
+| CPU per GB, both ends | 0.5 s | 1.2-1.4 s (about 2.5x) |
+| 4 KiB IO at queue depth 32 | about 115,000 IOPS, 15 µs CPU/op | 70,000-105,000 IOPS, 19-27 µs CPU/op |
+| 4 KiB IO at queue depth 1, p50 / p99 | 32 / 57 µs | 29-44 / 57-83 µs |
+| connection setup | 18,000/s | full handshake 570/s (1.9 ms CPU, both ends); resumed 1,160/s (1.0 ms) |
+
+What this shows:
+
+- **Bulk is bound by AES-GCM.** kTLS and memory-BIO userspace TLS are within
+  noise of each other, and both are well above `SSL_read` on the socket (one
+  copy more). kTLS did not buy bulk throughput here.
+- **Small IO**: TLS costs CPU per operation (15 → 19-27 µs) and a few to
+  tens of µs at QD1; which TLS transport is faster is not resolved.
+- **Connection setup is the expensive part.** A full mutual handshake costs
+  as much CPU as hundreds of 4 KiB IOs. With one connection per chunk slot, an
+  OST restart makes every client reconnect at once: 1,000 connections are
+  about 2 CPU-seconds across both ends. Resumption halves that; fewer
+  connections (see [open questions](#open-questions)) cuts it by the ratio.
+- **On a kTLS socket `send`, `sendmsg`, `recv`, buffer-select `recv`,
+  multishot `recv` with a buffer ring, `read_fixed`/`write_fixed` and
+  `sendfile` all returned correct data. `send_zc` and `send_zc_fixed` fail
+  with `EOPNOTSUPP`.** `librawio` uses none of the zero-copy sends today.
+- Not measured: ChaCha20-Poly1305, a real NIC, many connections on many cores,
+  kernels other than 7.0, hardware with VAES.
+
+Provisional choice: start with **userspace OpenSSL over memory BIOs inside
+`rawio`**. It was as fast as kTLS here, needs no kernel module or version, and
+keeps the whole path under `io_uring`. kTLS stays an option behind a
+configuration switch, to be re-measured on production hardware with a real
+network before it is made the default.
 
 Decision rule for stage 0: it decides **how** TLS is done (kTLS or userspace,
 connection reuse, minimum kernel), not **whether**. TLS is mandatory on every
@@ -506,7 +548,9 @@ require re-doing earlier ones.
 0. **Benchmark.** A throwaway harness comparing plain TCP, userspace
    OpenSSL TLS 1.3, and kTLS on the existing io_uring data path: 4 KiB and 1 MiB
    IO, queue depths 1 and 32, handshake rate, CPU per GB, p50/p99 latency.
-   Output: the TLS mode (kTLS or userspace) and the minimum kernel.
+   Output: the TLS mode (kTLS or userspace) and the minimum kernel. Done:
+   see [Measurements](#measurements); the minimum kernel is not established,
+   only 7.0 was tested.
 1. **Protocol groundwork.** Version + feature bits in the handshake;
    `tenant_id` in protocol, MDS store, OST slot key, `LIST`; `crypto_params`
    reserved in the object record. Single `default` tenant; behaviour unchanged.
@@ -528,7 +572,8 @@ require re-doing earlier ones.
 
 ## Open questions
 
-- The exact kernel baseline for kTLS and the answer from stage 0.
+- The kernel baseline for kTLS if it is made the default: stage 0 tested only
+  7.0, and the zero-copy `send_zc` is not available on a kTLS socket.
 - Whether one TLS connection per chunk slot stays, or stage 2 should coincide
   with the planned "one connection per (OST, object)" consolidation
   ([MDS design](mds.md)): handshake cost makes this likely.
