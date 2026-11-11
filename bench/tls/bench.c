@@ -167,7 +167,9 @@ static int conn_send_all(struct conn* c, const void* buf, size_t len) {
         if (c->mode == M_UBIO) {
             size_t pend;
             while ((pend = BIO_ctrl_pending(c->wb)) > 0) {
-                int m = BIO_read(c->wb, c->cbuf, pend > CBUF ? (int)CBUF : (int)pend);
+                int m = BIO_read(
+                    c->wb, c->cbuf, pend > CBUF ? (int)CBUF : (int)pend
+                );
                 if (m <= 0)
                     return -EIO;
                 int r = raw_send_all(c, c->cbuf, (size_t)m);
@@ -223,7 +225,8 @@ static int conn_recv_exact(struct conn* c, void* buf, size_t len) {
 /* ---- TLS setup ---------------------------------------------------------- */
 
 static SSL_CTX* mk_ctx(int server, int tickets) {
-    SSL_CTX* x = SSL_CTX_new(server ? TLS_server_method() : TLS_client_method());
+    SSL_CTX* x =
+        SSL_CTX_new(server ? TLS_server_method() : TLS_client_method());
     if (!x)
         die("SSL_CTX_new");
     SSL_CTX_set_min_proto_version(x, TLS1_3_VERSION);
@@ -243,8 +246,7 @@ static SSL_CTX* mk_ctx(int server, int tickets) {
     if (SSL_CTX_load_verify_locations(x, ca, NULL) != 1)
         die("load_verify_locations");
     SSL_CTX_set_verify(
-        x,
-        SSL_VERIFY_PEER | (server ? SSL_VERIFY_FAIL_IF_NO_PEER_CERT : 0),
+        x, SSL_VERIFY_PEER | (server ? SSL_VERIFY_FAIL_IF_NO_PEER_CERT : 0),
         NULL
     );
     if (C.mode == M_KTLS)
@@ -266,7 +268,9 @@ static SSL* handshake(int fd, SSL_CTX* x, int server, SSL_SESSION* sess) {
         SSL_set_session(ssl, sess);
     int r = server ? SSL_accept(ssl) : SSL_connect(ssl);
     if (r != 1) {
-        fprintf(stderr, "FATAL handshake failed (err %d)\n", SSL_get_error(ssl, r));
+        fprintf(
+            stderr, "FATAL handshake failed (err %d)\n", SSL_get_error(ssl, r)
+        );
         ERR_print_errors_fp(stderr);
         exit(2);
     }
@@ -341,14 +345,15 @@ static int connect_fd(void) {
 
 /* ---- workloads: streams ------------------------------------------------- */
 
-static void report_cpu(const char* role, const struct stats* s, uint64_t bytes) {
+static void
+report_cpu(const char* role, const struct stats* s, uint64_t bytes) {
     double u, sy;
     cpu_times(&u, &sy);
     double secs = (double)(now_ns() - s->t0) / 1e9;
     printf(
         "%s mode=%s work=%s secs=%.3f bytes=%llu cpu_user=%.3f cpu_sys=%.3f\n",
-        role, C.mode_name, C.work, secs, (unsigned long long)bytes,
-        u - s->u0, sy - s->s0
+        role, C.mode_name, C.work, secs, (unsigned long long)bytes, u - s->u0,
+        sy - s->s0
     );
 }
 
@@ -483,7 +488,8 @@ static void rr_server(struct conn* c) {
 
 static void hs_server(void) {
     int lfd = listen_fd();
-    SSL_CTX* x = strcmp(C.hs, "tcp") ? mk_ctx(1, !strcmp(C.hs, "resume")) : NULL;
+    SSL_CTX* x =
+        strcmp(C.hs, "tcp") ? mk_ctx(1, !strcmp(C.hs, "resume")) : NULL;
     struct stats st;
     stats_begin(&st);
     for (int i = 0; i < C.conns; ++i) {
@@ -547,7 +553,9 @@ static void hs_client(void) {
 #define PCH (64u * 1024u)
 #define BGID 7
 
-static unsigned char pat(size_t i) { return (unsigned char)(i * 131 + 7); }
+static unsigned char pat(size_t i) {
+    return (unsigned char)(i * 131 + 7);
+}
 
 static void echo_server(void) {
     int lfd = listen_fd();
@@ -571,8 +579,9 @@ static void echo_server(void) {
 }
 
 static const char* const probe_names[] = {
-    "send",         "sendmsg",    "send_zc",   "send_zc_fixed", "write_fixed",
-    "recv_bufsel",  "recv_multishot", "read_fixed", "sendfile",
+    "send",           "sendmsg",     "send_zc",
+    "send_zc_fixed",  "write_fixed", "recv_bufsel",
+    "recv_multishot", "read_fixed",  "sendfile",
 };
 #define NPROBE (sizeof probe_names / sizeof *probe_names)
 
@@ -625,7 +634,9 @@ static int probe_send(struct conn* c, int which, unsigned char* data) {
             );
             break;
         case 4:
-            io_uring_prep_write_fixed(sqe, c->fd, data + off, (unsigned)n, 0, 0);
+            io_uring_prep_write_fixed(
+                sqe, c->fd, data + off, (unsigned)n, 0, 0
+            );
             break;
         }
         io_uring_submit(r);
@@ -666,7 +677,9 @@ static int probe_recv(struct conn* c, int which, unsigned char* out) {
             return rr;
         while (got < PN) {
             struct io_uring_sqe* sqe = io_uring_get_sqe(r);
-            io_uring_prep_read_fixed(sqe, c->fd, out + got, (unsigned)(PN - got), 0, 0);
+            io_uring_prep_read_fixed(
+                sqe, c->fd, out + got, (unsigned)(PN - got), 0, 0
+            );
             io_uring_submit(r);
             int res = uring_wait(r);
             if (res < 0)
@@ -680,13 +693,16 @@ static int probe_recv(struct conn* c, int which, unsigned char* out) {
     /* buffer ring for 5 and 6 */
     enum { NBUF = 16 };
     int err = 0;
-    struct io_uring_buf_ring* br = io_uring_setup_buf_ring(r, NBUF, BGID, 0, &err);
+    struct io_uring_buf_ring* br =
+        io_uring_setup_buf_ring(r, NBUF, BGID, 0, &err);
     if (!br)
         return err ? err : -ENOMEM;
     unsigned char* bufs = malloc((size_t)NBUF * PCH);
     int mask = io_uring_buf_ring_mask(NBUF);
     for (int i = 0; i < NBUF; ++i)
-        io_uring_buf_ring_add(br, bufs + (size_t)i * PCH, PCH, (unsigned short)i, mask, i);
+        io_uring_buf_ring_add(
+            br, bufs + (size_t)i * PCH, PCH, (unsigned short)i, mask, i
+        );
     io_uring_buf_ring_advance(br, NBUF);
     int rc = 0;
     int armed = 0;
@@ -730,7 +746,9 @@ static int probe_recv(struct conn* c, int which, unsigned char* out) {
                 n = PN - got;
             memcpy(out + got, bufs + (size_t)bid * PCH, n);
             got += n;
-            io_uring_buf_ring_add(br, bufs + (size_t)bid * PCH, PCH, (unsigned short)bid, mask, 0);
+            io_uring_buf_ring_add(
+                br, bufs + (size_t)bid * PCH, PCH, (unsigned short)bid, mask, 0
+            );
             io_uring_buf_ring_advance(br, 1);
         } else {
             rc = -EBADMSG;
@@ -793,7 +811,10 @@ static void probe_client(void) {
         } else {
             verdict = "ok";
         }
-        printf("PROBE mode=%s op=%s result=%s\n", C.mode_name, probe_names[t], verdict);
+        printf(
+            "PROBE mode=%s op=%s result=%s\n", C.mode_name, probe_names[t],
+            verdict
+        );
         fflush(stdout);
         free(data);
         free(out);
@@ -825,20 +846,36 @@ int main(int argc, char** argv) {
     C.server = !strcmp(argv[1], "server");
     for (int i = 2; i + 1 < argc; i += 2) {
         const char *k = argv[i], *v = argv[i + 1];
-        if (!strcmp(k, "--mode")) C.mode_name = v;
-        else if (!strcmp(k, "--work")) C.work = v;
-        else if (!strcmp(k, "--hs")) C.hs = v;
-        else if (!strcmp(k, "--cipher")) C.cipher = v;
-        else if (!strcmp(k, "--certs")) C.certdir = v;
-        else if (!strcmp(k, "--port")) C.port = atoi(v);
-        else if (!strcmp(k, "--cpu")) C.cpu = atoi(v);
-        else if (!strcmp(k, "--qd")) C.qd = atoi(v);
-        else if (!strcmp(k, "--conns")) C.conns = atoi(v);
-        else if (!strcmp(k, "--secs")) C.secs = atof(v);
-        else if (!strcmp(k, "--size")) C.size = (size_t)atol(v);
-        else if (!strcmp(k, "--req")) C.req = (size_t)atol(v);
-        else if (!strcmp(k, "--resp")) C.resp = (size_t)atol(v);
-        else { fprintf(stderr, "bad option %s\n", k); return 1; }
+        if (!strcmp(k, "--mode"))
+            C.mode_name = v;
+        else if (!strcmp(k, "--work"))
+            C.work = v;
+        else if (!strcmp(k, "--hs"))
+            C.hs = v;
+        else if (!strcmp(k, "--cipher"))
+            C.cipher = v;
+        else if (!strcmp(k, "--certs"))
+            C.certdir = v;
+        else if (!strcmp(k, "--port"))
+            C.port = atoi(v);
+        else if (!strcmp(k, "--cpu"))
+            C.cpu = atoi(v);
+        else if (!strcmp(k, "--qd"))
+            C.qd = atoi(v);
+        else if (!strcmp(k, "--conns"))
+            C.conns = atoi(v);
+        else if (!strcmp(k, "--secs"))
+            C.secs = atof(v);
+        else if (!strcmp(k, "--size"))
+            C.size = (size_t)atol(v);
+        else if (!strcmp(k, "--req"))
+            C.req = (size_t)atol(v);
+        else if (!strcmp(k, "--resp"))
+            C.resp = (size_t)atol(v);
+        else {
+            fprintf(stderr, "bad option %s\n", k);
+            return 1;
+        }
     }
     C.mode = parse_mode(C.mode_name);
     if (C.cpu >= 0) {
@@ -849,11 +886,17 @@ int main(int argc, char** argv) {
     }
     const char* w = C.work;
     if (!strcmp(w, "hs")) {
-        if (C.server) hs_server(); else hs_client();
+        if (C.server)
+            hs_server();
+        else
+            hs_client();
         return 0;
     }
     if (!strcmp(w, "echo") || !strcmp(w, "probe")) {
-        if (C.server) echo_server(); else probe_client();
+        if (C.server)
+            echo_server();
+        else
+            probe_client();
         return 0;
     }
     /* data workloads: one connection */
@@ -865,7 +908,8 @@ int main(int argc, char** argv) {
     if (C.server) {
         srv_lfd = listen_fd();
         fd = tune(accept(srv_lfd, NULL, NULL));
-        if (fd < 0) die("accept");
+        if (fd < 0)
+            die("accept");
     } else {
         fd = connect_fd();
     }
@@ -874,13 +918,20 @@ int main(int argc, char** argv) {
     struct conn c;
     conn_setup(&c, fd, ssl);
     if (!strcmp(w, "up")) {
-        if (C.server) stream_receiver(&c, 0, "SERVER");
-        else stream_sender(&c, 1, "CLIENT");
+        if (C.server)
+            stream_receiver(&c, 0, "SERVER");
+        else
+            stream_sender(&c, 1, "CLIENT");
     } else if (!strcmp(w, "down")) {
-        if (C.server) stream_sender(&c, 0, "SERVER");
-        else stream_receiver(&c, 1, "CLIENT");
+        if (C.server)
+            stream_sender(&c, 0, "SERVER");
+        else
+            stream_receiver(&c, 1, "CLIENT");
     } else if (!strcmp(w, "rr")) {
-        if (C.server) rr_server(&c); else rr_client(&c);
+        if (C.server)
+            rr_server(&c);
+        else
+            rr_client(&c);
     } else {
         fprintf(stderr, "bad work %s\n", w);
         return 1;
