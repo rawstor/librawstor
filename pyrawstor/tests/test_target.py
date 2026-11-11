@@ -257,3 +257,33 @@ class TestTarget(unittest.TestCase):
             with self.assertRaises(OSError) as cm:
                 target.create_version(str(uuid.uuid4()))
             self.assertEqual(cm.exception.errno, errno.EINVAL)
+
+    def test_object_config_user_data(self):
+        size = rawstor.OBJECT_USER_DATA_SIZE
+        config = rawstor.librawstor.ObjectConfig()
+        self.assertEqual(config.user_data, bytes(size))
+
+        value = bytes(range(size % 256)) + bytes(size - size % 256)
+        config = rawstor.librawstor.ObjectConfig(user_data=value)
+        self.assertEqual(config.user_data, value)
+
+        other = bytes([7]) * size
+        config.user_data = other
+        self.assertEqual(config.user_data, other)
+
+        with self.assertRaises(ValueError):
+            config.user_data = bytes(size - 1)
+        with self.assertRaises(TypeError):
+            config.user_data = "text"
+        self.assertEqual(config.user_data, other)
+
+    def test_sync_accept_and_meta_carry_user_data(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = rawstor.Location(f"file://{temp_dir}").create(
+                size=65536, width=1)
+            value = bytes([3]) * rawstor.OBJECT_USER_DATA_SIZE
+            config = rawstor.librawstor.ObjectConfig(
+                epoch=1, sync_id=41, user_data=value)
+            self.assertTrue(target.sync_accept(config, 5, 1))
+            self.assertEqual(target.meta()[0].user_data, value)
+            target.remove()

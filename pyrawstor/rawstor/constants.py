@@ -24,6 +24,10 @@ OBJECT_MEMBER_IN_SYNC = 1
 OBJECT_MEMBER_SYNCING = 2
 OBJECT_MEMBER_EXCLUDED = 3
 
+# Size of ObjectConfig.user_data and ObjectMeta.user_data:
+# RAWSTOR_OBJECT_USER_DATA_SIZE (<rawstor/object.h>).
+OBJECT_USER_DATA_SIZE = 256
+
 # rawstor_target_open() flags: RAWSTOR_READONLY/RAWSTOR_FORCE
 # (<rawstor/target.h>). READONLY still needs the mirror quorum; only
 # FORCE | READONLY opens without it.

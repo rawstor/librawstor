@@ -26,6 +26,7 @@
 #include <vector>
 
 #include <cerrno>
+#include <cstring>
 
 namespace {
 
@@ -437,6 +438,9 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     c.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
     c.roles[1] = RAWSTOR_OBJECT_MEMBER_SYNCING;
     c.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    for (size_t i = 0; i < sizeof(c.user_data); ++i) {
+        c.user_data[i] = static_cast<uint8_t>(0xa0 + i);
+    }
     promised = {0x12, 0x34};
     accepted = {0x56, 0x78};
 
@@ -475,6 +479,7 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
     EXPECT_EQ(d.roles[0], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
     EXPECT_EQ(d.roles[1], RAWSTOR_OBJECT_MEMBER_SYNCING);
     EXPECT_EQ(d.roles[2], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
+    EXPECT_EQ(memcmp(d.user_data, c.user_data, sizeof(c.user_data)), 0);
     EXPECT_EQ(decoded_identity.member_role, identity.member_role);
     EXPECT_EQ(decoded_identity.width, identity.width);
     EXPECT_EQ(decoded_identity.chunk_size, identity.chunk_size);
@@ -482,43 +487,138 @@ TEST(BlkBackendTest, meta_encode_decode_round_trip) {
 }
 
 // The widest record -- every field at its widest, every member's role --
-// still fits a file:// copy's fixed-size record (META_MAX_SIZE).
-TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
-    RawstorObjectSyncStateValue state{};
-    RawstorObjectConfig config{};
-    RawstorObjectBallot promised{};
-    RawstorObjectBallot accepted{};
-    state = RAWSTOR_OBJECT_SYNC_STATE_LOST;
-    RawstorObjectConfig& c = config;
+// fits a file:// copy's fixed-size record (META_MAX_SIZE) as long as the
+// user data is unset; with it set, a chunk of up to META_MAX_SIZE's room
+// for roles (158 members) does, and a wider one is refused rather than
+// truncated.
+namespace {
+
+RawstorObjectConfig widest_config(uint8_t members, bool user_data) {
+    RawstorObjectConfig c{};
     c.epoch = ~0ull;
     c.sync_id = ~0ull;
     for (uint64_t& h : c.sync_id_history) {
         h = ~0ull;
     }
     c.resync_owner = ~0ull;
-    promised = {~0ull, ~0ull};
-    accepted = {~0ull, ~0ull};
-    c.nroles = RAWSTOR_OBJECT_MAX_WIDTH;
-    for (uint8_t& r : c.roles) {
-        r = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
+    c.nroles = members;
+    for (uint8_t i = 0; i < members; ++i) {
+        c.roles[i] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     }
+    if (user_data) {
+        memset(c.user_data, 0xff, sizeof(c.user_data));
+    }
+    return c;
+}
+
+std::string encode_widest(const RawstorObjectConfig& config) {
     rawstor::blk::Backend::ChunkIdentity identity{
         RAWSTOR_MEMBER_WITNESS, 255, ~0ull, ~0ull
     };
+    return MetadataBackend::meta_encode(
+        RAWSTOR_OBJECT_SYNC_STATE_LOST, config, {~0ull, ~0ull}, {~0ull, ~0ull},
+        identity
+    );
+}
+
+RawstorObjectConfig decode_widest(const std::string& encoded) {
+    RawstorObjectSyncStateValue state{};
+    RawstorObjectConfig config{};
+    RawstorObjectBallot promised{};
+    RawstorObjectBallot accepted{};
+    rawstor::blk::Backend::ChunkIdentity identity;
+    MetadataBackend::meta_decode(
+        encoded, &state, &config, &promised, &accepted, &identity
+    );
+    return config;
+}
+
+} // namespace
+
+TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
+    RawstorObjectConfig config = widest_config(RAWSTOR_OBJECT_MAX_WIDTH, false);
+    EXPECT_EQ(
+        decode_widest(encode_widest(config)).nroles, RAWSTOR_OBJECT_MAX_WIDTH
+    );
+}
+
+TEST(BlkBackendTest, meta_encode_fits_user_data_up_to_158_members) {
+    RawstorObjectConfig config = widest_config(158, true);
+    RawstorObjectConfig decoded = decode_widest(encode_widest(config));
+    EXPECT_EQ(decoded.nroles, 158);
+    EXPECT_EQ(
+        memcmp(decoded.user_data, config.user_data, sizeof(config.user_data)), 0
+    );
+}
+
+TEST(BlkBackendTest, meta_encode_refuses_a_record_beyond_its_room) {
+    RawstorObjectConfig config = widest_config(159, true);
+    EXPECT_THROW(encode_widest(config), std::system_error);
+}
+
+// A configuration without user data is encoded without the field, and a
+// record without it decodes to zero user data.
+TEST(BlkBackendTest, meta_encode_omits_zero_user_data) {
+    RawstorObjectConfig config{};
+    config.epoch = 3;
+    rawstor::blk::Backend::ChunkIdentity identity{};
+    identity.member_role = RAWSTOR_MEMBER_DATA;
+    identity.width = 2;
 
     std::string encoded = MetadataBackend::meta_encode(
-        state, config, promised, accepted, identity
+        RAWSTOR_OBJECT_SYNC_STATE_CLEAN, config, {}, {}, identity
     );
-    RawstorObjectSyncStateValue decoded_state{};
-    RawstorObjectConfig decoded_config{};
-    RawstorObjectBallot decoded_promised{};
-    RawstorObjectBallot decoded_accepted{};
+    EXPECT_EQ(encoded.find("user_data"), std::string::npos);
+
+    RawstorObjectSyncStateValue state{};
+    RawstorObjectConfig decoded{};
+    RawstorObjectBallot promised{};
+    RawstorObjectBallot accepted{};
     rawstor::blk::Backend::ChunkIdentity decoded_identity;
+    decoded.user_data[0] = 1;
     MetadataBackend::meta_decode(
-        encoded, &decoded_state, &decoded_config, &decoded_promised,
-        &decoded_accepted, &decoded_identity
+        encoded, &state, &decoded, &promised, &accepted, &decoded_identity
     );
-    EXPECT_EQ(decoded_config.nroles, RAWSTOR_OBJECT_MAX_WIDTH);
+    EXPECT_EQ(decoded.epoch, 3u);
+    for (uint8_t byte : decoded.user_data) {
+        EXPECT_EQ(byte, 0);
+    }
+}
+
+TEST(BlkBackendTest, meta_decode_rejects_malformed_user_data) {
+    RawstorObjectConfig config{};
+    rawstor::blk::Backend::ChunkIdentity identity{};
+    identity.member_role = RAWSTOR_MEMBER_DATA;
+    identity.width = 2;
+    config.user_data[0] = 0x5a;
+    const std::string good = MetadataBackend::meta_encode(
+        RAWSTOR_OBJECT_SYNC_STATE_CLEAN, config, {}, {}, identity
+    );
+
+    auto decode = [](const std::string& value) {
+        RawstorObjectSyncStateValue state{};
+        RawstorObjectConfig decoded{};
+        RawstorObjectBallot promised{};
+        RawstorObjectBallot accepted{};
+        rawstor::blk::Backend::ChunkIdentity decoded_identity;
+        MetadataBackend::meta_decode(
+            value, &state, &decoded, &promised, &accepted, &decoded_identity
+        );
+    };
+    EXPECT_NO_THROW(decode(good));
+    // Too short, too long, a non-hex digit, an upper-case digit and an
+    // unknown trailing field.
+    EXPECT_THROW(decode(good.substr(0, good.size() - 2)), std::system_error);
+    EXPECT_THROW(decode(good + "00"), std::system_error);
+    std::string bad = good;
+    bad.back() = 'g';
+    EXPECT_THROW(decode(bad), std::system_error);
+    bad.back() = 'A';
+    EXPECT_THROW(decode(bad), std::system_error);
+    EXPECT_THROW(
+        decode(good.substr(0, good.find(":user_data=")) + ":other=1"),
+        std::system_error
+    );
 }
 
 TEST(BlkBackendTest, meta_decode_rejects_empty_string) {

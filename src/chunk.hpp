@@ -102,6 +102,10 @@ private:
     bool _skip_quorum;
 
     struct RegisterTransport;
+    // A change of the user data in two steps, between user_data_prepare()
+    // and user_data_accept(), with the transition lock held.
+    struct UserDataTxn;
+    std::shared_ptr<UserDataTxn> _user_data_txn;
     void _adopt_locked(const RawstorObjectConfig& v);
     // With the transition lock held: records that the member this Chunk
     // brought back, if its resync ended without the rejoin, is excluded.
@@ -115,6 +119,10 @@ private:
     // no sign of life for the lease.
     rawstd::DetachedTask _resync_watch();
     rawstd::Task<void> _adopt();
+    rawstd::Task<bool> _user_data_change(
+        const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+        uint64_t* epoch
+    );
     rawstd::Task<void> _decide(
         const RawstorObjectConfig& value, const std::vector<bool>& accepting,
         std::vector<size_t>& failed
@@ -540,6 +548,46 @@ public:
     // member -- without the wait, a flush() racing an in-flight write
     // could report success before that write's data is actually durable.
     rawstd::Task<void> flush();
+
+    // The application's bytes in the chunk's configuration register
+    // (RawstorObjectConfig::user_data, RAWSTOR_OBJECT_USER_DATA_SIZE long)
+    // and the epoch they were decided at. Both go through the register: the
+    // answer is the value a majority of the members decided, so another
+    // writer's latest change is seen. EROFS for a read-only open.
+    //
+    // user_data_cas() sets `desired` if the register holds `expected` and
+    // returns true -- also when it holds `desired` already; otherwise nothing
+    // changes and it returns false. Either way `current` receives the value
+    // the register holds after the call. Setting a value other than the one
+    // held moves the epoch. A true return makes this process the holder of
+    // `desired`: once the register holds another value, every write of this
+    // process fails with ESTALE until it holds one again.
+    rawstd::Task<void> user_data(uint8_t* data, uint64_t* epoch);
+    rawstd::Task<bool> user_data_cas(
+        const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+        uint64_t* epoch
+    );
+
+    // The same change in steps, for one decided over the chunks of an object:
+    // the caller takes the lock of every chunk (user_data_lock(), the chunks
+    // in ascending order), prepares them all, derives the value to set from
+    // what the first chunk holds, accepts it on all of them, and releases the
+    // locks (user_data_unlock(), always, once per user_data_lock()). The
+    // accept goes under the ballots of the prepare, so a proposer that
+    // prepares the register in between makes it refuse (false) and nothing is
+    // decided on it: the caller starts over from user_data_prepare().
+    // user_data_prepare() answers with the value the register holds and its
+    // epoch. A true user_data_accept() makes this process the holder of
+    // `desired`, as user_data_cas() does.
+    rawstd::Task<void> user_data_lock();
+    rawstd::Task<void> user_data_prepare(uint8_t* current, uint64_t* epoch);
+    rawstd::Task<bool>
+    user_data_accept(const uint8_t* desired, uint8_t* current, uint64_t* epoch);
+    rawstd::Task<void> user_data_unlock();
+
+    // Whether this process set `value` on this chunk and has not found it
+    // replaced since: what a confirmation of `value` relies on.
+    bool user_data_held(const uint8_t* value) const;
 
     // flush()es (see above); for a mirrored object that is DIRTY, also
     // durably marks the in-sync members CLEAN with the current epoch/sync_id

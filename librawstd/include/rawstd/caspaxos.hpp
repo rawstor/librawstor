@@ -106,6 +106,14 @@ struct Reply {
     Acceptor<V> state;
 };
 
+// What the first phase of a change decided: the ballot the members promised
+// and the value with the highest accepted ballot among them.
+template <typename V>
+struct Prepared {
+    Ballot ballot;
+    V value;
+};
+
 // One instance drives one fixed register. Its nonzero id must be unique
 // among live proposers; calls must be serialized on the caller's queue.
 // Transport supplies Task<Reply<V>> prepare(index, ballot) and
@@ -272,6 +280,88 @@ public:
             }
         }
         RAWSTD_THROW_SYSTEM_ERROR(EAGAIN);
+    }
+
+    // The two phases of change() one at a time, for a caller that decides one
+    // change over several registers: it prepares them all, derives what to
+    // accept from the values it got, and accepts it under the ballots it
+    // prepared. Nothing in between can decide on a register: a proposer that
+    // prepares it meanwhile makes the accept below refuse, and the caller
+    // starts over from prepare().
+    //
+    // Phase 1: the ballot a majority promised and the value with the highest
+    // accepted ballot among the promises -- the actual current value. A
+    // refused ballot is retried above the one that refused it. No majority:
+    // EHOSTUNREACH; exhausted conflict attempts: EAGAIN; exhausted ballot
+    // counters: EOVERFLOW; overlapping calls: EBUSY.
+    template <typename Transport>
+    Task<Prepared<V>> prepare(Transport& transport, size_t attempts = 16) {
+        if (_busy) {
+            RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
+        }
+        _busy = true;
+        struct Guard {
+            bool& busy;
+            ~Guard() { busy = false; }
+        } guard{_busy};
+        // A ballot reserved after the last decision is below the one used here.
+        _next.reset();
+        for (size_t attempt = 0; attempt < attempts; ++attempt) {
+            if (_counter >= std::numeric_limits<uint64_t>::max() - 1) {
+                RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
+            }
+            Ballot ballot{++_counter, _id};
+            Round prepared = co_await _round([&](size_t index) {
+                return transport.prepare(index, ballot);
+            });
+            if (prepared.ok > _members / 2) {
+                co_return Prepared<V>{ballot, prepared.latest->value()};
+            }
+            if (!prepared.refused) {
+                RAWSTD_THROW_SYSTEM_ERROR(EHOSTUNREACH);
+            }
+        }
+        RAWSTD_THROW_SYSTEM_ERROR(EAGAIN);
+    }
+
+    // Phase 2: accepts `value` under the ballot of a prepare() of this
+    // proposer, without preparing again. True once a majority accepted it.
+    // False when a member refused and no majority accepted: a higher ballot was
+    // promised in between, and nothing was decided. No majority reachable:
+    // EHOSTUNREACH; exhausted ballot counters: EOVERFLOW; overlapping calls:
+    // EBUSY.
+    template <typename Transport>
+    Task<bool>
+    accept(Transport& transport, const Prepared<V>& prepared, const V& value) {
+        if (_busy) {
+            RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
+        }
+        _busy = true;
+        struct Guard {
+            bool& busy;
+            ~Guard() { busy = false; }
+        } guard{_busy};
+        const Ballot ballot = prepared.ballot;
+        if (ballot.counter == std::numeric_limits<uint64_t>::max()) {
+            RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
+        }
+        Ballot next{ballot.counter + 1, _id};
+        _counter = std::max(_counter, next.counter);
+        Round accepted = co_await _round([&](size_t index) {
+            return transport.accept(index, ballot, value, next);
+        });
+        if (accepted.ok > _members / 2) {
+            _value = value;
+            _decided = ballot;
+            if (!accepted.refused) {
+                _next = next;
+            }
+            co_return true;
+        }
+        if (!accepted.refused) {
+            RAWSTD_THROW_SYSTEM_ERROR(EHOSTUNREACH);
+        }
+        co_return false;
     }
 };
 

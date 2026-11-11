@@ -23,6 +23,7 @@
 #include <rawthread/lock.hpp>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <exception>
@@ -78,7 +79,11 @@ bool member_has_config(
                member.config.sync_id_history, config.sync_id_history,
                sizeof(config.sync_id_history)
            ) == 0 &&
-           memcmp(member.config.roles, config.roles, config.nroles) == 0;
+           memcmp(member.config.roles, config.roles, config.nroles) == 0 &&
+           memcmp(
+               member.config.user_data, config.user_data,
+               sizeof(config.user_data)
+           ) == 0;
 }
 
 bool member_matches_config(
@@ -430,6 +435,11 @@ private:
     // The in-sync copies are being healed from the reference (F5): the
     // register names this process the owner meanwhile.
     bool _healing = false;
+    // The user data this process set in the register (a successful
+    // user_data_cas()): while the register holds another value, this
+    // process has lost what it set, and its writes are refused.
+    std::optional<std::array<uint8_t, RAWSTOR_OBJECT_USER_DATA_SIZE>> _held;
+    std::atomic<bool> _fenced{false};
 
     void _fill_roles(RawstorObjectConfig& config) const noexcept {
         config.nroles = static_cast<uint8_t>(_states.size());
@@ -655,6 +665,7 @@ public:
             config.sync_id_history, _config.sync_id_history,
             sizeof(config.sync_id_history)
         );
+        memcpy(config.user_data, _config.user_data, sizeof(config.user_data));
         if (bump) {
             ++config.epoch;
             config.sync_id = random_sync_id();
@@ -779,14 +790,19 @@ public:
         const RawstorObjectConfig& v, const std::vector<bool>& usable
     ) {
         std::vector<size_t> excluded;
+        // A value that names no roles has none to map on the members' states;
+        // the epoch and the rest of it are taken over all the same, or the
+        // writes of this process would carry an epoch the register has left.
+        if (v.nroles == 0) {
+            adopt_locked(v);
+            return excluded;
+        }
         if (v.nroles != _states.size()) {
-            if (v.nroles != 0) {
-                rawstd_warning(
-                    "Mirror register names %u members, this chunk has %zu: "
-                    "its configuration is not taken over\n",
-                    static_cast<unsigned>(v.nroles), _states.size()
-                );
-            }
+            rawstd_warning(
+                "Mirror register names %u members, this chunk has %zu: "
+                "its configuration is not taken over\n",
+                static_cast<unsigned>(v.nroles), _states.size()
+            );
             return excluded;
         }
         for (size_t i = 0; i < _states.size(); ++i) {
@@ -837,7 +853,27 @@ public:
         }
         return excluded;
     }
+    // This process set the user data to `value`: it holds it, and is no longer
+    // fenced.
+    void hold_locked(const uint8_t* value) {
+        _held.emplace();
+        memcpy(_held->data(), value, _held->size());
+        _fenced.store(false, std::memory_order_release);
+    }
+    // Whether this process set user data that the register no longer holds.
+    bool fenced() const noexcept {
+        return _fenced.load(std::memory_order_acquire);
+    }
+    // Whether this process set `value` and has not found it replaced since.
+    bool holds_locked(const uint8_t* value) const noexcept {
+        return _held && !fenced() &&
+               memcmp(value, _held->data(), _held->size()) == 0;
+    }
     void adopt_locked(const RawstorObjectConfig& config) {
+        if (_held &&
+            memcmp(config.user_data, _held->data(), _held->size()) != 0) {
+            _fenced.store(true, std::memory_order_release);
+        }
         _config = config;
         for (size_t i = 0; i < _states.size(); ++i) {
             if (state(i) == MemberState::IN_SYNC) {
@@ -1805,6 +1841,250 @@ rawstd::Task<void> Chunk::_adopt() {
     }
 }
 
+/*
+ * Reads the user data of the chunk's register, changes it when it holds
+ * `expected`, or sets it, with the register's own consistency: the answer is a
+ * value a majority of the members decided. The change is a function of the
+ * value the register holds, so that another writer's decision is neither
+ * undone nor repeated:
+ * - a read (`desired` null) changes nothing;
+ * - a swap (`expected` and `desired`) is made only if the register holds
+ *   `expected`, and counts as made when it already holds `desired`;
+ * A value other than the one held moves the epoch; the sync set and the roles
+ * stay the ones decided. A swap that holds `desired` afterwards makes
+ * this process the holder of it: once it finds the register holding another
+ * value, every write of it is refused with `-ESTALE` until it holds one again.
+ * Returns whether the register holds `desired` (true for a read).
+ */
+rawstd::Task<bool> Chunk::_user_data_change(
+    const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+    uint64_t* epoch
+) {
+    if (_readonly) {
+        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+    }
+    MirrorControl& c = *_control;
+    co_await _lock();
+    bool matched = false;
+    std::vector<size_t> failed;
+    try {
+        std::vector<bool> accepting(_members.size(), false);
+        {
+            std::lock_guard<std::mutex> guard(c.mutex());
+            size_t votes = 0;
+            for (size_t i = 0; i < _members.size(); ++i) {
+                accepting[i] = _state(i) == MemberState::IN_SYNC;
+                votes += accepting[i];
+            }
+            if (votes == 0 || _below_write_quorum(votes)) {
+                c.freeze_locked();
+                RAWSTD_THROW_SYSTEM_ERROR(EIO);
+            }
+        }
+        RegisterTransport transport{
+            *this, accepting, std::vector<bool>(_members.size(), false)
+        };
+        RawstorObjectConfig decided;
+        try {
+            decided = co_await c.proposer().change(
+                transport,
+                [&](const RawstorObjectConfig& value)
+                    -> std::optional<RawstorObjectConfig> {
+                    const bool is_desired =
+                        desired != nullptr && memcmp(
+                                                  value.user_data, desired,
+                                                  RAWSTOR_OBJECT_USER_DATA_SIZE
+                                              ) == 0;
+                    matched = expected == nullptr || is_desired ||
+                              memcmp(
+                                  value.user_data, expected,
+                                  RAWSTOR_OBJECT_USER_DATA_SIZE
+                              ) == 0;
+                    if (!matched || desired == nullptr || is_desired) {
+                        return std::nullopt;
+                    }
+                    RawstorObjectConfig next = value;
+                    ++next.epoch;
+                    memcpy(
+                        next.user_data, desired, RAWSTOR_OBJECT_USER_DATA_SIZE
+                    );
+                    return next;
+                }
+            );
+        } catch (const std::system_error& e) {
+            if (e.code().value() != EHOSTUNREACH) {
+                throw;
+            }
+            std::lock_guard<std::mutex> guard(c.mutex());
+            c.freeze_locked();
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+        {
+            std::lock_guard<std::mutex> guard(c.mutex());
+            // Holding the value first: taking over the decision that set it
+            // must not find it replaced.
+            if (matched && desired != nullptr) {
+                c.hold_locked(desired);
+            }
+            if (decided.epoch > c.epoch_locked()) {
+                _adopt_locked(decided);
+            }
+        }
+        for (size_t i = 0; i < _members.size(); ++i) {
+            if (transport.failed[i]) {
+                failed.push_back(i);
+            }
+        }
+        memcpy(current, decided.user_data, RAWSTOR_OBJECT_USER_DATA_SIZE);
+        if (epoch != nullptr) {
+            *epoch = decided.epoch;
+        }
+    } catch (...) {
+        _unlock();
+        throw;
+    }
+    _unlock();
+    // A member that did not take the decision is out of the set, like one
+    // that fails a write.
+    if (!failed.empty()) {
+        co_await _degrade(failed);
+    }
+    co_return matched;
+}
+
+rawstd::Task<void> Chunk::user_data(uint8_t* data, uint64_t* epoch) {
+    co_await _user_data_change(nullptr, nullptr, data, epoch);
+}
+
+rawstd::Task<bool> Chunk::user_data_cas(
+    const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+    uint64_t* epoch
+) {
+    co_return co_await _user_data_change(expected, desired, current, epoch);
+}
+
+struct Chunk::UserDataTxn {
+    RegisterTransport transport;
+    std::optional<rawstd::caspaxos::Prepared<RawstorObjectConfig>> prepared;
+};
+
+rawstd::Task<void> Chunk::user_data_lock() {
+    if (_readonly) {
+        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+    }
+    co_await _lock();
+}
+
+rawstd::Task<void> Chunk::user_data_prepare(uint8_t* current, uint64_t* epoch) {
+    MirrorControl& c = *_control;
+    std::vector<bool> accepting(_members.size(), false);
+    {
+        std::lock_guard<std::mutex> guard(c.mutex());
+        size_t votes = 0;
+        for (size_t i = 0; i < _members.size(); ++i) {
+            accepting[i] = _state(i) == MemberState::IN_SYNC;
+            votes += accepting[i];
+        }
+        if (votes == 0 || _below_write_quorum(votes)) {
+            c.freeze_locked();
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+    }
+    std::shared_ptr<UserDataTxn> txn(new UserDataTxn{
+        RegisterTransport{
+            *this, accepting, std::vector<bool>(_members.size(), false)
+        },
+        std::nullopt
+    });
+    try {
+        txn->prepared = co_await c.proposer().prepare(txn->transport);
+    } catch (const std::system_error& e) {
+        if (e.code().value() != EHOSTUNREACH) {
+            throw;
+        }
+        std::lock_guard<std::mutex> guard(c.mutex());
+        c.freeze_locked();
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    const RawstorObjectConfig& value = txn->prepared->value;
+    {
+        std::lock_guard<std::mutex> guard(c.mutex());
+        if (value.epoch > c.epoch_locked()) {
+            _adopt_locked(value);
+        }
+    }
+    memcpy(current, value.user_data, RAWSTOR_OBJECT_USER_DATA_SIZE);
+    if (epoch != nullptr) {
+        *epoch = value.epoch;
+    }
+    _user_data_txn = std::move(txn);
+}
+
+rawstd::Task<bool> Chunk::user_data_accept(
+    const uint8_t* desired, uint8_t* current, uint64_t* epoch
+) {
+    if (!_user_data_txn || !_user_data_txn->prepared) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    MirrorControl& c = *_control;
+    UserDataTxn& txn = *_user_data_txn;
+    RawstorObjectConfig next = txn.prepared->value;
+    if (memcmp(next.user_data, desired, RAWSTOR_OBJECT_USER_DATA_SIZE) != 0) {
+        ++next.epoch;
+        memcpy(next.user_data, desired, RAWSTOR_OBJECT_USER_DATA_SIZE);
+    }
+    bool decided = false;
+    try {
+        decided =
+            co_await c.proposer().accept(txn.transport, *txn.prepared, next);
+    } catch (const std::system_error& e) {
+        if (e.code().value() != EHOSTUNREACH) {
+            throw;
+        }
+        std::lock_guard<std::mutex> guard(c.mutex());
+        c.freeze_locked();
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    if (!decided) {
+        co_return false;
+    }
+    {
+        std::lock_guard<std::mutex> guard(c.mutex());
+        c.hold_locked(desired);
+        if (next.epoch > c.epoch_locked()) {
+            _adopt_locked(next);
+        }
+    }
+    memcpy(current, next.user_data, RAWSTOR_OBJECT_USER_DATA_SIZE);
+    if (epoch != nullptr) {
+        *epoch = next.epoch;
+    }
+    co_return true;
+}
+
+bool Chunk::user_data_held(const uint8_t* value) const {
+    std::lock_guard<std::mutex> guard(_control->mutex());
+    return _control->holds_locked(value);
+}
+
+rawstd::Task<void> Chunk::user_data_unlock() {
+    // A member that did not take the decision is out of the set, like one
+    // that fails a write.
+    std::vector<size_t> failed;
+    if (_user_data_txn) {
+        for (size_t i = 0; i < _members.size(); ++i) {
+            if (_user_data_txn->transport.failed[i]) {
+                failed.push_back(i);
+            }
+        }
+        _user_data_txn.reset();
+    }
+    _unlock();
+    if (!failed.empty()) {
+        co_await _degrade(failed);
+    }
+}
+
 bool Chunk::_below_write_quorum(size_t votes) const noexcept {
     return votes * 2 <= _members.size();
 }
@@ -2048,6 +2328,9 @@ void Chunk::_reconcile_sync_set() {
     memcpy(
         config.sync_id_history, sync_id_history, sizeof(config.sync_id_history)
     );
+    if (current) {
+        memcpy(config.user_data, current->user_data, sizeof(config.user_data));
+    }
     c.initialize_locked(
         state, std::move(records), size, config, unrecorded_stale
     );
@@ -2597,6 +2880,11 @@ rawstd::Task<size_t> Chunk::_fan_out_write(
     std::function<rawstd::Task<size_t>(Slot&)> issue
 ) {
     for (size_t attempt = 0; attempt < 16; ++attempt) {
+        // The user data this process set has been replaced: another writer
+        // holds the chunk now, and nothing of this process is written.
+        if (_control->fenced()) {
+            RAWSTD_THROW_SYSTEM_ERROR(ESTALE);
+        }
         bool stale = false;
         size_t result =
             co_await _fan_out_write_once(offset, size, issue, stale);

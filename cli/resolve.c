@@ -247,6 +247,10 @@ static int resolve_chunk(
     new_config.epoch = max_epoch + 1;
     new_config.sync_id = random_sync_id();
     memcpy(new_config.sync_id_history, history, sizeof(history));
+    memcpy(
+        new_config.user_data, metas[winners[0]].config.user_data,
+        sizeof(new_config.user_data)
+    );
     new_config.nroles = (uint8_t)result;
     for (ssize_t i = 0; i < result; i++) {
         new_config.roles[i] = is_winner(winners, num_winners, (size_t)i)

@@ -295,13 +295,15 @@ stamped or `RESYNC` request with `-EOPNOTSUPP`.
      +-------------------------------------------+
 ```
 
-### Config — 312 bytes
+### Config — 568 bytes
 
 The chunk's configuration (`RawstorObjectConfig`): its sync set, the
 writer running the resync of the syncing member and its run (`resync_owner`:
 the proposer in the high 48 bits, the number of the run in the low 16, 0 when
-none) and every member's role, `nroles` entries of `enum RawstorObjectMemberRole` (0
-unknown, 1 in-sync, 2 syncing, 3 excluded), the rest zero. Carried in
+none), every member's role, `nroles` entries of `enum RawstorObjectMemberRole` (0
+unknown, 1 in-sync, 2 syncing, 3 excluded), the rest zero, and `user_data`, 256
+opaque bytes of the application, decided with the rest of the configuration
+(zero until first set; [multi-attach](multiattach.md#user-data)). Carried in
 SyncPropose and Meta; see [mirroring](mirroring.md#states-and-roles).
 
 ```text
@@ -322,7 +324,10 @@ SyncPropose and Meta; see [mirroring](mirroring.md#states-and-roles).
  56  |  nroles  |                              uint8_t roles[255]                            |
      |          |                                    ...                                     |
      +----------+----------------------------------------------------------------------------+
-312
+312  |                                  uint8_t user_data[256]                               |
+     |                                          ...                                          |
+     +---------------------------------------------------------------------------------------+
+568
 ```
 
 ### Ballot — 16 bytes
@@ -372,7 +377,7 @@ allowing the final consistency state to reach storage.
  16  |                                 uint64_t chunk_offset                                 |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
- 24  Config (312 bytes)
+ 24  Config (568 bytes)
      +----------+----------+----------+
 336  |  flags   | member_  |  state   |
      |          |  index   |          |
@@ -380,7 +385,7 @@ allowing the final consistency state to reach storage.
 339
 ```
 
-### SyncPropose — 369 bytes
+### SyncPropose — 625 bytes
 
 The two requests of a chunk's configuration register
 ([multi-attach](multiattach.md#the-register-caspaxos),
@@ -406,12 +411,12 @@ support). `member_index` is the copy's position among the chunk's members, which
      +---------------------------------------------------------------------------------------+
  24  Ballot ballot (16 bytes)
  40  Ballot next (16 bytes)
- 56  Config (312 bytes)
+ 56  Config (568 bytes)
      +----------+
-368  | member_  |
+624  | member_  |
      |  index   |
      +----------+
-369
+625
 ```
 
 ### Allocate — 44 bytes
@@ -490,12 +495,12 @@ in no particular order. An empty payload means the object has no versions
      +---------------------------------------------------------------------------------------+
 ```
 
-### Meta — 360 bytes
+### Meta — 616 bytes
 
 Everything about one stored copy: its size, its placement identity, its own
 state (`CLEAN`, `DIRTY`, `LOST`), how many sessions have it open for
 writing right now (`writers`), and the chunk's configuration as last set on
-it (a [Config](#config--312-bytes), at offset 16), and the copy's
+it (a [Config](#config--568-bytes), at offset 16), and the copy's
 replica of the register's ballots: the highest it promised and the one
 its Config was accepted under. OST reports the record of its one backend Slot.
 `width` is the non-zero number of data members; witness members are excluded
@@ -512,13 +517,13 @@ is reserved for an unknown role in an unavailable member's local placeholder.
   8  |  state   |  chunk_  |  width   | member_  |              uint32_t writers             |
      |          |  shift   |          |   role   |                                           |
      +----------+----------+----------+----------+-------------------------------------------+
- 16  Config (312 bytes)
-328  Ballot promised (16 bytes)
-344  Ballot accepted (16 bytes)
-360
+ 16  Config (568 bytes)
+584  Ballot promised (16 bytes)
+600  Ballot accepted (16 bytes)
+616
 ```
 
-### SyncReply — 361 bytes
+### SyncReply — 617 bytes
 
 The C API writes the member's record into `RawstorObjectMeta* meta` and
 reports acceptance through the callback's `ssize_t result`: 1 for acceptance,
@@ -528,16 +533,16 @@ nonnegative results. Internally, register methods return `bool` and fill a
 
 `SYNC_PREPARE`/`SYNC_ACCEPT`'s reply, sent whether the member promised or
 accepted (`ok` = 1) or refused (`ok` = 0): its whole record, a
-[Meta](#meta--360-bytes), follows at offset 1, so a refused proposer sees
+[Meta](#meta--616-bytes), follows at offset 1, so a refused proposer sees
 the actual value.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
      +----------+----------------------------------------------------------------------------+
-  0  |    ok    |                              Meta (360 bytes)                              |
+  0  |    ok    |                              Meta (616 bytes)                              |
      |          |                                                                            |
      +----------+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~+
-361
+617
 ```
 
 ### RawstorLocationInfo — 16 bytes

@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -913,6 +914,7 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
                 .resync_owner = 0,
                 .nroles = 0,
                 .roles = {},
+                .user_data = {},
             },
         .promised = {},
         .accepted = {},
@@ -1064,6 +1066,7 @@ TEST(MirrorResyncTest, member_refusing_its_rejoin_is_excluded_again) {
                 .resync_owner = 0,
                 .nroles = 0,
                 .roles = {},
+                .user_data = {},
             },
         .promised = {},
         .accepted = {},
@@ -1569,6 +1572,7 @@ TEST(MirrorResyncTest, resync_renews_the_register_while_a_write_is_pending) {
                 .resync_owner = 0,
                 .nroles = 0,
                 .roles = {},
+                .user_data = {},
             },
         .promised = {},
         .accepted = {},
@@ -2098,6 +2102,7 @@ TEST(MirrorResyncTest, closing_during_the_rejoin_keeps_the_member) {
                 .resync_owner = 0,
                 .nroles = 0,
                 .roles = {},
+                .user_data = {},
             },
         .promised = {},
         .accepted = {},
@@ -2832,6 +2837,7 @@ TEST(MirrorOstTest, read_failover_and_repair) {
                 .resync_owner = 0,
                 .nroles = 0,
                 .roles = {},
+                .user_data = {},
             },
         .promised = {},
         .accepted = {},
@@ -2917,6 +2923,7 @@ TEST(MirrorOstTest, two_members_freeze_below_majority) {
                 .resync_owner = 0,
                 .nroles = 0,
                 .roles = {},
+                .user_data = {},
             },
         .promised = {},
         .accepted = {},
@@ -3005,6 +3012,7 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
                 .resync_owner = 0,
                 .nroles = 0,
                 .roles = {},
+                .user_data = {},
             },
         .promised = {},
         .accepted = {},
@@ -3078,6 +3086,7 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
                 .resync_owner = 0,
                 .nroles = 0,
                 .roles = {},
+                .user_data = {},
             },
         .promised = {},
         .accepted = {},
@@ -3214,6 +3223,7 @@ RawstorFrameMetaPayload clean_legacy_meta() {
                 .resync_owner = 0,
                 .nroles = 0,
                 .roles = {},
+                .user_data = {},
             },
         .promised = {},
         .accepted = {},
@@ -3430,6 +3440,324 @@ TEST(
     ASSERT_TRUE(completed);
     EXPECT_NE(error, 0);
     object_close(queue, object);
+}
+
+/*
+ * The user data of a chunk's configuration register
+ * (rawstor_object_user_data()/_cas()).
+ */
+using UserData = std::array<uint8_t, RAWSTOR_OBJECT_USER_DATA_SIZE>;
+
+UserData user_data_of(uint8_t seed) {
+    UserData value{};
+    for (size_t i = 0; i < value.size(); ++i) {
+        value[i] = static_cast<uint8_t>(seed + i);
+    }
+    return value;
+}
+
+ssize_t object_user_data(
+    Queue& queue, RawstorObject* object, UserData& value, uint64_t* epoch
+) {
+    return rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
+        return rawstor_object_user_data(object, value.data(), epoch, cb, data);
+    });
+}
+
+ssize_t object_user_data_cas(
+    Queue& queue, RawstorObject* object, const UserData& expected,
+    const UserData& desired, UserData& current, uint64_t* epoch
+) {
+    return rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
+        return rawstor_object_user_data_cas(
+            object, expected.data(), desired.data(), current.data(), epoch, cb,
+            data
+        );
+    });
+}
+
+RawstorObjectSpec mirror_spec(uint8_t width) {
+    return RawstorObjectSpec{
+        .size = 1ull << 20,
+        .width = width,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+}
+
+// A change goes through the register: it is set on every member under a new
+// epoch, a second one that expects the old value is refused and learns the
+// new one, and setting the value held changes nothing.
+TEST(MirrorUserDataTest, cas_sets_the_value_on_every_member) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000e1");
+    ASSERT_EQ(target_create(queue, members.target_all(), mirror_spec(3)), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+
+    const UserData zero{};
+    UserData value = user_data_of(1);
+    uint64_t first_epoch = 0;
+    ASSERT_EQ(object_user_data(queue, object, value, &first_epoch), 0);
+    EXPECT_EQ(value, zero);
+
+    const UserData a = user_data_of(10);
+    const UserData b = user_data_of(20);
+    UserData current{};
+    uint64_t epoch = 0;
+    EXPECT_EQ(object_user_data_cas(queue, object, zero, a, current, &epoch), 1);
+    EXPECT_EQ(current, a);
+    EXPECT_EQ(epoch, first_epoch + 1);
+
+    // Expecting what is no longer there: refused, and the value that is
+    // there comes back.
+    EXPECT_EQ(object_user_data_cas(queue, object, zero, b, current, &epoch), 0);
+    EXPECT_EQ(current, a);
+    EXPECT_EQ(epoch, first_epoch + 1);
+
+    // The same value is no change: the epoch stays.
+    EXPECT_EQ(object_user_data_cas(queue, object, a, a, current, &epoch), 1);
+    EXPECT_EQ(current, a);
+    EXPECT_EQ(epoch, first_epoch + 1);
+
+    EXPECT_EQ(object_user_data_cas(queue, object, a, b, current, &epoch), 1);
+    EXPECT_EQ(current, b);
+    EXPECT_EQ(epoch, first_epoch + 2);
+    ASSERT_EQ(object_user_data(queue, object, value, &epoch), 0);
+    EXPECT_EQ(value, b);
+
+    // A write goes on under the new epoch.
+    std::string payload = "payload";
+    object_write(queue, object, payload.data(), payload.size(), 0, 0);
+
+    for (size_t i = 0; i < 3; ++i) {
+        RawstorObjectMeta meta{};
+        ASSERT_EQ(target_meta(queue, members.target(i), &meta), 0);
+        EXPECT_EQ(meta.config.epoch, first_epoch + 2) << i;
+        EXPECT_EQ(memcmp(meta.config.user_data, b.data(), b.size()), 0) << i;
+    }
+    object_close_clean(queue, object);
+}
+
+TEST(MirrorUserDataTest, value_survives_reopen_and_a_membership_change) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000e2");
+    ASSERT_EQ(target_create(queue, members.target_all(), mirror_spec(3)), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    const UserData a = user_data_of(33);
+    UserData current{};
+    uint64_t epoch = 0;
+    ASSERT_EQ(
+        object_user_data_cas(queue, object, UserData{}, a, current, &epoch), 1
+    );
+    std::string payload = "payload";
+    object_write(queue, object, payload.data(), payload.size(), 0, 0);
+    object_close_clean(queue, object);
+
+    // A member gone: the next open records the exclusion under a new sync
+    // set and a new epoch, which carry the user data along.
+    members.drop(2);
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    object_write(queue, object, payload.data(), payload.size(), 8, 0);
+
+    UserData value{};
+    uint64_t reopened_epoch = 0;
+    ASSERT_EQ(object_user_data(queue, object, value, &reopened_epoch), 0);
+    EXPECT_EQ(value, a);
+    EXPECT_GT(reopened_epoch, epoch);
+    object_close_clean(queue, object);
+
+    for (size_t i : {0, 1}) {
+        RawstorObjectMeta meta{};
+        ASSERT_EQ(target_meta(queue, members.target(i), &meta), 0);
+        EXPECT_EQ(memcmp(meta.config.user_data, a.data(), a.size()), 0) << i;
+    }
+}
+
+TEST(MirrorUserDataTest, single_copy_object) {
+    Queue queue(16);
+    Members members(1, "00000000-0000-7000-8000-0000000000e3");
+    ASSERT_EQ(target_create(queue, members.target(0), mirror_spec(1)), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target(0), &object), 0);
+    const UserData a = user_data_of(5);
+    UserData current{};
+    uint64_t epoch = 0;
+    ASSERT_EQ(
+        object_user_data_cas(queue, object, UserData{}, a, current, &epoch), 1
+    );
+    EXPECT_EQ(current, a);
+    std::string payload = "payload";
+    object_write(queue, object, payload.data(), payload.size(), 0, 0);
+    object_close_clean(queue, object);
+
+    ASSERT_EQ(target_open(queue, members.target(0), &object), 0);
+    UserData value{};
+    ASSERT_EQ(object_user_data(queue, object, value, nullptr), 0);
+    EXPECT_EQ(value, a);
+    object_close_clean(queue, object);
+}
+
+// Another writer decided a value meanwhile: the compare and swap answers with
+// it instead of overwriting it, and the writes that follow take its
+// configuration over.
+TEST(MirrorUserDataTest, cas_sees_another_writers_decision) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000e4");
+    ASSERT_EQ(target_create(queue, members.target_all(), mirror_spec(3)), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    std::string first = "first";
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+
+    // The other writer's decision, on a majority of the members.
+    RawstorObjectMeta before{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &before), 0);
+    RawstorObjectConfig decided = before.config;
+    ++decided.epoch;
+    const UserData theirs = user_data_of(77);
+    memcpy(decided.user_data, theirs.data(), theirs.size());
+    ASSERT_EQ(target_set_config(queue, members.target(0), decided), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(1), decided), 0);
+
+    const UserData mine = user_data_of(88);
+    UserData current{};
+    uint64_t epoch = 0;
+    EXPECT_EQ(
+        object_user_data_cas(queue, object, UserData{}, mine, current, &epoch),
+        0
+    );
+    EXPECT_EQ(current, theirs);
+    EXPECT_EQ(epoch, decided.epoch);
+
+    // Expecting the value it found, it succeeds on top of the decision.
+    EXPECT_EQ(
+        object_user_data_cas(queue, object, theirs, mine, current, &epoch), 1
+    );
+    EXPECT_EQ(current, mine);
+    EXPECT_EQ(epoch, decided.epoch + 1);
+
+    std::string second = "second";
+    object_write(queue, object, second.data(), second.size(), 16, 0);
+    object_close_clean(queue, object);
+}
+
+// A process that set the user data holds it. Once another writer has replaced
+// it, every write of this process is refused -- it does not take the other
+// writer's decision over and go on -- until it holds a value again.
+TEST(MirrorUserDataTest, replaced_holder_is_refused_until_it_holds_again) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000e6");
+    ASSERT_EQ(target_create(queue, members.target_all(), mirror_spec(3)), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    const UserData mine = user_data_of(10);
+    UserData current{};
+    uint64_t epoch = 0;
+    ASSERT_EQ(
+        object_user_data_cas(queue, object, UserData{}, mine, current, &epoch),
+        1
+    );
+    // Setting what is held already is the same call, and moves nothing.
+    uint64_t again = 0;
+    EXPECT_EQ(
+        object_user_data_cas(queue, object, UserData{}, mine, current, &again),
+        1
+    );
+    EXPECT_EQ(again, epoch);
+    std::string first = "first";
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+
+    // The other writer decides on a majority of the members.
+    RawstorObjectMeta before{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &before), 0);
+    RawstorObjectConfig decided = before.config;
+    ++decided.epoch;
+    const UserData theirs = user_data_of(50);
+    memcpy(decided.user_data, theirs.data(), theirs.size());
+    ASSERT_EQ(target_set_config(queue, members.target(0), decided), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(1), decided), 0);
+
+    std::string second = "second";
+    object_write(queue, object, second.data(), second.size(), 16, ESTALE);
+    // Refused for good, not once.
+    object_write(queue, object, second.data(), second.size(), 16, ESTALE);
+
+    // It holds a value again once it sets one, expecting what it found.
+    const UserData mine_again = user_data_of(90);
+    EXPECT_EQ(
+        object_user_data_cas(
+            queue, object, theirs, mine_again, current, &epoch
+        ),
+        1
+    );
+    object_write(queue, object, second.data(), second.size(), 16, 0);
+    object_close_clean(queue, object);
+}
+
+// Setting nothing, a process is not fenced by another writer's decision.
+TEST(MirrorUserDataTest, process_that_set_nothing_is_not_refused) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000e7");
+    ASSERT_EQ(target_create(queue, members.target_all(), mirror_spec(3)), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    std::string first = "first";
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+
+    RawstorObjectMeta before{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &before), 0);
+    RawstorObjectConfig decided = before.config;
+    ++decided.epoch;
+    const UserData theirs = user_data_of(50);
+    memcpy(decided.user_data, theirs.data(), theirs.size());
+    ASSERT_EQ(target_set_config(queue, members.target(0), decided), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(1), decided), 0);
+
+    std::string second = "second";
+    object_write(queue, object, second.data(), second.size(), 16, 0);
+    object_close_clean(queue, object);
+}
+
+TEST(MirrorUserDataTest, refusals) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000e5");
+    ASSERT_EQ(target_create(queue, members.target_all(), mirror_spec(3)), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    UserData value{};
+    uint64_t epoch = 0;
+    // Missing buffers are refused before anything is queued.
+    EXPECT_EQ(
+        rawstor_object_user_data(
+            object, nullptr, &epoch, [](ssize_t, void*) -> int { return 0; },
+            nullptr
+        ),
+        -EINVAL
+    );
+    object_close_clean(queue, object);
+
+    // A read-only open decides nothing.
+    ASSERT_EQ(
+        target_open(queue, members.target_all(), &object, RAWSTOR_READONLY), 0
+    );
+    EXPECT_EQ(object_user_data(queue, object, value, &epoch), -EROFS);
+    EXPECT_EQ(
+        object_user_data_cas(
+            queue, object, UserData{}, user_data_of(1), value, &epoch
+        ),
+        -EROFS
+    );
+    object_close_clean(queue, object);
 }
 
 } // unnamed namespace

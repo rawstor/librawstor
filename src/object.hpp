@@ -127,6 +127,15 @@ public:
 
     virtual rawstd::Task<void> flush() = 0;
 
+    // The object's user data, kept in the register of its first chunk
+    // (rawstor_object_user_data()/_cas()).
+    virtual rawstd::Task<void> user_data(uint8_t* value, uint64_t* epoch) = 0;
+
+    virtual rawstd::Task<bool> user_data_cas(
+        const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+        uint64_t* epoch
+    ) = 0;
+
     // `clean`: the writer is done cleanly (Chunk::close()); false for a
     // writer gone mid-flight -- rawstor_object_abandon().
     virtual rawstd::Task<void> close(bool clean = true) = 0;
@@ -177,6 +186,13 @@ public:
     write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) override;
 
     rawstd::Task<void> flush() override;
+
+    rawstd::Task<void> user_data(uint8_t* value, uint64_t* epoch) override;
+
+    rawstd::Task<bool> user_data_cas(
+        const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+        uint64_t* epoch
+    ) override;
 
     rawstd::Task<void> close(bool clean = true) override;
 };
@@ -253,6 +269,13 @@ private:
     // string against before ever constructing this object.
     rawstd::Task<Chunk*> _chunk(uint32_t index);
 
+    // user_data_cas() with a value to change: one decision over the registers
+    // of every chunk.
+    rawstd::Task<bool> _user_data_swap(
+        const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+        uint64_t* epoch
+    );
+
     // Every chunk opened so far, in order -- the ones flush()/close() act
     // on.
     std::vector<Chunk*> _open_chunks() const;
@@ -317,6 +340,13 @@ public:
     write_zeroes(size_t size, uint64_t offset, bool unmap, bool sync) override;
 
     rawstd::Task<void> flush() override;
+
+    rawstd::Task<void> user_data(uint8_t* value, uint64_t* epoch) override;
+
+    rawstd::Task<bool> user_data_cas(
+        const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+        uint64_t* epoch
+    ) override;
 
     rawstd::Task<void> close(bool clean = true) override;
 };

@@ -293,6 +293,7 @@ typedef struct {
     unsigned long long sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
     unsigned char nroles;
     unsigned char roles[RAWSTOR_OBJECT_MAX_WIDTH];
+    unsigned char user_data[RAWSTOR_OBJECT_USER_DATA_SIZE];
 } PyObjectConfig;
 
 static void PyObjectConfig_dealloc(PyObjectConfig* self) {
@@ -314,8 +315,32 @@ static PyObject* PyObjectConfig_new(
             self->sync_id_history[i] = 0;
         }
         self->nroles = 0;
+        memset(self->user_data, 0, sizeof(self->user_data));
     }
     return (PyObject*)self;
+}
+
+// Shared by _init and the user_data setter: `value` must be a bytes object
+// of exactly RAWSTOR_OBJECT_USER_DATA_SIZE bytes.
+static int parse_user_data(PyObject* value, unsigned char* out) {
+    char* buffer = NULL;
+    Py_ssize_t size = 0;
+    if (!PyBytes_Check(value)) {
+        PyErr_SetString(PyExc_TypeError, "user_data must be bytes");
+        return -1;
+    }
+    if (PyBytes_AsStringAndSize(value, &buffer, &size) < 0) {
+        return -1;
+    }
+    if (size != RAWSTOR_OBJECT_USER_DATA_SIZE) {
+        PyErr_Format(
+            PyExc_ValueError, "user_data must be exactly %d bytes",
+            RAWSTOR_OBJECT_USER_DATA_SIZE
+        );
+        return -1;
+    }
+    memcpy(out, buffer, RAWSTOR_OBJECT_USER_DATA_SIZE);
+    return 0;
 }
 
 // Shared by _init and the sync_id_history setter: `value` must be a
@@ -387,14 +412,21 @@ PyObjectConfig_init(PyObjectConfig* self, PyObject* args, PyObject* kwargs) {
     unsigned long long sync_id = 0;
     PyObject* sync_id_history_obj = NULL;
     PyObject* roles_obj = NULL;
-    static char* kwlist[] = {
-        "epoch", "sync_id", "sync_id_history", "roles", NULL
-    };
+    PyObject* user_data_obj = NULL;
+    static char* kwlist[] = {"epoch", "sync_id",   "sync_id_history",
+                             "roles", "user_data", NULL};
     if (!PyArg_ParseTupleAndKeywords(
-            args, kwargs, "|KKOO", kwlist, &epoch, &sync_id,
-            &sync_id_history_obj, &roles_obj
+            args, kwargs, "|KKOOO", kwlist, &epoch, &sync_id,
+            &sync_id_history_obj, &roles_obj, &user_data_obj
         )) {
         return -1;
+    }
+
+    unsigned char user_data[RAWSTOR_OBJECT_USER_DATA_SIZE] = {0};
+    if (user_data_obj != NULL) {
+        if (parse_user_data(user_data_obj, user_data) < 0) {
+            return -1;
+        }
     }
 
     unsigned char roles[RAWSTOR_OBJECT_MAX_WIDTH] = {0};
@@ -419,6 +451,7 @@ PyObjectConfig_init(PyObjectConfig* self, PyObject* args, PyObject* kwargs) {
     }
     memcpy(self->roles, roles, sizeof(self->roles));
     self->nroles = nroles;
+    memcpy(self->user_data, user_data, sizeof(self->user_data));
     return 0;
 }
 
@@ -544,6 +577,28 @@ static int PyObjectConfig_set_roles(
     return 0;
 }
 
+static PyObject*
+PyObjectConfig_get_user_data(PyObjectConfig* self, void* Py_UNUSED(closure)) {
+    return PyBytes_FromStringAndSize(
+        (const char*)self->user_data, RAWSTOR_OBJECT_USER_DATA_SIZE
+    );
+}
+
+static int PyObjectConfig_set_user_data(
+    PyObjectConfig* self, PyObject* value, void* Py_UNUSED(closure)
+) {
+    if (value == NULL) {
+        PyErr_SetString(PyExc_TypeError, "Cannot delete user_data attribute");
+        return -1;
+    }
+    unsigned char user_data[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    if (parse_user_data(value, user_data) < 0) {
+        return -1;
+    }
+    memcpy(self->user_data, user_data, sizeof(self->user_data));
+    return 0;
+}
+
 static PyGetSetDef PyObjectConfig_getset[] = {
     {"epoch", (getter)PyObjectConfig_get_epoch,
      (setter)PyObjectConfig_set_epoch, NULL, NULL},
@@ -553,6 +608,8 @@ static PyGetSetDef PyObjectConfig_getset[] = {
      (setter)PyObjectConfig_set_sync_id_history, NULL, NULL},
     {"roles", (getter)PyObjectConfig_get_roles,
      (setter)PyObjectConfig_set_roles, NULL, NULL},
+    {"user_data", (getter)PyObjectConfig_get_user_data,
+     (setter)PyObjectConfig_set_user_data, NULL, NULL},
     {NULL, NULL, NULL, NULL, NULL}
 };
 
@@ -594,6 +651,7 @@ typedef struct {
     unsigned long long epoch;
     unsigned long long sync_id;
     unsigned long long sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
+    unsigned char user_data[RAWSTOR_OBJECT_USER_DATA_SIZE];
 } PyObjectMeta;
 
 static void PyObjectMeta_dealloc(PyObjectMeta* self) {
@@ -688,6 +746,13 @@ PyObjectMeta_get_sync_id_history(PyObjectMeta* self, void* Py_UNUSED(closure)) {
     return tuple;
 }
 
+static PyObject*
+PyObjectMeta_get_user_data(PyObjectMeta* self, void* Py_UNUSED(closure)) {
+    return PyBytes_FromStringAndSize(
+        (const char*)self->user_data, RAWSTOR_OBJECT_USER_DATA_SIZE
+    );
+}
+
 static PyGetSetDef PyObjectMeta_getset[] = {
     {"size", (getter)PyObjectMeta_get_size, NULL, NULL, NULL},
     {"width", (getter)PyObjectMeta_get_width, NULL, NULL, NULL},
@@ -703,6 +768,7 @@ static PyGetSetDef PyObjectMeta_getset[] = {
     {"sync_id", (getter)PyObjectMeta_get_sync_id, NULL, NULL, NULL},
     {"sync_id_history", (getter)PyObjectMeta_get_sync_id_history, NULL, NULL,
      NULL},
+    {"user_data", (getter)PyObjectMeta_get_user_data, NULL, NULL, NULL},
     {NULL, NULL, NULL, NULL, NULL}
 };
 
@@ -1091,6 +1157,9 @@ build_mirror_meta(const struct RawstorObjectMeta* meta, ssize_t index) {
     for (int i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; i++) {
         py_meta->sync_id_history[i] = meta->config.sync_id_history[i];
     }
+    memcpy(
+        py_meta->user_data, meta->config.user_data, sizeof(py_meta->user_data)
+    );
     return (PyObject*)py_meta;
 }
 
@@ -1197,6 +1266,7 @@ py_rawstor_object_sync_accept(PyObject* Py_UNUSED(self), PyObject* args) {
     }
     config.nroles = py_config->nroles;
     memcpy(config.roles, py_config->roles, py_config->nroles);
+    memcpy(config.user_data, py_config->user_data, sizeof(config.user_data));
 
     struct RawstorObjectBallot ballot = {counter, proposer};
     struct RawstorObjectBallot next = {next_counter, next_proposer};

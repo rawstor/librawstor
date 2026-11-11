@@ -204,6 +204,12 @@ struct RawstorObjectConfig {
     uint8_t nroles;
     /** enum RawstorObjectMemberRole per member, in member order. */
     uint8_t roles[RAWSTOR_OBJECT_MAX_WIDTH];
+    /**
+     * Opaque bytes the application keeps in the register: decided together
+     * with the rest of the configuration, so a change of them moves the
+     * `epoch` (rawstor_object_user_data_cas()). Zero until first set.
+     */
+    uint8_t user_data[RAWSTOR_OBJECT_USER_DATA_SIZE];
 };
 
 /**

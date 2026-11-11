@@ -321,6 +321,116 @@ int rawstor_object_flush(
     RawstorObject* object, int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
+/** Size of the user data of an object. */
+#define RAWSTOR_OBJECT_USER_DATA_SIZE 256
+
+/**
+ * @brief Asynchronously read the object's user data.
+ *
+ * An object carries RAWSTOR_OBJECT_USER_DATA_SIZE opaque bytes for the
+ * application, zero until first set. They are kept in the configuration
+ * register of the object's first chunk, replicated on all that chunk's
+ * members, and the read goes through the register: the answer is the value a
+ * majority of the members decided -- another writer's latest change included
+ * -- not what this process saw last.
+ *
+ * A process that set the user data (a rawstor_object_user_data_cas() that
+ * returned 1) holds the value it set. Once it finds the object holding another
+ * one -- another writer replaced it, and this process learns of it with its
+ * next write, read or change -- every write of the process (writes, discards,
+ * zeroing and flushes) fails with @c -ESTALE, and goes on failing until it
+ * sets a value again. That is what makes the user data usable as a lock held
+ * by one writer at a time, a leader's identity and the like. A process that
+ * never set the user data is not held to any.
+ *
+ * @param object  Open object handle obtained from rawstor_target_open(),
+ *                opened for writing: the read is a decision of the register.
+ * @param value   Receives RAWSTOR_OBJECT_USER_DATA_SIZE bytes. Must remain
+ *                valid until @p cb is invoked.
+ * @param epoch   Receives the configuration epoch the value was decided at;
+ *                may be NULL. Must remain valid until @p cb is invoked.
+ * @param cb      Callback invoked on completion.
+ *                - @p result is zero on success, or a negative errno on
+ *                  failure (@c -EROFS for an object opened
+ *                  RAWSTOR_READONLY, @c -EIO when no majority of the
+ *                  members could be reached).
+ *                - @p data is the same pointer passed as @p data below.
+ *                - Return zero on success. A negative errno value signals an
+ *                  error back into the I/O completion machinery.
+ * @param data    User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the read was successfully queued; negative errno on immediate
+ *         failure (in which case @p cb is never invoked).
+ *
+ * @see rawstor_object_user_data_cas
+ */
+int rawstor_object_user_data(
+    RawstorObject* object, uint8_t* value, uint64_t* epoch,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously set the object's user data if it is @p expected
+ *        (compare and swap).
+ *
+ * The register changes only when it holds @p expected at the moment a
+ * majority of the members decide the change; otherwise nothing is written.
+ * Concurrent callers, in this process or others, are ordered by the
+ * register: at most one of several that expect the same value succeeds, and
+ * the others learn the value that won. A register that already holds
+ * @p desired counts as set, so a call can be repeated. See
+ * rawstor_object_user_data() for where the bytes are kept and what a process
+ * that set them is held to.
+ *
+ * A change of the value moves the configuration epoch of a chunk, and the
+ * call returns only after the value is decided on the register of every chunk
+ * of the object: from then on a writer that held the previous value is refused
+ * on every chunk. The chunks are decided together, in two phases that each go
+ * to all of them in parallel (two phases of the register per chunk), so that a
+ * process that stalls in the middle cannot overwrite what another decided
+ * meanwhile. If the call fails, repeat it with the same arguments, and write
+ * nothing before it returns 1.
+ *
+ * Confirming a value (@p expected equal to @p desired) that this process holds
+ * on every chunk -- it set it there and has not found it replaced since --
+ * writes nothing the other writers could tell apart and leaves the epochs where
+ * they are; the call still goes through the first chunk's register, so it
+ * confirms the value is the one a majority holds. A process that confirms a
+ * value it did not set is made the holder of it on every chunk, like one that
+ * swaps. A value names its holder: two processes that set the same value are
+ * not told apart.
+ *
+ * @param object    Open object handle obtained from rawstor_target_open(),
+ *                  opened for writing.
+ * @param expected  RAWSTOR_OBJECT_USER_DATA_SIZE bytes the register must
+ *                  hold. Must remain valid until @p cb is invoked.
+ * @param desired   RAWSTOR_OBJECT_USER_DATA_SIZE bytes to set. Must remain
+ *                  valid until @p cb is invoked.
+ * @param current   Receives the value the register holds after the call:
+ *                  @p desired on success, the value that was there when it
+ *                  did not match. Must remain valid until @p cb is invoked.
+ * @param epoch     Receives the epoch of that value; may be NULL. Must
+ *                  remain valid until @p cb is invoked.
+ * @param cb        Callback invoked on completion.
+ *                  - @p result is 1 if the register holds @p desired, 0 if
+ *                    it held another value (not an I/O error), or a negative
+ *                    errno on failure, as for rawstor_object_user_data().
+ *                  - @p data is the same pointer passed as @p data below.
+ *                  - Return zero on success. A negative errno value signals
+ *                    an error back into the I/O completion machinery.
+ * @param data      User-defined context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if the change was successfully queued; negative errno on
+ *         immediate failure (in which case @p cb is never invoked).
+ *
+ * @see rawstor_object_user_data
+ */
+int rawstor_object_user_data_cas(
+    RawstorObject* object, const uint8_t* expected, const uint8_t* desired,
+    uint8_t* current, uint64_t* epoch, int (*cb)(ssize_t result, void* data),
+    void* data
+) RAWSTOR_NOEXCEPT;
+
 #ifdef __cplusplus
 }
 #endif

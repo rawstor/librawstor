@@ -28,6 +28,7 @@ separately.
 | Resync across processes (`resync_owner`, sweep with `RESYNC`, lease of a silent owner) | 2 | ✅ | `src/chunk.cpp` (`_resync_run()`, `_resync_renew()`, `_lease_watch()`, `_resync_release()`) |
 | `LOST` cleared by a rule on the accepted value | 2 | ✅ | [Clearing `LOST`](#clearing-lost), `src/slot.cpp` (`clears_lost()`) |
 | `SET_CONFIG` and `rawstor_target_set_member_config()` removed; `rawstor resolve` decides through the register | 2 | ✅ | `cli/resolve.c` |
+| Application user data in the register's value: `rawstor_object_user_data()` / `_cas()` | 2 | ✅ | [User data](#user-data), `src/chunk.cpp` (`Chunk::_user_data_change()`) |
 | The client keeps the register value once per chunk, not per member | 2 | ✅ | `MirrorControl` (the decided configuration and the `Proposer`), [The register](#the-register-caspaxos) |
 | OST serves one backend Slot; mirroring is coordinated by the client | 1 | ✅ | [Mirroring](mirroring.md#one-copy-per-server) |
 | Witness participation in the configuration register for N = 2 | Before 2 | ✅ | `SYNC_PREPARE` / `SYNC_ACCEPT` on OST, file, LVM, ZFS and MDS (SQLite) witnesses; [MDS design](mds.md#witness) |
@@ -297,6 +298,104 @@ the members hold.
 The value carries no `state` of the copy itself: `DIRTY`, `CLEAN` and
 `LOST` stay the copy's own ([Mirroring](mirroring.md#states-and-roles)).
 
+### User data
+
+The value also carries `user_data`: `RAWSTOR_OBJECT_USER_DATA_SIZE` (256) opaque
+bytes of the application, zero until first set. They are part of the decided
+value, so they are replicated on every member of the chunk with the roles and
+the sync set, and are read and changed under the register's rules. An object
+has one set of them: the object-level calls take no offset, and the first
+chunk's register decides them, as `rawstor_target_meta()` and the register's
+requests of a whole-object target address the first chunk too. The other
+chunks carry a copy (see *Holding the value*).
+
+- `rawstor_object_user_data()` reads them through the register, so the
+  answer is what a majority of the members decided, not what this process saw
+  last. It answers with the `epoch` the value was decided at.
+- `rawstor_object_user_data_cas()` sets `desired` if the register holds
+  `expected`, as one change of the register (`Chunk::_user_data_change()`): the
+  change is a function of the value the register has decided, so a value
+  another writer decided is answered, not overwritten, and the answer is the
+  value held after the call. A register that holds `desired` already counts
+  as set, so the call can be repeated. Both need a writable open.
+- A change moves the `epoch`; the sync set and the roles stay. Setting the
+  value held moves nothing, but still goes through the register.
+- The other transitions keep the bytes: they are copied from the decided value
+  into every configuration a transition builds, and `rawstor resolve` keeps
+  those of the first winner.
+- A member that does not take the decision is excluded like one that fails a
+  write.
+
+#### Holding the value
+
+A write refused for another writer's `epoch` does not stop a writer by itself:
+the Chunk takes that writer's decision over and repeats the write
+([Epoch on writes](#epoch-on-writes)). What stops a writer is the value it
+holds. A process that set the user data -- a `cas` that left the register
+holding `desired` -- holds `desired`. When it takes a decision over and finds
+the register holding another value, it has lost what it set: every write of
+the process (`WRITE`, `WRITE_ZEROES`, `DISCARD` and `FLUSH`) fails with
+`-ESTALE`, and goes on failing until the process holds a value again, by a
+`cas` expecting the one it found. A process that never set the user data is
+not held to any and takes every decision over as before.
+
+The epoch is a chunk's own, so a writer is stopped on a chunk once that chunk's
+register has moved to the new value, and not before. For an object of several
+chunks, `rawstor_object_user_data_cas()` therefore decides the value on the
+register of every chunk, and returns when they all have. The writer that
+decided the value starts writing after that, so a writer that held the
+previous value is refused on every chunk from then on; a write of it that
+reached a chunk before, preceded the new holder's.
+
+It is one decision over all the registers, not one chunk after another: a
+swap that set chunk after chunk would let two proposers racing each other
+leave each chunk with whichever wrote last, and a writer that stalled between
+two chunks would overwrite the new holder's value on the rest when it woke up.
+The swap (`MultiChunkObject::_user_data_swap()`) takes the transition lock of
+every chunk, in ascending order so that two swaps never wait for each other,
+and goes in two phases:
+
+1. *Prepare* on every register (`Proposer::prepare()`): each member promises a
+   ballot, and the replies hold the value each register has decided. The first
+   chunk's value decides: the swap goes on if it is `expected`, or `desired`
+   already (the swap is being repeated); otherwise it ends there, answering
+   with that value, and nothing is set.
+2. *Accept* `desired` on every register under the ballot it prepared
+   (`Proposer::accept()`), without preparing again. A register that refuses
+   has promised a higher ballot meanwhile: another proposer is at work, nothing
+   is decided on it, and the swap starts over from the values that proposer
+   left.
+
+A proposer that stalls between the phases cannot overwrite anything when it
+wakes up: its accepts are below the promises the later one made. A proposer
+that stops in the middle of the second phase leaves some chunks with the value;
+whoever swaps next sees it in the replies of the first phase and finishes the
+job, and the call can be repeated with the same arguments.
+
+Confirming a value (`expected` equal to `desired`) is a swap like another unless
+this process holds the value on every chunk already -- it set it there, and
+has not found it replaced since. Then nothing is to be decided on the other
+chunks, and only the first chunk's register is asked, which is what keeps a
+renewal cheap; and if it holds another value by now, the answer says so and
+the process is refused from there on. A process that confirms a value it never
+set, a holder of an earlier incarnation's say, is made the holder on every
+chunk by that swap: held on the first chunk alone, it would not be stopped on
+the others when the value is replaced. A value names its holder: two processes
+that set the same value are not told apart by the register, and neither
+fences the other.
+
+The swap costs two phases of the register on every chunk when the value
+changes or this process does not hold it yet, the chunks going in parallel in
+each phase, and one decision on the first chunk when a holder confirms it. An
+object of a single chunk has one register to decide on.
+
+There are two ways to read the bytes, with different guarantees. The call
+above is the register's own read, made through an object opened for writing.
+`rawstor_target_meta()` returns each member's own record -- its replica, with
+the ballots, per member and without opening the object -- which can lag
+behind the decided value on a member that missed a decision. It is how a
+reader that cannot open the object for writing sees the bytes.
+
 ## Epoch on writes
 
 `WRITE`, `WRITE_ZEROES`, `DISCARD` and `FLUSH` carry the `epoch` of the
@@ -521,17 +620,23 @@ record or frames, so both change in place. Details in
     `-ESTALE` from a copy past it; flag `RESYNC` on
     `WRITE`/`WRITE_ZEROES`.
 - `include/rawstor/target.h`: `RawstorObjectConfig` carries
-  `resync_owner`, `RawstorObjectMeta` the ballots (`RawstorObjectBallot`).
+  `resync_owner` and `user_data`, `RawstorObjectMeta` the ballots
+  (`RawstorObjectBallot`).
   `rawstor_target_sync_prepare()` and `rawstor_target_sync_accept()` apply
   the requests to one member of a target, with `member_index` as its
   position.
+- `include/rawstor/object.h`: `rawstor_object_user_data()` and
+  `rawstor_object_user_data_cas()` ([User data](#user-data)).
 - The epoch and the `RESYNC` flag need no C API: `rawstor-ost` checks them
   in the server's `Slot`.
 - `src/blk_backend.cpp`: the record's encoding carries the ballots and
   `resync_owner` -- colon-separated fields, valid in an LVM tag and a ZFS
-  property. `META_MAX_SIZE` is 1024: a width-255 record with every field
-  at its largest fits (`tests/test_blk_backend.cpp`), well within a ZFS
-  user property's 8192 bytes.
+  property -- and, only when it is not all zero, the user data as a trailing
+  `user_data` field of hex digits. `META_MAX_SIZE` is 1024: a width-255
+  record with every field at its largest fits while the user data is unset,
+  and with it set up to 158 members do; a wider chunk's record is refused
+  with `EOVERFLOW` rather than truncated (`tests/test_blk_backend.cpp`). A
+  ZFS user property takes 8192 bytes.
 
 ## Implementation stages
 

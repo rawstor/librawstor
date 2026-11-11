@@ -999,6 +999,269 @@ TEST(ObjectTest, mds_io_beyond_first_chunk) {
     run(*queue, target.remove(*queue));
 }
 
+// The user data of an object is decided in the register of its first chunk and
+// handed on to every other chunk before the call returns, so that the epoch of
+// every chunk has moved past what the writer holding the previous value knew.
+TEST(ObjectTest, mds_user_data_is_set_on_every_chunk) {
+    rawstor::tests::ObjectEnv env(8810, 8811);
+    auto queue = rawio::Queue::create(16);
+    const uint64_t chunk_size = 64 * 1024;
+    RawstorObjectSpec spec{};
+    spec.size = 4 * chunk_size;
+    spec.chunk_size = chunk_size;
+    spec.width = 1;
+    char created[4096]{};
+    ASSERT_GT(
+        location_create(*queue, env.location(), spec, created, sizeof(created)),
+        0
+    );
+    rawstor::Target target(rawstd::URI::uriv(created));
+    auto object = run(*queue, target.open(*queue, 0));
+    const std::string created_target(created);
+
+    auto chunk_meta = [&](uint64_t offset) {
+        RawstorObjectMeta meta{};
+        EXPECT_EQ(target_meta(*queue, created_target, offset, &meta, 1), 1);
+        return meta;
+    };
+    auto holds = [&](const RawstorObjectMeta& meta, const uint8_t* value) {
+        return memcmp(
+                   meta.config.user_data, value, RAWSTOR_OBJECT_USER_DATA_SIZE
+               ) == 0;
+    };
+    const uint64_t offsets[] = {0, chunk_size, 2 * chunk_size, 3 * chunk_size};
+    uint64_t epochs[4];
+    for (size_t i = 0; i < 4; ++i) {
+        epochs[i] = chunk_meta(offsets[i]).config.epoch;
+    }
+
+    uint8_t zero[RAWSTOR_OBJECT_USER_DATA_SIZE] = {};
+    uint8_t first[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    memset(first, 0x5a, sizeof(first));
+    uint8_t second[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    memset(second, 0xa5, sizeof(second));
+    uint8_t current[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    uint64_t epoch = 0;
+
+    EXPECT_TRUE(
+        run(*queue, object->user_data_cas(zero, first, current, &epoch))
+    );
+    EXPECT_EQ(memcmp(current, first, sizeof(first)), 0);
+    for (size_t i = 0; i < 4; ++i) {
+        RawstorObjectMeta meta = chunk_meta(offsets[i]);
+        EXPECT_TRUE(holds(meta, first)) << i;
+        EXPECT_GT(meta.config.epoch, epochs[i]) << i;
+        epochs[i] = meta.config.epoch;
+    }
+
+    // Confirming the value held moves nothing, on any chunk.
+    EXPECT_TRUE(
+        run(*queue, object->user_data_cas(first, first, current, &epoch))
+    );
+    for (size_t i = 0; i < 4; ++i) {
+        EXPECT_EQ(chunk_meta(offsets[i]).config.epoch, epochs[i]) << i;
+    }
+
+    // So does the same swap made again, as after one that failed halfway.
+    EXPECT_TRUE(
+        run(*queue, object->user_data_cas(zero, first, current, &epoch))
+    );
+    for (size_t i = 0; i < 4; ++i) {
+        EXPECT_EQ(chunk_meta(offsets[i]).config.epoch, epochs[i]) << i;
+    }
+
+    EXPECT_TRUE(
+        run(*queue, object->user_data_cas(first, second, current, &epoch))
+    );
+    for (size_t i = 0; i < 4; ++i) {
+        RawstorObjectMeta meta = chunk_meta(offsets[i]);
+        EXPECT_TRUE(holds(meta, second)) << i;
+        EXPECT_GT(meta.config.epoch, epochs[i]) << i;
+    }
+
+    // A swap that does not match hands nothing on.
+    EXPECT_FALSE(
+        run(*queue, object->user_data_cas(first, zero, current, &epoch))
+    );
+    EXPECT_EQ(memcmp(current, second, sizeof(second)), 0);
+    EXPECT_TRUE(holds(chunk_meta(3 * chunk_size), second));
+
+    run(*queue, object->close());
+    run(*queue, target.remove(*queue));
+}
+
+namespace {
+
+// An mds:// object of four chunks of one member each, and the bytes its user
+// data calls work with.
+struct UserDataObject {
+    static constexpr uint64_t chunk_size = 64 * 1024;
+    static constexpr size_t chunks = 4;
+
+    rawstor::tests::ObjectEnv env;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(16);
+    std::string target_string;
+    std::unique_ptr<rawstor::Target> target;
+    std::unique_ptr<rawstor::Object> object;
+    uint8_t zero[RAWSTOR_OBJECT_USER_DATA_SIZE] = {};
+    uint8_t first[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    uint8_t foreign[RAWSTOR_OBJECT_USER_DATA_SIZE];
+
+    UserDataObject(int port, int monitor_port) : env(port, monitor_port) {
+        memset(first, 0x5a, sizeof(first));
+        memset(foreign, 0x77, sizeof(foreign));
+        RawstorObjectSpec spec{};
+        spec.size = chunks * chunk_size;
+        spec.chunk_size = chunk_size;
+        spec.width = 1;
+        char created[4096]{};
+        EXPECT_GT(
+            location_create(
+                *queue, env.location(), spec, created, sizeof(created)
+            ),
+            0
+        );
+        target_string = created;
+        target = std::make_unique<rawstor::Target>(rawstd::URI::uriv(created));
+        object = run(*queue, target->open(*queue, 0));
+    }
+
+    ~UserDataObject() {
+        run(*queue, object->close());
+        run(*queue, target->remove(*queue));
+    }
+
+    RawstorObjectMeta meta(size_t chunk) {
+        RawstorObjectMeta meta{};
+        EXPECT_EQ(
+            target_meta(*queue, target_string, chunk * chunk_size, &meta, 1), 1
+        );
+        return meta;
+    }
+
+    // Another writer's decision on one chunk: `value`, a higher epoch.
+    void decide(size_t chunk, const uint8_t* value) {
+        RawstorObjectConfig config = meta(chunk).config;
+        config.epoch += 5;
+        memcpy(config.user_data, value, RAWSTOR_OBJECT_USER_DATA_SIZE);
+        ASSERT_EQ(
+            target_set_member_sync_state(
+                *queue, target_string, chunk * chunk_size, 0, config
+            ),
+            0
+        );
+    }
+};
+
+} // namespace
+
+// What the other chunks hold does not matter to a swap that the first chunk
+// allows: it sets its value on all of them.
+TEST(ObjectTest, mds_user_data_swap_replaces_what_a_follower_chunk_holds) {
+    UserDataObject o(8812, 8813);
+    o.decide(2, o.foreign);
+    const uint64_t foreign_epoch = o.meta(2).config.epoch;
+
+    uint8_t current[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    uint64_t epoch = 0;
+    EXPECT_TRUE(
+        run(*o.queue, o.object->user_data_cas(o.zero, o.first, current, &epoch))
+    );
+    for (size_t i = 0; i < UserDataObject::chunks; ++i) {
+        EXPECT_EQ(
+            memcmp(o.meta(i).config.user_data, o.first, sizeof(o.first)), 0
+        ) << i;
+    }
+    EXPECT_GT(o.meta(2).config.epoch, foreign_epoch);
+}
+
+// A change another writer made on the first chunk comes back as the answer,
+// and nothing is set on any chunk.
+TEST(ObjectTest, mds_user_data_swap_refused_by_the_first_chunk_sets_nothing) {
+    UserDataObject o(8814, 8815);
+    o.decide(0, o.foreign);
+    const uint64_t decided_epoch = o.meta(0).config.epoch;
+    uint64_t epochs[UserDataObject::chunks];
+    for (size_t i = 1; i < UserDataObject::chunks; ++i) {
+        epochs[i] = o.meta(i).config.epoch;
+    }
+
+    uint8_t current[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    uint64_t epoch = 0;
+    EXPECT_FALSE(
+        run(*o.queue, o.object->user_data_cas(o.zero, o.first, current, &epoch))
+    );
+    EXPECT_EQ(memcmp(current, o.foreign, sizeof(o.foreign)), 0);
+    EXPECT_EQ(epoch, decided_epoch);
+    for (size_t i = 1; i < UserDataObject::chunks; ++i) {
+        RawstorObjectMeta meta = o.meta(i);
+        EXPECT_EQ(memcmp(meta.config.user_data, o.zero, sizeof(o.zero)), 0)
+            << i;
+        EXPECT_EQ(meta.config.epoch, epochs[i]) << i;
+    }
+}
+
+// A process that confirms a value it never set is not held to it on the other
+// chunks by the first one alone: the confirmation sets it there too, so that
+// the writer that replaces it later is not unfenced on a chunk.
+TEST(ObjectTest, mds_user_data_confirmed_by_a_process_that_did_not_set_it) {
+    UserDataObject o(8816, 8817);
+    // The value is on every chunk already, set by another process.
+    for (size_t i = 0; i < UserDataObject::chunks; ++i) {
+        o.decide(i, o.first);
+    }
+
+    uint8_t current[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    uint64_t epoch = 0;
+    EXPECT_TRUE(run(
+        *o.queue, o.object->user_data_cas(o.first, o.first, current, &epoch)
+    ));
+
+    // Another writer replaces it everywhere.
+    for (size_t i = 0; i < UserDataObject::chunks; ++i) {
+        o.decide(i, o.foreign);
+    }
+
+    // The process that confirmed it is refused on the last chunk too.
+    const std::string data(16, 'x');
+    const uint64_t offset = 3 * UserDataObject::chunk_size;
+    try {
+        run(*o.queue,
+            o.object->pwrite(data.data(), data.size(), offset, false));
+        ADD_FAILURE() << "the write was not refused";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ESTALE);
+    }
+}
+
+// What it holds on every chunk, a process confirms with the first chunk alone.
+TEST(ObjectTest, mds_user_data_confirmed_by_a_holder_asks_the_first_chunk) {
+    UserDataObject o(8818, 8819);
+    uint8_t current[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    uint64_t epoch = 0;
+    ASSERT_TRUE(
+        run(*o.queue, o.object->user_data_cas(o.zero, o.first, current, &epoch))
+    );
+    uint64_t epochs[UserDataObject::chunks];
+    for (size_t i = 0; i < UserDataObject::chunks; ++i) {
+        epochs[i] = o.meta(i).config.epoch;
+    }
+
+    EXPECT_TRUE(run(
+        *o.queue, o.object->user_data_cas(o.first, o.first, current, &epoch)
+    ));
+    for (size_t i = 0; i < UserDataObject::chunks; ++i) {
+        EXPECT_EQ(o.meta(i).config.epoch, epochs[i]) << i;
+    }
+
+    // And finds out it lost it when another writer replaced it.
+    o.decide(0, o.foreign);
+    EXPECT_FALSE(run(
+        *o.queue, o.object->user_data_cas(o.first, o.first, current, &epoch)
+    ));
+    EXPECT_EQ(memcmp(current, o.foreign, sizeof(o.foreign)), 0);
+}
+
 TEST(ObjectMetaTest, chunk_uris_do_not_probe_for_witness_records) {
     rawstor::tests::ObjectEnv env(8796, 8797);
     std::string uri =
