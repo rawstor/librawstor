@@ -359,6 +359,7 @@ OST commands:
 | `SET_OBJECT` | any right in the token; `RAWSTOR_READONLY` needs `read`, a read-write open needs `write` | role | role |
 | `READ`, `META`, `LIST_VERSIONS` | `read` | role | role |
 | `WRITE`, `FLUSH`, `LEAVE` | `write` | — | — |
+| `SYNC_PREPARE`, `SYNC_ACCEPT` (the chunk's configuration register on a witness member) | `write` | — | — |
 | `DISCARD`, `WRITE_ZEROES` with `UNMAP` | `discard` | — | — |
 | `WRITE_ZEROES` without `UNMAP` | `write` | — | — |
 | `ALLOCATE`, `RELEASE`, `CREATE_VERSION`, `FREEZE`, `THAW` | `manage` | — | role |
@@ -374,9 +375,19 @@ MDS commands:
 | `LIST_VERSIONS` | `reader` | — | role |
 | `LIST` | any, answers only the tenant of the certificate | — | role: any tenant or all |
 | `OBJ_CREATE`, `OBJ_RESIZE`, `OBJ_REMOVE`, `OBJ_COMMIT_VERSION`, `OBJ_REMOVE_VERSION` | `manager` | — | role |
-| `ALLOCATE`, `RELEASE`, `META`, `SYNC_PREPARE`, `SYNC_ACCEPT` on a witness hosted by the MDS | as the same command on an OST, by token | — | as on an OST |
+| `ALLOCATE`, `RELEASE`, `META`, `SYNC_PREPARE`, `SYNC_ACCEPT` on a witness hosted by the MDS | as the same command on an OST (`SYNC_*`: `write`), by token | — | as on an OST |
 | `LOCATION_INFO` | — | — | role |
 | tenant, principal and role management (admin API) | — | — | role |
+
+`SYNC_PREPARE` and `SYNC_ACCEPT` are how a writer records which copies are in
+sync, excludes one and takes it back, so every writer needs them and a
+`reader` must not have them. The same pair carries a manual branch resolution
+(`rawstor resolve`), which is therefore an operation of a principal holding
+`write`; the OST cannot tell the two uses apart, and restricting the manual one
+to `manager` would need a distinct command.
+
+Every command of the [protocol](protocol.md) appears in one of the tables; a
+command added later is refused until it is added here.
 
 Rules that apply to every row:
 
