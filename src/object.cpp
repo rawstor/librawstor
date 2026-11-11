@@ -426,13 +426,24 @@ rawstd::Task<bool> MultiChunkObject::user_data_cas(
     const uint8_t* expected, const uint8_t* desired, uint8_t* current,
     uint64_t* epoch
 ) {
-    // Confirming the value held changes nothing, so there is nothing to
-    // decide on the other chunks.
+    // Confirming a value this process holds on every chunk changes nothing,
+    // so only the first chunk is asked. A process that does not hold it
+    // there -- it never set it, or lost it on a chunk -- is not held to it
+    // on the other chunks, and a confirmation is the swap that makes it so.
     if (memcmp(expected, desired, RAWSTOR_OBJECT_USER_DATA_SIZE) == 0) {
-        Chunk* first = co_await _chunk(0);
-        co_return co_await first->user_data_cas(
-            expected, desired, current, epoch
+        std::vector<Chunk*> chunks(_chunks.size());
+        co_await rawstd::gather(
+            chunks.size(), [&](size_t i) -> rawstd::Task<void> {
+                chunks[i] = co_await _chunk(static_cast<uint32_t>(i));
+            }
         );
+        if (std::all_of(chunks.begin(), chunks.end(), [&](Chunk* chunk) {
+                return chunk->user_data_held(desired);
+            })) {
+            co_return co_await chunks[0]->user_data_cas(
+                expected, desired, current, epoch
+            );
+        }
     }
     co_return co_await _user_data_swap(expected, desired, current, epoch);
 }

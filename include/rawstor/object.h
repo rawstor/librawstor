@@ -391,10 +391,14 @@ int rawstor_object_user_data(
  * meanwhile. If the call fails, repeat it with the same arguments, and write
  * nothing before it returns 1.
  *
- * Setting the value the register already holds (@p expected equal to
- * @p desired) writes nothing the other writers could tell apart, leaves the
- * epochs where they are and hands nothing on; the call still goes through the
- * register, so it confirms the value is the one a majority holds.
+ * Confirming a value (@p expected equal to @p desired) that this process holds
+ * on every chunk -- it set it there and has not found it replaced since --
+ * writes nothing the other writers could tell apart and leaves the epochs where
+ * they are; the call still goes through the first chunk's register, so it
+ * confirms the value is the one a majority holds. A process that confirms a
+ * value it did not set is made the holder of it on every chunk, like one that
+ * swaps. A value names its holder: two processes that set the same value are
+ * not told apart.
  *
  * @param object    Open object handle obtained from rawstor_target_open(),
  *                  opened for writing.

@@ -585,6 +585,10 @@ public:
     user_data_accept(const uint8_t* desired, uint8_t* current, uint64_t* epoch);
     rawstd::Task<void> user_data_unlock();
 
+    // Whether this process set `value` on this chunk and has not found it
+    // replaced since: what a confirmation of `value` relies on.
+    bool user_data_held(const uint8_t* value) const;
+
     // flush()es (see above); for a mirrored object that is DIRTY, also
     // durably marks the in-sync members CLEAN with the current epoch/sync_id
     // before co_awaiting every Slot's close() concurrently -- a

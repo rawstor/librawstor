@@ -1139,11 +1139,11 @@ struct UserDataObject {
         return meta;
     }
 
-    // Another writer's decision on one chunk: its own value, a higher epoch.
-    void decide(size_t chunk) {
+    // Another writer's decision on one chunk: `value`, a higher epoch.
+    void decide(size_t chunk, const uint8_t* value) {
         RawstorObjectConfig config = meta(chunk).config;
         config.epoch += 5;
-        memcpy(config.user_data, foreign, sizeof(foreign));
+        memcpy(config.user_data, value, RAWSTOR_OBJECT_USER_DATA_SIZE);
         ASSERT_EQ(
             target_set_member_sync_state(
                 *queue, target_string, chunk * chunk_size, 0, config
@@ -1159,7 +1159,7 @@ struct UserDataObject {
 // allows: it sets its value on all of them.
 TEST(ObjectTest, mds_user_data_swap_replaces_what_a_follower_chunk_holds) {
     UserDataObject o(8812, 8813);
-    o.decide(2);
+    o.decide(2, o.foreign);
     const uint64_t foreign_epoch = o.meta(2).config.epoch;
 
     uint8_t current[RAWSTOR_OBJECT_USER_DATA_SIZE];
@@ -1179,7 +1179,7 @@ TEST(ObjectTest, mds_user_data_swap_replaces_what_a_follower_chunk_holds) {
 // and nothing is set on any chunk.
 TEST(ObjectTest, mds_user_data_swap_refused_by_the_first_chunk_sets_nothing) {
     UserDataObject o(8814, 8815);
-    o.decide(0);
+    o.decide(0, o.foreign);
     const uint64_t decided_epoch = o.meta(0).config.epoch;
     uint64_t epochs[UserDataObject::chunks];
     for (size_t i = 1; i < UserDataObject::chunks; ++i) {
@@ -1199,6 +1199,67 @@ TEST(ObjectTest, mds_user_data_swap_refused_by_the_first_chunk_sets_nothing) {
             << i;
         EXPECT_EQ(meta.config.epoch, epochs[i]) << i;
     }
+}
+
+// A process that confirms a value it never set is not held to it on the other
+// chunks by the first one alone: the confirmation sets it there too, so that
+// the writer that replaces it later is not unfenced on a chunk.
+TEST(ObjectTest, mds_user_data_confirmed_by_a_process_that_did_not_set_it) {
+    UserDataObject o(8816, 8817);
+    // The value is on every chunk already, set by another process.
+    for (size_t i = 0; i < UserDataObject::chunks; ++i) {
+        o.decide(i, o.first);
+    }
+
+    uint8_t current[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    uint64_t epoch = 0;
+    EXPECT_TRUE(run(
+        *o.queue, o.object->user_data_cas(o.first, o.first, current, &epoch)
+    ));
+
+    // Another writer replaces it everywhere.
+    for (size_t i = 0; i < UserDataObject::chunks; ++i) {
+        o.decide(i, o.foreign);
+    }
+
+    // The process that confirmed it is refused on the last chunk too.
+    const std::string data(16, 'x');
+    const uint64_t offset = 3 * UserDataObject::chunk_size;
+    try {
+        run(*o.queue,
+            o.object->pwrite(data.data(), data.size(), offset, false));
+        ADD_FAILURE() << "the write was not refused";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ESTALE);
+    }
+}
+
+// What it holds on every chunk, a process confirms with the first chunk alone.
+TEST(ObjectTest, mds_user_data_confirmed_by_a_holder_asks_the_first_chunk) {
+    UserDataObject o(8818, 8819);
+    uint8_t current[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    uint64_t epoch = 0;
+    ASSERT_TRUE(
+        run(*o.queue, o.object->user_data_cas(o.zero, o.first, current, &epoch))
+    );
+    uint64_t epochs[UserDataObject::chunks];
+    for (size_t i = 0; i < UserDataObject::chunks; ++i) {
+        epochs[i] = o.meta(i).config.epoch;
+    }
+
+    EXPECT_TRUE(run(
+        *o.queue, o.object->user_data_cas(o.first, o.first, current, &epoch)
+    ));
+    for (size_t i = 0; i < UserDataObject::chunks; ++i) {
+        EXPECT_EQ(o.meta(i).config.epoch, epochs[i]) << i;
+    }
+
+    // And finds out it lost it when another writer replaced it.
+    o.decide(0, o.foreign);
+    EXPECT_FALSE(run(
+        *o.queue, o.object->user_data_cas(o.first, o.first, current, &epoch)
+    ));
+    EXPECT_EQ(memcmp(current, o.foreign, sizeof(o.foreign)), 0);
 }
 
 TEST(ObjectMetaTest, chunk_uris_do_not_probe_for_witness_records) {

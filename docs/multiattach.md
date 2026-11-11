@@ -370,14 +370,24 @@ A proposer that stalls between the phases cannot overwrite anything when it
 wakes up: its accepts are below the promises the later one made. A proposer
 that stops in the middle of the second phase leaves some chunks with the value;
 whoever swaps next sees it in the replies of the first phase and finishes the
-job, and the call can be repeated with the same arguments. Confirming the value
-held (`expected` equal to `desired`) changes nothing and decides on the first
-chunk's register only.
+job, and the call can be repeated with the same arguments.
+
+Confirming a value (`expected` equal to `desired`) is a swap like another unless
+this process holds the value on every chunk already -- it set it there, and
+has not found it replaced since. Then nothing is to be decided on the other
+chunks, and only the first chunk's register is asked, which is what keeps a
+renewal cheap; and if it holds another value by now, the answer says so and
+the process is refused from there on. A process that confirms a value it never
+set, a holder of an earlier incarnation's say, is made the holder on every
+chunk by that swap: held on the first chunk alone, it would not be stopped on
+the others when the value is replaced. A value names its holder: two processes
+that set the same value are not told apart by the register, and neither
+fences the other.
 
 The swap costs two phases of the register on every chunk when the value
-changes, the chunks going in parallel in each phase, and one decision on the
-first chunk when it is confirmed. An object of a single chunk has one register
-to decide on.
+changes or this process does not hold it yet, the chunks going in parallel in
+each phase, and one decision on the first chunk when a holder confirms it. An
+object of a single chunk has one register to decide on.
 
 There are two ways to read the bytes, with different guarantees. The call
 above is the register's own read, made through an object opened for writing.

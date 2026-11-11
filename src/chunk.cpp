@@ -790,14 +790,19 @@ public:
         const RawstorObjectConfig& v, const std::vector<bool>& usable
     ) {
         std::vector<size_t> excluded;
+        // A value that names no roles has none to map on the members' states;
+        // the epoch and the rest of it are taken over all the same, or the
+        // writes of this process would carry an epoch the register has left.
+        if (v.nroles == 0) {
+            adopt_locked(v);
+            return excluded;
+        }
         if (v.nroles != _states.size()) {
-            if (v.nroles != 0) {
-                rawstd_warning(
-                    "Mirror register names %u members, this chunk has %zu: "
-                    "its configuration is not taken over\n",
-                    static_cast<unsigned>(v.nroles), _states.size()
-                );
-            }
+            rawstd_warning(
+                "Mirror register names %u members, this chunk has %zu: "
+                "its configuration is not taken over\n",
+                static_cast<unsigned>(v.nroles), _states.size()
+            );
             return excluded;
         }
         for (size_t i = 0; i < _states.size(); ++i) {
@@ -858,6 +863,11 @@ public:
     // Whether this process set user data that the register no longer holds.
     bool fenced() const noexcept {
         return _fenced.load(std::memory_order_acquire);
+    }
+    // Whether this process set `value` and has not found it replaced since.
+    bool holds_locked(const uint8_t* value) const noexcept {
+        return _held && !fenced() &&
+               memcmp(value, _held->data(), _held->size()) == 0;
     }
     void adopt_locked(const RawstorObjectConfig& config) {
         if (_held &&
@@ -2050,6 +2060,11 @@ rawstd::Task<bool> Chunk::user_data_accept(
         *epoch = next.epoch;
     }
     co_return true;
+}
+
+bool Chunk::user_data_held(const uint8_t* value) const {
+    std::lock_guard<std::mutex> guard(_control->mutex());
+    return _control->holds_locked(value);
 }
 
 rawstd::Task<void> Chunk::user_data_unlock() {
