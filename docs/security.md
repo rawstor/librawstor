@@ -48,6 +48,9 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | Capability tokens issued by `RESOLVE`, checked by OST | 3 | ❌ | — |
 | `rawstor pki` helper (own CA), external CA support | 4 | ❌ | — |
 | At-rest encryption, server side (ZFS / dm-crypt) | 5 | ❌ | documentation only |
+| `quarantined` OST state in the topology | 7 | ❌ | — |
+| epoch-fence: clients with an older map are refused by the remaining members | 7 | ❌ | [MDS design](mds.md#epoch-fence) |
+| Replace a mirror member (`updatePlacement`, migration, resync onto a new OST) | 7 | ❌ | [MDS design](mds.md) |
 | At-rest encryption, client side (AES-XTS, wrapped per-object key) | 6 | ❌ | — |
 
 ## Threat model
@@ -592,6 +595,73 @@ Consequences that need to be accepted or handled:
     goes to [Known limitations](limitations.md) when implemented.
 - Encryption costs CPU on the client (hypervisor), not on the OST.
 
+## Excluding a compromised OST
+
+An OST is trusted with availability and, for plain volumes, with data. When
+an OST is known or suspected to be compromised, the operator must be able to
+cut it off and restore redundancy elsewhere. Detecting the compromise is out
+of scope here.
+
+### What a compromised OST can and cannot do
+
+| It can | It cannot |
+|---|---|
+| read every chunk it stores, of every tenant, in plaintext unless the volume is encrypted on the client (stage 6) | mint or alter a token: it holds only the MDS public key |
+| return altered data: the copy is read from one in-sync member, XTS gives no integrity and the transport hash is not cryptographic | use a client's token against another OST: the token is bound to the client's certificate, whose key it does not have |
+| lie about its own state: a copy's state (`CLEAN`, `DIRTY`, `LOST`, sync id) is kept by the copy itself, so it can claim to be the up-to-date member | present itself as another OST: clients expect a specific `ost_id` identity |
+| keep using its certificate until it expires, unless the CA publishes revocation | reach chunks it does not hold |
+
+The mirroring protocol assumes crash failures; a compromised member is
+Byzantine, so the steps below remove it, they do not make it harmless while it
+is still a member.
+
+### Cutting it off
+
+In this order:
+
+1. **Stop advertising it.** The OST is marked `quarantined` in the topology: it
+   receives no new placement, `RESOLVE` no longer returns it, and no token is
+   issued for it. (Today the MDS refuses to drop an OST that still holds
+   chunks, so a state between "in use" and "removed" is needed.)
+2. **Stop trusting its identity.** The CA stops issuing and renewing its
+   certificate: delete the SPIRE entry, or do not renew; where the CA
+   publishes a CRL, add its serial. Without revocation the old certificate
+   stays valid until it expires (hours).
+3. **Fence the clients.** The MDS increments the objects' `map_epoch` and
+   writes the new watermark (`slot.fence`) on the remaining members of every
+   chunk it held ([epoch-fence](mds.md#epoch-fence)). A client that still has
+   the old map is refused by a healthy member with `STALE`, re-reads the map
+   and no longer includes the quarantined OST. This does not depend on the
+   compromised OST cooperating.
+4. **Restore redundancy.** The copy is replaced: a new OST is placed
+   (`updatePlacement`) and resynced from a remaining in-sync copy, the way an
+   excluded copy is resynced today ([Mirroring](mirroring.md)). The
+   quarantined copy is never used as the source.
+5. **Treat its data as disclosed.** Plain volumes on it must be assumed read.
+   Encrypted volumes expose ciphertext only; their data keys are held by
+   clients and the KMS, so no key rotation is needed because of the OST.
+   Retire or wipe the host before reuse.
+
+### How fast
+
+| Step | Effective after |
+|---|---|
+| `RESOLVE` stops returning it | at once, for clients that resolve |
+| Token expiry | minutes: no new `SET_OBJECT` on it |
+| Epoch fence | the next write that reaches a healthy member |
+| Certificate expiry | hours (SPIRE has no revocation; a CRL shortens it elsewhere) |
+
+A client that only reads from the compromised copy and never writes keeps
+reading it until its token expires and it resolves again; reads are not
+fenced.
+
+### Dependencies
+
+Steps 1, 3 and 4 are MDS and mirroring work that does not exist yet
+(`quarantined`, epoch-fence, member replacement) and are listed in the
+[status table](#status). Without them the operator can only do step 2 and wait
+for the certificate to expire, and cannot rebuild redundancy.
+
 ## Implementation stages
 
 ```mermaid
@@ -636,6 +706,9 @@ require re-doing earlier ones.
 6. **At-rest, client side.** AES-XTS in the client library, KMS plugin
    interface, wrapped keys on the MDS, `rawstor create --encrypt`, the
    write-zeroes emulation and no `DISCARD`.
+7. **Excluding a compromised OST.** `quarantined` state, epoch-fence,
+   member replacement with resync, and the operator procedure above. It depends
+   on MDS and mirroring work and can be scheduled independently of stages 2-6.
 
 ## Open questions
 
