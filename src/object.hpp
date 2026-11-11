@@ -99,14 +99,6 @@ protected:
         }
     }
 
-    // A request that names a chunk rather than a byte range must name a
-    // byte of the object.
-    void _check_offset(uint64_t offset) const {
-        if (offset >= _size) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-    }
-
 public:
     Object(const Object&) = delete;
     Object(Object&&) = delete;
@@ -135,14 +127,13 @@ public:
 
     virtual rawstd::Task<void> flush() = 0;
 
-    // The user data of the chunk that holds `offset`
+    // The object's user data, kept in the register of its first chunk
     // (rawstor_object_user_data()/_cas()).
-    virtual rawstd::Task<void>
-    user_data(uint64_t offset, uint8_t* value, uint64_t* epoch) = 0;
+    virtual rawstd::Task<void> user_data(uint8_t* value, uint64_t* epoch) = 0;
 
     virtual rawstd::Task<bool> user_data_cas(
-        uint64_t offset, const uint8_t* expected, const uint8_t* desired,
-        uint8_t* current, uint64_t* epoch
+        const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+        uint64_t* epoch
     ) = 0;
 
     // `clean`: the writer is done cleanly (Chunk::close()); false for a
@@ -196,12 +187,11 @@ public:
 
     rawstd::Task<void> flush() override;
 
-    rawstd::Task<void>
-    user_data(uint64_t offset, uint8_t* value, uint64_t* epoch) override;
+    rawstd::Task<void> user_data(uint8_t* value, uint64_t* epoch) override;
 
     rawstd::Task<bool> user_data_cas(
-        uint64_t offset, const uint8_t* expected, const uint8_t* desired,
-        uint8_t* current, uint64_t* epoch
+        const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+        uint64_t* epoch
     ) override;
 
     rawstd::Task<void> close(bool clean = true) override;
@@ -344,12 +334,11 @@ public:
 
     rawstd::Task<void> flush() override;
 
-    rawstd::Task<void>
-    user_data(uint64_t offset, uint8_t* value, uint64_t* epoch) override;
+    rawstd::Task<void> user_data(uint8_t* value, uint64_t* epoch) override;
 
     rawstd::Task<bool> user_data_cas(
-        uint64_t offset, const uint8_t* expected, const uint8_t* desired,
-        uint8_t* current, uint64_t* epoch
+        const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+        uint64_t* epoch
     ) override;
 
     rawstd::Task<void> close(bool clean = true) override;

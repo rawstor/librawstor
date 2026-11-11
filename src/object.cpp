@@ -72,16 +72,14 @@ rawstd::Task<void> SingleChunkObject::flush() {
 }
 
 rawstd::Task<void>
-SingleChunkObject::user_data(uint64_t offset, uint8_t* value, uint64_t* epoch) {
-    _check_offset(offset);
+SingleChunkObject::user_data(uint8_t* value, uint64_t* epoch) {
     co_await _chunk->user_data(value, epoch);
 }
 
 rawstd::Task<bool> SingleChunkObject::user_data_cas(
-    uint64_t offset, const uint8_t* expected, const uint8_t* desired,
-    uint8_t* current, uint64_t* epoch
+    const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+    uint64_t* epoch
 ) {
-    _check_offset(offset);
     co_return co_await _chunk->user_data_cas(expected, desired, current, epoch);
 }
 
@@ -416,18 +414,16 @@ rawstd::Task<void> MultiChunkObject::flush() {
 }
 
 rawstd::Task<void>
-MultiChunkObject::user_data(uint64_t offset, uint8_t* value, uint64_t* epoch) {
-    _check_offset(offset);
-    Chunk* chunk = co_await _chunk(static_cast<uint32_t>(offset / _chunk_size));
+MultiChunkObject::user_data(uint8_t* value, uint64_t* epoch) {
+    Chunk* chunk = co_await _chunk(0);
     co_await chunk->user_data(value, epoch);
 }
 
 rawstd::Task<bool> MultiChunkObject::user_data_cas(
-    uint64_t offset, const uint8_t* expected, const uint8_t* desired,
-    uint8_t* current, uint64_t* epoch
+    const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+    uint64_t* epoch
 ) {
-    _check_offset(offset);
-    Chunk* chunk = co_await _chunk(static_cast<uint32_t>(offset / _chunk_size));
+    Chunk* chunk = co_await _chunk(0);
     co_return co_await chunk->user_data_cas(expected, desired, current, epoch);
 }
 
@@ -788,7 +784,7 @@ int rawstor_object_write_zeroes(
 }
 
 int rawstor_object_user_data(
-    RawstorObject* object, uint64_t offset, uint8_t* value, uint64_t* epoch,
+    RawstorObject* object, uint8_t* value, uint64_t* epoch,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     if (value == nullptr) {
@@ -796,10 +792,8 @@ int rawstor_object_user_data(
     }
     try {
         launch_flush_op(
-            static_cast<rawstor::Object*>(object)->user_data(
-                offset, value, epoch
-            ),
-            cb, data
+            static_cast<rawstor::Object*>(object)->user_data(value, epoch), cb,
+            data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -816,9 +810,9 @@ int rawstor_object_user_data(
 }
 
 int rawstor_object_user_data_cas(
-    RawstorObject* object, uint64_t offset, const uint8_t* expected,
-    const uint8_t* desired, uint8_t* current, uint64_t* epoch,
-    int (*cb)(ssize_t result, void* data), void* data
+    RawstorObject* object, const uint8_t* expected, const uint8_t* desired,
+    uint8_t* current, uint64_t* epoch, int (*cb)(ssize_t result, void* data),
+    void* data
 ) noexcept {
     if (expected == nullptr || desired == nullptr || current == nullptr) {
         return -EINVAL;
@@ -826,7 +820,7 @@ int rawstor_object_user_data_cas(
     try {
         launch_swap_op(
             static_cast<rawstor::Object*>(object)->user_data_cas(
-                offset, expected, desired, current, epoch
+                expected, desired, current, epoch
             ),
             cb, data
         );

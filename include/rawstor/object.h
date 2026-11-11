@@ -321,30 +321,33 @@ int rawstor_object_flush(
     RawstorObject* object, int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-/** Size of the user data a chunk keeps in its configuration register. */
+/** Size of the user data of an object. */
 #define RAWSTOR_OBJECT_USER_DATA_SIZE 256
 
 /**
- * @brief Asynchronously read the user data of the chunk that holds @p offset.
+ * @brief Asynchronously read the object's user data.
  *
- * Every chunk's configuration register carries RAWSTOR_OBJECT_USER_DATA_SIZE
- * opaque bytes for the application, replicated on all the chunk's members and
- * zero until first set. The read goes through the register, so the answer is
- * the value a majority of the members decided -- another writer's latest
- * change included -- not what this process saw last.
+ * An object carries RAWSTOR_OBJECT_USER_DATA_SIZE opaque bytes for the
+ * application, zero until first set. They are kept in the configuration
+ * register of the object's first chunk, replicated on all that chunk's
+ * members, and the read goes through the register: the answer is the value a
+ * majority of the members decided -- another writer's latest change included
+ * -- not what this process saw last.
  *
- * A change of the user data moves the chunk's configuration epoch. Writes
- * carry the epoch of the configuration they were issued under, and a member
- * refuses one below its own with @c -ESTALE: a writer that kept using the
- * chunk after another one replaced the user data is stopped at its next write
- * (and takes the new value over, for any I/O it issues afterwards). That is
- * what makes the user data usable as a lock held by one writer at a time, a
- * leader's identity and the like.
+ * A change of the user data moves the configuration epoch of that chunk.
+ * Writes carry the epoch of the configuration they were issued under, and a
+ * member refuses one below its own with @c -ESTALE: a writer that kept using
+ * the chunk after another one replaced the user data is stopped at its next
+ * write (and takes the new value over, for any I/O it issues afterwards).
+ * That is what makes the user data usable as a lock held by one writer at a
+ * time, a leader's identity and the like.
+ *
+ * The epoch is a chunk's own, so the user data stops the writes to the
+ * first chunk only. To have it stop every write of the object, make the
+ * object of a single chunk (RawstorObjectSpec::chunk_size 0).
  *
  * @param object  Open object handle obtained from rawstor_target_open(),
  *                opened for writing: the read is a decision of the register.
- * @param offset  Byte offset within the object; selects the chunk the same
- *                way I/O offsets do. It must lie within the object.
  * @param value   Receives RAWSTOR_OBJECT_USER_DATA_SIZE bytes. Must remain
  *                valid until @p cb is invoked.
  * @param epoch   Receives the configuration epoch the value was decided at;
@@ -352,9 +355,8 @@ int rawstor_object_flush(
  * @param cb      Callback invoked on completion.
  *                - @p result is zero on success, or a negative errno on
  *                  failure (@c -EROFS for an object opened
- *                  RAWSTOR_READONLY, @c -EINVAL for an offset outside the
- *                  object, @c -EIO when no majority of the members could be
- *                  reached).
+ *                  RAWSTOR_READONLY, @c -EIO when no majority of the
+ *                  members could be reached).
  *                - @p data is the same pointer passed as @p data below.
  *                - Return zero on success. A negative errno value signals an
  *                  error back into the I/O completion machinery.
@@ -366,20 +368,20 @@ int rawstor_object_flush(
  * @see rawstor_object_user_data_cas
  */
 int rawstor_object_user_data(
-    RawstorObject* object, uint64_t offset, uint8_t* value, uint64_t* epoch,
+    RawstorObject* object, uint8_t* value, uint64_t* epoch,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously set the user data of the chunk that holds @p offset
- *        if it is @p expected (compare and swap).
+ * @brief Asynchronously set the object's user data if it is @p expected
+ *        (compare and swap).
  *
  * The register changes only when it holds @p expected at the moment a
  * majority of the members decide the change; otherwise nothing is written.
  * Concurrent callers, in this process or others, are ordered by the
  * register: at most one of several that expect the same value succeeds, and
  * the others learn the value that won. See rawstor_object_user_data()
- * for what the epoch makes of a change.
+ * for where the bytes are kept and what the epoch makes of a change.
  *
  * Setting the value the register already holds (@p expected equal to
  * @p desired) writes nothing the other writers could tell apart and leaves
@@ -388,8 +390,6 @@ int rawstor_object_user_data(
  *
  * @param object    Open object handle obtained from rawstor_target_open(),
  *                  opened for writing.
- * @param offset    Byte offset within the object; selects the chunk. It must
- *                  lie within the object.
  * @param expected  RAWSTOR_OBJECT_USER_DATA_SIZE bytes the register must
  *                  hold. Must remain valid until @p cb is invoked.
  * @param desired   RAWSTOR_OBJECT_USER_DATA_SIZE bytes to set. Must remain
@@ -414,9 +414,9 @@ int rawstor_object_user_data(
  * @see rawstor_object_user_data
  */
 int rawstor_object_user_data_cas(
-    RawstorObject* object, uint64_t offset, const uint8_t* expected,
-    const uint8_t* desired, uint8_t* current, uint64_t* epoch,
-    int (*cb)(ssize_t result, void* data), void* data
+    RawstorObject* object, const uint8_t* expected, const uint8_t* desired,
+    uint8_t* current, uint64_t* epoch, int (*cb)(ssize_t result, void* data),
+    void* data
 ) RAWSTOR_NOEXCEPT;
 
 #ifdef __cplusplus

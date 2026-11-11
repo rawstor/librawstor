@@ -3457,25 +3457,21 @@ UserData user_data_of(uint8_t seed) {
 }
 
 ssize_t object_user_data(
-    Queue& queue, RawstorObject* object, uint64_t offset, UserData& value,
-    uint64_t* epoch
+    Queue& queue, RawstorObject* object, UserData& value, uint64_t* epoch
 ) {
     return rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
-        return rawstor_object_user_data(
-            object, offset, value.data(), epoch, cb, data
-        );
+        return rawstor_object_user_data(object, value.data(), epoch, cb, data);
     });
 }
 
 ssize_t object_user_data_cas(
-    Queue& queue, RawstorObject* object, uint64_t offset,
-    const UserData& expected, const UserData& desired, UserData& current,
-    uint64_t* epoch
+    Queue& queue, RawstorObject* object, const UserData& expected,
+    const UserData& desired, UserData& current, uint64_t* epoch
 ) {
     return rawstor::tests::sync_run(queue, [&](auto cb, void* data) {
         return rawstor_object_user_data_cas(
-            object, offset, expected.data(), desired.data(), current.data(),
-            epoch, cb, data
+            object, expected.data(), desired.data(), current.data(), epoch, cb,
+            data
         );
     });
 }
@@ -3504,36 +3500,32 @@ TEST(MirrorUserDataTest, cas_sets_the_value_on_every_member) {
     const UserData zero{};
     UserData value = user_data_of(1);
     uint64_t first_epoch = 0;
-    ASSERT_EQ(object_user_data(queue, object, 0, value, &first_epoch), 0);
+    ASSERT_EQ(object_user_data(queue, object, value, &first_epoch), 0);
     EXPECT_EQ(value, zero);
 
     const UserData a = user_data_of(10);
     const UserData b = user_data_of(20);
     UserData current{};
     uint64_t epoch = 0;
-    EXPECT_EQ(
-        object_user_data_cas(queue, object, 0, zero, a, current, &epoch), 1
-    );
+    EXPECT_EQ(object_user_data_cas(queue, object, zero, a, current, &epoch), 1);
     EXPECT_EQ(current, a);
     EXPECT_EQ(epoch, first_epoch + 1);
 
     // Expecting what is no longer there: refused, and the value that is
     // there comes back.
-    EXPECT_EQ(
-        object_user_data_cas(queue, object, 0, zero, b, current, &epoch), 0
-    );
+    EXPECT_EQ(object_user_data_cas(queue, object, zero, b, current, &epoch), 0);
     EXPECT_EQ(current, a);
     EXPECT_EQ(epoch, first_epoch + 1);
 
     // The same value is no change: the epoch stays.
-    EXPECT_EQ(object_user_data_cas(queue, object, 0, a, a, current, &epoch), 1);
+    EXPECT_EQ(object_user_data_cas(queue, object, a, a, current, &epoch), 1);
     EXPECT_EQ(current, a);
     EXPECT_EQ(epoch, first_epoch + 1);
 
-    EXPECT_EQ(object_user_data_cas(queue, object, 0, a, b, current, &epoch), 1);
+    EXPECT_EQ(object_user_data_cas(queue, object, a, b, current, &epoch), 1);
     EXPECT_EQ(current, b);
     EXPECT_EQ(epoch, first_epoch + 2);
-    ASSERT_EQ(object_user_data(queue, object, 0, value, &epoch), 0);
+    ASSERT_EQ(object_user_data(queue, object, value, &epoch), 0);
     EXPECT_EQ(value, b);
 
     // A write goes on under the new epoch.
@@ -3560,8 +3552,7 @@ TEST(MirrorUserDataTest, value_survives_reopen_and_a_membership_change) {
     UserData current{};
     uint64_t epoch = 0;
     ASSERT_EQ(
-        object_user_data_cas(queue, object, 0, UserData{}, a, current, &epoch),
-        1
+        object_user_data_cas(queue, object, UserData{}, a, current, &epoch), 1
     );
     std::string payload = "payload";
     object_write(queue, object, payload.data(), payload.size(), 0, 0);
@@ -3575,7 +3566,7 @@ TEST(MirrorUserDataTest, value_survives_reopen_and_a_membership_change) {
 
     UserData value{};
     uint64_t reopened_epoch = 0;
-    ASSERT_EQ(object_user_data(queue, object, 0, value, &reopened_epoch), 0);
+    ASSERT_EQ(object_user_data(queue, object, value, &reopened_epoch), 0);
     EXPECT_EQ(value, a);
     EXPECT_GT(reopened_epoch, epoch);
     object_close_clean(queue, object);
@@ -3598,8 +3589,7 @@ TEST(MirrorUserDataTest, single_copy_object) {
     UserData current{};
     uint64_t epoch = 0;
     ASSERT_EQ(
-        object_user_data_cas(queue, object, 0, UserData{}, a, current, &epoch),
-        1
+        object_user_data_cas(queue, object, UserData{}, a, current, &epoch), 1
     );
     EXPECT_EQ(current, a);
     std::string payload = "payload";
@@ -3608,7 +3598,7 @@ TEST(MirrorUserDataTest, single_copy_object) {
 
     ASSERT_EQ(target_open(queue, members.target(0), &object), 0);
     UserData value{};
-    ASSERT_EQ(object_user_data(queue, object, 0, value, nullptr), 0);
+    ASSERT_EQ(object_user_data(queue, object, value, nullptr), 0);
     EXPECT_EQ(value, a);
     object_close_clean(queue, object);
 }
@@ -3640,9 +3630,7 @@ TEST(MirrorUserDataTest, cas_sees_another_writers_decision) {
     UserData current{};
     uint64_t epoch = 0;
     EXPECT_EQ(
-        object_user_data_cas(
-            queue, object, 0, UserData{}, mine, current, &epoch
-        ),
+        object_user_data_cas(queue, object, UserData{}, mine, current, &epoch),
         0
     );
     EXPECT_EQ(current, theirs);
@@ -3650,7 +3638,7 @@ TEST(MirrorUserDataTest, cas_sees_another_writers_decision) {
 
     // Expecting the value it found, it succeeds on top of the decision.
     EXPECT_EQ(
-        object_user_data_cas(queue, object, 0, theirs, mine, current, &epoch), 1
+        object_user_data_cas(queue, object, theirs, mine, current, &epoch), 1
     );
     EXPECT_EQ(current, mine);
     EXPECT_EQ(epoch, decided.epoch + 1);
@@ -3669,20 +3657,10 @@ TEST(MirrorUserDataTest, refusals) {
     ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
     UserData value{};
     uint64_t epoch = 0;
-    // An offset outside the object names no chunk.
-    EXPECT_EQ(
-        object_user_data(queue, object, 1ull << 20, value, &epoch), -EINVAL
-    );
-    EXPECT_EQ(
-        object_user_data_cas(
-            queue, object, 1ull << 20, UserData{}, UserData{}, value, &epoch
-        ),
-        -EINVAL
-    );
     // Missing buffers are refused before anything is queued.
     EXPECT_EQ(
         rawstor_object_user_data(
-            object, 0, nullptr, &epoch, [](ssize_t, void*) -> int { return 0; },
+            object, nullptr, &epoch, [](ssize_t, void*) -> int { return 0; },
             nullptr
         ),
         -EINVAL
@@ -3693,10 +3671,10 @@ TEST(MirrorUserDataTest, refusals) {
     ASSERT_EQ(
         target_open(queue, members.target_all(), &object, RAWSTOR_READONLY), 0
     );
-    EXPECT_EQ(object_user_data(queue, object, 0, value, &epoch), -EROFS);
+    EXPECT_EQ(object_user_data(queue, object, value, &epoch), -EROFS);
     EXPECT_EQ(
         object_user_data_cas(
-            queue, object, 0, UserData{}, user_data_of(1), value, &epoch
+            queue, object, UserData{}, user_data_of(1), value, &epoch
         ),
         -EROFS
     );

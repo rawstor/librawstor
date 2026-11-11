@@ -999,6 +999,46 @@ TEST(ObjectTest, mds_io_beyond_first_chunk) {
     run(*queue, target.remove(*queue));
 }
 
+// The user data of an object is kept in the register of its first chunk.
+TEST(ObjectTest, mds_user_data_is_kept_in_the_first_chunk) {
+    rawstor::tests::ObjectEnv env(8810, 8811);
+    auto queue = rawio::Queue::create(16);
+    const uint64_t chunk_size = 64 * 1024;
+    RawstorObjectSpec spec{};
+    spec.size = 4 * chunk_size;
+    spec.chunk_size = chunk_size;
+    spec.width = 1;
+    char created[4096]{};
+    ASSERT_GT(
+        location_create(*queue, env.location(), spec, created, sizeof(created)),
+        0
+    );
+    rawstor::Target target(rawstd::URI::uriv(created));
+    auto object = run(*queue, target.open(*queue, 0));
+
+    uint8_t zero[RAWSTOR_OBJECT_USER_DATA_SIZE] = {};
+    uint8_t value[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    memset(value, 0x5a, sizeof(value));
+    uint8_t current[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    uint64_t epoch = 0;
+    EXPECT_TRUE(
+        run(*queue, object->user_data_cas(zero, value, current, &epoch))
+    );
+    EXPECT_EQ(memcmp(current, value, sizeof(value)), 0);
+
+    const std::string created_target(created);
+    for (uint64_t offset : {uint64_t{0}, chunk_size, 3 * chunk_size}) {
+        RawstorObjectMeta meta{};
+        ASSERT_EQ(target_meta(*queue, created_target, offset, &meta, 1), 1);
+        EXPECT_EQ(
+            memcmp(meta.config.user_data, value, sizeof(value)) == 0,
+            offset == 0
+        ) << offset;
+    }
+    run(*queue, object->close());
+    run(*queue, target.remove(*queue));
+}
+
 TEST(ObjectMetaTest, chunk_uris_do_not_probe_for_witness_records) {
     rawstor::tests::ObjectEnv env(8796, 8797);
     std::string uri =

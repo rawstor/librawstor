@@ -303,9 +303,11 @@ The value carries no `state` of the copy itself: `DIRTY`, `CLEAN` and
 The value also carries `user_data`: `RAWSTOR_OBJECT_USER_DATA_SIZE` (256) opaque
 bytes of the application, zero until first set. They are part of the decided
 value, so they are replicated on every member of the chunk with the roles and
-the sync set, and are read and changed under the register's rules. A chunk has
-its own, as it has its own register: with several chunks, the one an offset
-falls in is the one addressed.
+the sync set, and are read and changed under the register's rules. An object
+has one set of them, which are those of its first chunk: the object-level calls
+take no offset, as `rawstor_target_meta()` and the register's requests of a
+whole-object target address the first chunk too. The other chunks' registers
+carry zeros.
 
 - `rawstor_object_user_data()` reads them through the register, so the
   answer is what a majority of the members decided, not what this process saw
@@ -326,13 +328,12 @@ falls in is the one addressed.
 - A member that does not take the decision is excluded like one that fails a
   write.
 
-A chunk's epoch fences the writes to that chunk, and only those: the registers
-of an object's chunks are independent. A lock whose holder alone may write is
-therefore taken on the chunk it is about to write -- the holder sets the user
-data of every chunk it writes to, and a writer it replaces is stopped on that
-chunk at its next write. An object made of chunks is locked chunk by chunk;
-a writer that takes several takes them in ascending offset order, so that two
-of them never wait for each other.
+The epoch is a chunk's own, so the user data stops the writes to the first
+chunk and no others: a writer that another one replaced is refused on chunk 0
+at its next write, and its writes to the other chunks of the object are not
+refused. User data that is to stop every write of an object -- a lock whose holder alone may
+write, say -- therefore belongs on an object of a single chunk
+(`chunk_size` 0), where the one epoch covers every write.
 
 There are two ways to read the bytes, with different guarantees. The call
 above is the register's own read, made through an object opened for writing.
