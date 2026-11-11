@@ -667,6 +667,13 @@ Consequences that need to be accepted or handled:
     Guests do not depend on the content of blocks they have not written; this
     goes to [Known limitations](limitations.md) when implemented.
 - Encryption costs CPU on the client (hypervisor), not on the OST.
+- **A volume encrypted on the client is encrypted twice on the wire**: its
+  payload is ciphertext already when TLS encrypts it again. This is kept: TLS
+  also gives what XTS does not, the integrity of every frame (a write cannot
+  be redirected to another offset or a sector replaced undetected), the
+  confidentiality of the frame headers (ids, offsets, access pattern) and the
+  authentication of the peers. The redundant part, the confidentiality of the
+  payload, is an optimization candidate: see [open questions](#open-questions).
 
 ## Excluding a compromised OST
 
@@ -785,6 +792,16 @@ require re-doing earlier ones.
 
 ## Open questions
 
+- **Double encryption of encrypted volumes** (optimization, not a defect). For
+  a volume encrypted on the client the transport could authenticate and protect
+  the integrity of frames without encrypting their payload: the handshake stays
+  TLS 1.3, a session key comes from `SSL_export_keying_material`, and frames
+  carry a MAC and a counter. Unlike the general "authenticated, unencrypted"
+  mode rejected above, this one is sound, because the payload is ciphertext;
+  what it leaks is the frame headers, that is the access pattern. It costs a
+  record layer of our own. Worth doing only if measurements on production
+  hardware show the combined cost of XTS and TLS to be unacceptable; the cost
+  of XTS alone has not been measured yet.
 - How to move an existing plaintext cluster to TLS without stopping it: a
   service listening on a TLS and a plaintext port during the transition, or a
   restart order (MDS, OSTs, then clients) that relies on mirroring and client
