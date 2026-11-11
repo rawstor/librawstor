@@ -7,6 +7,29 @@ private, and the operator of an OST must not be able to read tenant data.
 A deployment whose storage network is isolated from every untrusted party may
 instead run with [`--insecure`](#insecure-mode), which turns all of this off.
 
+## Decision
+
+- **Transport: TLS 1.3 with mutual authentication on every port**, by default
+  and as the only secured mode. Userspace OpenSSL over memory BIOs inside
+  `rawio` is the first transport; kTLS is an option, off by default.
+- **Identity: a SPIFFE ID** (one URI SAN) in the peer's certificate, issued by
+  any CA that can write it: the project's own (`rawstor pki`) or an external
+  one.
+- **Authorization: tokens signed by the MDS**, bound to the client's
+  certificate, with a closed rights table per command.
+- **`--insecure`** for a storage network isolated from every untrusted party:
+  plaintext and no authentication at all.
+- **There is no mode with authentication but without encryption.** In this
+  design authentication is the TLS handshake, and TLS 1.3 always encrypts. A
+  weaker mode that authenticates only when the connection is opened (Ceph's
+  `crc` mode) does not stop an attacker on the path from taking over the
+  connection; a stronger one (authentication plus a MAC on every frame, keyed
+  from the handshake) needs a record layer of our own, which is security
+  code to write and test for a saving that was not measured. It is revisited
+  only if production measurements show the cost of TLS to be unacceptable.
+- **Client-side encryption of volumes** is a later stage and does not replace
+  TLS.
+
 ## Status
 
 Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet. *Stage* is this
@@ -485,8 +508,8 @@ mode inside TLS. The alternatives were considered and are not offered:
 - IPsec, WireGuard or MACsec move the cost to another layer; without NIC
   offload (none is assumed) they do not save CPU.
 
-If a measured need appears, an authenticated, unencrypted data path can be
-revisited then. Encrypting volumes on the client (stage 6) does not remove the
+An authenticated, unencrypted data path is revisited only if measurements on
+production hardware show the cost of TLS to be unacceptable. Encrypting volumes on the client (stage 6) does not remove the
 need for TLS: the payload becomes ciphertext, but authentication and the
 integrity of the wire, which XTS does not give, still come from TLS.
 
