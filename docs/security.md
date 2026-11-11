@@ -37,7 +37,7 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 
 | Feature | Stage | Status | Where |
 |---|---|---|---|
-| Benchmark: TLS 1.3 / kTLS on the io_uring hot path | 0 | ✅ | `bench/tls/` ([results](https://github.com/rawstor/librawstor/blob/main/bench/tls/RESULTS.md)) |
+| Benchmark: TLS 1.3 / kTLS on the io_uring hot path | 0 | ✅ | [Measurements](#measurements) |
 | Protocol version + feature bits in the `SET_OBJECT` handshake | 1 | ❌ | also planned in [MDS design](mds.md) |
 | `tenant_id` in the protocol and in the MDS store (single `default` tenant) | 1 | ❌ | — |
 | mTLS (OpenSSL) on every port: OST, MDS, witness, client side | 2 | ❌ | — |
@@ -463,12 +463,26 @@ structural:
 
 ### Measurements
 
-Stage 0 is [`bench/tls`](https://github.com/rawstor/librawstor/tree/main/bench/tls):
-plain TCP, kTLS, userspace OpenSSL over memory BIOs and userspace OpenSSL on
-the socket, all over loopback with mutual TLS 1.3, driven by `io_uring`. The
-figures below are medians of three runs on an 8-vCPU VM without VAES (AES-GCM
-about 3.2 GB/s per core), so the absolute numbers are conservative. Small-IO
-runs vary by ±30-50% between repetitions; see `RESULTS.md` there.
+Stage 0 compared four transports over loopback, all driven by `io_uring`
+and, for TLS, mutual TLS 1.3 (X25519, ECDSA P-256 certificates with a
+SPIFFE-style URI SAN):
+
+| Transport | Meaning |
+|---|---|
+| plain | TCP, `io_uring` `send`/`recv` |
+| kTLS | OpenSSL handshake, then kernel TLS records; the same `io_uring` operations as plain |
+| memory BIO | userspace OpenSSL over memory BIOs; `io_uring` moves the ciphertext |
+| `SSL` on fd | userspace OpenSSL `SSL_read`/`SSL_write` on the socket (reference) |
+
+Workloads: 1 MiB streams in both directions on one connection; 4 KiB request
+/ response at queue depth 1 and 32 (a WRITE: 4 KiB request, 16 B reply; a
+READ: 48 B request, 4 KiB reply); connection setup (TCP only, full handshake,
+resumed); and a probe of which `io_uring` operations work on a kTLS socket.
+Server and client were pinned to two separate cores and issued one synchronous
+`io_uring` operation at a time, as a QD1 caller does. The figures are medians of
+three runs of four seconds on an 8-vCPU VM (AMD EPYC-Rome, no VAES; AES-256-GCM
+about 3.2 GB/s per core by `openssl speed`), kernel 7.0.0-38, OpenSSL 3.5.5,
+liburing 2.14.
 
 | Measurement | plain TCP | TLS (any transport) |
 |---|---|---|
@@ -477,6 +491,45 @@ runs vary by ±30-50% between repetitions; see `RESULTS.md` there.
 | 4 KiB IO at queue depth 32 | about 115,000 IOPS, 15 µs CPU/op | 70,000-105,000 IOPS, 19-27 µs CPU/op |
 | 4 KiB IO at queue depth 1, p50 / p99 | 32 / 57 µs | 29-44 / 57-83 µs |
 | connection setup | 18,000/s | full handshake 570/s (1.9 ms CPU, both ends); resumed 1,160/s (1.0 ms) |
+
+By transport (AES-256-GCM; CPU is client plus server, user plus kernel):
+
+| Transport | stream up, GB/s | stream down, GB/s | CPU s/GB (up / down) |
+|---|---|---|---|
+| plain | 3.07 | 3.42 | 0.53 / 0.47 |
+| kTLS | 1.10 | 1.40 | 1.40 / 1.24 |
+| memory BIO | 1.43 | 1.46 | 1.25 / 1.25 |
+| `SSL` on fd | 1.20 | 0.98 | 1.44 / 1.75 |
+
+| Op, queue depth | Transport | IOPS | p50 µs | p99 µs | CPU µs/op |
+|---|---|---|---|---|---|
+| WRITE, 1 | plain / kTLS / memory BIO | 30,800 / 28,600 / 22,300 | 32 / 31 / 44 | 58 / 71 / 74 | 34 / 40 / 48 |
+| READ, 1 | plain / kTLS / memory BIO | 28,900 / 23,100 / 31,200 | 32 / 43 / 29 | 57 / 83 / 57 | 36 / 47 / 37 |
+| WRITE, 32 | plain / kTLS / memory BIO | 117,000 / 69,000 / 105,000 | 264 / 436 / 290 | 397 / 777 / 531 | 15 / 26 / 19 |
+| READ, 32 | plain / kTLS / memory BIO | 114,000 / 70,000 / 103,000 | 270 / 413 / 293 | 452 / 967 / 513 | 15 / 26 / 19 |
+
+Small-IO runs vary by up to ±30-50% between the three repetitions (kTLS, WRITE
+at queue depth 1: 20,000 / 28,600 / 31,000 IOPS; plain, WRITE at queue depth
+32: 111,000 / 117,000 / 182,000), so **differences between the TLS transports
+on small IO are not resolved**; only TLS against plain, and the bulk numbers,
+are. Bulk: plain 3.1-4.1 GB/s and the TLS transports 1.0-1.7 GB/s in every run.
+
+Connection setup, mutual TLS, both ends: TCP connect only 18,000/s (0.07 ms
+CPU); full handshake 570/s (1.9 ms); resumed with a session ticket 1,160/s
+(1.0 ms). Resumption was verified: every connection after the first reused the
+session.
+
+`io_uring` on a kTLS socket (256 KiB of a known pattern echoed through the
+server; correct only if every byte matches):
+
+| Operation | plain | kTLS |
+|---|---|---|
+| `send`, `sendmsg` | ok | ok |
+| `send_zc`, `send_zc_fixed` | ok | fails with `EOPNOTSUPP` |
+| `write_fixed`, `read_fixed` | ok | ok |
+| `recv` with buffer select | ok | ok |
+| multishot `recv` with a buffer ring | ok | ok |
+| `sendfile` | ok | ok |
 
 In absolute terms the extra CPU of TLS is about 0.8 s per GB across both
 ends, that is **about 0.4 core per side for each GB/s of traffic** on this
@@ -502,8 +555,13 @@ What this shows:
   multishot `recv` with a buffer ring, `read_fixed`/`write_fixed` and
   `sendfile` all returned correct data. `send_zc` and `send_zc_fixed` fail
   with `EOPNOTSUPP`.** `librawio` uses none of the zero-copy sends today.
+- Limits of the method: loopback, so no NIC and no network latency; one
+  connection per workload, so per-core cost is the quantity to extrapolate, not
+  the absolute GB/s; one synchronous operation at a time, so rawstor's own
+  batching and multishot receive are covered only by the feature probe.
 - Not measured: ChaCha20-Poly1305, a real NIC, many connections on many cores,
-  kernels other than 7.0, hardware with VAES.
+  kernels other than 7.0, hardware with VAES. Re-measure on production
+  hardware before relying on absolute numbers.
 
 Provisional choice: start with **userspace OpenSSL over memory BIOs inside
 `rawio`**. It was as fast as kTLS here, needs no kernel module or version, and
@@ -694,9 +752,9 @@ flowchart TD
 Each stage is shippable and leaves the cluster working. Later stages do not
 require re-doing earlier ones.
 
-0. **Benchmark (done).** A harness comparing plain TCP, userspace
-   OpenSSL TLS 1.3, and kTLS on the existing io_uring data path: 4 KiB and 1 MiB
-   IO, queue depths 1 and 32, handshake rate, CPU per GB, p50/p99 latency.
+0. **Benchmark (done).** Plain TCP, userspace OpenSSL TLS 1.3 and kTLS were
+   compared on an io_uring data path: 4 KiB and 1 MiB IO, queue depths 1 and
+   32, handshake rate, CPU per GB, p50/p99 latency.
    Output: the TLS mode (kTLS or userspace) and the minimum kernel. Done:
    see [Measurements](#measurements); the minimum kernel is not established,
    only 7.0 was tested.
