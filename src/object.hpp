@@ -269,9 +269,12 @@ private:
     // string against before ever constructing this object.
     rawstd::Task<Chunk*> _chunk(uint32_t index);
 
-    // Sets the user data of chunk `index`, whatever it holds
-    // (user_data_cas() hands the value it set on to every other chunk).
-    rawstd::Task<void> _set_user_data(uint32_t index, const uint8_t* desired);
+    // user_data_cas() with a value to change: one decision over the registers
+    // of every chunk.
+    rawstd::Task<bool> _user_data_swap(
+        const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+        uint64_t* epoch
+    );
 
     // Every chunk opened so far, in order -- the ones flush()/close() act
     // on.

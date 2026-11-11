@@ -419,3 +419,79 @@ TEST(CasPaxosProposerTest, fatal_transport_error_waits_for_other_requests) {
     transport.drain();
     EXPECT_EQ(retry.get(), 1);
 }
+
+// The phases of a change one at a time, for a change decided over several
+// registers.
+TEST(CasPaxosProposerTest, steps_decide_like_a_change) {
+    MemoryTransport transport;
+    IntProposer proposer(1, 3);
+    auto prepared = proposer.prepare(transport).get();
+    EXPECT_EQ(prepared.value, 0);
+    EXPECT_TRUE(proposer.accept(transport, prepared, 5).get());
+    for (const auto& state : transport.states) {
+        EXPECT_EQ(state.value(), 5);
+        EXPECT_EQ(state.accepted(), prepared.ballot);
+    }
+    EXPECT_EQ(proposer.change(transport, keep).get(), 5);
+}
+
+TEST(CasPaxosProposerTest, prepare_returns_the_value_decided_before) {
+    MemoryTransport transport;
+    IntProposer first(1, 3);
+    IntProposer second(2, 3);
+    EXPECT_EQ(first.change(transport, increment).get(), 1);
+    EXPECT_EQ(second.prepare(transport).get().value, 1);
+}
+
+// A proposer that prepares in between makes the accept refuse, and nothing it
+// would have accepted is decided: a stale accept cannot overwrite what a later
+// proposer decided.
+TEST(CasPaxosProposerTest, accept_is_refused_after_a_higher_prepare) {
+    MemoryTransport transport;
+    IntProposer stale(1, 3);
+    IntProposer other(2, 3);
+    auto prepared = stale.prepare(transport).get();
+    EXPECT_EQ(other.change(transport, increment).get(), 1);
+
+    EXPECT_FALSE(stale.accept(transport, prepared, 7).get());
+    for (const auto& state : transport.states) {
+        EXPECT_EQ(state.value(), 1);
+    }
+
+    // It starts over from the value that was decided.
+    auto again = stale.prepare(transport).get();
+    EXPECT_EQ(again.value, 1);
+    EXPECT_TRUE(stale.accept(transport, again, 2).get());
+    for (const auto& state : transport.states) {
+        EXPECT_EQ(state.value(), 2);
+    }
+}
+
+TEST(CasPaxosProposerTest, accept_without_a_reachable_majority_fails) {
+    MemoryTransport transport;
+    IntProposer proposer(1, 3);
+    auto prepared = proposer.prepare(transport).get();
+    transport.unavailable = {false, true, true};
+    auto task = proposer.accept(transport, prepared, 5);
+    ASSERT_TRUE(task.done());
+    try {
+        task.get();
+        ADD_FAILURE() << "expected an error";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EHOSTUNREACH);
+    }
+}
+
+TEST(CasPaxosProposerTest, prepare_without_a_reachable_majority_fails) {
+    MemoryTransport transport;
+    transport.unavailable = {false, true, true};
+    IntProposer proposer(1, 3);
+    auto task = proposer.prepare(transport);
+    ASSERT_TRUE(task.done());
+    try {
+        task.get();
+        ADD_FAILURE() << "expected an error";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EHOSTUNREACH);
+    }
+}

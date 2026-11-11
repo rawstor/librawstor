@@ -12,6 +12,7 @@ the acceptor; stage 2 adds the generic proposer.
 | `Proposer<V>`: the two phases as a coroutine over a pluggable transport | 2 | ✅ | `librawstd/include/rawstd/caspaxos.hpp`, `librawstd/tests/test_caspaxos.cpp` |
 | Proposer skipping phase 1 after its own decision | 2 | ✅ | `rawstd::caspaxos::Proposer<V>::change()` |
 | Proposer raising its counter above states it read outside a round | 2 | ✅ | `rawstd::caspaxos::Proposer<V>::observe()` |
+| The two phases one at a time, for a change decided over several registers | 2 | ✅ | `rawstd::caspaxos::Proposer<V>::prepare()` / `accept()` |
 
 ## Overview
 
@@ -231,6 +232,9 @@ template <typename V>
 struct Reply { bool ok; Acceptor<V> state; };
 
 template <typename V>
+struct Prepared { Ballot ballot; V value; };
+
+template <typename V>
 class Proposer {
 public:
     Proposer(uint64_t id, size_t members);
@@ -238,6 +242,13 @@ public:
     template <typename Transport, typename Change>
     rawstd::Task<V> change(Transport& transport, Change transform,
                          size_t attempts = 16);
+
+    template <typename Transport>
+    rawstd::Task<Prepared<V>> prepare(Transport& transport,
+                                    size_t attempts = 16);
+    template <typename Transport>
+    rawstd::Task<bool> accept(Transport& transport,
+                            const Prepared<V>& prepared, const V& value);
 };
 ```
 
@@ -277,6 +288,20 @@ rawstd::Task<Reply<V>> accept(size_t index, Ballot ballot, const V& value,
   reservation, even when a majority accepted. Any unsuccessful operation
   discards the reservation. An accept rejected on the one-round path
   falls back to prepare and reapplies the function to the recovered value.
+- `prepare()` and `accept()` are the two phases of `change()` one at a time,
+  for a caller that decides one change over several registers: it prepares
+  them all, derives what to accept on each from the values it got, and
+  accepts under the ballots it prepared. `prepare()` retries a refused
+  ballot like `change()` and answers with the ballot and the value with the
+  highest accepted ballot. `accept()` never prepares again: it answers `true`
+  once a majority accepted, and `false` when a member refused and no majority
+  accepted, because a higher ballot was promised in between -- nothing is
+  decided then, and the caller starts over from `prepare()`. That is what
+  makes a stalled proposer harmless: whatever it accepts after another has
+  prepared the register is refused. Both fail like `change()` without a
+  reachable majority (`EHOSTUNREACH`). `prepare()` drops the one-round
+  reservation; an `accept()` that decided leaves the next ballot reserved,
+  as `change()` does.
 - Tests use in-memory acceptors with lost replies, unavailable majorities,
   competing proposers, conflicts between phases, and out-of-order
   coroutine completions.

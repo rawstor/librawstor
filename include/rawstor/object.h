@@ -382,13 +382,14 @@ int rawstor_object_user_data(
  * rawstor_object_user_data() for where the bytes are kept and what a process
  * that set them is held to.
  *
- * A change of the value moves the configuration epoch of the chunk, and the
- * call returns only after it has set the value on every other chunk of the
- * object too: from then on a writer that held the previous value is refused on
- * every chunk. That is one decision of the register per chunk, run in
- * parallel; an object of a single chunk has nothing to hand on. If the call
- * fails after the first chunk took the value, repeat it with the same
- * arguments to finish the hand-over, and write nothing before it returns 1.
+ * A change of the value moves the configuration epoch of a chunk, and the
+ * call returns only after the value is decided on the register of every chunk
+ * of the object: from then on a writer that held the previous value is refused
+ * on every chunk. The chunks are decided together, in two phases that each go
+ * to all of them in parallel (two phases of the register per chunk), so that a
+ * process that stalls in the middle cannot overwrite what another decided
+ * meanwhile. If the call fails, repeat it with the same arguments, and write
+ * nothing before it returns 1.
  *
  * Setting the value the register already holds (@p expected equal to
  * @p desired) writes nothing the other writers could tell apart, leaves the

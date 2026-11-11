@@ -1840,12 +1840,11 @@ rawstd::Task<void> Chunk::_adopt() {
  * - a read (`desired` null) changes nothing;
  * - a swap (`expected` and `desired`) is made only if the register holds
  *   `expected`, and counts as made when it already holds `desired`;
- * - a set (`expected` null, `desired`) is made whatever the register holds.
  * A value other than the one held moves the epoch; the sync set and the roles
- * stay the ones decided. A swap or a set that holds `desired` afterwards makes
+ * stay the ones decided. A swap that holds `desired` afterwards makes
  * this process the holder of it: once it finds the register holding another
  * value, every write of it is refused with `-ESTALE` until it holds one again.
- * Returns whether the register holds `desired` (true for a read and a set).
+ * Returns whether the register holds `desired` (true for a read).
  */
 rawstd::Task<bool> Chunk::_user_data_change(
     const uint8_t* expected, const uint8_t* desired, uint8_t* current,
@@ -1954,9 +1953,121 @@ rawstd::Task<bool> Chunk::user_data_cas(
     co_return co_await _user_data_change(expected, desired, current, epoch);
 }
 
-rawstd::Task<void> Chunk::user_data_set(const uint8_t* desired) {
-    uint8_t current[RAWSTOR_OBJECT_USER_DATA_SIZE];
-    co_await _user_data_change(nullptr, desired, current, nullptr);
+struct Chunk::UserDataTxn {
+    RegisterTransport transport;
+    std::optional<rawstd::caspaxos::Prepared<RawstorObjectConfig>> prepared;
+};
+
+rawstd::Task<void> Chunk::user_data_lock() {
+    if (_readonly) {
+        RAWSTD_THROW_SYSTEM_ERROR(EROFS);
+    }
+    co_await _lock();
+}
+
+rawstd::Task<void> Chunk::user_data_prepare(uint8_t* current, uint64_t* epoch) {
+    MirrorControl& c = *_control;
+    std::vector<bool> accepting(_members.size(), false);
+    {
+        std::lock_guard<std::mutex> guard(c.mutex());
+        size_t votes = 0;
+        for (size_t i = 0; i < _members.size(); ++i) {
+            accepting[i] = _state(i) == MemberState::IN_SYNC;
+            votes += accepting[i];
+        }
+        if (votes == 0 || _below_write_quorum(votes)) {
+            c.freeze_locked();
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+    }
+    std::shared_ptr<UserDataTxn> txn(new UserDataTxn{
+        RegisterTransport{
+            *this, accepting, std::vector<bool>(_members.size(), false)
+        },
+        std::nullopt
+    });
+    try {
+        txn->prepared = co_await c.proposer().prepare(txn->transport);
+    } catch (const std::system_error& e) {
+        if (e.code().value() != EHOSTUNREACH) {
+            throw;
+        }
+        std::lock_guard<std::mutex> guard(c.mutex());
+        c.freeze_locked();
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    const RawstorObjectConfig& value = txn->prepared->value;
+    {
+        std::lock_guard<std::mutex> guard(c.mutex());
+        if (value.epoch > c.epoch_locked()) {
+            _adopt_locked(value);
+        }
+    }
+    memcpy(current, value.user_data, RAWSTOR_OBJECT_USER_DATA_SIZE);
+    if (epoch != nullptr) {
+        *epoch = value.epoch;
+    }
+    _user_data_txn = std::move(txn);
+}
+
+rawstd::Task<bool> Chunk::user_data_accept(
+    const uint8_t* desired, uint8_t* current, uint64_t* epoch
+) {
+    if (!_user_data_txn || !_user_data_txn->prepared) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    MirrorControl& c = *_control;
+    UserDataTxn& txn = *_user_data_txn;
+    RawstorObjectConfig next = txn.prepared->value;
+    if (memcmp(next.user_data, desired, RAWSTOR_OBJECT_USER_DATA_SIZE) != 0) {
+        ++next.epoch;
+        memcpy(next.user_data, desired, RAWSTOR_OBJECT_USER_DATA_SIZE);
+    }
+    bool decided = false;
+    try {
+        decided =
+            co_await c.proposer().accept(txn.transport, *txn.prepared, next);
+    } catch (const std::system_error& e) {
+        if (e.code().value() != EHOSTUNREACH) {
+            throw;
+        }
+        std::lock_guard<std::mutex> guard(c.mutex());
+        c.freeze_locked();
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    if (!decided) {
+        co_return false;
+    }
+    {
+        std::lock_guard<std::mutex> guard(c.mutex());
+        c.hold_locked(desired);
+        if (next.epoch > c.epoch_locked()) {
+            _adopt_locked(next);
+        }
+    }
+    memcpy(current, next.user_data, RAWSTOR_OBJECT_USER_DATA_SIZE);
+    if (epoch != nullptr) {
+        *epoch = next.epoch;
+    }
+    co_return true;
+}
+
+rawstd::Task<void> Chunk::user_data_unlock() {
+    // A member that did not take the decision is out of the set, like one
+    // that fails a write.
+    std::vector<size_t> failed;
+    if (_user_data_txn) {
+        for (size_t i = 0; i < _members.size(); ++i) {
+            if (_user_data_txn->transport.failed[i]) {
+                failed.push_back(i);
+            }
+        }
+        _user_data_txn.reset();
+    }
+    _unlock();
+    if (!failed.empty()) {
+        co_await _degrade(failed);
+    }
 }
 
 bool Chunk::_below_write_quorum(size_t votes) const noexcept {

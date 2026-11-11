@@ -8,6 +8,8 @@
 #include <rawstd/logging.hpp>
 
 #include <algorithm>
+#include <array>
+#include <exception>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -424,26 +426,109 @@ rawstd::Task<bool> MultiChunkObject::user_data_cas(
     const uint8_t* expected, const uint8_t* desired, uint8_t* current,
     uint64_t* epoch
 ) {
-    Chunk* chunk = co_await _chunk(0);
-    bool swapped =
-        co_await chunk->user_data_cas(expected, desired, current, epoch);
-    // The first chunk decides who holds the object. Every other chunk is
-    // given the value as well, before the caller goes on: a writer that held
-    // the previous value is refused on a chunk once that chunk's register
-    // has moved to the new one, and not before. Confirming the value held
-    // (`expected` equal to `desired`) changes nothing to hand on.
-    if (swapped && memcmp(expected, desired, RAWSTOR_OBJECT_USER_DATA_SIZE)) {
-        co_await rawstd::gather(_chunks.size() - 1, [&](size_t i) {
-            return _set_user_data(static_cast<uint32_t>(i + 1), desired);
-        });
+    // Confirming the value held changes nothing, so there is nothing to
+    // decide on the other chunks.
+    if (memcmp(expected, desired, RAWSTOR_OBJECT_USER_DATA_SIZE) == 0) {
+        Chunk* first = co_await _chunk(0);
+        co_return co_await first->user_data_cas(
+            expected, desired, current, epoch
+        );
     }
-    co_return swapped;
+    co_return co_await _user_data_swap(expected, desired, current, epoch);
 }
 
-rawstd::Task<void>
-MultiChunkObject::_set_user_data(uint32_t index, const uint8_t* desired) {
-    Chunk* chunk = co_await _chunk(index);
-    co_await chunk->user_data_set(desired);
+/*
+ * One decision over the registers of every chunk. A writer that held the
+ * previous value is refused on a chunk once that chunk's register has moved to
+ * the new one, so the new value is set on all of them before the caller goes
+ * on -- and set by one decision, not chunk after chunk: two proposers racing
+ * each other would otherwise leave each chunk with whichever wrote last.
+ *
+ * With the transition lock of every chunk taken, in ascending order, so that
+ * two swaps never wait for each other, the first phase prepares every
+ * register, which also makes them refuse a lower ballot. The first chunk's
+ * value decides: `expected`, or `desired` already, and the value goes on. The
+ * second phase accepts `desired` on every register under the ballot it
+ * prepared. A register that refuses has promised a higher ballot meanwhile:
+ * another proposer is at work, and the swap starts over from what it left.
+ */
+rawstd::Task<bool> MultiChunkObject::_user_data_swap(
+    const uint8_t* expected, const uint8_t* desired, uint8_t* current,
+    uint64_t* epoch
+) {
+    constexpr size_t size = RAWSTOR_OBJECT_USER_DATA_SIZE;
+    const size_t n = _chunks.size();
+    std::vector<Chunk*> chunks(n);
+    co_await rawstd::gather(n, [&](size_t i) -> rawstd::Task<void> {
+        chunks[i] = co_await _chunk(static_cast<uint32_t>(i));
+    });
+
+    struct Value {
+        std::array<uint8_t, size> data;
+        uint64_t epoch;
+    };
+
+    for (size_t attempt = 0; attempt < 16; ++attempt) {
+        size_t locked = 0;
+        std::exception_ptr error;
+        bool finished = false;
+        bool swapped = false;
+        try {
+            for (; locked < n; ++locked) {
+                co_await chunks[locked]->user_data_lock();
+            }
+            std::vector<Value> held(n);
+            co_await rawstd::gather(n, [&](size_t i) {
+                return chunks[i]->user_data_prepare(
+                    held[i].data.data(), &held[i].epoch
+                );
+            });
+            if (memcmp(held[0].data.data(), desired, size) != 0 &&
+                memcmp(held[0].data.data(), expected, size) != 0) {
+                memcpy(current, held[0].data.data(), size);
+                if (epoch != nullptr) {
+                    *epoch = held[0].epoch;
+                }
+                finished = true;
+            } else {
+                std::vector<Value> decided(n);
+                std::vector<bool> accepted =
+                    co_await rawstd::gather(n, [&](size_t i) {
+                        return chunks[i]->user_data_accept(
+                            desired, decided[i].data.data(), &decided[i].epoch
+                        );
+                    });
+                if (std::all_of(accepted.begin(), accepted.end(), [](bool ok) {
+                        return ok;
+                    })) {
+                    memcpy(current, decided[0].data.data(), size);
+                    if (epoch != nullptr) {
+                        *epoch = decided[0].epoch;
+                    }
+                    swapped = true;
+                    finished = true;
+                }
+            }
+        } catch (...) {
+            error = std::current_exception();
+        }
+        for (size_t i = locked; i-- > 0;) {
+            try {
+                co_await chunks[i]->user_data_unlock();
+            } catch (...) {
+                if (!error) {
+                    error = std::current_exception();
+                }
+            }
+        }
+        if (error) {
+            std::rethrow_exception(error);
+        }
+        if (finished) {
+            co_return swapped;
+        }
+    }
+    RAWSTD_THROW_SYSTEM_ERROR(EAGAIN);
 }
 
 rawstd::Task<void> MultiChunkObject::close(bool clean) {

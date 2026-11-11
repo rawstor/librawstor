@@ -341,19 +341,43 @@ not held to any and takes every decision over as before.
 
 The epoch is a chunk's own, so a writer is stopped on a chunk once that chunk's
 register has moved to the new value, and not before. For an object of several
-chunks, `rawstor_object_user_data_cas()` therefore hands the value on: once
-the first chunk has decided it, the call sets it on every other chunk, which
-moves their epochs, and returns when they all have. The writer that decided
-the value starts writing after that, so a writer that held the previous value
-is refused on every chunk from then on; a write of it that reached a chunk
-before, preceded the new holder's. A swap that fails between the first chunk
-and the last leaves the value on the first only: the call is repeated, and the
-chunks that hold it already take no part. Confirming the value held
-(`expected` equal to `desired`) hands nothing on.
+chunks, `rawstor_object_user_data_cas()` therefore decides the value on the
+register of every chunk, and returns when they all have. The writer that
+decided the value starts writing after that, so a writer that held the
+previous value is refused on every chunk from then on; a write of it that
+reached a chunk before, preceded the new holder's.
 
-The hand-over costs one decision of the register per chunk when the value
-changes (the chunks go in parallel), and none when it is confirmed. An object
-of a single chunk has nothing to hand on.
+It is one decision over all the registers, not one chunk after another: a
+swap that set chunk after chunk would let two proposers racing each other
+leave each chunk with whichever wrote last, and a writer that stalled between
+two chunks would overwrite the new holder's value on the rest when it woke up.
+The swap (`MultiChunkObject::_user_data_swap()`) takes the transition lock of
+every chunk, in ascending order so that two swaps never wait for each other,
+and goes in two phases:
+
+1. *Prepare* on every register (`Proposer::prepare()`): each member promises a
+   ballot, and the replies hold the value each register has decided. The first
+   chunk's value decides: the swap goes on if it is `expected`, or `desired`
+   already (the swap is being repeated); otherwise it ends there, answering
+   with that value, and nothing is set.
+2. *Accept* `desired` on every register under the ballot it prepared
+   (`Proposer::accept()`), without preparing again. A register that refuses
+   has promised a higher ballot meanwhile: another proposer is at work, nothing
+   is decided on it, and the swap starts over from the values that proposer
+   left.
+
+A proposer that stalls between the phases cannot overwrite anything when it
+wakes up: its accepts are below the promises the later one made. A proposer
+that stops in the middle of the second phase leaves some chunks with the value;
+whoever swaps next sees it in the replies of the first phase and finishes the
+job, and the call can be repeated with the same arguments. Confirming the value
+held (`expected` equal to `desired`) changes nothing and decides on the first
+chunk's register only.
+
+The swap costs two phases of the register on every chunk when the value
+changes, the chunks going in parallel in each phase, and one decision on the
+first chunk when it is confirmed. An object of a single chunk has one register
+to decide on.
 
 There are two ways to read the bytes, with different guarantees. The call
 above is the register's own read, made through an object opened for writing.
