@@ -35,6 +35,8 @@ private:
     RawIOQueue* _queue;
     Server& _server;
     int _fd;
+    // Set by HANDSHAKE, the first request: nothing is served before it.
+    bool _handshaken = false;
 
     static rawstd::DetachedTask _recv_pump(std::weak_ptr<Client> weak);
 

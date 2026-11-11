@@ -15,8 +15,30 @@
 namespace rawstor {
 namespace tests {
 
+void serve_handshake(Server& server) {
+    server.read(
+        "RAWSTOR_CMD_HANDSHAKE <<<", sizeof(RawstorFrameHandshake),
+        [](const void*) {}
+    );
+    RawstorFrameResponse response = {
+        .head{
+            .magic = RAWSTOR_MAGIC,
+            .cmd = RAWSTOR_CMD_HANDSHAKE,
+            .cid = 0,
+        },
+        .body = {
+            .hash = 0,
+            .res = sizeof(RawstorFrameHandshakePayload),
+        },
+    };
+    server.write("RAWSTOR_CMD_HANDSHAKE >>>", &response, sizeof(response));
+    RawstorFrameHandshakePayload reply = {.features = 0};
+    server.write("RAWSTOR_CMD_HANDSHAKE >>>", &reply, sizeof(reply));
+}
+
 Session::Session(rawstor::tests::Server& server) : _server(server) {
     _server.accept("SESSION <<<");
+    serve_handshake(_server);
 }
 
 Session::~Session() {

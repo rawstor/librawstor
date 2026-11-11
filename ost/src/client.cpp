@@ -473,8 +473,40 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
 
             rawstd_trace("head received: %d\n", head.cmd);
 
+            // Nothing is served before the handshake. The request's payload
+            // is not read: the connection ends here.
+            if (!client->_handshaken && head.cmd != RAWSTOR_CMD_HANDSHAKE) {
+                co_await client->_send_response(head.cmd, head.cid, -EPROTO, 0);
+                rawstd_error(
+                    "fd %d: Request %u before the handshake\n", fd, head.cmd
+                );
+                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            }
+
             // --- read this request's frame payload and dispatch it ---
             switch (head.cmd) {
+            case RAWSTOR_CMD_HANDSHAKE: {
+                RawstorFrameHandshakePayload handshake;
+                co_await recv_frame(
+                    stream, &handshake, sizeof(handshake), fd,
+                    "request payload", &stream_failed
+                );
+                client = weak.lock();
+                if (client == nullptr) {
+                    co_return;
+                }
+                if (client->_handshaken) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -EPROTO, 0
+                    );
+                    rawstd_error("fd %d: A second handshake\n", fd);
+                    RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+                }
+                client->_handshaken = true;
+                _handshake(weak, head, handshake);
+                rawstd::DetachedTask::rethrow_if_pending();
+                break;
+            }
             case RAWSTOR_CMD_SET_OBJECT: {
                 RawstorFrameSetObjectPayload set_object;
                 co_await recv_frame(
@@ -813,6 +845,36 @@ Client::_close_current_slot(std::weak_ptr<Client> weak) {
     }
 
     co_return weak.lock();
+}
+
+rawstd::DetachedTask Client::_handshake(
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameHandshakePayload payload
+) {
+    std::shared_ptr<Client> client = weak.lock();
+    if (client == nullptr) {
+        co_return;
+    }
+
+    // The capabilities both sides know.
+    RawstorFrameHandshakePayload reply{
+        .features = payload.features & RAWSTOR_FEATURES_SUPPORTED,
+    };
+    std::vector<unsigned char> data(sizeof(reply));
+    memcpy(data.data(), &reply, sizeof(reply));
+
+    bool send_failed = false;
+    try {
+        co_await client->_send_response(
+            RAWSTOR_CMD_HANDSHAKE, head.cid, data.size(), 0, data
+        );
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        send_failed = true;
+    }
+    if (send_failed) {
+        co_await client->_server.del_client(client->_fd);
+    }
 }
 
 rawstd::DetachedTask Client::_list(

@@ -36,6 +36,9 @@ class Backend : public rawstor::Backend {
 private:
     uint16_t _cid_counter;
 
+    // The capabilities the server accepted in the handshake.
+    uint64_t _features = 0;
+
     rawio::Event* _read_event;
     std::unordered_map<uint16_t, std::shared_ptr<BackendOp>> _ops;
 
@@ -110,6 +113,8 @@ private:
 protected:
     // Native member requests and transport lifecycle shared by OST and MDS.
     rawstd::Task<void> _wire_connect();
+
+    rawstd::Task<void> _wire_handshake();
 
     rawstd::Task<void> _wire_close();
 

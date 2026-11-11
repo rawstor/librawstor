@@ -1005,6 +1005,7 @@ void auto_respond_writes_then_flush_and_release(
                         );
                         server.close("SESSION >>> (after flush)");
                         server.accept("SESSION <<< (target remove)");
+                        rawstor::tests::serve_handshake(server);
                         server.read(
                             "RAWSTOR_CMD_RELEASE <<<",
                             sizeof(RawstorFrameBasic), [](const void*) {}
@@ -1080,6 +1081,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     // down; the server side only ever forget()s its bookkeeping of it
     // (see forget()'s own doc comment in server.hpp).
     server.accept("SESSION <<<");
+    rawstor::tests::serve_handshake(server);
     // Slot::open() sends SET_OBJECT then META (see its own comment) --
     // replicated by hand here since this test can't use Session (see the
     // comment above), matching
@@ -1156,6 +1158,7 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
             // guaranteed to sit behind it.
             server.forget("SESSION (forgotten, connection left for the OS)");
             server.accept("SESSION <<< (retry target)");
+            rawstor::tests::serve_handshake(server);
             server.read(
                 "RAWSTOR_CMD_SET_OBJECT <<<", sizeof(RawstorFrameSetObject),
                 [](const void*) {}
@@ -1322,6 +1325,7 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
     // Session's destructor (which would queue it too early, before any
     // of these kWrites requests has actually arrived).
     server.accept("SESSION <<<");
+    rawstor::tests::serve_handshake(server);
     // Slot::open() sends SET_OBJECT then META (see its own comment) --
     // replicated by hand here since this test can't use Session (see the
     // comment above), matching
@@ -1379,6 +1383,7 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
                     server.close("SESSION >>> (after all writes, unanswered)");
 
                     server.accept("SESSION <<< (retry target)");
+                    rawstor::tests::serve_handshake(server);
                     server.read(
                         "RAWSTOR_CMD_SET_OBJECT <<<",
                         sizeof(RawstorFrameSetObject), [](const void*) {}

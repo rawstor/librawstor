@@ -252,13 +252,37 @@ TEST(OstLocationInfoTest, cancel_all_stops_retries) {
         getsockname(listen_fd, reinterpret_cast<sockaddr*>(&addr), &addr_len), 0
     );
     ASSERT_EQ(listen(listen_fd, 4), 0);
-    std::thread peer([listen_fd]() {
+    // Every connection opens with a HANDSHAKE, which the peer accepts.
+    auto handshake = [](int fd) {
+        RawstorFrameHandshake request;
+        if (recv(fd, &request, sizeof(request), MSG_WAITALL) !=
+            static_cast<ssize_t>(sizeof(request))) {
+            return;
+        }
+        struct {
+            RawstorFrameResponse response;
+            RawstorFrameHandshakePayload payload;
+        } reply = {};
+        reply.response.head.magic = RAWSTOR_MAGIC;
+        reply.response.head.cmd = RAWSTOR_CMD_HANDSHAKE;
+        reply.response.head.cid = request.head.cid;
+        reply.response.body.res = sizeof(reply.payload);
+        ssize_t ignored = send(fd, &reply, sizeof(reply), MSG_NOSIGNAL);
+        (void)ignored;
+    };
+    int second_fd = -1;
+    std::thread peer([listen_fd, &handshake, &second_fd]() {
         int fd = accept(listen_fd, nullptr, nullptr);
         if (fd >= 0) {
+            handshake(fd);
             RawstorFrameBasic request;
             ssize_t ignored = recv(fd, &request, sizeof(request), MSG_WAITALL);
             (void)ignored;
             ::close(fd);
+        }
+        second_fd = accept(listen_fd, nullptr, nullptr);
+        if (second_fd >= 0) {
+            handshake(second_fd);
         }
     });
     std::string location =
@@ -307,6 +331,9 @@ TEST(OstLocationInfoTest, cancel_all_stops_retries) {
     }
     EXPECT_TRUE(result.done);
     EXPECT_EQ(result.value, -ECANCELED);
+    if (second_fd >= 0) {
+        ::close(second_fd);
+    }
     ::close(listen_fd);
 }
 
