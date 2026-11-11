@@ -16,6 +16,7 @@
 #include <rawstd/uuid.h>
 
 #include <netinet/in.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -31,6 +32,7 @@
 #include <future>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -64,8 +66,11 @@ bool pump_until(
 // either). The other half of the
 // pair, wired directly into Client::create() below, stands in for what
 // Server::_add_client() would otherwise do with a real accept()ed fd.
-std::pair<std::shared_ptr<rawstor::ostserver::Client>, int>
-connect_client(rawstor::ostserver::Server& server, RawIOQueue* queue) {
+// The connection is handshaken, as every real client's first request does,
+// unless `handshake` is false.
+std::pair<std::shared_ptr<rawstor::ostserver::Client>, int> connect_client(
+    rawstor::ostserver::Server& server, RawIOQueue* queue, bool handshake = true
+) {
     int fds[2];
     if (::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == -1) {
         RAWSTD_THROW_ERRNO();
@@ -92,6 +97,35 @@ connect_client(rawstor::ostserver::Server& server, RawIOQueue* queue) {
 
     std::shared_ptr<rawstor::ostserver::Client> client =
         rawstor::ostserver::Client::create(queue, server, fds[0]).get();
+    if (handshake) {
+        RawstorFrameHandshake request = {
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_HANDSHAKE,
+                    .cid = 0,
+                },
+            .payload = {.features = RAWSTOR_FEATURES_SUPPORTED},
+        };
+        if (::send(fds[1], &request, sizeof(request), 0) !=
+            static_cast<ssize_t>(sizeof(request))) {
+            RAWSTD_THROW_ERRNO();
+        }
+        const size_t reply_size =
+            sizeof(RawstorFrameResponse) + sizeof(RawstorFrameHandshakePayload);
+        if (!pump_until(queue, [&] {
+                int n = 0;
+                return ::ioctl(fds[1], FIONREAD, &n) == 0 &&
+                       static_cast<size_t>(n) >= reply_size;
+            })) {
+            throw std::runtime_error("no handshake answer");
+        }
+        unsigned char reply[reply_size];
+        if (::recv(fds[1], reply, reply_size, 0) !=
+            static_cast<ssize_t>(reply_size)) {
+            RAWSTD_THROW_ERRNO();
+        }
+    }
     return {client, fds[1]};
 }
 
@@ -1232,6 +1266,12 @@ TEST(
             setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)),
             0
         );
+        client.send_handshake(RAWSTOR_FEATURES_SUPPORTED);
+        RawstorFrameHandshakePayload reply{};
+        ASSERT_EQ(
+            client.recv_response(&reply, sizeof(reply)).body.res,
+            static_cast<int32_t>(sizeof(reply))
+        );
         RawstdUUID id;
         ASSERT_EQ(rawstd_uuid7_init(&id), 0);
         client.send_allocate(id, 4096, 1);
@@ -1409,4 +1449,74 @@ TEST(OstClientTest, freeze_without_a_token_is_invalid) {
     ASSERT_EQ(rawstd_uuid7_init(&id), 0);
     client.send_freeze_thaw(RAWSTOR_CMD_FREEZE, id, 0, RawstdUUID{});
     expect_response(queue, client, RAWSTOR_CMD_FREEZE, -EINVAL);
+}
+
+// HANDSHAKE answers with the subset of the offered features the server
+// knows; none is defined yet, so whatever is offered, none is accepted.
+TEST(OstClientTest, handshake_accepts_no_unknown_feature) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue, false);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    client.send_handshake(~UINT64_C(0));
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >=
+               sizeof(RawstorFrameResponse) +
+                   sizeof(RawstorFrameHandshakePayload);
+    }));
+    RawstorFrameHandshakePayload reply{.features = ~UINT64_C(0)};
+    RawstorFrameResponse response = client.recv_response(&reply, sizeof(reply));
+    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_HANDSHAKE);
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(sizeof(reply)));
+    EXPECT_EQ(reply.features, RAWSTOR_FEATURES_SUPPORTED);
+
+    // The connection is served from now on.
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    client.send_allocate(id, 4096, 1);
+    expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, 0);
+}
+
+// Nothing is served before the handshake: the request is refused with
+// -EPROTO and the connection ends.
+TEST(OstClientTest, a_request_before_the_handshake_is_refused) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue, false);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    client.send_allocate(id, 4096, 1);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    EXPECT_EQ(client.recv_response().body.res, -EPROTO);
+}
+
+// A second handshake on a connection is refused the same way.
+TEST(OstClientTest, a_second_handshake_is_refused) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    client.send_handshake(0);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    EXPECT_EQ(client.recv_response().body.res, -EPROTO);
 }

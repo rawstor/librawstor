@@ -24,6 +24,13 @@ extern "C" {
 #define RAWSTOR_MAGIC 0x72737472 // "rstr" as ascii
 
 /*
+ * Optional capabilities negotiated by HANDSHAKE. No bit is
+ * defined yet: RAWSTOR_FEATURES_SUPPORTED is the union of the bits this
+ * build knows, what a client offers and what a server accepts from an offer.
+ */
+#define RAWSTOR_FEATURES_SUPPORTED UINT64_C(0)
+
+/*
  * One command space for every server role, grouped into reserved ranges
  * (docs/mds.md, "Wire protocol"):
  *
@@ -66,6 +73,17 @@ extern "C" {
  */
 #define RAWSTOR_CMD_RELEASE 0x05
 #define RAWSTOR_CMD_LIST 0x06
+/*
+ * The first request of every connection, to every server role: the client
+ * offers the optional capabilities it has (`features`, RAWSTOR_FEATURE_*) in
+ * RawstorFrameHandshakePayload, the server answers with the same payload
+ * holding the subset it accepts. Each side uses only that subset and ignores
+ * the bits it does not know. There is no protocol version; capabilities are
+ * the only negotiation. A server serves nothing before it: any other first
+ * request is answered -EPROTO and the connection is closed, and so is a
+ * second HANDSHAKE.
+ */
+#define RAWSTOR_CMD_HANDSHAKE 0x07
 #define RAWSTOR_CMD_LOCATION_INFO 0x08
 #define RAWSTOR_CMD_FLUSH 0x09
 #define RAWSTOR_CMD_WRITE_ZEROES 0x0a
@@ -163,6 +181,16 @@ struct RawstorFrameHead {
 } RAWSTOR_PACKED;
 
 /* request frames */
+
+/* HANDSHAKE's request and response payload. */
+struct RawstorFrameHandshakePayload {
+    uint64_t features;
+} RAWSTOR_PACKED;
+
+struct RawstorFrameHandshake {
+    struct RawstorFrameHead head;
+    struct RawstorFrameHandshakePayload payload;
+} RAWSTOR_PACKED;
 
 /*
  * Minimalistic protocol frame, shared by every command that doesn't need
@@ -757,6 +785,7 @@ static inline int rawstor_frame_allocate_decode(
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameHead, 8);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBasicPayload, 48);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetObjectPayload, 64);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameHandshakePayload, 8);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 20);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 32);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameVersionEntry, 16);

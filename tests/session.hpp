@@ -15,6 +15,10 @@ namespace tests {
 
 class Server;
 
+// Answers the HANDSHAKE every client sends first on a connection: reads the
+// request and accepts no feature.
+void serve_handshake(Server& server);
+
 class Session final {
 private:
     rawstor::tests::Server& _server;

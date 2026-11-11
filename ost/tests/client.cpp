@@ -282,6 +282,21 @@ uint16_t Client::send_list(const RawstdUUID& token, uint32_t limit) {
     return cid;
 }
 
+uint16_t Client::send_handshake(uint64_t features) {
+    uint16_t cid = _next_cid++;
+    RawstorFrameHandshake frame = {
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_HANDSHAKE,
+                .cid = cid,
+            },
+        .payload = {.features = features},
+    };
+    send_all(_fd, &frame, sizeof(frame));
+    return cid;
+}
+
 uint16_t Client::send_unknown_command() {
     uint16_t cid = _next_cid++;
     RawstorFrameHead head = {

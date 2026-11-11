@@ -41,6 +41,8 @@ public:
         const RawstdUUID& id, uint64_t chunk_offset = 0,
         const RawstdUUID& session_id = {}
     );
+    // HANDSHAKE offering `features`; its answer is a payload of 8 bytes.
+    uint16_t send_handshake(uint64_t features);
     uint16_t send_meta(const RawstdUUID& id, uint64_t chunk_offset);
     uint16_t send_leave();
     // SYNC_PREPARE/SYNC_ACCEPT (`frame.head.cmd`); the cid is filled in.

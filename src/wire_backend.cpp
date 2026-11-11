@@ -609,6 +609,46 @@ rawstd::Task<void> Backend::_wire_connect() {
     set_fd(fd);
 
     _start_receive_ring();
+
+    co_await _wire_handshake();
+}
+
+// The first request of the connection: nothing else is served before it.
+rawstd::Task<void> Backend::_wire_handshake() {
+    RawstorFrameHandshake request{
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_HANDSHAKE,
+                .cid = 0,
+            },
+        .payload = {.features = RAWSTOR_FEATURES_SUPPORTED},
+    };
+    // The handshake is the connection's own: the requests after it are
+    // numbered from where the connection started.
+    const uint16_t first_cid = _cid_counter;
+    std::vector<unsigned char> response;
+    try {
+        response = co_await exchange(
+            &request, sizeof(request), RAWSTOR_CMD_HANDSHAKE,
+            sizeof(RawstorFrameHandshakePayload)
+        );
+    } catch (const std::system_error&) {
+        throw;
+    } catch (...) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    _cid_counter = first_cid;
+    if (response.size() != sizeof(RawstorFrameHandshakePayload)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+    RawstorFrameHandshakePayload reply;
+    memcpy(&reply, response.data(), sizeof(reply));
+    // The server accepts a subset of what was offered.
+    if (reply.features & ~RAWSTOR_FEATURES_SUPPORTED) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+    _features = reply.features;
 }
 
 void Backend::_start_receive_ring() {

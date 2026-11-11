@@ -35,6 +35,8 @@ private:
     RawIOQueue* _queue;
     Server& _server;
     int _fd;
+    // Set by HANDSHAKE, the first request: nothing is served before it.
+    bool _handshaken = false;
     RawIOEvent* _recv_event;
     std::shared_ptr<Slot> _slot;
     uint64_t _size = 0;
@@ -96,6 +98,10 @@ private:
     static rawstd::Task<std::shared_ptr<Client>>
     _close_current_slot(std::weak_ptr<Client> weak);
 
+    static rawstd::DetachedTask _handshake(
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameHandshakePayload payload
+    );
     static rawstd::DetachedTask _list(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameListPayload payload

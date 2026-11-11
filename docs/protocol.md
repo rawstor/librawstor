@@ -32,7 +32,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Object versions: `OBJ_COMMIT_VERSION` `OBJ_REMOVE_VERSION` | ✅ | MDS server + `src/mds_backend.cpp` |
 | `idempotency_key` on mutating `OBJ_*` | ✅ | `mds/src/store.cpp` (`applied_mutations`) |
 | `-ENOSYS` for commands outside a server's role | ✅ | `ost/src/client.cpp`, `mds/src/client.cpp` |
-| Protocol version + feature bits in the `SET_OBJECT` handshake | ❌ | planned in [MDS design](mds.md) |
+| `HANDSHAKE`: the first request of every connection, feature bits (no protocol version) | ✅ | `include/rawstor/protocol.h`, OST `ost/src/client.cpp`, MDS `mds/src/client.cpp`, `src/wire_backend.cpp` |
 | Explicit `len` field in the response (`{res, len, hash}`) | ❌ | `res` still carries the payload size |
 | `map_epoch` in the IO frame (epoch-fence) | ❌ | planned in [MDS design](mds.md) |
 | Auth / capabilities | ❌ | open question |
@@ -63,11 +63,14 @@ that follows the struct.
 A client may pipeline requests: each carries a `cid` (command id) and its
 response echoes it back, so responses are matched by `cid`, not by order.
 
-The first request on a connection is `SET_OBJECT`. On an OST it binds the
-connection to a copy through a Slot, identified by `object_id`, `offset`
+The first request on a connection is `HANDSHAKE`: the client offers its
+capabilities and the server answers with the ones it accepts. A server serves
+nothing before it: any other first request is answered `-EPROTO` and the
+connection is closed, and so is a second `HANDSHAKE`. Then, on an OST,
+`SET_OBJECT` binds the connection to a copy through a Slot, identified by `object_id`, `offset`
 (the chunk offset within the object), and `version_id`. I/O offsets are
 relative to that chunk; the OST does not open an Object or route I/O
-between chunks. On the MDS it is a plain handshake. A server answers any
+between chunks; on the MDS it binds nothing. A server answers any
 command outside its role with `res = -ENOSYS`.
 
 ## Frame head
@@ -97,6 +100,7 @@ role), `0x01..0x1f` data (OST), `0x20..0x3f` metadata shared by OST and MDS,
 | `0x04` | `ALLOCATE` | OST / MDS (witness only) | Allocate | — |
 | `0x05` | `RELEASE` | OST / MDS (witness only) | Basic (non-nil `version_id`: that version only) | — |
 | `0x06` | `LIST` | OST, MDS | List | List rows |
+| `0x07` | `HANDSHAKE` | all | Handshake | Handshake |
 | `0x08` | `LOCATION_INFO` | OST / MDS | Basic (unused) | `RawstorLocationInfo` |
 | `0x09` | `FLUSH` | OST | Basic (`val` = epoch) | — |
 | `0x0a` | `WRITE_ZEROES` | OST | IO (`flags`: `SYNC`, `UNMAP`, `RESYNC`) | — |
@@ -197,6 +201,22 @@ none any more -- the lease ran out and the barrier lifted itself.
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  40  |                                     uint64_t val                                      |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+```
+
+### Handshake — 8 bytes
+
+`HANDSHAKE`'s request and response payload. `features` is the set of optional
+capabilities, a bit mask; no bit is defined yet. The client offers what it has
+and the server answers with the subset it accepts, which the connection then
+uses; each side ignores the bits it does not know. There is no protocol
+version: capabilities are the only negotiation.
+
+```text
+     +0         +1         +2         +3         +4         +5         +6         +7
+     +---------------------------------------------------------------------------------------+
+  0  |                                   uint64_t features                                   |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
 ```

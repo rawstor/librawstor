@@ -267,6 +267,14 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     int fd = client->_fd;
     ObjectStore& store = client->_server.store();
 
+    // Nothing is served before the handshake. The request's payload is not
+    // read: the connection ends here.
+    if (!client->_handshaken && head.cmd != RAWSTOR_CMD_HANDSHAKE) {
+        co_await client->_send_response(head.cmd, head.cid, -EPROTO);
+        rawstd_error("fd %d: Request %u before the handshake\n", fd, head.cmd);
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+
     // Every request below is served synchronously against ObjectStore
     // (docs/mds.md: "Calls are synchronous... a briefly blocked
     // event loop is accepted") -- the only actual awaiting here is the
@@ -281,6 +289,24 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         RawstorFrameSetObjectPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         co_await client->_send_response(head.cmd, head.cid, 0);
+        break;
+    }
+    case RAWSTOR_CMD_HANDSHAKE: {
+        RawstorFrameHandshakePayload payload;
+        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        if (client->_handshaken) {
+            co_await client->_send_response(head.cmd, head.cid, -EPROTO);
+            rawstd_error("fd %d: A second handshake\n", fd);
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        client->_handshaken = true;
+        // The capabilities both sides know.
+        RawstorFrameHandshakePayload reply{
+            .features = payload.features & RAWSTOR_FEATURES_SUPPORTED,
+        };
+        co_await client->_send_response(
+            head.cmd, head.cid, sizeof(reply), &reply, sizeof(reply)
+        );
         break;
     }
     case RAWSTOR_CMD_LOCATION_INFO: {
