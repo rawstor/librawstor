@@ -28,7 +28,7 @@ extern "C" {
  * `capacity` of them in `addrs`. Blocks while a name is looked up. Returns the
  * number of addresses stored (at least 1) or a negative errno value.
  */
-int rawstd_socket_resolve_all(
+int rawstd_socket_resolve(
     const char* host, unsigned int port, struct sockaddr_in* addrs,
     size_t capacity
 );

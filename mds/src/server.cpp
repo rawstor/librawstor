@@ -83,7 +83,7 @@ int Server::bind_listen(const std::string& addr, unsigned int port) {
         }
 
         sockaddr_in sin = {};
-        res = rawstd_socket_resolve_all(addr.c_str(), port, &sin, 1);
+        res = rawstd_socket_resolve(addr.c_str(), port, &sin, 1);
         if (res < 0) {
             rawstd_error("Failed to resolve address: %s\n", addr.c_str());
             RAWSTD_THROW_SYSTEM_ERROR(-res);

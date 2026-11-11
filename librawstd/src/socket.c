@@ -16,7 +16,7 @@
 #include <stdio.h>
 #include <string.h>
 
-int rawstd_socket_resolve_all(
+int rawstd_socket_resolve(
     const char* host, unsigned int port, struct sockaddr_in* addrs,
     size_t capacity
 ) {

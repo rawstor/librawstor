@@ -583,7 +583,7 @@ rawstd::Task<void> Backend::_wire_connect() {
     }
 
     sockaddr_in servaddrs[8];
-    int count = rawstd_socket_resolve_all(
+    int count = rawstd_socket_resolve(
         location().hostname().c_str(), location_port(location()), servaddrs,
         sizeof(servaddrs) / sizeof(servaddrs[0])
     );
