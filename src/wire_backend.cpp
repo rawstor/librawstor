@@ -583,20 +583,19 @@ rawstd::Task<void> Backend::_wire_connect() {
     }
 
     sockaddr_in servaddrs[8];
-    size_t count = sizeof(servaddrs) / sizeof(servaddrs[0]);
-    int res = rawstd_socket_resolve_all(
+    int count = rawstd_socket_resolve_all(
         location().hostname().c_str(), location_port(location()), servaddrs,
-        &count
+        sizeof(servaddrs) / sizeof(servaddrs[0])
     );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    if (count < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-count);
     }
 
     // A name may resolve to several addresses, some of them unreachable;
     // the location is connected as soon as one of them accepts.
     int fd = -1;
     std::exception_ptr connect_error;
-    for (size_t i = 0; i < count && fd == -1; ++i) {
+    for (int i = 0; i < count && fd == -1; ++i) {
         try {
             fd = co_await connect_socket(_queue, servaddrs[i]);
         } catch (...) {

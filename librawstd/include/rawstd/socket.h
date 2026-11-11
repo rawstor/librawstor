@@ -24,23 +24,13 @@ extern "C" {
 
 /**
  * Resolves `host` (a dotted IPv4 address or a host name) to its IPv4 socket
- * addresses with `port` (host byte order), in resolver order. `*count` is the
- * capacity of `addrs` on entry and the number of addresses stored on return.
- * Blocks while a name is looked up. Returns 0 or a negative errno value.
+ * addresses with `port` (host byte order), in resolver order, storing at most
+ * `capacity` of them in `addrs`. Blocks while a name is looked up. Returns the
+ * number of addresses stored (at least 1) or a negative errno value.
  */
 int rawstd_socket_resolve_all(
     const char* host, unsigned int port, struct sockaddr_in* addrs,
-    size_t* count
-);
-
-/**
- * Same as rawstd_socket_resolve_all(), keeping only the first address. (a
- * dotted IPv4 address or a host name) to an IPv4 socket address with `port`
- * (host byte order). Blocks while a name is looked up. Returns 0 or a negative
- * errno value.
- */
-int rawstd_socket_resolve(
-    const char* host, unsigned int port, struct sockaddr_in* addr
+    size_t capacity
 );
 
 int rawstd_socket_set_nonblock(int fd);

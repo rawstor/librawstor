@@ -18,7 +18,7 @@
 
 int rawstd_socket_resolve_all(
     const char* host, unsigned int port, struct sockaddr_in* addrs,
-    size_t* count
+    size_t capacity
 ) {
     struct addrinfo hints = {
         .ai_family = AF_INET,
@@ -53,7 +53,7 @@ int rawstd_socket_resolve_all(
     }
 
     size_t n = 0;
-    for (struct addrinfo* ai = res; ai != NULL && n < *count;
+    for (struct addrinfo* ai = res; ai != NULL && n < capacity;
          ai = ai->ai_next) {
         if (ai->ai_addrlen != sizeof(*addrs)) {
             continue;
@@ -66,16 +66,8 @@ int rawstd_socket_resolve_all(
     if (n == 0) {
         return -EINVAL;
     }
-    *count = n;
 
-    return 0;
-}
-
-int rawstd_socket_resolve(
-    const char* host, unsigned int port, struct sockaddr_in* addr
-) {
-    size_t count = 1;
-    return rawstd_socket_resolve_all(host, port, addr, &count);
+    return (int)n;
 }
 
 static int socket_add_flag(int fd, int flag) {
