@@ -129,7 +129,9 @@ def main(path):
         cpu = (
             float(c["cpu_user"]) + float(c["cpu_sys"]) + float(s["cpu_user"]) + float(s["cpu_sys"])
         ) / n * 1e3
-        hs[c["hs"]].append((float(c["hs_per_s"]), cpu, int(c["reused"])))
+        hs[c["hs"]].append(
+            (float(c["hs_per_s"]), cpu, int(c["reused"]), int(c["conns"]))
+        )
     if hs:
         print("## Connection setup (mTLS, ECDSA P-256, X25519)\n")
         print("| setup | connections/s | CPU ms/connection (both sides) |")
@@ -137,10 +139,21 @@ def main(path):
         labels = {"tcp": "TCP connect only", "full": "full TLS 1.3 handshake", "resume": "resumed (session ticket)"}
         for k in ["tcp", "full", "resume"]:
             v = hs.get(k)
-            if v:
-                print(
-                    f"| {labels[k]} | {med([x[0] for x in v]):,.0f} | {med([x[1] for x in v]):.3f} |"
-                )
+            if not v:
+                continue
+            # the first connection of a resume run is a full handshake, every
+            # other one must have reused the session; a full run reuses none
+            expected = {"tcp": 0, "full": 0}.get(k)
+            bad = [
+                x for x in v
+                if (k == "resume" and x[2] < x[3] - 1) or (expected == 0 and x[2] != 0)
+            ]
+            label = labels[k]
+            if bad:
+                label += f" **INVALID: {min(x[2] for x in bad)} of {bad[0][3]} reused**"
+            print(
+                f"| {label} | {med([x[0] for x in v]):,.0f} | {med([x[1] for x in v]):.3f} |"
+            )
         print()
 
     # ---- probes

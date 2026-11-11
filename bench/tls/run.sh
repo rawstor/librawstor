@@ -17,6 +17,7 @@ CPU_C=${CPU_C:-3}
 SECS=${SECS:-3}
 REPS=${REPS:-3}
 HS_CONNS=${HS_CONNS:-2000}
+PAIR_TIMEOUT=${PAIR_TIMEOUT:-120}   # seconds for one server or client run
 MODES=${MODES:-"plain ktls ubio ufd"}
 mkdir -p "$OUT/certs"
 RAW="$OUT/raw.txt"
@@ -51,11 +52,18 @@ pair() { # tag, common args...
     PORT=$((PORT + 1))
     {
         echo "RUN $tag"
-        "$OUT/bench" server --certs "$C" --port $PORT --cpu "$CPU_S" "$@" 2>&1 &
+        timeout "$PAIR_TIMEOUT" "$OUT/bench" server --certs "$C" --port $PORT \
+            --cpu "$CPU_S" "$@" 2>&1 &
         local spid=$!
         sleep 0.3
-        "$OUT/bench" client --certs "$C" --port $PORT --cpu "$CPU_C" "$@" 2>&1 || true
-        wait $spid || true
+        local rc=0
+        timeout "$PAIR_TIMEOUT" "$OUT/bench" client --certs "$C" --port $PORT \
+            --cpu "$CPU_C" "$@" 2>&1 || rc=$?
+        if [ "$rc" -ne 0 ]; then
+            echo "CLIENT_FAILED rc=$rc"
+            kill "$spid" 2>/dev/null || true
+        fi
+        wait "$spid" 2>/dev/null || true
     } >> "$RAW"
 }
 
