@@ -21,6 +21,29 @@ TEST(URITest, empty) {
     EXPECT_EQ(uri.path().filename(), "");
 }
 
+TEST(URITest, userinfo_without_password) {
+    rawstd::URI uri("ost://tenant@example.com:7777/foo");
+
+    EXPECT_EQ(uri.str(), "ost://tenant@example.com:7777/foo");
+    EXPECT_EQ(uri.scheme(), "ost");
+    EXPECT_EQ(uri.userinfo(), "tenant");
+    EXPECT_EQ(uri.username(), "tenant");
+    EXPECT_EQ(uri.password(), "");
+    EXPECT_EQ(uri.authority(), "tenant@example.com:7777");
+    EXPECT_EQ(uri.host(), "example.com:7777");
+    EXPECT_EQ(uri.hostname(), "example.com");
+    EXPECT_EQ(uri.port(), 7777u);
+    EXPECT_EQ(uri.path().str(), "/foo");
+}
+
+TEST(URITest, userinfo_without_host) {
+    rawstd::URI uri("file://tenant@/var/lib/rawstor");
+
+    EXPECT_EQ(uri.userinfo(), "tenant");
+    EXPECT_EQ(uri.hostname(), "");
+    EXPECT_EQ(uri.path().str(), "/var/lib/rawstor");
+}
+
 TEST(URITest, http) {
     rawstd::URI uri("http://user:password@example.com:80/foo");
 
