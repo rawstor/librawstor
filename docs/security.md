@@ -145,7 +145,11 @@ Every connection has an **expected server identity** that comes from trusted
 configuration, not from the peer: for an MDS, the identity configured next to
 its address; for an OST, `spiffe://<trust_domain>/ost/<ost_id>` where `ost_id` is
 the one the MDS returns in `RESOLVE` (the topology's OST UUID). A handshake
-whose peer SAN differs fails. Servers verify the client the same way against
+whose peer SAN differs fails. The address
+in a location (an IPv4 address or a host name, which is resolved without any
+authentication) takes no part in the check: the certificate carries no DNS
+name that is compared with it, so a spoofed DNS answer can send a client to
+the wrong host but cannot make that host pass as the expected identity. Servers verify the client the same way against
 the tenant and role rules of stage 3.
 
 Services verify the peer chain against a configured CA bundle, check
