@@ -6,6 +6,8 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 
+#include <stddef.h>
+
 #if defined(RAWSTD_ON_LINUX)
 #define RAWSTD_MSG_NOSIGNAL MSG_NOSIGNAL
 #elif defined(RAWSTD_ON_MACOS)
@@ -21,9 +23,21 @@ extern "C" {
 #endif
 
 /**
- * Resolves `host` (a dotted IPv4 address or a host name) to an IPv4 socket
- * address with `port` (host byte order). Blocks while a name is looked up.
- * Returns 0 or a negative errno value.
+ * Resolves `host` (a dotted IPv4 address or a host name) to its IPv4 socket
+ * addresses with `port` (host byte order), in resolver order. `*count` is the
+ * capacity of `addrs` on entry and the number of addresses stored on return.
+ * Blocks while a name is looked up. Returns 0 or a negative errno value.
+ */
+int rawstd_socket_resolve_all(
+    const char* host, unsigned int port, struct sockaddr_in* addrs,
+    size_t* count
+);
+
+/**
+ * Same as rawstd_socket_resolve_all(), keeping only the first address. (a
+ * dotted IPv4 address or a host name) to an IPv4 socket address with `port`
+ * (host byte order). Blocks while a name is looked up. Returns 0 or a negative
+ * errno value.
  */
 int rawstd_socket_resolve(
     const char* host, unsigned int port, struct sockaddr_in* addr

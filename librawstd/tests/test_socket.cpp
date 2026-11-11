@@ -33,6 +33,19 @@ TEST_F(SocketTest, resolve_hostname) {
     EXPECT_EQ(ntohl(addr.sin_addr.s_addr), INADDR_LOOPBACK);
 }
 
+TEST_F(SocketTest, resolve_all) {
+    sockaddr_in addrs[4] = {};
+    size_t count = 4;
+    ASSERT_EQ(rawstd_socket_resolve_all("localhost", 8080, addrs, &count), 0);
+    ASSERT_GE(count, 1u);
+    ASSERT_LE(count, 4u);
+    for (size_t i = 0; i < count; ++i) {
+        EXPECT_EQ(addrs[i].sin_family, AF_INET);
+        EXPECT_EQ(ntohs(addrs[i].sin_port), 8080);
+        EXPECT_EQ(ntohl(addrs[i].sin_addr.s_addr) >> 24, 127u);
+    }
+}
+
 TEST_F(SocketTest, resolve_invalid) {
     sockaddr_in addr = {};
     EXPECT_EQ(rawstd_socket_resolve("host.invalid", 8080, &addr), -EINVAL);

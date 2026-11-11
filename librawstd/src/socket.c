@@ -12,12 +12,13 @@
 #include <sys/types.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
-#include <fcntl.h>
 
-int rawstd_socket_resolve(
-    const char* host, unsigned int port, struct sockaddr_in* addr
+int rawstd_socket_resolve_all(
+    const char* host, unsigned int port, struct sockaddr_in* addrs,
+    size_t* count
 ) {
     struct addrinfo hints = {
         .ai_family = AF_INET,
@@ -51,14 +52,30 @@ int rawstd_socket_resolve(
         }
     }
 
-    if (res == NULL || res->ai_addrlen != sizeof(*addr)) {
-        freeaddrinfo(res);
-        return -EINVAL;
+    size_t n = 0;
+    for (struct addrinfo* ai = res; ai != NULL && n < *count;
+         ai = ai->ai_next) {
+        if (ai->ai_addrlen != sizeof(*addrs)) {
+            continue;
+        }
+        memcpy(&addrs[n], ai->ai_addr, sizeof(*addrs));
+        ++n;
     }
-    memcpy(addr, res->ai_addr, sizeof(*addr));
     freeaddrinfo(res);
 
+    if (n == 0) {
+        return -EINVAL;
+    }
+    *count = n;
+
     return 0;
+}
+
+int rawstd_socket_resolve(
+    const char* host, unsigned int port, struct sockaddr_in* addr
+) {
+    size_t count = 1;
+    return rawstd_socket_resolve_all(host, port, addr, &count);
 }
 
 static int socket_add_flag(int fd, int flag) {
