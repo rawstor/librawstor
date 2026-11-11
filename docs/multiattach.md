@@ -304,10 +304,10 @@ The value also carries `user_data`: `RAWSTOR_OBJECT_USER_DATA_SIZE` (256) opaque
 bytes of the application, zero until first set. They are part of the decided
 value, so they are replicated on every member of the chunk with the roles and
 the sync set, and are read and changed under the register's rules. An object
-has one set of them, which are those of its first chunk: the object-level calls
-take no offset, as `rawstor_target_meta()` and the register's requests of a
-whole-object target address the first chunk too. The other chunks' registers
-carry zeros.
+has one set of them: the object-level calls take no offset, and the first
+chunk's register decides them, as `rawstor_target_meta()` and the register's
+requests of a whole-object target address the first chunk too. The other
+chunks carry a copy (see *Holding the value*).
 
 - `rawstor_object_user_data()` reads them through the register, so the
   answer is what a majority of the members decided, not what this process saw
@@ -316,24 +316,44 @@ carry zeros.
   `expected`, as one change of the register (`Chunk::_user_data_change()`): the
   change is a function of the value the register has decided, so a value
   another writer decided is answered, not overwritten, and the answer is the
-  value held after the call. Both need a writable open.
-- A change moves the `epoch`; the sync set and the roles stay. Writers stamp
-  their writes with the epoch they know, so a writer whose user data another
-  writer replaced is refused with `-ESTALE` at its next write and takes the
-  decision over ([Epoch on writes](#epoch-on-writes)). Setting the value held
-  moves nothing, but still goes through the register.
+  value held after the call. A register that holds `desired` already counts
+  as set, so the call can be repeated. Both need a writable open.
+- A change moves the `epoch`; the sync set and the roles stay. Setting the
+  value held moves nothing, but still goes through the register.
 - The other transitions keep the bytes: they are copied from the decided value
   into every configuration a transition builds, and `rawstor resolve` keeps
   those of the first winner.
 - A member that does not take the decision is excluded like one that fails a
   write.
 
-The epoch is a chunk's own, so the user data stops the writes to the first
-chunk and no others: a writer that another one replaced is refused on chunk 0
-at its next write, and its writes to the other chunks of the object are not
-refused. User data that is to stop every write of an object -- a lock whose holder alone may
-write, say -- therefore belongs on an object of a single chunk
-(`chunk_size` 0), where the one epoch covers every write.
+#### Holding the value
+
+A write refused for another writer's `epoch` does not stop a writer by itself:
+the Chunk takes that writer's decision over and repeats the write
+([Epoch on writes](#epoch-on-writes)). What stops a writer is the value it
+holds. A process that set the user data -- a `cas` that left the register
+holding `desired` -- holds `desired`. When it takes a decision over and finds
+the register holding another value, it has lost what it set: every write of
+the process (`WRITE`, `WRITE_ZEROES`, `DISCARD` and `FLUSH`) fails with
+`-ESTALE`, and goes on failing until the process holds a value again, by a
+`cas` expecting the one it found. A process that never set the user data is
+not held to any and takes every decision over as before.
+
+The epoch is a chunk's own, so a writer is stopped on a chunk once that chunk's
+register has moved to the new value, and not before. For an object of several
+chunks, `rawstor_object_user_data_cas()` therefore hands the value on: once
+the first chunk has decided it, the call sets it on every other chunk, which
+moves their epochs, and returns when they all have. The writer that decided
+the value starts writing after that, so a writer that held the previous value
+is refused on every chunk from then on; a write of it that reached a chunk
+before, preceded the new holder's. A swap that fails between the first chunk
+and the last leaves the value on the first only: the call is repeated, and the
+chunks that hold it already take no part. Confirming the value held
+(`expected` equal to `desired`) hands nothing on.
+
+The hand-over costs one decision of the register per chunk when the value
+changes (the chunks go in parallel), and none when it is confirmed. An object
+of a single chunk has nothing to hand on.
 
 There are two ways to read the bytes, with different guarantees. The call
 above is the register's own read, made through an object opened for writing.

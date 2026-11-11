@@ -999,8 +999,10 @@ TEST(ObjectTest, mds_io_beyond_first_chunk) {
     run(*queue, target.remove(*queue));
 }
 
-// The user data of an object is kept in the register of its first chunk.
-TEST(ObjectTest, mds_user_data_is_kept_in_the_first_chunk) {
+// The user data of an object is decided in the register of its first chunk and
+// handed on to every other chunk before the call returns, so that the epoch of
+// every chunk has moved past what the writer holding the previous value knew.
+TEST(ObjectTest, mds_user_data_is_set_on_every_chunk) {
     rawstor::tests::ObjectEnv env(8810, 8811);
     auto queue = rawio::Queue::create(16);
     const uint64_t chunk_size = 64 * 1024;
@@ -1015,26 +1017,67 @@ TEST(ObjectTest, mds_user_data_is_kept_in_the_first_chunk) {
     );
     rawstor::Target target(rawstd::URI::uriv(created));
     auto object = run(*queue, target.open(*queue, 0));
+    const std::string created_target(created);
+
+    auto chunk_meta = [&](uint64_t offset) {
+        RawstorObjectMeta meta{};
+        EXPECT_EQ(target_meta(*queue, created_target, offset, &meta, 1), 1);
+        return meta;
+    };
+    auto holds = [&](const RawstorObjectMeta& meta, const uint8_t* value) {
+        return memcmp(
+                   meta.config.user_data, value, RAWSTOR_OBJECT_USER_DATA_SIZE
+               ) == 0;
+    };
+    const uint64_t offsets[] = {0, chunk_size, 2 * chunk_size, 3 * chunk_size};
+    uint64_t epochs[4];
+    for (size_t i = 0; i < 4; ++i) {
+        epochs[i] = chunk_meta(offsets[i]).config.epoch;
+    }
 
     uint8_t zero[RAWSTOR_OBJECT_USER_DATA_SIZE] = {};
-    uint8_t value[RAWSTOR_OBJECT_USER_DATA_SIZE];
-    memset(value, 0x5a, sizeof(value));
+    uint8_t first[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    memset(first, 0x5a, sizeof(first));
+    uint8_t second[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    memset(second, 0xa5, sizeof(second));
     uint8_t current[RAWSTOR_OBJECT_USER_DATA_SIZE];
     uint64_t epoch = 0;
-    EXPECT_TRUE(
-        run(*queue, object->user_data_cas(zero, value, current, &epoch))
-    );
-    EXPECT_EQ(memcmp(current, value, sizeof(value)), 0);
 
-    const std::string created_target(created);
-    for (uint64_t offset : {uint64_t{0}, chunk_size, 3 * chunk_size}) {
-        RawstorObjectMeta meta{};
-        ASSERT_EQ(target_meta(*queue, created_target, offset, &meta, 1), 1);
-        EXPECT_EQ(
-            memcmp(meta.config.user_data, value, sizeof(value)) == 0,
-            offset == 0
-        ) << offset;
+    EXPECT_TRUE(
+        run(*queue, object->user_data_cas(zero, first, current, &epoch))
+    );
+    EXPECT_EQ(memcmp(current, first, sizeof(first)), 0);
+    for (size_t i = 0; i < 4; ++i) {
+        RawstorObjectMeta meta = chunk_meta(offsets[i]);
+        EXPECT_TRUE(holds(meta, first)) << i;
+        EXPECT_GT(meta.config.epoch, epochs[i]) << i;
+        epochs[i] = meta.config.epoch;
     }
+
+    // Confirming the value held moves nothing, on any chunk.
+    EXPECT_TRUE(
+        run(*queue, object->user_data_cas(first, first, current, &epoch))
+    );
+    for (size_t i = 0; i < 4; ++i) {
+        EXPECT_EQ(chunk_meta(offsets[i]).config.epoch, epochs[i]) << i;
+    }
+
+    EXPECT_TRUE(
+        run(*queue, object->user_data_cas(first, second, current, &epoch))
+    );
+    for (size_t i = 0; i < 4; ++i) {
+        RawstorObjectMeta meta = chunk_meta(offsets[i]);
+        EXPECT_TRUE(holds(meta, second)) << i;
+        EXPECT_GT(meta.config.epoch, epochs[i]) << i;
+    }
+
+    // A swap that does not match hands nothing on.
+    EXPECT_FALSE(
+        run(*queue, object->user_data_cas(first, zero, current, &epoch))
+    );
+    EXPECT_EQ(memcmp(current, second, sizeof(second)), 0);
+    EXPECT_TRUE(holds(chunk_meta(3 * chunk_size), second));
+
     run(*queue, object->close());
     run(*queue, target.remove(*queue));
 }

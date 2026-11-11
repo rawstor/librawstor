@@ -3648,6 +3648,85 @@ TEST(MirrorUserDataTest, cas_sees_another_writers_decision) {
     object_close_clean(queue, object);
 }
 
+// A process that set the user data holds it. Once another writer has replaced
+// it, every write of this process is refused -- it does not take the other
+// writer's decision over and go on -- until it holds a value again.
+TEST(MirrorUserDataTest, replaced_holder_is_refused_until_it_holds_again) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000e6");
+    ASSERT_EQ(target_create(queue, members.target_all(), mirror_spec(3)), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    const UserData mine = user_data_of(10);
+    UserData current{};
+    uint64_t epoch = 0;
+    ASSERT_EQ(
+        object_user_data_cas(queue, object, UserData{}, mine, current, &epoch),
+        1
+    );
+    // Setting what is held already is the same call, and moves nothing.
+    uint64_t again = 0;
+    EXPECT_EQ(
+        object_user_data_cas(queue, object, UserData{}, mine, current, &again),
+        1
+    );
+    EXPECT_EQ(again, epoch);
+    std::string first = "first";
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+
+    // The other writer decides on a majority of the members.
+    RawstorObjectMeta before{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &before), 0);
+    RawstorObjectConfig decided = before.config;
+    ++decided.epoch;
+    const UserData theirs = user_data_of(50);
+    memcpy(decided.user_data, theirs.data(), theirs.size());
+    ASSERT_EQ(target_set_config(queue, members.target(0), decided), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(1), decided), 0);
+
+    std::string second = "second";
+    object_write(queue, object, second.data(), second.size(), 16, ESTALE);
+    // Refused for good, not once.
+    object_write(queue, object, second.data(), second.size(), 16, ESTALE);
+
+    // It holds a value again once it sets one, expecting what it found.
+    const UserData mine_again = user_data_of(90);
+    EXPECT_EQ(
+        object_user_data_cas(
+            queue, object, theirs, mine_again, current, &epoch
+        ),
+        1
+    );
+    object_write(queue, object, second.data(), second.size(), 16, 0);
+    object_close_clean(queue, object);
+}
+
+// Setting nothing, a process is not fenced by another writer's decision.
+TEST(MirrorUserDataTest, process_that_set_nothing_is_not_refused) {
+    Queue queue(16);
+    Members members(3, "00000000-0000-7000-8000-0000000000e7");
+    ASSERT_EQ(target_create(queue, members.target_all(), mirror_spec(3)), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    std::string first = "first";
+    object_write(queue, object, first.data(), first.size(), 0, 0);
+
+    RawstorObjectMeta before{};
+    ASSERT_EQ(target_meta(queue, members.target(0), &before), 0);
+    RawstorObjectConfig decided = before.config;
+    ++decided.epoch;
+    const UserData theirs = user_data_of(50);
+    memcpy(decided.user_data, theirs.data(), theirs.size());
+    ASSERT_EQ(target_set_config(queue, members.target(0), decided), 0);
+    ASSERT_EQ(target_set_config(queue, members.target(1), decided), 0);
+
+    std::string second = "second";
+    object_write(queue, object, second.data(), second.size(), 16, 0);
+    object_close_clean(queue, object);
+}
+
 TEST(MirrorUserDataTest, refusals) {
     Queue queue(16);
     Members members(3, "00000000-0000-7000-8000-0000000000e5");

@@ -23,6 +23,7 @@
 #include <rawthread/lock.hpp>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <exception>
@@ -434,6 +435,11 @@ private:
     // The in-sync copies are being healed from the reference (F5): the
     // register names this process the owner meanwhile.
     bool _healing = false;
+    // The user data this process set in the register (a successful
+    // user_data_cas()): while the register holds another value, this
+    // process has lost what it set, and its writes are refused.
+    std::optional<std::array<uint8_t, RAWSTOR_OBJECT_USER_DATA_SIZE>> _held;
+    std::atomic<bool> _fenced{false};
 
     void _fill_roles(RawstorObjectConfig& config) const noexcept {
         config.nroles = static_cast<uint8_t>(_states.size());
@@ -842,7 +848,22 @@ public:
         }
         return excluded;
     }
+    // This process set the user data to `value`: it holds it, and is no longer
+    // fenced.
+    void hold_locked(const uint8_t* value) {
+        _held.emplace();
+        memcpy(_held->data(), value, _held->size());
+        _fenced.store(false, std::memory_order_release);
+    }
+    // Whether this process set user data that the register no longer holds.
+    bool fenced() const noexcept {
+        return _fenced.load(std::memory_order_acquire);
+    }
     void adopt_locked(const RawstorObjectConfig& config) {
+        if (_held &&
+            memcmp(config.user_data, _held->data(), _held->size()) != 0) {
+            _fenced.store(true, std::memory_order_release);
+        }
         _config = config;
         for (size_t i = 0; i < _states.size(); ++i) {
             if (state(i) == MemberState::IN_SYNC) {
@@ -1811,16 +1832,20 @@ rawstd::Task<void> Chunk::_adopt() {
 }
 
 /*
- * Reads the user data of the chunk's register, or changes it when it holds
- * `expected`, with the register's own consistency: the answer is a value a
- * majority of the members decided. The change is a function of the value the
- * register holds -- made only if that is `expected` (any value when it is
- * null, which makes this a read) and not already `desired` -- so that another
- * writer's decision is neither undone nor repeated. A changed value moves the
- * epoch: every writer that stamps its writes with the epoch it knew gets
- * `-ESTALE` and takes the decision over, which is what fences a writer whose
- * user data was replaced. The sync set and the roles stay the ones decided.
- * Returns whether the value matched `expected` (true for a read).
+ * Reads the user data of the chunk's register, changes it when it holds
+ * `expected`, or sets it, with the register's own consistency: the answer is a
+ * value a majority of the members decided. The change is a function of the
+ * value the register holds, so that another writer's decision is neither
+ * undone nor repeated:
+ * - a read (`desired` null) changes nothing;
+ * - a swap (`expected` and `desired`) is made only if the register holds
+ *   `expected`, and counts as made when it already holds `desired`;
+ * - a set (`expected` null, `desired`) is made whatever the register holds.
+ * A value other than the one held moves the epoch; the sync set and the roles
+ * stay the ones decided. A swap or a set that holds `desired` afterwards makes
+ * this process the holder of it: once it finds the register holding another
+ * value, every write of it is refused with `-ESTALE` until it holds one again.
+ * Returns whether the register holds `desired` (true for a read and a set).
  */
 rawstd::Task<bool> Chunk::_user_data_change(
     const uint8_t* expected, const uint8_t* desired, uint8_t* current,
@@ -1856,16 +1881,17 @@ rawstd::Task<bool> Chunk::_user_data_change(
                 transport,
                 [&](const RawstorObjectConfig& value)
                     -> std::optional<RawstorObjectConfig> {
-                    matched =
-                        expected == nullptr || memcmp(
-                                                   value.user_data, expected,
-                                                   RAWSTOR_OBJECT_USER_DATA_SIZE
-                                               ) == 0;
-                    if (!matched || desired == nullptr ||
-                        memcmp(
-                            value.user_data, desired,
-                            RAWSTOR_OBJECT_USER_DATA_SIZE
-                        ) == 0) {
+                    const bool is_desired =
+                        desired != nullptr && memcmp(
+                                                  value.user_data, desired,
+                                                  RAWSTOR_OBJECT_USER_DATA_SIZE
+                                              ) == 0;
+                    matched = expected == nullptr || is_desired ||
+                              memcmp(
+                                  value.user_data, expected,
+                                  RAWSTOR_OBJECT_USER_DATA_SIZE
+                              ) == 0;
+                    if (!matched || desired == nullptr || is_desired) {
                         return std::nullopt;
                     }
                     RawstorObjectConfig next = value;
@@ -1886,6 +1912,11 @@ rawstd::Task<bool> Chunk::_user_data_change(
         }
         {
             std::lock_guard<std::mutex> guard(c.mutex());
+            // Holding the value first: taking over the decision that set it
+            // must not find it replaced.
+            if (matched && desired != nullptr) {
+                c.hold_locked(desired);
+            }
             if (decided.epoch > c.epoch_locked()) {
                 _adopt_locked(decided);
             }
@@ -1921,6 +1952,11 @@ rawstd::Task<bool> Chunk::user_data_cas(
     uint64_t* epoch
 ) {
     co_return co_await _user_data_change(expected, desired, current, epoch);
+}
+
+rawstd::Task<void> Chunk::user_data_set(const uint8_t* desired) {
+    uint8_t current[RAWSTOR_OBJECT_USER_DATA_SIZE];
+    co_await _user_data_change(nullptr, desired, current, nullptr);
 }
 
 bool Chunk::_below_write_quorum(size_t votes) const noexcept {
@@ -2718,6 +2754,11 @@ rawstd::Task<size_t> Chunk::_fan_out_write(
     std::function<rawstd::Task<size_t>(Slot&)> issue
 ) {
     for (size_t attempt = 0; attempt < 16; ++attempt) {
+        // The user data this process set has been replaced: another writer
+        // holds the chunk now, and nothing of this process is written.
+        if (_control->fenced()) {
+            RAWSTD_THROW_SYSTEM_ERROR(ESTALE);
+        }
         bool stale = false;
         size_t result =
             co_await _fan_out_write_once(offset, size, issue, stale);

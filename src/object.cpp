@@ -15,6 +15,7 @@
 
 #include <cerrno>
 #include <cstddef>
+#include <cstring>
 
 namespace rawstor {
 
@@ -424,7 +425,25 @@ rawstd::Task<bool> MultiChunkObject::user_data_cas(
     uint64_t* epoch
 ) {
     Chunk* chunk = co_await _chunk(0);
-    co_return co_await chunk->user_data_cas(expected, desired, current, epoch);
+    bool swapped =
+        co_await chunk->user_data_cas(expected, desired, current, epoch);
+    // The first chunk decides who holds the object. Every other chunk is
+    // given the value as well, before the caller goes on: a writer that held
+    // the previous value is refused on a chunk once that chunk's register
+    // has moved to the new one, and not before. Confirming the value held
+    // (`expected` equal to `desired`) changes nothing to hand on.
+    if (swapped && memcmp(expected, desired, RAWSTOR_OBJECT_USER_DATA_SIZE)) {
+        co_await rawstd::gather(_chunks.size() - 1, [&](size_t i) {
+            return _set_user_data(static_cast<uint32_t>(i + 1), desired);
+        });
+    }
+    co_return swapped;
+}
+
+rawstd::Task<void>
+MultiChunkObject::_set_user_data(uint32_t index, const uint8_t* desired) {
+    Chunk* chunk = co_await _chunk(index);
+    co_await chunk->user_data_set(desired);
 }
 
 rawstd::Task<void> MultiChunkObject::close(bool clean) {

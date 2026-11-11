@@ -334,17 +334,14 @@ int rawstor_object_flush(
  * majority of the members decided -- another writer's latest change included
  * -- not what this process saw last.
  *
- * A change of the user data moves the configuration epoch of that chunk.
- * Writes carry the epoch of the configuration they were issued under, and a
- * member refuses one below its own with @c -ESTALE: a writer that kept using
- * the chunk after another one replaced the user data is stopped at its next
- * write (and takes the new value over, for any I/O it issues afterwards).
- * That is what makes the user data usable as a lock held by one writer at a
- * time, a leader's identity and the like.
- *
- * The epoch is a chunk's own, so the user data stops the writes to the
- * first chunk only. To have it stop every write of the object, make the
- * object of a single chunk (RawstorObjectSpec::chunk_size 0).
+ * A process that set the user data (a rawstor_object_user_data_cas() that
+ * returned 1) holds the value it set. Once it finds the object holding another
+ * one -- another writer replaced it, and this process learns of it with its
+ * next write, read or change -- every write of the process (writes, discards,
+ * zeroing and flushes) fails with @c -ESTALE, and goes on failing until it
+ * sets a value again. That is what makes the user data usable as a lock held
+ * by one writer at a time, a leader's identity and the like. A process that
+ * never set the user data is not held to any.
  *
  * @param object  Open object handle obtained from rawstor_target_open(),
  *                opened for writing: the read is a decision of the register.
@@ -380,13 +377,23 @@ int rawstor_object_user_data(
  * majority of the members decide the change; otherwise nothing is written.
  * Concurrent callers, in this process or others, are ordered by the
  * register: at most one of several that expect the same value succeeds, and
- * the others learn the value that won. See rawstor_object_user_data()
- * for where the bytes are kept and what the epoch makes of a change.
+ * the others learn the value that won. A register that already holds
+ * @p desired counts as set, so a call can be repeated. See
+ * rawstor_object_user_data() for where the bytes are kept and what a process
+ * that set them is held to.
+ *
+ * A change of the value moves the configuration epoch of the chunk, and the
+ * call returns only after it has set the value on every other chunk of the
+ * object too: from then on a writer that held the previous value is refused on
+ * every chunk. That is one decision of the register per chunk, run in
+ * parallel; an object of a single chunk has nothing to hand on. If the call
+ * fails after the first chunk took the value, repeat it with the same
+ * arguments to finish the hand-over, and write nothing before it returns 1.
  *
  * Setting the value the register already holds (@p expected equal to
- * @p desired) writes nothing the other writers could tell apart and leaves
- * the epoch where it is; the call still goes through the register, so it
- * confirms the value is the one a majority holds.
+ * @p desired) writes nothing the other writers could tell apart, leaves the
+ * epochs where they are and hands nothing on; the call still goes through the
+ * register, so it confirms the value is the one a majority holds.
  *
  * @param object    Open object handle obtained from rawstor_target_open(),
  *                  opened for writing.
@@ -400,8 +407,8 @@ int rawstor_object_user_data(
  * @param epoch     Receives the epoch of that value; may be NULL. Must
  *                  remain valid until @p cb is invoked.
  * @param cb        Callback invoked on completion.
- *                  - @p result is 1 if the value was set, 0 if the register
- *                    held another one (not an I/O error), or a negative
+ *                  - @p result is 1 if the register holds @p desired, 0 if
+ *                    it held another value (not an I/O error), or a negative
  *                    errno on failure, as for rawstor_object_user_data().
  *                  - @p data is the same pointer passed as @p data below.
  *                  - Return zero on success. A negative errno value signals

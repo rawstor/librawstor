@@ -269,6 +269,10 @@ private:
     // string against before ever constructing this object.
     rawstd::Task<Chunk*> _chunk(uint32_t index);
 
+    // Sets the user data of chunk `index`, whatever it holds
+    // (user_data_cas() hands the value it set on to every other chunk).
+    rawstd::Task<void> _set_user_data(uint32_t index, const uint8_t* desired);
+
     // Every chunk opened so far, in order -- the ones flush()/close() act
     // on.
     std::vector<Chunk*> _open_chunks() const;
