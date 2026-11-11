@@ -3,6 +3,7 @@
 
 #include "rawstd/gcc.h"
 
+#include <netinet/in.h>
 #include <sys/socket.h>
 
 #if defined(RAWSTD_ON_LINUX)
@@ -18,6 +19,15 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * Resolves `host` (a dotted IPv4 address or a host name) to an IPv4 socket
+ * address with `port` (host byte order). Blocks while a name is looked up.
+ * Returns 0 or a negative errno value.
+ */
+int rawstd_socket_resolve(
+    const char* host, unsigned int port, struct sockaddr_in* addr
+);
 
 int rawstd_socket_set_nonblock(int fd);
 

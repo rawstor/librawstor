@@ -54,9 +54,10 @@ deciding how to deploy.
   touched after `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY`, but a client that is
   still working on the OSTs by then may be seen half done until the next
   probe. See [Configuration](configuration.md).
-- **Locations are IP addresses.** Use IPs, not host names, in locations and
-  topology files. A client-local location such as `file://` only makes sense on
-  a single host.
+- **Host names are resolved to IPv4 only.** A host name in a location,
+  topology file or listen address is looked up (blocking) when connecting or
+  binding, and only its IPv4 address is used. A client-local location such as
+  `file://` only makes sense on a single host.
 
 ## Versions
 

@@ -553,16 +553,11 @@ rawstd::Task<void> Backend::_wire_connect() {
         }
 
         sockaddr_in servaddr = {};
-        servaddr.sin_family = AF_INET;
-        servaddr.sin_port = htons(location_port(location()));
-
-        res = inet_pton(
-            AF_INET, location().hostname().c_str(), &servaddr.sin_addr
+        res = rawstd_socket_resolve(
+            location().hostname().c_str(), location_port(location()), &servaddr
         );
-        if (res == 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        } else if (res == -1) {
-            RAWSTD_THROW_ERRNO();
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
 
         co_await _queue.connect(fd, (sockaddr*)&servaddr, sizeof(servaddr));

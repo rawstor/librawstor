@@ -3,6 +3,8 @@
 #include "rawstd/gcc.h"
 #include "rawstd/logging.h"
 
+#include <arpa/inet.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 
@@ -10,7 +12,54 @@
 #include <sys/types.h>
 
 #include <errno.h>
+#include <stdio.h>
+#include <string.h>
 #include <fcntl.h>
+
+int rawstd_socket_resolve(
+    const char* host, unsigned int port, struct sockaddr_in* addr
+) {
+    struct addrinfo hints = {
+        .ai_family = AF_INET,
+        .ai_socktype = SOCK_STREAM,
+    };
+    struct addrinfo* res = NULL;
+
+    char service[8];
+    if (port > 65535) {
+        return -EINVAL;
+    }
+    snprintf(service, sizeof(service), "%u", port);
+
+    int ret = getaddrinfo(host, service, &hints, &res);
+    if (ret != 0) {
+        switch (ret) {
+        case EAI_SYSTEM: {
+            int error = errno;
+            errno = 0;
+            return error != 0 ? -error : -EIO;
+        }
+        case EAI_AGAIN:
+            return -EAGAIN;
+        case EAI_MEMORY:
+            return -ENOMEM;
+        default:
+            rawstd_warning(
+                "Failed to resolve %s: %s\n", host, gai_strerror(ret)
+            );
+            return -EINVAL;
+        }
+    }
+
+    if (res == NULL || res->ai_addrlen != sizeof(*addr)) {
+        freeaddrinfo(res);
+        return -EINVAL;
+    }
+    memcpy(addr, res->ai_addr, sizeof(*addr));
+    freeaddrinfo(res);
+
+    return 0;
+}
 
 static int socket_add_flag(int fd, int flag) {
     int error;
