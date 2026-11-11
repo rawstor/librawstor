@@ -74,6 +74,18 @@ relative to that chunk; the OST does not open an Object or route I/O
 between chunks; on the MDS it binds nothing. A server answers any
 command outside its role with `res = -ENOSYS`.
 
+```mermaid
+sequenceDiagram
+    participant C as client
+    participant S as OST / MDS
+
+    C->>S: HANDSHAKE (features offered)
+    S-->>C: HANDSHAKE (features accepted)
+    C->>S: SET_OBJECT, then requests
+
+    Note over C,S: any other first request, or a second HANDSHAKE:<br/>-EPROTO, connection closed
+```
+
 ## Frame head
 
 Every request and every response starts with the same 8-byte head.
