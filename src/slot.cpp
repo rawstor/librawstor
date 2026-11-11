@@ -1169,6 +1169,66 @@ rawstd::Task<void> Slot::list_chunks(
     }
 }
 
+rawstd::Task<void> Slot::create_tenant(const RawstdUUID& tenant) {
+    OperationGuard operation(*this);
+
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::create_tenant,
+            new_idempotency_key(), tenant
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void> Slot::remove_tenant(const RawstdUUID& tenant) {
+    OperationGuard operation(*this);
+
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::remove_tenant,
+            new_idempotency_key(), tenant
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<std::vector<RawstdUUID>> Slot::list_tenants() {
+    OperationGuard operation(*this);
+
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        auto ret = co_await _with_retry(
+            func_name, trace_event, &Backend::list_tenants
+        );
+        _finish(t_call);
+        co_return ret;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
 rawstd::Task<void> Slot::_create_version(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
     const RawstdUUID& version_id

@@ -123,6 +123,8 @@ protected:
         RawstdUUID& token, RawstdUUID version_id = {}
     );
 
+    rawstd::Task<std::vector<RawstdUUID>> _wire_list_tenants();
+
     rawstd::Task<void> _wire_create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstorObjectSpec& sp,

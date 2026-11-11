@@ -311,6 +311,7 @@ rawstd::Task<void> Backend::list_chunks(
         if (capped) {
             token = chunks.back().id;
         }
+        co_await _keep_owned(id, chunks);
     } catch (const std::system_error&) {
         throw;
     } catch (const std::exception& e) {
@@ -461,6 +462,7 @@ rawstd::Task<void> Backend::create(
             identity.width = static_cast<uint8_t>(sp.width);
             identity.chunk_size = sp.chunk_size;
             identity.size = sp.size;
+            identity.tenant = tenant();
 
             // meta_encode()'s own (shorter, variable-length) return value
             // is NUL-padded out to a fixed META_MAX_SIZE bytes here,
@@ -626,6 +628,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
+    memcpy(ret.tenant_id, identity.tenant.bytes, sizeof(ret.tenant_id));
     ret.state = state;
     ret.config = config;
     ret.promised = promised;

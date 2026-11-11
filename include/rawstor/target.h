@@ -231,6 +231,11 @@ struct RawstorObjectConfig {
  * @see rawstor_target_meta
  */
 struct RawstorObjectMeta {
+    /**
+     * The tenant that owns the object (docs/tenants.md); all zero for an
+     * object created without one.
+     */
+    uint8_t tenant_id[16];
     struct RawstorObjectSpec spec;
     enum RawstorMemberRole member_role;
     enum RawstorObjectSyncStateValue state;

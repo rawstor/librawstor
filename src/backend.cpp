@@ -5,6 +5,7 @@
 #include "lvm_backend.hpp"
 #include "mds_backend.hpp"
 #include "ost_backend.hpp"
+#include "tenant.hpp"
 #include "zfs_backend.hpp"
 
 #include <rawstd/logging.h>
@@ -24,6 +25,7 @@ namespace rawstor {
 
 Backend::Backend(Private, rawio::Queue& queue, const rawstd::URI& location) :
     _location(location),
+    _tenant(rawstor::tenant::of(location)),
     _fd(-1),
     _queue(queue) {
 }
@@ -74,6 +76,20 @@ Backend::create(rawio::Queue& queue, const rawstd::URI& location) {
 
 rawstd::Task<std::vector<rawstd::URI>>
 Backend::resolve_targets(const RawstdUUID&, const RawstdUUID&) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
+rawstd::Task<std::vector<RawstdUUID>> Backend::list_tenants() {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
+rawstd::Task<void>
+Backend::create_tenant(const RawstdUUID&, const RawstdUUID&) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
+rawstd::Task<void>
+Backend::remove_tenant(const RawstdUUID&, const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 

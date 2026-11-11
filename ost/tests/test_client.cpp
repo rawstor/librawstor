@@ -30,6 +30,7 @@
 #include <cstring>
 #include <functional>
 #include <future>
+#include <set>
 #include <string>
 #include <thread>
 #include <utility>
@@ -1449,6 +1450,177 @@ TEST(OstClientTest, freeze_without_a_token_is_invalid) {
     ASSERT_EQ(rawstd_uuid7_init(&id), 0);
     client.send_freeze_thaw(RAWSTOR_CMD_FREEZE, id, 0, RawstdUUID{});
     expect_response(queue, client, RAWSTOR_CMD_FREEZE, -EINVAL);
+}
+
+namespace {
+
+RawstdUUID make_tenant() {
+    RawstdUUID id;
+    EXPECT_EQ(rawstd_uuid7_init(&id), 0);
+    return id;
+}
+
+// One LIST page of `client`'s tenant: the ids it names, without the cursor.
+std::vector<RawstdUUID>
+list_ids(RawIOQueue* queue, rawstor::ostserver::tests::Client& client) {
+    client.send_list(RawstdUUID{}, 0);
+    EXPECT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    // The response head first, so the row count is known.
+    RawstorFrameResponse head = client.recv_response();
+    EXPECT_GE(head.body.res, 0);
+    size_t count =
+        static_cast<size_t>(head.body.res) / sizeof(RawstorFrameListEntry);
+    std::vector<RawstorFrameListEntry> rows(count);
+    if (count != 0) {
+        EXPECT_TRUE(pump_until(queue, [&] {
+            return client.bytes_available() >=
+                   count * sizeof(RawstorFrameListEntry);
+        }));
+        client.recv_payload(rows.data(), count * sizeof(RawstorFrameListEntry));
+    }
+    std::vector<RawstdUUID> ids;
+    // The last row is the resume cursor.
+    for (size_t i = 0; i + 1 < rows.size(); ++i) {
+        RawstdUUID id;
+        std::memcpy(id.bytes, rows[i].id, sizeof(id.bytes));
+        ids.push_back(id);
+    }
+    return ids;
+}
+
+} // namespace
+
+// An object records the tenant that owns it when it is created, and META
+// reports it.
+TEST(OstClientTest, an_object_records_its_owner) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    RawstdUUID owned;
+    ASSERT_EQ(rawstd_uuid7_init(&owned), 0);
+    RawstdUUID unowned;
+    ASSERT_EQ(rawstd_uuid7_init(&unowned), 0);
+    RawstdUUID acme = make_tenant();
+
+    client.set_tenant(acme);
+    client.send_allocate(owned, 4096, 1);
+    expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, 0);
+    client.set_tenant(RawstdUUID{});
+    client.send_allocate(unowned, 4096, 1);
+    expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, 0);
+
+    for (const auto& [id, owner] :
+         {std::pair{owned, acme}, std::pair{unowned, RawstdUUID{}}}) {
+        client.send_meta(id, 0);
+        ASSERT_TRUE(pump_until(queue, [&] {
+            return client.bytes_available() >=
+                   sizeof(RawstorFrameResponse) +
+                       sizeof(RawstorFrameMetaPayload);
+        }));
+        RawstorFrameMetaPayload meta;
+        RawstorFrameResponse response =
+            client.recv_response(&meta, sizeof(meta));
+        ASSERT_EQ(response.body.res, static_cast<int32_t>(sizeof(meta)));
+        EXPECT_EQ(
+            std::memcmp(meta.tenant_id, owner.bytes, sizeof(meta.tenant_id)), 0
+        );
+    }
+}
+
+// LIST names the objects a tenant owns; without a tenant it names them all.
+TEST(OstClientTest, list_shows_the_objects_a_tenant_owns) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    RawstdUUID acme = make_tenant();
+    RawstdUUID other = make_tenant();
+    RawstdUUID in_acme;
+    RawstdUUID in_other;
+    RawstdUUID in_none;
+    ASSERT_EQ(rawstd_uuid7_init(&in_acme), 0);
+    ASSERT_EQ(rawstd_uuid7_init(&in_other), 0);
+    ASSERT_EQ(rawstd_uuid7_init(&in_none), 0);
+
+    client.set_tenant(acme);
+    client.send_allocate(in_acme, 4096, 1);
+    expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, 0);
+    client.set_tenant(other);
+    client.send_allocate(in_other, 4096, 1);
+    expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, 0);
+    client.set_tenant(RawstdUUID{});
+    client.send_allocate(in_none, 4096, 1);
+    expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, 0);
+
+    auto only = [&](const RawstdUUID& tenant, const RawstdUUID& expected) {
+        client.set_tenant(tenant);
+        std::vector<RawstdUUID> ids = list_ids(queue, client);
+        ASSERT_EQ(ids.size(), 1u);
+        EXPECT_EQ(rawstd_uuid_cmp(&ids[0], &expected), 0);
+    };
+    only(acme, in_acme);
+    only(other, in_other);
+
+    // An administrator names no tenant and sees every object.
+    client.set_tenant(RawstdUUID{});
+    EXPECT_EQ(list_ids(queue, client).size(), 3u);
+
+    // A tenant that owns nothing sees nothing.
+    client.set_tenant(make_tenant());
+    EXPECT_TRUE(list_ids(queue, client).empty());
+}
+
+// An object id is unique on its own: a second tenant cannot create it again.
+TEST(OstClientTest, an_object_id_is_unique_across_tenants) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+
+    client.set_tenant(make_tenant());
+    client.send_allocate(id, 4096, 1);
+    expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, 0);
+    client.set_tenant(make_tenant());
+    client.send_allocate(id, 4096, 1);
+    expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, -EEXIST);
+}
+
+// The tenant registry is the MDS's: an OST has none.
+TEST(OstClientTest, an_ost_has_no_tenant_registry) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    client.send_list_tenants();
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    EXPECT_EQ(client.recv_response().body.res, -ENOSYS);
 }
 
 // HANDSHAKE answers with the subset of the offered features the server

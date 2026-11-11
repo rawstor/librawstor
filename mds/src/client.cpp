@@ -309,6 +309,52 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         );
         break;
     }
+    case RAWSTOR_CMD_LIST_TENANTS: {
+        RawstorFrameBasicPayload payload;
+        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        std::vector<RawstorFrameTenantEntry> entries;
+        int32_t res = 0;
+        try {
+            for (const RawstdUUID& tenant : store.list_tenants()) {
+                RawstorFrameTenantEntry entry{};
+                memcpy(entry.tenant_id, tenant.bytes, sizeof(entry.tenant_id));
+                entries.push_back(entry);
+            }
+        } catch (const std::system_error& e) {
+            res = -e.code().value();
+        }
+        if (res < 0) {
+            co_await client->_send_response(head.cmd, head.cid, res);
+        } else {
+            co_await client->_send_response(
+                head.cmd, head.cid,
+                static_cast<int32_t>(entries.size() * sizeof(entries[0])),
+                entries.data(), entries.size() * sizeof(entries[0])
+            );
+        }
+        break;
+    }
+    case RAWSTOR_CMD_TENANT_CREATE:
+    case RAWSTOR_CMD_TENANT_REMOVE: {
+        RawstorFrameTenantOpPayload payload;
+        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        int32_t res = 0;
+        try {
+            if (head.cmd == RAWSTOR_CMD_TENANT_CREATE) {
+                store.create_tenant(
+                    uuid_of(payload.idempotency_key), uuid_of(payload.tenant_id)
+                );
+            } else {
+                store.remove_tenant(
+                    uuid_of(payload.idempotency_key), uuid_of(payload.tenant_id)
+                );
+            }
+        } catch (const std::system_error& e) {
+            res = -e.code().value();
+        }
+        co_await client->_send_response(head.cmd, head.cid, res);
+        break;
+    }
     case RAWSTOR_CMD_LOCATION_INFO: {
         RawstorFrameBasicPayload payload;
         co_await recv_all(queue, fd, &payload, sizeof(payload));
@@ -343,7 +389,8 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
             store.create_witness(
-                uuid_of(payload.object_id), payload.chunk_offset, spec
+                uuid_of(payload.tenant_id), uuid_of(payload.object_id),
+                payload.chunk_offset, spec
             );
         } catch (const std::system_error& e) {
             res = -e.code().value();
@@ -441,8 +488,9 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                 .seed = payload.policy.placement_seed,
             };
             ObjectDescriptor descriptor = store.create(
-                uuid_of(payload.idempotency_key), uuid_of(payload.id),
-                payload.logical_size, 1ull << payload.chunk_shift, policy
+                uuid_of(payload.tenant_id), uuid_of(payload.idempotency_key),
+                uuid_of(payload.id), payload.logical_size,
+                1ull << payload.chunk_shift, policy
             );
             out.map_epoch = descriptor.map_epoch;
         } catch (const std::system_error& e) {
@@ -490,7 +538,8 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         int32_t res = 0;
         std::vector<RawstorFrameListEntry> entries;
         try {
-            auto records = store.list_chunks(token, limit);
+            auto records =
+                store.list_chunks(uuid_of(payload.tenant_id), token, limit);
             entries.resize(records.size() + 1);
             for (size_t i = 0; i < records.size(); ++i) {
                 memcpy(

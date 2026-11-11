@@ -212,6 +212,12 @@ public:
         RawstdUUID& token, RawstdUUID version_id = {}
     );
 
+    rawstd::Task<std::vector<RawstdUUID>> list_tenants();
+
+    rawstd::Task<void> create_tenant(const RawstdUUID& tenant);
+
+    rawstd::Task<void> remove_tenant(const RawstdUUID& tenant);
+
     rawstd::Task<void> create_version(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
     );

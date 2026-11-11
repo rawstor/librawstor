@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Tenants ([design](docs/tenants.md)): an object has an owner tenant, named in a location as optional user information (`ost://<tenant>@host:port`); `list` shows the objects a tenant owns, or every object without one; an MDS keeps a tenant registry, and `rawstor tenant create`/`list`/`remove` manage it.
 - Every connection begins with `HANDSHAKE`, which negotiates optional capabilities as feature bits (no protocol version); a server serves nothing before it, and none is defined yet.
 - Host names work wherever an IPv4 address did: `ost://`/`mds://` locations, topology files and the `rawstor-ost`/`rawstor-mds` listen address are resolved (IPv4 only).
 - `rawstor-vhost` supports QEMU live migration: it logs the guest pages it writes (`VHOST_USER_PROTOCOL_F_LOG_SHMFD`, `VHOST_F_LOG_ALL`) and accepts the migration-time `SET_CONFIG`.
@@ -42,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Incompatible: every connection must begin with `HANDSHAKE`.
 - Incompatible: the CLI groups its commands. `rawstor object create|list|show|remove|resize|chunks|slots|resolve` and `rawstor version create|list|show|remove` replace the top-level commands, `info` moves to `rawstor location info`, `testio` stays; `object remove` and `object show` take only the address of an object, `version remove` and `version show` only that of a version.
+- Incompatible: `ALLOCATE`, `OBJ_CREATE`, `LIST` and `META` carry a tenant, chunk metadata records the owner, and an MDS database from before tenants is refused at start; there is no migration.
 - The service reference moved out of `README.md` into `docs/` (`rawstor-ost`, `rawstor-mds`, `rawstor-vhost`, `rawstor-vduse`, configuration, witness members, troubleshooting, building from source), a quick start from packages and a new page of known limitations; the README keeps the key ideas and an index, and the source tarball, the `librawstor` deb and rpm ship `docs/` next to it (under `/usr/share/doc/librawstor/`).
 - An open `mds://` object talks to its OSTs directly: the MDS is read once at open, and I/O errors no longer re-resolve the map or reopen the object.
 - `rawstor object create|resolve|list|show`, `rawstor version create|list` and `rawstor location info` print a table by default instead of plain lines; scripts that read a target from stdout use `--format value --column target`. `rawstor object show -v` is gone: `rawstor object chunks` and `rawstor object slots` list the chunks and the member slots.

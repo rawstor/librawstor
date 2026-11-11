@@ -283,6 +283,7 @@ rawstd::Task<void> Backend::list_chunks(
     if (capped) {
         token = chunks.back().id;
     }
+    co_await _keep_owned(id, chunks);
 
     co_return;
 }
@@ -347,6 +348,7 @@ rawstd::Task<void> Backend::create(
     identity.width = static_cast<uint8_t>(sp.width);
     identity.chunk_size = sp.chunk_size;
     identity.size = sp.size;
+    identity.tenant = tenant();
     std::string prop = std::string(rawstor_property) + "=" +
                        meta_encode(state, config, promised, accepted, identity);
 
@@ -493,6 +495,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
+    memcpy(ret.tenant_id, identity.tenant.bytes, sizeof(ret.tenant_id));
     ret.state = state;
     ret.config = config;
     ret.promised = promised;

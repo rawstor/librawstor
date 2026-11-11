@@ -101,6 +101,9 @@ private:
 
     std::function<void(const std::vector<RawstdUUID>&)> _on_space_change;
 
+    void _check_layout();
+    // ENOENT unless `tenant` is registered; the nil tenant (none) always is.
+    void _require_tenant(const RawstdUUID& tenant);
     void _sync_backends(const Topology& topology);
     // The caller holds _mutex and has committed.
     void _notify_space_change(std::vector<RawstdUUID> osts);
@@ -124,8 +127,10 @@ public:
     ObjectStore& operator=(const ObjectStore&) = delete;
     ObjectStore& operator=(ObjectStore&&) = delete;
 
+    // `tenant` owns the object (docs/tenants.md); nil for none.
     void create_witness(
-        const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& spec
+        const RawstdUUID& tenant, const RawstdUUID& id, uint64_t offset,
+        const RawstorObjectSpec& spec
     );
     RawstorObjectMeta witness_meta(const RawstdUUID& id, uint64_t offset);
     void remove_witness(const RawstdUUID& id, uint64_t offset);
@@ -146,8 +151,25 @@ public:
         const RawstorObjectConfig& config, bool& ok
     );
 
-    /* One page of ids and all their offsets; token is nil on the last page. */
-    std::vector<ChunkEntry> list_chunks(RawstdUUID& token, unsigned int limit);
+    /*
+     * One page of ids and all their offsets; token is nil on the last page.
+     * Only the objects `tenant` owns, or every object for a nil tenant.
+     */
+    std::vector<ChunkEntry> list_chunks(
+        const RawstdUUID& tenant, RawstdUUID& token, unsigned int limit
+    );
+
+    /*
+     * The tenant registry (docs/tenants.md): the tenants an object can be
+     * created for. create_tenant: EEXIST for a registered id, EINVAL for the
+     * nil UUID. remove_tenant: ENOENT for an unknown tenant, EBUSY while it
+     * owns objects. Both are idempotent like every mutation.
+     */
+    void
+    create_tenant(const RawstdUUID& idempotency_key, const RawstdUUID& tenant);
+    void
+    remove_tenant(const RawstdUUID& idempotency_key, const RawstdUUID& tenant);
+    std::vector<RawstdUUID> list_tenants();
 
     std::shared_ptr<const Topology> topology();
 
@@ -197,8 +219,8 @@ public:
      * caller's own rollback) creates it afresh.
      */
     ObjectDescriptor create(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t logical_size, uint64_t chunk_size,
+        const RawstdUUID& tenant, const RawstdUUID& idempotency_key,
+        const RawstdUUID& id, uint64_t logical_size, uint64_t chunk_size,
         const PlacementPolicy& policy
     );
 

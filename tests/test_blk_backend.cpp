@@ -503,7 +503,7 @@ TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
         r = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     }
     rawstor::blk::Backend::ChunkIdentity identity{
-        RAWSTOR_MEMBER_WITNESS, 255, ~0ull, ~0ull
+        RAWSTOR_MEMBER_WITNESS, 255, ~0ull, ~0ull, {}
     };
 
     std::string encoded = MetadataBackend::meta_encode(

@@ -9,6 +9,7 @@
 #include "resolve.h"
 #include "show.h"
 #include "slots.h"
+#include "tenant.h"
 #include "testio.h"
 
 #include "config.h"
@@ -69,6 +70,7 @@ static void usage(void) {
         "command:\n"
         "  location              Show information about a location\n"
         "  object                Work with rawstor objects\n"
+        "  tenant                Work with tenants\n"
         "  testio                Test rawstor IO routines\n"
         "  version               Work with versions of an object\n"
         "\n"
@@ -559,6 +561,120 @@ static int command_remove(int argc, char** argv, enum TargetType type) {
     }
 
     return rawstor_cli_remove(target_arg, type == TARGET_VERSION);
+}
+
+static void command_tenant_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] tenant create LOCATION [-u UUID]\n"
+        "       rawstor [options] tenant remove LOCATION TENANT\n"
+        "       rawstor [options] tenant list LOCATION\n"
+        "\n"
+        "An object has one tenant, its owner. A location names a tenant as "
+        "optional\n"
+        "user information: mds://TENANT@host:port. `create` through it makes "
+        "objects\n"
+        "owned by that tenant, `list` shows the objects it owns; without one, "
+        "`list`\n"
+        "shows every object.\n"
+        "\n"
+        "  create                Register a tenant in the MDS at LOCATION "
+        "(an mds://\n"
+        "                        location); prints its id, new unless -u "
+        "is given\n"
+        "  remove                Remove an empty tenant from that MDS\n"
+        "  list                  List the tenants registered in the MDS at "
+        "LOCATION\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
+        "  -u, --uuid UUID       create: register this UUID instead of a new "
+        "one\n"
+    );
+};
+
+static int command_tenant(int argc, char** argv) {
+    const char* optstring = "hu:";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"uuid", required_argument, NULL, 'u'},
+        {},
+    };
+
+    char* id_arg = NULL;
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_tenant_usage();
+            return EXIT_SUCCESS;
+
+        case 'u':
+            id_arg = optarg;
+            break;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    char* action_arg = NULL;
+    char* location_arg = NULL;
+    char* tenant_arg = NULL;
+    if (optind < argc) {
+        action_arg = argv[optind++];
+    }
+    if (optind < argc) {
+        location_arg = argv[optind++];
+    }
+    if (optind < argc) {
+        tenant_arg = argv[optind++];
+    }
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EX_USAGE;
+    }
+
+    if (action_arg == NULL || location_arg == NULL) {
+        fprintf(stderr, "action and location required\n");
+        return EX_USAGE;
+    }
+
+    if (strcmp(action_arg, "create") == 0) {
+        if (tenant_arg != NULL) {
+            fprintf(stderr, "Unexpected argument: %s\n", tenant_arg);
+            return EX_USAGE;
+        }
+        return rawstor_cli_tenant_create(location_arg, id_arg);
+    }
+    if (id_arg != NULL) {
+        fprintf(stderr, "-u applies to create only\n");
+        return EX_USAGE;
+    }
+    if (strcmp(action_arg, "remove") == 0) {
+        if (tenant_arg == NULL) {
+            fprintf(stderr, "tenant required\n");
+            return EX_USAGE;
+        }
+        return rawstor_cli_tenant_remove(location_arg, tenant_arg);
+    }
+    if (strcmp(action_arg, "list") == 0) {
+        if (tenant_arg != NULL) {
+            fprintf(stderr, "Unexpected argument: %s\n", tenant_arg);
+            return EX_USAGE;
+        }
+        return rawstor_cli_tenant_list(location_arg);
+    }
+
+    fprintf(stderr, "Unknown tenant action: %s\n", action_arg);
+    return EX_USAGE;
 }
 
 static void command_resize_usage(void) {
@@ -1724,6 +1840,8 @@ static int run_command(
         ret = command_remove(argc, argv, TARGET_OBJECT);
     } else if (strcmp(command, "info") == 0) {
         ret = command_info(argc, argv);
+    } else if (strcmp(command, "tenant") == 0) {
+        ret = command_tenant(argc, argv);
     } else if (strcmp(command, "testio") == 0) {
         ret = command_testio(argc, argv);
     } else if (strcmp(command, "version") == 0) {

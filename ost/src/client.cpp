@@ -3,6 +3,7 @@
 #include <ost/server.hpp>
 
 #include "slot.hpp"
+#include "tenant.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -79,6 +80,21 @@ rawstd::Task<void> with_slot(
     if (error) {
         std::rethrow_exception(error);
     }
+}
+
+// The same for a request that names a tenant (docs/tenants.md): the store is
+// opened as that tenant, which is the owner of what is created and the filter
+// of what is listed. The server's own locations name a store only.
+template <typename F>
+rawstd::Task<void> with_tenant_slot(
+    RawIOQueue* queue, const std::vector<rawstd::URI>& locations,
+    const RawstdUUID& tenant, F operation
+) {
+    std::vector<rawstd::URI> qualified;
+    for (const rawstd::URI& location : locations) {
+        qualified.push_back(rawstor::tenant::with(location, tenant));
+    }
+    co_await with_slot(queue, qualified, std::move(operation));
 }
 
 void check_copy_range(uint64_t offset, size_t size, uint64_t capacity) {
@@ -888,12 +904,13 @@ rawstd::DetachedTask Client::_list(
 
     RawstdUUID token{};
     memcpy(token.bytes, payload.token_id, sizeof(token.bytes));
+    const RawstdUUID tenant = rawstor::tenant::from_wire(payload.tenant_id);
     std::vector<rawstor::ChunkGroup> groups;
     std::vector<unsigned char> data;
     int result = 0;
     try {
-        co_await with_slot(
-            client->_queue, client->_server.locations(),
+        co_await with_tenant_slot(
+            client->_queue, client->_server.locations(), tenant,
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                 co_await slot.list_chunks({}, payload.limit, groups, token);
             }
@@ -948,6 +965,7 @@ rawstd::DetachedTask Client::_allocate(
 
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
+    const RawstdUUID tenant = rawstor::tenant::from_wire(payload.tenant_id);
 
     int result = 0;
     try {
@@ -956,8 +974,8 @@ rawstd::DetachedTask Client::_allocate(
         if (int error = rawstor_frame_allocate_decode(&payload, &spec, &role)) {
             RAWSTD_THROW_SYSTEM_ERROR(error);
         }
-        co_await with_slot(
-            client->_queue, client->_server.locations(),
+        co_await with_tenant_slot(
+            client->_queue, client->_server.locations(), tenant,
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                 co_await slot.create(uuid, payload.chunk_offset, spec, role);
             }

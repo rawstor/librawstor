@@ -31,6 +31,14 @@ extern "C" {
 #define RAWSTOR_FEATURES_SUPPORTED UINT64_C(0)
 
 /*
+ * Tenants (docs/tenants.md). An object has one tenant, its owner, recorded
+ * when it is created (OBJ_CREATE, ALLOCATE) and reported by META; it is not
+ * part of the object's address: an object id is unique on its own. LIST takes
+ * a tenant as a filter. The nil UUID is "no tenant": an object created
+ * without one has no owner, and a LIST without one lists every object.
+ */
+
+/*
  * One command space for every server role, grouped into reserved ranges
  * (docs/mds.md, "Wire protocol"):
  *
@@ -139,6 +147,14 @@ extern "C" {
 #define RAWSTOR_CMD_THAW 0x13
 
 /*
+ * The tenants registered in an MDS (docs/tenants.md): rides RawstorFrameBasic
+ * (every field unused), its response payload is a packed array of
+ * RawstorFrameTenantEntry (body.res = count * sizeof(RawstorFrameTenantEntry)),
+ * in no particular order. An OST answers -ENOSYS.
+ */
+#define RAWSTOR_CMD_LIST_TENANTS 0x20
+
+/*
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/resolve/
  * resize/remove a whole, possibly multi-chunk mds:// object. RESOLVE
  * rides RawstorFrameBasicPayload (object_id = id, version_id = the bound
@@ -162,6 +178,15 @@ extern "C" {
  */
 #define RAWSTOR_CMD_OBJ_COMMIT_VERSION 0x45
 #define RAWSTOR_CMD_OBJ_REMOVE_VERSION 0x46
+/*
+ * Tenant registry of the MDS (docs/tenants.md): TENANT_CREATE registers a
+ * client-generated tenant id, TENANT_REMOVE removes an empty one (-EBUSY
+ * while it has objects, -EPERM for the default tenant). Both ride
+ * RawstorFrameTenantOpPayload and carry an idempotency_key like every
+ * mutating OBJ_* request.
+ */
+#define RAWSTOR_CMD_TENANT_CREATE 0x47
+#define RAWSTOR_CMD_TENANT_REMOVE 0x48
 
 typedef uint16_t RawstorCommandType;
 
@@ -226,11 +251,11 @@ struct RawstorFrameBasic {
 } RAWSTOR_PACKED;
 
 /*
- * SET_OBJECT's request. `object_id`/`offset` address the copy. `val` is the
- * open flags (RAWSTOR_READONLY, <rawstor/target.h>, or 0). `version_id` binds
- * a previously created version (nil = live), which a bound version always
- * opens read-only. `session_id` identifies the client session the
- * connection serves; it is never nil.
+ * SET_OBJECT's request. `object_id`/`offset` address the copy.
+ * `val` is the open flags (RAWSTOR_READONLY, <rawstor/target.h>, or 0).
+ * `version_id` binds a previously created version (nil = live), which a
+ * bound version always opens read-only. `session_id` identifies the client
+ * session the connection serves; it is never nil.
  */
 struct RawstorFrameSetObjectPayload {
     uint8_t session_id[16];
@@ -246,20 +271,21 @@ struct RawstorFrameSetObject {
 } RAWSTOR_PACKED;
 
 /*
- * LIST's request: `token_id` resumes strictly after the id it names --
- * every offset a listed id has is always reported together in the same
- * page (rawstor::Backend::list_chunks()'s own contract, src/backend.hpp:
- * one page entry is an id plus every offset it has, never split across
- * pages), so resuming only ever needs to name an id, unlike
- * RawstorFrameBasicPayload's own offset/version_id fields, which
- * LIST has no use for. This is why LIST gets its own dedicated request
- * payload rather than reusing that one; its own response shape
- * (BackendOpBasic's plain array-of-T, ost_backend.cpp) doesn't fit LIST's
- * own resume-cursor-as-last-entry convention either (RawstorFrameList
- * Entry's own doc comment below). A nil token_id means "from the start",
- * matching a nil RawstdUUID.
+ * LIST's request: `tenant_id` limits the listing to the objects that tenant
+ * owns (nil = every object); `token_id` resumes strictly after the id it names
+ * -- every offset a listed id has is always reported together in the same page
+ * (rawstor::Backend::list_chunks()'s own contract, src/backend.hpp: one page
+ * entry is an id plus every offset it has, never split across pages), so
+ * resuming only ever needs to name an id, unlike RawstorFrameBasicPayload's own
+ * offset/version_id fields, which LIST has no use for. This is why LIST gets
+ * its own dedicated request payload rather than reusing that one; its own
+ * response shape (BackendOpBasic's plain array-of-T, ost_backend.cpp) doesn't
+ * fit LIST's own resume-cursor-as-last-entry convention either
+ * (RawstorFrameList Entry's own doc comment below). A nil token_id means "from
+ * the start", matching a nil RawstdUUID.
  */
 struct RawstorFrameListPayload {
+    uint8_t tenant_id[16];
     uint8_t token_id[16];
     uint32_t limit;
 } RAWSTOR_PACKED;
@@ -302,6 +328,22 @@ struct RawstorFrameListEntry {
     uint64_t chunk_offset;
     uint8_t type; /* enum RawstorListEntryType */
     uint8_t reserved[7];
+} RAWSTOR_PACKED;
+
+/* One LIST_TENANTS response row. */
+struct RawstorFrameTenantEntry {
+    uint8_t tenant_id[16];
+} RAWSTOR_PACKED;
+
+/* TENANT_CREATE / TENANT_REMOVE request payload. */
+struct RawstorFrameTenantOpPayload {
+    uint8_t tenant_id[16];
+    uint8_t idempotency_key[16];
+} RAWSTOR_PACKED;
+
+struct RawstorFrameTenantOp {
+    struct RawstorFrameHead head;
+    struct RawstorFrameTenantOpPayload payload;
 } RAWSTOR_PACKED;
 
 /* One LIST_VERSIONS response row. */
@@ -386,6 +428,7 @@ struct RawstorFrameConfig {
  * RawstorObjectSpec's own doc comment in target.h.
  */
 struct RawstorFrameAllocatePayload {
+    uint8_t tenant_id[16];
     uint8_t object_id[16];
     uint64_t chunk_offset;
     uint64_t size;
@@ -432,6 +475,7 @@ struct RawstorFrameResponse {
  * payload read, or a two-part iovec write).
  */
 struct RawstorFrameMetaPayload {
+    uint8_t tenant_id[16];
     uint64_t size;
     RawstorSyncStateType state;
     uint8_t chunk_shift;
@@ -527,6 +571,7 @@ struct RawstorFrameObjPolicy {
  * an mds:// object's chunk_size is always a nonzero power of two.
  */
 struct RawstorFrameObjCreatePayload {
+    uint8_t tenant_id[16];
     uint8_t id[16];              /* client-generated, like every object id */
     uint8_t idempotency_key[16]; /* idempotency key, see OBJ_* above */
     uint64_t logical_size;
@@ -695,6 +740,7 @@ static inline int rawstor_frame_meta_encode(
         return EINVAL;
     }
     memset(out, 0, sizeof(*out));
+    memcpy(out->tenant_id, in->tenant_id, sizeof(out->tenant_id));
     out->size = in->spec.size;
     out->width = (uint8_t)in->spec.width;
     out->chunk_shift =
@@ -721,6 +767,7 @@ static inline int rawstor_frame_meta_decode(
         in->chunk_shift >= 64 || in->width == 0) {
         return EPROTO;
     }
+    memcpy(out->tenant_id, in->tenant_id, sizeof(out->tenant_id));
     out->writers = in->writers;
     out->spec.size = in->size;
     out->spec.width = in->width;
@@ -786,19 +833,21 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameHead, 8);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBasicPayload, 48);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetObjectPayload, 64);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameHandshakePayload, 8);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 20);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 36);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 32);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameVersionEntry, 16);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameTenantEntry, 16);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameTenantOpPayload, 32);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 29);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorObjectBallot, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameConfig, 312);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncProposePayload, 369);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAllocatePayload, 44);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAllocatePayload, 60);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameResponseBody, 12);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 360);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncReplyPayload, 361);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameMetaPayload, 376);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSyncReplyPayload, 377);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjPolicy, 19);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjCreatePayload, 60);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjCreatePayload, 76);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjOpPayload, 56);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjResizedPayload, 12);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjDescriptorPayload, 56);

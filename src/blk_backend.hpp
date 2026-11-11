@@ -28,7 +28,7 @@ namespace blk {
 class Backend : public rawstor::Backend {
 private:
     // Versioned native metadata includes the logical member size.
-    static constexpr unsigned int META_FORMAT_VERSION = 1;
+    static constexpr unsigned int META_FORMAT_VERSION = 2;
 
     rawstd::Task<void> _bind_object(
         const RawstdUUID& id, uint64_t offset, int flags,
@@ -88,6 +88,8 @@ public:
         uint8_t width;
         uint64_t chunk_size;
         uint64_t size;
+        // The tenant that owns the object (docs/tenants.md); nil for none.
+        RawstdUUID tenant;
     };
 
 protected:
@@ -140,6 +142,14 @@ protected:
     // record to this constant instead of guessing; nothing outside the
     // class hierarchy needs it.
     static constexpr size_t META_MAX_SIZE = 1024;
+
+    // list_chunks() of a tenant (docs/tenants.md): drops from `chunks` the
+    // objects that tenant does not own, judged by each one's own metadata.
+    // A backend without a tenant keeps everything, and a listing of one `id`
+    // is never filtered. The page's resume token is not affected, so a page
+    // may come back shorter than `limit`.
+    rawstd::Task<void>
+    _keep_owned(const RawstdUUID& id, std::vector<ChunkGroup>& chunks);
 
     // Durably writes the copy metadata, preserving its ChunkIdentity.
     // Slot holds the copy's record lock while applying metadata requests.

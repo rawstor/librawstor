@@ -168,6 +168,14 @@ Currently, five URI schemes are supported:
 - `ost://<host>:<port>` – an OST server at the given host and port.
 - `file://<path_to_folder>` – a folder on the local filesystem.
 
+### Tenant
+
+A location may name a **tenant** as user information: `ost://<tenant>@host:port`,
+`file://<tenant>@/path`; it is optional. An object has one tenant, its owner, and
+an object id is unique on its own, so the tenant is not part of an address. A
+location with a tenant creates objects for it and lists the objects it owns; one
+without lists every object. See [Tenants](tenants.md).
+
 ### Multiple backends (comma‑separated)
 
 When multiple URIs are listed, the client interprets the list according

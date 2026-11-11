@@ -3,6 +3,7 @@
 
 #include "opts.h"
 #include "telemetry.hpp"
+#include "tenant.hpp"
 
 #include <rawio/awaitable.hpp>
 #include <rawio/queue.hpp>
@@ -148,6 +149,7 @@ public:
             )) {
             RAWSTD_THROW_SYSTEM_ERROR(error);
         }
+        rawstor::tenant::to_wire(backend->tenant(), _request.payload.tenant_id);
         memcpy(
             _request.payload.object_id, id.bytes,
             sizeof(_request.payload.object_id)
@@ -363,10 +365,12 @@ public:
                     .cid = cid,
                 },
             .payload = {
+                .tenant_id = {},
                 .token_id = {},
                 .limit = limit,
             },
         }) {
+        rawstor::tenant::to_wire(backend->tenant(), _request.payload.tenant_id);
         memcpy(
             _request.payload.token_id, token.bytes,
             sizeof(_request.payload.token_id)
@@ -765,7 +769,7 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
     RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
     uint64_t offset, uint64_t val, const RawstdUUID& version_id
 ) {
-    if (cmd == RAWSTOR_CMD_LIST_VERSIONS) {
+    if (cmd == RAWSTOR_CMD_LIST_VERSIONS || cmd == RAWSTOR_CMD_LIST_TENANTS) {
         co_await _ensure_large_receive_ring();
     }
     co_await _receive_resize.settle();
@@ -939,6 +943,21 @@ rawstd::Task<void> Backend::_wire_list_chunks(
 // sp is forwarded on the wire unchanged (see BackendOpAllocate); the
 // The server preserves the requested member role and placement identity;
 // one connection addresses one data or metadata-only member.
+rawstd::Task<std::vector<RawstdUUID>> Backend::_wire_list_tenants() {
+    std::vector<RawstorFrameTenantEntry> entries =
+        co_await _basic_request<RawstorFrameTenantEntry>(
+            RAWSTOR_CMD_LIST_TENANTS, "list_tenants", {}, 0
+        );
+    std::vector<RawstdUUID> ret;
+    ret.reserve(entries.size());
+    for (const RawstorFrameTenantEntry& entry : entries) {
+        RawstdUUID id;
+        memcpy(id.bytes, entry.tenant_id, sizeof(id.bytes));
+        ret.push_back(id);
+    }
+    co_return ret;
+}
+
 rawstd::Task<void> Backend::_wire_create(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
     const RawstorObjectSpec& sp, RawstorMemberRole member_role

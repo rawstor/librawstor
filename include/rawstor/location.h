@@ -187,6 +187,58 @@ int rawstor_location_info(
  * @see Locations and Targets:
  * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
+/**
+ * @brief Asynchronously list the tenants registered in an MDS.
+ *
+ * Every URI of @p location must be an `mds://` one: only an MDS keeps a tenant
+ * registry, and any other store answers -ENOTSUP. The tenants come as UUID
+ * strings in no particular order, in a list the caller releases with
+ * @ref rawstor_string_list_delete. A tenant is named in a location by
+ * optional user information (`mds://<tenant>@host:port`).
+ *
+ * @param queue     RawIO queue.
+ * @param location  Location, comma-separated like every location.
+ * @param tenants   Receives the list on success.
+ * @param cb        Completion callback; @c result is 0 or a negative errno.
+ * @param data      Passed to @p cb.
+ *
+ * @return 0 if the operation was started, a negative errno otherwise.
+ *
+ * @see https://github.com/rawstor/librawstor/blob/main/docs/tenants.md
+ */
+int rawstor_location_tenants(
+    RawIOQueue* queue, const char* location, RawstorStringList** tenants,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously register a tenant in an MDS.
+ *
+ * @p location must name exactly one `mds://` URI. @p tenant is a UUID string
+ * (not the nil UUID); the MDS answers -EEXIST if it is registered already.
+ * The default tenant is registered with every MDS.
+ *
+ * @return 0 if the operation was started, a negative errno otherwise.
+ */
+int rawstor_location_create_tenant(
+    RawIOQueue* queue, const char* location, const char* tenant,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously remove an empty tenant from an MDS.
+ *
+ * @p location must name exactly one `mds://` URI. The MDS answers -ENOENT
+ * for an unknown tenant, -EBUSY while the tenant has objects and -EPERM for
+ * the default tenant.
+ *
+ * @return 0 if the operation was started, a negative errno otherwise.
+ */
+int rawstor_location_remove_tenant(
+    RawIOQueue* queue, const char* location, const char* tenant,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
 int rawstor_location_list(
     RawIOQueue* queue, const char* location, unsigned int limit,
     RawstorStringList** targets, RawstorPaginationToken* token,

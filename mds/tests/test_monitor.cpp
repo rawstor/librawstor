@@ -154,7 +154,7 @@ TEST(MonitorTest, mutation_triggers_a_refresh_probe) {
     RawstdUUID id{};
     ASSERT_GE(rawstd_uuid7_init(&id), 0);
     store.create(
-        RawstdUUID{}, id, chunk_size, chunk_size,
+        RawstdUUID{}, RawstdUUID{}, id, chunk_size, chunk_size,
         PlacementPolicy{1, Level::OST, 1, 0}
     );
     // Not guessed: unchanged until the probe reads the OST's own figure.

@@ -2,6 +2,7 @@
 
 #include "slot.hpp"
 #include "target.hpp"
+#include "tenant.hpp"
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
@@ -47,7 +48,9 @@ RawstdUUID uuid_from_bytes(const uint8_t bytes[16]) {
 // Deserializes an RESOLVE response payload (descriptor + per-chunk
 // entries + slots -- docs/mds.md, "Wire protocol"; the exact inverse of
 // mds/client.cpp's encode_object_map()) into a WireMap.
-WireMap decode_object_map(const std::vector<unsigned char>& data) {
+WireMap decode_object_map(
+    const std::vector<unsigned char>& data, const RawstdUUID& tenant
+) {
     WireMap map;
     size_t off = 0;
 
@@ -99,6 +102,13 @@ WireMap decode_object_map(const std::vector<unsigned char>& data) {
             slots[s].ost_id = uuid_from_bytes(wire_slot.ost_id);
             slots[s].location.resize(wire_slot.location_len);
             take(slots[s].location.data(), wire_slot.location_len);
+            // The OST is addressed as the tenant the request was made for.
+            if (!slots[s].location.empty()) {
+                slots[s].location = rawstor::tenant::with(
+                                        rawstd::URI(slots[s].location), tenant
+                )
+                                        .str();
+            }
         }
     }
 
@@ -276,6 +286,7 @@ rawstd::Task<uint64_t> Backend::_obj_create(
             },
         .payload = {},
     };
+    rawstor::tenant::to_wire(tenant(), request.payload.tenant_id);
     uuid_to_bytes(id, request.payload.id);
     uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
     request.payload.logical_size = logical_size;
@@ -314,7 +325,7 @@ Backend::_resolve(const RawstdUUID& id, const RawstdUUID& version_id) {
     std::vector<unsigned char> data = co_await exchange(
         &request, sizeof(request), RAWSTOR_CMD_RESOLVE, SIZE_MAX
     );
-    co_return decode_object_map(data);
+    co_return decode_object_map(data, tenant());
 }
 
 rawstd::Task<WireResized> Backend::_obj_resize(
@@ -367,7 +378,7 @@ Backend::_obj_remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
     std::vector<unsigned char> data = co_await exchange(
         &request, sizeof(request), RAWSTOR_CMD_OBJ_REMOVE, SIZE_MAX
     );
-    co_return decode_object_map(data);
+    co_return decode_object_map(data, tenant());
 }
 
 rawstd::Task<uint64_t> Backend::_obj_commit_version(
@@ -534,6 +545,44 @@ rawstd::Task<void> Backend::list_chunks(
     if (!group.offsets.empty()) {
         chunks.push_back(std::move(group));
     }
+}
+
+rawstd::Task<std::vector<RawstdUUID>> Backend::list_tenants() {
+    return _wire_list_tenants();
+}
+
+rawstd::Task<void> Backend::create_tenant(
+    const RawstdUUID& idempotency_key, const RawstdUUID& tenant
+) {
+    RawstorFrameTenantOp request{
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_TENANT_CREATE,
+                .cid = 0,
+            },
+        .payload = {.tenant_id = {}, .idempotency_key = {}},
+    };
+    uuid_to_bytes(tenant, request.payload.tenant_id);
+    uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
+    co_await exchange(&request, sizeof(request), RAWSTOR_CMD_TENANT_CREATE, 0);
+}
+
+rawstd::Task<void> Backend::remove_tenant(
+    const RawstdUUID& idempotency_key, const RawstdUUID& tenant
+) {
+    RawstorFrameTenantOp request{
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_TENANT_REMOVE,
+                .cid = 0,
+            },
+        .payload = {.tenant_id = {}, .idempotency_key = {}},
+    };
+    uuid_to_bytes(tenant, request.payload.tenant_id);
+    uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
+    co_await exchange(&request, sizeof(request), RAWSTOR_CMD_TENANT_REMOVE, 0);
 }
 
 rawstd::Task<void> Backend::create(

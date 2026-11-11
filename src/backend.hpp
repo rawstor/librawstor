@@ -34,6 +34,7 @@ struct ChunkGroup {
 class Backend : public std::enable_shared_from_this<Backend> {
 private:
     rawstd::URI _location;
+    RawstdUUID _tenant;
     int _fd;
 
 protected:
@@ -67,6 +68,11 @@ public:
     std::string str() const;
 
     inline const rawstd::URI& location() const noexcept { return _location; }
+
+    // The tenant this backend acts for: the optional user information of its
+    // location (docs/tenants.md); nil for none. It owns what create() makes
+    // and is the filter of list_chunks().
+    inline const RawstdUUID& tenant() const noexcept { return _tenant; }
 
     inline int fd() const noexcept { return _fd; }
 
@@ -124,6 +130,17 @@ public:
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
         RawstdUUID& token, RawstdUUID version_id = {}
     ) = 0;
+
+    // The tenants registered in an MDS, in no particular order. ENOTSUP
+    // elsewhere: only an MDS keeps a registry.
+    virtual rawstd::Task<std::vector<RawstdUUID>> list_tenants();
+
+    // Registers / removes a tenant (docs/tenants.md); only an MDS keeps a
+    // tenant registry, so the default is ENOTSUP.
+    virtual rawstd::Task<void>
+    create_tenant(const RawstdUUID& idempotency_key, const RawstdUUID& tenant);
+    virtual rawstd::Task<void>
+    remove_tenant(const RawstdUUID& idempotency_key, const RawstdUUID& tenant);
 
     // Creates one data or metadata-only witness member. member_role is
     // placement identity, distinct from the chunk-wide specification.

@@ -43,6 +43,18 @@ public:
         RawstorPaginationToken& token
     ) const;
 
+    // The tenants registered in the MDS this location names (docs/tenants.md),
+    // in no particular order; ENOTSUP for a store without a registry.
+    rawstd::Task<void>
+    tenants(rawio::Queue& queue, std::vector<RawstdUUID>& tenants) const;
+
+    // Registers / removes `tenant` in the MDS this location names (exactly
+    // one mds:// URI; ENOTSUP otherwise).
+    rawstd::Task<void>
+    create_tenant(rawio::Queue& queue, const RawstdUUID& tenant) const;
+    rawstd::Task<void>
+    remove_tenant(rawio::Queue& queue, const RawstdUUID& tenant) const;
+
     // Creates a new object at this location under a fresh UUID v7 and
     // returns the Target addressing it.
     rawstd::Task<Target>

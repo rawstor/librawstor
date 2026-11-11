@@ -130,6 +130,16 @@ public:
         RawstdUUID& token, RawstdUUID version_id = {}
     ) override;
 
+    // The tenants registered in the MDS.
+    rawstd::Task<std::vector<RawstdUUID>> list_tenants() override;
+
+    rawstd::Task<void> create_tenant(
+        const RawstdUUID& idempotency_key, const RawstdUUID& tenant
+    ) override;
+    rawstd::Task<void> remove_tenant(
+        const RawstdUUID& idempotency_key, const RawstdUUID& tenant
+    ) override;
+
     // DATA creates a whole placed object; WITNESS creates one metadata member.
     rawstd::Task<void> create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,

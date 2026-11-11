@@ -173,6 +173,25 @@ rawstd::Task<std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID>> list_one(
 // C ABI adapter for rawstor_location_info(): `loc`/`queue` are captured by
 // value/pointer into the coroutine's own frame rather than taken as a
 // pre-built Task<RawstorLocationInfo> -- unlike ost/src/client.cpp's own
+// One URI's worth of Location::tenants() work, shaped like info_one().
+rawstd::Task<std::vector<RawstdUUID>>
+tenants_one(rawio::Queue& queue, const rawstd::URI& location) {
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, location);
+    std::vector<RawstdUUID> ret;
+    std::exception_ptr error;
+    try {
+        ret = co_await slot->list_tenants();
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    co_return ret;
+}
+
 // launch-a-Task style adapters, Location::info() itself needs to be
 // *called* from inside a coroutine that survives the whole await (a
 // reference parameter to a coroutine isn't lifetime-extended past the
@@ -284,6 +303,130 @@ void launch_list_op(
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
+// Location::tenants() as a RawstorStringList of UUID strings, for
+// rawstor_location_tenants(); same launch-a-coroutine shape as
+// launch_list_op_coro() above.
+rawstd::DetachedTask launch_tenants_op_coro(
+    rawstor::Location loc, rawio::Queue* queue, RawstorStringList** tenants,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    RawstorStringList* list = nullptr;
+    try {
+        std::vector<RawstdUUID> found;
+        co_await loc.tenants(*queue, found);
+
+        list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
+        if (list == nullptr) {
+            throw std::bad_alloc();
+        }
+        for (const RawstdUUID& tenant : found) {
+            RawstdUUIDString text;
+            rawstd_uuid_to_string(&tenant, &text);
+
+            char* str = (char*)malloc(sizeof(text));
+            if (str == nullptr) {
+                RAWSTD_THROW_ERRNO();
+            }
+            memcpy(str, text, sizeof(text));
+
+            char** it = (char**)rawstd_list_append((RawstdList*)list);
+            if (it == nullptr) {
+                free(str);
+                RAWSTD_THROW_ERRNO();
+            }
+            *it = str;
+        }
+
+        *tenants = list;
+    } catch (const std::system_error& e) {
+        rawstor_string_list_delete(list);
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        rawstor_string_list_delete(list);
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        rawstor_string_list_delete(list);
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        rawstor_string_list_delete(list);
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+// create_tenant()/remove_tenant() for rawstor_location_*_tenant().
+rawstd::DetachedTask launch_tenant_mutation_coro(
+    rawstor::Location loc, rawio::Queue* queue, RawstdUUID tenant, bool create,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        if (create) {
+            co_await loc.create_tenant(*queue, tenant);
+        } else {
+            co_await loc.remove_tenant(*queue, tenant);
+        }
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+int launch_tenant_mutation(
+    RawIOQueue* queue, const char* location, const char* tenant, bool create,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        RawstdUUID id;
+        if (rawstd_uuid_from_string(&id, tenant) < 0 ||
+            rawstd_uuid_is_nil(&id)) {
+            return -EINVAL;
+        }
+        rawstor::Location loc(rawstd::URI::uriv(location));
+        launch_tenant_mutation_coro(
+            std::move(loc), static_cast<rawio::Queue*>(queue), id, create, cb,
+            data
+        );
+        rawstd::DetachedTask::rethrow_if_pending();
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+void launch_tenants_op(
+    rawstor::Location loc, rawio::Queue* queue, RawstorStringList** tenants,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    launch_tenants_op_coro(std::move(loc), queue, tenants, cb, data);
+    rawstd::DetachedTask::rethrow_if_pending();
+}
+
 // C ABI adapter for rawstor_location_create()'s actual object-creation
 // step, once the target string is already known to fit the caller's
 // buffer (see rawstor_location_create() itself for the synchronous,
@@ -331,6 +474,65 @@ namespace rawstor {
 // Validated once, here: _uris never changes after construction, so
 // nothing past this point can un-validate it, and no public method below
 // needs to re-check it (same pattern as Target's own constructor).
+rawstd::Task<void>
+Location::tenants(rawio::Queue& queue, std::vector<RawstdUUID>& tenants) const {
+    tenants.clear();
+    for (const rawstd::URI& uri : _uris) {
+        for (const RawstdUUID& tenant : co_await tenants_one(queue, uri)) {
+            bool known = false;
+            for (const RawstdUUID& seen : tenants) {
+                if (rawstd_uuid_cmp(&seen, &tenant) == 0) {
+                    known = true;
+                    break;
+                }
+            }
+            if (!known) {
+                tenants.push_back(tenant);
+            }
+        }
+    }
+}
+
+namespace {
+
+// The tenant registry is the MDS's own: one mds:// URI.
+rawstd::Task<void> tenant_op(
+    rawio::Queue& queue, const std::vector<rawstd::URI>& uris,
+    const RawstdUUID& tenant, bool create
+) {
+    if (uris.size() != 1 || uris.front().scheme() != "mds") {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, uris.front());
+    std::exception_ptr error;
+    try {
+        if (create) {
+            co_await slot->create_tenant(tenant);
+        } else {
+            co_await slot->remove_tenant(tenant);
+        }
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+}
+
+} // namespace
+
+rawstd::Task<void>
+Location::create_tenant(rawio::Queue& queue, const RawstdUUID& tenant) const {
+    return tenant_op(queue, _uris, tenant, true);
+}
+
+rawstd::Task<void>
+Location::remove_tenant(rawio::Queue& queue, const RawstdUUID& tenant) const {
+    return tenant_op(queue, _uris, tenant, false);
+}
+
 Location::Location(const std::vector<rawstd::URI>& uris) : _uris(uris) {
     validate_not_empty(_uris);
     validate_different_uris(_uris);
@@ -501,6 +703,43 @@ rawstd::Task<Target> Location::create(
 }
 
 } // namespace rawstor
+
+int rawstor_location_tenants(
+    RawIOQueue* queue, const char* location, RawstorStringList** tenants,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Location loc(rawstd::URI::uriv(location));
+        launch_tenants_op(
+            std::move(loc), static_cast<rawio::Queue*>(queue), tenants, cb, data
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_location_create_tenant(
+    RawIOQueue* queue, const char* location, const char* tenant,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    return launch_tenant_mutation(queue, location, tenant, true, cb, data);
+}
+
+int rawstor_location_remove_tenant(
+    RawIOQueue* queue, const char* location, const char* tenant,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    return launch_tenant_mutation(queue, location, tenant, false, cb, data);
+}
 
 int rawstor_location_list(
     RawIOQueue* queue, const char* location, unsigned int limit,

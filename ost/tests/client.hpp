@@ -22,6 +22,7 @@ class Client final {
 private:
     int _fd;
     uint16_t _next_cid;
+    RawstdUUID _tenant;
 
 public:
     // Takes ownership of fd (closed by the destructor).
@@ -33,6 +34,10 @@ public:
     Client& operator=(const Client&) = delete;
     Client& operator=(Client&&) = delete;
 
+    // The tenant of the following ALLOCATE (its owner) and LIST (its filter);
+    // none until set.
+    void set_tenant(const RawstdUUID& tenant);
+
     // Each send_*() returns the cid it used, for matching against the
     // eventual recv_response().
     uint16_t
@@ -41,6 +46,7 @@ public:
         const RawstdUUID& id, uint64_t chunk_offset = 0,
         const RawstdUUID& session_id = {}
     );
+    uint16_t send_list_tenants();
     // HANDSHAKE offering `features`; its answer is a payload of 8 bytes.
     uint16_t send_handshake(uint64_t features);
     uint16_t send_meta(const RawstdUUID& id, uint64_t chunk_offset);
@@ -78,6 +84,11 @@ public:
     // it.
     RawstorFrameResponse
     recv_response(void* payload = nullptr, size_t payload_size = 0);
+
+    // Reads `size` more bytes of a response payload that recv_response()
+    // was not given a buffer for (a response whose size is only known from
+    // its head).
+    void recv_payload(void* payload, size_t size);
 
     // Bytes currently queued to read on this socket (SIOCINQ) without
     // blocking -- lets a pump loop know when a response has actually
