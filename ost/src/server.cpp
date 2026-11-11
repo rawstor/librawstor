@@ -19,7 +19,6 @@
 #include <unistd.h>
 
 #include <exception>
-#include <sstream>
 #include <string>
 #include <system_error>
 
@@ -97,16 +96,11 @@ int Server::bind_listen(const std::string& addr, unsigned int port) {
         }
 
         sockaddr_in sin = {};
-        sin.sin_family = AF_INET;
-        res = inet_pton(AF_INET, addr.c_str(), &sin.sin_addr);
-        if (res == 0) {
-            std::ostringstream oss;
-            oss << "the address was not parseable: " << addr;
-            throw std::runtime_error(oss.str());
-        } else if (res == -1) {
-            RAWSTD_THROW_ERRNO();
+        res = rawstd_socket_resolve(addr.c_str(), port, &sin, 1);
+        if (res < 0) {
+            rawstd_error("Failed to resolve address: %s\n", addr.c_str());
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
-        sin.sin_port = htons(port);
 
         if (bind(fd, reinterpret_cast<sockaddr*>(&sin), sizeof(sin)) == -1) {
             RAWSTD_THROW_ERRNO();

@@ -3,7 +3,10 @@
 
 #include "rawstd/gcc.h"
 
+#include <netinet/in.h>
 #include <sys/socket.h>
+
+#include <stddef.h>
 
 #if defined(RAWSTD_ON_LINUX)
 #define RAWSTD_MSG_NOSIGNAL MSG_NOSIGNAL
@@ -18,6 +21,17 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * Resolves `host` (a dotted IPv4 address or a host name) to its IPv4 socket
+ * addresses with `port` (host byte order), in resolver order, storing at most
+ * `capacity` of them in `addrs`. Blocks while a name is looked up. Returns the
+ * number of addresses stored (at least 1) or a negative errno value.
+ */
+int rawstd_socket_resolve(
+    const char* host, unsigned int port, struct sockaddr_in* addrs,
+    size_t capacity
+);
 
 int rawstd_socket_set_nonblock(int fd);
 

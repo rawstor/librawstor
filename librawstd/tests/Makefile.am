@@ -22,6 +22,7 @@ test_all_SOURCES = test_caspaxos.cpp \
                    test_mempool.cpp \
                    test_pipe.cpp \
                    test_ringbuf.cpp \
+                   test_socket.cpp \
                    test_threading.cpp \
                    test_units.cpp \
                    test_uri.cpp \

@@ -502,18 +502,12 @@ Backend::~Backend() {
     }
 }
 
-rawstd::Task<void> Backend::_wire_connect() {
-    // Every failure below -- including a malformed location, which can't
-    // be fixed by retrying but is otherwise indistinguishable here from a
-    // transient one -- means "couldn't establish this backend"; all of
-    // them surface as a plain std::system_error, which
-    // Slot::_with_retry() reacts to by reconnecting and retrying
-    // (see slot.cpp).
-    if (!location().path().str().empty() && location().path().str() != "/") {
-        rawstd_error("Empty path expected: %s\n", location().str().c_str());
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
+namespace {
 
+// Connects a new non-blocking socket to `servaddr`; closes it again and
+// throws when the connection cannot be established.
+rawstd::Task<int>
+connect_socket(rawio::Queue& queue, const sockaddr_in& servaddr) {
     int res;
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -552,20 +546,7 @@ rawstd::Task<void> Backend::_wire_connect() {
             }
         }
 
-        sockaddr_in servaddr = {};
-        servaddr.sin_family = AF_INET;
-        servaddr.sin_port = htons(location_port(location()));
-
-        res = inet_pton(
-            AF_INET, location().hostname().c_str(), &servaddr.sin_addr
-        );
-        if (res == 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        } else if (res == -1) {
-            RAWSTD_THROW_ERRNO();
-        }
-
-        co_await _queue.connect(fd, (sockaddr*)&servaddr, sizeof(servaddr));
+        co_await queue.connect(fd, (sockaddr*)&servaddr, sizeof(servaddr));
     } catch (...) {
         // co_await is not permitted inside a catch handler -- stash the
         // exception and rethrow it once out of the handler, below, after
@@ -577,10 +558,51 @@ rawstd::Task<void> Backend::_wire_connect() {
         // Best-effort: close() failing here must not replace
         // connect_error with one of its own.
         try {
-            co_await _queue.close(fd);
+            co_await queue.close(fd);
         } catch (...) {
         }
         rawstd_debug("fd %d: Closed\n", fd);
+        std::rethrow_exception(connect_error);
+    }
+
+    co_return fd;
+}
+
+} // namespace
+
+rawstd::Task<void> Backend::_wire_connect() {
+    // Every failure below -- including a malformed location, which can't
+    // be fixed by retrying but is otherwise indistinguishable here from a
+    // transient one -- means "couldn't establish this backend"; all of
+    // them surface as a plain std::system_error, which
+    // Slot::_with_retry() reacts to by reconnecting and retrying
+    // (see slot.cpp).
+    if (!location().path().str().empty() && location().path().str() != "/") {
+        rawstd_error("Empty path expected: %s\n", location().str().c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    sockaddr_in servaddrs[8];
+    int count = rawstd_socket_resolve(
+        location().hostname().c_str(), location_port(location()), servaddrs,
+        sizeof(servaddrs) / sizeof(servaddrs[0])
+    );
+    if (count < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-count);
+    }
+
+    // A name may resolve to several addresses, some of them unreachable;
+    // the location is connected as soon as one of them accepts.
+    int fd = -1;
+    std::exception_ptr connect_error;
+    for (int i = 0; i < count && fd == -1; ++i) {
+        try {
+            fd = co_await connect_socket(_queue, servaddrs[i]);
+        } catch (...) {
+            connect_error = std::current_exception();
+        }
+    }
+    if (fd == -1) {
         std::rethrow_exception(connect_error);
     }
 

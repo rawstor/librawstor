@@ -12,7 +12,8 @@ systemd:
 
 The hypervisor talks to the metadata host to find an object's chunks and to
 both storage hosts to read and write them, and the metadata host talks to the
-storage hosts. Addresses in locations are IPs, not host names.
+storage hosts. Addresses in locations are IPv4 addresses or host names
+resolving to IPv4.
 
 With two data copies, a quorum needs a third vote to tell a failed copy from
 a network split. The witness is that vote: it stores no data, only the
