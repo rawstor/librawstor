@@ -4,6 +4,8 @@ Authentication, authorization, transport and at-rest encryption, and the
 groundwork for multi-tenancy. The deployment target is a **public cloud
 service**: tenants are mutually untrusted, the storage network is not assumed
 private, and the operator of an OST must not be able to read tenant data.
+A deployment whose storage network is isolated from every untrusted party may
+instead run with [`--insecure`](#insecure-mode), which turns all of this off.
 
 ## Status
 
@@ -16,7 +18,8 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | Protocol version + feature bits in the `SET_OBJECT` handshake | 1 | ❌ | also planned in [MDS design](mds.md) |
 | `tenant_id` in the protocol and in the MDS store (single `default` tenant) | 1 | ❌ | — |
 | mTLS (OpenSSL) on every port: OST, MDS, witness, client side | 2 | ❌ | — |
-| kTLS offload of the data path | 2 | ❌ | decided by stage 0 |
+| kTLS offload of the data path | 2 | ❌ | optional, off by default (stage 0) |
+| `--insecure`: plaintext, no authentication, per service | 2 | ❌ | — |
 | Certificate and CA reload without downtime | 2 | ❌ | — |
 | Principals, roles, tenants in the MDS store, admin API | 3 | ❌ | — |
 | Capability tokens issued by `RESOLVE`, checked by OST | 3 | ❌ | — |
@@ -26,6 +29,8 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 
 ## Threat model
 
+- Everything below assumes TLS. Under `--insecure` none of the guarantees
+  hold.
 - A network attacker can read, modify and inject traffic between any two
   rawstor processes, and can connect to any listening port.
 - A tenant is untrusted: it must not read, write, list or delete another
@@ -396,8 +401,9 @@ Quotas, rate limits and noisy-neighbour control are a separate task.
 
 ## The cost of TLS on the hot path
 
-The hot path is the question here, and the answer should come from a
-measurement (stage 0), not from an assumption.
+The hot path is where TLS costs something, so stage 0 measured it instead of
+assuming it. The control path (MDS) carries little traffic and its TLS cost
+is negligible.
 
 What to expect: with AES-NI, AES-GCM is typically several GB/s per core, so
 the throughput cost is a share of CPU, not a ceiling. The larger risks are
@@ -431,6 +437,14 @@ runs vary by ±30-50% between repetitions; see `RESULTS.md` there.
 | 4 KiB IO at queue depth 1, p50 / p99 | 32 / 57 µs | 29-44 / 57-83 µs |
 | connection setup | 18,000/s | full handshake 570/s (1.9 ms CPU, both ends); resumed 1,160/s (1.0 ms) |
 
+In absolute terms the extra CPU of TLS is about 0.8 s per GB across both
+ends, that is **about 0.4 core per side for each GB/s of traffic** on this
+CPU. The "2.5x" is relative to a plain TCP stack that is itself cheap (0.5 s
+per GB); it is not a share of the host. Hardware with VAES runs AES-GCM
+several times faster, which lowers the figure accordingly. These are
+loopback, single-connection numbers; the share of a real host depends on
+how much storage traffic it carries.
+
 What this shows:
 
 - **Bulk is bound by AES-GCM.** kTLS and memory-BIO userspace TLS are within
@@ -456,18 +470,45 @@ keeps the whole path under `io_uring`. kTLS stays an option behind a
 configuration switch, to be re-measured on production hardware with a real
 network before it is made the default.
 
-Decision rule for stage 0: it decides **how** TLS is done (kTLS or userspace,
-connection reuse, minimum kernel), not **whether**. TLS is mandatory on every
-port, the OST data path included. An integrity-only mode is rejected: until
-client-side encryption exists, and for every plain volume after it, the data
-on the wire is tenant data, and TLS 1.3 has no null cipher anyway. If the
-measurement shows an unacceptable cost, the answer is engineering (kTLS,
-hardware, fewer handshakes), not weaker transport.
+### Outcome
 
-The one exception is an explicit, loudly-logged `--insecure` flag for
-development and tests: never a default, and never accepted by a service that
-has a certificate configured.
+Stage 0 decided **how** TLS is done, not whether: TLS 1.3 with mutual
+authentication is the default on every port, the OST data path included, with
+userspace OpenSSL as the first transport and kTLS as an option.
 
+TLS 1.3 has no null cipher, so there is no "authenticated but not encrypted"
+mode inside TLS. The alternatives were considered and are not offered:
+
+- a per-frame MAC keyed from the handshake would be cheaper than encryption,
+  but it is a second wire protocol to build and test, and it was not
+  measured;
+- IPsec, WireGuard or MACsec move the cost to another layer; without NIC
+  offload (none is assumed) they do not save CPU.
+
+If a measured need appears, an authenticated, unencrypted data path can be
+revisited then. Encrypting volumes on the client (stage 6) does not remove the
+need for TLS: the payload becomes ciphertext, but authentication and the
+integrity of the wire, which XTS does not give, still come from TLS.
+
+### Insecure mode
+
+`--insecure` (on every server and every client process) turns TLS off for that
+process. Traffic is then **plaintext, and no peer is authenticated**: there is
+no certificate to read an identity, a tenant or a role from, so the rights
+table, tokens and tenant isolation do not apply and every peer that can reach
+the port can do everything, as before this design. It is meant for a storage
+network that is isolated from every untrusted party, and for development and
+tests; the operator takes responsibility for the network.
+
+- A port is TLS or plaintext, never both and never auto-detected, so a
+  client cannot be downgraded: a plaintext client against a TLS server (or
+  the reverse) fails the connection.
+- A service refuses to start with `--insecure` and a certificate configured at
+  the same time.
+- The service logs the mode loudly at start.
+- It is a per-process choice. Mixing modes inside one cluster is not
+  supported except while moving a cluster from one mode to the other (see
+  [open questions](#open-questions)).
 
 ## At-rest encryption
 
@@ -545,7 +586,7 @@ flowchart TD
 Each stage is shippable and leaves the cluster working. Later stages do not
 require re-doing earlier ones.
 
-0. **Benchmark.** A throwaway harness comparing plain TCP, userspace
+0. **Benchmark (done).** A harness comparing plain TCP, userspace
    OpenSSL TLS 1.3, and kTLS on the existing io_uring data path: 4 KiB and 1 MiB
    IO, queue depths 1 and 32, handshake rate, CPU per GB, p50/p99 latency.
    Output: the TLS mode (kTLS or userspace) and the minimum kernel. Done:
@@ -556,8 +597,11 @@ require re-doing earlier ones.
    reserved in the object record. Single `default` tenant; behaviour unchanged.
 2. **Transport.** An OpenSSL layer under `rawio` (client and server side),
    mTLS, identity extraction from the SAN, config options on every service,
-   reload on `SIGHUP`, `--insecure` for tests. kTLS if stage 0 says so. Service
-   and CLI test suites run over TLS.
+   reload on `SIGHUP`, `--insecure`. kTLS as an option. Service and CLI test
+   suites run over TLS. Every TLS option is both a command-line flag and a
+   `KEY=value` entry of the service's configuration file (the
+   `/etc/rawstor/*/<name>.conf` files that the systemd units and orchestrators
+   already use), and a changed certificate is applied by `systemctl reload`.
 3. **Authorization.** Tenants, principals and roles in the MDS store and admin
    API; capability tokens in `RESOLVE`, verified by the OST; per-command rights
    table; `-EACCES` / `-ENOENT` semantics (a foreign object is `-ENOENT`).
@@ -572,6 +616,10 @@ require re-doing earlier ones.
 
 ## Open questions
 
+- How to move an existing plaintext cluster to TLS without stopping it: a
+  service listening on a TLS and a plaintext port during the transition, or a
+  restart order (MDS, OSTs, then clients) that relies on mirroring and client
+  reconnects.
 - The kernel baseline for kTLS if it is made the default: stage 0 tested only
   7.0, and the zero-copy `send_zc` is not available on a kTLS socket.
 - Whether one TLS connection per chunk slot stays, or stage 2 should coincide
