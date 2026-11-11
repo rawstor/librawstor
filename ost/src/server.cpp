@@ -19,7 +19,6 @@
 #include <unistd.h>
 
 #include <exception>
-#include <sstream>
 #include <string>
 #include <system_error>
 
@@ -99,9 +98,8 @@ int Server::bind_listen(const std::string& addr, unsigned int port) {
         sockaddr_in sin = {};
         res = rawstd_socket_resolve(addr.c_str(), port, &sin);
         if (res < 0) {
-            std::ostringstream oss;
-            oss << "the address was not resolvable: " << addr;
-            throw std::system_error(-res, std::generic_category(), oss.str());
+            rawstd_error("Failed to resolve address: %s\n", addr.c_str());
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
 
         if (bind(fd, reinterpret_cast<sockaddr*>(&sin), sizeof(sin)) == -1) {
