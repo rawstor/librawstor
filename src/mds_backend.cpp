@@ -104,10 +104,9 @@ WireMap decode_object_map(
             take(slots[s].location.data(), wire_slot.location_len);
             // The OST is addressed as the tenant the request was made for.
             if (!slots[s].location.empty()) {
-                slots[s].location = rawstor::tenant::with(
-                                        rawstd::URI(slots[s].location), tenant
-                )
-                                        .str();
+                slots[s].location =
+                    rawstor::with_tenant(rawstd::URI(slots[s].location), tenant)
+                        .str();
             }
         }
     }
@@ -286,7 +285,7 @@ rawstd::Task<uint64_t> Backend::_obj_create(
             },
         .payload = {},
     };
-    rawstor::tenant::to_wire(owner(), request.payload.tenant_id);
+    rawstor::tenant_to_wire(owner(), request.payload.tenant_id);
     uuid_to_bytes(id, request.payload.id);
     uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
     request.payload.logical_size = logical_size;

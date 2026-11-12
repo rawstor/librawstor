@@ -2246,9 +2246,9 @@ int rawstor_target_id(const char* target, char* buf, size_t size) noexcept {
 int rawstor_target_tenant(const char* target, char* buf, size_t size) noexcept {
     try {
         std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
-        RawstdUUID owner = rawstor::tenant::owner_of(uris.front());
+        RawstdUUID owner = rawstor::owner_of(uris.front());
         for (const rawstd::URI& uri : uris) {
-            RawstdUUID other = rawstor::tenant::owner_of(uri);
+            RawstdUUID other = rawstor::owner_of(uri);
             if (rawstd_uuid_cmp(&owner, &other) != 0) {
                 rawstd_error("target names different tenants\n");
                 return -EINVAL;

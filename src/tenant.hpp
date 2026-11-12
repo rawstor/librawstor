@@ -10,32 +10,30 @@
 // Tenants (docs/tenants.md): the tenant of a location is the user information
 // of its URI, optional; the nil UUID stands for "no tenant".
 namespace rawstor {
-namespace tenant {
 
 // The tenant `uri` names: the nil UUID without user information, EINVAL for
 // anything that is not a non-nil UUID.
-RawstdUUID of(const rawstd::URI& uri);
+RawstdUUID tenant_of(const rawstd::URI& uri);
 
 // The tenant that owns what is created without naming one.
 RawstdUUID default_tenant();
 
 // The tenant an address names for an object owned by `owner`: none for the
 // default tenant, which an address without one stands for.
-RawstdUUID named(const RawstdUUID& owner);
+RawstdUUID named_tenant(const RawstdUUID& owner);
 
 // The owner an address stands for: the tenant it names, the default tenant
 // when it names none. EINVAL for a tenant that is not a non-nil UUID.
 RawstdUUID owner_of(const rawstd::URI& uri);
 
 // `uri` with `tenant` as its user information, none for the nil UUID.
-rawstd::URI with(const rawstd::URI& uri, const RawstdUUID& tenant);
+rawstd::URI with_tenant(const rawstd::URI& uri, const RawstdUUID& tenant);
 
 // The tenant a frame field holds.
-RawstdUUID from_wire(const uint8_t (&bytes)[16]);
+RawstdUUID tenant_from_wire(const uint8_t (&bytes)[16]);
 
-void to_wire(const RawstdUUID& tenant, uint8_t (&bytes)[16]);
+void tenant_to_wire(const RawstdUUID& tenant, uint8_t (&bytes)[16]);
 
-} // namespace tenant
 } // namespace rawstor
 
 #endif // RAWSTOR_TENANT_HPP

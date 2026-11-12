@@ -92,7 +92,7 @@ rawstd::Task<void> with_tenant_slot(
 ) {
     std::vector<rawstd::URI> qualified;
     for (const rawstd::URI& location : locations) {
-        qualified.push_back(rawstor::tenant::with(location, tenant));
+        qualified.push_back(rawstor::with_tenant(location, tenant));
     }
     co_await with_slot(queue, qualified, std::move(operation));
 }
@@ -904,7 +904,7 @@ rawstd::DetachedTask Client::_list(
 
     RawstdUUID token{};
     memcpy(token.bytes, payload.token_id, sizeof(token.bytes));
-    const RawstdUUID tenant = rawstor::tenant::from_wire(payload.tenant_id);
+    const RawstdUUID tenant = rawstor::tenant_from_wire(payload.tenant_id);
     std::vector<rawstor::ChunkGroup> groups;
     std::vector<unsigned char> data;
     int result = 0;
@@ -919,7 +919,7 @@ rawstd::DetachedTask Client::_list(
         for (const auto& group : groups) {
             RawstorFrameListEntry entry{};
             memcpy(entry.id, group.id.bytes, sizeof(entry.id));
-            rawstor::tenant::to_wire(group.tenant, entry.tenant_id);
+            rawstor::tenant_to_wire(group.tenant, entry.tenant_id);
             if (group.offsets.empty()) {
                 entry.type = RAWSTOR_LIST_ENTRY_OBJECT;
                 entries.push_back(entry);
@@ -966,7 +966,7 @@ rawstd::DetachedTask Client::_allocate(
 
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-    const RawstdUUID tenant = rawstor::tenant::from_wire(payload.tenant_id);
+    const RawstdUUID tenant = rawstor::tenant_from_wire(payload.tenant_id);
 
     int result = 0;
     try {

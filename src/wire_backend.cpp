@@ -149,7 +149,7 @@ public:
             )) {
             RAWSTD_THROW_SYSTEM_ERROR(error);
         }
-        rawstor::tenant::to_wire(backend->owner(), _request.payload.tenant_id);
+        rawstor::tenant_to_wire(backend->owner(), _request.payload.tenant_id);
         memcpy(
             _request.payload.object_id, id.bytes,
             sizeof(_request.payload.object_id)
@@ -370,7 +370,7 @@ public:
                 .limit = limit,
             },
         }) {
-        rawstor::tenant::to_wire(backend->tenant(), _request.payload.tenant_id);
+        rawstor::tenant_to_wire(backend->tenant(), _request.payload.tenant_id);
         memcpy(
             _request.payload.token_id, token.bytes,
             sizeof(_request.payload.token_id)
@@ -916,7 +916,7 @@ rawstd::Task<void> Backend::_wire_list_chunks(
                 continue;
             }
             chunks.push_back(
-                ChunkGroup{entry_id, {}, tenant::from_wire(entry.tenant_id)}
+                ChunkGroup{entry_id, {}, tenant_from_wire(entry.tenant_id)}
             );
             continue;
         }
@@ -931,7 +931,7 @@ rawstd::Task<void> Backend::_wire_list_chunks(
                 ChunkGroup{
                     entry_id,
                     {entry.chunk_offset},
-                    tenant::from_wire(entry.tenant_id)
+                    tenant_from_wire(entry.tenant_id)
                 }
             );
         }

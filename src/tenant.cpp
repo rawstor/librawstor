@@ -9,9 +9,8 @@
 #include <cstring>
 
 namespace rawstor {
-namespace tenant {
 
-RawstdUUID of(const rawstd::URI& uri) {
+RawstdUUID tenant_of(const rawstd::URI& uri) {
     const std::string& name = uri.username();
     if (name.empty()) {
         return RawstdUUID{};
@@ -35,7 +34,7 @@ RawstdUUID default_tenant() {
     return id;
 }
 
-RawstdUUID named(const RawstdUUID& owner) {
+RawstdUUID named_tenant(const RawstdUUID& owner) {
     RawstdUUID fallback = default_tenant();
     if (rawstd_uuid_is_nil(&owner) || rawstd_uuid_cmp(&owner, &fallback) == 0) {
         return RawstdUUID{};
@@ -44,11 +43,11 @@ RawstdUUID named(const RawstdUUID& owner) {
 }
 
 RawstdUUID owner_of(const rawstd::URI& uri) {
-    RawstdUUID id = of(uri);
+    RawstdUUID id = tenant_of(uri);
     return rawstd_uuid_is_nil(&id) ? default_tenant() : id;
 }
 
-rawstd::URI with(const rawstd::URI& uri, const RawstdUUID& tenant) {
+rawstd::URI with_tenant(const rawstd::URI& uri, const RawstdUUID& tenant) {
     std::string info;
     if (!rawstd_uuid_is_nil(&tenant)) {
         RawstdUUIDString text;
@@ -63,15 +62,14 @@ rawstd::URI with(const rawstd::URI& uri, const RawstdUUID& tenant) {
     return rawstd::URI(ret);
 }
 
-RawstdUUID from_wire(const uint8_t (&bytes)[16]) {
+RawstdUUID tenant_from_wire(const uint8_t (&bytes)[16]) {
     RawstdUUID id;
     memcpy(id.bytes, bytes, sizeof(id.bytes));
     return id;
 }
 
-void to_wire(const RawstdUUID& tenant, uint8_t (&bytes)[16]) {
+void tenant_to_wire(const RawstdUUID& tenant, uint8_t (&bytes)[16]) {
     memcpy(bytes, tenant.bytes, sizeof(bytes));
 }
 
-} // namespace tenant
 } // namespace rawstor

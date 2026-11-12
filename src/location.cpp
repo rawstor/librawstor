@@ -116,8 +116,8 @@ std::vector<rawstd::URI> address_of(const std::vector<rawstd::URI>& uris) {
     ret.reserve(uris.size());
     for (const rawstd::URI& uri : uris) {
         ret.push_back(
-            rawstor::tenant::with(
-                uri, rawstor::tenant::named(rawstor::tenant::owner_of(uri))
+            rawstor::with_tenant(
+                uri, rawstor::named_tenant(rawstor::owner_of(uri))
             )
         );
     }
@@ -619,7 +619,7 @@ rawstd::Task<void> Location::list(
             // The target names the owner of the object, not the tenant the
             // listing was asked for.
             const rawstd::URI owned =
-                tenant::with(location, tenant::named(group.tenant));
+                with_tenant(location, named_tenant(group.tenant));
             if (group.offsets.empty()) {
                 entries.emplace_back(0, rawstd::URI(owned, uuid_string));
                 continue;

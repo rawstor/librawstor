@@ -25,14 +25,13 @@ namespace rawstor {
 
 Backend::Backend(Private, rawio::Queue& queue, const rawstd::URI& location) :
     _location(location),
-    _tenant(rawstor::tenant::of(location)),
+    _tenant(rawstor::tenant_of(location)),
     _fd(-1),
     _queue(queue) {
 }
 
 RawstdUUID Backend::owner() const {
-    return rawstd_uuid_is_nil(&_tenant) ? rawstor::tenant::default_tenant()
-                                        : _tenant;
+    return rawstd_uuid_is_nil(&_tenant) ? rawstor::default_tenant() : _tenant;
 }
 
 Backend::~Backend() {
