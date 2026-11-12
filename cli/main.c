@@ -56,7 +56,8 @@ static void usage(void) {
         "  -e, --eib             Show sizes in EiB\n"
         "                        Without a unit option, sizes are shown in "
         "a compact\n"
-        "                        unit (`info` rounds to a human-readable "
+        "                        unit (`location info` rounds to a "
+        "human-readable "
         "one, a rounded\n"
         "                        value is prefixed with '~'). A unit "
         "applies to --format\n"
@@ -66,12 +67,10 @@ static void usage(void) {
         "                        arguments such as --size.\n"
         "\n"
         "command:\n"
-        "  object                Create, list, show, remove or resize "
-        "objects\n"
-        "  version               Create, list, show or remove versions of "
-        "an object\n"
-        "  info                  Show rawstor location info\n"
+        "  location              Show information about a location\n"
+        "  object                Work with rawstor objects\n"
         "  testio                Test rawstor IO routines\n"
+        "  version               Work with versions of an object\n"
         "\n"
         "Run `rawstor <command> --help` to list a command's subcommands and "
         "`rawstor <command> <subcommand> --help` to show its usage.\n"
@@ -87,15 +86,15 @@ static void object_usage(void) {
         "[command_options]\n"
         "\n"
         "subcommand:\n"
+        "  chunks                List an object's chunks\n"
         "  create                Create rawstor object\n"
         "  list(ls)              List rawstor objects\n"
-        "  show                  Show rawstor object\n"
         "  remove(rm)            Remove rawstor object\n"
         "  resize                Grow an mds:// object\n"
-        "  chunks                List an object's chunks\n"
+        "  resolve               Resolve a mirrored object's split brain\n"
+        "  show                  Show rawstor object\n"
         "  slots                 List the member slots of an object's "
         "chunks\n"
-        "  resolve               Resolve a mirrored object's split brain\n"
         "\n"
         "An object is addressed as TARGET, a version of it as "
         "TARGET/VERSION_ID\n"
@@ -118,8 +117,8 @@ static void version_usage(void) {
         "subcommand:\n"
         "  create                Create a version of an object\n"
         "  list(ls)              List an object's versions\n"
-        "  show                  Show a version\n"
         "  remove(rm)            Remove a version\n"
+        "  show                  Show a version\n"
         "\n"
         "A version is addressed as TARGET/VERSION_ID, as printed by "
         "`rawstor version\n"
@@ -734,7 +733,8 @@ static void command_info_usage(void) {
     fprintf(
         stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
                 "\n"
-                "usage: rawstor [options] info LOCATION [command_options]\n"
+                "usage: rawstor [options] location info LOCATION "
+                "[command_options]\n"
                 "\n"
                 "  LOCATION              Comma-separated list of rawstor "
                 "backend locations.\n"
@@ -758,7 +758,7 @@ static void command_info_usage(void) {
                 "Sizes are shown in a human-readable unit, a rounded value "
                 "prefixed with '~',\n"
                 "or in the unit chosen by a global option "
-                "(`rawstor -g info ...`).\n"
+                "(`rawstor -g location info ...`).\n"
     );
 }
 
@@ -1598,6 +1598,42 @@ static int command_testio(int argc, char** argv) {
     );
 }
 
+static void location_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] location <subcommand> "
+        "[command_options]\n"
+        "\n"
+        "subcommand:\n"
+        "  info                  Show used, available and total space of "
+        "a location\n"
+        "\n"
+        "Run `rawstor location <subcommand> --help` to show its usage.\n"
+    );
+}
+
+static int run_location(int argc, char** argv) {
+    if (argc < 2) {
+        location_usage();
+        return EX_USAGE;
+    }
+    const char* sub = argv[1];
+    if (strcmp(sub, "-h") == 0 || strcmp(sub, "--help") == 0 ||
+        strcmp(sub, "help") == 0) {
+        location_usage();
+        return EXIT_SUCCESS;
+    }
+    argc--;
+    argv++;
+    if (strcmp(sub, "info") == 0) {
+        return command_info(argc, argv);
+    }
+    fprintf(stderr, "Unexpected location subcommand: %s\n", sub);
+    return EX_USAGE;
+}
+
 static int run_object(int argc, char** argv) {
     if (argc < 2) {
         object_usage();
@@ -1611,22 +1647,22 @@ static int run_object(int argc, char** argv) {
     }
     argc--;
     argv++;
-    if (strcmp(sub, "create") == 0) {
+    if (strcmp(sub, "chunks") == 0) {
+        return command_chunks(argc, argv);
+    } else if (strcmp(sub, "create") == 0) {
         return command_create(argc, argv);
     } else if (strcmp(sub, "list") == 0 || strcmp(sub, "ls") == 0) {
         return command_list(argc, argv);
-    } else if (strcmp(sub, "show") == 0) {
-        return command_show(argc, argv, TARGET_OBJECT);
     } else if (strcmp(sub, "remove") == 0 || strcmp(sub, "rm") == 0) {
         return command_remove(argc, argv, TARGET_OBJECT);
     } else if (strcmp(sub, "resize") == 0) {
         return command_resize(argc, argv);
-    } else if (strcmp(sub, "chunks") == 0) {
-        return command_chunks(argc, argv);
-    } else if (strcmp(sub, "slots") == 0) {
-        return command_slots(argc, argv);
     } else if (strcmp(sub, "resolve") == 0) {
         return command_resolve(argc, argv);
+    } else if (strcmp(sub, "show") == 0) {
+        return command_show(argc, argv, TARGET_OBJECT);
+    } else if (strcmp(sub, "slots") == 0) {
+        return command_slots(argc, argv);
     }
     fprintf(stderr, "Unexpected object subcommand: %s\n", sub);
     return EX_USAGE;
@@ -1649,10 +1685,10 @@ static int run_version(int argc, char** argv) {
         return command_create_version(argc, argv);
     } else if (strcmp(sub, "list") == 0 || strcmp(sub, "ls") == 0) {
         return command_list_versions(argc, argv);
-    } else if (strcmp(sub, "show") == 0) {
-        return command_show(argc, argv, TARGET_VERSION);
     } else if (strcmp(sub, "remove") == 0 || strcmp(sub, "rm") == 0) {
         return command_remove(argc, argv, TARGET_VERSION);
+    } else if (strcmp(sub, "show") == 0) {
+        return command_show(argc, argv, TARGET_VERSION);
     }
     fprintf(stderr, "Unexpected version subcommand: %s\n", sub);
     return EX_USAGE;
@@ -1670,14 +1706,14 @@ static int run_command(
     }
 
     int ret;
-    if (strcmp(command, "object") == 0) {
+    if (strcmp(command, "location") == 0) {
+        ret = run_location(argc, argv);
+    } else if (strcmp(command, "object") == 0) {
         ret = run_object(argc, argv);
-    } else if (strcmp(command, "version") == 0) {
-        ret = run_version(argc, argv);
-    } else if (strcmp(command, "info") == 0) {
-        ret = command_info(argc, argv);
     } else if (strcmp(command, "testio") == 0) {
         ret = command_testio(argc, argv);
+    } else if (strcmp(command, "version") == 0) {
+        ret = run_version(argc, argv);
     } else {
         fprintf(stderr, "Unexpected command: %s\n", command);
         ret = EX_USAGE;

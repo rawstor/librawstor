@@ -45,7 +45,7 @@ flowchart TD
 | Component | What it is |
 |---|---|
 | `librawstor` | Client library with a C API; create, open, read, write and list objects. |
-| `rawstor` | Command-line client: `create`, `list`, `show`, `info`, `resize`, `remove`, `testio`. |
+| `rawstor` | Command-line client: `location`, `object`, `testio`, `version`. |
 | `rawstor-ost` | Object storage server. Serves a local directory or proxies to other OSTs. |
 | `rawstor-mds` | Metadata server for chunked objects: placement across OSTs, versions. |
 | `rawstor-vhost`, `rawstor-vduse` | Expose an object as a `virtio-blk` disk over vhost-user or VDUSE. |

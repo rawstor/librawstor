@@ -86,7 +86,7 @@ echo "BIND_ADDR=0.0.0.0:7776" | sudo tee /etc/rawstor/mds/${CLUSTER1}.conf
 echo "BIND_ADDR=0.0.0.0:7786" | sudo tee /etc/rawstor/mds/${CLUSTER2}.conf
 sudo systemctl enable --now rawstor-mds@${CLUSTER1} rawstor-mds@${CLUSTER2}
 
-rawstor info mds://127.0.0.1:7776          # serving?
+rawstor location info mds://127.0.0.1:7776          # serving?
 # edit /etc/rawstor/mds/${CLUSTER1}.topology, then
 sudo systemctl reload rawstor-mds@${CLUSTER1}
 journalctl -u rawstor-mds@${CLUSTER1} | grep Topology   # applied?

@@ -83,7 +83,7 @@ sudo systemctl enable --now rawstor-ost@${OST1} rawstor-ost@${OST2}
 
 systemctl status rawstor-ost@${OST1}       # state
 journalctl -u rawstor-ost@${OST1}          # log
-rawstor info ost://127.0.0.1:7777          # serving?
+rawstor location info ost://127.0.0.1:7777          # serving?
 sudo systemctl restart rawstor-ost@${OST1}
 ```
 
