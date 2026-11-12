@@ -251,7 +251,8 @@ rawstd::Task<void> Backend::_bind_object(
 }
 
 rawstd::Task<void> Backend::_page_owned(
-    const RawstdUUID& id, std::vector<ChunkGroup> found, unsigned int limit,
+    const RawstdUUID& id, const RawstdUUID& tenant,
+    std::vector<ChunkGroup> found, unsigned int limit,
     std::vector<ChunkGroup>& chunks, RawstdUUID& token
 ) {
     if (limit == 0) {
@@ -288,8 +289,8 @@ rawstd::Task<void> Backend::_page_owned(
             continue;
         }
         group.tenant = tenant_from_wire(metas.front().tenant_id);
-        if (rawstd_uuid_is_nil(&tenant()) ||
-            rawstd_uuid_cmp(&group.tenant, &tenant()) == 0) {
+        if (rawstd_uuid_is_nil(&tenant) ||
+            rawstd_uuid_cmp(&group.tenant, &tenant) == 0) {
             chunks.push_back(std::move(group));
         }
     }

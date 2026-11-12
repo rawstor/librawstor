@@ -8,6 +8,7 @@
 #include "ost_backend.hpp"
 #include "slot.hpp"
 #include "target.hpp"
+#include "tenant.hpp"
 
 #include <rawio/awaitable.hpp>
 #include <rawio/stream.hpp>
@@ -963,13 +964,14 @@ void Chunk::_unlock() noexcept {
 // is safe to let unwind through a throwing constructor.
 Chunk::Chunk(
     Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
-    bool readonly, bool force, RawstorObjectSpec spec,
+    bool readonly, bool force, RawstorObjectSpec spec, const RawstdUUID& owner,
     std::vector<Member> members, std::shared_ptr<MirrorControl> control
 ) :
     _queue(queue),
     _id(id),
     _offset(offset),
     _spec(spec),
+    _owner(owner),
     _members(std::move(members)),
     _readonly(readonly),
     _skip_quorum(readonly && force),
@@ -1207,7 +1209,8 @@ rawstd::Task<void> recreate_missing(
                 !has_witness(sp, locations.size()) || i + 1 < locations.size();
             co_await slot->create(
                 id, offset, sp,
-                data ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS
+                data ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS,
+                tenant_from_wire(survivor->tenant_id)
             );
             meta = co_await open_member(
                 *slot, id, offset, flags, version_id, data
@@ -1473,6 +1476,8 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     members.reserve(locations.size());
     reachable = 0;
     RawstorObjectSpec spec = agreed ? agreed->spec : RawstorObjectSpec{};
+    const RawstdUUID owner =
+        agreed ? tenant_from_wire(agreed->tenant_id) : RawstdUUID{};
     for (size_t i = 0; i < locations.size(); ++i) {
         members.push_back(
             Member{
@@ -1515,8 +1520,8 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     // trusted-member analysis) is the constructor's own job from here.
     std::unique_ptr<Chunk> chunk = std::make_unique<Chunk>(
         Private(), queue, id, offset, (flags & RAWSTOR_READONLY) != 0,
-        (flags & RAWSTOR_FORCE) != 0, std::move(spec), std::move(members),
-        control
+        (flags & RAWSTOR_FORCE) != 0, std::move(spec), owner,
+        std::move(members), control
     );
     open_guard.opened = true;
 
@@ -3987,6 +3992,7 @@ rawstd::DetachedTask Chunk::_probe_tick() {
     uint64_t offset = _offset;
     const bool data_io = !_members[idx].witness;
     const RawstorObjectSpec spec = _spec;
+    const RawstdUUID owner = _owner;
     // The replacement serves the session of the Slot it replaces.
     const RawstdUUID session =
         _members[idx].slot ? _members[idx].slot->session_id() : RawstdUUID{};
@@ -4021,7 +4027,7 @@ rawstd::DetachedTask Chunk::_probe_tick() {
             }
             co_await slot->create(
                 id, offset, spec,
-                data_io ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS
+                data_io ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS, owner
             );
             meta = co_await open_member(
                 *slot, id, offset, 0, RawstdUUID{}, data_io, session

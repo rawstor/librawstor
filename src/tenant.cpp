@@ -47,6 +47,18 @@ RawstdUUID owner_of(const rawstd::URI& uri) {
     return rawstd_uuid_is_nil(&id) ? default_tenant() : id;
 }
 
+RawstdUUID owner_of(const std::vector<rawstd::URI>& uris) {
+    RawstdUUID owner = owner_of(uris.front());
+    for (const rawstd::URI& uri : uris) {
+        RawstdUUID other = owner_of(uri);
+        if (rawstd_uuid_cmp(&owner, &other) != 0) {
+            rawstd_error("target names different tenants\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
+    return owner;
+}
+
 rawstd::URI with_tenant(const rawstd::URI& uri, const RawstdUUID& tenant) {
     std::string info;
     if (!rawstd_uuid_is_nil(&tenant)) {

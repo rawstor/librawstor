@@ -131,7 +131,7 @@ public:
         const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         const RawstdUUID& id, uint64_t chunk_offset,
         const RawstorObjectSpec& sp, RawstorMemberRole member_role,
-        const rawstd::TraceEvent& trace_event
+        const RawstdUUID& owner, const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "create", 0, 0),
         _request({
@@ -149,7 +149,7 @@ public:
             )) {
             RAWSTD_THROW_SYSTEM_ERROR(error);
         }
-        rawstor::tenant_to_wire(backend->owner(), _request.payload.tenant_id);
+        rawstor::tenant_to_wire(owner, _request.payload.tenant_id);
         memcpy(
             _request.payload.object_id, id.bytes,
             sizeof(_request.payload.object_id)
@@ -353,7 +353,7 @@ private:
 public:
     BackendOpList(
         const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
-        const RawstdUUID& token, unsigned int limit,
+        const RawstdUUID& token, unsigned int limit, const RawstdUUID& tenant,
         const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "list", 0, 0),
@@ -370,7 +370,7 @@ public:
                 .limit = limit,
             },
         }) {
-        rawstor::tenant_to_wire(backend->tenant(), _request.payload.tenant_id);
+        rawstor::tenant_to_wire(tenant, _request.payload.tenant_id);
         memcpy(
             _request.payload.token_id, token.bytes,
             sizeof(_request.payload.token_id)
@@ -827,7 +827,7 @@ rawstd::Task<std::vector<unsigned char>> Backend::exchange(
 
 rawstd::Task<void> Backend::_wire_list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID version_id
+    RawstdUUID& token, RawstdUUID tenant, RawstdUUID version_id
 ) {
     co_await _ensure_large_receive_ring();
 
@@ -864,7 +864,7 @@ rawstd::Task<void> Backend::_wire_list_chunks(
 
     std::shared_ptr<BackendOpList> op = std::make_shared<BackendOpList>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        input_token, limit, trace_event
+        input_token, limit, tenant, trace_event
     );
     _add_op(op);
 
@@ -968,13 +968,14 @@ rawstd::Task<std::vector<RawstdUUID>> Backend::_wire_list_tenants() {
 
 rawstd::Task<void> Backend::_wire_create(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
-    const RawstorObjectSpec& sp, RawstorMemberRole member_role
+    const RawstorObjectSpec& sp, RawstorMemberRole member_role,
+    const RawstdUUID& owner
 ) {
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('c', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpAllocate> op = std::make_shared<BackendOpAllocate>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        id, offset, sp, member_role, trace_event
+        id, offset, sp, member_role, owner, trace_event
     );
     _add_op(op);
 

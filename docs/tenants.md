@@ -29,7 +29,9 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
   changed. It is 16 bytes, a UUID. An object created without naming a tenant
   belongs to the **default tenant** (`00000000-0000-0000-0000-000000000001`),
   which every MDS registers and nobody can create or remove. The nil UUID
-  owns nothing: in a request it means **no filter**.
+  owns nothing: in a request it means **no filter**, and a request that
+  creates an object for it, which the library never sends, leaves the object
+  without an owner.
 - An object id is **globally unique**: the tenant is not part of an address,
   a path on disk or a database key. Creating an id that exists is `-EEXIST`
   whoever asks.
@@ -90,10 +92,11 @@ file://<tenant>@/var/lib/rawstor
 zfs://<tenant>@tank/rawstor
 ```
 
-The tenant follows a location through every layer: a target string, the OST
-locations the MDS returns for an object (the client addresses every OST as the
-tenant it names, so a chunk is created for it) and the targets `list` prints.
-A user information that is not a non-nil UUID is refused with `-EINVAL`.
+The tenant is read from the address where the user's request enters the
+library (`Location`, `Target`) and handed down as an argument: the owner of a
+`create`, the filter of a `list`. A backend has no tenant of its own, and the
+MDS and the OSTs record what they are given. A user information that is not a
+non-nil UUID is refused with `-EINVAL`.
 
 How the tenant of a location reaches the stored object, through the MDS and an
 OST:

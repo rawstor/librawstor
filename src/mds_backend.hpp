@@ -66,10 +66,13 @@ struct WireVersionMember {
 class Backend final : public wire::Backend {
 private:
     // OBJ commands share the member transport and preserve caller mutation IDs.
+    // The owner an object records, read off its first copy that answers.
+    rawstd::Task<RawstdUUID> _owner_of(const WireMap& map);
+
     rawstd::Task<uint64_t> _obj_create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t logical_size, uint64_t chunk_size,
-        const RawstorFrameObjPolicy& policy
+        const RawstorFrameObjPolicy& policy, const RawstdUUID& owner
     );
 
     rawstd::Task<WireMap>
@@ -127,7 +130,7 @@ public:
     // own real chunk offsets, off its own WireMap.
     rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID version_id = {}
+        RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
     ) override;
 
     // The tenants registered in the MDS.
@@ -144,7 +147,7 @@ public:
     rawstd::Task<void> create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        RawstorMemberRole member_role, const RawstdUUID& owner
     ) override;
 
     // Unregisters and destroys the whole object (docs/mds.md, deletion

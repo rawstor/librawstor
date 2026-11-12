@@ -48,9 +48,7 @@ RawstdUUID uuid_from_bytes(const uint8_t bytes[16]) {
 // Deserializes an RESOLVE response payload (descriptor + per-chunk
 // entries + slots -- docs/mds.md, "Wire protocol"; the exact inverse of
 // mds/client.cpp's encode_object_map()) into a WireMap.
-WireMap decode_object_map(
-    const std::vector<unsigned char>& data, const RawstdUUID& tenant
-) {
+WireMap decode_object_map(const std::vector<unsigned char>& data) {
     WireMap map;
     size_t off = 0;
 
@@ -102,12 +100,6 @@ WireMap decode_object_map(
             slots[s].ost_id = uuid_from_bytes(wire_slot.ost_id);
             slots[s].location.resize(wire_slot.location_len);
             take(slots[s].location.data(), wire_slot.location_len);
-            // The OST is addressed as the tenant the request was made for.
-            if (!slots[s].location.empty()) {
-                slots[s].location =
-                    rawstor::with_tenant(rawstd::URI(slots[s].location), tenant)
-                        .str();
-            }
         }
     }
 
@@ -274,7 +266,7 @@ namespace mds {
 rawstd::Task<uint64_t> Backend::_obj_create(
     const RawstdUUID& idempotency_key, const RawstdUUID& id,
     uint64_t logical_size, uint64_t chunk_size,
-    const RawstorFrameObjPolicy& policy
+    const RawstorFrameObjPolicy& policy, const RawstdUUID& owner
 ) {
     RawstorFrameObjCreate request{
         .head =
@@ -285,7 +277,7 @@ rawstd::Task<uint64_t> Backend::_obj_create(
             },
         .payload = {},
     };
-    rawstor::tenant_to_wire(owner(), request.payload.tenant_id);
+    rawstor::tenant_to_wire(owner, request.payload.tenant_id);
     uuid_to_bytes(id, request.payload.id);
     uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
     request.payload.logical_size = logical_size;
@@ -324,7 +316,7 @@ Backend::_resolve(const RawstdUUID& id, const RawstdUUID& version_id) {
     std::vector<unsigned char> data = co_await exchange(
         &request, sizeof(request), RAWSTOR_CMD_RESOLVE, SIZE_MAX
     );
-    co_return decode_object_map(data, tenant());
+    co_return decode_object_map(data);
 }
 
 rawstd::Task<WireResized> Backend::_obj_resize(
@@ -377,7 +369,7 @@ Backend::_obj_remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
     std::vector<unsigned char> data = co_await exchange(
         &request, sizeof(request), RAWSTOR_CMD_OBJ_REMOVE, SIZE_MAX
     );
-    co_return decode_object_map(data, tenant());
+    co_return decode_object_map(data);
 }
 
 rawstd::Task<uint64_t> Backend::_obj_commit_version(
@@ -503,11 +495,13 @@ rawstd::Task<void> Backend::_connect() {
 // object's WireMap.
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID version_id
+    RawstdUUID& token, RawstdUUID tenant, RawstdUUID version_id
 ) {
     chunks.clear();
     if (rawstd_uuid_is_nil(&id)) {
-        co_await _wire_list_chunks({}, limit, chunks, token, version_id);
+        co_await _wire_list_chunks(
+            {}, limit, chunks, token, tenant, version_id
+        );
         std::vector<RawstdUUID> objects;
         for (const auto& group : chunks) {
             if (group.offsets.empty()) {
@@ -586,7 +580,8 @@ rawstd::Task<void> Backend::remove_tenant(
 
 rawstd::Task<void> Backend::create(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
-    const RawstorObjectSpec& sp, RawstorMemberRole member_role
+    const RawstorObjectSpec& sp, RawstorMemberRole member_role,
+    const RawstdUUID& owner
 ) {
     if (member_role != RAWSTOR_MEMBER_DATA || offset != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -602,7 +597,9 @@ rawstd::Task<void> Backend::create(
     // Replayed, not re-applied, when this is a retry of a create whose
     // reply got lost (docs/mds.md, "Idempotent mutations"); a retry after
     // the rollback below creates the object afresh.
-    co_await _obj_create(idempotency_key, id, sp.size, sp.chunk_size, policy);
+    co_await _obj_create(
+        idempotency_key, id, sp.size, sp.chunk_size, policy, owner
+    );
 
     /* Materialize every chunk object on its OSTs. */
     WireMap map = co_await _resolve(id, RawstdUUID{});
@@ -618,7 +615,7 @@ rawstd::Task<void> Backend::create(
         // to create before a later one's own failure -- only the object
         // map registration itself is left for this call to roll back.
         co_await Target(build_target_uris(map, RawstdUUID{}))
-            .create(_queue, object_spec(map));
+            .create(_queue, object_spec(map), owner);
     } catch (...) {
         error = std::current_exception();
     }
@@ -700,6 +697,37 @@ rawstd::Task<void> Backend::remove(
     }
 }
 
+// The owner an object records: its first copy that answers has it.
+rawstd::Task<RawstdUUID> Backend::_owner_of(const WireMap& map) {
+    std::exception_ptr error;
+    for (const WireSlot& member : map.chunks.at(0)) {
+        if (member.location.empty()) {
+            continue;
+        }
+        auto slot = co_await Slot::create(_queue, slot_location(member));
+        RawstdUUID owner{};
+        bool found = false;
+        try {
+            std::vector<RawstorObjectMeta> metas =
+                co_await slot->meta(map.id, 0);
+            if (!metas.empty()) {
+                owner = tenant_from_wire(metas.front().tenant_id);
+                found = true;
+            }
+        } catch (const std::system_error&) {
+            error = std::current_exception();
+        }
+        co_await slot->close();
+        if (found) {
+            co_return owner;
+        }
+    }
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+}
+
 rawstd::Task<void> Backend::resize(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t,
     uint64_t new_size
@@ -731,6 +759,9 @@ rawstd::Task<void> Backend::resize(
     /* Re-fetch: the map now has whatever new chunks the MDS reserved. */
     WireMap after = co_await _resolve(id, RawstdUUID{});
 
+    /* The new chunks belong to the object's own owner. */
+    RawstdUUID owner = co_await _owner_of(before);
+
     /*
      * Materialize the new chunks, one copy at a time: a copy that already
      * exists was made by an earlier attempt of this same resize, so a
@@ -748,7 +779,8 @@ rawstd::Task<void> Backend::resize(
                                       ? RAWSTOR_MEMBER_WITNESS
                                       : RAWSTOR_MEMBER_DATA;
                 co_await slot->create(
-                    after.id, i * after.chunk_size, chunk_spec(after), role
+                    after.id, i * after.chunk_size, chunk_spec(after), role,
+                    owner
                 );
             } catch (const std::system_error& e) {
                 if (e.code().value() != EEXIST) {

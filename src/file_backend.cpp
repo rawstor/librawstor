@@ -204,7 +204,7 @@ rawstd::Task<int> Backend::_open_version(
 
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID version_id
+    RawstdUUID& token, RawstdUUID tenant, RawstdUUID version_id
 ) {
     if (!rawstd_uuid_is_nil(&version_id)) {
         // A version is described by meta() only; its chunks are not listed.
@@ -296,7 +296,9 @@ rawstd::Task<void> Backend::list_chunks(
             )
         );
 
-        co_await _page_owned(id, std::move(found), limit, chunks, token);
+        co_await _page_owned(
+            id, tenant, std::move(found), limit, chunks, token
+        );
     } catch (const std::system_error&) {
         throw;
     } catch (const std::exception& e) {
@@ -312,7 +314,8 @@ rawstd::Task<void> Backend::list_chunks(
 
 rawstd::Task<void> Backend::create(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
-    const RawstorObjectSpec& sp, RawstorMemberRole member_role
+    const RawstorObjectSpec& sp, RawstorMemberRole member_role,
+    const RawstdUUID& owner
 ) {
     std::string location_path = get_location_path(location());
     mkdir_or_exist(location_path);
@@ -447,7 +450,7 @@ rawstd::Task<void> Backend::create(
             identity.width = static_cast<uint8_t>(sp.width);
             identity.chunk_size = sp.chunk_size;
             identity.size = sp.size;
-            identity.tenant = owner();
+            identity.tenant = owner;
 
             // meta_encode()'s own (shorter, variable-length) return value
             // is NUL-padded out to a fixed META_MAX_SIZE bytes here,

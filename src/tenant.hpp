@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // Tenants (docs/tenants.md): the tenant of a location is the user information
 // of its URI, optional; the nil UUID stands for "no tenant".
@@ -25,6 +26,10 @@ RawstdUUID named_tenant(const RawstdUUID& owner);
 // The owner an address stands for: the tenant it names, the default tenant
 // when it names none. EINVAL for a tenant that is not a non-nil UUID.
 RawstdUUID owner_of(const rawstd::URI& uri);
+
+// The owner every URI of an address stands for: they must all agree, EINVAL
+// otherwise.
+RawstdUUID owner_of(const std::vector<rawstd::URI>& uris);
 
 // `uri` with `tenant` as its user information, none for the nil UUID.
 rawstd::URI with_tenant(const rawstd::URI& uri, const RawstdUUID& tenant);

@@ -214,7 +214,7 @@ rawstd::Task<int> Backend::_open_version(
 
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID version_id
+    RawstdUUID& token, RawstdUUID tenant, RawstdUUID version_id
 ) {
     co_await _cleanup_staging_lvs();
 
@@ -334,7 +334,7 @@ rawstd::Task<void> Backend::list_chunks(
                        )
     );
 
-    co_await _page_owned(id, std::move(found), limit, chunks, token);
+    co_await _page_owned(id, tenant, std::move(found), limit, chunks, token);
 
     co_return;
 }
@@ -416,7 +416,8 @@ rawstd::Task<void> Backend::_cleanup_staging_lvs() {
 
 rawstd::Task<void> Backend::create(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
-    const RawstorObjectSpec& sp, RawstorMemberRole member_role
+    const RawstorObjectSpec& sp, RawstorMemberRole member_role,
+    const RawstdUUID& owner
 ) {
     if (sp.size == 0 && member_role != RAWSTOR_MEMBER_WITNESS) {
         rawstd_error("lvm: object size must be positive\n");
@@ -492,7 +493,7 @@ rawstd::Task<void> Backend::create(
     identity.width = static_cast<uint8_t>(sp.width);
     identity.chunk_size = sp.chunk_size;
     identity.size = sp.size;
-    identity.tenant = owner();
+    identity.tenant = owner;
     std::string tag = std::string(rawstor_tag_prefix) +
                       meta_encode(state, config, promised, accepted, identity);
 

@@ -150,7 +150,8 @@ protected:
     // every group, and a listing of one `id` is left as it is. `token` is the
     // last id of a page that more groups follow, nil otherwise.
     rawstd::Task<void> _page_owned(
-        const RawstdUUID& id, std::vector<ChunkGroup> found, unsigned int limit,
+        const RawstdUUID& id, const RawstdUUID& tenant,
+        std::vector<ChunkGroup> found, unsigned int limit,
         std::vector<ChunkGroup>& chunks, RawstdUUID& token
     );
 

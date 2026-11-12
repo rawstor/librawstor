@@ -13,6 +13,7 @@
 #include "rawio_sync.hpp"
 #include "register.hpp"
 #include "target.hpp"
+#include "tenant.hpp"
 #include "wire_backend.hpp"
 
 #include <rawio/queue.hpp>
@@ -717,6 +718,43 @@ TEST(ObjectResizeTest, grows_and_creates_new_chunks) {
     EXPECT_EQ(read_spec.size, 2ull << 20);
 
     EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
+// The chunks a grow adds belong to the owner of the object, whichever address
+// the grow is asked through (docs/tenants.md).
+TEST(ObjectResizeTest, new_chunks_belong_to_the_owner_of_the_object) {
+    rawstor::tests::ObjectEnv env(8898, 8899);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    rawstd::URI mds(env.location());
+    RawstdUUID owner;
+    ASSERT_EQ(rawstd_uuid7_init(&owner), 0);
+    run(*queue, rawstor::Location({mds}).create_tenant(*queue, owner));
+
+    const char* id = "018f4e2a-3000-7000-8000-000000000040";
+    RawstorObjectSpec spec{};
+    spec.size = 512ull << 10;
+    spec.width = 1;
+    spec.chunk_size = 512ull << 10;
+    run(*queue,
+        rawstor::Target({rawstd::URI(rawstor::with_tenant(mds, owner), id)})
+            .create(*queue, spec));
+
+    // Grown through an address that names no tenant.
+    run(*queue,
+        rawstor::Target({rawstd::URI(mds, id)}).resize(*queue, 2ull << 20));
+
+    for (uint64_t offset : {0ull, 512ull << 10, 1024ull << 10, 1536ull << 10}) {
+        std::ostringstream hex;
+        hex << std::hex << offset;
+        rawstor::Target chunk({rawstd::URI(rawstd::URI(mds, id), hex.str())});
+        auto metas = run(*queue, chunk.meta(*queue));
+        ASSERT_FALSE(metas.empty());
+        RawstdUUID got = rawstor::tenant_from_wire(metas.front().tenant_id);
+        EXPECT_EQ(rawstd_uuid_cmp(&got, &owner), 0) << "offset " << offset;
+    }
+
+    run(*queue, rawstor::Target({rawstd::URI(mds, id)}).remove(*queue));
 }
 
 // Grow-only: the MDS itself rejects a smaller new_size.

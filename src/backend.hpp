@@ -36,7 +36,6 @@ struct ChunkGroup {
 class Backend : public std::enable_shared_from_this<Backend> {
 private:
     rawstd::URI _location;
-    RawstdUUID _tenant;
     int _fd;
 
 protected:
@@ -70,15 +69,6 @@ public:
     std::string str() const;
 
     inline const rawstd::URI& location() const noexcept { return _location; }
-
-    // The tenant this backend acts for: the optional user information of its
-    // location (docs/tenants.md); nil for none. It is the filter of
-    // list_chunks().
-    inline const RawstdUUID& tenant() const noexcept { return _tenant; }
-
-    // The owner of what create() makes: the tenant, or the default tenant
-    // when there is none.
-    RawstdUUID owner() const;
 
     inline int fd() const noexcept { return _fd; }
 
@@ -129,12 +119,15 @@ public:
     // group per object, offset 0) and the filtered form off its own
     // WireMap.
     //
+    // A non-nil `tenant` (only with a nil `id`) lists the objects of that
+    // tenant alone (docs/tenants.md); nil lists them all.
+    //
     // A non-nil `version_id` (only with a non-nil `id`) lists the chunks
     // that version of `id` has instead of the live ones; ENOTSUP on a
     // backend without versions.
     virtual rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID version_id = {}
+        RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
     ) = 0;
 
     // The tenants registered in an MDS, in no particular order. ENOTSUP
@@ -149,11 +142,13 @@ public:
     remove_tenant(const RawstdUUID& idempotency_key, const RawstdUUID& tenant);
 
     // Creates one data or metadata-only witness member. member_role is
-    // placement identity, distinct from the chunk-wide specification.
+    // placement identity, distinct from the chunk-wide specification. `owner`
+    // is the tenant the object belongs to (docs/tenants.md), recorded with it
+    // and never changed; the nil UUID records none.
     virtual rawstd::Task<void> create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        RawstorMemberRole member_role, const RawstdUUID& owner
     ) = 0;
 
     // Removes the live version of `id`/`offset`. A version

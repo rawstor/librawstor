@@ -222,6 +222,13 @@ public:
     rawstd::Task<void>
     create(rawio::Queue& queue, const RawstorObjectSpec& sp) const;
 
+    // The same, for `owner`, the tenant the object belongs to, rather than
+    // the one the URIs of this target stand for (docs/tenants.md).
+    rawstd::Task<void> create(
+        rawio::Queue& queue, const RawstorObjectSpec& sp,
+        const RawstdUUID& owner
+    ) const;
+
     // Creates a native CoW version of the live object as the version
     // `this` is bound to (version_id() above, a target string of the form
     // <id>/<version_id>) -- the only entry point for this (create() above

@@ -505,7 +505,8 @@ TEST(TargetCreateTest, width_rules) {
     for (const auto& location : {dir1.uri(), dir2.uri()}) {
         auto slot =
             run(*queue, rawstor::Slot::create(*queue, rawstd::URI(location)));
-        run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_DATA));
+        run(*queue,
+            slot->create(id, 0, spec, RAWSTOR_MEMBER_DATA, RawstdUUID{}));
         run(*queue, slot->close());
     }
     std::vector<RawstorObjectMeta> metas =

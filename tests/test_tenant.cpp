@@ -127,44 +127,78 @@ TEST(Tenant, tenant_follows_a_child_uri) {
 
 // ---- over a real store (docs/tenants.md) ----
 
-// The tenant a location names owns the objects created through it, and the
-// object's own metadata says so.
-TEST(TenantTest, an_object_records_the_tenant_that_created_it) {
+// A backend records the owner it is asked to create an object for, and the
+// object's own metadata says so; none is recorded when none is given. Which
+// owner a location stands for is decided above it (Location, Target).
+TEST(TenantTest, an_object_records_the_owner_it_is_created_for) {
     rawstor::tests::TmpDir dir;
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
     RawstdUUID owner = new_id();
-    rawstd::URI location = rawstor::with_tenant(rawstd::URI(dir.uri()), owner);
 
+    auto backend =
+        run(*queue, rawstor::Backend::create(*queue, rawstd::URI(dir.uri())));
     RawstdUUID id = new_id();
-    auto backend = run(*queue, rawstor::Backend::create(*queue, location));
-    run(*queue, backend->create(
-                    RawstdUUID{}, id, 0, small_spec(), RAWSTOR_MEMBER_DATA
-                ));
+    run(*queue,
+        backend->create(
+            RawstdUUID{}, id, 0, small_spec(), RAWSTOR_MEMBER_DATA, owner
+        ));
     auto metas = run(*queue, backend->meta(id, 0));
     ASSERT_EQ(metas.size(), 1u);
     EXPECT_EQ(
         memcmp(metas[0].tenant_id, owner.bytes, sizeof(metas[0].tenant_id)), 0
     );
-    run(*queue, backend->close());
 
-    // A location without a tenant creates objects of the default tenant.
-    auto plain =
-        run(*queue, rawstor::Backend::create(*queue, rawstd::URI(dir.uri())));
     RawstdUUID other_id = new_id();
-    run(*queue, plain->create(
-                    RawstdUUID{}, other_id, 0, small_spec(), RAWSTOR_MEMBER_DATA
+    run(*queue, backend->create(
+                    RawstdUUID{}, other_id, 0, small_spec(),
+                    RAWSTOR_MEMBER_DATA, RawstdUUID{}
                 ));
-    auto plain_metas = run(*queue, plain->meta(other_id, 0));
-    ASSERT_EQ(plain_metas.size(), 1u);
-    RawstdUUID fallback = rawstor::default_tenant();
+    auto other_metas = run(*queue, backend->meta(other_id, 0));
+    ASSERT_EQ(other_metas.size(), 1u);
+    RawstdUUID none{};
     EXPECT_EQ(
         memcmp(
-            plain_metas[0].tenant_id, fallback.bytes,
-            sizeof(plain_metas[0].tenant_id)
+            other_metas[0].tenant_id, none.bytes,
+            sizeof(other_metas[0].tenant_id)
         ),
         0
     );
-    run(*queue, plain->close());
+    run(*queue, backend->close());
+}
+
+// The tenant a location names owns what is created through it, and none
+// names the default tenant: the owner is decided from the address of the
+// object, not by the backend.
+TEST(TenantTest, a_target_is_created_for_the_tenant_it_names) {
+    rawstor::tests::TmpDir dir;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    RawstdUUID owner = new_id();
+    rawstd::URI plain(dir.uri());
+
+    rawstor::Target named =
+        run(*queue, rawstor::Location({rawstor::with_tenant(plain, owner)})
+                        .create(*queue, small_spec()));
+    rawstor::Target unnamed =
+        run(*queue, rawstor::Location({plain}).create(*queue, small_spec()));
+
+    auto tenant_of_copy = [&](const rawstor::Target& target) {
+        auto metas = run(*queue, target.meta(*queue));
+        EXPECT_EQ(metas.size(), 1u);
+        return rawstor::tenant_from_wire(metas.front().tenant_id);
+    };
+    RawstdUUID got = tenant_of_copy(named);
+    EXPECT_EQ(rawstd_uuid_cmp(&got, &owner), 0);
+    RawstdUUID fallback = rawstor::default_tenant();
+    got = tenant_of_copy(unnamed);
+    EXPECT_EQ(rawstd_uuid_cmp(&got, &fallback), 0);
+
+    // A tenant named for the object by a caller overrides the address.
+    RawstdUUID other = new_id();
+    rawstd::URI address(plain, "0197e0a2-7c3b-7d4e-8f10-000000000002");
+    rawstor::Target explicit_owner(std::vector<rawstd::URI>{address});
+    run(*queue, explicit_owner.create(*queue, small_spec(), other));
+    got = tenant_of_copy(explicit_owner);
+    EXPECT_EQ(rawstd_uuid_cmp(&got, &other), 0);
 }
 
 // A listing shows the objects a tenant owns; a location without a tenant, the

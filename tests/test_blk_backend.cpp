@@ -656,7 +656,8 @@ TEST(BlkBackendTest, witness_member_holds_no_data_and_refuses_real_io) {
 
     std::unique_ptr<rawstor::Slot> slot =
         run(*queue, rawstor::Slot::create(*queue, location));
-    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_WITNESS));
+    run(*queue,
+        slot->create(id, 0, spec, RAWSTOR_MEMBER_WITNESS, RawstdUUID{}));
 
     // Holds no data: its own "data" file exists (still enumerable --
     // e.g. rawstor-mds's reconstruct scan, which tells it apart from a

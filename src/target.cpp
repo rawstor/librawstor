@@ -251,7 +251,7 @@ void validate_same_uuid(
 // exception with a second one.
 rawstd::Task<void> create_one(
     rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectSpec& sp,
-    RawstorMemberRole role = RAWSTOR_MEMBER_DATA
+    const RawstdUUID& owner, RawstorMemberRole role = RAWSTOR_MEMBER_DATA
 ) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t offset = extract_offset(target);
@@ -259,7 +259,7 @@ rawstd::Task<void> create_one(
         co_await rawstor::Slot::create(queue, strip_path(target));
     std::exception_ptr error;
     try {
-        co_await slot->create(id, offset, sp, role);
+        co_await slot->create(id, offset, sp, role, owner);
     } catch (...) {
         error = std::current_exception();
     }
@@ -513,7 +513,7 @@ rawstd::Task<std::vector<uint64_t>> chunks_one(
     RawstdUUID token{};
     std::exception_ptr error;
     try {
-        co_await slot->list_chunks(id, 0, groups, token, version_id);
+        co_await slot->list_chunks(id, 0, groups, token, {}, version_id);
     } catch (...) {
         error = std::current_exception();
     }
@@ -1292,6 +1292,12 @@ const RawstdUUID& Target::version_id() const {
 
 rawstd::Task<void>
 Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
+    co_await create(queue, sp, owner_of(_uris));
+}
+
+rawstd::Task<void> Target::create(
+    rawio::Queue& queue, const RawstorObjectSpec& sp, const RawstdUUID& owner
+) const {
     if (is_logical_chunk(_uris)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -1419,7 +1425,9 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
             RawstorMemberRole role = witness && index + 1 == uris.size()
                                          ? RAWSTOR_MEMBER_WITNESS
                                          : RAWSTOR_MEMBER_DATA;
-            tasks.push_back(create_one(queue, uris[index], chunk_sp, role));
+            tasks.push_back(
+                create_one(queue, uris[index], chunk_sp, owner, role)
+            );
         }
 
         // co_await isn't allowed inside a catch block, so the failure is
@@ -2245,15 +2253,7 @@ int rawstor_target_id(const char* target, char* buf, size_t size) noexcept {
 
 int rawstor_target_tenant(const char* target, char* buf, size_t size) noexcept {
     try {
-        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
-        RawstdUUID owner = rawstor::owner_of(uris.front());
-        for (const rawstd::URI& uri : uris) {
-            RawstdUUID other = rawstor::owner_of(uri);
-            if (rawstd_uuid_cmp(&owner, &other) != 0) {
-                rawstd_error("target names different tenants\n");
-                return -EINVAL;
-            }
-        }
+        RawstdUUID owner = rawstor::owner_of(rawstd::URI::uriv(target));
         RawstdUUIDString text;
         rawstd_uuid_to_string(&owner, &text);
         int res = snprintf(buf, size, "%s", text);

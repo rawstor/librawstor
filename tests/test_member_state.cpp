@@ -116,7 +116,7 @@ TEST(MemberStateTest, unreachable_metadata_cannot_be_opened_for_io) {
     RawstorObjectSpec spec{};
     spec.size = 4096;
     spec.width = 1;
-    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_DATA));
+    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_DATA, RawstdUUID{}));
     auto backend = run(*queue, rawstor::Backend::create(*queue, location));
     run(*queue, backend->set_state(
                     id, 0, RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
@@ -160,7 +160,8 @@ create_copy(rawio::Queue& queue, const DirtyCopy& copy) {
     RawstorObjectSpec spec{};
     spec.size = 4096;
     spec.width = 1;
-    run(queue, slot->create(copy.id, 0, spec, RAWSTOR_MEMBER_DATA));
+    run(queue,
+        slot->create(copy.id, 0, spec, RAWSTOR_MEMBER_DATA, RawstdUUID{}));
     return slot;
 }
 
@@ -871,7 +872,7 @@ TEST(MemberStateTest, unknown_persisted_state_is_rejected_for_io) {
     RawstorObjectSpec spec{};
     spec.size = 4096;
     spec.width = 1;
-    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_DATA));
+    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_DATA, RawstdUUID{}));
     auto backend = run(*queue, rawstor::Backend::create(*queue, location));
     run(*queue, backend->set_state(
                     id, 0, RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
@@ -896,7 +897,7 @@ TEST(MemberStateTest, malformed_persisted_metadata_is_not_retried) {
     RawstorObjectSpec spec{};
     spec.size = 4096;
     spec.width = 1;
-    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_DATA));
+    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_DATA, RawstdUUID{}));
     const auto path = dir.path() / id_string(id) / "0" / "meta";
     std::ifstream input(path, std::ios::binary);
     const std::string original((std::istreambuf_iterator<char>(input)), {});

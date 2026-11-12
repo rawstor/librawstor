@@ -209,7 +209,7 @@ public:
     // Backend) already bound to one location.
     rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID version_id = {}
+        RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
     );
 
     rawstd::Task<std::vector<RawstdUUID>> list_tenants();
@@ -227,7 +227,7 @@ public:
 
     rawstd::Task<void> create(
         const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        RawstorMemberRole member_role, const RawstdUUID& owner
     );
 
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset);

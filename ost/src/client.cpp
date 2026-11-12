@@ -82,21 +82,6 @@ rawstd::Task<void> with_slot(
     }
 }
 
-// The same for a request that names a tenant (docs/tenants.md): the store is
-// opened as that tenant, which is the owner of what is created and the filter
-// of what is listed. The server's own locations name a store only.
-template <typename F>
-rawstd::Task<void> with_tenant_slot(
-    RawIOQueue* queue, const std::vector<rawstd::URI>& locations,
-    const RawstdUUID& tenant, F operation
-) {
-    std::vector<rawstd::URI> qualified;
-    for (const rawstd::URI& location : locations) {
-        qualified.push_back(rawstor::with_tenant(location, tenant));
-    }
-    co_await with_slot(queue, qualified, std::move(operation));
-}
-
 void check_copy_range(uint64_t offset, size_t size, uint64_t capacity) {
     if (offset > capacity || size > capacity - offset) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -909,10 +894,12 @@ rawstd::DetachedTask Client::_list(
     std::vector<unsigned char> data;
     int result = 0;
     try {
-        co_await with_tenant_slot(
-            client->_queue, client->_server.locations(), tenant,
+        co_await with_slot(
+            client->_queue, client->_server.locations(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
-                co_await slot.list_chunks({}, payload.limit, groups, token);
+                co_await slot.list_chunks(
+                    {}, payload.limit, groups, token, tenant
+                );
             }
         );
         std::vector<RawstorFrameListEntry> entries;
@@ -975,10 +962,12 @@ rawstd::DetachedTask Client::_allocate(
         if (int error = rawstor_frame_allocate_decode(&payload, &spec, &role)) {
             RAWSTD_THROW_SYSTEM_ERROR(error);
         }
-        co_await with_tenant_slot(
-            client->_queue, client->_server.locations(), tenant,
+        co_await with_slot(
+            client->_queue, client->_server.locations(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
-                co_await slot.create(uuid, payload.chunk_offset, spec, role);
+                co_await slot.create(
+                    uuid, payload.chunk_offset, spec, role, tenant
+                );
             }
         );
     } catch (const std::system_error& error) {
