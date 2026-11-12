@@ -257,3 +257,35 @@ class TestTarget(unittest.TestCase):
             with self.assertRaises(OSError) as cm:
                 target.create_version(str(uuid.uuid4()))
             self.assertEqual(cm.exception.errno, errno.EINVAL)
+
+
+class TestTargetTenant(unittest.TestCase):
+    TENANT = "0197e0a2-7c3b-7d4e-8f10-3a5b6c7d8e9f"
+    OBJECT = "0197e0a2-7c3b-7d4e-8f10-000000000001"
+
+    def test_tenant(self):
+        named = rawstor.Target(
+            f"ost://{self.TENANT}@10.0.0.1:7777/{self.OBJECT}")
+        self.assertEqual(named.tenant, self.TENANT)
+
+        plain = rawstor.Target(f"ost://10.0.0.1:7777/{self.OBJECT}")
+        self.assertEqual(plain.tenant, rawstor.DEFAULT_TENANT)
+
+    def test_tenant_of_mirrors(self):
+        mirrors = rawstor.Target(
+            f"ost://{self.TENANT}@10.0.0.1:7777/{self.OBJECT},"
+            f"ost://{self.TENANT}@10.0.0.2:7777/{self.OBJECT}")
+        self.assertEqual(mirrors.tenant, self.TENANT)
+
+        split = rawstor.Target(
+            f"ost://{self.TENANT}@10.0.0.1:7777/{self.OBJECT},"
+            f"ost://10.0.0.2:7777/{self.OBJECT}")
+        with self.assertRaises(OSError) as error:
+            split.tenant
+        self.assertEqual(error.exception.errno, errno.EINVAL)
+
+    def test_tenant_that_is_not_a_uuid(self):
+        target = rawstor.Target(f"ost://acme@10.0.0.1:7777/{self.OBJECT}")
+        with self.assertRaises(OSError) as error:
+            target.tenant
+        self.assertEqual(error.exception.errno, errno.EINVAL)

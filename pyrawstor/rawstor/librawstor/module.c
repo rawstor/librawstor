@@ -22,6 +22,10 @@ static PyMethodDef librawstor_methods[] = {
     {"object_slots", py_rawstor_object_slots, METH_VARARGS, NULL},
     {"object_versions", py_rawstor_object_versions, METH_VARARGS, NULL},
     {"location_info", py_rawstor_location_info, METH_VARARGS, NULL},
+    {"tenant_list", py_rawstor_tenant_list, METH_VARARGS, NULL},
+    {"tenant_create", py_rawstor_tenant_create, METH_VARARGS, NULL},
+    {"tenant_remove", py_rawstor_tenant_remove, METH_VARARGS, NULL},
+    {"target_tenant", py_rawstor_target_tenant, METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL}
 };
 

@@ -198,6 +198,26 @@ own (`tenant`), also for an administrator, whose location names no tenant. The
 `target` column names the owner too, unless it is the default tenant.
 `create -t TARGET` makes the object for the tenant its target names.
 
+## Python
+
+```python
+admin = rawstor.Location("mds://10.0.0.2:7776")
+tenant = admin.create_tenant()            # a random UUID, or create_tenant(uuid)
+admin.tenants()                           # the registered tenants, as strings
+admin.remove_tenant(tenant)
+
+mine = rawstor.Location(f"mds://{tenant}@10.0.0.2:7776")
+target = mine.create(size=10 << 30, width=1, chunk_size=256 << 20)
+target.tenant                             # the owner named by the target
+target.meta()[0].tenant                   # the owner the copy records
+[t.tenant for t in mine]                  # what `mine` lists: its own objects
+rawstor.DEFAULT_TENANT                    # the owner when none is named
+```
+
+`Target.tenant` reads the address only. `ObjectMeta.tenant` is the owner a copy
+records. `Location.tenants()`, `create_tenant()` and `remove_tenant()` raise
+`OSError` (`ENOTSUP`) for a location that is not an `mds://` one.
+
 ## Not here
 
 Authentication, the binding of a tenant to a certificate, rights, quotas and

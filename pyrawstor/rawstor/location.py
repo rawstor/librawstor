@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from uuid import uuid4
 
 from . import librawstor
 from .constants import OBJ_DOMAIN_DEFAULT
@@ -62,6 +63,28 @@ class Location:
 
     def info(self) -> librawstor.LocationInfo:
         return librawstor.location_info(self._uri)
+
+    def tenants(self) -> list[str]:
+        """The tenants registered in the MDS this location names, as UUID
+        strings, in no particular order. Raises OSError (ENOTSUP) for a
+        location that is not an mds:// one: only an MDS keeps a tenant
+        registry (docs/tenants.md)."""
+        return librawstor.tenant_list(self._uri)
+
+    def create_tenant(self, tenant: str | None = None) -> str:
+        """Register `tenant`, a UUID string (a random one if None), in the
+        MDS this location names, and return it. Raises OSError: EEXIST if
+        it is registered, EINVAL if it is not a UUID or is the nil one."""
+        if tenant is None:
+            tenant = str(uuid4())
+        librawstor.tenant_create(self._uri, tenant)
+        return tenant
+
+    def remove_tenant(self, tenant: str) -> None:
+        """Remove `tenant` from the MDS this location names. Raises
+        OSError: ENOENT if it is not registered, EBUSY while it owns an
+        object, EPERM for the default tenant."""
+        librawstor.tenant_remove(self._uri, tenant)
 
     def objects(self) -> Iterator[Target]:
         """Yield the objects of this location, a page at a time."""

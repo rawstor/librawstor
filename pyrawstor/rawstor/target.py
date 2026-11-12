@@ -64,6 +64,14 @@ class Target:
             return NotImplemented
         return self._uri == other._uri
 
+    @property
+    def tenant(self) -> str:
+        """The tenant that owns the object this target addresses, as a UUID
+        string: the one its URIs name as user information, the default
+        tenant (DEFAULT_TENANT) when they name none. Nothing is contacted.
+        Raises OSError (EINVAL) if the URIs name different tenants."""
+        return librawstor.target_tenant(self._uri)
+
     def create(
         self, *, size: int, width: int, chunk_size: int = 0,
         stripe_width: int = 0,
