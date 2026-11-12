@@ -334,22 +334,7 @@ rawstd::Task<void> Backend::list_chunks(
                        )
     );
 
-    if (limit == 0) {
-        limit = rawstor_opts_list_limit();
-    } else {
-        limit = std::min(limit, rawstor_opts_list_limit());
-    }
-
-    bool capped = found.size() > limit;
-    if (capped) {
-        found.resize(limit);
-    }
-
-    chunks = std::move(found);
-    if (capped) {
-        token = chunks.back().id;
-    }
-    co_await _keep_owned(id, chunks);
+    co_await _page_owned(id, std::move(found), limit, chunks, token);
 
     co_return;
 }
@@ -507,7 +492,7 @@ rawstd::Task<void> Backend::create(
     identity.width = static_cast<uint8_t>(sp.width);
     identity.chunk_size = sp.chunk_size;
     identity.size = sp.size;
-    identity.tenant = tenant();
+    identity.tenant = owner();
     std::string tag = std::string(rawstor_tag_prefix) +
                       meta_encode(state, config, promised, accepted, identity);
 

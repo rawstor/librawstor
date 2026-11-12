@@ -34,9 +34,11 @@ extern "C" {
  * Tenants (docs/tenants.md). An object has one tenant, its owner, recorded
  * when it is created (OBJ_CREATE, ALLOCATE) and reported by META; it is not
  * part of the object's address: an object id is unique on its own. LIST takes
- * a tenant as a filter. The nil UUID is "no tenant": an object created
- * without one has no owner, and a LIST without one lists every object.
+ * a tenant as a filter. The nil UUID is "no filter" there: a LIST without a
+ * tenant lists every object. A client that names no tenant when it creates an
+ * object creates it for the default tenant, which every MDS registers.
  */
+#define RAWSTOR_DEFAULT_TENANT "00000000-0000-0000-0000-000000000001"
 
 /*
  * One command space for every server role, grouped into reserved ranges

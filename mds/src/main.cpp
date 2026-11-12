@@ -137,10 +137,10 @@ void scan_ost(
         SyncOp op;
         op.queue = queue;
         ssize_t r = sync_op_wait(
-            op,
-            rawstor_location_list(
-                queue, location.c_str(), 0, &targets, &token, sync_op_cb, &op
-            )
+            op, rawstor_location_list(
+                    queue, location.c_str(), nullptr, 0, &targets, nullptr,
+                    &token, sync_op_cb, &op
+                )
         );
         if (r < 0) {
             rawstor_string_list_delete(targets);

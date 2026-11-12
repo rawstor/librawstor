@@ -149,7 +149,7 @@ public:
             )) {
             RAWSTD_THROW_SYSTEM_ERROR(error);
         }
-        rawstor::tenant::to_wire(backend->tenant(), _request.payload.tenant_id);
+        rawstor::tenant::to_wire(backend->owner(), _request.payload.tenant_id);
         memcpy(
             _request.payload.object_id, id.bytes,
             sizeof(_request.payload.object_id)

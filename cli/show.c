@@ -6,7 +6,6 @@
 #include <rawstor.h>
 
 #include <rawstd/exitcode.h>
-#include <rawstd/uuid.h>
 
 #include <errno.h>
 #include <stdio.h>
@@ -34,27 +33,12 @@ int rawstor_cli_show(const char* target, const RawstorCliOutput* output) {
         return rawstd_exitcode_for_errno((int)-result);
     }
 
-    /* The owner is recorded with the object's first chunk. */
-    struct RawstorObjectMeta meta;
-    memset(&meta, 0, sizeof(meta));
-    op.done = 0;
-    int mres =
-        rawstor_target_meta(op.queue, target, &meta, 1, rawstor_cli_op_cb, &op);
-    result = rawstor_cli_op_wait(&op, mres);
+    char tenant[64];
+    int ores = rawstor_cli_op_owner(&op, target, tenant, sizeof(tenant));
     rawstor_cli_op_destroy(&op);
-    if (result < 0) {
-        fprintf(
-            stderr, "rawstor_target_meta() failed: %s\n", strerror((int)-result)
-        );
-        return rawstd_exitcode_for_errno((int)-result);
-    }
-    char tenant[64] = "";
-    struct RawstdUUID owner;
-    memcpy(owner.bytes, meta.tenant_id, sizeof(owner.bytes));
-    if (!rawstd_uuid_is_nil(&owner)) {
-        RawstdUUIDString text;
-        rawstd_uuid_to_string(&owner, &text);
-        snprintf(tenant, sizeof(tenant), "%s", text);
+    if (ores < 0) {
+        fprintf(stderr, "rawstor_target_meta() failed: %s\n", strerror(-ores));
+        return rawstd_exitcode_for_errno(-ores);
     }
 
     /* version_id is a column only when TARGET names a version. */

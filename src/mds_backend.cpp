@@ -286,7 +286,7 @@ rawstd::Task<uint64_t> Backend::_obj_create(
             },
         .payload = {},
     };
-    rawstor::tenant::to_wire(tenant(), request.payload.tenant_id);
+    rawstor::tenant::to_wire(owner(), request.payload.tenant_id);
     uuid_to_bytes(id, request.payload.id);
     uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
     request.payload.logical_size = logical_size;

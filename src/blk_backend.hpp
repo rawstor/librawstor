@@ -143,13 +143,16 @@ protected:
     // class hierarchy needs it.
     static constexpr size_t META_MAX_SIZE = 1024;
 
-    // list_chunks() of a tenant (docs/tenants.md): sets the owner of each
-    // group of `chunks` from its own metadata and drops the objects that
-    // tenant does not own. A backend without a tenant keeps everything, and a
-    // listing of one `id` is left as it is. The page's resume token is not
-    // affected, so a page may come back shorter than `limit`.
-    rawstd::Task<void>
-    _keep_owned(const RawstdUUID& id, std::vector<ChunkGroup>& chunks);
+    // The page of list_chunks() out of `found`, the groups after the resume
+    // point in id order: up to `limit` of them, each with its owner read from
+    // its own metadata, those of other tenants skipped before they count
+    // against the limit (docs/tenants.md). A backend without a tenant keeps
+    // every group, and a listing of one `id` is left as it is. `token` is the
+    // last id of a page that more groups follow, nil otherwise.
+    rawstd::Task<void> _page_owned(
+        const RawstdUUID& id, std::vector<ChunkGroup> found, unsigned int limit,
+        std::vector<ChunkGroup>& chunks, RawstdUUID& token
+    );
 
     // Durably writes the copy metadata, preserving its ChunkIdentity.
     // Slot holds the copy's record lock while applying metadata requests.

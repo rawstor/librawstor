@@ -16,6 +16,9 @@ namespace tenant {
 // anything that is not a non-nil UUID.
 RawstdUUID of(const rawstd::URI& uri);
 
+// The tenant that owns what is created without naming one.
+RawstdUUID default_tenant();
+
 // `uri` with `tenant` as its user information, none for the nil UUID.
 rawstd::URI with(const rawstd::URI& uri, const RawstdUUID& tenant);
 

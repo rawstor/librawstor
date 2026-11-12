@@ -250,13 +250,28 @@ rawstd::Task<void> Backend::_bind_object(
     set_fd(opened);
 }
 
-rawstd::Task<void>
-Backend::_keep_owned(const RawstdUUID& id, std::vector<ChunkGroup>& chunks) {
-    if (!rawstd_uuid_is_nil(&id)) {
-        co_return;
+rawstd::Task<void> Backend::_page_owned(
+    const RawstdUUID& id, std::vector<ChunkGroup> found, unsigned int limit,
+    std::vector<ChunkGroup>& chunks, RawstdUUID& token
+) {
+    if (limit == 0) {
+        limit = rawstor_opts_list_limit();
+    } else {
+        limit = std::min(limit, rawstor_opts_list_limit());
     }
-    std::vector<ChunkGroup> owned;
-    for (ChunkGroup& group : chunks) {
+
+    chunks.clear();
+    token = {};
+    for (size_t i = 0; i < found.size(); ++i) {
+        if (chunks.size() == limit) {
+            token = chunks.back().id;
+            break;
+        }
+        ChunkGroup& group = found[i];
+        if (!rawstd_uuid_is_nil(&id)) {
+            chunks.push_back(std::move(group));
+            continue;
+        }
         std::vector<RawstorObjectMeta> metas;
         try {
             metas = co_await meta(
@@ -275,10 +290,9 @@ Backend::_keep_owned(const RawstdUUID& id, std::vector<ChunkGroup>& chunks) {
         group.tenant = tenant::from_wire(metas.front().tenant_id);
         if (rawstd_uuid_is_nil(&tenant()) ||
             rawstd_uuid_cmp(&group.tenant, &tenant()) == 0) {
-            owned.push_back(std::move(group));
+            chunks.push_back(std::move(group));
         }
     }
-    chunks = std::move(owned);
 }
 
 std::string Backend::meta_encode(

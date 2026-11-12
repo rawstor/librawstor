@@ -72,9 +72,13 @@ public:
     inline const rawstd::URI& location() const noexcept { return _location; }
 
     // The tenant this backend acts for: the optional user information of its
-    // location (docs/tenants.md); nil for none. It owns what create() makes
-    // and is the filter of list_chunks().
+    // location (docs/tenants.md); nil for none. It is the filter of
+    // list_chunks().
     inline const RawstdUUID& tenant() const noexcept { return _tenant; }
+
+    // The owner of what create() makes: the tenant, or the default tenant
+    // when there is none.
+    RawstdUUID owner() const;
 
     inline int fd() const noexcept { return _fd; }
 

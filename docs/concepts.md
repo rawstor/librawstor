@@ -174,7 +174,8 @@ A location may name a **tenant** as user information: `ost://<tenant>@host:port`
 `file://<tenant>@/path`; it is optional. An object has one tenant, its owner, and
 an object id is unique on its own, so the tenant is not part of an address. A
 location with a tenant creates objects for it and lists the objects it owns; one
-without lists every object. See [Tenants](tenants.md).
+without creates them for the default tenant and lists every object. See
+[Tenants](tenants.md).
 
 ### Multiple backends (comma‑separated)
 

@@ -30,6 +30,11 @@ Backend::Backend(Private, rawio::Queue& queue, const rawstd::URI& location) :
     _queue(queue) {
 }
 
+RawstdUUID Backend::owner() const {
+    return rawstd_uuid_is_nil(&_tenant) ? rawstor::tenant::default_tenant()
+                                        : _tenant;
+}
+
 Backend::~Backend() {
     if (_fd != -1) {
         rawstd_debug("fd %d: Close\n", _fd);

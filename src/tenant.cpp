@@ -1,5 +1,7 @@
 #include "tenant.hpp"
 
+#include <rawstor/protocol.h>
+
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
 
@@ -24,6 +26,12 @@ RawstdUUID of(const rawstd::URI& uri) {
         );
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
+    return id;
+}
+
+RawstdUUID default_tenant() {
+    RawstdUUID id;
+    rawstd_uuid_from_string(&id, RAWSTOR_DEFAULT_TENANT);
     return id;
 }
 

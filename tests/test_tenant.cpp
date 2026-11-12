@@ -3,6 +3,7 @@
 #include "backend.hpp"
 #include "location.hpp"
 #include "opts.h"
+#include "rawio_sync.hpp"
 #include "target.hpp"
 #include "tenant.hpp"
 #include "tmp_dir.hpp"
@@ -145,7 +146,7 @@ TEST(TenantTest, an_object_records_the_tenant_that_created_it) {
     );
     run(*queue, backend->close());
 
-    // A location without a tenant creates objects that have none.
+    // A location without a tenant creates objects of the default tenant.
     auto plain =
         run(*queue, rawstor::Backend::create(*queue, rawstd::URI(dir.uri())));
     RawstdUUID other_id = new_id();
@@ -154,10 +155,10 @@ TEST(TenantTest, an_object_records_the_tenant_that_created_it) {
                 ));
     auto plain_metas = run(*queue, plain->meta(other_id, 0));
     ASSERT_EQ(plain_metas.size(), 1u);
-    RawstdUUID none{};
+    RawstdUUID fallback = rawstor::tenant::default_tenant();
     EXPECT_EQ(
         memcmp(
-            plain_metas[0].tenant_id, none.bytes,
+            plain_metas[0].tenant_id, fallback.bytes,
             sizeof(plain_metas[0].tenant_id)
         ),
         0
@@ -226,10 +227,91 @@ TEST(TenantTest, listing_tells_the_owner_of_each_object) {
         if (rawstd_uuid_cmp(&owner, &acme) == 0) {
             ++owned;
         } else {
-            EXPECT_TRUE(rawstd_uuid_is_nil(&owner));
+            RawstdUUID fallback = rawstor::tenant::default_tenant();
+            EXPECT_EQ(rawstd_uuid_cmp(&owner, &fallback), 0);
         }
     }
     EXPECT_EQ(owned, 1u);
+}
+
+// The filter comes before the page: a page of a tenant's objects is full even
+// when objects of other tenants sort between them.
+TEST(TenantTest, a_page_is_filled_with_the_objects_of_the_tenant) {
+    rawstor::tests::TmpDir dir;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    rawstd::URI plain(dir.uri());
+    rawstd::URI acme = rawstor::tenant::with(plain, new_id());
+    rawstd::URI other = rawstor::tenant::with(plain, new_id());
+
+    // Ids sort in creation order.
+    for (int i = 0; i < 3; ++i) {
+        run(*queue,
+            rawstor::Location({other}).create(*queue, new_id(), small_spec()));
+    }
+    for (int i = 0; i < 3; ++i) {
+        run(*queue,
+            rawstor::Location({acme}).create(*queue, new_id(), small_spec()));
+    }
+
+    rawstor::Location location({acme});
+    std::list<rawstor::Target> targets;
+    RawstorPaginationToken token = {};
+    run(*queue, location.list(*queue, 2, targets, token));
+    EXPECT_EQ(targets.size(), 2u);
+    EXPECT_FALSE(rawstor_pagination_token_empty(&token));
+    run(*queue, location.list(*queue, 2, targets, token));
+    EXPECT_EQ(targets.size(), 1u);
+}
+
+// An explicit tenant stands in for the one a location names, for the listing
+// and for the object a create makes.
+TEST(TenantTest, an_explicit_tenant_overrides_the_location) {
+    rawstor::tests::TmpDir dir;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    rawstd::URI plain(dir.uri());
+    RawstdUUID acme = new_id();
+    RawstdUUID other = new_id();
+    RawstdUUIDString acme_text;
+    rawstd_uuid_to_string(&acme, &acme_text);
+    RawstdUUIDString other_text;
+    rawstd_uuid_to_string(&other, &other_text);
+
+    // An administrator, naming no tenant, creates an object for acme.
+    char target[512];
+    RawstorObjectSpec spec = small_spec();
+    ssize_t res =
+        rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+            return rawstor_location_create(
+                queue.get(), plain.str().c_str(), acme_text, nullptr, &spec,
+                target, sizeof(target), cb, data
+            );
+        });
+    ASSERT_GT(res, 0);
+    EXPECT_EQ(std::string(target).find('@'), std::string::npos);
+
+    auto list_for = [&](const char* tenant) {
+        RawstorStringList* targets = nullptr;
+        RawstorStringList* tenants = nullptr;
+        RawstorPaginationToken token = {};
+        ssize_t lres =
+            rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+                return rawstor_location_list(
+                    queue.get(), plain.str().c_str(), tenant, 0, &targets,
+                    &tenants, &token, cb, data
+                );
+            });
+        EXPECT_EQ(lres, 0);
+        size_t count = rawstor_string_list_size(targets);
+        if (count == 1) {
+            EXPECT_STREQ(*rawstor_string_list_iter(tenants), acme_text);
+        }
+        rawstor_string_list_delete(targets);
+        rawstor_string_list_delete(tenants);
+        return count;
+    };
+    EXPECT_EQ(list_for(acme_text), 1u);
+    EXPECT_EQ(list_for(other_text), 0u);
+    EXPECT_EQ(list_for(nullptr), 1u);
 }
 
 // An object id is unique on its own: another tenant cannot create it again.

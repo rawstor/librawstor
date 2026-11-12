@@ -105,6 +105,7 @@ private:
     void _check_layout();
     // ENOENT unless `tenant` is registered; the nil tenant (none) always is.
     void _require_tenant(const RawstdUUID& tenant);
+    void _register_default_tenant();
     void _sync_backends(const Topology& topology);
     // The caller holds _mutex and has committed.
     void _notify_space_change(std::vector<RawstdUUID> osts);

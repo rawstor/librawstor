@@ -88,7 +88,8 @@ ssize_t location_create(
 ) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
         return rawstor_location_create(
-            &queue, location.c_str(), nullptr, &spec, target, size, cb, data
+            &queue, location.c_str(), nullptr, nullptr, &spec, target, size, cb,
+            data
         );
     });
 }
@@ -367,7 +368,8 @@ TEST(ObjectListTest, lists_mds_objects) {
         ssize_t res =
             rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
                 return rawstor_location_list(
-                    queue.get(), location.c_str(), 1, &page, &token, cb, data
+                    queue.get(), location.c_str(), nullptr, 1, &page, nullptr,
+                    &token, cb, data
                 );
             });
         ASSERT_EQ(res, 0);

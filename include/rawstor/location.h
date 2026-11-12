@@ -239,26 +239,39 @@ int rawstor_location_remove_tenant(
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
-int rawstor_location_list(
-    RawIOQueue* queue, const char* location, unsigned int limit,
-    RawstorStringList** targets, RawstorPaginationToken* token,
-    int (*cb)(ssize_t result, void* data), void* data
-) RAWSTOR_NOEXCEPT;
-
 /**
- * @brief Like rawstor_location_list(), and also tells who owns each object.
+ * @brief Asynchronously list the objects of a location, with their tenants.
  *
- * @p tenants receives a second list, in the order of @p targets: the tenant
- * that owns the object of each target as a UUID string, or an empty string for
- * an object with none. A target itself names no tenant. Free both lists with
- * @ref rawstor_string_list_delete. Whatever tenant @p location names filters
- * the listing (docs/tenants.md); a location without one lists every object.
+ * @p targets receives the target of each object and @p tenants, in the same
+ * order, the tenant that owns it as a UUID string. A target names no tenant:
+ * it addresses the object. Free both lists with
+ * @ref rawstor_string_list_delete.
+ *
+ * Only the objects of the tenant named by @p tenant, or, when it is NULL, by
+ * the user information of @p location (`ost://<tenant>@host:port`), are listed
+ * (docs/tenants.md). Without either, every object of the store is.
+ *
+ * @param queue     Queue used to drive the asynchronous listing.
+ * @param location  Location whose objects to list.
+ * @param tenant    A tenant UUID string, or NULL for the one @p location
+ *                  names. Only read while this call is being queued.
+ * @param limit     Most objects to return; 0 for the library's default.
+ * @param targets   Receives the list of targets on success.
+ * @param tenants   Receives the list of their tenants on success. May be NULL
+ *                  if the tenants are of no interest.
+ * @param token     Pagination cursor, updated to the next page's; empty once
+ *                  nothing is left.
+ * @param cb        Completion callback; its result is zero or a negative
+ *                  errno.
+ * @param data      Context pointer passed unchanged to @p cb.
+ *
+ * @return 0 if @p cb will be invoked, a negative errno on immediate failure.
  */
-int rawstor_location_list_with_tenants(
-    RawIOQueue* queue, const char* location, unsigned int limit,
-    RawstorStringList** targets, RawstorStringList** tenants,
-    RawstorPaginationToken* token, int (*cb)(ssize_t result, void* data),
-    void* data
+int rawstor_location_list(
+    RawIOQueue* queue, const char* location, const char* tenant,
+    unsigned int limit, RawstorStringList** targets,
+    RawstorStringList** tenants, RawstorPaginationToken* token,
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -302,6 +315,10 @@ int rawstor_location_list_with_tenants(
  * @param location  Location string specifying the backend and endpoint
  *                  (e.g., "ost://host:port"). Must not be NULL and must be a
  *                  valid location as per the library's format.
+ * @param tenant    The tenant that owns the object, a UUID string. If NULL, the
+ *                  one @p location names as user information, and without
+ *                  either the default tenant (docs/tenants.md). The target
+ *                  names no tenant.
  * @param uuid      UUID string for the object. If NULL, a UUID is automatically
  *                  generated. If not NULL, it must be a valid UUID string.
  *                  Only read while this call is being queued -- need not
@@ -347,9 +364,9 @@ int rawstor_location_list_with_tenants(
  * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 int rawstor_location_create(
-    RawIOQueue* queue, const char* location, const char* uuid,
-    const struct RawstorObjectSpec* spec, char* target, size_t size,
-    int (*cb)(ssize_t result, void* data), void* data
+    RawIOQueue* queue, const char* location, const char* tenant,
+    const char* uuid, const struct RawstorObjectSpec* spec, char* target,
+    size_t size, int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 #ifdef __cplusplus

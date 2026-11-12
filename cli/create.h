@@ -29,10 +29,12 @@ int rawstor_cli_create(
     const RawstorCliOutput* output
 );
 
+/* `tenant` owns the object; NULL takes the one `location` names, and none
+ * the default tenant. */
 int rawstor_cli_create_at(
-    const char* location, const char* uuid, uint64_t size, uint64_t chunk_size,
-    unsigned int mirrors, unsigned int failure_domain, uint64_t stripe_width,
-    const RawstorCliOutput* output
+    const char* location, const char* tenant, const char* uuid, uint64_t size,
+    uint64_t chunk_size, unsigned int mirrors, unsigned int failure_domain,
+    uint64_t stripe_width, const RawstorCliOutput* output
 );
 
 #ifdef __cplusplus

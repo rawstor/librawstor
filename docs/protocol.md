@@ -568,7 +568,7 @@ particular order. An empty payload means none. An OST answers `-ENOSYS`.
 ### Meta — 376 bytes
 
 Everything about one stored copy: the tenant that owns its object
-(`tenant_id`, all zero for none), its size, its placement identity, its own
+(`tenant_id`), its size, its placement identity, its own
 state (`CLEAN`, `DIRTY`, `LOST`), how many sessions have it open for
 writing right now (`writers`), and the chunk's configuration as last set on
 it (a [Config](#config--312-bytes), at offset 32), and the copy's

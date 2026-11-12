@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Tenants ([design](docs/tenants.md)): an object has an owner tenant, named in a location as optional user information (`ost://<tenant>@host:port`); `list` shows the objects a tenant owns, or every object without one; an MDS keeps a tenant registry, and `rawstor tenant create`/`list`/`remove` manage it.
+- Tenants ([design](docs/tenants.md)): an object has an owner tenant, named in a location as optional user information (`ost://<tenant>@host:port`); `list` shows the objects a tenant owns and each one's tenant, or every object without a tenant, and takes `--tenant`; `create` takes `--tenant` too, and without any tenant creates for the default tenant; an MDS keeps a tenant registry, and `rawstor tenant create`/`list`/`remove` manage it.
 - Every connection begins with `HANDSHAKE`, which negotiates optional capabilities as feature bits (no protocol version); a server serves nothing before it, and none is defined yet.
 - Host names work wherever an IPv4 address did: `ost://`/`mds://` locations, topology files and the `rawstor-ost`/`rawstor-mds` listen address are resolved (IPv4 only).
 - `rawstor-vhost` supports QEMU live migration: it logs the guest pages it writes (`VHOST_USER_PROTOCOL_F_LOG_SHMFD`, `VHOST_F_LOG_ALL`) and accepts the migration-time `SET_CONFIG`.

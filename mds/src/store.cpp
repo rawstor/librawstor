@@ -475,6 +475,7 @@ ObjectStore::ObjectStore(const std::string& path, Topology topology) :
         exec(_db, "PRAGMA foreign_keys=ON;");
         _check_layout();
         exec(_db, SCHEMA);
+        _register_default_tenant();
         exec(_db, "PRAGMA user_version=1;");
         _sync_backends(*_topology);
     } catch (...) {
@@ -509,6 +510,19 @@ void ObjectStore::_check_layout() {
         rawstd_error("MDS store has an unsupported layout\n");
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
+}
+
+/* Every store registers the default tenant, which can neither be created nor
+ * removed. */
+void ObjectStore::_register_default_tenant() {
+    RawstdUUID tenant;
+    rawstd_uuid_from_string(&tenant, RAWSTOR_DEFAULT_TENANT);
+    Stmt insert(
+        _db, "INSERT OR IGNORE INTO tenants (id, created_at) VALUES (?, ?);"
+    );
+    insert.bind_blob(1, tenant.bytes, sizeof(tenant.bytes))
+        .bind_int64(2, static_cast<uint64_t>(time(nullptr)))
+        .step();
 }
 
 /* A nil tenant is none; any other is registered. */
@@ -1601,6 +1615,11 @@ void ObjectStore::create_tenant(
 void ObjectStore::remove_tenant(
     const RawstdUUID& idempotency_key, const RawstdUUID& tenant
 ) {
+    RawstdUUID default_tenant;
+    rawstd_uuid_from_string(&default_tenant, RAWSTOR_DEFAULT_TENANT);
+    if (rawstd_uuid_cmp(&tenant, &default_tenant) == 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPERM);
+    }
     std::lock_guard<std::mutex> lock(_mutex);
     if (replay_mutation(
             _db, idempotency_key, MutationType::remove_tenant, tenant

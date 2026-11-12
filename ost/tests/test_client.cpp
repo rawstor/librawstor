@@ -1454,6 +1454,13 @@ TEST(OstClientTest, freeze_without_a_token_is_invalid) {
 
 namespace {
 
+// The owner of an object created without naming a tenant.
+RawstdUUID default_tenant() {
+    RawstdUUID id;
+    EXPECT_EQ(rawstd_uuid_from_string(&id, RAWSTOR_DEFAULT_TENANT), 0);
+    return id;
+}
+
 RawstdUUID make_tenant() {
     RawstdUUID id;
     EXPECT_EQ(rawstd_uuid7_init(&id), 0);
@@ -1527,7 +1534,7 @@ TEST(OstClientTest, an_object_records_its_owner) {
     expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, 0);
 
     for (const auto& [id, owner] :
-         {std::pair{owned, acme}, std::pair{unowned, RawstdUUID{}}}) {
+         {std::pair{owned, acme}, std::pair{unowned, default_tenant()}}) {
         client.send_meta(id, 0);
         ASSERT_TRUE(pump_until(queue, [&] {
             return client.bytes_available() >=
@@ -1594,7 +1601,7 @@ TEST(OstClientTest, list_shows_the_objects_a_tenant_owns) {
         const RawstdUUID& owner = rawstd_uuid_cmp(&id, &in_acme) == 0 ? acme
                                   : rawstd_uuid_cmp(&id, &in_other) == 0
                                       ? other
-                                      : RawstdUUID{};
+                                      : default_tenant();
         EXPECT_EQ(
             std::memcmp(row.tenant_id, owner.bytes, sizeof(row.tenant_id)), 0
         );

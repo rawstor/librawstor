@@ -19,7 +19,9 @@ static const enum RawstorCliColumnType types[] = {
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING
 };
 
-int rawstor_cli_list(const char* location, const RawstorCliOutput* output) {
+int rawstor_cli_list(
+    const char* location, const char* tenant, const RawstorCliOutput* output
+) {
     RawstorCliTable* table =
         rawstor_cli_table_create("targets", columns, types, 4);
     if (table == NULL) {
@@ -40,14 +42,14 @@ int rawstor_cli_list(const char* location, const RawstorCliOutput* output) {
     RawstorPaginationToken token = {};
     do {
         op.done = 0;
-        int sres = rawstor_location_list_with_tenants(
-            op.queue, location, 0, &targets, &tenants, &token,
+        int sres = rawstor_location_list(
+            op.queue, location, tenant, 0, &targets, &tenants, &token,
             rawstor_cli_op_cb, &op
         );
         ssize_t result = rawstor_cli_op_wait(&op, sres);
         if (result < 0) {
             fprintf(
-                stderr, "rawstor_location_list_with_tenants() failed: %s\n",
+                stderr, "rawstor_location_list() failed: %s\n",
                 strerror((int)-result)
             );
             rawstor_cli_op_destroy(&op);
