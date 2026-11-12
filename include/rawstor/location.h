@@ -240,12 +240,12 @@ int rawstor_location_remove_tenant(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously list the objects of a location, with their tenants.
+ * @brief Asynchronously list the objects of a location.
  *
- * @p targets receives the target of each object and @p tenants, in the same
- * order, the tenant that owns it as a UUID string. A target names no tenant:
- * it addresses the object. Free both lists with
- * @ref rawstor_string_list_delete.
+ * @p targets receives the target of each object. A target names the tenant
+ * that owns its object as user information (`ost://<tenant>@host:port/<uuid>`),
+ * and none for an object of the default tenant; @ref rawstor_target_tenant
+ * reads it back. Free the list with @ref rawstor_string_list_delete.
  *
  * Only the objects of the tenant @p location names as user information
  * (`ost://<tenant>@host:port`) are listed (docs/tenants.md); a location
@@ -255,8 +255,6 @@ int rawstor_location_remove_tenant(
  * @param location  Location whose objects to list.
  * @param limit     Most objects to return; 0 for the library's default.
  * @param targets   Receives the list of targets on success.
- * @param tenants   Receives the list of their tenants on success. May be NULL
- *                  if the tenants are of no interest.
  * @param token     Pagination cursor, updated to the next page's; empty once
  *                  nothing is left.
  * @param cb        Completion callback; its result is zero or a negative
@@ -267,9 +265,8 @@ int rawstor_location_remove_tenant(
  */
 int rawstor_location_list(
     RawIOQueue* queue, const char* location, unsigned int limit,
-    RawstorStringList** targets, RawstorStringList** tenants,
-    RawstorPaginationToken* token, int (*cb)(ssize_t result, void* data),
-    void* data
+    RawstorStringList** targets, RawstorPaginationToken* token,
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -282,8 +279,8 @@ int rawstor_location_list(
  * provided via the @p spec structure.
  *
  * The tenant @p location names as user information owns the object, and the
- * default tenant when it names none (docs/tenants.md); the target names no
- * tenant.
+ * default tenant when it names none (docs/tenants.md); the target names its
+ * owner the same way, and none for the default tenant.
  *
  * The function constructs the full target identifier from @p location and
  * @p uuid according to the library's target format (e.g.,

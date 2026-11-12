@@ -42,9 +42,12 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 - `list` returns the objects **visible to the caller**. Until rights exist
   that is the objects it owns; a caller that names no tenant, the
   administrator, sees every object of the store.
-- Every row of a listing carries the owner of its object, also for the
-  administrator. A target names no tenant: it addresses the object, and the
-  owner comes beside it (`rawstor_location_list()` returns both).
+- A target names the owner of its object as the user information of its
+  URIs (`mds://<tenant>@host:port/<uuid>`), and none for an object of the
+  default tenant: an address without one stands for the default tenant, which
+  is the caller's own until a caller has an identity. So every row of a
+  listing carries its owner, also for the administrator, and
+  `rawstor_target_tenant()` reads it from the address.
 - Every other operation takes the tenant to be informational: an object is
   found by its id, whoever the caller says it is.
 
@@ -191,7 +194,8 @@ rawstor object list   mds://10.0.0.2:7776                           # every obje
 ```
 
 `create`, `list` and `show` print the owner of the object as a column of its
-own (`tenant`), also for an administrator, whose location names no tenant.
+own (`tenant`), also for an administrator, whose location names no tenant. The
+`target` column names the owner too, unless it is the default tenant.
 `create -t TARGET` makes the object for the tenant its target names.
 
 ## Not here

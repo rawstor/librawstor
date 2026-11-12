@@ -153,7 +153,7 @@ ssize_t location_list(
 ) {
     return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
         return rawstor_location_list(
-            &queue, location.c_str(), limit, targets, nullptr, token, cb, data
+            &queue, location.c_str(), limit, targets, token, cb, data
         );
     });
 }

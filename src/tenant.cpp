@@ -35,6 +35,19 @@ RawstdUUID default_tenant() {
     return id;
 }
 
+RawstdUUID named(const RawstdUUID& owner) {
+    RawstdUUID fallback = default_tenant();
+    if (rawstd_uuid_is_nil(&owner) || rawstd_uuid_cmp(&owner, &fallback) == 0) {
+        return RawstdUUID{};
+    }
+    return owner;
+}
+
+RawstdUUID owner_of(const rawstd::URI& uri) {
+    RawstdUUID id = of(uri);
+    return rawstd_uuid_is_nil(&id) ? default_tenant() : id;
+}
+
 rawstd::URI with(const rawstd::URI& uri, const RawstdUUID& tenant) {
     std::string info;
     if (!rawstd_uuid_is_nil(&tenant)) {

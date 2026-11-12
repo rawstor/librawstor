@@ -367,8 +367,7 @@ TEST(ObjectListTest, lists_mds_objects) {
         ssize_t res =
             rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
                 return rawstor_location_list(
-                    queue.get(), location.c_str(), 1, &page, nullptr, &token,
-                    cb, data
+                    queue.get(), location.c_str(), 1, &page, &token, cb, data
                 );
             });
         ASSERT_EQ(res, 0);

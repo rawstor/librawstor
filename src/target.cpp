@@ -5,6 +5,7 @@
 #include "object.hpp"
 #include "opts.h"
 #include "slot.hpp"
+#include "tenant.hpp"
 
 #include <rawstor/list.h>
 #include <rawstor/target.h>
@@ -2225,6 +2226,37 @@ int rawstor_target_id(const char* target, char* buf, size_t size) noexcept {
         RawstdUUIDString uuid;
         rawstd_uuid_to_string(&id, &uuid);
         int res = snprintf(buf, size, "%s", uuid);
+        if (res < 0) {
+            RAWSTD_THROW_ERRNO();
+        }
+        return res;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_target_tenant(const char* target, char* buf, size_t size) noexcept {
+    try {
+        std::vector<rawstd::URI> uris = rawstd::URI::uriv(target);
+        RawstdUUID owner = rawstor::tenant::owner_of(uris.front());
+        for (const rawstd::URI& uri : uris) {
+            RawstdUUID other = rawstor::tenant::owner_of(uri);
+            if (rawstd_uuid_cmp(&owner, &other) != 0) {
+                rawstd_error("target names different tenants\n");
+                return -EINVAL;
+            }
+        }
+        RawstdUUIDString text;
+        rawstd_uuid_to_string(&owner, &text);
+        int res = snprintf(buf, size, "%s", text);
         if (res < 0) {
             RAWSTD_THROW_ERRNO();
         }

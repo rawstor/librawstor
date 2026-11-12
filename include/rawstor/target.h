@@ -679,6 +679,32 @@ int rawstor_target_id(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Retrieve the tenant that owns the object a target string addresses.
+ *
+ * A target names its owner as the user information of its URIs
+ * (`ost://<tenant>@host:port/<uuid>`); one that names none belongs to the
+ * default tenant (docs/tenants.md). The string is written into the provided
+ * buffer as a UUID. This is purely a syntactic operation on @p target -- no
+ * backend is contacted, and the object need not exist.
+ *
+ * @param target  Target string; every URI of it must name the same tenant.
+ * @param buf     Output buffer that will receive the tenant UUID string. Can
+ *                be NULL if only the required buffer length is needed.
+ * @param size    Size of the output buffer in bytes (including space for the
+ *                terminating null byte).
+ *
+ * @return On success, the number of characters that would have been written
+ *         to buf (excluding the terminating null byte), as snprintf() does. A
+ *         negative errno is returned if @p target is not valid target syntax,
+ *         names a tenant that is not a UUID, or names different tenants.
+ *
+ * @see rawstor_target_id
+ */
+int rawstor_target_tenant(
+    const char* target, char* buf, size_t size
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Retrieve the location part of a target string.
  *
  * Given a target string (as defined in the Rawstor location/target syntax),

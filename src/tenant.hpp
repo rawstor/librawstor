@@ -19,6 +19,14 @@ RawstdUUID of(const rawstd::URI& uri);
 // The tenant that owns what is created without naming one.
 RawstdUUID default_tenant();
 
+// The tenant an address names for an object owned by `owner`: none for the
+// default tenant, which an address without one stands for.
+RawstdUUID named(const RawstdUUID& owner);
+
+// The owner an address stands for: the tenant it names, the default tenant
+// when it names none. EINVAL for a tenant that is not a non-nil UUID.
+RawstdUUID owner_of(const rawstd::URI& uri);
+
 // `uri` with `tenant` as its user information, none for the nil UUID.
 rawstd::URI with(const rawstd::URI& uri, const RawstdUUID& tenant);
 

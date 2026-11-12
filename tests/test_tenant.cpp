@@ -190,9 +190,9 @@ TEST(TenantTest, listing_shows_the_objects_a_tenant_owns) {
     EXPECT_EQ(listed(*queue, rawstor::tenant::with(plain, new_id())), 0u);
 }
 
-// A listing tells who owns each object, also for the administrator, and a
-// target names no tenant.
-TEST(TenantTest, listing_tells_the_owner_of_each_object) {
+// A listing's targets name the owner of each object, also for the
+// administrator, and none for the default tenant.
+TEST(TenantTest, listed_targets_name_their_owner) {
     rawstor::tests::TmpDir dir;
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
     rawstd::URI plain(dir.uri());
@@ -206,32 +206,36 @@ TEST(TenantTest, listing_tells_the_owner_of_each_object) {
         rawstor::Location({plain}).create(*queue, in_none, small_spec()));
 
     std::list<rawstor::Target> targets;
-    std::vector<RawstdUUID> owners;
     RawstorPaginationToken token = {};
     run(*queue, rawstor::Location({rawstor::tenant::with(plain, acme)})
-                    .list(*queue, 0, targets, token, &owners));
-    ASSERT_EQ(owners.size(), 1u);
-    EXPECT_EQ(rawstd_uuid_cmp(&owners[0], &acme), 0);
+                    .list(*queue, 0, targets, token));
+    ASSERT_EQ(targets.size(), 1u);
     for (const rawstd::URI& uri : targets.front().uris()) {
-        EXPECT_TRUE(uri.username().empty());
+        RawstdUUID named = rawstor::tenant::of(uri);
+        EXPECT_EQ(rawstd_uuid_cmp(&named, &acme), 0);
     }
 
+    // The administrator's listing: acme's object names acme, the other one
+    // the default tenant by naming none.
     targets.clear();
-    owners.clear();
     token = {};
-    run(*queue,
-        rawstor::Location({plain}).list(*queue, 0, targets, token, &owners));
-    ASSERT_EQ(owners.size(), 2u);
-    size_t owned = 0;
-    for (const RawstdUUID& owner : owners) {
-        if (rawstd_uuid_cmp(&owner, &acme) == 0) {
-            ++owned;
-        } else {
-            RawstdUUID fallback = rawstor::tenant::default_tenant();
-            EXPECT_EQ(rawstd_uuid_cmp(&owner, &fallback), 0);
+    run(*queue, rawstor::Location({plain}).list(*queue, 0, targets, token));
+    ASSERT_EQ(targets.size(), 2u);
+    size_t named_acme = 0;
+    for (const rawstor::Target& target : targets) {
+        for (const rawstd::URI& uri : target.uris()) {
+            RawstdUUID named = rawstor::tenant::of(uri);
+            if (rawstd_uuid_is_nil(&named)) {
+                RawstdUUID owner = rawstor::tenant::owner_of(uri);
+                RawstdUUID fallback = rawstor::tenant::default_tenant();
+                EXPECT_EQ(rawstd_uuid_cmp(&owner, &fallback), 0);
+            } else {
+                EXPECT_EQ(rawstd_uuid_cmp(&named, &acme), 0);
+                ++named_acme;
+            }
         }
     }
-    EXPECT_EQ(owned, 1u);
+    EXPECT_EQ(named_acme, 1u);
 }
 
 // The filter comes before the page: a page of a tenant's objects is full even
@@ -264,8 +268,7 @@ TEST(TenantTest, a_page_is_filled_with_the_objects_of_the_tenant) {
 }
 
 // The tenant a location names owns what is created through it and limits what
-// is listed through it; a target names none, and the listing tells each
-// object's owner beside it.
+// is listed through it, and the targets name their owners.
 TEST(TenantTest, a_location_names_the_tenant_through_the_c_api) {
     rawstor::tests::TmpDir dir;
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
@@ -287,35 +290,65 @@ TEST(TenantTest, a_location_names_the_tenant_through_the_c_api) {
             );
         });
     ASSERT_GT(res, 0);
-    EXPECT_EQ(std::string(target).find('@'), std::string::npos);
+    EXPECT_NE(std::string(target).find(acme_text), std::string::npos);
+    char owner[64];
+    ASSERT_GT(rawstor_target_tenant(target, owner, sizeof(owner)), 0);
+    EXPECT_STREQ(owner, acme_text);
 
     auto list_as = [&](const rawstd::URI& location) {
         RawstorStringList* targets = nullptr;
-        RawstorStringList* tenants = nullptr;
         RawstorPaginationToken token = {};
         ssize_t lres =
             rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
                 return rawstor_location_list(
-                    queue.get(), location.str().c_str(), 0, &targets, &tenants,
-                    &token, cb, data
+                    queue.get(), location.str().c_str(), 0, &targets, &token,
+                    cb, data
                 );
             });
         EXPECT_EQ(lres, 0);
         size_t count = rawstor_string_list_size(targets);
         if (count == 1) {
-            EXPECT_STREQ(*rawstor_string_list_iter(tenants), acme_text);
-            EXPECT_EQ(
-                std::string(*rawstor_string_list_iter(targets)).find('@'),
-                std::string::npos
+            char listed[64];
+            EXPECT_GT(
+                rawstor_target_tenant(
+                    *rawstor_string_list_iter(targets), listed, sizeof(listed)
+                ),
+                0
             );
+            EXPECT_STREQ(listed, acme_text);
         }
         rawstor_string_list_delete(targets);
-        rawstor_string_list_delete(tenants);
         return count;
     };
     EXPECT_EQ(list_as(as_acme), 1u);
     EXPECT_EQ(list_as(rawstor::tenant::with(plain, other)), 0u);
     EXPECT_EQ(list_as(plain), 1u);
+}
+
+// The tenant of a target string: the one it names, the default tenant when it
+// names none, and an error for a string that names two.
+TEST(TenantTest, the_tenant_of_a_target) {
+    std::string object = "0197e0a2-7c3b-7d4e-8f10-000000000001";
+    char buf[64];
+
+    std::string named =
+        std::string("ost://") + acme + "@10.0.0.1:7777/" + object;
+    ASSERT_GT(rawstor_target_tenant(named.c_str(), buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, acme);
+
+    std::string plain = "ost://10.0.0.1:7777/" + object;
+    ASSERT_GT(rawstor_target_tenant(plain.c_str(), buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, RAWSTOR_DEFAULT_TENANT);
+
+    // Mirrors of one object name one tenant.
+    std::string mirrors = named + ",ost://" + acme + "@10.0.0.2:7777/" + object;
+    ASSERT_GT(rawstor_target_tenant(mirrors.c_str(), buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, acme);
+    std::string split = named + "," + plain;
+    EXPECT_EQ(rawstor_target_tenant(split.c_str(), buf, sizeof(buf)), -EINVAL);
+
+    // The length alone, as snprintf() does.
+    EXPECT_EQ(rawstor_target_tenant(named.c_str(), nullptr, 0), 36);
 }
 
 // An object id is unique on its own: another tenant cannot create it again.

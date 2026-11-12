@@ -109,12 +109,17 @@ std::vector<rawstd::URI> build_create_uris(
     return ret;
 }
 
-// `uris` as an address: a target names no tenant.
-std::vector<rawstd::URI> without_tenant(const std::vector<rawstd::URI>& uris) {
+// `uris` as the address of what is created through them: each names its
+// owner, the default tenant by naming none.
+std::vector<rawstd::URI> address_of(const std::vector<rawstd::URI>& uris) {
     std::vector<rawstd::URI> ret;
     ret.reserve(uris.size());
     for (const rawstd::URI& uri : uris) {
-        ret.push_back(rawstor::tenant::with(uri, RawstdUUID{}));
+        ret.push_back(
+            rawstor::tenant::with(
+                uri, rawstor::tenant::named(rawstor::tenant::owner_of(uri))
+            )
+        );
     }
     return ret;
 }
@@ -254,20 +259,14 @@ void launch_info_op(
 // run after the now-async co_await instead.
 rawstd::DetachedTask launch_list_op_coro(
     rawstor::Location loc, rawio::Queue* queue, unsigned int limit,
-    RawstorStringList** targets, RawstorStringList** tenants,
-    RawstorPaginationToken* token, int (*cb)(ssize_t result, void* data),
-    void* data
+    RawstorStringList** targets, RawstorPaginationToken* token,
+    int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     RawstorStringList* list = nullptr;
-    RawstorStringList* owner_list = nullptr;
     try {
         std::list<rawstor::Target> list_targets;
-        std::vector<RawstdUUID> owners;
-        co_await loc.list(
-            *queue, limit, list_targets, *token,
-            tenants != nullptr ? &owners : nullptr
-        );
+        co_await loc.list(*queue, limit, list_targets, *token);
 
         list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
         if (list == nullptr) {
@@ -290,52 +289,20 @@ rawstd::DetachedTask launch_list_op_coro(
             *it = str;
         }
 
-        if (tenants != nullptr) {
-            owner_list =
-                (RawstorStringList*)rawstd_list_create(sizeof(const char*));
-            if (owner_list == nullptr) {
-                throw std::bad_alloc();
-            }
-            for (const RawstdUUID& owner : owners) {
-                RawstdUUIDString text;
-                std::string name;
-                if (!rawstd_uuid_is_nil(&owner)) {
-                    rawstd_uuid_to_string(&owner, &text);
-                    name = text;
-                }
-                char* str = (char*)malloc(name.length() + 1);
-                if (str == nullptr) {
-                    RAWSTD_THROW_ERRNO();
-                }
-                memcpy(str, name.c_str(), name.length() + 1);
-                char** it = (char**)rawstd_list_append((RawstdList*)owner_list);
-                if (it == nullptr) {
-                    free(str);
-                    RAWSTD_THROW_ERRNO();
-                }
-                *it = str;
-            }
-            *tenants = owner_list;
-        }
-
         *targets = list;
     } catch (const std::system_error& e) {
         rawstor_string_list_delete(list);
-        rawstor_string_list_delete(owner_list);
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
         rawstor_string_list_delete(list);
-        rawstor_string_list_delete(owner_list);
         result = -ENOMEM;
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
         rawstor_string_list_delete(list);
-        rawstor_string_list_delete(owner_list);
         result = -EINVAL;
     } catch (...) {
         rawstd_error("Unexpected error\n");
         rawstor_string_list_delete(list);
-        rawstor_string_list_delete(owner_list);
         result = -EINVAL;
     }
     int res = cb(result, data);
@@ -346,13 +313,10 @@ rawstd::DetachedTask launch_list_op_coro(
 
 void launch_list_op(
     rawstor::Location loc, rawio::Queue* queue, unsigned int limit,
-    RawstorStringList** targets, RawstorStringList** tenants,
-    RawstorPaginationToken* token, int (*cb)(ssize_t result, void* data),
-    void* data
+    RawstorStringList** targets, RawstorPaginationToken* token,
+    int (*cb)(ssize_t result, void* data), void* data
 ) {
-    launch_list_op_coro(
-        std::move(loc), queue, limit, targets, tenants, token, cb, data
-    );
+    launch_list_op_coro(std::move(loc), queue, limit, targets, token, cb, data);
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
@@ -613,7 +577,7 @@ rawstd::Task<RawstorLocationInfo> Location::info(rawio::Queue& queue) const {
 
 rawstd::Task<void> Location::list(
     rawio::Queue& queue, unsigned int limit, std::list<Target>& targets,
-    RawstorPaginationToken& token, std::vector<RawstdUUID>* owners
+    RawstorPaginationToken& token
 ) const {
     RawstdUUID token_id = decode_token(token);
 
@@ -640,7 +604,6 @@ rawstd::Task<void> Location::list(
         RawstdUUID, std::vector<std::pair<uint64_t, rawstd::URI>>,
         decltype(id_less)>
         targets_map(id_less);
-    std::map<RawstdUUID, RawstdUUID, decltype(id_less)> owner_map(id_less);
     RawstdUUID empty_id{};
     RawstdUUID next_token = empty_id;
     for (size_t i = 0; i < _uris.size(); ++i) {
@@ -653,11 +616,12 @@ rawstd::Task<void> Location::list(
                 targets_map[group.id];
             RawstdUUIDString uuid_string;
             rawstd_uuid_to_string(&group.id, &uuid_string);
-            // A target addresses an object; its owner travels beside it.
-            owner_map[group.id] = group.tenant;
-            const rawstd::URI plain = tenant::with(location, RawstdUUID{});
+            // The target names the owner of the object, not the tenant the
+            // listing was asked for.
+            const rawstd::URI owned =
+                tenant::with(location, tenant::named(group.tenant));
             if (group.offsets.empty()) {
-                entries.emplace_back(0, rawstd::URI(plain, uuid_string));
+                entries.emplace_back(0, rawstd::URI(owned, uuid_string));
                 continue;
             }
             for (uint64_t offset : group.offsets) {
@@ -670,8 +634,8 @@ rawstd::Task<void> Location::list(
                 oss << std::hex << offset;
                 rawstd::URI member_location =
                     location.scheme() == "mds"
-                        ? rawstd::URI("ost" + plain.str().substr(3))
-                        : plain;
+                        ? rawstd::URI("ost" + owned.str().substr(3))
+                        : owned;
                 rawstd::URI uri(
                     rawstd::URI(member_location, uuid_string), oss.str()
                 );
@@ -693,7 +657,6 @@ rawstd::Task<void> Location::list(
     }
 
     std::list<Target> ret;
-    std::vector<RawstdUUID> ret_owners;
     RawstdUUID last_id = empty_id;
     bool have_last = false;
     bool capped = false;
@@ -722,7 +685,6 @@ rawstd::Task<void> Location::list(
             uris.push_back(uri);
         }
         ret.emplace_back(uris);
-        ret_owners.push_back(owner_map[it.first]);
 
         have_last = true;
         last_id = it.first;
@@ -735,9 +697,6 @@ rawstd::Task<void> Location::list(
     }
 
     targets.swap(ret);
-    if (owners != nullptr) {
-        owners->swap(ret_owners);
-    }
     encode_token(next_token, token);
 }
 
@@ -761,7 +720,7 @@ rawstd::Task<Target> Location::create(
     Target t(build_create_uris(_uris, uuid_string, sp));
     co_await t.create(queue, sp);
 
-    co_return Target(without_tenant(t.uris()));
+    co_return Target(address_of(t.uris()));
 }
 
 } // namespace rawstor
@@ -805,15 +764,14 @@ int rawstor_location_remove_tenant(
 
 int rawstor_location_list(
     RawIOQueue* queue, const char* location, unsigned int limit,
-    RawstorStringList** targets, RawstorStringList** tenants,
-    RawstorPaginationToken* token, int (*cb)(ssize_t result, void* data),
-    void* data
+    RawstorStringList** targets, RawstorPaginationToken* token,
+    int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Location loc(rawstd::URI::uriv(location));
         launch_list_op(
             std::move(loc), static_cast<rawio::Queue*>(queue), limit, targets,
-            tenants, token, cb, data
+            token, cb, data
         );
         return 0;
     } catch (const std::system_error& e) {
@@ -881,7 +839,7 @@ int rawstor_location_create(
             build_create_uris(uris, uuid_string, *spec);
 
         res = snprintf(
-            target, size, "%s", rawstd::URI::uris(without_tenant(ret)).c_str()
+            target, size, "%s", rawstd::URI::uris(address_of(ret)).c_str()
         );
         if (res < 0) {
             return res;

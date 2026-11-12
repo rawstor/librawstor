@@ -38,11 +38,10 @@ public:
 
     rawstd::Task<RawstorLocationInfo> info(rawio::Queue& queue) const;
 
-    // `owners`, when given, receives the tenant that owns each of `targets`,
-    // in the same order (nil for none). A target itself names no tenant.
+    // The targets name their owners (docs/tenants.md).
     rawstd::Task<void> list(
         rawio::Queue& queue, unsigned int limit, std::list<Target>& targets,
-        RawstorPaginationToken& token, std::vector<RawstdUUID>* owners = nullptr
+        RawstorPaginationToken& token
     ) const;
 
     // The tenants registered in the MDS this location names (docs/tenants.md),
