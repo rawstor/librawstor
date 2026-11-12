@@ -646,6 +646,46 @@ TEST(OstIOTest, write_error) {
     EXPECT_THROW(object.write(ping.data(), ping.length()), std::system_error);
 }
 
+// A refusal for lack of rights is not retried either: one session sees the
+// whole of it, as with ENOENT above.
+static void expect_write_refused_without_retry(int error) {
+    Queue queue(16);
+    rawstor::tests::Server server(8753, 256);
+    std::string target =
+        "ost://127.0.0.1:8753/00000000-0000-7000-8000-000000000000";
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
+        s.cmd_meta(RAWSTOR_MAGIC, 1, 0, clean_meta_1mb);
+        s.cmd_write_request(4);
+        s.cmd_write_response(RAWSTOR_MAGIC, 2, -error);
+    }
+
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_release(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    Object object(queue, target, 1ull << 20);
+
+    std::string ping = "ping";
+    EXPECT_THROW(object.write(ping.data(), ping.length()), std::system_error);
+}
+
+TEST(OstIOTest, write_not_permitted_is_not_retried) {
+    expect_write_refused_without_retry(EPERM);
+}
+
+TEST(OstIOTest, write_access_denied_is_not_retried) {
+    expect_write_refused_without_retry(EACCES);
+}
+
 TEST(OstIOTest, write_busy_retries_without_reconnect) {
     Queue queue(16);
     rawstor::tests::Server server(8753, 256);
