@@ -66,28 +66,103 @@ static void usage(void) {
         "                        arguments such as --size.\n"
         "\n"
         "command:\n"
-        "  list(ls)              List rawstor objects\n"
-        "  create                Create rawstor object\n"
-        "  remove(rm)            Remove rawstor object or version\n"
-        "  resize                Grow an mds:// object\n"
-        "  show                  Show rawstor object or version\n"
-        "  chunks                List an object's chunks\n"
-        "  slots                 List the member slots of an object's chunks\n"
+        "  object                Create, list, show, remove or resize "
+        "objects\n"
+        "  version               Create, list, show or remove versions of "
+        "an object\n"
         "  info                  Show rawstor location info\n"
-        "  resolve               Resolve a mirrored object's split brain\n"
-        "  create-version        Create a version of an object\n"
-        "  list-versions(lsv)    List an object's versions\n"
         "  testio                Test rawstor IO routines\n"
         "\n"
-        "versions:               A version is addressed as TARGET/VERSION_ID, "
-        "as\n"
-        "                        printed by create-version and "
-        "list-versions;\n"
-        "                        pass it as TARGET to show or remove\n"
-        "\n"
-        "command options:        Run `<command> --help` to show command usage\n"
+        "Run `rawstor <command> --help` to list a command's subcommands and "
+        "`rawstor <command> <subcommand> --help` to show its usage.\n"
     );
 };
+
+static void object_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] object <subcommand> "
+        "[command_options]\n"
+        "\n"
+        "subcommand:\n"
+        "  create                Create rawstor object\n"
+        "  list(ls)              List rawstor objects\n"
+        "  show                  Show rawstor object\n"
+        "  remove(rm)            Remove rawstor object\n"
+        "  resize                Grow an mds:// object\n"
+        "  chunks                List an object's chunks\n"
+        "  slots                 List the member slots of an object's "
+        "chunks\n"
+        "  resolve               Resolve a mirrored object's split brain\n"
+        "\n"
+        "An object is addressed as TARGET, a version of it as "
+        "TARGET/VERSION_ID\n"
+        "(see `rawstor version`); `rawstor object` takes only the "
+        "former, except chunks\n"
+        "and slots, which take either.\n"
+        "\n"
+        "Run `rawstor object <subcommand> --help` to show its usage.\n"
+    );
+}
+
+static void version_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] version <subcommand> "
+        "[command_options]\n"
+        "\n"
+        "subcommand:\n"
+        "  create                Create a version of an object\n"
+        "  list(ls)              List an object's versions\n"
+        "  show                  Show a version\n"
+        "  remove(rm)            Remove a version\n"
+        "\n"
+        "A version is addressed as TARGET/VERSION_ID, as printed by "
+        "`rawstor version\n"
+        "create` and `rawstor version list`; `show` and `remove` take only "
+        "such a target.\n"
+        "\n"
+        "Run `rawstor version <subcommand> --help` to show its usage.\n"
+    );
+}
+
+/* What a command may be given: the address of an object, or of a version of
+ * it (TARGET/VERSION_ID). */
+enum TargetType {
+    TARGET_OBJECT,
+    TARGET_VERSION,
+};
+
+/* Rejects a TARGET of the other type before anything is done to it. */
+static int check_target_type(const char* target, enum TargetType type) {
+    char uuid[64];
+    char version_id[64];
+    rawstor_cli_target_ids(
+        target, uuid, sizeof(uuid), version_id, sizeof(version_id)
+    );
+    int is_version = version_id[0] != '\0';
+    if (type == TARGET_OBJECT && is_version) {
+        fprintf(
+            stderr,
+            "%s names a version, not an object; use `rawstor version`\n", target
+        );
+        return EX_USAGE;
+    }
+    if (type == TARGET_VERSION && !is_version) {
+        fprintf(
+            stderr,
+            "%s names an object, not a version (TARGET/VERSION_ID); use "
+            "`rawstor object`\n",
+            target
+        );
+        return EX_USAGE;
+    }
+    return 0;
+}
 
 static void version(void) {
     fprintf(stdout, "Rawstor CLI " PACKAGE_VERSION "\n");
@@ -101,9 +176,9 @@ static void command_create_usage(void) {
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor [options] create LOCATION [-u UUID] "
+        "usage: rawstor [options] object create LOCATION [-u UUID] "
         "[command_options]\n"
-        "       rawstor [options] create -t TARGET [command_options]\n"
+        "       rawstor [options] object create -t TARGET [command_options]\n"
         "\n"
         "create by location (backend list, optional UUID):\n"
         "  LOCATION              Comma-separated list of rawstor backend "
@@ -392,28 +467,48 @@ static int command_create(int argc, char** argv) {
     }
 }
 
-static void command_remove_usage(void) {
+static void command_remove_usage(enum TargetType type) {
+    if (type == TARGET_VERSION) {
+        fprintf(
+            stdout,
+            "Rawstor CLI " PACKAGE_VERSION "\n"
+            "\n"
+            "usage: rawstor [options] version remove(rm) TARGET "
+            "[command_options]\n"
+            "\n"
+            "  TARGET                A target naming a bound version, as "
+            "printed by\n"
+            "                        `rawstor version create`, e.g. "
+            "ost://host:port/<uuid>/<version_id>.\n"
+            "                        For an mds:// TARGET, the MDS "
+            "unregisters it first\n"
+            "                        (no new readers); the per-member "
+            "destroy is\n"
+            "                        best-effort on whichever members still "
+            "resolve.\n"
+            "\n"
+            "command options:\n"
+            "  -h, --help            Show this help message and exit\n"
+        );
+        return;
+    }
     fprintf(
-        stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
-                "\n"
-                "usage: rawstor [options] remove(rm) TARGET [command_options]\n"
-                "\n"
-                "A TARGET naming a bound version (as printed by "
-                "`rawstor\n"
-                "create-version`, e.g. ost://host:port/<uuid>/<version_id>) "
-                "destroys that\n"
-                "version instead of the live object. For an mds:// TARGET, "
-                "the MDS\n"
-                "unregisters it first (no new readers); the per-member "
-                "destroy is\n"
-                "best-effort on whichever members still resolve.\n"
-                "\n"
-                "command options:\n"
-                "  -h, --help            Show this help message and exit\n"
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] object remove(rm) TARGET "
+        "[command_options]\n"
+        "\n"
+        "  TARGET                A target naming an object. A version "
+        "(TARGET/VERSION_ID)\n"
+        "                        is removed by `rawstor version remove`.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
     );
 };
 
-static int command_remove(int argc, char** argv) {
+static int command_remove(int argc, char** argv, enum TargetType type) {
     const char* optstring = "h";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -430,7 +525,7 @@ static int command_remove(int argc, char** argv) {
 
         switch (c) {
         case 'h':
-            command_remove_usage();
+            command_remove_usage(type);
             return EXIT_SUCCESS;
 
         default:
@@ -453,7 +548,12 @@ static int command_remove(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_remove(target_arg);
+    int checked = check_target_type(target_arg, type);
+    if (checked != 0) {
+        return checked;
+    }
+
+    return rawstor_cli_remove(target_arg, type == TARGET_VERSION);
 }
 
 static void command_resize_usage(void) {
@@ -461,7 +561,8 @@ static void command_resize_usage(void) {
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor [options] resize TARGET -s SIZE [command_options]\n"
+        "usage: rawstor [options] object resize TARGET -s SIZE "
+        "[command_options]\n"
         "\n"
         "Grows an mds:// object to a new logical size (grow-only -- "
         "shrinking\n"
@@ -551,7 +652,8 @@ static void command_list_usage(void) {
     fprintf(
         stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
                 "\n"
-                "usage: rawstor [options] list(ls) LOCATION [command_options]\n"
+                "usage: rawstor [options] object list(ls) LOCATION "
+                "[command_options]\n"
                 "\n"
                 "  LOCATION              Comma-separated list of rawstor "
                 "backend locations.\n"
@@ -730,28 +832,52 @@ static int command_info(int argc, char** argv) {
     return rawstor_cli_info(location_arg, logical_arg, &output_arg);
 }
 
-static void command_show_usage(void) {
+static void command_show_usage(enum TargetType type) {
+    if (type == TARGET_VERSION) {
+        fprintf(
+            stdout,
+            "Rawstor CLI " PACKAGE_VERSION "\n"
+            "\n"
+            "usage: rawstor [options] version show TARGET "
+            "[command_options]\n"
+            "\n"
+            "  TARGET                A target naming a bound version, as "
+            "printed by\n"
+            "                        `rawstor version create` or `rawstor "
+            "version list`, e.g.\n"
+            "                        ost://host:port/<uuid>/<version_id>. "
+            "`rawstor object chunks`\n"
+            "                        and `rawstor object slots` show its "
+            "chunks and their\n"
+            "                        member slots.\n"
+            "\n"
+            "command options:\n"
+            "  -h, --help            Show this help message and "
+            "exit\n" RAWSTOR_CLI_OUTPUT_USAGE
+        );
+        return;
+    }
     fprintf(
-        stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
-                "\n"
-                "usage: rawstor [options] show TARGET [command_options]\n"
-                "\n"
-                "A TARGET naming a bound version (as printed by "
-                "`rawstor\n"
-                "create-version` or `rawstor list-versions`, e.g.\n"
-                "ost://host:port/<uuid>/<version_id>) shows that version "
-                "instead of\n"
-                "the live object. `rawstor chunks` and `rawstor slots` "
-                "show its chunks and\n"
-                "their member slots.\n"
-                "\n"
-                "command options:\n"
-                "  -h, --help            Show this help message and "
-                "exit\n" RAWSTOR_CLI_OUTPUT_USAGE
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] object show TARGET [command_options]\n"
+        "\n"
+        "  TARGET                A target naming an object. A version "
+        "(TARGET/VERSION_ID)\n"
+        "                        is shown by `rawstor version show`. "
+        "`rawstor object chunks`\n"
+        "                        and `rawstor object slots` show its "
+        "chunks and their\n"
+        "                        member slots.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and "
+        "exit\n" RAWSTOR_CLI_OUTPUT_USAGE
     );
 };
 
-static int command_show(int argc, char** argv) {
+static int command_show(int argc, char** argv, enum TargetType type) {
     const char* optstring = "h";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -771,7 +897,7 @@ static int command_show(int argc, char** argv) {
 
         switch (c) {
         case 'h':
-            command_show_usage();
+            command_show_usage(type);
             return EXIT_SUCCESS;
 
         case RAWSTOR_CLI_OPT_FORMAT:
@@ -808,6 +934,11 @@ static int command_show(int argc, char** argv) {
         return EX_USAGE;
     }
 
+    int checked = check_target_type(target_arg, type);
+    if (checked != 0) {
+        return checked;
+    }
+
     return rawstor_cli_show(target_arg, &output_arg);
 }
 
@@ -816,7 +947,7 @@ static void command_resolve_usage(void) {
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor [options] resolve TARGET --winner=N[,N...] "
+        "usage: rawstor [options] object resolve TARGET --winner=N[,N...] "
         "[command_options]\n"
         "\n"
         "Declares one or more mirrors authoritative after a split brain "
@@ -841,12 +972,13 @@ static void command_resolve_usage(void) {
         "targets.\n"
         "  --winner N[,N...]      The targeted chunk's own N-th mirror(s) "
         "(0-based,\n"
-        "                        same order `rawstor slots` lists "
+        "                        same order `rawstor object slots` lists "
         "them):\n"
         "                        the copies to keep.\n"
         "\n"
         "command options:\n"
-        "  Use a chunk_target from `rawstor chunks`; an object target resolves "
+        "  Use a chunk_target from `rawstor object chunks`; an object target "
+        "resolves "
         "all chunks.\n" RAWSTOR_CLI_OUTPUT_USAGE
     );
 };
@@ -966,7 +1098,7 @@ static void command_create_version_usage(void) {
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor [options] create-version TARGET [-u UUID] "
+        "usage: rawstor [options] version create TARGET [-u UUID] "
         "[command_options]\n"
         "\n"
         "Creates a version of an object, at whichever version TARGET and "
@@ -983,7 +1115,7 @@ static void command_create_version_usage(void) {
         "                        ost://host:port/<id>, or one already\n"
         "                        naming its own bound version "
         "(TARGET/VERSION_ID,\n"
-        "                        as printed back by a previous create-version) "
+        "                        as printed back by a previous version create) "
         "-- that\n"
         "                        version is then the one created, and -u "
         "is not\n"
@@ -1070,7 +1202,7 @@ static void command_list_versions_usage(void) {
     fprintf(
         stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
                 "\n"
-                "usage: rawstor [options] list-versions(lsv) TARGET "
+                "usage: rawstor [options] version list(ls) TARGET "
                 "[command_options]\n"
                 "\n"
                 "  TARGET                The object whose versions to list; "
@@ -1148,7 +1280,7 @@ static void command_chunks_usage(void) {
     fprintf(
         stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
                 "\n"
-                "usage: rawstor [options] chunks TARGET "
+                "usage: rawstor [options] object chunks TARGET "
                 "[command_options]\n"
                 "\n"
                 "  TARGET                The object whose chunks to list, "
@@ -1232,7 +1364,7 @@ static void command_slots_usage(void) {
     fprintf(
         stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
                 "\n"
-                "usage: rawstor [options] slots TARGET "
+                "usage: rawstor [options] object slots TARGET "
                 "[command_options]\n"
                 "\n"
                 "  TARGET                The object whose chunks' member "
@@ -1466,6 +1598,66 @@ static int command_testio(int argc, char** argv) {
     );
 }
 
+static int run_object(int argc, char** argv) {
+    if (argc < 2) {
+        object_usage();
+        return EX_USAGE;
+    }
+    const char* sub = argv[1];
+    if (strcmp(sub, "-h") == 0 || strcmp(sub, "--help") == 0 ||
+        strcmp(sub, "help") == 0) {
+        object_usage();
+        return EXIT_SUCCESS;
+    }
+    argc--;
+    argv++;
+    if (strcmp(sub, "create") == 0) {
+        return command_create(argc, argv);
+    } else if (strcmp(sub, "list") == 0 || strcmp(sub, "ls") == 0) {
+        return command_list(argc, argv);
+    } else if (strcmp(sub, "show") == 0) {
+        return command_show(argc, argv, TARGET_OBJECT);
+    } else if (strcmp(sub, "remove") == 0 || strcmp(sub, "rm") == 0) {
+        return command_remove(argc, argv, TARGET_OBJECT);
+    } else if (strcmp(sub, "resize") == 0) {
+        return command_resize(argc, argv);
+    } else if (strcmp(sub, "chunks") == 0) {
+        return command_chunks(argc, argv);
+    } else if (strcmp(sub, "slots") == 0) {
+        return command_slots(argc, argv);
+    } else if (strcmp(sub, "resolve") == 0) {
+        return command_resolve(argc, argv);
+    }
+    fprintf(stderr, "Unexpected object subcommand: %s\n", sub);
+    return EX_USAGE;
+}
+
+static int run_version(int argc, char** argv) {
+    if (argc < 2) {
+        version_usage();
+        return EX_USAGE;
+    }
+    const char* sub = argv[1];
+    if (strcmp(sub, "-h") == 0 || strcmp(sub, "--help") == 0 ||
+        strcmp(sub, "help") == 0) {
+        version_usage();
+        return EXIT_SUCCESS;
+    }
+    argc--;
+    argv++;
+    if (strcmp(sub, "create") == 0) {
+        return command_create_version(argc, argv);
+    } else if (strcmp(sub, "list") == 0 || strcmp(sub, "ls") == 0) {
+        return command_list_versions(argc, argv);
+    } else if (strcmp(sub, "show") == 0) {
+        return command_show(argc, argv, TARGET_VERSION);
+    } else if (strcmp(sub, "remove") == 0 || strcmp(sub, "rm") == 0) {
+        return command_remove(argc, argv, TARGET_VERSION);
+    }
+    fprintf(stderr, "Unexpected version subcommand: %s\n", sub);
+    return EX_USAGE;
+}
+
 static int run_command(
     const char* command, const struct RawstorOpts* opts, int argc, char** argv
 ) {
@@ -1478,33 +1670,16 @@ static int run_command(
     }
 
     int ret;
-    if (strcmp(command, "create") == 0) {
-        ret = command_create(argc, argv);
-    } else if (strcmp(command, "remove") == 0 || strcmp(command, "rm") == 0) {
-        ret = command_remove(argc, argv);
-    } else if (strcmp(command, "resize") == 0) {
-        ret = command_resize(argc, argv);
-    } else if (strcmp(command, "list") == 0 || strcmp(command, "ls") == 0) {
-        ret = command_list(argc, argv);
-    } else if (strcmp(command, "show") == 0) {
-        ret = command_show(argc, argv);
-    } else if (strcmp(command, "chunks") == 0) {
-        ret = command_chunks(argc, argv);
-    } else if (strcmp(command, "slots") == 0) {
-        ret = command_slots(argc, argv);
+    if (strcmp(command, "object") == 0) {
+        ret = run_object(argc, argv);
+    } else if (strcmp(command, "version") == 0) {
+        ret = run_version(argc, argv);
     } else if (strcmp(command, "info") == 0) {
         ret = command_info(argc, argv);
-    } else if (strcmp(command, "resolve") == 0) {
-        ret = command_resolve(argc, argv);
-    } else if (strcmp(command, "list-versions") == 0 ||
-               strcmp(command, "lsv") == 0) {
-        ret = command_list_versions(argc, argv);
-    } else if (strcmp(command, "create-version") == 0) {
-        ret = command_create_version(argc, argv);
     } else if (strcmp(command, "testio") == 0) {
         ret = command_testio(argc, argv);
     } else {
-        printf("Unexpected command: %s\n", command);
+        fprintf(stderr, "Unexpected command: %s\n", command);
         ret = EX_USAGE;
     }
 

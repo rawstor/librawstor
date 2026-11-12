@@ -86,7 +86,7 @@ with `reconnect=1` on the QEMU chardev and an external supervisor (e.g.
 survive guest-side reconnects. Send `SIGINT`/`SIGTERM` to stop it: it
 first waits for every request already in flight to complete, so QEMU,
 reconnecting to the restarted backend, carries on exactly where it left
-off. After growing the object (`rawstor resize`), send `SIGHUP`: the
+off. After growing the object (`rawstor object resize`), send `SIGHUP`: the
 backend re-reads the size, reopens its connections to the target so I/O
 reaches the new space, and sends `VHOST_USER_BACKEND_CONFIG_CHANGE_MSG` so
 the front-end re-reads the config and tells the guest (QEMU updates the

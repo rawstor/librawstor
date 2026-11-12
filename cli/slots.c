@@ -108,7 +108,8 @@ slots_chunk(RawstorCliOp* op, const char* target, RawstorCliTable* table) {
     if (result > MAX_MEMBERS) {
         fprintf(
             stderr,
-            "rawstor slots: chunk[%llx] has %zd members, more than this CLI "
+            "rawstor object slots: chunk[%llx] has %zd members, more than this "
+            "CLI "
             "can display (%d)\n",
             (unsigned long long)offset, result, MAX_MEMBERS
         );
@@ -129,7 +130,9 @@ slots_chunk(RawstorCliOp* op, const char* target, RawstorCliTable* table) {
         return rawstd_exitcode_for_errno((int)-slot_count);
     }
     if (slot_count != result) {
-        fprintf(stderr, "rawstor slots: slot and metadata counts differ\n");
+        fprintf(
+            stderr, "rawstor object slots: slot and metadata counts differ\n"
+        );
         rawstor_string_list_delete(slots);
         return EXIT_FAILURE;
     }

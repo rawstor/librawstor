@@ -98,10 +98,10 @@ id and target; `--format value --column object_id,target` prints just those
 two, tab-separated, ready for the shell:
 
 ```
-CREATED=$(rawstor create mds://192.168.0.13 --size=10G --chunk-size=256M --mirrors=2 --format value --column object_id,target)
+CREATED=$(rawstor object create mds://192.168.0.13 --size=10G --chunk-size=256M --mirrors=2 --format value --column object_id,target)
 read -r OBJECT OBJECT_TARGET <<< "${CREATED}"
 
-rawstor slots ${OBJECT_TARGET}                # each copy's state, per chunk
+rawstor object slots ${OBJECT_TARGET}                # each copy's state, per chunk
 ```
 
 Expose the object as a vhost-user disk. The `rawstor-vhost@` instance is
@@ -135,7 +135,7 @@ qemu-system-x86_64 \
 
 A restarted `rawstor-vhost` instance picks up where it left off, so QEMU's
 `reconnect=1` is enough to survive it. Later, grow the disk with
-`rawstor resize ${OBJECT_TARGET} --size=20G`. The details of every service
+`rawstor object resize ${OBJECT_TARGET} --size=20G`. The details of every service
 are in the reference pages ([rawstor-ost](ost.md), [rawstor-mds](mds-server.md), [rawstor-vhost](vhost.md), [rawstor-vduse](vduse.md)), and how a
 mirror degrades and recovers is in [Mirroring](mirroring.md).
 
