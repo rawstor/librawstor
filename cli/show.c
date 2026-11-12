@@ -40,28 +40,29 @@ int rawstor_cli_show(const char* target, const RawstorCliOutput* output) {
         target, object_id, sizeof(object_id), version_id, sizeof(version_id)
     );
     int has_version = version_id[0] != '\0';
-    static const char* const version_columns[] = {
-        "object_id", "version_id", "target", "size", "mirrors"
-    };
+    static const char* const version_columns[] = {"object_id", "version_id",
+                                                  "target",    "location",
+                                                  "size",      "mirrors"};
     static const enum RawstorCliColumnType version_types[] = {
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
-        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_SIZE,
-        RAWSTOR_CLI_COLUMN_NUMBER
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+        RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_NUMBER
     };
     static const char* const live_columns[] = {
-        "object_id", "target", "size", "mirrors"
+        "object_id", "target", "location", "size", "mirrors"
     };
     static const enum RawstorCliColumnType live_types[] = {
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
-        RAWSTOR_CLI_COLUMN_SIZE, RAWSTOR_CLI_COLUMN_NUMBER
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_SIZE,
+        RAWSTOR_CLI_COLUMN_NUMBER
     };
 
     RawstorCliTable* table =
         has_version
             ? rawstor_cli_record_create(
-                  "object", version_columns, version_types, 5
+                  "object", version_columns, version_types, 6
               )
-            : rawstor_cli_record_create("object", live_columns, live_types, 4);
+            : rawstor_cli_record_create("object", live_columns, live_types, 5);
     if (table == NULL) {
         fprintf(stderr, "Out of memory\n");
         return EXIT_FAILURE;
@@ -69,13 +70,16 @@ int rawstor_cli_show(const char* target, const RawstorCliOutput* output) {
 
     char mirrors_buf[32];
     snprintf(mirrors_buf, sizeof(mirrors_buf), "%u", spec.width);
-    RawstorCliCell cells[5];
+    RawstorCliCell cells[6];
     size_t ncells = 0;
     cells[ncells++] = rawstor_cli_cell_string(object_id);
     if (has_version) {
         cells[ncells++] = rawstor_cli_cell_string(version_id);
     }
     cells[ncells++] = rawstor_cli_cell_string(target);
+    char location[1024];
+    rawstor_cli_target_location(target, location, sizeof(location));
+    cells[ncells++] = rawstor_cli_cell_string(location);
     cells[ncells++] = rawstor_cli_cell_size(spec.size);
     cells[ncells++] = rawstor_cli_cell_number(mirrors_buf, spec.width);
 

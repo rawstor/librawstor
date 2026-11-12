@@ -140,11 +140,16 @@ slots_chunk(RawstorCliOp* op, const char* target, RawstorCliTable* table) {
         const struct RawstorObjectMeta* meta = &metas[i];
         char slot_buf[32];
         snprintf(slot_buf, sizeof(slot_buf), "%zd", i);
-        RawstorCliCell cells[14] = {
+        char slot_location[1024];
+        rawstor_cli_target_location(
+            *slot, slot_location, sizeof(slot_location)
+        );
+        RawstorCliCell cells[15] = {
             rawstor_cli_cell_size(offset),
             rawstor_cli_cell_string(target),
             rawstor_cli_cell_number(slot_buf, (uint64_t)i),
             rawstor_cli_cell_string(*slot),
+            rawstor_cli_cell_string(slot_location),
         };
         char writers_buf[32];
         char epoch_buf[32];
@@ -153,16 +158,16 @@ slots_chunk(RawstorCliOp* op, const char* target, RawstorCliTable* table) {
         char promised_buf[64];
         char accepted_buf[64];
         if (meta->state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
-            cells[4] = rawstor_cli_cell_string(NULL);
-            cells[5] = rawstor_cli_cell_number(NULL, 0);
-            cells[6] = rawstor_cli_cell_string("UNREACHABLE");
-            cells[7] = rawstor_cli_cell_string(NULL);
-            cells[8] = rawstor_cli_cell_number(NULL, 0);
+            cells[5] = rawstor_cli_cell_string(NULL);
+            cells[6] = rawstor_cli_cell_number(NULL, 0);
+            cells[7] = rawstor_cli_cell_string("UNREACHABLE");
+            cells[8] = rawstor_cli_cell_string(NULL);
             cells[9] = rawstor_cli_cell_number(NULL, 0);
-            cells[10] = rawstor_cli_cell_string(NULL);
+            cells[10] = rawstor_cli_cell_number(NULL, 0);
             cells[11] = rawstor_cli_cell_string(NULL);
             cells[12] = rawstor_cli_cell_string(NULL);
             cells[13] = rawstor_cli_cell_string(NULL);
+            cells[14] = rawstor_cli_cell_string(NULL);
         } else {
             snprintf(
                 writers_buf, sizeof(writers_buf), "%u",
@@ -179,22 +184,22 @@ slots_chunk(RawstorCliOp* op, const char* target, RawstorCliTable* table) {
             );
             format_ballot(&meta->promised, promised_buf, sizeof(promised_buf));
             format_ballot(&meta->accepted, accepted_buf, sizeof(accepted_buf));
-            cells[4] = rawstor_cli_cell_string(
+            cells[5] = rawstor_cli_cell_string(
                 meta->member_role == RAWSTOR_MEMBER_WITNESS ? "witness" : "data"
             );
-            cells[5] = rawstor_cli_cell_size(meta->spec.size);
-            cells[6] =
-                rawstor_cli_cell_string(sync_state_to_string(meta->state));
+            cells[6] = rawstor_cli_cell_size(meta->spec.size);
             cells[7] =
+                rawstor_cli_cell_string(sync_state_to_string(meta->state));
+            cells[8] =
                 rawstor_cli_cell_string(role_to_string(&meta->config, i));
-            cells[8] = rawstor_cli_cell_number(writers_buf, meta->writers);
-            cells[9] = rawstor_cli_cell_number(epoch_buf, meta->config.epoch);
-            cells[10] = rawstor_cli_cell_string(sync_buf);
-            cells[11] = rawstor_cli_cell_string(
+            cells[9] = rawstor_cli_cell_number(writers_buf, meta->writers);
+            cells[10] = rawstor_cli_cell_number(epoch_buf, meta->config.epoch);
+            cells[11] = rawstor_cli_cell_string(sync_buf);
+            cells[12] = rawstor_cli_cell_string(
                 meta->config.resync_owner != 0 ? owner_buf : NULL
             );
-            cells[12] = rawstor_cli_cell_string(promised_buf);
-            cells[13] = rawstor_cli_cell_string(accepted_buf);
+            cells[13] = rawstor_cli_cell_string(promised_buf);
+            cells[14] = rawstor_cli_cell_string(accepted_buf);
         }
         if (rawstor_cli_table_add_row(table, cells) < 0) {
             fprintf(stderr, "Out of memory\n");
@@ -242,21 +247,23 @@ static int slots_meta(const char* target, RawstorCliTable* table) {
 
 int rawstor_cli_slots(const char* target, const RawstorCliOutput* output) {
     static const char* const columns[] = {
-        "offset",  "chunk_target", "slot",     "slot_target", "member",
-        "size",    "state",        "role",     "writers",     "epoch",
-        "sync_id", "resync_owner", "promised", "accepted",
+        "offset",        "chunk_target", "slot",     "slot_target",
+        "slot_location", "member",       "size",     "state",
+        "role",          "writers",      "epoch",    "sync_id",
+        "resync_owner",  "promised",     "accepted",
     };
     static const enum RawstorCliColumnType types[] = {
         RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_STRING,
-        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_SIZE,
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
-        RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
+        RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_STRING,
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_NUMBER,
+        RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
-        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+        RAWSTOR_CLI_COLUMN_STRING,
     };
     RawstorCliTable* table =
-        rawstor_cli_table_create("slots", columns, types, 14);
+        rawstor_cli_table_create("slots", columns, types, 15);
     if (table == NULL) {
         fprintf(stderr, "Out of memory\n");
         return EXIT_FAILURE;
