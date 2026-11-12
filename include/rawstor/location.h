@@ -247,14 +247,12 @@ int rawstor_location_remove_tenant(
  * it addresses the object. Free both lists with
  * @ref rawstor_string_list_delete.
  *
- * Only the objects of the tenant named by @p tenant, or, when it is NULL, by
- * the user information of @p location (`ost://<tenant>@host:port`), are listed
- * (docs/tenants.md). Without either, every object of the store is.
+ * Only the objects of the tenant @p location names as user information
+ * (`ost://<tenant>@host:port`) are listed (docs/tenants.md); a location
+ * without one lists every object of the store.
  *
  * @param queue     Queue used to drive the asynchronous listing.
  * @param location  Location whose objects to list.
- * @param tenant    A tenant UUID string, or NULL for the one @p location
- *                  names. Only read while this call is being queued.
  * @param limit     Most objects to return; 0 for the library's default.
  * @param targets   Receives the list of targets on success.
  * @param tenants   Receives the list of their tenants on success. May be NULL
@@ -268,10 +266,10 @@ int rawstor_location_remove_tenant(
  * @return 0 if @p cb will be invoked, a negative errno on immediate failure.
  */
 int rawstor_location_list(
-    RawIOQueue* queue, const char* location, const char* tenant,
-    unsigned int limit, RawstorStringList** targets,
-    RawstorStringList** tenants, RawstorPaginationToken* token,
-    int (*cb)(ssize_t result, void* data), void* data
+    RawIOQueue* queue, const char* location, unsigned int limit,
+    RawstorStringList** targets, RawstorStringList** tenants,
+    RawstorPaginationToken* token, int (*cb)(ssize_t result, void* data),
+    void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
@@ -282,6 +280,10 @@ int rawstor_location_list(
  * NULL, the library automatically generates a unique UUID for the object;
  * otherwise, the provided UUID is used. The object metadata (size, etc.) is
  * provided via the @p spec structure.
+ *
+ * The tenant @p location names as user information owns the object, and the
+ * default tenant when it names none (docs/tenants.md); the target names no
+ * tenant.
  *
  * The function constructs the full target identifier from @p location and
  * @p uuid according to the library's target format (e.g.,
@@ -315,10 +317,6 @@ int rawstor_location_list(
  * @param location  Location string specifying the backend and endpoint
  *                  (e.g., "ost://host:port"). Must not be NULL and must be a
  *                  valid location as per the library's format.
- * @param tenant    The tenant that owns the object, a UUID string. If NULL, the
- *                  one @p location names as user information, and without
- *                  either the default tenant (docs/tenants.md). The target
- *                  names no tenant.
  * @param uuid      UUID string for the object. If NULL, a UUID is automatically
  *                  generated. If not NULL, it must be a valid UUID string.
  *                  Only read while this call is being queued -- need not
@@ -364,9 +362,9 @@ int rawstor_location_list(
  * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 int rawstor_location_create(
-    RawIOQueue* queue, const char* location, const char* tenant,
-    const char* uuid, const struct RawstorObjectSpec* spec, char* target,
-    size_t size, int (*cb)(ssize_t result, void* data), void* data
+    RawIOQueue* queue, const char* location, const char* uuid,
+    const struct RawstorObjectSpec* spec, char* target, size_t size,
+    int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 #ifdef __cplusplus

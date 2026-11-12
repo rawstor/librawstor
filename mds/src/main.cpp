@@ -138,8 +138,8 @@ void scan_ost(
         op.queue = queue;
         ssize_t r = sync_op_wait(
             op, rawstor_location_list(
-                    queue, location.c_str(), nullptr, 0, &targets, nullptr,
-                    &token, sync_op_cb, &op
+                    queue, location.c_str(), 0, &targets, nullptr, &token,
+                    sync_op_cb, &op
                 )
         );
         if (r < 0) {

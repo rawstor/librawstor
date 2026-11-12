@@ -194,14 +194,13 @@ static void command_create_usage(void) {
         "RAWSTOR_LOCATION environment variable.\n"
         "                        If -u is omitted, a random UUIDv7 is "
         "generated.\n"
+        "                        The tenant LOCATION names as user "
+        "information\n"
+        "                        (mds://tenant@host) owns the object, and "
+        "the default\n"
+        "                        tenant when it names none.\n"
         "  -u, --uuid UUID       Explicit UUID for the object (only valid "
         "when creating by location).\n"
-        "  --tenant TENANT       The tenant that owns the object. If "
-        "omitted, the one\n"
-        "                        LOCATION names (tenant@host), and "
-        "without either, the\n"
-        "                        default tenant. Only valid when creating by "
-        "location.\n"
         "\n"
         "create by target (pre-formatted targets with embedded UUID):\n"
         "  -t, --target TARGET   Comma-separated list of rawstor backend "
@@ -261,7 +260,6 @@ static int command_create(int argc, char** argv) {
         {"chunk-size", required_argument, NULL, 'C'},
         {"failure-domain", required_argument, NULL, 'F'},
         {"stripe-width", required_argument, NULL, 'K'},
-        {"tenant", required_argument, NULL, RAWSTOR_CLI_OPT_TENANT},
         {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
         {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
         {},
@@ -275,7 +273,6 @@ static int command_create(int argc, char** argv) {
     const char* chunk_size_arg = NULL;
     const char* failure_domain_arg = NULL;
     const char* stripe_width_arg = NULL;
-    const char* tenant_arg = NULL;
     RawstorCliOutput output_arg = {.unit = global_unit};
     optind = 0;
     while (1) {
@@ -315,10 +312,6 @@ static int command_create(int argc, char** argv) {
 
         case 'K':
             stripe_width_arg = optarg;
-            break;
-
-        case RAWSTOR_CLI_OPT_TENANT:
-            tenant_arg = optarg;
             break;
 
         case RAWSTOR_CLI_OPT_FORMAT:
@@ -376,14 +369,6 @@ static int command_create(int argc, char** argv) {
 
     if (uuid_arg != NULL && location_arg == NULL) {
         fprintf(stderr, "uuid argument requires location\n");
-        return EX_USAGE;
-    }
-
-    if (tenant_arg != NULL && location_arg == NULL) {
-        fprintf(
-            stderr, "--tenant requires location; a target names its tenant "
-                    "itself\n"
-        );
         return EX_USAGE;
     }
 
@@ -488,8 +473,8 @@ static int command_create(int argc, char** argv) {
         );
     } else {
         return rawstor_cli_create_at(
-            location_arg, tenant_arg, uuid_arg, size, chunk_size, mirrors,
-            failure_domain, stripe_width, &output_arg
+            location_arg, uuid_arg, size, chunk_size, mirrors, failure_domain,
+            stripe_width, &output_arg
         );
     }
 }
@@ -800,16 +785,16 @@ static void command_list_usage(void) {
                 "backend locations.\n"
                 "                        If omitted, falls back to the "
                 "RAWSTOR_LOCATION environment variable.\n"
+                "                        The tenant LOCATION names as user "
+                "information\n"
+                "                        (mds://tenant@host) limits the "
+                "listing to its\n"
+                "                        objects; without one, every object "
+                "is listed.\n"
                 "\n"
                 "command options:\n"
                 "  -h, --help            Show this help message and "
-                "exit\n"
-                "  --tenant TENANT       List only the objects of this "
-                "tenant. If omitted,\n"
-                "                        the tenant LOCATION names "
-                "(tenant@host), and\n"
-                "                        without either, every "
-                "object.\n" RAWSTOR_CLI_OUTPUT_USAGE
+                "exit\n" RAWSTOR_CLI_OUTPUT_USAGE
     );
 }
 
@@ -817,14 +802,12 @@ static int command_list(int argc, char** argv) {
     const char* optstring = "h";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
-        {"tenant", required_argument, NULL, RAWSTOR_CLI_OPT_TENANT},
         {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
         {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
         {},
     };
 
     char* location_arg = NULL;
-    const char* tenant_arg = NULL;
     RawstorCliOutput output_arg = {.unit = global_unit};
     optind = 0;
     while (1) {
@@ -837,10 +820,6 @@ static int command_list(int argc, char** argv) {
         case 'h':
             command_list_usage();
             return EXIT_SUCCESS;
-
-        case RAWSTOR_CLI_OPT_TENANT:
-            tenant_arg = optarg;
-            break;
 
         case RAWSTOR_CLI_OPT_FORMAT:
             if (rawstor_cli_output_set_format(&output_arg, optarg) != 0) {
@@ -880,7 +859,7 @@ static int command_list(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_list(location_arg, tenant_arg, &output_arg);
+    return rawstor_cli_list(location_arg, &output_arg);
 }
 
 static void command_info_usage(void) {

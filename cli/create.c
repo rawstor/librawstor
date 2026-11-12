@@ -181,7 +181,7 @@ int rawstor_cli_create(
 // rawstor_cli_op_init()'s own failure already comes back in that same
 // shape, a negative errno).
 static ssize_t try_location_create(
-    const char* location, const char* tenant, const char* uuid,
+    const char* location, const char* uuid,
     const struct RawstorObjectSpec* spec, char* target, size_t size
 ) {
     RawstorCliOp op;
@@ -191,8 +191,7 @@ static ssize_t try_location_create(
     }
 
     int sres = rawstor_location_create(
-        op.queue, location, tenant, uuid, spec, target, size, rawstor_cli_op_cb,
-        &op
+        op.queue, location, uuid, spec, target, size, rawstor_cli_op_cb, &op
     );
     ssize_t result = rawstor_cli_op_wait(&op, sres);
     rawstor_cli_op_destroy(&op);
@@ -200,9 +199,9 @@ static ssize_t try_location_create(
 }
 
 int rawstor_cli_create_at(
-    const char* location, const char* tenant, const char* uuid, uint64_t size,
-    uint64_t chunk_size, unsigned int mirrors, unsigned int failure_domain,
-    uint64_t stripe_width, const RawstorCliOutput* output
+    const char* location, const char* uuid, uint64_t size, uint64_t chunk_size,
+    unsigned int mirrors, unsigned int failure_domain, uint64_t stripe_width,
+    const RawstorCliOutput* output
 ) {
     struct RawstorObjectSpec spec = {
         .size = size,
@@ -225,8 +224,7 @@ int rawstor_cli_create_at(
     // forwards to (location.cpp), needing no I/O and creating nothing.
     // The second call, into a buffer sized exactly for that length, does
     // the real work.
-    ssize_t result =
-        try_location_create(location, tenant, uuid, &spec, NULL, 0);
+    ssize_t result = try_location_create(location, uuid, &spec, NULL, 0);
     if (result < 0) {
         fprintf(
             stderr, "rawstor_location_create() failed: %s\n",
@@ -241,9 +239,8 @@ int rawstor_cli_create_at(
         return EXIT_FAILURE;
     }
 
-    result = try_location_create(
-        location, tenant, uuid, &spec, target, (size_t)result + 1
-    );
+    result =
+        try_location_create(location, uuid, &spec, target, (size_t)result + 1);
     if (result < 0) {
         fprintf(
             stderr, "rawstor_location_create() failed: %s\n",

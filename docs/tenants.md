@@ -17,7 +17,6 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Owner recorded with every chunk (`ALLOCATE`, chunk metadata, `META`) | ✅ | `src/blk_backend.cpp`, `include/rawstor/protocol.h` |
 | `LIST` by owner, every row carrying its owner; no tenant lists every object | ✅ | `src/blk_backend.cpp`, `mds/src/store.cpp` |
 | The default tenant owns what is created without naming one | ✅ | `src/tenant.cpp`, `mds/src/store.cpp` |
-| `--tenant` for `rawstor object list` and `create` | ✅ | `cli/main.c` |
 | MDS: owner of an object, tenant registry, `TENANT_CREATE` / `TENANT_REMOVE` / `LIST_TENANTS` | ✅ | `mds/src/store.cpp`, `mds/src/client.cpp` |
 | `--reconstruct` restores owners and registers their tenants | ✅ | `mds/src/store.cpp` |
 | CLI: `rawstor tenant create/remove/list` | ✅ | `cli/tenant.c` |
@@ -34,13 +33,12 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 - An object id is **globally unique**: the tenant is not part of an address,
   a path on disk or a database key. Creating an id that exists is `-EEXIST`
   whoever asks.
-- A caller names a tenant as the **user information of the location** it
-  uses, or explicitly (`--tenant`, the `tenant` argument of
-  `rawstor_location_list()` and `rawstor_location_create()`), which wins. It
-  is optional. The tenant of a call is the owner of what it creates, and the
-  filter of what it lists. Until rights exist, a caller that names a tenant
-  other than the one it is, an administrator creating an object for a user,
-  is not refused.
+- A location names a tenant as its **user information**, optionally. It is
+  the tenant whose objects the location addresses: the owner of what is
+  created through it, and the filter of what is listed through it. It is not
+  who is calling: the caller is a separate matter (a certificate, later), so
+  an administrator creates an object for a user by naming that user in the
+  location. Until rights exist, nobody is refused.
 - `list` returns the objects **visible to the caller**. Until rights exist
   that is the objects it owns; a caller that names no tenant, the
   administrator, sees every object of the store.
@@ -186,17 +184,14 @@ rawstor tenant list   mds://10.0.0.2:7776
 rawstor tenant remove mds://10.0.0.2:7776 <uuid>
 
 rawstor object create mds://<tenant>@10.0.0.2:7776 --size 10G ...   # owned by <tenant>
-rawstor object create mds://10.0.0.2:7776 --tenant <tenant> ...     # the same, an explicit tenant wins
 rawstor object create mds://10.0.0.2:7776 ...                       # owned by the default tenant
 rawstor object list   mds://<tenant>@10.0.0.2:7776                  # what <tenant> owns
-rawstor object list   mds://10.0.0.2:7776 --tenant <tenant>         # the same
 rawstor object list   mds://10.0.0.2:7776                           # every object
 ```
 
 `create`, `list` and `show` print the owner of the object as a column of its
 own (`tenant`), also for an administrator, whose location names no tenant.
-`--tenant` is a location's option: with `create -t TARGET` the tenant is the
-one the target names.
+`create -t TARGET` makes the object for the tenant its target names.
 
 ## Not here
 

@@ -9,11 +9,9 @@
 extern "C" {
 #endif
 
-/* `tenant` limits the listing to that tenant's objects; NULL takes the one
- * `location` names, and none lists every object. */
-int rawstor_cli_list(
-    const char* location, const char* tenant, const RawstorCliOutput* output
-);
+/* The tenant `location` names limits the listing to its objects; without one
+ * every object is listed. */
+int rawstor_cli_list(const char* location, const RawstorCliOutput* output);
 
 #ifdef __cplusplus
 }

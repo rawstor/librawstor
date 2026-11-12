@@ -263,9 +263,10 @@ TEST(TenantTest, a_page_is_filled_with_the_objects_of_the_tenant) {
     EXPECT_EQ(targets.size(), 1u);
 }
 
-// An explicit tenant stands in for the one a location names, for the listing
-// and for the object a create makes.
-TEST(TenantTest, an_explicit_tenant_overrides_the_location) {
+// The tenant a location names owns what is created through it and limits what
+// is listed through it; a target names none, and the listing tells each
+// object's owner beside it.
+TEST(TenantTest, a_location_names_the_tenant_through_the_c_api) {
     rawstor::tests::TmpDir dir;
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
     rawstd::URI plain(dir.uri());
@@ -273,45 +274,48 @@ TEST(TenantTest, an_explicit_tenant_overrides_the_location) {
     RawstdUUID other = new_id();
     RawstdUUIDString acme_text;
     rawstd_uuid_to_string(&acme, &acme_text);
-    RawstdUUIDString other_text;
-    rawstd_uuid_to_string(&other, &other_text);
 
-    // An administrator, naming no tenant, creates an object for acme.
+    // An administrator creates an object for acme by naming it.
     char target[512];
     RawstorObjectSpec spec = small_spec();
+    rawstd::URI as_acme = rawstor::tenant::with(plain, acme);
     ssize_t res =
         rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
             return rawstor_location_create(
-                queue.get(), plain.str().c_str(), acme_text, nullptr, &spec,
-                target, sizeof(target), cb, data
+                queue.get(), as_acme.str().c_str(), nullptr, &spec, target,
+                sizeof(target), cb, data
             );
         });
     ASSERT_GT(res, 0);
     EXPECT_EQ(std::string(target).find('@'), std::string::npos);
 
-    auto list_for = [&](const char* tenant) {
+    auto list_as = [&](const rawstd::URI& location) {
         RawstorStringList* targets = nullptr;
         RawstorStringList* tenants = nullptr;
         RawstorPaginationToken token = {};
         ssize_t lres =
             rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
                 return rawstor_location_list(
-                    queue.get(), plain.str().c_str(), tenant, 0, &targets,
-                    &tenants, &token, cb, data
+                    queue.get(), location.str().c_str(), 0, &targets, &tenants,
+                    &token, cb, data
                 );
             });
         EXPECT_EQ(lres, 0);
         size_t count = rawstor_string_list_size(targets);
         if (count == 1) {
             EXPECT_STREQ(*rawstor_string_list_iter(tenants), acme_text);
+            EXPECT_EQ(
+                std::string(*rawstor_string_list_iter(targets)).find('@'),
+                std::string::npos
+            );
         }
         rawstor_string_list_delete(targets);
         rawstor_string_list_delete(tenants);
         return count;
     };
-    EXPECT_EQ(list_for(acme_text), 1u);
-    EXPECT_EQ(list_for(other_text), 0u);
-    EXPECT_EQ(list_for(nullptr), 1u);
+    EXPECT_EQ(list_as(as_acme), 1u);
+    EXPECT_EQ(list_as(rawstor::tenant::with(plain, other)), 0u);
+    EXPECT_EQ(list_as(plain), 1u);
 }
 
 // An object id is unique on its own: another tenant cannot create it again.

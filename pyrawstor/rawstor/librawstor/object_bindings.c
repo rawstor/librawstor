@@ -798,8 +798,7 @@ PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
         goto error;
     }
     int sres = rawstor_location_list(
-        op.queue, location, NULL, limit, &list, NULL, &token,
-        rawstor_sync_op_cb, &op
+        op.queue, location, limit, &list, NULL, &token, rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);
     rawstor_sync_op_destroy(&op);
@@ -933,7 +932,7 @@ py_rawstor_object_create_at(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
     int sres = rawstor_location_create(
-        op.queue, location, NULL, uuid, &spec, target, sizeof(target),
+        op.queue, location, uuid, &spec, target, sizeof(target),
         rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);

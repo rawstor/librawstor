@@ -47,8 +47,8 @@ TEST(ListTest, empty) {
     ssize_t res =
         rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
             return rawstor_location_list(
-                queue.get(), location.str().c_str(), nullptr, 0, &targets,
-                nullptr, &token, cb, data
+                queue.get(), location.str().c_str(), 0, &targets, nullptr,
+                &token, cb, data
             );
         });
     EXPECT_EQ(res, 0);
@@ -111,8 +111,8 @@ TEST(ListTest, merge) {
     RawstorPaginationToken token = {};
     res = rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
         return rawstor_location_list(
-            queue.get(), locations.c_str(), nullptr, 0, &targets, nullptr,
-            &token, cb, data
+            queue.get(), locations.c_str(), 0, &targets, nullptr, &token, cb,
+            data
         );
     });
     EXPECT_EQ(res, 0);
@@ -213,8 +213,8 @@ TEST(ListTest, merge_multi_chunk) {
     RawstorPaginationToken token = {};
     res = rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
         return rawstor_location_list(
-            queue.get(), locations.c_str(), nullptr, 0, &targets, nullptr,
-            &token, cb, data
+            queue.get(), locations.c_str(), 0, &targets, nullptr, &token, cb,
+            data
         );
     });
     EXPECT_EQ(res, 0);
@@ -261,8 +261,8 @@ TEST(ListTest, pagination) {
     auto list = [&](RawstorStringList** page, RawstorPaginationToken* token) {
         return rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
             return rawstor_location_list(
-                queue.get(), location.str().c_str(), nullptr, 0, page, nullptr,
-                token, cb, data
+                queue.get(), location.str().c_str(), 0, page, nullptr, token,
+                cb, data
             );
         });
     };
@@ -297,8 +297,8 @@ TEST(ListTest, pagination) {
         ssize_t res =
             rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
                 return rawstor_location_create(
-                    queue.get(), location.str().c_str(), nullptr, nullptr,
-                    &spec, target, sizeof(target), cb, data
+                    queue.get(), location.str().c_str(), nullptr, &spec, target,
+                    sizeof(target), cb, data
                 );
             });
         EXPECT_GT(res, 0);

@@ -160,8 +160,8 @@ static int info_logical(const char* location, const RawstorCliOutput* output) {
     do {
         op.done = 0;
         int sres = rawstor_location_list(
-            op.queue, location, NULL, 0, &targets, NULL, &token,
-            rawstor_cli_op_cb, &op
+            op.queue, location, 0, &targets, NULL, &token, rawstor_cli_op_cb,
+            &op
         );
         ssize_t result = rawstor_cli_op_wait(&op, sres);
         if (result < 0) {

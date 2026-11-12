@@ -12,7 +12,6 @@ extern "C" {
 enum {
     RAWSTOR_CLI_OPT_FORMAT = 1000,
     RAWSTOR_CLI_OPT_COLUMN,
-    RAWSTOR_CLI_OPT_TENANT,
 };
 
 /* The usage lines of those options, for a command's own help text. */
