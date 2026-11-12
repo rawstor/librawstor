@@ -228,11 +228,7 @@ void print_table(
 
     std::vector<std::string> headers;
     for (const Column& c : cols) {
-        std::string h = c.name;
-        std::transform(h.begin(), h.end(), h.begin(), [](unsigned char ch) {
-            return std::toupper(ch);
-        });
-        headers.push_back(header ? h : "");
+        headers.push_back(header ? c.name : "");
     }
 
     std::vector<size_t> widths(n);
@@ -428,6 +424,22 @@ void rawstor_cli_target_ids(
     }
     if (rawstor_target_version_id(target, version, version_size) < 0) {
         version[0] = '\0';
+    }
+}
+
+void rawstor_cli_target_location(
+    const char* target, char* location, size_t location_size
+) {
+    if (rawstor_target_location(target, location, location_size) < 0 ||
+        std::strlen(location) >= location_size) {
+        location[0] = '\0';
+    }
+    /* "mds://host:port/" names the store as "mds://host:port". */
+    for (char* it = location; *it != '\0'; ++it) {
+        if (*it == '/' && (it[1] == ',' || it[1] == '\0') && it[-1] != '/') {
+            std::memmove(it, it + 1, std::strlen(it));
+            --it;
+        }
     }
 }
 

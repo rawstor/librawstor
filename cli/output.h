@@ -99,6 +99,13 @@ void rawstor_cli_target_ids(
     size_t version_size
 );
 
+/* The location part of `target`: its URIs without the object id and chunk
+ * offset, comma-separated and without a trailing slash. Empty when `target`
+ * cannot be parsed. */
+void rawstor_cli_target_location(
+    const char* target, char* location, size_t location_size
+);
+
 typedef struct RawstorCliTable RawstorCliTable;
 
 /* `names` are the lowercase column names: json keys and --column values. */

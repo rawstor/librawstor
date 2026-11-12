@@ -57,9 +57,12 @@ chunks_row(RawstorCliOp* op, const char* chunk, RawstorCliTable* table) {
     char slots_buf[32];
     snprintf(mirrors_buf, sizeof(mirrors_buf), "%u", spec.width);
     snprintf(slots_buf, sizeof(slots_buf), "%zd", slot_count);
+    char chunk_location[1024];
+    rawstor_cli_target_location(chunk, chunk_location, sizeof(chunk_location));
     RawstorCliCell cells[] = {
         rawstor_cli_cell_size(offset),
         rawstor_cli_cell_string(chunk),
+        rawstor_cli_cell_string(chunk_location),
         rawstor_cli_cell_size(spec.size),
         rawstor_cli_cell_number(mirrors_buf, spec.width),
         rawstor_cli_cell_number(slots_buf, (uint64_t)slot_count),
@@ -72,16 +75,16 @@ chunks_row(RawstorCliOp* op, const char* chunk, RawstorCliTable* table) {
 }
 
 int rawstor_cli_chunks(const char* target, const RawstorCliOutput* output) {
-    static const char* const columns[] = {
-        "offset", "chunk_target", "size", "mirrors", "slots"
-    };
+    static const char* const columns[] = {"offset",         "chunk_target",
+                                          "chunk_location", "size",
+                                          "mirrors",        "slots"};
     static const enum RawstorCliColumnType types[] = {
-        RAWSTOR_CLI_COLUMN_SIZE, RAWSTOR_CLI_COLUMN_STRING,
-        RAWSTOR_CLI_COLUMN_SIZE, RAWSTOR_CLI_COLUMN_NUMBER,
-        RAWSTOR_CLI_COLUMN_NUMBER
+        RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_STRING,
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_SIZE,
+        RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER
     };
     RawstorCliTable* table =
-        rawstor_cli_table_create("chunks", columns, types, 5);
+        rawstor_cli_table_create("chunks", columns, types, 6);
     if (table == NULL) {
         fprintf(stderr, "Out of memory\n");
         return EXIT_FAILURE;
