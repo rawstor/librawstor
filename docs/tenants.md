@@ -178,8 +178,9 @@ registered again.
 ## CLI
 
 ```bash
-rawstor tenant create mds://10.0.0.2:7776            # prints the new tenant id
+rawstor tenant create mds://10.0.0.2:7776            # prints the new tenant_id
 rawstor tenant create mds://10.0.0.2:7776 --uuid <uuid>
+rawstor tenant create mds://10.0.0.2:7776 --format value   # just the id
 rawstor tenant list   mds://10.0.0.2:7776
 rawstor tenant remove mds://10.0.0.2:7776 <uuid>
 

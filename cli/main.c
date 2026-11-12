@@ -583,7 +583,8 @@ static void command_tenant_create_usage(void) {
         "  -u, --uuid UUID       Register this UUID instead of a new one.\n"
         "\n"
         "command options:\n"
-        "  -h, --help            Show this help message and exit\n"
+        "  -h, --help            Show this help message and "
+        "exit\n" RAWSTOR_CLI_OUTPUT_USAGE
     );
 }
 
@@ -602,7 +603,8 @@ static void command_tenant_list_usage(void) {
         "                        RAWSTOR_LOCATION environment variable.\n"
         "\n"
         "command options:\n"
-        "  -h, --help            Show this help message and exit\n"
+        "  -h, --help            Show this help message and "
+        "exit\n" RAWSTOR_CLI_OUTPUT_USAGE
     );
 }
 
@@ -657,10 +659,13 @@ static int command_tenant_create(int argc, char** argv) {
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"uuid", required_argument, NULL, 'u'},
+        {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
+        {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
         {},
     };
 
     const char* uuid_arg = NULL;
+    RawstorCliOutput output_arg = {.unit = global_unit};
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -677,6 +682,20 @@ static int command_tenant_create(int argc, char** argv) {
             uuid_arg = optarg;
             break;
 
+        case RAWSTOR_CLI_OPT_FORMAT:
+            if (rawstor_cli_output_set_format(&output_arg, optarg) != 0) {
+                fprintf(
+                    stderr, "Unknown format: %s (table, json or value)\n",
+                    optarg
+                );
+                return EX_USAGE;
+            }
+            break;
+
+        case RAWSTOR_CLI_OPT_COLUMN:
+            output_arg.columns = optarg;
+            break;
+
         default:
             return EX_USAGE;
         }
@@ -692,16 +711,19 @@ static int command_tenant_create(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_tenant_create(location, uuid_arg);
+    return rawstor_cli_tenant_create(location, uuid_arg, &output_arg);
 }
 
 static int command_tenant_list(int argc, char** argv) {
     const char* optstring = "h";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
+        {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
+        {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
         {},
     };
 
+    RawstorCliOutput output_arg = {.unit = global_unit};
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -714,6 +736,20 @@ static int command_tenant_list(int argc, char** argv) {
             command_tenant_list_usage();
             return EXIT_SUCCESS;
 
+        case RAWSTOR_CLI_OPT_FORMAT:
+            if (rawstor_cli_output_set_format(&output_arg, optarg) != 0) {
+                fprintf(
+                    stderr, "Unknown format: %s (table, json or value)\n",
+                    optarg
+                );
+                return EX_USAGE;
+            }
+            break;
+
+        case RAWSTOR_CLI_OPT_COLUMN:
+            output_arg.columns = optarg;
+            break;
+
         default:
             return EX_USAGE;
         }
@@ -729,7 +765,7 @@ static int command_tenant_list(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_tenant_list(location);
+    return rawstor_cli_tenant_list(location, &output_arg);
 }
 
 static int command_tenant_remove(int argc, char** argv) {
