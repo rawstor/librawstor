@@ -158,7 +158,7 @@ static int resolve_chunk(
     if (result > MAX_MIRRORS) {
         fprintf(
             stderr,
-            "rawstor resolve: chunk[%llx] has %zd mirrors, more "
+            "rawstor object resolve: chunk[%llx] has %zd mirrors, more "
             "than this CLI can handle (%d)\n",
             (unsigned long long)offset, result, MAX_MIRRORS
         );
@@ -340,8 +340,8 @@ static int resolve_chunk(
             return rawstd_exitcode_for_errno(-res);
         }
 
-        /* sync_id in hex, as rawstor slots and meta_encode()'s on-disk
-         * encoding print it; epoch in decimal, as rawstor slots prints
+        /* sync_id in hex, as rawstor object slots and meta_encode()'s on-disk
+         * encoding print it; epoch in decimal, as rawstor object slots prints
          * it. */
         char slot_buf[32];
         char old_sync_buf[32];

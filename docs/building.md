@@ -48,9 +48,9 @@ rawstor-mds \
 # The port may be omitted: it defaults to 7777 for ost:// and 7776 for mds://.
 #
 # An object split into 256M chunks, placed across the OSTs by the MDS...
-OBJECT_TARGET=$(rawstor create mds://${MDS_HOST} --size=1G --chunk-size=256M --mirrors=1 --format value --column target)
+OBJECT_TARGET=$(rawstor object create mds://${MDS_HOST} --size=1G --chunk-size=256M --mirrors=1 --format value --column target)
 # ...or a plain object stored whole on one OST, no MDS needed:
-# OBJECT_TARGET=$(rawstor create ost://${OST_HOST} --size=1G --mirrors=1 --format value --column target)
+# OBJECT_TARGET=$(rawstor object create ost://${OST_HOST} --size=1G --mirrors=1 --format value --column target)
 
 VHOST_RUNDIR=${PREFIX}/var/run/rawstor
 

@@ -43,7 +43,7 @@ deciding how to deploy.
   there is no dynamic membership service. A reload that drops an OST still
   holding chunks is refused. Existing chunks are never moved when an OST is
   added.
-- **Grow-only resize.** `rawstor resize` can grow an object by whole chunks;
+- **Grow-only resize.** `rawstor object resize` can grow an object by whole chunks;
   shrinking is refused.
 - **No authentication or capabilities.** Anyone who can reach an MDS or OST port
   can use it. Run them on a trusted network.

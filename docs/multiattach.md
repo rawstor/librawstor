@@ -27,7 +27,7 @@ separately.
 | `LOST` at open and at runtime: resync of the losers | 2 | ✅ | at open, without other writers, the open heals the copies in the set and then clears `LOST` ([Mirroring](mirroring.md), F5); while writers go on, a writer that finds a copy `LOST` excludes it and resyncs it, one copy at a time (`src/chunk.cpp`, `_lost_watch()`) |
 | Resync across processes (`resync_owner`, sweep with `RESYNC`, lease of a silent owner) | 2 | ✅ | `src/chunk.cpp` (`_resync_run()`, `_resync_renew()`, `_lease_watch()`, `_resync_release()`) |
 | `LOST` cleared by a rule on the accepted value | 2 | ✅ | [Clearing `LOST`](#clearing-lost), `src/slot.cpp` (`clears_lost()`) |
-| `SET_CONFIG` and `rawstor_target_set_member_config()` removed; `rawstor resolve` decides through the register | 2 | ✅ | `cli/resolve.c` |
+| `SET_CONFIG` and `rawstor_target_set_member_config()` removed; `rawstor object resolve` decides through the register | 2 | ✅ | `cli/resolve.c` |
 | The client keeps the register value once per chunk, not per member | 2 | ✅ | `MirrorControl` (the decided configuration and the `Proposer`), [The register](#the-register-caspaxos) |
 | OST serves one backend Slot; mirroring is coordinated by the client | 1 | ✅ | [Mirroring](mirroring.md#one-copy-per-server) |
 | Witness participation in the configuration register for N = 2 | Before 2 | ✅ | `SYNC_PREPARE` / `SYNC_ACCEPT` on OST, file, LVM, ZFS and MDS (SQLite) witnesses; [MDS design](mds.md#witness) |
@@ -281,9 +281,9 @@ included, leaves `LOST` where it is.
 A witness holds no copy and no writer session: its state stays as it was
 created.
 
-### `rawstor resolve`
+### `rawstor object resolve`
 
-`rawstor resolve` decides a configuration by hand: it chooses a ballot above
+`rawstor object resolve` decides a configuration by hand: it chooses a ballot above
 every one the chunk's members report and has every reachable member promise
 it with `SYNC_PREPARE`, so that no writer can decide under a lower ballot
 while the members are changed one at a time. A member that refuses has a

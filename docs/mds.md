@@ -868,7 +868,7 @@ The plan closes this with a state on the version, so that a version is only
 visible once the orchestrator has verified its barrier:
 
 - **`PENDING` / `VALID`.** `OBJ_COMMIT_VERSION` registers the version as
-  `PENDING`: `list-versions`, `SET_OBJECT` of its `version_id` and `RESOLVE`
+  `PENDING`: `rawstor version list`, `SET_OBJECT` of its `version_id` and `RESOLVE`
   do not see it. After every member answered `THAW` successfully the
   orchestrator sends `OBJ_CONFIRM_VERSION` (idempotent, like the other
   mutations) and the version becomes `VALID`. A `THAW` that failed or answered
@@ -879,7 +879,7 @@ visible once the orchestrator has verified its barrier:
   that did not hold. Collecting it means unregistering it on the MDS and
   destroying its native copies on the members, as `OBJ_REMOVE_VERSION` and the
   fan-out destroy already do. The MDS does not talk to OSTs for data, so the
-  executor is the client: every `create-version`, and a `rawstor` command for
+  executor is the client: every `rawstor version create`, and a `rawstor` command for
   the purpose, sweep the expired `PENDING` versions they find. Having the MDS
   do the destroy itself is the alternative, and changes what the MDS is.
 - **Reconstruct.** `--reconstruct` rebuilds the version records from the OSTs
@@ -905,7 +905,7 @@ visible once the orchestrator has verified its barrier:
   the two steps (an unreferenced version found on an OST is garbage,
   collectable).
 - **`file://` backend has no CoW** → its versions are fake snapshots: under the
-  write barrier, `create-version` copies each member's `data` and `meta` to
+  write barrier, `rawstor version create` copies each member's `data` and `meta` to
   `<id>/<offset>/<version_id>/` (no sharing). The copy runs on the member's
   event loop one 1 MiB block at a time, keeps the source's holes, and is
   synced; it is staged in files unique to the attempt and renamed into place
@@ -996,7 +996,7 @@ registration. New `mds://` chunks automatically receive one witness when
 For example, create a two-copy object with a witness on MDS:
 
 ```sh
-rawstor create -s 1G -m 2 'ost://10.0.0.11:9090,ost://10.0.0.12:9090,ost://10.0.0.13:9091'
+rawstor object create -s 1G -m 2 'ost://10.0.0.11:9090,ost://10.0.0.12:9090,ost://10.0.0.13:9091'
 ```
 
 The mirroring model supports several writer queues within one process (see
@@ -1125,7 +1125,7 @@ Metadata durability assumes acknowledged records are never rolled back.
 When replacing an MDS database from backup, discard backed-up witness
 records, reconstruct the object map, and re-attach empty witnesses through a
 data majority. Reconstructing a current database preserves its witnesses.
-`rawstor resolve` records EXCLUDED for every non-winner before establishing
+`rawstor object resolve` records EXCLUDED for every non-winner before establishing
 the operator's new generation, and aborts if an exclusion cannot be persisted.
 Only DATA members can be selected as content winners.
 
@@ -1402,7 +1402,7 @@ Here `-m 2 --failure-domain server` places two DATA copies and a witness on
 host3. The MDS endpoint is explicit in the topology so its failure domain is
 known. It is health-probed like other candidates, but its reported aggregate
 capacity is not counted again as storage capacity. Returned physical witness
-URIs use `ost://host3:7776/UUID/OFFSET`, including in `rawstor slots`.
+URIs use `ost://host3:7776/UUID/OFFSET`, including in `rawstor object slots`.
 
 Witness slots are last in each live chunk map and are created and removed with
 their chunk. They take part in configuration barriers and quorum, but receive

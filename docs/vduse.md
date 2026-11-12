@@ -102,7 +102,7 @@ is always "connected". Attaching the created device to the vDPA bus (`vdpa
 dev add name UUID mgmtdev vduse`) and, if applicable, driving it from a
 VMM, are separate, external steps.
 
-After growing the object (`rawstor resize`), send `SIGHUP`: the process
+After growing the object (`rawstor object resize`), send `SIGHUP`: the process
 re-reads the size, reopens its connections to the target so I/O reaches
 the new space, updates the device's config space and raises a config
 interrupt, so the guest sees the new capacity. A size that did not grow is

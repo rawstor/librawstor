@@ -10,8 +10,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-int rawstor_cli_remove(const char* target) {
-    fprintf(stderr, "Removing object: %s\n", target);
+int rawstor_cli_remove(const char* target, int version) {
+    const char* what = version ? "version" : "object";
+    fprintf(stderr, "Removing %s: %s\n", what, target);
 
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);
@@ -31,7 +32,7 @@ int rawstor_cli_remove(const char* target) {
         return rawstd_exitcode_for_errno((int)-result);
     }
 
-    fprintf(stderr, "Object removed\n");
+    fprintf(stderr, "%s removed\n", version ? "Version" : "Object");
 
     return EXIT_SUCCESS;
 }

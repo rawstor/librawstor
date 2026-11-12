@@ -78,7 +78,7 @@ constexpr const char* SCHEMA =
     /* Applied mutations by idempotency_key, for replaying a retried request. */
     "CREATE TABLE IF NOT EXISTS applied_mutations ("
     "  idempotency_key BLOB PRIMARY KEY,"
-    "  kind INTEGER NOT NULL,"
+    "  type INTEGER NOT NULL,"
     "  id BLOB NOT NULL,"
     "  result BLOB NOT NULL,"
     "  created_at INTEGER NOT NULL"
@@ -265,10 +265,10 @@ void insert_chunks(
 
 /*
  * Idempotency records (ObjectStore's own doc comment on idempotency_key).
- * `kind` tells the mutations apart, so an idempotency_key replayed for a
+ * `type` tells the mutations apart, so an idempotency_key replayed for a
  * different call is caught instead of answered with a foreign result.
  */
-enum class MutationKind : unsigned {
+enum class MutationType : unsigned {
     create = 1,
     resize = 2,
     remove = 3,
@@ -325,14 +325,14 @@ public:
  * if it was applied as a different call. A nil idempotency_key never replays.
  */
 std::optional<std::vector<unsigned char>> replay_mutation(
-    sqlite3* db, const RawstdUUID& idempotency_key, MutationKind kind,
+    sqlite3* db, const RawstdUUID& idempotency_key, MutationType type,
     const RawstdUUID& id
 ) {
     if (rawstd_uuid_is_nil(&idempotency_key)) {
         return std::nullopt;
     }
     Stmt select(
-        db, "SELECT kind, id, result FROM applied_mutations WHERE "
+        db, "SELECT type, id, result FROM applied_mutations WHERE "
             "idempotency_key = ?;"
     );
     select.bind_blob(1, idempotency_key.bytes, sizeof(idempotency_key.bytes));
@@ -341,7 +341,7 @@ std::optional<std::vector<unsigned char>> replay_mutation(
     }
     RawstdUUID recorded_id;
     select.column_uuid(1, &recorded_id);
-    if (select.column_int64(0) != static_cast<uint64_t>(kind) ||
+    if (select.column_int64(0) != static_cast<uint64_t>(type) ||
         rawstd_uuid_cmp(&recorded_id, &id) != 0) {
         rawstd_error(
             "MDS store: idempotency_key reused for a different request\n"
@@ -353,7 +353,7 @@ std::optional<std::vector<unsigned char>> replay_mutation(
 
 /* Inside the mutation's own transaction; also drops expired records. */
 void record_mutation(
-    sqlite3* db, const RawstdUUID& idempotency_key, MutationKind kind,
+    sqlite3* db, const RawstdUUID& idempotency_key, MutationType type,
     const RawstdUUID& id, const std::vector<unsigned char>& result
 ) {
     if (rawstd_uuid_is_nil(&idempotency_key)) {
@@ -371,12 +371,12 @@ void record_mutation(
             .step();
     }
     Stmt insert(
-        db, "INSERT OR REPLACE INTO applied_mutations (idempotency_key, kind, "
+        db, "INSERT OR REPLACE INTO applied_mutations (idempotency_key, type, "
             "id, result, created_at)"
             " VALUES (?, ?, ?, ?, ?);"
     );
     insert.bind_blob(1, idempotency_key.bytes, sizeof(idempotency_key.bytes))
-        .bind_int64(2, static_cast<uint64_t>(kind))
+        .bind_int64(2, static_cast<uint64_t>(type))
         .bind_blob(3, id.bytes, sizeof(id.bytes))
         .bind_blob(4, result.data(), result.size())
         .bind_int64(5, now)
@@ -858,7 +858,7 @@ ObjectDescriptor ObjectStore::create(
     std::lock_guard<std::mutex> lock(_mutex);
     validate_geometry(logical_size, chunk_size);
 
-    if (replay_mutation(_db, idempotency_key, MutationKind::create, id)) {
+    if (replay_mutation(_db, idempotency_key, MutationType::create, id)) {
         try {
             return _descriptor(id);
         } catch (const std::system_error& e) {
@@ -911,7 +911,7 @@ ObjectDescriptor ObjectStore::create(
         _db, available, ret.id, 0, nchunks, chunk_size, ret.policy, touched
     );
 
-    record_mutation(_db, idempotency_key, MutationKind::create, id, {});
+    record_mutation(_db, idempotency_key, MutationType::create, id, {});
 
     tx.commit();
     _notify_space_change(std::move(touched));
@@ -984,7 +984,7 @@ ResizeResult ObjectStore::resize(
 ) {
     std::lock_guard<std::mutex> lock(_mutex);
     if (std::optional<std::vector<unsigned char>> recorded =
-            replay_mutation(_db, idempotency_key, MutationKind::resize, id)) {
+            replay_mutation(_db, idempotency_key, MutationType::resize, id)) {
         ResultReader r(*recorded);
         ResizeResult ret{};
         ret.map_epoch = r.get<uint64_t>();
@@ -1027,7 +1027,7 @@ ResizeResult ObjectStore::resize(
     );
 
     record_mutation(
-        _db, idempotency_key, MutationKind::resize, id,
+        _db, idempotency_key, MutationType::resize, id,
         ResultWriter().put(map_epoch).put(old_chunks).data()
     );
 
@@ -1208,7 +1208,7 @@ ObjectMap
 ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
     std::lock_guard<std::mutex> lock(_mutex);
     if (std::optional<std::vector<unsigned char>> recorded =
-            replay_mutation(_db, idempotency_key, MutationKind::remove, id)) {
+            replay_mutation(_db, idempotency_key, MutationType::remove, id)) {
         return decode_map(*recorded);
     }
 
@@ -1240,7 +1240,7 @@ ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
     }
 
     record_mutation(
-        _db, idempotency_key, MutationKind::remove, id, encode_map(ret)
+        _db, idempotency_key, MutationType::remove, id, encode_map(ret)
     );
 
     tx.commit();
@@ -1333,7 +1333,7 @@ uint64_t ObjectStore::commit_version(
 ) {
     std::lock_guard<std::mutex> lock(_mutex);
     if (std::optional<std::vector<unsigned char>> recorded = replay_mutation(
-            _db, idempotency_key, MutationKind::commit_version, id
+            _db, idempotency_key, MutationType::commit_version, id
         )) {
         return ResultReader(*recorded).get<uint64_t>();
     }
@@ -1408,7 +1408,7 @@ uint64_t ObjectStore::commit_version(
     }
 
     record_mutation(
-        _db, idempotency_key, MutationKind::commit_version, id,
+        _db, idempotency_key, MutationType::commit_version, id,
         ResultWriter().put(map_epoch).data()
     );
 
@@ -1424,7 +1424,7 @@ std::vector<VersionMember> ObjectStore::remove_version(
     std::lock_guard<std::mutex> lock(_mutex);
     std::vector<VersionMember> ret;
     if (std::optional<std::vector<unsigned char>> recorded = replay_mutation(
-            _db, idempotency_key, MutationKind::remove_version, id
+            _db, idempotency_key, MutationType::remove_version, id
         )) {
         ResultReader r(*recorded);
         ret.resize(r.get<uint64_t>());
@@ -1473,7 +1473,7 @@ std::vector<VersionMember> ObjectStore::remove_version(
         w.put(m.logical_index).put(m.ost_id);
     }
     record_mutation(
-        _db, idempotency_key, MutationKind::remove_version, id, w.data()
+        _db, idempotency_key, MutationType::remove_version, id, w.data()
     );
 
     tx.commit();

@@ -7,7 +7,9 @@
 extern "C" {
 #endif
 
-int rawstor_cli_remove(const char* target);
+/* `version` only words the messages: a target naming a version removes
+ * that version, any other removes the live object. */
+int rawstor_cli_remove(const char* target, int version);
 
 #ifdef __cplusplus
 }
