@@ -276,7 +276,7 @@ rawstd::Task<void> Backend::list_chunks(
             }
 
             std::sort(offsets.begin(), offsets.end());
-            found.push_back(ChunkGroup{uuid, std::move(offsets)});
+            found.push_back(ChunkGroup{uuid, std::move(offsets), {}});
         }
 
         std::sort(

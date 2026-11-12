@@ -28,6 +28,7 @@ struct ChunkEntry {
     RawstdUUID id;
     uint64_t offset;
     RawstorListEntryType type;
+    RawstdUUID tenant;
 };
 
 struct ObjectDescriptor {

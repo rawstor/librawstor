@@ -246,6 +246,22 @@ int rawstor_location_list(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Like rawstor_location_list(), and also tells who owns each object.
+ *
+ * @p tenants receives a second list, in the order of @p targets: the tenant
+ * that owns the object of each target as a UUID string, or an empty string for
+ * an object with none. A target itself names no tenant. Free both lists with
+ * @ref rawstor_string_list_delete. Whatever tenant @p location names filters
+ * the listing (docs/tenants.md); a location without one lists every object.
+ */
+int rawstor_location_list_with_tenants(
+    RawIOQueue* queue, const char* location, unsigned int limit,
+    RawstorStringList** targets, RawstorStringList** tenants,
+    RawstorPaginationToken* token, int (*cb)(ssize_t result, void* data),
+    void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Asynchronously create an empty object at the specified location
  *        with optional UUID, and return the constructed target string.
  *

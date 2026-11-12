@@ -497,15 +497,16 @@ chunk's placement identity, stored with it.
 
 ## Response payloads
 
-### List rows — 32 bytes each
+### List rows — 48 bytes each
 
 One row per (id, chunk offset); an id with several chunks spans consecutive
 rows. `type` says what the row addresses: `CHUNK` (1) is one chunk stored at
 `chunk_offset`; `OBJECT` (2) is a whole object addressed by id alone, with
 `chunk_offset` 0. The MDS answers one `OBJECT` row per `mds://` object and one
-`CHUNK` row per witness member. `reserved` is all 0. The **last** row is always the resume cursor for the next page (a nil id
-once nothing is left), never a result. An empty payload means the far end is
-already exhausted.
+`CHUNK` row per witness member. `tenant_id` is the owner of the object, all
+zero when it has none, whoever asked. `reserved` is all 0. The **last** row is
+always the resume cursor for the next page (a nil id once nothing is left),
+never a result. An empty payload means the far end is already exhausted.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -516,10 +517,16 @@ already exhausted.
   8  |                                                                                       |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
- 16  |                                 uint64_t chunk_offset                                 |
+ 16  |                                                                                       |
+     |                                 uint8_t tenant_id[16]                                 |
+     |                                                                                       |
+ 24  |                                                                                       |
+     |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+ 32  |                                 uint64_t chunk_offset                                 |
      |                                                                                       |
      +----------+----------------------------------------------------------------------------+
- 24  | uint8_t  |                            uint8_t reserved[7]                             |
+ 40  | uint8_t  |                            uint8_t reserved[7]                             |
      |   type   |                                                                            |
      +----------+----------------------------------------------------------------------------+
 ```

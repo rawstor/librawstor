@@ -919,6 +919,7 @@ rawstd::DetachedTask Client::_list(
         for (const auto& group : groups) {
             RawstorFrameListEntry entry{};
             memcpy(entry.id, group.id.bytes, sizeof(entry.id));
+            rawstor::tenant::to_wire(group.tenant, entry.tenant_id);
             if (group.offsets.empty()) {
                 entry.type = RAWSTOR_LIST_ENTRY_OBJECT;
                 entries.push_back(entry);

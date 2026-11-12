@@ -143,11 +143,11 @@ protected:
     // class hierarchy needs it.
     static constexpr size_t META_MAX_SIZE = 1024;
 
-    // list_chunks() of a tenant (docs/tenants.md): drops from `chunks` the
-    // objects that tenant does not own, judged by each one's own metadata.
-    // A backend without a tenant keeps everything, and a listing of one `id`
-    // is never filtered. The page's resume token is not affected, so a page
-    // may come back shorter than `limit`.
+    // list_chunks() of a tenant (docs/tenants.md): sets the owner of each
+    // group of `chunks` from its own metadata and drops the objects that
+    // tenant does not own. A backend without a tenant keeps everything, and a
+    // listing of one `id` is left as it is. The page's resume token is not
+    // affected, so a page may come back shorter than `limit`.
     rawstd::Task<void>
     _keep_owned(const RawstdUUID& id, std::vector<ChunkGroup>& chunks);
 

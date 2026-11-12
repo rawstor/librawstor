@@ -1,6 +1,7 @@
 #include "blk_backend.hpp"
 
 #include "opts.h"
+#include "tenant.hpp"
 
 #include <rawio/awaitable.hpp>
 
@@ -251,7 +252,7 @@ rawstd::Task<void> Backend::_bind_object(
 
 rawstd::Task<void>
 Backend::_keep_owned(const RawstdUUID& id, std::vector<ChunkGroup>& chunks) {
-    if (rawstd_uuid_is_nil(&tenant()) || !rawstd_uuid_is_nil(&id)) {
+    if (!rawstd_uuid_is_nil(&id)) {
         co_return;
     }
     std::vector<ChunkGroup> owned;
@@ -268,10 +269,12 @@ Backend::_keep_owned(const RawstdUUID& id, std::vector<ChunkGroup>& chunks) {
             }
             throw;
         }
-        if (!metas.empty() &&
-            memcmp(
-                metas.front().tenant_id, tenant().bytes, sizeof(tenant().bytes)
-            ) == 0) {
+        if (metas.empty()) {
+            continue;
+        }
+        group.tenant = tenant::from_wire(metas.front().tenant_id);
+        if (rawstd_uuid_is_nil(&tenant()) ||
+            rawstd_uuid_cmp(&group.tenant, &tenant()) == 0) {
             owned.push_back(std::move(group));
         }
     }

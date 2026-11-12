@@ -537,7 +537,7 @@ rawstd::Task<void> Backend::list_chunks(
         co_return;
     }
 
-    ChunkGroup group{id, {}};
+    ChunkGroup group{id, {}, {}};
     group.offsets.reserve(map.chunks.size());
     for (uint64_t i = 0; i < map.chunks.size(); ++i) {
         group.offsets.push_back(i * map.chunk_size);

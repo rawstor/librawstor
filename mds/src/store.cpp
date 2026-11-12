@@ -693,12 +693,13 @@ std::vector<ChunkEntry> ObjectStore::list_chunks(
     /* The objects a tenant owns; no tenant lists them all. */
     const bool all = rawstd_uuid_is_nil(&tenant);
     Stmt stmt(
-        _db, "WITH entries AS ("
-             "SELECT id,chunk_offset,1 AS type,tenant_id FROM witnesses "
-             "UNION ALL SELECT id,0,2,tenant_id FROM objects) "
-             "SELECT id,chunk_offset,type FROM entries WHERE id>? AND "
-             "(?=1 OR tenant_id=?) "
-             "ORDER BY id,type DESC,chunk_offset"
+        _db,
+        "WITH entries AS ("
+        "SELECT id,chunk_offset,1 AS type,tenant_id FROM witnesses "
+        "UNION ALL SELECT id,0,2,tenant_id FROM objects) "
+        "SELECT id,chunk_offset,type,tenant_id FROM entries WHERE id>? AND "
+        "(?=1 OR tenant_id=?) "
+        "ORDER BY id,type DESC,chunk_offset"
     );
     RawstdUUID after = token;
     stmt.bind_blob(1, after.bytes, sizeof(after.bytes))
@@ -713,6 +714,7 @@ std::vector<ChunkEntry> ObjectStore::list_chunks(
         stmt.column_uuid(0, &entry.id);
         entry.offset = stmt.column_int64(1);
         entry.type = static_cast<RawstorListEntryType>(stmt.column_int64(2));
+        stmt.column_uuid(3, &entry.tenant);
         if (rawstd_uuid_cmp(&entry.id, &last) != 0) {
             if (limit != 0 && groups == limit) {
                 token = last;

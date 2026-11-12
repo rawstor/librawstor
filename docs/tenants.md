@@ -35,6 +35,9 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 - `list` returns the objects **visible to the caller**. Until rights exist
   that is the objects it owns; a caller that names no tenant, the
   administrator, sees every object of the store.
+- Every row of a listing carries the owner of its object, also for the
+  administrator. A target names no tenant: it addresses the object, and the
+  owner comes beside it (`rawstor_location_list_with_tenants()`).
 - Every other operation takes the tenant to be informational: an object is
   found by its id, whoever the caller says it is.
 
@@ -174,6 +177,10 @@ rawstor create mds://<tenant>@10.0.0.2:7776 --size 10G ...   # owned by <tenant>
 rawstor list   mds://<tenant>@10.0.0.2:7776                  # what <tenant> owns
 rawstor list   mds://10.0.0.2:7776                           # every object
 ```
+
+`list` and `show` print the owner of the object as a column of its own
+(`tenant`, empty for none), also for an administrator, whose location names no
+tenant.
 
 ## Not here
 

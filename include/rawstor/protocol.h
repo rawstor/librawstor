@@ -316,7 +316,8 @@ struct RawstorFrameList {
  * stored at `chunk_offset`; RAWSTOR_LIST_ENTRY_OBJECT is a whole object
  * addressed by id alone (an mds:// object, whose chunks are placed by its
  * map), with `chunk_offset` 0. `reserved` is all 0. The resume cursor row
- * has type 0 and is not interpreted as a result.
+ * has type 0 and is not interpreted as a result. `tenant_id` is the owner of
+ * the object the row addresses, all 0 when it has none, whoever asked.
  */
 enum RawstorListEntryType {
     RAWSTOR_LIST_ENTRY_CHUNK = 1,
@@ -325,6 +326,7 @@ enum RawstorListEntryType {
 
 struct RawstorFrameListEntry {
     uint8_t id[16];
+    uint8_t tenant_id[16]; /* owner of the object; all 0 for none */
     uint64_t chunk_offset;
     uint8_t type; /* enum RawstorListEntryType */
     uint8_t reserved[7];
@@ -834,7 +836,7 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBasicPayload, 48);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetObjectPayload, 64);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameHandshakePayload, 8);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 36);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 32);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 48);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameVersionEntry, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameTenantEntry, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameTenantOpPayload, 32);

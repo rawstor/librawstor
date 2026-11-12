@@ -189,6 +189,49 @@ TEST(TenantTest, listing_shows_the_objects_a_tenant_owns) {
     EXPECT_EQ(listed(*queue, rawstor::tenant::with(plain, new_id())), 0u);
 }
 
+// A listing tells who owns each object, also for the administrator, and a
+// target names no tenant.
+TEST(TenantTest, listing_tells_the_owner_of_each_object) {
+    rawstor::tests::TmpDir dir;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    rawstd::URI plain(dir.uri());
+    RawstdUUID acme = new_id();
+    RawstdUUID in_acme = new_id();
+    RawstdUUID in_none = new_id();
+
+    run(*queue, rawstor::Location({rawstor::tenant::with(plain, acme)})
+                    .create(*queue, in_acme, small_spec()));
+    run(*queue,
+        rawstor::Location({plain}).create(*queue, in_none, small_spec()));
+
+    std::list<rawstor::Target> targets;
+    std::vector<RawstdUUID> owners;
+    RawstorPaginationToken token = {};
+    run(*queue, rawstor::Location({rawstor::tenant::with(plain, acme)})
+                    .list(*queue, 0, targets, token, &owners));
+    ASSERT_EQ(owners.size(), 1u);
+    EXPECT_EQ(rawstd_uuid_cmp(&owners[0], &acme), 0);
+    for (const rawstd::URI& uri : targets.front().uris()) {
+        EXPECT_TRUE(uri.username().empty());
+    }
+
+    targets.clear();
+    owners.clear();
+    token = {};
+    run(*queue,
+        rawstor::Location({plain}).list(*queue, 0, targets, token, &owners));
+    ASSERT_EQ(owners.size(), 2u);
+    size_t owned = 0;
+    for (const RawstdUUID& owner : owners) {
+        if (rawstd_uuid_cmp(&owner, &acme) == 0) {
+            ++owned;
+        } else {
+            EXPECT_TRUE(rawstd_uuid_is_nil(&owner));
+        }
+    }
+    EXPECT_EQ(owned, 1u);
+}
+
 // An object id is unique on its own: another tenant cannot create it again.
 TEST(TenantTest, an_object_id_is_unique_across_tenants) {
     rawstor::tests::TmpDir dir;

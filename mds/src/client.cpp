@@ -545,6 +545,10 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                 memcpy(
                     entries[i].id, records[i].id.bytes, sizeof(entries[i].id)
                 );
+                memcpy(
+                    entries[i].tenant_id, records[i].tenant.bytes,
+                    sizeof(entries[i].tenant_id)
+                );
                 entries[i].chunk_offset = records[i].offset;
                 entries[i].type = records[i].type;
             }

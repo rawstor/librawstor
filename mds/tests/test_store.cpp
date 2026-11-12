@@ -1153,7 +1153,17 @@ TEST_F(ObjectStoreTest, listing_shows_the_objects_a_tenant_owns) {
 
     // An administrator names no tenant and sees every object.
     token = {};
-    EXPECT_EQ(store.list_chunks(RawstdUUID{}, token, 0).size(), 3u);
+    auto all = store.list_chunks(RawstdUUID{}, token, 0);
+    ASSERT_EQ(all.size(), 3u);
+
+    // Every entry names the owner of its object, whoever asked.
+    for (const auto& entry : all) {
+        const RawstdUUID& owner =
+            rawstd_uuid_cmp(&entry.id, &in_acme) == 0    ? acme
+            : rawstd_uuid_cmp(&entry.id, &in_other) == 0 ? other
+                                                         : RawstdUUID{};
+        EXPECT_EQ(rawstd_uuid_cmp(&entry.tenant, &owner), 0);
+    }
 
     // A tenant that owns nothing sees nothing.
     token = {};

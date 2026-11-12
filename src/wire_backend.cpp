@@ -915,7 +915,9 @@ rawstd::Task<void> Backend::_wire_list_chunks(
             if (location().scheme() == "ost") {
                 continue;
             }
-            chunks.push_back(ChunkGroup{entry_id, {}});
+            chunks.push_back(
+                ChunkGroup{entry_id, {}, tenant::from_wire(entry.tenant_id)}
+            );
             continue;
         }
         if (entry.type != RAWSTOR_LIST_ENTRY_CHUNK) {
@@ -925,7 +927,13 @@ rawstd::Task<void> Backend::_wire_list_chunks(
             rawstd_uuid_cmp(&chunks.back().id, &entry_id) == 0) {
             chunks.back().offsets.push_back(entry.chunk_offset);
         } else {
-            chunks.push_back(ChunkGroup{entry_id, {entry.chunk_offset}});
+            chunks.push_back(
+                ChunkGroup{
+                    entry_id,
+                    {entry.chunk_offset},
+                    tenant::from_wire(entry.tenant_id)
+                }
+            );
         }
     }
 

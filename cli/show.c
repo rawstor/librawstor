@@ -6,6 +6,7 @@
 #include <rawstor.h>
 
 #include <rawstd/exitcode.h>
+#include <rawstd/uuid.h>
 
 #include <errno.h>
 #include <stdio.h>
@@ -25,12 +26,35 @@ int rawstor_cli_show(const char* target, const RawstorCliOutput* output) {
     int sres =
         rawstor_target_spec(op.queue, target, &spec, rawstor_cli_op_cb, &op);
     ssize_t result = rawstor_cli_op_wait(&op, sres);
-    rawstor_cli_op_destroy(&op);
     if (result < 0) {
+        rawstor_cli_op_destroy(&op);
         fprintf(
             stderr, "rawstor_target_spec() failed: %s\n", strerror((int)-result)
         );
         return rawstd_exitcode_for_errno((int)-result);
+    }
+
+    /* The owner is recorded with the object's first chunk. */
+    struct RawstorObjectMeta meta;
+    memset(&meta, 0, sizeof(meta));
+    op.done = 0;
+    int mres =
+        rawstor_target_meta(op.queue, target, &meta, 1, rawstor_cli_op_cb, &op);
+    result = rawstor_cli_op_wait(&op, mres);
+    rawstor_cli_op_destroy(&op);
+    if (result < 0) {
+        fprintf(
+            stderr, "rawstor_target_meta() failed: %s\n", strerror((int)-result)
+        );
+        return rawstd_exitcode_for_errno((int)-result);
+    }
+    char tenant[64] = "";
+    struct RawstdUUID owner;
+    memcpy(owner.bytes, meta.tenant_id, sizeof(owner.bytes));
+    if (!rawstd_uuid_is_nil(&owner)) {
+        RawstdUUIDString text;
+        rawstd_uuid_to_string(&owner, &text);
+        snprintf(tenant, sizeof(tenant), "%s", text);
     }
 
     /* version_id is a column only when TARGET names a version. */
@@ -41,28 +65,30 @@ int rawstor_cli_show(const char* target, const RawstorCliOutput* output) {
     );
     int has_version = version_id[0] != '\0';
     static const char* const version_columns[] = {"object_id", "version_id",
-                                                  "target",    "location",
-                                                  "size",      "mirrors"};
+                                                  "tenant",    "target",
+                                                  "location",  "size",
+                                                  "mirrors"};
     static const enum RawstorCliColumnType version_types[] = {
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
-        RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_NUMBER
-    };
-    static const char* const live_columns[] = {
-        "object_id", "target", "location", "size", "mirrors"
-    };
-    static const enum RawstorCliColumnType live_types[] = {
-        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_SIZE,
         RAWSTOR_CLI_COLUMN_NUMBER
+    };
+    static const char* const live_columns[] = {"object_id", "tenant",
+                                               "target",    "location",
+                                               "size",      "mirrors"};
+    static const enum RawstorCliColumnType live_types[] = {
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+        RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_NUMBER
     };
 
     RawstorCliTable* table =
         has_version
             ? rawstor_cli_record_create(
-                  "object", version_columns, version_types, 6
+                  "object", version_columns, version_types, 7
               )
-            : rawstor_cli_record_create("object", live_columns, live_types, 5);
+            : rawstor_cli_record_create("object", live_columns, live_types, 6);
     if (table == NULL) {
         fprintf(stderr, "Out of memory\n");
         return EXIT_FAILURE;
@@ -70,12 +96,13 @@ int rawstor_cli_show(const char* target, const RawstorCliOutput* output) {
 
     char mirrors_buf[32];
     snprintf(mirrors_buf, sizeof(mirrors_buf), "%u", spec.width);
-    RawstorCliCell cells[6];
+    RawstorCliCell cells[7];
     size_t ncells = 0;
     cells[ncells++] = rawstor_cli_cell_string(object_id);
     if (has_version) {
         cells[ncells++] = rawstor_cli_cell_string(version_id);
     }
+    cells[ncells++] = rawstor_cli_cell_optional(tenant);
     cells[ncells++] = rawstor_cli_cell_string(target);
     char location[1024];
     rawstor_cli_target_location(target, location, sizeof(location));

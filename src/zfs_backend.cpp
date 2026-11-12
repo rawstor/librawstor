@@ -256,7 +256,7 @@ rawstd::Task<void> Backend::list_chunks(
     found.reserve(grouped.size());
     for (auto& [id, offsets] : grouped) {
         std::sort(offsets.begin(), offsets.end());
-        found.push_back(ChunkGroup{id, std::move(offsets)});
+        found.push_back(ChunkGroup{id, std::move(offsets), {}});
     }
 
     found.erase(

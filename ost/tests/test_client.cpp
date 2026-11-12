@@ -1460,9 +1460,9 @@ RawstdUUID make_tenant() {
     return id;
 }
 
-// One LIST page of `client`'s tenant: the ids it names, without the cursor.
-std::vector<RawstdUUID>
-list_ids(RawIOQueue* queue, rawstor::ostserver::tests::Client& client) {
+// One LIST page of `client`'s tenant: its rows, without the cursor.
+std::vector<RawstorFrameListEntry>
+list_rows(RawIOQueue* queue, rawstor::ostserver::tests::Client& client) {
     client.send_list(RawstdUUID{}, 0);
     EXPECT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >= sizeof(RawstorFrameResponse);
@@ -1480,11 +1480,20 @@ list_ids(RawIOQueue* queue, rawstor::ostserver::tests::Client& client) {
         }));
         client.recv_payload(rows.data(), count * sizeof(RawstorFrameListEntry));
     }
-    std::vector<RawstdUUID> ids;
     // The last row is the resume cursor.
-    for (size_t i = 0; i + 1 < rows.size(); ++i) {
+    if (!rows.empty()) {
+        rows.pop_back();
+    }
+    return rows;
+}
+
+// One LIST page of `client`'s tenant: the ids it names, without the cursor.
+std::vector<RawstdUUID>
+list_ids(RawIOQueue* queue, rawstor::ostserver::tests::Client& client) {
+    std::vector<RawstdUUID> ids;
+    for (const RawstorFrameListEntry& row : list_rows(queue, client)) {
         RawstdUUID id;
-        std::memcpy(id.bytes, rows[i].id, sizeof(id.bytes));
+        std::memcpy(id.bytes, row.id, sizeof(id.bytes));
         ids.push_back(id);
     }
     return ids;
@@ -1577,6 +1586,19 @@ TEST(OstClientTest, list_shows_the_objects_a_tenant_owns) {
     // An administrator names no tenant and sees every object.
     client.set_tenant(RawstdUUID{});
     EXPECT_EQ(list_ids(queue, client).size(), 3u);
+
+    // Every row names the owner of its object, whoever asked.
+    for (const RawstorFrameListEntry& row : list_rows(queue, client)) {
+        RawstdUUID id;
+        std::memcpy(id.bytes, row.id, sizeof(id.bytes));
+        const RawstdUUID& owner = rawstd_uuid_cmp(&id, &in_acme) == 0 ? acme
+                                  : rawstd_uuid_cmp(&id, &in_other) == 0
+                                      ? other
+                                      : RawstdUUID{};
+        EXPECT_EQ(
+            std::memcmp(row.tenant_id, owner.bytes, sizeof(row.tenant_id)), 0
+        );
+    }
 
     // A tenant that owns nothing sees nothing.
     client.set_tenant(make_tenant());

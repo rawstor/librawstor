@@ -25,10 +25,12 @@ namespace rawstor {
 // mds:// volume specifically, every one of its own chunks (mds::Backend's
 // own chunk_slot_target(), docs/mds.md's "Chunk identity": obj_id =
 // volume_id). Empty offsets address the object as a whole; {0} addresses
-// its chunk at offset zero. An absent object has no entry.
+// its chunk at offset zero. An absent object has no entry. `tenant` is the
+// owner of the object, nil for none; a listing of one `id` leaves it nil.
 struct ChunkGroup {
     RawstdUUID id;
     std::vector<uint64_t> offsets;
+    RawstdUUID tenant;
 };
 
 class Backend : public std::enable_shared_from_this<Backend> {
