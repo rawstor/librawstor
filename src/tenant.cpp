@@ -1,6 +1,6 @@
 #include "tenant.hpp"
 
-#include <rawstor/protocol.h>
+#include <rawstor/location.h>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>

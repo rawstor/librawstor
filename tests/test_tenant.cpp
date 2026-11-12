@@ -8,6 +8,7 @@
 #include "tenant.hpp"
 #include "tmp_dir.hpp"
 
+#include <rawstor/location.h>
 #include <rawstor/protocol.h>
 
 #include <rawio/queue.hpp>

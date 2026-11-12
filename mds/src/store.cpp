@@ -1,4 +1,5 @@
 #include <mds/store.hpp>
+#include <rawstor/location.h>
 #include <rawstor/protocol.h>
 
 #include <rawstd/caspaxos.hpp>

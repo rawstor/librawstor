@@ -5,6 +5,7 @@
 #include <ost/client.hpp>
 #include <ost/server.hpp>
 
+#include <rawstor/location.h>
 #include <rawstor/protocol.h>
 #include <rawstor/rawio.h>
 #include <rawstor/target.h>

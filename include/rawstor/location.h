@@ -188,6 +188,16 @@ int rawstor_location_info(
  * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 /**
+ * @brief The tenant that owns an object created without naming one, as a UUID
+ *        string (docs/tenants.md).
+ *
+ * Every MDS registers it, and it can be neither created nor removed. A target
+ * names its owner as user information and names none for this tenant: an
+ * address without one stands for it.
+ */
+#define RAWSTOR_DEFAULT_TENANT "00000000-0000-0000-0000-000000000001"
+
+/**
  * @brief Asynchronously list the tenants registered in an MDS.
  *
  * Every URI of @p location must be an `mds://` one: only an MDS keeps a tenant

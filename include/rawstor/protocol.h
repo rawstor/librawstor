@@ -36,9 +36,9 @@ extern "C" {
  * part of the object's address: an object id is unique on its own. LIST takes
  * a tenant as a filter. The nil UUID is "no filter" there: a LIST without a
  * tenant lists every object. A client that names no tenant when it creates an
- * object creates it for the default tenant, which every MDS registers.
+ * object creates it for the default tenant (RAWSTOR_DEFAULT_TENANT,
+ * <rawstor/location.h>), which every MDS registers.
  */
-#define RAWSTOR_DEFAULT_TENANT "00000000-0000-0000-0000-000000000001"
 
 /*
  * One command space for every server role, grouped into reserved ranges
