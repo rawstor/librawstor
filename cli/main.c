@@ -568,39 +568,91 @@ static int command_remove(int argc, char** argv, enum TargetType type) {
     return rawstor_cli_remove(target_arg, type == TARGET_VERSION);
 }
 
-static void command_tenant_usage(void) {
+static void command_tenant_create_usage(void) {
     fprintf(
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
         "usage: rawstor [options] tenant create LOCATION [-u UUID]\n"
-        "       rawstor [options] tenant remove LOCATION TENANT\n"
-        "       rawstor [options] tenant list LOCATION\n"
         "\n"
-        "An object has one tenant, its owner. A location names a tenant as "
-        "optional\n"
-        "user information: mds://TENANT@host:port. `create` through it makes "
-        "objects\n"
-        "owned by that tenant, `list` shows the objects it owns; without one, "
-        "`list`\n"
-        "shows every object.\n"
+        "Registers a tenant in the MDS at LOCATION and prints its id.\n"
         "\n"
-        "  create                Register a tenant in the MDS at LOCATION "
-        "(an mds://\n"
-        "                        location); prints its id, new unless -u "
-        "is given\n"
-        "  remove                Remove an empty tenant from that MDS\n"
-        "  list                  List the tenants registered in the MDS at "
-        "LOCATION\n"
+        "  LOCATION              An mds:// location. If omitted, falls back "
+        "to the\n"
+        "                        RAWSTOR_LOCATION environment variable.\n"
+        "  -u, --uuid UUID       Register this UUID instead of a new one.\n"
         "\n"
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
-        "  -u, --uuid UUID       create: register this UUID instead of a new "
-        "one\n"
     );
-};
+}
 
-static int command_tenant(int argc, char** argv) {
+static void command_tenant_list_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] tenant list(ls) LOCATION\n"
+        "\n"
+        "Lists the tenants registered in the MDS at LOCATION, one id per "
+        "line.\n"
+        "\n"
+        "  LOCATION              An mds:// location. If omitted, falls back "
+        "to the\n"
+        "                        RAWSTOR_LOCATION environment variable.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
+    );
+}
+
+static void command_tenant_remove_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] tenant remove(rm) [LOCATION] TENANT\n"
+        "\n"
+        "Removes an empty tenant from the MDS at LOCATION: -EBUSY while it "
+        "owns an\n"
+        "object, and the default tenant is never removed.\n"
+        "\n"
+        "  LOCATION              An mds:// location. If omitted, falls back "
+        "to the\n"
+        "                        RAWSTOR_LOCATION environment variable.\n"
+        "  TENANT                The UUID of the tenant to remove.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
+    );
+}
+
+/* The positional arguments after the options: at most `max` of them, put into
+ * args[]. Returns 0, or EX_USAGE. */
+static int tenant_args(int argc, char** argv, char** args, int max) {
+    int n = 0;
+    while (optind < argc) {
+        if (n == max) {
+            fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+            return EX_USAGE;
+        }
+        args[n++] = argv[optind++];
+    }
+    return 0;
+}
+
+/* The location a tenant command works on: `arg`, or RAWSTOR_LOCATION. */
+static const char* tenant_location(const char* arg) {
+    if (arg == NULL) {
+        arg = getenv("RAWSTOR_LOCATION");
+    }
+    if (arg == NULL) {
+        fprintf(stderr, "location required\n");
+    }
+    return arg;
+}
+
+static int command_tenant_create(int argc, char** argv) {
     const char* optstring = "hu:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -608,7 +660,7 @@ static int command_tenant(int argc, char** argv) {
         {},
     };
 
-    char* id_arg = NULL;
+    const char* uuid_arg = NULL;
     optind = 0;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -618,11 +670,11 @@ static int command_tenant(int argc, char** argv) {
 
         switch (c) {
         case 'h':
-            command_tenant_usage();
+            command_tenant_create_usage();
             return EXIT_SUCCESS;
 
         case 'u':
-            id_arg = optarg;
+            uuid_arg = optarg;
             break;
 
         default:
@@ -630,56 +682,97 @@ static int command_tenant(int argc, char** argv) {
         }
     }
 
-    char* action_arg = NULL;
-    char* location_arg = NULL;
-    char* tenant_arg = NULL;
-    if (optind < argc) {
-        action_arg = argv[optind++];
+    char* args[1] = {NULL};
+    int res = tenant_args(argc, argv, args, 1);
+    if (res != 0) {
+        return res;
     }
-    if (optind < argc) {
-        location_arg = argv[optind++];
-    }
-    if (optind < argc) {
-        tenant_arg = argv[optind++];
-    }
-    if (optind < argc) {
-        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+    const char* location = tenant_location(args[0]);
+    if (location == NULL) {
         return EX_USAGE;
     }
 
-    if (action_arg == NULL || location_arg == NULL) {
-        fprintf(stderr, "action and location required\n");
+    return rawstor_cli_tenant_create(location, uuid_arg);
+}
+
+static int command_tenant_list(int argc, char** argv) {
+    const char* optstring = "h";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {},
+    };
+
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_tenant_list_usage();
+            return EXIT_SUCCESS;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    char* args[1] = {NULL};
+    int res = tenant_args(argc, argv, args, 1);
+    if (res != 0) {
+        return res;
+    }
+    const char* location = tenant_location(args[0]);
+    if (location == NULL) {
         return EX_USAGE;
     }
 
-    if (strcmp(action_arg, "create") == 0) {
-        if (tenant_arg != NULL) {
-            fprintf(stderr, "Unexpected argument: %s\n", tenant_arg);
+    return rawstor_cli_tenant_list(location);
+}
+
+static int command_tenant_remove(int argc, char** argv) {
+    const char* optstring = "h";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {},
+    };
+
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_tenant_remove_usage();
+            return EXIT_SUCCESS;
+
+        default:
             return EX_USAGE;
         }
-        return rawstor_cli_tenant_create(location_arg, id_arg);
-    }
-    if (id_arg != NULL) {
-        fprintf(stderr, "-u applies to create only\n");
-        return EX_USAGE;
-    }
-    if (strcmp(action_arg, "remove") == 0) {
-        if (tenant_arg == NULL) {
-            fprintf(stderr, "tenant required\n");
-            return EX_USAGE;
-        }
-        return rawstor_cli_tenant_remove(location_arg, tenant_arg);
-    }
-    if (strcmp(action_arg, "list") == 0) {
-        if (tenant_arg != NULL) {
-            fprintf(stderr, "Unexpected argument: %s\n", tenant_arg);
-            return EX_USAGE;
-        }
-        return rawstor_cli_tenant_list(location_arg);
     }
 
-    fprintf(stderr, "Unknown tenant action: %s\n", action_arg);
-    return EX_USAGE;
+    char* args[2] = {NULL, NULL};
+    int res = tenant_args(argc, argv, args, 2);
+    if (res != 0) {
+        return res;
+    }
+    /* A lone argument is the tenant: the location is then the environment's. */
+    char* tenant = args[1] != NULL ? args[1] : args[0];
+    const char* location = tenant_location(args[1] != NULL ? args[0] : NULL);
+    if (location == NULL) {
+        return EX_USAGE;
+    }
+    if (tenant == NULL) {
+        fprintf(stderr, "tenant required\n");
+        return EX_USAGE;
+    }
+
+    return rawstor_cli_tenant_remove(location, tenant);
 }
 
 static void command_resize_usage(void) {
@@ -1731,6 +1824,57 @@ static int command_testio(int argc, char** argv) {
     );
 }
 
+static void tenant_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] tenant <subcommand> [command_options]\n"
+        "\n"
+        "An object has one tenant, its owner. A location names a tenant as "
+        "optional\n"
+        "user information: mds://TENANT@host:port. `object create` through "
+        "it makes\n"
+        "objects owned by that tenant, `object list` shows the objects it "
+        "owns; without\n"
+        "one, `object list` shows every object, and `object create` makes "
+        "them for the\n"
+        "default tenant. The tenants themselves are registered in an "
+        "MDS.\n"
+        "\n"
+        "subcommand:\n"
+        "  create                Register a tenant in an MDS\n"
+        "  list(ls)              List the tenants registered in an MDS\n"
+        "  remove(rm)            Remove an empty tenant from an MDS\n"
+        "\n"
+        "Run `rawstor tenant <subcommand> --help` to show its usage.\n"
+    );
+}
+
+static int run_tenant(int argc, char** argv) {
+    if (argc < 2) {
+        tenant_usage();
+        return EX_USAGE;
+    }
+    const char* sub = argv[1];
+    if (strcmp(sub, "-h") == 0 || strcmp(sub, "--help") == 0 ||
+        strcmp(sub, "help") == 0) {
+        tenant_usage();
+        return EXIT_SUCCESS;
+    }
+    argc--;
+    argv++;
+    if (strcmp(sub, "create") == 0) {
+        return command_tenant_create(argc, argv);
+    } else if (strcmp(sub, "list") == 0 || strcmp(sub, "ls") == 0) {
+        return command_tenant_list(argc, argv);
+    } else if (strcmp(sub, "remove") == 0 || strcmp(sub, "rm") == 0) {
+        return command_tenant_remove(argc, argv);
+    }
+    fprintf(stderr, "Unexpected tenant subcommand: %s\n", sub);
+    return EX_USAGE;
+}
+
 static void location_usage(void) {
     fprintf(
         stdout,
@@ -1852,7 +1996,7 @@ static int run_command(
     } else if (strcmp(command, "info") == 0) {
         ret = command_info(argc, argv);
     } else if (strcmp(command, "tenant") == 0) {
-        ret = command_tenant(argc, argv);
+        ret = run_tenant(argc, argv);
     } else if (strcmp(command, "testio") == 0) {
         ret = command_testio(argc, argv);
     } else if (strcmp(command, "version") == 0) {
