@@ -75,7 +75,9 @@ bool pump(rawio::Queue& queue, Done done, unsigned int msec = 5000) {
     return done();
 }
 
-rawstd::Task<size_t> send_all(Transport& t, const std::string& data) {
+// `data` is taken by value: it lives in the coroutine's frame until the send
+// has completed, as a send's buffer must.
+rawstd::Task<size_t> send_all(Transport& t, std::string data) {
     co_return co_await t.send(data.data(), data.size(), RAWSTD_MSG_NOSIGNAL);
 }
 
