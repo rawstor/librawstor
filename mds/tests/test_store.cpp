@@ -1281,9 +1281,13 @@ TEST_F(ObjectStoreTest, a_replayed_transfer_does_not_undo_a_later_one) {
     );
     RawstdUUID key = make_id();
 
-    store.transfer(key, id, second);
+    RawstdUUID applied = store.transfer(key, id, second);
+    EXPECT_EQ(rawstd_uuid_cmp(&applied, &second), 0);
     store.transfer(make_id(), id, first);
-    store.transfer(key, id, second);
+
+    // The repeat applies nothing and reports who owns the object now.
+    RawstdUUID now = store.transfer(key, id, second);
+    EXPECT_EQ(rawstd_uuid_cmp(&now, &first), 0);
 
     RawstdUUID token{};
     EXPECT_EQ(store.list_chunks(first, token, 0).size(), 1u);

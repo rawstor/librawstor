@@ -772,8 +772,11 @@ rawstd::Task<void> Backend::resize(
     }
 }
 
-rawstd::Task<void> Backend::set_owner(
-    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t,
+// OBJ_TRANSFER: the owner the object has when the MDS answers. Sent again with
+// the same idempotency_key it applies nothing and reads the owner as it is
+// then.
+rawstd::Task<RawstdUUID> Backend::_obj_transfer(
+    const RawstdUUID& idempotency_key, const RawstdUUID& id,
     const RawstdUUID& owner
 ) {
     RawstorFrameObjOp request{
@@ -790,8 +793,24 @@ rawstd::Task<void> Backend::set_owner(
     uuid_to_bytes(id, request.payload.id);
     uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
     uuid_to_bytes(owner, request.payload.version_id);
-    co_await exchange(&request, sizeof(request), RAWSTOR_CMD_OBJ_TRANSFER, 0);
 
+    std::vector<unsigned char> data = co_await exchange(
+        &request, sizeof(request), RAWSTOR_CMD_OBJ_TRANSFER,
+        sizeof(RawstorFrameObjTransferredPayload)
+    );
+    if (data.size() != sizeof(RawstorFrameObjTransferredPayload)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+    RawstorFrameObjTransferredPayload out;
+    memcpy(&out, data.data(), sizeof(out));
+    RawstdUUID ret;
+    memcpy(ret.bytes, out.tenant_id, sizeof(ret.bytes));
+    co_return ret;
+}
+
+// Records `owner` with every member of the object, one at a time.
+rawstd::Task<void>
+Backend::_set_members_owner(const RawstdUUID& id, const RawstdUUID& owner) {
     WireMap map = co_await _resolve(id, RawstdUUID{});
     bool unaddressed = false;
     for (uint64_t i = 0; i < map.chunks.size(); ++i) {
@@ -820,6 +839,35 @@ rawstd::Task<void> Backend::set_owner(
         rawstd_error("transfer: a member of the object has no address\n");
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
+}
+
+// Two transfers of one object can reach the MDS in one order and their members
+// in another, so the members are not taken for done until the MDS, asked again
+// after they were written, still has the owner they were written with: if it
+// has another by then, that is the owner they are written with next. Whoever
+// writes a member last has read the MDS after it, so they agree in the end.
+rawstd::Task<void> Backend::set_owner(
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t,
+    const RawstdUUID& owner
+) {
+    RawstdUUID written = co_await _obj_transfer(idempotency_key, id, owner);
+
+    // A transfer storm can go on, but not forever.
+    const unsigned int max_rounds = 16;
+    for (unsigned int round = 0; round < max_rounds; ++round) {
+        co_await _set_members_owner(id, written);
+
+        RawstdUUID current = co_await _obj_transfer(idempotency_key, id, owner);
+        if (rawstd_uuid_is_nil(&current)) {
+            // Removed meanwhile.
+            RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+        }
+        if (rawstd_uuid_cmp(&current, &written) == 0) {
+            co_return;
+        }
+        written = current;
+    }
+    RAWSTD_THROW_SYSTEM_ERROR(EAGAIN);
 }
 
 rawstd::Task<void> Backend::create_version(

@@ -145,10 +145,13 @@ public:
      * Makes `tenant` the owner of the object (docs/tenants.md): ENOENT for an
      * unknown object or an unregistered tenant, EINVAL for the nil tenant.
      * Idempotent by `idempotency_key` like every mutation: a repeat of it
-     * is answered without applying it again. set_witness_owner() does the
-     * same for a witness record, which a repeat leaves as it is anyway.
+     * is answered without applying it again. Either way it returns the owner
+     * the object has now, which a repeat reports as it is at that time (nil if
+     * the object is gone), so that a caller can tell whether another transfer
+     * has come in since. set_witness_owner() does the same for a witness
+     * record, which a repeat leaves as it is anyway.
      */
-    void transfer(
+    RawstdUUID transfer(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         const RawstdUUID& tenant
     );

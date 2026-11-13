@@ -702,7 +702,18 @@ void ObjectStore::remove_witness(const RawstdUUID& id, uint64_t offset) {
     }
 }
 
-void ObjectStore::transfer(
+/* The owner of the object, nil if there is none. */
+static RawstdUUID object_owner(sqlite3* db, const RawstdUUID& id) {
+    Stmt select(db, "SELECT tenant_id FROM objects WHERE id = ?;");
+    select.bind_blob(1, id.bytes, sizeof(id.bytes));
+    RawstdUUID ret{};
+    if (select.step()) {
+        select.column_uuid(0, &ret);
+    }
+    return ret;
+}
+
+RawstdUUID ObjectStore::transfer(
     const RawstdUUID& idempotency_key, const RawstdUUID& id,
     const RawstdUUID& tenant
 ) {
@@ -711,7 +722,8 @@ void ObjectStore::transfer(
     }
     std::lock_guard<std::mutex> guard(_mutex);
     if (replay_mutation(_db, idempotency_key, MutationType::transfer, id)) {
-        return;
+        // Not applied again: the owner is whoever has it now.
+        return object_owner(_db, id);
     }
     Transaction tx(_db);
     _require_tenant(tenant);
@@ -724,6 +736,7 @@ void ObjectStore::transfer(
     }
     record_mutation(_db, idempotency_key, MutationType::transfer, id, {});
     tx.commit();
+    return tenant;
 }
 
 void ObjectStore::set_witness_owner(
@@ -1105,17 +1118,6 @@ ObjectMap ObjectStore::_open_live(const RawstdUUID& id) {
         }
     }
 
-    return ret;
-}
-
-/* The owner of the object, nil if there is none. */
-static RawstdUUID object_owner(sqlite3* db, const RawstdUUID& id) {
-    Stmt select(db, "SELECT tenant_id FROM objects WHERE id = ?;");
-    select.bind_blob(1, id.bytes, sizeof(id.bytes));
-    RawstdUUID ret{};
-    if (select.step()) {
-        select.column_uuid(0, &ret);
-    }
     return ret;
 }
 

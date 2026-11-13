@@ -84,6 +84,14 @@ private:
         uint64_t new_size
     );
 
+    rawstd::Task<RawstdUUID> _obj_transfer(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        const RawstdUUID& owner
+    );
+
+    rawstd::Task<void>
+    _set_members_owner(const RawstdUUID& id, const RawstdUUID& owner);
+
     /* Returns the map the object had, for the fan-out destroy. */
     rawstd::Task<WireMap>
     _obj_remove(const RawstdUUID& idempotency_key, const RawstdUUID& id);
@@ -135,8 +143,9 @@ public:
     ) override;
 
     // Makes `owner` the owner of the whole object: the MDS first, then every
-    // member's own record, one at a time. Repeating it after a failure
-    // finishes the job.
+    // member's own record, one at a time, and again until the MDS still has the
+    // owner they were written with, which another transfer meanwhile can
+    // change. Repeating it after a failure finishes the job.
     rawstd::Task<void> set_owner(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstdUUID& owner

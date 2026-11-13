@@ -189,7 +189,11 @@ tenant owns an object. The default tenant is refused (`-EPERM`) before any
 object is touched. A failure part-way leaves the objects not yet removed and
 the tenant registered, and running the removal again finishes it. An object
 removed by someone else meanwhile is skipped. An object created for the tenant
-meanwhile can make the last step answer `-EBUSY`.
+meanwhile can make the last step answer `-EBUSY`. The removal acts on the
+objects by their ids: an object transferred out of the tenant between the
+listing and its removal is removed with the rest, and nothing stops it, as nothing
+yet checks who may remove what (rights are the next stage, [Security
+design](security.md), and will be checked per object).
 
 `--reconstruct` rebuilds the map from what the OSTs hold, and the owner is part
 of a chunk's metadata, so owners come back with it; a tenant found as an owner is
@@ -218,6 +222,14 @@ an `idempotency_key` like every mutating `OBJ_*` request ([MDS
 design](mds.md), "Idempotent mutations"): a transfer resent after a lost reply
 is answered with its recorded result and is not applied again, so it does not
 undo a transfer made since.
+
+Two transfers of one object can reach the MDS in one order and the members in
+another. The transfer therefore does not take the members for done when it has
+written them: it asks the MDS again (the same request, which applies nothing and
+answers with the owner as it is then), and if the owner is no longer the one it
+wrote, it writes the members with that one and asks again. Whoever writes a
+member last has read the MDS after it, so the members end with the owner the
+MDS has; a storm that does not settle in 16 rounds fails with `-EAGAIN`.
 
 A transfer that fails part-way, say with a copy unreachable, leaves copies with
 different owners until it is run again, which finishes it. A member the MDS has

@@ -201,9 +201,12 @@ extern "C" {
  * OBJ_TRANSFER: makes the tenant in `version_id` the owner of the object `id`
  * (-ENOENT for an unknown object or an unregistered tenant, -EINVAL for the
  * nil tenant). Rides RawstorFrameObjOpPayload, so it carries an
- * idempotency_key like every mutating OBJ_* request, and has no response
- * payload. The client then records the owner with every member through
- * SET_OWNER.
+ * idempotency_key like every mutating OBJ_* request. Its response is a
+ * RawstorFrameObjTransferredPayload: the owner the object has when the MDS
+ * answers, which a repeat of the request (same idempotency_key) reads without
+ * applying anything again, so that the client can see whether another transfer
+ * has come in since. The client records the owner with every member through
+ * SET_OWNER, and again with the owner it then reads, until they agree.
  */
 #define RAWSTOR_CMD_OBJ_TRANSFER 0x49
 
@@ -660,6 +663,11 @@ struct RawstorFrameObjResizedPayload {
     uint8_t tenant_id[16];
 } RAWSTOR_PACKED;
 
+/* OBJ_TRANSFER response payload: the owner of the object now. */
+struct RawstorFrameObjTransferredPayload {
+    uint8_t tenant_id[16];
+} RAWSTOR_PACKED;
+
 /*
  * RESOLVE (and OBJ_REMOVE: the map the object had, for the client's
  * fan-out destroy of its chunks) response payload: the descriptor
@@ -893,6 +901,7 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjPolicy, 19);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjCreatePayload, 76);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjOpPayload, 56);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjResizedPayload, 28);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjTransferredPayload, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjDescriptorPayload, 56);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjChunkSlot, 19);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameObjCommitVersionPayload, 52);

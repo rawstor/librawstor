@@ -461,15 +461,21 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         RawstorFrameObjOpPayload payload{};
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
+        RawstorFrameObjTransferredPayload out{};
         try {
-            store.transfer(
+            RawstdUUID owner = store.transfer(
                 uuid_of(payload.idempotency_key), uuid_of(payload.id),
                 uuid_of(payload.version_id)
             );
+            memcpy(out.tenant_id, owner.bytes, sizeof(out.tenant_id));
+            res = sizeof(out);
         } catch (const std::system_error& e) {
             res = -e.code().value();
         }
-        co_await client->_send_response(head.cmd, head.cid, res);
+        co_await client->_send_response(
+            head.cmd, head.cid, res, res > 0 ? &out : nullptr,
+            res > 0 ? sizeof(out) : 0
+        );
         break;
     }
     case RAWSTOR_CMD_SYNC_PREPARE:
