@@ -8,12 +8,30 @@
 
 namespace {
 
-std::string join(const rawstd::URI& parent, const std::string& child) {
-    std::string path = parent.str();
-    if (path.empty() || path[path.length() - 1] == '/') {
-        return path + child;
+std::string join(const std::string& parent, const std::string& child) {
+    if (parent.empty() || parent[parent.length() - 1] == '/') {
+        return parent + child;
     }
-    return path + '/' + child;
+    return parent + '/' + child;
+}
+
+// `uri` with the password of its user information left out, which `username`
+// and `password` are the parse of.
+std::string without_password(
+    const std::string& uri, const std::string& username,
+    const std::string& password
+) {
+    if (password.empty()) {
+        return uri;
+    }
+    size_t start = uri.find("://");
+    start = start == uri.npos ? 0 : start + 3;
+    const std::string userinfo = username + ":" + password + "@";
+    if (uri.compare(start, userinfo.size(), userinfo) != 0) {
+        return uri;
+    }
+    return uri.substr(0, start) + (username.empty() ? "" : username + "@") +
+           uri.substr(start + userinfo.size());
 }
 
 void parse_uri(
@@ -242,11 +260,12 @@ std::string URI::uris(const std::vector<rawstd::URI>& uriv) {
     return oss.str();
 }
 
-URI::URI(const std::string& uri) : _uri(uri) {
+URI::URI(const std::string& uri) : _source(uri) {
     std::string path;
     parse_uri(
-        _uri, &_scheme, &_username, &_password, &_hostname, &_port, &path
+        _source, &_scheme, &_username, &_password, &_hostname, &_port, &path
     );
+    _uri = without_password(_source, _username, _password);
 
     _userinfo = get_userinfo(_username, _password);
     _host = get_host(_hostname, _port);
@@ -255,11 +274,12 @@ URI::URI(const std::string& uri) : _uri(uri) {
 }
 
 URI::URI(const URI& parent, const std::string& child) :
-    _uri(::join(parent, child)) {
+    _source(::join(parent._source, child)) {
     std::string path;
     parse_uri(
-        _uri, &_scheme, &_username, &_password, &_hostname, &_port, &path
+        _source, &_scheme, &_username, &_password, &_hostname, &_port, &path
     );
+    _uri = without_password(_source, _username, _password);
 
     _userinfo = get_userinfo(_username, _password);
     _host = get_host(_hostname, _port);
@@ -268,6 +288,7 @@ URI::URI(const URI& parent, const std::string& child) :
 }
 
 URI::URI(const URI& other) :
+    _source(other._source),
     _uri(other._uri),
     _scheme(other._scheme),
     _userinfo(other._userinfo),
@@ -281,6 +302,7 @@ URI::URI(const URI& other) :
 }
 
 URI::URI(URI&& other) noexcept :
+    _source(std::move(other._source)),
     _uri(std::move(other._uri)),
     _scheme(std::move(other._scheme)),
     _userinfo(std::move(other._userinfo)),
@@ -297,6 +319,7 @@ URI& URI::operator=(const URI& other) {
     if (this != &other) {
         URI copy(other);
 
+        _source = std::move(copy._source);
         _uri = std::move(copy._uri);
         _scheme = std::move(copy._scheme);
         _userinfo = std::move(copy._userinfo);
@@ -313,6 +336,7 @@ URI& URI::operator=(const URI& other) {
 
 URI& URI::operator=(URI&& other) noexcept {
     if (this != &other) {
+        _source = std::move(other._source);
         _uri = std::move(other._uri);
         _scheme = std::move(other._scheme);
         _userinfo = std::move(other._userinfo);

@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A URI prints without its password: `user:password@host` is shown as `user@host` wherever a URI or target is printed or listed.
 - Incompatible: every connection must begin with `HANDSHAKE`.
 - Incompatible: the CLI groups its commands. `rawstor object create|list|show|remove|resize|chunks|slots|resolve` and `rawstor version create|list|show|remove` replace the top-level commands, `info` moves to `rawstor location info`, `testio` stays; `object remove` and `object show` take only the address of an object, `version remove` and `version show` only that of a version.
 - Incompatible: `ALLOCATE`, `OBJ_CREATE`, `LIST` and `META` carry a tenant, chunk metadata records the owner, and an MDS database from before tenants is refused at start; there is no migration.
