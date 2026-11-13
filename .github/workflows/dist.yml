@@ -395,7 +395,7 @@ jobs:
     - name: install-python3-rawstor
       run: sudo apt install -y ./python3-rawstor-${{ matrix.os }}.deb/python*-rawstor_*.deb
     - name: test-python3-rawstor
-      run: python -c "import rawstor; print(list(rawstor.Location('ost://127.0.0.1:7777/'))); print('OK')"
+      run: python -c "import rawstor; print(list(rawstor.Location('ost://127.0.0.1:7777/').objects())); print('OK')"
 
   rpm-librawstor:
     needs: sources
@@ -603,7 +603,7 @@ jobs:
     - name: test-python3-rawstor
       run: |
         mkdir -p /tmp/rawstor-install-test
-        python3 -c "import rawstor; print(list(rawstor.Location('file:///tmp/rawstor-install-test'))); print('OK')"
+        python3 -c "import rawstor; print(list(rawstor.Location('file:///tmp/rawstor-install-test').objects())); print('OK')"
 
   wheel:
     needs:
@@ -739,7 +739,7 @@ jobs:
     - name: test-python3-rawstor
       run: |
         mkdir -p /tmp/rawstor-wheel-install-test
-        python -c "import rawstor; print(list(rawstor.Location('file:///tmp/rawstor-wheel-install-test'))); print('OK')"
+        python -c "import rawstor; print(list(rawstor.Location('file:///tmp/rawstor-wheel-install-test').objects())); print('OK')"
 
   release:
     needs:
