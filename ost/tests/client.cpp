@@ -1,5 +1,6 @@
 #include "client.hpp"
 
+#include <rawstor/location.h>
 #include <rawstor/target.h>
 
 #include <rawstd/gpp.hpp>
@@ -68,8 +69,10 @@ Client::~Client() {
     }
 }
 
-uint16_t
-Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
+uint16_t Client::send_allocate_for(
+    const RawstdUUID& owner, const RawstdUUID& id, uint64_t size,
+    unsigned int width
+) {
     uint16_t cid = _next_cid++;
     RawstorFrameAllocate frame = {
         .head =
@@ -91,11 +94,25 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
         },
     };
     std::memcpy(
-        frame.payload.tenant_id, _tenant.bytes, sizeof(frame.payload.tenant_id)
+        frame.payload.tenant_id, owner.bytes, sizeof(frame.payload.tenant_id)
     );
     std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));
     send_all(_fd, &frame, sizeof(frame));
     return cid;
+}
+
+RawstdUUID Client::default_owner() {
+    RawstdUUID id;
+    rawstd_uuid_from_string(&id, RAWSTOR_DEFAULT_TENANT);
+    return id;
+}
+
+uint16_t
+Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
+    return send_allocate_for(
+        rawstd_uuid_is_nil(&_tenant) ? default_owner() : _tenant, id, size,
+        width
+    );
 }
 
 uint16_t Client::send_set_object(

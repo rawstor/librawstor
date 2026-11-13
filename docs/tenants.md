@@ -30,9 +30,8 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
   only by a [transfer](#transfer). It is 16 bytes, a UUID. An object created without naming a tenant
   belongs to the **default tenant** (`00000000-0000-0000-0000-000000000001`),
   which every MDS registers and nobody can create or remove. The nil UUID
-  owns nothing: in a request it means **no filter**, and a request that
-  creates an object for it, which the library never sends, leaves the object
-  without an owner.
+  owns nothing: in a `LIST` it means **no filter**, and creating an object for
+  it, or transferring one to it, is refused with `-EINVAL`.
 - An object id is **globally unique**: the tenant is not part of an address,
   a path on disk or a database key. Creating an id that exists is `-EEXIST`
   whoever asks.

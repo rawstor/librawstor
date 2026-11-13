@@ -4,6 +4,7 @@
 #include "register.hpp"
 #include "slot.hpp"
 #include "target.hpp"
+#include "tenant.hpp"
 #include "tmp_dir.hpp"
 
 #include <rawio/queue.hpp>
@@ -506,7 +507,9 @@ TEST(TargetCreateTest, width_rules) {
         auto slot =
             run(*queue, rawstor::Slot::create(*queue, rawstd::URI(location)));
         run(*queue,
-            slot->create(id, 0, spec, RAWSTOR_MEMBER_DATA, RawstdUUID{}));
+            slot->create(
+                id, 0, spec, RAWSTOR_MEMBER_DATA, rawstor::default_tenant()
+            ));
         run(*queue, slot->close());
     }
     std::vector<RawstorObjectMeta> metas =

@@ -1522,12 +1522,13 @@ TEST(OstClientTest, an_object_records_its_owner) {
     client.set_tenant(acme);
     client.send_allocate(owned, 4096, 1);
     expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, 0);
+    // Without a tenant named, the default tenant owns it.
     client.set_tenant(RawstdUUID{});
     client.send_allocate(unowned, 4096, 1);
     expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, 0);
 
     for (const auto& [id, owner] :
-         {std::pair{owned, acme}, std::pair{unowned, RawstdUUID{}}}) {
+         {std::pair{owned, acme}, std::pair{unowned, client.default_owner()}}) {
         client.send_meta(id, 0);
         ASSERT_TRUE(pump_until(queue, [&] {
             return client.bytes_available() >=
@@ -1542,6 +1543,23 @@ TEST(OstClientTest, an_object_records_its_owner) {
             std::memcmp(meta.tenant_id, owner.bytes, sizeof(meta.tenant_id)), 0
         );
     }
+}
+
+// An object has an owner: ALLOCATE for the nil tenant is refused.
+TEST(OstClientTest, an_object_needs_an_owner) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+    client.send_allocate_for(RawstdUUID{}, id, 4096, 1);
+    expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, -EINVAL);
 }
 
 // LIST names the objects a tenant owns; without a tenant it names them all.
@@ -1594,7 +1612,7 @@ TEST(OstClientTest, list_shows_the_objects_a_tenant_owns) {
         const RawstdUUID& owner = rawstd_uuid_cmp(&id, &in_acme) == 0 ? acme
                                   : rawstd_uuid_cmp(&id, &in_other) == 0
                                       ? other
-                                      : RawstdUUID{};
+                                      : client.default_owner();
         EXPECT_EQ(
             std::memcmp(row.tenant_id, owner.bytes, sizeof(row.tenant_id)), 0
         );

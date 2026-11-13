@@ -35,8 +35,18 @@ public:
     Client& operator=(Client&&) = delete;
 
     // The tenant of the following ALLOCATE (its owner) and LIST (its filter);
-    // none until set.
+    // none until set. An ALLOCATE while none is set creates for the default
+    // tenant, which every object needs an owner of.
     void set_tenant(const RawstdUUID& tenant);
+
+    // The tenant an object belongs to when none is named.
+    static RawstdUUID default_owner();
+
+    // ALLOCATE for exactly `owner`, nil included.
+    uint16_t send_allocate_for(
+        const RawstdUUID& owner, const RawstdUUID& id, uint64_t size,
+        unsigned int width
+    );
 
     // Each send_*() returns the cid it used, for matching against the
     // eventual recv_response().

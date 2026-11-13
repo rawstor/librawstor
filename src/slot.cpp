@@ -1313,6 +1313,11 @@ rawstd::Task<void> Slot::create(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
     RawstorMemberRole member_role, const RawstdUUID& owner
 ) {
+    // Every object has an owner (docs/tenants.md).
+    if (rawstd_uuid_is_nil(&owner)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     OperationGuard operation(*this);
 
     const char* func_name = __FUNCTION__;

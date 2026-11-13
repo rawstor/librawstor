@@ -396,12 +396,12 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                     rawstor_frame_allocate_decode(&payload, &spec, &role)) {
                 RAWSTD_THROW_SYSTEM_ERROR(error);
             }
-            if (role != RAWSTOR_MEMBER_WITNESS) {
+            const RawstdUUID owner = uuid_of(payload.tenant_id);
+            if (role != RAWSTOR_MEMBER_WITNESS || rawstd_uuid_is_nil(&owner)) {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
             store.create_witness(
-                uuid_of(payload.tenant_id), uuid_of(payload.object_id),
-                payload.chunk_offset, spec
+                owner, uuid_of(payload.object_id), payload.chunk_offset, spec
             );
         } catch (const std::system_error& e) {
             res = -e.code().value();
@@ -511,6 +511,11 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
             if (payload.chunk_shift == 0 || payload.chunk_shift >= 64) {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
+            // Every object has an owner (docs/tenants.md).
+            const RawstdUUID owner = uuid_of(payload.tenant_id);
+            if (rawstd_uuid_is_nil(&owner)) {
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
             PlacementPolicy policy{
                 .width = payload.policy.width,
                 .failure_domain = level_of(payload.policy.failure_domain),
@@ -518,9 +523,8 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
                 .seed = payload.policy.placement_seed,
             };
             ObjectDescriptor descriptor = store.create(
-                uuid_of(payload.tenant_id), uuid_of(payload.idempotency_key),
-                uuid_of(payload.id), payload.logical_size,
-                1ull << payload.chunk_shift, policy
+                owner, uuid_of(payload.idempotency_key), uuid_of(payload.id),
+                payload.logical_size, 1ull << payload.chunk_shift, policy
             );
             out.map_epoch = descriptor.map_epoch;
         } catch (const std::system_error& e) {

@@ -5,6 +5,7 @@
 #include "opts.h"
 #include "slot.hpp"
 #include "target.hpp"
+#include "tenant.hpp"
 #include "tmp_dir.hpp"
 
 #include <rawio/queue.hpp>
@@ -657,7 +658,9 @@ TEST(BlkBackendTest, witness_member_holds_no_data_and_refuses_real_io) {
     std::unique_ptr<rawstor::Slot> slot =
         run(*queue, rawstor::Slot::create(*queue, location));
     run(*queue,
-        slot->create(id, 0, spec, RAWSTOR_MEMBER_WITNESS, RawstdUUID{}));
+        slot->create(
+            id, 0, spec, RAWSTOR_MEMBER_WITNESS, rawstor::default_tenant()
+        ));
 
     // Holds no data: its own "data" file exists (still enumerable --
     // e.g. rawstor-mds's reconstruct scan, which tells it apart from a

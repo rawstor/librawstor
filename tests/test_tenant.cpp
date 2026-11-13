@@ -4,6 +4,7 @@
 #include "location.hpp"
 #include "opts.h"
 #include "rawio_sync.hpp"
+#include "slot.hpp"
 #include "target.hpp"
 #include "tenant.hpp"
 #include "tmp_dir.hpp"
@@ -456,6 +457,25 @@ TEST(TenantTest, a_transfer_makes_another_tenant_the_owner_of_every_copy) {
     for (const auto& meta : run(*queue, target.meta(*queue))) {
         EXPECT_EQ(meta.spec.size, spec.size);
         EXPECT_EQ(meta.member_role, RAWSTOR_MEMBER_DATA);
+    }
+}
+
+// Every object has an owner: a copy is not created for the nil tenant.
+TEST(TenantTest, an_object_needs_an_owner) {
+    rawstor::tests::TmpDir dir;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    std::unique_ptr<rawstor::Slot> slot =
+        run(*queue, rawstor::Slot::create(*queue, rawstd::URI(dir.uri())));
+
+    for (RawstorMemberRole role :
+         {RAWSTOR_MEMBER_DATA, RAWSTOR_MEMBER_WITNESS}) {
+        try {
+            run(*queue,
+                slot->create(new_id(), 0, small_spec(), role, RawstdUUID{}));
+            FAIL() << "created a copy without an owner";
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), EINVAL);
+        }
     }
 }
 
