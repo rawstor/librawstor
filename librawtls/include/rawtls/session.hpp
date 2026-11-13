@@ -36,8 +36,9 @@ namespace rawtls {
  * Both sides verify the other. The peer's certificate must chain to a CA of
  * the Context, have exactly one URI SAN holding a SPIFFE ID of the Context's
  * trust domain, carry the key usage of its end of the connection and not be
- * a CA. A client also names the identity it expects of the server, and
- * a server's ID must be that of an OST or an MDS.
+ * a CA. A client also says whom it expects: the exact ID of the server when it
+ * knows it, otherwise the role (an OST or an MDS) the server must have, and a
+ * server's ID must be that of an OST or an MDS either way.
  *
  * In TLS 1.3 the client's handshake completes before the server has checked
  * the client's certificate: a client that is refused learns it from the next
@@ -58,6 +59,7 @@ private:
     Mode _mode;
     std::string _trust_domain;
     std::string _expected_peer;
+    Role _expected_role;
     std::optional<SpiffeId> _peer;
     bool _handshake_done;
     bool _verify_failed;
@@ -74,11 +76,16 @@ private:
 
 public:
     /*
-     * `expected_peer` is the exact SPIFFE ID a client requires of the server,
-     * and must be given for Mode::client; a server accepts any peer the rules
-     * above allow and ignores it.
+     * A client gives `expected_peer`, the exact SPIFFE ID it requires of the
+     * server, or leaves it empty and gives `expected_role`, ost or mds, to
+     * accept any server of that role in the trust domain; one of the two is
+     * required (std::system_error(EINVAL) otherwise). A server accepts any
+     * peer the rules above allow and ignores both.
      */
-    Session(Context& context, Mode mode, const std::string& expected_peer = "");
+    Session(
+        Context& context, Mode mode, const std::string& expected_peer = "",
+        std::optional<Role> expected_role = std::nullopt
+    );
     Session(const Session&) = delete;
     Session(Session&&) = delete;
     Session& operator=(const Session&) = delete;

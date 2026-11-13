@@ -37,11 +37,12 @@ public:
 
     // A TLS connection: runs the handshake on `fd` as the client or the
     // server and returns the Transport once the peer is verified. A client
-    // names the server it expects, as Session does. Throws what Session
+    // says whom it expects, as Session does. Throws what Session
     // throws, or the std::system_error of the socket.
     static rawstd::Task<std::unique_ptr<Transport>>
     tls(rawio::Queue& queue, int fd, Context& context, Session::Mode mode,
-        const std::string& expected_peer = "");
+        const std::string& expected_peer = "",
+        std::optional<Role> expected_role = std::nullopt);
 
     // Sends all of `buf` (or all of `msg`) and completes with the number of
     // bytes of it. Sends on one Transport reach the peer whole and in the

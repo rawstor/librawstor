@@ -3,6 +3,7 @@
 
 #include "opts.h"
 #include "telemetry.hpp"
+#include "tls.hpp"
 
 #include <rawio/awaitable.hpp>
 #include <rawio/queue.hpp>
@@ -572,10 +573,34 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     _pump() {
 }
 
+namespace {
+
+rawstd::Task<size_t> no_connection() {
+    RAWSTD_THROW_SYSTEM_ERROR(EBADF);
+    co_return 0;
+}
+
+} // namespace
+
+rawtls::Op<size_t>
+Backend::_send(const void* buf, size_t size, unsigned int flags) {
+    if (_transport == nullptr) {
+        return no_connection();
+    }
+    return _transport->send(buf, size, flags);
+}
+
+rawtls::Op<size_t> Backend::_sendmsg(const msghdr* msg, unsigned int flags) {
+    if (_transport == nullptr) {
+        return no_connection();
+    }
+    return _transport->sendmsg(msg, flags);
+}
+
 Backend::~Backend() {
-    if (_read_event != nullptr) {
+    if (_read_event != nullptr && _transport != nullptr) {
         try {
-            _queue.cancel(_read_event);
+            _transport->cancel_receive(_read_event);
         } catch (const std::exception& e) {
             rawstd_warning("Failed to cancel event: %s\n", e.what());
         }
@@ -689,6 +714,11 @@ rawstd::Task<void> Backend::_wire_connect() {
 
     set_fd(fd);
 
+    // TLS, when configured, is settled before the first byte of the protocol.
+    _transport = co_await tls::connect(
+        _queue, fd, location().scheme(), location().host()
+    );
+
     _start_receive_ring();
 
     co_await _wire_handshake();
@@ -737,8 +767,8 @@ void Backend::_start_receive_ring() {
         RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");
     // Short metadata responses need 32KiB. Data I/O and variable-sized
     // listings use 1024 buffers of 128KiB for burst headroom.
-    rawio::RecvStream stream = _queue.recv_multishot(
-        fd(), _large_receive_ring ? 1u << 17 : 4096,
+    rawio::RecvStream stream = _transport->recv_multishot(
+        _large_receive_ring ? 1u << 17 : 4096,
         _large_receive_ring ? 64 * 16 : 8, sizeof(RawstorFrameResponse), 0
     );
     _read_event = stream.event();
@@ -770,7 +800,7 @@ rawstd::Task<void> Backend::_ensure_large_receive_ring() {
     std::exception_ptr error;
     try {
         if (_read_event != nullptr) {
-            co_await _queue.cancel(_read_event);
+            co_await _transport->cancel_receive(_read_event);
             _read_event = nullptr;
         }
         co_await _pump.settle();
@@ -807,7 +837,7 @@ rawstd::Task<void> Backend::_wire_close() {
     _fail_in_flight(ECONNABORTED);
 
     if (_read_event != nullptr) {
-        co_await _queue.cancel(_read_event);
+        co_await _transport->cancel_receive(_read_event);
         _read_event = nullptr;
     }
     // The cancel above only resolves once the cancel request itself is
@@ -839,6 +869,7 @@ rawstd::Task<void> Backend::_wire_close() {
         co_await _queue.cancel(f);
         co_await _queue.close(f);
     }
+    _transport.reset();
 }
 
 template <typename T>
@@ -859,8 +890,8 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()
@@ -891,8 +922,8 @@ rawstd::Task<std::vector<unsigned char>> Backend::exchange(
     );
     _add_op(op);
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         op->request_cb(validate_result(op->request_size(), result));
     } catch (const std::system_error& e) {
@@ -946,8 +977,8 @@ rawstd::Task<void> Backend::_wire_list_chunks(
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()
@@ -1043,8 +1074,8 @@ rawstd::Task<void> Backend::_wire_list_tenants(
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()
@@ -1091,8 +1122,8 @@ rawstd::Task<void> Backend::_wire_create(
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()
@@ -1259,8 +1290,8 @@ rawstd::Task<bool> Backend::_sync_request(
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()
