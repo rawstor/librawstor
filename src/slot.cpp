@@ -1209,7 +1209,9 @@ rawstd::Task<void> Slot::remove_tenant(const RawstdUUID& tenant) {
     }
 }
 
-rawstd::Task<std::vector<RawstdUUID>> Slot::list_tenants() {
+rawstd::Task<void> Slot::list_tenants(
+    unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+) {
     OperationGuard operation(*this);
 
     const char* func_name = __FUNCTION__;
@@ -1218,11 +1220,11 @@ rawstd::Task<std::vector<RawstdUUID>> Slot::list_tenants() {
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        auto ret = co_await _with_retry(
-            func_name, trace_event, &Backend::list_tenants
+        co_await _with_retry(
+            func_name, trace_event, &Backend::list_tenants, limit, tenants,
+            token
         );
         _finish(t_call);
-        co_return ret;
     } catch (...) {
         _finish(t_call);
         throw;

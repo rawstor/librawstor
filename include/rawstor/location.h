@@ -198,17 +198,25 @@ int rawstor_location_info(
 #define RAWSTOR_DEFAULT_TENANT "00000000-0000-0000-0000-000000000001"
 
 /**
- * @brief Asynchronously list the tenants registered in an MDS.
+ * @brief Asynchronously list a page of the tenants registered in an MDS.
  *
  * Every URI of @p location must be an `mds://` one: only an MDS keeps a tenant
  * registry, and any other store answers -ENOTSUP. The tenants come as UUID
- * strings in no particular order, in a list the caller releases with
+ * strings in ascending order, in a list the caller releases with
  * @ref rawstor_string_list_delete. A tenant is named in a location by
  * optional user information (`mds://<tenant>@host:port`).
  *
+ * Paginated like @ref rawstor_location_list: start with an empty token, and
+ * pass the token returned by a call to the next one until
+ * @ref rawstor_pagination_token_empty says nothing is left.
+ *
  * @param queue     RawIO queue.
  * @param location  Location, comma-separated like every location.
+ * @param limit     Most tenants to return; 0 means the library default.
  * @param tenants   Receives the list on success.
+ * @param token     In: where to resume (empty to start). Out: where the next
+ *                  page resumes, empty after the last one. Must stay valid
+ *                  until @p cb runs.
  * @param cb        Completion callback; @c result is 0 or a negative errno.
  * @param data      Passed to @p cb.
  *
@@ -217,7 +225,8 @@ int rawstor_location_info(
  * @see https://github.com/rawstor/librawstor/blob/main/docs/tenants.md
  */
 int rawstor_location_tenants(
-    RawIOQueue* queue, const char* location, RawstorStringList** tenants,
+    RawIOQueue* queue, const char* location, unsigned int limit,
+    RawstorStringList** tenants, RawstorPaginationToken* token,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 

@@ -193,15 +193,19 @@ rawstd::Task<std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID>> list_one(
 // C ABI adapter for rawstor_location_info(): `loc`/`queue` are captured by
 // value/pointer into the coroutine's own frame rather than taken as a
 // pre-built Task<RawstorLocationInfo> -- unlike ost/src/client.cpp's own
-// One URI's worth of Location::tenants() work, shaped like info_one().
-rawstd::Task<std::vector<RawstdUUID>>
-tenants_one(rawio::Queue& queue, const rawstd::URI& location) {
+// One URI's worth of Location::tenants() work, shaped like list_one(): the
+// page it found and the token it reported.
+rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>> tenants_one(
+    rawio::Queue& queue, const rawstd::URI& location, unsigned int limit,
+    RawstdUUID token
+) {
+    std::pair<std::vector<RawstdUUID>, RawstdUUID> ret;
+    ret.second = token;
     std::unique_ptr<rawstor::Slot> slot =
         co_await rawstor::Slot::create(queue, location);
-    std::vector<RawstdUUID> ret;
     std::exception_ptr error;
     try {
-        ret = co_await slot->list_tenants();
+        co_await slot->list_tenants(limit, ret.first, ret.second);
     } catch (...) {
         error = std::current_exception();
     }
@@ -327,14 +331,15 @@ void launch_list_op(
 // rawstor_location_tenants(); same launch-a-coroutine shape as
 // launch_list_op_coro() above.
 rawstd::DetachedTask launch_tenants_op_coro(
-    rawstor::Location loc, rawio::Queue* queue, RawstorStringList** tenants,
+    rawstor::Location loc, rawio::Queue* queue, unsigned int limit,
+    RawstorStringList** tenants, RawstorPaginationToken* token,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     RawstorStringList* list = nullptr;
     try {
         std::vector<RawstdUUID> found;
-        co_await loc.tenants(*queue, found);
+        co_await loc.tenants(*queue, limit, found, *token);
 
         list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
         if (list == nullptr) {
@@ -440,10 +445,13 @@ int launch_tenant_mutation(
 }
 
 void launch_tenants_op(
-    rawstor::Location loc, rawio::Queue* queue, RawstorStringList** tenants,
+    rawstor::Location loc, rawio::Queue* queue, unsigned int limit,
+    RawstorStringList** tenants, RawstorPaginationToken* token,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
-    launch_tenants_op_coro(std::move(loc), queue, tenants, cb, data);
+    launch_tenants_op_coro(
+        std::move(loc), queue, limit, tenants, token, cb, data
+    );
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
@@ -494,23 +502,53 @@ namespace rawstor {
 // Validated once, here: _uris never changes after construction, so
 // nothing past this point can un-validate it, and no public method below
 // needs to re-check it (same pattern as Target's own constructor).
-rawstd::Task<void>
-Location::tenants(rawio::Queue& queue, std::vector<RawstdUUID>& tenants) const {
-    tenants.clear();
-    for (const rawstd::URI& uri : _uris) {
-        for (const RawstdUUID& tenant : co_await tenants_one(queue, uri)) {
-            bool known = false;
-            for (const RawstdUUID& seen : tenants) {
-                if (rawstd_uuid_cmp(&seen, &tenant) == 0) {
-                    known = true;
-                    break;
-                }
-            }
-            if (!known) {
-                tenants.push_back(tenant);
-            }
+rawstd::Task<void> Location::tenants(
+    rawio::Queue& queue, unsigned int limit, std::vector<RawstdUUID>& tenants,
+    RawstorPaginationToken& token
+) const {
+    RawstdUUID token_id = decode_token(token);
+
+    std::vector<std::pair<std::vector<RawstdUUID>, RawstdUUID>> listings =
+        co_await rawstd::gather(_uris.size(), [&](size_t i) {
+            return tenants_one(queue, _uris[i], limit, token_id);
+        });
+
+    // Merged across every URI. A URI that has more reports where its page
+    // ended; nothing past the earliest such point is taken, so the next page
+    // starts exactly there.
+    auto id_less = [](const RawstdUUID& lhs, const RawstdUUID& rhs) -> bool {
+        return rawstd_uuid_cmp(&lhs, &rhs) < 0;
+    };
+    std::set<RawstdUUID, decltype(id_less)> merged(id_less);
+    RawstdUUID next{};
+    for (const auto& [page, page_token] : listings) {
+        merged.insert(page.begin(), page.end());
+        if (!rawstd_uuid_is_nil(&page_token) &&
+            (rawstd_uuid_is_nil(&next) || id_less(page_token, next))) {
+            next = page_token;
         }
     }
+
+    if (limit == 0) {
+        limit = rawstor_opts_list_limit();
+    } else {
+        limit = std::min(limit, rawstor_opts_list_limit());
+    }
+
+    std::vector<RawstdUUID> ret;
+    for (const RawstdUUID& tenant : merged) {
+        if (!rawstd_uuid_is_nil(&next) && id_less(next, tenant)) {
+            break;
+        }
+        if (ret.size() == limit) {
+            next = ret.back();
+            break;
+        }
+        ret.push_back(tenant);
+    }
+
+    tenants.swap(ret);
+    encode_token(next, token);
 }
 
 namespace {
@@ -729,13 +767,15 @@ rawstd::Task<Target> Location::create(
 } // namespace rawstor
 
 int rawstor_location_tenants(
-    RawIOQueue* queue, const char* location, RawstorStringList** tenants,
+    RawIOQueue* queue, const char* location, unsigned int limit,
+    RawstorStringList** tenants, RawstorPaginationToken* token,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Location loc(rawstd::URI::uriv(location));
         launch_tenants_op(
-            std::move(loc), static_cast<rawio::Queue*>(queue), tenants, cb, data
+            std::move(loc), static_cast<rawio::Queue*>(queue), limit, tenants,
+            token, cb, data
         );
         return 0;
     } catch (const std::system_error& e) {

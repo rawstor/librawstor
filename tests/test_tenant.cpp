@@ -409,11 +409,10 @@ TEST(TenantTest, a_store_without_a_registry_has_no_tenants) {
     rawstor::tests::TmpDir dir;
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
     std::vector<RawstdUUID> tenants;
+    RawstorPaginationToken token = {};
     try {
-        run(
-            *queue,
-            rawstor::Location({rawstd::URI(dir.uri())}).tenants(*queue, tenants)
-        );
+        run(*queue, rawstor::Location({rawstd::URI(dir.uri())})
+                        .tenants(*queue, 0, tenants, token));
         FAIL() << "listed tenants of a store without a registry";
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), ENOTSUP);

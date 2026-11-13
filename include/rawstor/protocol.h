@@ -334,7 +334,27 @@ struct RawstorFrameListEntry {
     uint8_t reserved[7];
 } RAWSTOR_PACKED;
 
-/* One LIST_TENANTS response row. */
+/*
+ * LIST_TENANTS' request: `token_id` resumes strictly after the tenant it
+ * names (nil = from the start), `limit` caps the page (0 = the server's own
+ * cap).
+ */
+struct RawstorFrameListTenantsPayload {
+    uint8_t token_id[16];
+    uint32_t limit;
+} RAWSTOR_PACKED;
+
+struct RawstorFrameListTenants {
+    struct RawstorFrameHead head;
+    struct RawstorFrameListTenantsPayload payload;
+} RAWSTOR_PACKED;
+
+/*
+ * One LIST_TENANTS response row. The rows are the page's tenants in
+ * ascending order followed by one more: the resume cursor, a nil tenant once
+ * nothing is left, never a result. An empty body means the far end is
+ * exhausted.
+ */
 struct RawstorFrameTenantEntry {
     uint8_t tenant_id[16];
 } RAWSTOR_PACKED;

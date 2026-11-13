@@ -130,9 +130,14 @@ public:
         RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
     ) = 0;
 
-    // The tenants registered in an MDS, in no particular order. ENOTSUP
-    // elsewhere: only an MDS keeps a registry.
-    virtual rawstd::Task<std::vector<RawstdUUID>> list_tenants();
+    // One page of the tenants registered in an MDS, ascending, strictly
+    // after `token` (nil = from the start). `token` comes back as the last
+    // tenant of the page while more follow, nil on the last page. A `limit`
+    // of 0 is the server's own cap. ENOTSUP elsewhere: only an MDS keeps a
+    // registry.
+    virtual rawstd::Task<void> list_tenants(
+        unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+    );
 
     // Registers / removes a tenant (docs/tenants.md); only an MDS keeps a
     // tenant registry, so the default is ENOTSUP.

@@ -78,7 +78,8 @@ Backend::resolve_targets(const RawstdUUID&, const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
-rawstd::Task<std::vector<RawstdUUID>> Backend::list_tenants() {
+rawstd::Task<void>
+Backend::list_tenants(unsigned int, std::vector<RawstdUUID>&, RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 

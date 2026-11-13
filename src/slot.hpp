@@ -212,7 +212,9 @@ public:
         RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
     );
 
-    rawstd::Task<std::vector<RawstdUUID>> list_tenants();
+    rawstd::Task<void> list_tenants(
+        unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+    );
 
     rawstd::Task<void> create_tenant(const RawstdUUID& tenant);
 

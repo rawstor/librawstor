@@ -423,6 +423,78 @@ public:
     }
 };
 
+// LIST_TENANTS' own request shape (RawstorFrameListTenants): a resume token
+// and a limit, answered by tenant rows plus a trailing resume cursor.
+class BackendOpListTenants final : public BackendOp {
+private:
+    RawstorFrameListTenants _request;
+    std::vector<RawstorFrameTenantEntry> _response_data;
+
+public:
+    BackendOpListTenants(
+        const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
+        const RawstdUUID& token, unsigned int limit,
+        const rawstd::TraceEvent& trace_event
+    ) :
+        BackendOp(backend, cid, trace_event, "list_tenants", 0, 0),
+        _request({
+            .head =
+                {
+                    .magic = RAWSTOR_MAGIC,
+                    .cmd = RAWSTOR_CMD_LIST_TENANTS,
+                    .cid = cid,
+                },
+            .payload = {
+                .token_id = {},
+                .limit = limit,
+            },
+        }) {
+        memcpy(
+            _request.payload.token_id, token.bytes,
+            sizeof(_request.payload.token_id)
+        );
+    }
+
+    const void* request_data() const noexcept { return &_request; }
+
+    size_t request_size() const noexcept override { return sizeof(_request); }
+
+    size_t
+    response_head_cb(const RawstorFrameResponse* response, int error) override {
+        RAWSTD_TRACE_EVENT_MESSAGE(_trace_event, "error = %d\n", error);
+
+        if (!error) {
+            error = validate_response(response);
+        }
+
+        if (!error) {
+            error = validate_cmd(response->head.cmd, _request.head.cmd);
+        }
+
+        if (!error && response->body.res > 0) {
+            if (response->body.res % sizeof(RawstorFrameTenantEntry) != 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+            }
+            return static_cast<size_t>(response->body.res);
+        }
+
+        _dispatch(0, error);
+        return 0;
+    }
+
+    void response_body_cb(
+        const iovec* iov, unsigned int niov, size_t result
+    ) override {
+        _response_data.resize(result / sizeof(RawstorFrameTenantEntry));
+        rawstd_iovec_to_buf(iov, niov, 0, _response_data.data(), result);
+        _dispatch(result, 0);
+    }
+
+    std::vector<RawstorFrameTenantEntry> take_response_data() {
+        return std::move(_response_data);
+    }
+};
+
 void Backend::_fail_in_flight(int error) {
     if (_ops.empty()) {
         return;
@@ -775,7 +847,7 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
     RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
     uint64_t offset, uint64_t val, const RawstdUUID& version_id
 ) {
-    if (cmd == RAWSTOR_CMD_LIST_VERSIONS || cmd == RAWSTOR_CMD_LIST_TENANTS) {
+    if (cmd == RAWSTOR_CMD_LIST_VERSIONS) {
         co_await _ensure_large_receive_ring();
     }
     co_await _receive_resize.settle();
@@ -953,19 +1025,57 @@ rawstd::Task<void> Backend::_wire_list_chunks(
 // sp is forwarded on the wire unchanged (see BackendOpAllocate); the
 // The server preserves the requested member role and placement identity;
 // one connection addresses one data or metadata-only member.
-rawstd::Task<std::vector<RawstdUUID>> Backend::_wire_list_tenants() {
-    std::vector<RawstorFrameTenantEntry> entries =
-        co_await _basic_request<RawstorFrameTenantEntry>(
-            RAWSTOR_CMD_LIST_TENANTS, "list_tenants", {}, 0
+rawstd::Task<void> Backend::_wire_list_tenants(
+    unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+) {
+    co_await _ensure_large_receive_ring();
+
+    const RawstdUUID input_token = token;
+    tenants.clear();
+    token = {};
+
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('l', "fd = %d\n", fd());
+
+    std::shared_ptr<BackendOpListTenants> op =
+        std::make_shared<BackendOpListTenants>(
+            std::static_pointer_cast<Backend>(shared_from_this()),
+            _cid_counter++, input_token, limit, trace_event
         );
-    std::vector<RawstdUUID> ret;
-    ret.reserve(entries.size());
-    for (const RawstorFrameTenantEntry& entry : entries) {
-        RawstdUUID id;
-        memcpy(id.bytes, entry.tenant_id, sizeof(id.bytes));
-        ret.push_back(id);
+    _add_op(op);
+
+    try {
+        size_t result = co_await _queue.send(
+            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        );
+        RAWSTD_TRACE_EVENT_MESSAGE(
+            trace_event, "%zu of %zu\n", result, op->request_size()
+        );
+        op->request_cb(validate_result(op->request_size(), result));
+    } catch (const std::system_error& e) {
+        op->request_cb(e.code().value());
     }
-    co_return ret;
+
+    std::vector<RawstorFrameTenantEntry> entries;
+    try {
+        co_await *op;
+        entries = op->take_response_data();
+    } catch (const std::system_error&) {
+        throw;
+    } catch (...) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+
+    // The last row is the resume cursor; no rows at all means exhausted.
+    if (entries.empty()) {
+        co_return;
+    }
+    tenants.reserve(entries.size() - 1);
+    for (size_t i = 0; i + 1 < entries.size(); ++i) {
+        RawstdUUID id;
+        memcpy(id.bytes, entries[i].tenant_id, sizeof(id.bytes));
+        tenants.push_back(id);
+    }
+    memcpy(token.bytes, entries.back().tenant_id, sizeof(token.bytes));
 }
 
 rawstd::Task<void> Backend::_wire_create(

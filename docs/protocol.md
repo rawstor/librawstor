@@ -125,7 +125,7 @@ role), `0x01..0x1f` data (OST), `0x20..0x3f` metadata shared by OST and MDS,
 | `0x11` | `SYNC_ACCEPT` | OST / MDS (witness only) | SyncPropose | SyncReply |
 | `0x12` | `FREEZE` | OST | Basic (`offset` = chunk offset, `version_id` = the holder's token, `val` = lease in ms) | — |
 | `0x13` | `THAW` | OST | Basic (`offset` = chunk offset, `version_id` = the holder's token) | — |
-| `0x20` | `LIST_TENANTS` | MDS | Basic (unused) | Tenant rows |
+| `0x20` | `LIST_TENANTS` | MDS | ListTenants | Tenant rows |
 | `0x40` | `OBJ_CREATE` | MDS | ObjCreate | ObjCreated |
 | `0x41` | `RESOLVE` | MDS | Basic (`version_id`, nil = live) | ObjDescriptor + chunks |
 | `0x42` | `OBJ_RESIZE` | MDS | ObjOp (`val` = new size) | ObjResized |
@@ -335,6 +335,25 @@ limits the listing to the objects that tenant owns; nil lists every object
      |                                                                                       |
      +-------------------------------------------+-------------------------------------------+
  32  |              uint32_t limit               |
+     |                                           |
+     +-------------------------------------------+
+```
+
+### ListTenants — 20 bytes
+
+`limit` tenants per page (0 = the server's own cap), starting after `token_id`
+(nil = from the start).
+
+```text
+     +0         +1         +2         +3         +4         +5         +6         +7
+     +---------------------------------------------------------------------------------------+
+  0  |                                                                                       |
+     |                                  uint8_t token_id[16]                                 |
+     |                                                                                       |
+  8  |                                                                                       |
+     |                                                                                       |
+     +-------------------------------------------+-------------------------------------------+
+ 16  |              uint32_t limit               |
      |                                           |
      +-------------------------------------------+
 ```
@@ -551,8 +570,10 @@ in no particular order. An empty payload means the object has no versions
 
 ### Tenant rows — 16 bytes each
 
-`LIST_TENANTS`' answer: one row per tenant registered in the MDS, in no
-particular order. An empty payload means none. An OST answers `-ENOSYS`.
+`LIST_TENANTS`' answer: one row per tenant of the page, in ascending order,
+then one more row: the resume cursor, the last tenant of the page while more
+follow and nil once nothing is left. An empty payload means the registry is
+already exhausted. An OST answers `-ENOSYS`.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7

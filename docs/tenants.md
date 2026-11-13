@@ -133,7 +133,10 @@ frame names an object by its id alone.
 
 Three commands concern the registry ([protocol](protocol.md)), all of them on
 the MDS: `LIST_TENANTS`, `TENANT_CREATE` and `TENANT_REMOVE`. An OST answers
-`-ENOSYS`.
+`-ENOSYS`. `LIST_TENANTS` is paginated like `LIST`: a page in ascending
+order after a token, and a trailing row that resumes it (`RawstorFrameListTenantsPayload`);
+`rawstor_location_tenants()` takes a limit and a token the same way, and
+`Location.tenants()` reads every page.
 
 Frame layouts and the metadata record are not compatible with earlier ones, and
 no older format is read or written.

@@ -758,6 +758,38 @@ TEST(ObjectResizeTest, new_chunks_belong_to_the_owner_of_the_object) {
     run(*queue, rawstor::Target({rawstd::URI(mds, id)}).remove(*queue));
 }
 
+// The registry is read a page at a time through the MDS: each tenant once, in
+// ascending order, the default tenant among them.
+TEST(ObjectTenantTest, the_registry_is_listed_a_page_at_a_time) {
+    rawstor::tests::ObjectEnv env(8900, 8901);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    rawstor::Location location({rawstd::URI(env.location())});
+    for (int i = 0; i < 4; ++i) {
+        RawstdUUID tenant;
+        ASSERT_EQ(rawstd_uuid7_init(&tenant), 0);
+        run(*queue, location.create_tenant(*queue, tenant));
+    }
+
+    std::vector<RawstdUUID> all;
+    RawstorPaginationToken token = {};
+    size_t pages = 0;
+    do {
+        std::vector<RawstdUUID> page;
+        run(*queue, location.tenants(*queue, 2, page, token));
+        EXPECT_LE(page.size(), 2u);
+        all.insert(all.end(), page.begin(), page.end());
+        ++pages;
+    } while (!rawstor_pagination_token_empty(&token));
+
+    // The default tenant and the four created.
+    ASSERT_EQ(all.size(), 5u);
+    EXPECT_GE(pages, 3u);
+    for (size_t i = 1; i < all.size(); ++i) {
+        EXPECT_LT(rawstd_uuid_cmp(&all[i - 1], &all[i]), 0);
+    }
+}
+
 // Grow-only: the MDS itself rejects a smaller new_size.
 TEST(ObjectResizeTest, shrink_is_einval) {
     rawstor::tests::ObjectEnv env(8780, 8781);

@@ -68,6 +68,19 @@ PlacementPolicy make_policy(unsigned width) {
     return PlacementPolicy{width, Level::OST, 1, 0};
 }
 
+// Every tenant of the registry, read a page at a time.
+std::vector<RawstdUUID>
+all_tenants(ObjectStore& store, unsigned int limit = 2) {
+    std::vector<RawstdUUID> ret;
+    RawstdUUID token{};
+    do {
+        std::vector<RawstdUUID> page = store.list_tenants(token, limit);
+        EXPECT_LE(page.size(), limit);
+        ret.insert(ret.end(), page.begin(), page.end());
+    } while (!rawstd_uuid_is_nil(&token));
+    return ret;
+}
+
 class ObjectStoreTest : public testing::Test {
 protected:
     rawstor::mdsserver::tests::TmpDir dir;
@@ -1190,13 +1203,38 @@ TEST_F(ObjectStoreTest, an_owner_is_a_registered_tenant) {
     );
 }
 
+// A page ends where the next one starts: every tenant once, in order, and no
+// token after the last page; limit 0 is everything.
+TEST_F(ObjectStoreTest, tenants_are_listed_a_page_at_a_time) {
+    ObjectStore store = make_store();
+    for (int i = 0; i < 4; ++i) {
+        store.create_tenant(RawstdUUID{}, make_id());
+    }
+
+    std::vector<RawstdUUID> paged = all_tenants(store, 2);
+    ASSERT_EQ(paged.size(), 5u);
+    for (size_t i = 1; i < paged.size(); ++i) {
+        EXPECT_LT(rawstd_uuid_cmp(&paged[i - 1], &paged[i]), 0);
+    }
+
+    RawstdUUID token{};
+    std::vector<RawstdUUID> page = store.list_tenants(token, 0);
+    EXPECT_EQ(page.size(), 5u);
+    EXPECT_TRUE(rawstd_uuid_is_nil(&token));
+
+    token = {};
+    page = store.list_tenants(token, 2);
+    EXPECT_EQ(page.size(), 2u);
+    EXPECT_EQ(rawstd_uuid_cmp(&token, &page.back()), 0);
+}
+
 TEST_F(ObjectStoreTest, tenants_are_created_and_removed) {
     ObjectStore store = make_store();
     RawstdUUID acme = make_id();
 
     // The default tenant is registered with every store, and stays.
-    ASSERT_EQ(store.list_tenants().size(), 1u);
-    RawstdUUID default_tenant = store.list_tenants().front();
+    ASSERT_EQ(all_tenants(store).size(), 1u);
+    RawstdUUID default_tenant = all_tenants(store).front();
     EXPECT_EQ(
         errno_of([&] { store.create_tenant(RawstdUUID{}, default_tenant); }),
         EEXIST
@@ -1211,7 +1249,7 @@ TEST_F(ObjectStoreTest, tenants_are_created_and_removed) {
     );
 
     store.create_tenant(RawstdUUID{}, acme);
-    EXPECT_EQ(store.list_tenants().size(), 2u);
+    EXPECT_EQ(all_tenants(store).size(), 2u);
     EXPECT_EQ(
         errno_of([&] { store.create_tenant(RawstdUUID{}, acme); }), EEXIST
     );
@@ -1226,7 +1264,7 @@ TEST_F(ObjectStoreTest, tenants_are_created_and_removed) {
     );
     store.remove(RawstdUUID{}, id);
     store.remove_tenant(RawstdUUID{}, acme);
-    EXPECT_EQ(store.list_tenants().size(), 1u);
+    EXPECT_EQ(all_tenants(store).size(), 1u);
     EXPECT_EQ(
         errno_of([&] { store.remove_tenant(RawstdUUID{}, acme); }), ENOENT
     );
@@ -1241,17 +1279,17 @@ TEST_F(ObjectStoreTest, a_replayed_tenant_creation_restores_a_removed_tenant) {
 
     store.create_tenant(key, acme);
     store.remove_tenant(RawstdUUID{}, acme);
-    EXPECT_EQ(store.list_tenants().size(), 1u);
+    EXPECT_EQ(all_tenants(store).size(), 1u);
 
     store.create_tenant(key, acme);
-    EXPECT_EQ(store.list_tenants().size(), 2u);
+    EXPECT_EQ(all_tenants(store).size(), 2u);
     store.create(
         acme, RawstdUUID{}, make_id(), chunk_size, chunk_size, make_policy(1)
     );
 
     // Replayed again while it exists: still just the one tenant.
     store.create_tenant(key, acme);
-    EXPECT_EQ(store.list_tenants().size(), 2u);
+    EXPECT_EQ(all_tenants(store).size(), 2u);
 }
 
 // The owner is part of the chunk's own metadata, so a rebuilt map has it.
@@ -1267,7 +1305,7 @@ TEST_F(ObjectStoreTest, reconstruct_restores_the_owner) {
     store.reconstruct(records);
 
     // The tenant is registered again, and owns the object.
-    ASSERT_EQ(store.list_tenants().size(), 2u);
+    ASSERT_EQ(all_tenants(store).size(), 2u);
     RawstdUUID token{};
     auto entries = store.list_chunks(acme, token, 0);
     ASSERT_EQ(entries.size(), 1u);

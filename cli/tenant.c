@@ -120,31 +120,37 @@ int rawstor_cli_tenant_list(
     }
 
     RawstorStringList* tenants = NULL;
-    int sres = rawstor_location_tenants(
-        op.queue, location, &tenants, rawstor_cli_op_cb, &op
-    );
-    ssize_t result = rawstor_cli_op_wait(&op, sres);
-    rawstor_cli_op_destroy(&op);
-    if (result < 0) {
-        fprintf(
-            stderr, "rawstor_location_tenants() failed: %s\n",
-            strerror((int)-result)
+    RawstorPaginationToken token = {};
+    do {
+        op.done = 0;
+        int sres = rawstor_location_tenants(
+            op.queue, location, 0, &tenants, &token, rawstor_cli_op_cb, &op
         );
-        rawstor_cli_table_delete(table);
-        return rawstd_exitcode_for_errno((int)-result);
-    }
-
-    for (const char** it = rawstor_string_list_iter(tenants); it != NULL;
-         it = rawstor_string_list_next(it)) {
-        RawstorCliCell cells[] = {rawstor_cli_cell_string(*it)};
-        if (rawstor_cli_table_add_row(table, cells) < 0) {
-            fprintf(stderr, "Out of memory\n");
-            rawstor_string_list_delete(tenants);
+        ssize_t result = rawstor_cli_op_wait(&op, sres);
+        if (result < 0) {
+            fprintf(
+                stderr, "rawstor_location_tenants() failed: %s\n",
+                strerror((int)-result)
+            );
+            rawstor_cli_op_destroy(&op);
             rawstor_cli_table_delete(table);
-            return EXIT_FAILURE;
+            return rawstd_exitcode_for_errno((int)-result);
         }
-    }
-    rawstor_string_list_delete(tenants);
+        for (const char** it = rawstor_string_list_iter(tenants); it != NULL;
+             it = rawstor_string_list_next(it)) {
+            RawstorCliCell cells[] = {rawstor_cli_cell_string(*it)};
+            if (rawstor_cli_table_add_row(table, cells) < 0) {
+                fprintf(stderr, "Out of memory\n");
+                rawstor_string_list_delete(tenants);
+                rawstor_cli_op_destroy(&op);
+                rawstor_cli_table_delete(table);
+                return EXIT_FAILURE;
+            }
+        }
+        rawstor_string_list_delete(tenants);
+    } while (!rawstor_pagination_token_empty(&token));
+
+    rawstor_cli_op_destroy(&op);
     int ret = rawstor_cli_output_print(output, &table, 1);
     rawstor_cli_table_delete(table);
     return ret;

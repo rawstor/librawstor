@@ -171,7 +171,13 @@ public:
     create_tenant(const RawstdUUID& idempotency_key, const RawstdUUID& tenant);
     void
     remove_tenant(const RawstdUUID& idempotency_key, const RawstdUUID& tenant);
-    std::vector<RawstdUUID> list_tenants();
+
+    /*
+     * One page of the registry in ascending order, strictly after `token`
+     * (nil = from the start); `token` is the last tenant of the page while
+     * more follow and nil on the last page. A `limit` of 0 is no limit.
+     */
+    std::vector<RawstdUUID> list_tenants(RawstdUUID& token, unsigned int limit);
 
     std::shared_ptr<const Topology> topology();
 

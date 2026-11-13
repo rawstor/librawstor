@@ -543,8 +543,10 @@ rawstd::Task<void> Backend::list_chunks(
     }
 }
 
-rawstd::Task<std::vector<RawstdUUID>> Backend::list_tenants() {
-    return _wire_list_tenants();
+rawstd::Task<void> Backend::list_tenants(
+    unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+) {
+    return _wire_list_tenants(limit, tenants, token);
 }
 
 rawstd::Task<void> Backend::create_tenant(

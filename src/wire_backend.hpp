@@ -123,7 +123,9 @@ protected:
         RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
     );
 
-    rawstd::Task<std::vector<RawstdUUID>> _wire_list_tenants();
+    rawstd::Task<void> _wire_list_tenants(
+        unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+    );
 
     rawstd::Task<void> _wire_create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,

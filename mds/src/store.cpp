@@ -1655,11 +1655,20 @@ void ObjectStore::remove_tenant(
     tx.commit();
 }
 
-std::vector<RawstdUUID> ObjectStore::list_tenants() {
+std::vector<RawstdUUID>
+ObjectStore::list_tenants(RawstdUUID& token, unsigned int limit) {
     std::lock_guard<std::mutex> lock(_mutex);
-    Stmt select(_db, "SELECT id FROM tenants ORDER BY id;");
+    Stmt select(_db, "SELECT id FROM tenants WHERE id>? ORDER BY id;");
+    // The statement reads `after` until it is done; `token` is rewritten.
+    const RawstdUUID after = token;
+    select.bind_blob(1, after.bytes, sizeof(after.bytes));
     std::vector<RawstdUUID> ret;
+    token = {};
     while (select.step()) {
+        if (limit != 0 && ret.size() == limit) {
+            token = ret.back();
+            break;
+        }
         RawstdUUID tenant;
         select.column_uuid(0, &tenant);
         ret.push_back(tenant);

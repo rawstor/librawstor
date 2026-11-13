@@ -133,8 +133,10 @@ public:
         RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
     ) override;
 
-    // The tenants registered in the MDS.
-    rawstd::Task<std::vector<RawstdUUID>> list_tenants() override;
+    // One page of the tenants registered in the MDS.
+    rawstd::Task<void> list_tenants(
+        unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+    ) override;
 
     rawstd::Task<void> create_tenant(
         const RawstdUUID& idempotency_key, const RawstdUUID& tenant

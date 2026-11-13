@@ -26,8 +26,8 @@ using rawstor::mdsserver::PlacementSlot;
 using rawstor::mdsserver::Topology;
 using rawstor::mdsserver::VersionMember;
 
-// The most objects one LIST page carries; a request asking for more (or
-// for no particular number, 0) gets this many.
+// The most objects (or tenants) one LIST (LIST_TENANTS) page carries; a request
+// asking for more (or for no particular number, 0) gets this many.
 const unsigned int list_limit = 1024;
 
 int recv_trampoline(ssize_t result, void* data) {
@@ -310,16 +310,27 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         break;
     }
     case RAWSTOR_CMD_LIST_TENANTS: {
-        RawstorFrameBasicPayload payload;
+        RawstorFrameListTenantsPayload payload{};
         co_await recv_all(queue, fd, &payload, sizeof(payload));
+        RawstdUUID token = uuid_of(payload.token_id);
+        unsigned int limit = payload.limit == 0 || payload.limit > list_limit
+                                 ? list_limit
+                                 : payload.limit;
         std::vector<RawstorFrameTenantEntry> entries;
         int32_t res = 0;
         try {
-            for (const RawstdUUID& tenant : store.list_tenants()) {
-                RawstorFrameTenantEntry entry{};
-                memcpy(entry.tenant_id, tenant.bytes, sizeof(entry.tenant_id));
-                entries.push_back(entry);
+            std::vector<RawstdUUID> tenants = store.list_tenants(token, limit);
+            entries.resize(tenants.size() + 1);
+            for (size_t i = 0; i < tenants.size(); ++i) {
+                memcpy(
+                    entries[i].tenant_id, tenants[i].bytes,
+                    sizeof(entries[i].tenant_id)
+                );
             }
+            memcpy(
+                entries.back().tenant_id, token.bytes,
+                sizeof(entries.back().tenant_id)
+            );
         } catch (const std::system_error& e) {
             res = -e.code().value();
         }

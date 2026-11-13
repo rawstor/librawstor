@@ -66,10 +66,16 @@ class Location:
 
     def tenants(self) -> list[str]:
         """The tenants registered in the MDS this location names, as UUID
-        strings, in no particular order. Raises OSError (ENOTSUP) for a
+        strings in ascending order. Raises OSError (ENOTSUP) for a
         location that is not an mds:// one: only an MDS keeps a tenant
         registry (docs/tenants.md)."""
-        return librawstor.tenant_list(self._uri)
+        tenants: list[str] = []
+        token = None
+        while True:
+            page, token = librawstor.tenant_list(self._uri, 0, token)
+            tenants.extend(page)
+            if token is None:
+                return tenants
 
     def create_tenant(self, tenant: str | None = None) -> str:
         """Register `tenant`, a UUID string (a random one if None), in the

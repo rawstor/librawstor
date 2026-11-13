@@ -789,7 +789,14 @@ static void free_pagination_token(PyObject* capsule) {
     free(token);
 }
 
-PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
+typedef int (*LocationPageFunction)(
+    RawIOQueue*, const char*, unsigned int, RawstorStringList**,
+    RawstorPaginationToken*, int (*)(ssize_t, void*), void*
+);
+
+// One page of strings and the token that resumes after it (None on the last
+// page), from a paginated rawstor_location_*() listing.
+static PyObject* location_page(PyObject* args, LocationPageFunction enumerate) {
     const char* location;
     unsigned int limit;
     PyObject* py_token;
@@ -827,7 +834,7 @@ PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
         set_os_error(-ires);
         goto error;
     }
-    int sres = rawstor_location_list(
+    int sres = enumerate(
         op.queue, location, limit, &list, &token, rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);
@@ -890,6 +897,10 @@ error:
     rawstor_string_list_delete(list);
     Py_XDECREF(py_list);
     return NULL;
+}
+
+PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
+    return location_page(args, rawstor_location_list);
 }
 
 PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
@@ -1355,7 +1366,7 @@ static PyObject* target_list(PyObject* args, TargetListFunction enumerate) {
 }
 
 PyObject* py_rawstor_tenant_list(PyObject* Py_UNUSED(self), PyObject* args) {
-    return target_list(args, rawstor_location_tenants);
+    return location_page(args, rawstor_location_tenants);
 }
 
 static PyObject* tenant_mutation(

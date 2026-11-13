@@ -44,10 +44,14 @@ public:
         RawstorPaginationToken& token
     ) const;
 
-    // The tenants registered in the MDS this location names (docs/tenants.md),
-    // in no particular order; ENOTSUP for a store without a registry.
-    rawstd::Task<void>
-    tenants(rawio::Queue& queue, std::vector<RawstdUUID>& tenants) const;
+    // One page of the tenants registered in the MDS this location names
+    // (docs/tenants.md), ascending; ENOTSUP for a store without a registry.
+    // `token` resumes the listing like list()'s: empty to start, and empty
+    // again on return once nothing is left.
+    rawstd::Task<void> tenants(
+        rawio::Queue& queue, unsigned int limit,
+        std::vector<RawstdUUID>& tenants, RawstorPaginationToken& token
+    ) const;
 
     // Registers / removes `tenant` in the MDS this location names (exactly
     // one mds:// URI; ENOTSUP otherwise).
