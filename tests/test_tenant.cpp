@@ -3,10 +3,10 @@
 #include "backend.hpp"
 #include "location.hpp"
 #include "opts.h"
+#include "owner.hpp"
 #include "rawio_sync.hpp"
 #include "slot.hpp"
 #include "target.hpp"
-#include "tenant.hpp"
 #include "tmp_dir.hpp"
 
 #include <rawstor/location.h>
@@ -69,85 +69,67 @@ size_t listed(rawio::Queue& queue, const rawstd::URI& location) {
 
 } // namespace
 
-TEST(Tenant, an_address_without_a_tenant_names_none) {
-    RawstdUUID id = rawstor::tenant_of(rawstd::URI("ost://10.0.0.1:7777"));
-    EXPECT_TRUE(rawstd_uuid_is_nil(&id));
+namespace {
+
+RawstdUUID owner_of_address(const std::string& address) {
+    return rawstor::Location({rawstd::URI(address)}).owner();
+}
+
+} // namespace
+
+// An address without a tenant stands for the default tenant.
+TEST(Tenant, an_address_without_a_tenant_names_the_default) {
+    RawstdUUID id = owner_of_address("ost://10.0.0.1:7777");
+    RawstdUUID expected = rawstor::tests::default_owner();
+    EXPECT_EQ(rawstd_uuid_cmp(&id, &expected), 0);
 }
 
 TEST(Tenant, address_with_tenant) {
-    std::string text = std::string("ost://") + acme + "@10.0.0.1:7777";
-    RawstdUUID id = rawstor::tenant_of(rawstd::URI(text));
+    RawstdUUID id =
+        owner_of_address(std::string("ost://") + acme + "@10.0.0.1:7777");
     RawstdUUID expected = uuid(acme);
     EXPECT_EQ(rawstd_uuid_cmp(&id, &expected), 0);
 }
 
 TEST(Tenant, address_with_bad_tenant) {
-    EXPECT_THROW(
-        rawstor::tenant_of(rawstd::URI("ost://acme@10.0.0.1:7777")),
-        std::system_error
-    );
-    EXPECT_THROW(
-        rawstor::tenant_of(rawstd::URI("ost://*@10.0.0.1:7777")),
-        std::system_error
-    );
-    EXPECT_THROW(
-        rawstor::tenant_of(
-            rawstd::URI(
-                "ost://00000000-0000-0000-0000-000000000000@10.0.0.1:7777"
-            )
-        ),
-        std::system_error
-    );
+    for (const char* address :
+         {"ost://acme@10.0.0.1:7777", "ost://*@10.0.0.1:7777",
+          "ost://00000000-0000-0000-0000-000000000000@10.0.0.1:7777"}) {
+        try {
+            owner_of_address(address);
+            FAIL() << address << " names a tenant";
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), EINVAL) << address;
+        }
+    }
 }
 
-TEST(Tenant, with_tenant) {
-    rawstd::URI plain("ost://10.0.0.1:7777/path");
-    rawstd::URI named = rawstor::with_tenant(plain, uuid(acme));
-    EXPECT_EQ(
-        named.str(), std::string("ost://") + acme + "@10.0.0.1:7777/path"
-    );
-
-    // No tenant is the address without user information.
-    EXPECT_EQ(rawstor::with_tenant(named, RawstdUUID{}).str(), plain.str());
-}
-
-TEST(Tenant, with_tenant_keeps_a_host_less_address) {
-    rawstd::URI plain("file:///var/lib/rawstor");
-    rawstd::URI named = rawstor::with_tenant(plain, uuid(acme));
-    EXPECT_EQ(named.str(), std::string("file://") + acme + "@/var/lib/rawstor");
-    EXPECT_EQ(named.path().str(), "/var/lib/rawstor");
-}
-
-// An address names its owner unless it is the default tenant.
-TEST(Tenant, address_of_names_the_owner_unless_it_is_the_default) {
-    rawstd::URI plain("mds://10.0.0.2:7776");
+// The URIs of a location agree on the owner.
+TEST(Tenant, a_location_names_one_tenant) {
+    rawstd::URI first("ost://10.0.0.1:7777");
+    rawstd::URI second("ost://10.0.0.2:7777");
     RawstdUUID owner = uuid(acme);
 
-    EXPECT_EQ(
-        rawstor::address_of(plain, owner).str(),
-        rawstor::with_tenant(plain, owner).str()
+    EXPECT_NO_THROW(
+        rawstor::Location({rawstor::tests::with_tenant(first, owner),
+                           rawstor::tests::with_tenant(second, owner)})
+            .owner()
     );
-    EXPECT_EQ(
-        rawstor::address_of(
-            rawstor::with_tenant(plain, owner), rawstor::default_tenant()
-        )
-            .str(),
-        plain.str()
-    );
-
-    // Each URI is addressed for its own owner.
-    std::vector<rawstd::URI> addressed =
-        rawstor::address_of({rawstor::with_tenant(plain, owner), plain});
-    ASSERT_EQ(addressed.size(), 2u);
-    EXPECT_EQ(addressed[0].str(), rawstor::with_tenant(plain, owner).str());
-    EXPECT_EQ(addressed[1].str(), plain.str());
+    try {
+        rawstor::Location({rawstor::tests::with_tenant(first, owner), second})
+            .owner();
+        FAIL() << "a location names two tenants";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EINVAL);
+    }
 }
 
 TEST(Tenant, tenant_follows_a_child_uri) {
-    rawstd::URI named =
-        rawstor::with_tenant(rawstd::URI("mds://10.0.0.2:7776"), uuid(acme));
+    rawstd::URI named = rawstor::tests::with_tenant(
+        rawstd::URI("mds://10.0.0.2:7776"), uuid(acme)
+    );
     rawstd::URI child(named, "0197e0a2-7c3b-7d4e-8f10-000000000001");
-    RawstdUUID id = rawstor::tenant_of(child);
+    RawstdUUID id = rawstor::Target({child}).location().owner();
     RawstdUUID expected = uuid(acme);
     EXPECT_EQ(rawstd_uuid_cmp(&id, &expected), 0);
 }
@@ -203,8 +185,9 @@ TEST(TenantTest, a_target_is_created_for_the_tenant_it_names) {
     rawstd::URI plain(dir.uri());
 
     rawstor::Target named =
-        run(*queue, rawstor::Location({rawstor::with_tenant(plain, owner)})
-                        .create(*queue, small_spec()));
+        run(*queue,
+            rawstor::Location({rawstor::tests::with_tenant(plain, owner)})
+                .create(*queue, small_spec()));
     rawstor::Target unnamed =
         run(*queue, rawstor::Location({plain}).create(*queue, small_spec()));
 
@@ -217,7 +200,7 @@ TEST(TenantTest, a_target_is_created_for_the_tenant_it_names) {
     };
     RawstdUUID got = tenant_of_copy(named);
     EXPECT_EQ(rawstd_uuid_cmp(&got, &owner), 0);
-    RawstdUUID fallback = rawstor::default_tenant();
+    RawstdUUID fallback = rawstor::tests::default_owner();
     got = tenant_of_copy(unnamed);
     EXPECT_EQ(rawstd_uuid_cmp(&got, &fallback), 0);
 
@@ -236,8 +219,8 @@ TEST(TenantTest, listing_shows_the_objects_a_tenant_owns) {
     rawstor::tests::TmpDir dir;
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
     rawstd::URI plain(dir.uri());
-    rawstd::URI in_acme = rawstor::with_tenant(plain, new_id());
-    rawstd::URI in_other = rawstor::with_tenant(plain, new_id());
+    rawstd::URI in_acme = rawstor::tests::with_tenant(plain, new_id());
+    rawstd::URI in_other = rawstor::tests::with_tenant(plain, new_id());
 
     run(*queue,
         rawstor::Location({in_acme}).create(*queue, new_id(), small_spec()));
@@ -251,7 +234,7 @@ TEST(TenantTest, listing_shows_the_objects_a_tenant_owns) {
     EXPECT_EQ(listed(*queue, in_acme), 2u);
     EXPECT_EQ(listed(*queue, in_other), 1u);
     EXPECT_EQ(listed(*queue, plain), 4u);
-    EXPECT_EQ(listed(*queue, rawstor::with_tenant(plain, new_id())), 0u);
+    EXPECT_EQ(listed(*queue, rawstor::tests::with_tenant(plain, new_id())), 0u);
 }
 
 // A listing's targets name the owner of each object, also for the
@@ -264,18 +247,18 @@ TEST(TenantTest, listed_targets_name_their_owner) {
     RawstdUUID in_acme = new_id();
     RawstdUUID in_none = new_id();
 
-    run(*queue, rawstor::Location({rawstor::with_tenant(plain, acme)})
+    run(*queue, rawstor::Location({rawstor::tests::with_tenant(plain, acme)})
                     .create(*queue, in_acme, small_spec()));
     run(*queue,
         rawstor::Location({plain}).create(*queue, in_none, small_spec()));
 
     std::list<rawstor::Target> targets;
     RawstorPaginationToken token = {};
-    run(*queue, rawstor::Location({rawstor::with_tenant(plain, acme)})
+    run(*queue, rawstor::Location({rawstor::tests::with_tenant(plain, acme)})
                     .list(*queue, 0, targets, token));
     ASSERT_EQ(targets.size(), 1u);
     for (const rawstd::URI& uri : targets.front().uris()) {
-        RawstdUUID named = rawstor::tenant_of(uri);
+        RawstdUUID named = rawstor::tests::named_owner(uri);
         EXPECT_EQ(rawstd_uuid_cmp(&named, &acme), 0);
     }
 
@@ -288,10 +271,10 @@ TEST(TenantTest, listed_targets_name_their_owner) {
     size_t named_acme = 0;
     for (const rawstor::Target& target : targets) {
         for (const rawstd::URI& uri : target.uris()) {
-            RawstdUUID named = rawstor::tenant_of(uri);
+            RawstdUUID named = rawstor::tests::named_owner(uri);
             if (rawstd_uuid_is_nil(&named)) {
-                RawstdUUID owner = rawstor::owner_of(uri);
-                RawstdUUID fallback = rawstor::default_tenant();
+                RawstdUUID owner = rawstor::Target({uri}).location().owner();
+                RawstdUUID fallback = rawstor::tests::default_owner();
                 EXPECT_EQ(rawstd_uuid_cmp(&owner, &fallback), 0);
             } else {
                 EXPECT_EQ(rawstd_uuid_cmp(&named, &acme), 0);
@@ -308,8 +291,8 @@ TEST(TenantTest, a_page_is_filled_with_the_objects_of_the_tenant) {
     rawstor::tests::TmpDir dir;
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
     rawstd::URI plain(dir.uri());
-    rawstd::URI acme = rawstor::with_tenant(plain, new_id());
-    rawstd::URI other = rawstor::with_tenant(plain, new_id());
+    rawstd::URI acme = rawstor::tests::with_tenant(plain, new_id());
+    rawstd::URI other = rawstor::tests::with_tenant(plain, new_id());
 
     // Ids sort in creation order.
     for (int i = 0; i < 3; ++i) {
@@ -345,7 +328,7 @@ TEST(TenantTest, a_location_names_the_tenant_through_the_c_api) {
     // An administrator creates an object for acme by naming it.
     char target[512];
     RawstorObjectSpec spec = small_spec();
-    rawstd::URI as_acme = rawstor::with_tenant(plain, acme);
+    rawstd::URI as_acme = rawstor::tests::with_tenant(plain, acme);
     ssize_t res =
         rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
             return rawstor_location_create(
@@ -385,7 +368,7 @@ TEST(TenantTest, a_location_names_the_tenant_through_the_c_api) {
         return count;
     };
     EXPECT_EQ(list_as(as_acme), 1u);
-    EXPECT_EQ(list_as(rawstor::with_tenant(plain, other)), 0u);
+    EXPECT_EQ(list_as(rawstor::tests::with_tenant(plain, other)), 0u);
     EXPECT_EQ(list_as(plain), 1u);
 }
 
@@ -422,11 +405,13 @@ TEST(TenantTest, an_object_id_is_unique_across_tenants) {
     rawstd::URI plain(dir.uri());
     RawstdUUID id = new_id();
 
-    run(*queue, rawstor::Location({rawstor::with_tenant(plain, new_id())})
-                    .create(*queue, id, small_spec()));
+    run(*queue,
+        rawstor::Location({rawstor::tests::with_tenant(plain, new_id())})
+            .create(*queue, id, small_spec()));
     EXPECT_THROW(
-        run(*queue, rawstor::Location({rawstor::with_tenant(plain, new_id())})
-                        .create(*queue, id, small_spec())),
+        run(*queue,
+            rawstor::Location({rawstor::tests::with_tenant(plain, new_id())})
+                .create(*queue, id, small_spec())),
         std::system_error
     );
 }
@@ -444,11 +429,12 @@ TEST(TenantTest, a_transfer_makes_another_tenant_the_owner_of_every_copy) {
 
     RawstorObjectSpec spec = small_spec();
     spec.width = 2;
-    rawstor::Target target =
-        run(*queue,
-            rawstor::Location({rawstor::with_tenant(first_uri, acme_id),
-                               rawstor::with_tenant(second_uri, acme_id)})
-                .create(*queue, spec));
+    rawstor::Target target = run(
+        *queue,
+        rawstor::Location({rawstor::tests::with_tenant(first_uri, acme_id),
+                           rawstor::tests::with_tenant(second_uri, acme_id)})
+            .create(*queue, spec)
+    );
 
     auto owners = [&] {
         std::vector<RawstdUUID> ret;
@@ -460,8 +446,8 @@ TEST(TenantTest, a_transfer_makes_another_tenant_the_owner_of_every_copy) {
         return ret;
     };
     auto listed_for = [&](const RawstdUUID& tenant) {
-        return listed(*queue, rawstor::with_tenant(first_uri, tenant)) +
-               listed(*queue, rawstor::with_tenant(second_uri, tenant));
+        return listed(*queue, rawstor::tests::with_tenant(first_uri, tenant)) +
+               listed(*queue, rawstor::tests::with_tenant(second_uri, tenant));
     };
 
     EXPECT_EQ(listed_for(acme_id), 2u);

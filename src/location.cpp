@@ -3,7 +3,6 @@
 #include "opts.h"
 #include "slot.hpp"
 #include "target.hpp"
-#include "tenant.hpp"
 
 #include <rawstor/list.h>
 
@@ -109,6 +108,100 @@ std::vector<rawstd::URI> build_create_uris(
     return ret;
 }
 
+// Tenants (docs/tenants.md): the tenant of a location is the user information
+// of its URI, optional; the nil UUID stands for "no tenant".
+
+// The tenant `uri` names: the nil UUID without user information, EINVAL for
+// anything that is not a non-nil UUID.
+RawstdUUID tenant_of(const rawstd::URI& uri) {
+    const std::string& name = uri.username();
+    if (name.empty()) {
+        return RawstdUUID{};
+    }
+    RawstdUUID id;
+    if (rawstd_uuid_from_string(&id, name.c_str()) < 0 ||
+        rawstd_uuid_is_nil(&id)) {
+        // Not the whole URI: its user information may carry a password.
+        rawstd_error(
+            "%s://%s%s: tenant \"%s\" is not a UUID\n", uri.scheme().c_str(),
+            uri.host().c_str(), uri.path().str().c_str(), name.c_str()
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    return id;
+}
+
+// The tenant that owns what is created without naming one.
+RawstdUUID default_tenant() {
+    RawstdUUID id;
+    rawstd_uuid_from_string(&id, RAWSTOR_DEFAULT_TENANT);
+    return id;
+}
+
+// The tenant an address names for an object owned by `owner`: none for the
+// default tenant, which an address without one stands for.
+RawstdUUID named_tenant(const RawstdUUID& owner) {
+    RawstdUUID fallback = default_tenant();
+    if (rawstd_uuid_is_nil(&owner) || rawstd_uuid_cmp(&owner, &fallback) == 0) {
+        return RawstdUUID{};
+    }
+    return owner;
+}
+
+// The owner an address stands for: the tenant it names, the default tenant
+// when it names none. EINVAL for a tenant that is not a non-nil UUID.
+RawstdUUID owner_of(const rawstd::URI& uri) {
+    RawstdUUID id = tenant_of(uri);
+    return rawstd_uuid_is_nil(&id) ? default_tenant() : id;
+}
+
+// The owner every URI of an address stands for: they must all agree, EINVAL
+// otherwise.
+RawstdUUID owner_of(const std::vector<rawstd::URI>& uris) {
+    RawstdUUID owner = owner_of(uris.front());
+    for (const rawstd::URI& uri : uris) {
+        RawstdUUID other = owner_of(uri);
+        if (rawstd_uuid_cmp(&owner, &other) != 0) {
+            rawstd_error("target names different tenants\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
+    return owner;
+}
+
+// `uri` with `tenant` as its user information, none for the nil UUID.
+rawstd::URI with_tenant(const rawstd::URI& uri, const RawstdUUID& tenant) {
+    std::string info;
+    if (!rawstd_uuid_is_nil(&tenant)) {
+        RawstdUUIDString text;
+        rawstd_uuid_to_string(&tenant, &text);
+        info = text;
+    }
+    std::string ret = uri.scheme() + "://";
+    if (!info.empty()) {
+        ret += info + "@";
+    }
+    ret += uri.host() + uri.path().str();
+    return rawstd::URI(ret);
+}
+
+// `uri` as the address of an object owned by `owner`: it names the owner, the
+// default tenant by naming none.
+rawstd::URI address_of(const rawstd::URI& uri, const RawstdUUID& owner) {
+    return with_tenant(uri, named_tenant(owner));
+}
+
+// `uris` as the address of what is created through them: each names its own
+// owner, the default tenant by naming none.
+std::vector<rawstd::URI> address_of(const std::vector<rawstd::URI>& uris) {
+    std::vector<rawstd::URI> ret;
+    ret.reserve(uris.size());
+    for (const rawstd::URI& uri : uris) {
+        ret.push_back(address_of(uri, owner_of(uri)));
+    }
+    return ret;
+}
+
 // RawstorPaginationToken now holds exactly a RawstdUUID's own bytes --
 // direct copies, not an encoding of anything.
 RawstdUUID decode_token(const RawstorPaginationToken& token) {
@@ -162,8 +255,7 @@ rawstd::Task<std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID>> list_one(
     std::exception_ptr error;
     try {
         co_await slot->list_chunks(
-            RawstdUUID{}, limit, ret.first, ret.second,
-            rawstor::tenant_of(location)
+            RawstdUUID{}, limit, ret.first, ret.second, tenant_of(location)
         );
     } catch (...) {
         error = std::current_exception();
@@ -606,6 +698,10 @@ Location::Location(const std::vector<rawstd::URI>& uris) : _uris(uris) {
     validate_different_uris(_uris);
 }
 
+RawstdUUID Location::owner() const {
+    return owner_of(_uris);
+}
+
 rawstd::Task<RawstorLocationInfo> Location::info(rawio::Queue& queue) const {
     std::vector<RawstorLocationInfo> infos =
         co_await rawstd::gather(_uris.size(), [&](size_t i) {
@@ -891,8 +987,7 @@ int rawstor_location_create(
             build_create_uris(uris, uuid_string, *spec);
 
         res = snprintf(
-            target, size, "%s",
-            rawstd::URI::uris(rawstor::address_of(ret)).c_str()
+            target, size, "%s", rawstd::URI::uris(address_of(ret)).c_str()
         );
         if (res < 0) {
             return res;

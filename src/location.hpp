@@ -36,6 +36,11 @@ public:
         return _uris;
     }
 
+    // The tenant the URIs stand for (docs/tenants.md): the one they name as
+    // user information, the default tenant when they name none. EINVAL if one
+    // names something that is not a tenant, or they name different ones.
+    RawstdUUID owner() const;
+
     rawstd::Task<RawstorLocationInfo> info(rawio::Queue& queue) const;
 
     // The targets name their owners (docs/tenants.md).

@@ -3,7 +3,6 @@
 
 #include "opts.h"
 #include "telemetry.hpp"
-#include "tenant.hpp"
 
 #include <rawio/awaitable.hpp>
 #include <rawio/queue.hpp>

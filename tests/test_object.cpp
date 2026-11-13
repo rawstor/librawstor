@@ -10,10 +10,10 @@
 #include "location.hpp"
 #include "object.hpp"
 #include "object_env.hpp"
+#include "owner.hpp"
 #include "rawio_sync.hpp"
 #include "register.hpp"
 #include "target.hpp"
-#include "tenant.hpp"
 #include "wire_backend.hpp"
 
 #include <rawio/queue.hpp>
@@ -736,9 +736,10 @@ TEST(ObjectResizeTest, new_chunks_belong_to_the_owner_of_the_object) {
     spec.size = 512ull << 10;
     spec.width = 1;
     spec.chunk_size = 512ull << 10;
-    run(*queue,
-        rawstor::Target({rawstd::URI(rawstor::with_tenant(mds, owner), id)})
-            .create(*queue, spec));
+    run(*queue, rawstor::Target(
+                    {rawstd::URI(rawstor::tests::with_tenant(mds, owner), id)}
+                )
+                    .create(*queue, spec));
 
     // Grown through an address that names no tenant.
     run(*queue,
@@ -810,7 +811,9 @@ TEST(ObjectTenantTest, a_transfer_moves_the_object_and_its_chunks) {
     spec.size = 1ull << 20;
     spec.width = 1;
     spec.chunk_size = 512ull << 10;
-    rawstor::Target target({rawstd::URI(rawstor::with_tenant(mds, acme), id)});
+    rawstor::Target target(
+        {rawstd::URI(rawstor::tests::with_tenant(mds, acme), id)}
+    );
     run(*queue, target.create(*queue, spec));
 
     RawstdUUID unknown;
@@ -838,8 +841,9 @@ TEST(ObjectTenantTest, a_transfer_moves_the_object_and_its_chunks) {
     auto count_for = [&](const RawstdUUID& tenant) {
         std::list<rawstor::Target> targets;
         RawstorPaginationToken token = {};
-        run(*queue, rawstor::Location({rawstor::with_tenant(mds, tenant)})
-                        .list(*queue, 0, targets, token));
+        run(*queue,
+            rawstor::Location({rawstor::tests::with_tenant(mds, tenant)})
+                .list(*queue, 0, targets, token));
         return targets.size();
     };
     EXPECT_EQ(count_for(acme), 0u);
@@ -871,7 +875,9 @@ TEST(ObjectTenantTest, removing_a_tenant_removes_its_objects) {
     };
     for (const char* id : ids) {
         run(*queue,
-            rawstor::Target({rawstd::URI(rawstor::with_tenant(mds, acme), id)})
+            rawstor::Target(
+                {rawstd::URI(rawstor::tests::with_tenant(mds, acme), id)}
+            )
                 .create(*queue, spec));
     }
     // An object of the default tenant stays.
@@ -881,23 +887,25 @@ TEST(ObjectTenantTest, removing_a_tenant_removes_its_objects) {
     auto count_for = [&](const RawstdUUID& tenant) {
         std::list<rawstor::Target> targets;
         RawstorPaginationToken token = {};
-        run(*queue, rawstor::Location({rawstor::with_tenant(mds, tenant)})
-                        .list(*queue, 0, targets, token));
+        run(*queue,
+            rawstor::Location({rawstor::tests::with_tenant(mds, tenant)})
+                .list(*queue, 0, targets, token));
         return targets.size();
     };
     ASSERT_EQ(count_for(acme), 3u);
 
     try {
-        run(*queue, admin.remove_tenant(*queue, rawstor::default_tenant()));
+        run(*queue,
+            admin.remove_tenant(*queue, rawstor::tests::default_owner()));
         FAIL() << "removed the default tenant";
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), EPERM);
     }
-    EXPECT_EQ(count_for(rawstor::default_tenant()), 1u);
+    EXPECT_EQ(count_for(rawstor::tests::default_owner()), 1u);
 
     run(*queue, admin.remove_tenant(*queue, acme));
     EXPECT_EQ(count_for(acme), 0u);
-    EXPECT_EQ(count_for(rawstor::default_tenant()), 1u);
+    EXPECT_EQ(count_for(rawstor::tests::default_owner()), 1u);
 
     // The tenant is gone too.
     try {

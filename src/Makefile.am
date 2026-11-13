@@ -68,8 +68,6 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         subprocess.hpp \
                         target.cpp \
                         target.hpp \
-                        tenant.cpp \
-                        tenant.hpp \
                         telemetry.cpp \
                         telemetry.hpp \
                         zfs_backend.cpp \

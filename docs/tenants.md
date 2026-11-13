@@ -13,10 +13,10 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 
 | Feature | Status | Where |
 |---|---|---|
-| Tenant in the location URI (`<tenant>@`), optional | ✅ | `src/tenant.cpp`, `librawstd/src/uri.cpp` |
+| Tenant in the location URI (`<tenant>@`), optional | ✅ | `src/location.cpp`, `librawstd/src/uri.cpp` |
 | Owner recorded with every chunk (`ALLOCATE`, chunk metadata, `META`) | ✅ | `src/blk_backend.cpp`, `include/rawstor/protocol.h` |
 | `LIST` by owner, every row carrying its owner; no tenant lists every object | ✅ | `src/blk_backend.cpp`, `mds/src/store.cpp` |
-| The default tenant owns what is created without naming one | ✅ | `src/tenant.cpp`, `mds/src/store.cpp` |
+| The default tenant owns what is created without naming one | ✅ | `src/location.cpp`, `mds/src/store.cpp` |
 | MDS: owner of an object, tenant registry, `TENANT_CREATE` / `TENANT_REMOVE` / `LIST_TENANTS` | ✅ | `mds/src/store.cpp`, `mds/src/client.cpp` |
 | `--reconstruct` restores owners and registers their tenants | ✅ | `mds/src/store.cpp` |
 | CLI: `rawstor tenant create/list/remove` | ✅ | `cli/tenant.c` |

@@ -8,7 +8,6 @@
 #include "ost_backend.hpp"
 #include "slot.hpp"
 #include "target.hpp"
-#include "tenant.hpp"
 
 #include <rawio/awaitable.hpp>
 #include <rawio/stream.hpp>

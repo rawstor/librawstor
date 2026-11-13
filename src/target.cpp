@@ -5,7 +5,6 @@
 #include "object.hpp"
 #include "opts.h"
 #include "slot.hpp"
-#include "tenant.hpp"
 
 #include <rawstor/list.h>
 #include <rawstor/target.h>
@@ -1339,7 +1338,7 @@ const RawstdUUID& Target::version_id() const {
 
 rawstd::Task<void>
 Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
-    co_await create(queue, sp, owner_of(_uris));
+    co_await create(queue, sp, location().owner());
 }
 
 rawstd::Task<void> Target::create(
@@ -2343,7 +2342,8 @@ int rawstor_target_id(const char* target, char* buf, size_t size) noexcept {
 
 int rawstor_target_tenant(const char* target, char* buf, size_t size) noexcept {
     try {
-        RawstdUUID owner = rawstor::owner_of(rawstd::URI::uriv(target));
+        RawstdUUID owner =
+            rawstor::Target(rawstd::URI::uriv(target)).location().owner();
         RawstdUUIDString text;
         rawstd_uuid_to_string(&owner, &text);
         int res = snprintf(buf, size, "%s", text);

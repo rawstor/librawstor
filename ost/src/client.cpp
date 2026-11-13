@@ -3,7 +3,6 @@
 #include <ost/server.hpp>
 
 #include "slot.hpp"
-#include "tenant.hpp"
 
 #include <rawio/queue.hpp>
 

@@ -2,7 +2,6 @@
 
 #include "slot.hpp"
 #include "target.hpp"
-#include "tenant.hpp"
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>

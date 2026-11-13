@@ -1,7 +1,6 @@
 #include "blk_backend.hpp"
 
 #include "opts.h"
-#include "tenant.hpp"
 
 #include <rawio/awaitable.hpp>
 

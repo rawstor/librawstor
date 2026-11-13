@@ -1,9 +1,9 @@
 #include "object.hpp"
 #include "object_env.hpp"
 #include "opts.h"
+#include "owner.hpp"
 #include "slot.hpp"
 #include "target.hpp"
-#include "tenant.hpp"
 #include "tmp_dir.hpp"
 
 #include <rawio/queue.hpp>
@@ -372,7 +372,7 @@ TEST(SessionReplaceTest, adopted_departure_wait_leaves_the_next_departure) {
     spec.width = 1;
     run(*first_queue,
         first->create(
-            id, 0, spec, RAWSTOR_MEMBER_DATA, rawstor::default_tenant()
+            id, 0, spec, RAWSTOR_MEMBER_DATA, rawstor::tests::default_owner()
         ));
     first->set_departure_grace(grace, nullptr);
     run(*first_queue, first->open(session, id, 0, 0, RawstdUUID{}));

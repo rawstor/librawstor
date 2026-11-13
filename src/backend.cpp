@@ -5,7 +5,6 @@
 #include "lvm_backend.hpp"
 #include "mds_backend.hpp"
 #include "ost_backend.hpp"
-#include "tenant.hpp"
 #include "zfs_backend.hpp"
 
 #include <rawstd/logging.h>
