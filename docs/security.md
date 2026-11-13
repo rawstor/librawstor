@@ -48,10 +48,10 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | Capability tokens issued by `RESOLVE`, checked by OST | 3 | ❌ | — |
 | `rawstor pki` helper (own CA), external CA support | 4 | ❌ | — |
 | At-rest encryption, server side (ZFS / dm-crypt) | 5 | ❌ | documentation only |
+| At-rest encryption, client side (AES-XTS, wrapped per-object key) | 6 | ❌ | — |
 | `quarantined` OST state in the topology | 7 | ❌ | — |
 | epoch-fence: clients with an older map are refused by the remaining members | 7 | ❌ | [MDS design](mds.md#epoch-fence) |
 | Replace a mirror member (`updatePlacement`, migration, resync onto a new OST) | 7 | ❌ | [MDS design](mds.md) |
-| At-rest encryption, client side (AES-XTS, wrapped per-object key) | 6 | ❌ | — |
 
 ## Threat model
 
