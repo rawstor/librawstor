@@ -40,10 +40,10 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | Benchmark: TLS 1.3 / kTLS on the io_uring hot path | 0 | ✅ | [Measurements](#measurements) |
 | `HANDSHAKE`: feature bits, the first request of every connection (no protocol version) | 1 | ✅ | [Protocol](protocol.md) |
 | Owner tenant of an object in the protocol, chunk metadata, `LIST` and the MDS store; tenant registry; a default tenant | 1 | ✅ | [Tenants](tenants.md) |
-| mTLS (OpenSSL) on every port: OST, MDS, witness, client side | 2 | ❌ | — |
+| mTLS (OpenSSL) on every port: OST, MDS, witness, client side | 2 | 🟡 | `librawtls`: TLS 1.3 sessions over memory BIOs, SPIFFE identity checks; no connection uses it yet |
 | kTLS offload of the data path | 2 | ❌ | optional, off by default (stage 0) |
 | `--insecure`: plaintext, no authentication, per service | 2 | ❌ | — |
-| Certificate and CA reload without downtime | 2 | ❌ | — |
+| Certificate and CA reload without downtime | 2 | 🟡 | `rawtls::Context::reload()`; no `SIGHUP` handler yet |
 | Principals and roles in the MDS store, admin API (the tenant registry exists, see stage 1) | 3 | ❌ | — |
 | Capability tokens issued by `RESOLVE`, checked by OST | 3 | ❌ | — |
 | `rawstor pki` helper (own CA), external CA support | 4 | ❌ | — |
