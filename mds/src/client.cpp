@@ -4,6 +4,7 @@
 
 #include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
+#include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
 #include <rawstd/socket.h>
 
@@ -30,69 +31,28 @@ using rawstor::mdsserver::VersionMember;
 // asking for more (or for no particular number, 0) gets this many.
 const unsigned int list_limit = 1024;
 
-int recv_trampoline(ssize_t result, void* data) {
-    size_t value = result < 0 ? 0 : static_cast<size_t>(result);
-    int error = result < 0 ? static_cast<int>(-result) : 0;
-    static_cast<rawstd::CallbackAwaitable<size_t>*>(data)->complete(
-        value, error
-    );
-    return 0;
-}
-
-rawstd::Task<size_t>
-co_recv(RawIOQueue* queue, int fd, void* buf, size_t size) {
-    rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawio_recv(queue, fd, buf, size, 0, recv_trampoline, &awaiter);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
+// Reads exactly `size` bytes of the next part of a request into `buf`. The
+// stream ends with EPIPE when the peer disconnects; a stream that ends in the
+// middle of a part is a torn-down connection, EPROTO.
+rawstd::Task<void> recv_all(rawio::RecvStream& stream, void* buf, size_t size) {
+    rawio::RecvStream::Item item = co_await stream.next(size);
+    if (item.size() != size) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
-    co_return co_await awaiter;
+    rawstd_iovec_to_buf(item.iov(), item.niov(), 0, buf, size);
 }
 
-// Reads exactly `size` bytes (looping over short reads); throws ECONNRESET
-// on a clean peer disconnect (0-byte read) or EPROTO on a torn-down
-// connection mid-frame -- either way, terminal for this Client.
-rawstd::Task<void> recv_all(RawIOQueue* queue, int fd, void* buf, size_t size) {
-    uint8_t* p = static_cast<uint8_t*>(buf);
-    size_t got = 0;
-    while (got < size) {
-        size_t n = co_await co_recv(queue, fd, p + got, size - got);
-        if (n == 0) {
-            RAWSTD_THROW_SYSTEM_ERROR(ECONNRESET);
-        }
-        got += n;
-    }
-}
-
-int send_trampoline(ssize_t result, void* data) {
-    size_t value = result < 0 ? 0 : static_cast<size_t>(result);
-    int error = result < 0 ? static_cast<int>(-result) : 0;
-    static_cast<rawstd::CallbackAwaitable<size_t>*>(data)->complete(
-        value, error
-    );
-    return 0;
-}
-
-rawstd::Task<size_t> co_send(
-    RawIOQueue* queue, int fd, const void* buf, size_t size, unsigned int flags
-) {
-    rawstd::CallbackAwaitable<size_t> awaiter;
-    int res =
-        rawio_send(queue, fd, buf, size, flags, send_trampoline, &awaiter);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_return co_await awaiter;
-}
-
+// Sends all of `buf`, looping over a plain connection's short sends.
 rawstd::Task<void>
-send_all(RawIOQueue* queue, int fd, const void* buf, size_t size) {
+send_all(rawtls::Transport& transport, const void* buf, size_t size) {
     const uint8_t* p = static_cast<const uint8_t*>(buf);
     size_t sent = 0;
     while (sent < size) {
-        size_t n = co_await co_send(
-            queue, fd, p + sent, size - sent, RAWSTD_MSG_NOSIGNAL
-        );
+        size_t n =
+            co_await transport.send(p + sent, size - sent, RAWSTD_MSG_NOSIGNAL);
+        if (n == 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
+        }
         sent += n;
     }
 }
@@ -177,19 +137,26 @@ encode_object_map(const Topology& topology, const ObjectMap& map) {
 namespace rawstor {
 namespace mdsserver {
 
-rawstd::Task<std::shared_ptr<Client>>
-Client::create(RawIOQueue* queue, Server& server, int fd) {
-    std::shared_ptr<Client> client =
-        std::make_shared<Client>(Private(), queue, server, fd);
+rawstd::Task<std::shared_ptr<Client>> Client::create(
+    RawIOQueue* queue, Server& server, int fd,
+    std::unique_ptr<rawtls::Transport> transport
+) {
+    std::shared_ptr<Client> client = std::make_shared<Client>(
+        Private(), queue, server, fd, std::move(transport)
+    );
     _recv_pump(client);
     rawstd::DetachedTask::rethrow_if_pending();
     co_return client;
 }
 
-Client::Client(Private, RawIOQueue* queue, Server& server, int fd) :
+Client::Client(
+    Private, RawIOQueue* queue, Server& server, int fd,
+    std::unique_ptr<rawtls::Transport> transport
+) :
     _queue(queue),
     _server(server),
-    _fd(fd) {
+    _fd(fd),
+    _transport(std::move(transport)) {
 }
 
 Client::~Client() {
@@ -214,9 +181,9 @@ rawstd::Task<void> Client::_send_response(
             .res = res,
         },
     };
-    co_await send_all(_queue, _fd, &response, sizeof(response));
+    co_await send_all(*_transport, &response, sizeof(response));
     if (size > 0) {
-        co_await send_all(_queue, _fd, data, size);
+        co_await send_all(*_transport, data, size);
     }
 }
 
@@ -225,20 +192,23 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak) {
     if (client == nullptr) {
         co_return;
     }
-    RawIOQueue* queue = client->_queue;
     int fd = client->_fd;
     Server& server = client->_server;
+    // MDS requests are small: a few KiB at most, so a small ring is plenty.
+    rawio::RecvStream stream = client->_transport->recv_multishot(
+        4096, 64, sizeof(RawstorFrameHead), 0
+    );
     client.reset();
 
     try {
         while (true) {
             RawstorFrameHead head;
-            co_await recv_all(queue, fd, &head, sizeof(head));
+            co_await recv_all(stream, &head, sizeof(head));
             if (head.magic != RAWSTOR_MAGIC) {
                 rawstd_error("fd %d: Bad magic\n", fd);
                 RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
             }
-            co_await _dispatch(weak, head);
+            co_await _dispatch(weak, head, stream);
         }
     } catch (const std::system_error& e) {
         // ECANCELED is the Server itself shutting down (SIGINT/SIGTERM):
@@ -247,7 +217,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak) {
         if (e.code().value() == ECANCELED) {
             co_return;
         }
-        if (e.code().value() != ECONNRESET) {
+        if (e.code().value() != EPIPE) {
             rawstd_error("fd %d: %s\n", fd, e.what());
         }
     } catch (const std::exception& e) {
@@ -257,13 +227,14 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak) {
     co_await server.del_client(fd);
 }
 
-rawstd::Task<void>
-Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
+rawstd::Task<void> Client::_dispatch(
+    std::weak_ptr<Client> weak, const RawstorFrameHead& head,
+    rawio::RecvStream& stream
+) {
     std::shared_ptr<Client> client = weak.lock();
     if (client == nullptr) {
         co_return;
     }
-    RawIOQueue* queue = client->_queue;
     int fd = client->_fd;
     ObjectStore& store = client->_server.store();
 
@@ -287,13 +258,13 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         // RawstorFrameSetObjectPayload on the wire (shared with every
         // other server role, protocol.h).
         RawstorFrameSetObjectPayload payload;
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         co_await client->_send_response(head.cmd, head.cid, 0);
         break;
     }
     case RAWSTOR_CMD_HANDSHAKE: {
         RawstorFrameHandshakePayload payload;
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         if (client->_handshaken) {
             co_await client->_send_response(head.cmd, head.cid, -EPROTO);
             rawstd_error("fd %d: A second handshake\n", fd);
@@ -311,7 +282,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     }
     case RAWSTOR_CMD_LIST_TENANTS: {
         RawstorFrameListTenantsPayload payload{};
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         RawstdUUID token = uuid_of(payload.token_id);
         unsigned int limit = payload.limit == 0 || payload.limit > list_limit
                                  ? list_limit
@@ -348,7 +319,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     case RAWSTOR_CMD_TENANT_CREATE:
     case RAWSTOR_CMD_TENANT_REMOVE: {
         RawstorFrameTenantOpPayload payload;
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         int32_t res = 0;
         try {
             if (head.cmd == RAWSTOR_CMD_TENANT_CREATE) {
@@ -368,7 +339,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     }
     case RAWSTOR_CMD_LOCATION_INFO: {
         RawstorFrameBasicPayload payload;
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         RawstorLocationInfo info{};
         int32_t res = 0;
         try {
@@ -387,7 +358,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     }
     case RAWSTOR_CMD_ALLOCATE: {
         RawstorFrameAllocatePayload payload{};
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         int32_t res = 0;
         try {
             RawstorObjectSpec spec{};
@@ -412,7 +383,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     case RAWSTOR_CMD_META:
     case RAWSTOR_CMD_RELEASE: {
         RawstorFrameBasicPayload payload{};
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         int32_t res = 0;
         RawstorFrameMetaPayload out{};
         try {
@@ -444,7 +415,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     }
     case RAWSTOR_CMD_SET_OWNER: {
         RawstorFrameBasicPayload payload{};
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         int32_t res = 0;
         try {
             store.set_witness_owner(
@@ -459,7 +430,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     }
     case RAWSTOR_CMD_OBJ_TRANSFER: {
         RawstorFrameObjOpPayload payload{};
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         int32_t res = 0;
         RawstorFrameObjTransferredPayload out{};
         try {
@@ -481,7 +452,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     case RAWSTOR_CMD_SYNC_PREPARE:
     case RAWSTOR_CMD_SYNC_ACCEPT: {
         RawstorFrameSyncProposePayload payload{};
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         int32_t res = 0;
         RawstorFrameSyncReplyPayload out{};
         try {
@@ -519,7 +490,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     }
     case RAWSTOR_CMD_OBJ_CREATE: {
         RawstorFrameObjCreatePayload payload;
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         int32_t res = 0;
         RawstorFrameObjCreatedPayload out{};
         try {
@@ -558,7 +529,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     }
     case RAWSTOR_CMD_RESOLVE: {
         RawstorFrameBasicPayload payload;
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         int32_t res = 0;
         std::vector<unsigned char> data;
         try {
@@ -581,7 +552,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     }
     case RAWSTOR_CMD_LIST: {
         RawstorFrameListPayload payload{};
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         auto token = uuid_of(payload.token_id);
         unsigned int limit = payload.limit == 0 || payload.limit > list_limit
                                  ? list_limit
@@ -616,7 +587,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     }
     case RAWSTOR_CMD_LIST_VERSIONS: {
         RawstorFrameBasicPayload payload;
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         int32_t res = 0;
         std::vector<unsigned char> data;
         try {
@@ -645,7 +616,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     }
     case RAWSTOR_CMD_OBJ_RESIZE: {
         RawstorFrameObjOpPayload payload;
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         int32_t res = 0;
         RawstorFrameObjResizedPayload out{};
         try {
@@ -670,7 +641,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     }
     case RAWSTOR_CMD_OBJ_REMOVE: {
         RawstorFrameObjOpPayload payload;
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         int32_t res = 0;
         std::vector<unsigned char> data;
         try {
@@ -693,7 +664,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     }
     case RAWSTOR_CMD_OBJ_COMMIT_VERSION: {
         RawstorFrameObjCommitVersionPayload payload;
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         // Grown batch by batch as member records actually arrive, never
         // sized by the peer-supplied count up front: a bogus nmembers
         // can't force an allocation bigger than what was really sent.
@@ -703,7 +674,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
             size_t n = std::min<size_t>(256, payload.nmembers - done);
             wire_members.resize(done + n);
             co_await recv_all(
-                queue, fd, wire_members.data() + done,
+                stream, wire_members.data() + done,
                 n * sizeof(RawstorFrameObjVersionMemberPayload)
             );
         }
@@ -738,7 +709,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
     }
     case RAWSTOR_CMD_OBJ_REMOVE_VERSION: {
         RawstorFrameObjOpPayload payload;
-        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        co_await recv_all(stream, &payload, sizeof(payload));
         int32_t res = 0;
         std::vector<unsigned char> data;
         try {

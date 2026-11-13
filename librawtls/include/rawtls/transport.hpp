@@ -38,15 +38,19 @@ public:
     // A TLS connection: runs the handshake on `fd` as the client or the
     // server and returns the Transport once the peer is verified. A client
     // says whom it expects, as Session does. Throws what Session
-    // throws, or the std::system_error of the socket.
+    // throws, or the std::system_error of the socket; a peer that has not
+    // completed the handshake within `handshake_timeout_ms` fails it with
+    // ETIMEDOUT.
     static rawstd::Task<std::unique_ptr<Transport>>
     tls(rawio::Queue& queue, int fd, Context& context, Session::Mode mode,
         const std::string& expected_peer = "",
-        std::optional<Role> expected_role = std::nullopt);
+        std::optional<Role> expected_role = std::nullopt,
+        unsigned int handshake_timeout_ms = 10000);
 
-    // Sends all of `buf` (or all of `msg`) and completes with the number of
-    // bytes of it. Sends on one Transport reach the peer whole and in the
-    // order they were started.
+    // Sends `buf` (or `msg`) and completes with the number of its bytes that
+    // went out: a plain connection may send less, like a socket, and a TLS
+    // connection always sends all of it. Sends on a TLS Transport reach the
+    // peer whole and in the order they were started.
     virtual Op<size_t>
     send(const void* buf, size_t size, unsigned int flags) = 0;
     virtual Op<size_t> sendmsg(const msghdr* msg, unsigned int flags) = 0;

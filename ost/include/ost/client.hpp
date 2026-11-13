@@ -10,6 +10,8 @@
 
 #include <rawio/queue.hpp>
 
+#include <rawtls/transport.hpp>
+
 #include <rawstd/coro.hpp>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
@@ -35,6 +37,8 @@ private:
     RawIOQueue* _queue;
     Server& _server;
     int _fd;
+    // The connection's bytes, plain or through TLS.
+    std::unique_ptr<rawtls::Transport> _transport;
     // Set by HANDSHAKE, the first request: nothing is served before it.
     bool _handshaken = false;
     RawIOEvent* _recv_event;
@@ -64,8 +68,7 @@ private:
     // all -- only actually reaching into one, via `weak`, once dispatch
     // begins. See the .cpp for why this can't just be a coroutine-local
     // recv stream the way ost/src/ost_backend.cpp's rawio::RecvStream is.
-    static rawstd::DetachedTask
-    _recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd);
+    static rawstd::DetachedTask _recv_pump(std::weak_ptr<Client> weak, int fd);
 
     // Every _*() below is `static` (no implicit `this`) and takes a
     // `weak_ptr<Client>` explicitly: each is a coroutine that may co_await
@@ -195,10 +198,16 @@ private:
     );
 
 public:
-    static rawstd::Task<std::shared_ptr<Client>>
-    create(RawIOQueue* queue, Server& server, int fd);
+    // `transport` is the connection on `fd`, after any TLS handshake.
+    static rawstd::Task<std::shared_ptr<Client>> create(
+        RawIOQueue* queue, Server& server, int fd,
+        std::unique_ptr<rawtls::Transport> transport
+    );
 
-    Client(Private, RawIOQueue* queue, Server& server, int fd);
+    Client(
+        Private, RawIOQueue* queue, Server& server, int fd,
+        std::unique_ptr<rawtls::Transport> transport
+    );
     Client(const Client&) = delete;
     Client(Client&&) = delete;
     ~Client() noexcept;

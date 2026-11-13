@@ -132,6 +132,11 @@ struct TlsState {
     // can follow it, and the sends waiting their turn fail instead of writing
     // to a socket that is being closed.
     bool broken = false;
+    // The handshake's deadline: the timer, whether the handshake is still
+    // running, and whether the timer is what ended it.
+    rawio::Event* timer = nullptr;
+    bool handshaking = true;
+    bool timed_out = false;
 
     TlsState(
         rawio::Queue& q, int f, Context& context, Session::Mode mode,
@@ -237,7 +242,18 @@ rawstd::Task<void> tls_handshake(std::shared_ptr<TlsState> s) {
             if (done) {
                 co_return;
             }
-            size_t n = co_await s->queue.recv(s->fd, in.data(), in.size(), 0);
+            // Registered so the deadline can cancel it.
+            rawio::Awaitable<size_t> op =
+                s->queue.recv(s->fd, in.data(), in.size(), 0);
+            s->inflight = op.event();
+            size_t n = 0;
+            try {
+                n = co_await op;
+            } catch (...) {
+                s->inflight = nullptr;
+                throw;
+            }
+            s->inflight = nullptr;
             if (n == 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
             }
@@ -504,14 +520,63 @@ std::unique_ptr<Transport> Transport::plain(rawio::Queue& queue, int fd) {
     return std::make_unique<PlainTransport>(queue, fd);
 }
 
+namespace {
+
+// Ends the handshake if the peer has not finished it in time, by cancelling the
+// recv it is waiting in.
+rawstd::DetachedTask
+handshake_deadline(std::shared_ptr<TlsState> s, unsigned int timeout_ms) {
+    rawio::Awaitable<void> timer = s->queue.timeout(timeout_ms * 1000u);
+    s->timer = timer.event();
+    try {
+        co_await timer;
+    } catch (const std::system_error&) {
+        // Cancelled: the handshake ended first.
+        s->timer = nullptr;
+        co_return;
+    }
+    s->timer = nullptr;
+    if (s->handshaking) {
+        s->timed_out = true;
+        cancel_receive_now(*s);
+    }
+}
+
+} // namespace
+
 rawstd::Task<std::unique_ptr<Transport>> Transport::tls(
     rawio::Queue& queue, int fd, Context& context, Session::Mode mode,
-    const std::string& expected_peer, std::optional<Role> expected_role
+    const std::string& expected_peer, std::optional<Role> expected_role,
+    unsigned int handshake_timeout_ms
 ) {
     std::shared_ptr<TlsState> state = std::make_shared<TlsState>(
         queue, fd, context, mode, expected_peer, expected_role
     );
-    co_await tls_handshake(state);
+    handshake_deadline(state, handshake_timeout_ms);
+    rawstd::DetachedTask::rethrow_if_pending();
+
+    std::exception_ptr error;
+    try {
+        co_await tls_handshake(state);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    state->handshaking = false;
+    if (state->timer != nullptr) {
+        try {
+            queue.cancel(state->timer);
+        } catch (const std::exception& e) {
+            rawstd_warning("Failed to cancel event: %s\n", e.what());
+        }
+    }
+    if (error) {
+        if (state->timed_out) {
+            RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
+        }
+        std::rethrow_exception(error);
+    }
+    // The deadline's cancel is not the stream's: a stream starts afresh.
+    state->cancelled = false;
     co_return std::make_unique<TlsTransport>(std::move(state));
 }
 

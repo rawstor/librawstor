@@ -3,6 +3,7 @@
 #include <ost/client.hpp>
 
 #include "slot.hpp"
+#include "tls.hpp"
 
 #include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
@@ -148,6 +149,11 @@ Server::~Server() {
         }
     }
     _clients.clear();
+    for (int fd : _handshaking) {
+        if (::shutdown(fd, SHUT_RDWR) == -1 && errno != ENOTCONN) {
+            rawstd_warning("Failed to shut down client: %s\n", strerror(errno));
+        }
+    }
 
     // _wake_fd itself needs no cleanup here: Server never owns it, see
     // its own constructor doc comment.
@@ -162,7 +168,7 @@ Server::~Server() {
     // Slot departure persists the final member state before the queue dies.
     // In-flight requests can release their Client and start a departure
     // while this pump is running.
-    while (_live_clients != 0 || _departures != 0) {
+    while (_live_clients != 0 || _departures != 0 || _handshakes != 0) {
         int res = rawio_wait(_queue);
         if (res < 0 && res != -EINTR) {
             rawstd_warning("Failed to drain clients: %s\n", strerror(-res));
@@ -194,7 +200,12 @@ rawstd::Task<void> Server::_add_client(int fd) {
     std::exception_ptr error;
     std::shared_ptr<Client> client;
     try {
-        client = co_await Client::create(_queue, *this, fd);
+        std::unique_ptr<rawtls::Transport> transport =
+            co_await rawstor::tls::accept(
+                *static_cast<rawio::Queue*>(_queue), fd
+            );
+        client =
+            co_await Client::create(_queue, *this, fd, std::move(transport));
     } catch (...) {
         error = std::current_exception();
     }
@@ -214,6 +225,18 @@ rawstd::Task<void> Server::_add_client(int fd) {
 
     rawstd_info("Client connected: fd=%d\n", fd);
     _clients.emplace(fd, std::move(client));
+}
+
+rawstd::DetachedTask Server::_admit(int fd) {
+    ++_handshakes;
+    _handshaking.insert(fd);
+    try {
+        co_await _add_client(fd);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+    }
+    _handshaking.erase(fd);
+    --_handshakes;
 }
 
 rawstd::Task<void> Server::del_client(int fd) {
@@ -275,11 +298,8 @@ rawstd::DetachedTask Server::_accept_task() {
                 continue;
             }
 
-            try {
-                co_await _add_client(fd);
-            } catch (const std::exception& e) {
-                rawstd_error("%s\n", e.what());
-            }
+            _admit(fd);
+            rawstd::DetachedTask::rethrow_if_pending();
         }
 
         if (error != ENOBUFS) {

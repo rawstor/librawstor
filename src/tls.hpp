@@ -47,6 +47,14 @@ rawstd::Task<std::unique_ptr<rawtls::Transport>> connect(
     const std::string& host
 );
 
+/*
+ * The Transport of an accepted socket: plain when TLS is off, otherwise the TLS
+ * server side of it, after the handshake. A client that does not complete it
+ * in time, or that is refused, fails it.
+ */
+rawstd::Task<std::unique_ptr<rawtls::Transport>>
+accept(rawio::Queue& queue, int fd);
+
 } // namespace tls
 } // namespace rawstor
 
