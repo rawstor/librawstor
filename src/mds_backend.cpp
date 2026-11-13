@@ -735,7 +735,7 @@ rawstd::Task<void> Backend::resize(
     WireMap after = co_await _resolve(id, RawstdUUID{});
 
     /* The new chunks belong to the object's own owner, as the MDS has it. */
-    const RawstdUUID& owner = resized.owner;
+    RawstdUUID owner = resized.owner;
 
     /*
      * Materialize the new chunks, one copy at a time: a copy that already
@@ -770,6 +770,27 @@ rawstd::Task<void> Backend::resize(
             }
         }
     }
+
+    // A transfer meanwhile writes the members of the chunks it finds in the
+    // map, and these were not there yet, or did not exist. So the owner is
+    // asked again after they are created (the same OBJ_RESIZE, which applies
+    // nothing and reports the owner as it is then), and the new chunks follow
+    // it until the owner is the one they were written with.
+    const unsigned int max_rounds = 16;
+    for (unsigned int round = 0; round < max_rounds; ++round) {
+        mds::WireResized again =
+            co_await _obj_resize(idempotency_key, id, new_size);
+        if (rawstd_uuid_is_nil(&again.owner)) {
+            // Removed meanwhile.
+            RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+        }
+        if (rawstd_uuid_cmp(&again.owner, &owner) == 0) {
+            co_return;
+        }
+        owner = again.owner;
+        co_await _set_members_owner(after, resized.old_nchunks, owner);
+    }
+    RAWSTD_THROW_SYSTEM_ERROR(EAGAIN);
 }
 
 // OBJ_TRANSFER: the owner the object has when the MDS answers. Sent again with
@@ -808,12 +829,13 @@ rawstd::Task<RawstdUUID> Backend::_obj_transfer(
     co_return ret;
 }
 
-// Records `owner` with every member of the object, one at a time.
-rawstd::Task<void>
-Backend::_set_members_owner(const RawstdUUID& id, const RawstdUUID& owner) {
-    WireMap map = co_await _resolve(id, RawstdUUID{});
+// Records `owner` with every member of the chunks of `map` from `first_chunk`
+// on, one at a time.
+rawstd::Task<void> Backend::_set_members_owner(
+    const WireMap& map, uint64_t first_chunk, const RawstdUUID& owner
+) {
     bool unaddressed = false;
-    for (uint64_t i = 0; i < map.chunks.size(); ++i) {
+    for (uint64_t i = first_chunk; i < map.chunks.size(); ++i) {
         for (const auto& member : map.chunks[i]) {
             // A member the topology has no address for cannot be reached:
             // the others are done first, then the transfer fails, so that
@@ -855,7 +877,8 @@ rawstd::Task<void> Backend::set_owner(
     // A transfer storm can go on, but not forever.
     const unsigned int max_rounds = 16;
     for (unsigned int round = 0; round < max_rounds; ++round) {
-        co_await _set_members_owner(id, written);
+        WireMap map = co_await _resolve(id, RawstdUUID{});
+        co_await _set_members_owner(map, 0, written);
 
         RawstdUUID current = co_await _obj_transfer(idempotency_key, id, owner);
         if (rawstd_uuid_is_nil(&current)) {

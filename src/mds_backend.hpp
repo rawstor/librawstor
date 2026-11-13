@@ -89,8 +89,9 @@ private:
         const RawstdUUID& owner
     );
 
-    rawstd::Task<void>
-    _set_members_owner(const RawstdUUID& id, const RawstdUUID& owner);
+    rawstd::Task<void> _set_members_owner(
+        const WireMap& map, uint64_t first_chunk, const RawstdUUID& owner
+    );
 
     /* Returns the map the object had, for the fan-out destroy. */
     rawstd::Task<WireMap>

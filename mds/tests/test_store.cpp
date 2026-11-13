@@ -1319,6 +1319,15 @@ TEST_F(ObjectStoreTest, resize_reports_the_owner) {
     store.transfer(RawstdUUID{}, id, other);
     grown = store.resize(RawstdUUID{}, id, 3 * chunk_size);
     EXPECT_EQ(rawstd_uuid_cmp(&grown.tenant, &other), 0);
+
+    // A repeat applies nothing and reports the owner as it is then.
+    RawstdUUID key = make_id();
+    ResizeResult first = store.resize(key, id, 4 * chunk_size);
+    EXPECT_EQ(rawstd_uuid_cmp(&first.tenant, &other), 0);
+    store.transfer(RawstdUUID{}, id, acme);
+    ResizeResult again = store.resize(key, id, 4 * chunk_size);
+    EXPECT_EQ(again.old_nchunks, first.old_nchunks);
+    EXPECT_EQ(rawstd_uuid_cmp(&again.tenant, &acme), 0);
 }
 
 TEST_F(ObjectStoreTest, tenants_are_created_and_removed) {

@@ -231,6 +231,12 @@ wrote, it writes the members with that one and asks again. Whoever writes a
 member last has read the MDS after it, so the members end with the owner the
 MDS has; a storm that does not settle in 16 rounds fails with `-EAGAIN`.
 
+A `resize` does the same for the chunks it adds: it creates them for the owner
+`OBJ_RESIZE` reports, asks again afterwards (the same request, which applies
+nothing), and while the owner is not the one the new chunks were written with,
+writes them with the new one, so a transfer that came in meanwhile and did not
+find these chunks does not leave them with the old owner.
+
 A transfer that fails part-way, say with a copy unreachable, leaves copies with
 different owners until it is run again, which finishes it. A member the MDS has
 no address for (its OST is gone from the topology) is unreachable too: the
