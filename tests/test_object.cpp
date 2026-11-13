@@ -750,7 +750,8 @@ TEST(ObjectResizeTest, new_chunks_belong_to_the_owner_of_the_object) {
         rawstor::Target chunk({rawstd::URI(rawstd::URI(mds, id), hex.str())});
         auto metas = run(*queue, chunk.meta(*queue));
         ASSERT_FALSE(metas.empty());
-        RawstdUUID got = rawstor::tenant_from_wire(metas.front().tenant_id);
+        RawstdUUID got;
+        memcpy(got.bytes, metas.front().tenant_id, sizeof(got.bytes));
         EXPECT_EQ(rawstd_uuid_cmp(&got, &owner), 0) << "offset " << offset;
     }
 

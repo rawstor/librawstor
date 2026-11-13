@@ -6,7 +6,6 @@
 #include <rawstd/logging.hpp>
 
 #include <cerrno>
-#include <cstring>
 
 namespace rawstor {
 
@@ -72,16 +71,6 @@ rawstd::URI with_tenant(const rawstd::URI& uri, const RawstdUUID& tenant) {
     }
     ret += uri.host() + uri.path().str();
     return rawstd::URI(ret);
-}
-
-RawstdUUID tenant_from_wire(const uint8_t (&bytes)[16]) {
-    RawstdUUID id;
-    memcpy(id.bytes, bytes, sizeof(id.bytes));
-    return id;
-}
-
-void tenant_to_wire(const RawstdUUID& tenant, uint8_t (&bytes)[16]) {
-    memcpy(bytes, tenant.bytes, sizeof(bytes));
 }
 
 } // namespace rawstor

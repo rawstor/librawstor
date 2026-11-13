@@ -288,7 +288,10 @@ rawstd::Task<void> Backend::_page_owned(
         if (metas.empty()) {
             continue;
         }
-        group.tenant = tenant_from_wire(metas.front().tenant_id);
+        memcpy(
+            group.tenant.bytes, metas.front().tenant_id,
+            sizeof(group.tenant.bytes)
+        );
         if (rawstd_uuid_is_nil(&tenant) ||
             rawstd_uuid_cmp(&group.tenant, &tenant) == 0) {
             chunks.push_back(std::move(group));

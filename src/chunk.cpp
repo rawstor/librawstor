@@ -1207,10 +1207,15 @@ rawstd::Task<void> recreate_missing(
             slot = co_await Slot::create(queue, locations[i]);
             const bool data =
                 !has_witness(sp, locations.size()) || i + 1 < locations.size();
+            RawstdUUID survivor_owner;
+            memcpy(
+                survivor_owner.bytes, survivor->tenant_id,
+                sizeof(survivor_owner.bytes)
+            );
             co_await slot->create(
                 id, offset, sp,
                 data ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS,
-                tenant_from_wire(survivor->tenant_id)
+                survivor_owner
             );
             meta = co_await open_member(
                 *slot, id, offset, flags, version_id, data
@@ -1476,8 +1481,10 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     members.reserve(locations.size());
     reachable = 0;
     RawstorObjectSpec spec = agreed ? agreed->spec : RawstorObjectSpec{};
-    const RawstdUUID owner =
-        agreed ? tenant_from_wire(agreed->tenant_id) : RawstdUUID{};
+    RawstdUUID owner{};
+    if (agreed) {
+        memcpy(owner.bytes, agreed->tenant_id, sizeof(owner.bytes));
+    }
     for (size_t i = 0; i < locations.size(); ++i) {
         members.push_back(
             Member{

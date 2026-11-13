@@ -149,7 +149,10 @@ public:
             )) {
             RAWSTD_THROW_SYSTEM_ERROR(error);
         }
-        rawstor::tenant_to_wire(owner, _request.payload.tenant_id);
+        memcpy(
+            _request.payload.tenant_id, owner.bytes,
+            sizeof(_request.payload.tenant_id)
+        );
         memcpy(
             _request.payload.object_id, id.bytes,
             sizeof(_request.payload.object_id)
@@ -370,7 +373,10 @@ public:
                 .limit = limit,
             },
         }) {
-        rawstor::tenant_to_wire(tenant, _request.payload.tenant_id);
+        memcpy(
+            _request.payload.tenant_id, tenant.bytes,
+            sizeof(_request.payload.tenant_id)
+        );
         memcpy(
             _request.payload.token_id, token.bytes,
             sizeof(_request.payload.token_id)
@@ -910,14 +916,14 @@ rawstd::Task<void> Backend::_wire_list_chunks(
         const RawstorFrameListEntry& entry = entries[i];
         RawstdUUID entry_id;
         memcpy(entry_id.bytes, entry.id, sizeof(entry_id.bytes));
+        RawstdUUID entry_tenant;
+        memcpy(entry_tenant.bytes, entry.tenant_id, sizeof(entry_tenant.bytes));
         if (entry.type == RAWSTOR_LIST_ENTRY_OBJECT) {
             // Native access exposes physical members, never logical maps.
             if (location().scheme() == "ost") {
                 continue;
             }
-            chunks.push_back(
-                ChunkGroup{entry_id, {}, tenant_from_wire(entry.tenant_id)}
-            );
+            chunks.push_back(ChunkGroup{entry_id, {}, entry_tenant});
             continue;
         }
         if (entry.type != RAWSTOR_LIST_ENTRY_CHUNK) {
@@ -928,11 +934,7 @@ rawstd::Task<void> Backend::_wire_list_chunks(
             chunks.back().offsets.push_back(entry.chunk_offset);
         } else {
             chunks.push_back(
-                ChunkGroup{
-                    entry_id,
-                    {entry.chunk_offset},
-                    tenant_from_wire(entry.tenant_id)
-                }
+                ChunkGroup{entry_id, {entry.chunk_offset}, entry_tenant}
             );
         }
     }

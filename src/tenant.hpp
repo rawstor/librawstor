@@ -4,7 +4,6 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
-#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -33,11 +32,6 @@ RawstdUUID owner_of(const std::vector<rawstd::URI>& uris);
 
 // `uri` with `tenant` as its user information, none for the nil UUID.
 rawstd::URI with_tenant(const rawstd::URI& uri, const RawstdUUID& tenant);
-
-// The tenant a frame field holds.
-RawstdUUID tenant_from_wire(const uint8_t (&bytes)[16]);
-
-void tenant_to_wire(const RawstdUUID& tenant, uint8_t (&bytes)[16]);
 
 } // namespace rawstor
 

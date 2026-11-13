@@ -277,7 +277,10 @@ rawstd::Task<uint64_t> Backend::_obj_create(
             },
         .payload = {},
     };
-    rawstor::tenant_to_wire(owner, request.payload.tenant_id);
+    memcpy(
+        request.payload.tenant_id, owner.bytes,
+        sizeof(request.payload.tenant_id)
+    );
     uuid_to_bytes(id, request.payload.id);
     uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
     request.payload.logical_size = logical_size;
@@ -711,7 +714,9 @@ rawstd::Task<RawstdUUID> Backend::_owner_of(const WireMap& map) {
             std::vector<RawstorObjectMeta> metas =
                 co_await slot->meta(map.id, 0);
             if (!metas.empty()) {
-                owner = tenant_from_wire(metas.front().tenant_id);
+                memcpy(
+                    owner.bytes, metas.front().tenant_id, sizeof(owner.bytes)
+                );
                 found = true;
             }
         } catch (const std::system_error&) {

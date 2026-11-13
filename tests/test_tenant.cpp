@@ -184,7 +184,9 @@ TEST(TenantTest, a_target_is_created_for_the_tenant_it_names) {
     auto tenant_of_copy = [&](const rawstor::Target& target) {
         auto metas = run(*queue, target.meta(*queue));
         EXPECT_EQ(metas.size(), 1u);
-        return rawstor::tenant_from_wire(metas.front().tenant_id);
+        RawstdUUID tenant;
+        memcpy(tenant.bytes, metas.front().tenant_id, sizeof(tenant.bytes));
+        return tenant;
     };
     RawstdUUID got = tenant_of_copy(named);
     EXPECT_EQ(rawstd_uuid_cmp(&got, &owner), 0);
