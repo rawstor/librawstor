@@ -503,6 +503,35 @@ TEST_F(SessionTest, ClientNeedsAnExpectedServerIdentity) {
     );
 }
 
+TEST_F(SessionTest, ClientMayExpectOnlyTheRoleOfTheServer) {
+    rawtls::Context client_context(config(pki, client_identity));
+    rawtls::Context server_context(config(pki, server_identity));
+    {
+        rawtls::Session client(
+            client_context, rawtls::Session::Mode::client, "", rawtls::Role::ost
+        );
+        rawtls::Session server(server_context, rawtls::Session::Mode::server);
+        Handshake result = handshake(client, server);
+        EXPECT_EQ(result.client, 0);
+        EXPECT_EQ(client.peer().name, ost_a);
+    }
+    {
+        rawtls::Session client(
+            client_context, rawtls::Session::Mode::client, "", rawtls::Role::mds
+        );
+        rawtls::Session server(server_context, rawtls::Session::Mode::server);
+        EXPECT_EQ(handshake(client, server).client, EACCES);
+    }
+    // Only the roles of a server can be expected of one.
+    EXPECT_THROW(
+        rawtls::Session(
+            client_context, rawtls::Session::Mode::client, "",
+            rawtls::Role::admin
+        ),
+        std::system_error
+    );
+}
+
 TEST_F(SessionTest, NothingFlowsBeforeTheHandshake) {
     rawtls::Context context(config(pki, client_identity));
     rawtls::Session client(

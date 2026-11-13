@@ -40,7 +40,8 @@ void log_errors(const char* what) {
 } // namespace
 
 Session::Session(
-    Context& context, Mode mode, const std::string& expected_peer
+    Context& context, Mode mode, const std::string& expected_peer,
+    std::optional<Role> expected_role
 ) :
     _ctx(context._snapshot()),
     _ssl(nullptr),
@@ -49,13 +50,23 @@ Session::Session(
     _mode(mode),
     _trust_domain(context.trust_domain()),
     _expected_peer(expected_peer),
+    _expected_role(Role::ost),
     _handshake_done(false),
     _verify_failed(false),
     _closed(false) {
     if (mode == Mode::client) {
-        // A client that does not know whom it is talking to would accept any
-        // certificate of the CA.
-        if (!SpiffeId::parse(expected_peer).is_server()) {
+        // A client that knows nothing about whom it is talking to would
+        // accept any certificate of the CA.
+        if (!expected_peer.empty()) {
+            SpiffeId id = SpiffeId::parse(expected_peer);
+            if (!id.is_server()) {
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
+            _expected_role = id.role;
+        } else if (expected_role.has_value() && (*expected_role == Role::ost ||
+                                                 *expected_role == Role::mds)) {
+            _expected_role = *expected_role;
+        } else {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
     }
@@ -172,7 +183,10 @@ SpiffeId Session::_check_peer(x509_st* cert) const {
         if (!id.is_server()) {
             refuse("the server's SPIFFE ID is not that of an OST or an MDS");
         }
-        if (id.uri != _expected_peer) {
+        if (id.role != _expected_role) {
+            refuse("the server's SPIFFE ID is not of the role expected");
+        }
+        if (!_expected_peer.empty() && id.uri != _expected_peer) {
             refuse("the server's SPIFFE ID is not the one expected");
         }
     }

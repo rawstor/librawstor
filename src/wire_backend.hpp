@@ -5,6 +5,8 @@
 
 #include "backend.hpp"
 
+#include <rawtls/transport.hpp>
+
 #include <rawio/queue.hpp>
 #include <rawio/stream.hpp>
 
@@ -39,6 +41,10 @@ private:
     // The capabilities the server accepted in the handshake.
     uint64_t _features = 0;
 
+    // The connection's bytes, plain or through TLS; set by _wire_connect() and
+    // gone after _wire_close().
+    std::unique_ptr<rawtls::Transport> _transport;
+
     rawio::Event* _read_event;
     std::unordered_map<uint16_t, std::shared_ptr<BackendOp>> _ops;
 
@@ -59,6 +65,11 @@ private:
 protected:
     uint16_t _next_cid() noexcept { return _cid_counter++; }
     void _add_op(const std::shared_ptr<BackendOp>& op);
+
+    // Send on the connection: the whole of `buf` (or `msg`), failing with
+    // EBADF if there is no connection, as a send on a closed socket does.
+    rawtls::Op<size_t> _send(const void* buf, size_t size, unsigned int flags);
+    rawtls::Op<size_t> _sendmsg(const msghdr* msg, unsigned int flags);
 
 private:
     // The cid-dispatched counterpart of the old basic_request_async():

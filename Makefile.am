@@ -1,12 +1,8 @@
 SUBDIRS = librawstd \
           librawio \
-          librawthread
-
-if WITH_OPENSSL
-    SUBDIRS += librawtls
-endif
-
-SUBDIRS += src \
+          librawthread \
+          librawtls \
+          src \
           cli \
           vhost \
           vhost-qemu \
@@ -110,9 +106,7 @@ test: all
 	make -C librawstd test
 	make -C librawio test
 	make -C librawthread test
-	@if [ "x$(WITH_OPENSSL)" = "xyes" ]; then \
-	  make -C librawtls test; \
-	fi
+	make -C librawtls test
 	make -C vhost test
 	@if [ "x$(ENABLE_VDUSE_BACKEND)" = "xyes" ]; then \
 	  make -C vduse test; \

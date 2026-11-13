@@ -123,17 +123,7 @@ AS_IF([test "x$with_libxxhash" = "xyes"], [
 
 
 AC_SUBST([OPENSSL_MIN_VERSION], ["3.0"])
-
-AC_ARG_WITH([openssl], [AS_HELP_STRING([--without-openssl],
-    [disable TLS support (every connection is then plaintext)])],
-    [with_openssl=$withval],
-    [with_openssl="yes"])
-AM_CONDITIONAL([WITH_OPENSSL], [test "x$with_openssl" = "xyes"])
-AC_SUBST([WITH_OPENSSL], [$with_openssl])
-AS_IF([test "x$with_openssl" = "xyes"], [
-    PKG_CHECK_MODULES([OPENSSL], [openssl >= $OPENSSL_MIN_VERSION])
-    AC_DEFINE([RAWSTOR_WITH_OPENSSL], 1, [With OpenSSL])
-])
+PKG_CHECK_MODULES([OPENSSL], [openssl >= $OPENSSL_MIN_VERSION])
 
 
 AC_ARG_WITH([sqlite3], [AS_HELP_STRING([--without-sqlite3],

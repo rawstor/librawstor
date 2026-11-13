@@ -11,10 +11,12 @@ AM_CFLAGS = $(GENERIC_CFLAGS) \
 
 AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(LIBXXHASH_CFLAGS) \
+              $(OPENSSL_CFLAGS) \
               $(ASAN_CFLAGS) \
               -I$(top_srcdir)/librawstd/include \
               -I$(top_srcdir)/librawio/include \
               -I$(top_srcdir)/librawthread/include \
+              -I$(top_srcdir)/librawtls/include \
               -I$(top_srcdir)/include \
               -I$(top_srcdir)/src/3rdparty
 
@@ -70,15 +72,19 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         target.hpp \
                         telemetry.cpp \
                         telemetry.hpp \
+                        tls.cpp \
+                        tls.hpp \
                         zfs_backend.cpp \
                         zfs_backend.hpp
 
 librawstor_la_LDFLAGS = -version-info $(LIBRARY_VERSION)
 
 librawstor_la_LIBADD = $(top_builddir)/librawthread/src/librawthread.la \
+                       $(top_builddir)/librawtls/src/librawtls.la \
                        $(top_builddir)/librawio/src/librawio.la \
                        $(top_builddir)/librawstd/src/librawstd.la \
                        $(LIBXXHASH_LIBS) \
+                       $(OPENSSL_LIBS) \
                        -lstdc++
 
 

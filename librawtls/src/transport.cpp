@@ -128,22 +128,32 @@ struct TlsState {
     // The recv in flight, if any, and whether the stream was told to stop.
     rawio::Event* inflight = nullptr;
     bool cancelled = false;
+    // Set once a write failed: part of a record may be on the wire, so nothing
+    // can follow it, and the sends waiting their turn fail instead of writing
+    // to a socket that is being closed.
+    bool broken = false;
 
     TlsState(
         rawio::Queue& q, int f, Context& context, Session::Mode mode,
-        const std::string& expected_peer
+        const std::string& expected_peer, std::optional<Role> expected_role
     ) :
         queue(q),
         fd(f),
-        session(context, mode, expected_peer) {}
+        session(context, mode, expected_peer, expected_role) {}
 };
 
 rawstd::Task<void>
 write_all(std::shared_ptr<TlsState> s, const unsigned char* p, size_t n) {
     while (n > 0) {
-        size_t written =
-            co_await s->queue.send(s->fd, p, n, RAWSTD_MSG_NOSIGNAL);
+        size_t written = 0;
+        try {
+            written = co_await s->queue.send(s->fd, p, n, RAWSTD_MSG_NOSIGNAL);
+        } catch (...) {
+            s->broken = true;
+            throw;
+        }
         if (written == 0) {
+            s->broken = true;
             RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
         }
         p += written;
@@ -154,6 +164,9 @@ write_all(std::shared_ptr<TlsState> s, const unsigned char* p, size_t n) {
 // Sends what the session has to say. The caller must be the only one writing:
 // holding write_mutex, or before the Transport exists.
 rawstd::Task<void> flush(std::shared_ptr<TlsState> s) {
+    if (s->broken) {
+        RAWSTD_THROW_SYSTEM_ERROR(ECONNABORTED);
+    }
     for (;;) {
         size_t n = s->session.output_size();
         if (n == 0) {
@@ -493,10 +506,11 @@ std::unique_ptr<Transport> Transport::plain(rawio::Queue& queue, int fd) {
 
 rawstd::Task<std::unique_ptr<Transport>> Transport::tls(
     rawio::Queue& queue, int fd, Context& context, Session::Mode mode,
-    const std::string& expected_peer
+    const std::string& expected_peer, std::optional<Role> expected_role
 ) {
-    std::shared_ptr<TlsState> state =
-        std::make_shared<TlsState>(queue, fd, context, mode, expected_peer);
+    std::shared_ptr<TlsState> state = std::make_shared<TlsState>(
+        queue, fd, context, mode, expected_peer, expected_role
+    );
     co_await tls_handshake(state);
     co_return std::make_unique<TlsTransport>(std::move(state));
 }
