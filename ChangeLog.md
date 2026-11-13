@@ -73,6 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The OST wire protocol changed incompatibly (`LIST` entries carry a chunk offset, `RELEASE` also removes a version, new `META`/`SYNC_PREPARE`/`SYNC_ACCEPT`/`LEAVE`/`CREATE_VERSION`/`LIST_VERSIONS`/`OBJ_*` commands); `rawstor-ost` and its clients must be upgraded together.
 
 ### Removed
+- Python `Location.__iter__`: iterate `Location.objects()` instead, a generator.
 - The deprecated synchronous `rawstor_object_spec()`/`_list()`/`_create()`/`_create_at()`/`_remove()`/`_open()`/`_id()`/`_location()`, in favor of the async `rawstor_target_*()`/`rawstor_location_*()` API.
 - The deprecated `-l`/`--location` and `-t`/`--target` flags (`rawstor object` subcommands, `rawstor testio`, `rawstor-ost`, `rawstor-vhost`) in favor of the positional `LOCATION`/`TARGET` argument (`rawstor object create -t TARGET` is unaffected), and the `rawstor-cli` compat symlink from the deb/rpm packages.
 - The `RAWSTOR_OPTS_SESSIONS` environment variable, `rawstor --sessions` and `RawstorOpts.sessions`. Breaking C API change.

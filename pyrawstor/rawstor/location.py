@@ -63,7 +63,8 @@ class Location:
     def info(self) -> librawstor.LocationInfo:
         return librawstor.location_info(self._uri)
 
-    def __iter__(self) -> Iterator[Target]:
+    def objects(self) -> Iterator[Target]:
+        """Yield the objects of this location, a page at a time."""
         token = None
         while True:
             page, token = librawstor.object_list(self._uri, 0, token)
