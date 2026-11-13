@@ -28,6 +28,14 @@ void terminate() noexcept;
 rawtls::Context* context() noexcept;
 
 /*
+ * Reads the certificate, key and CAs again before the next connection is made:
+ * connections already established keep what they started with. Safe in a
+ * signal handler. Without TLS settings it does nothing; if a file cannot be
+ * read the error is logged and the old settings stay.
+ */
+void request_reload() noexcept;
+
+/*
  * Records that the server at `host` (`host:port`, as URI::host() spells it) is
  * the OST `ost_id`, as the MDS said when it resolved an object. A TLS
  * connection to that address then requires that OST's identity, so one OST

@@ -5,6 +5,7 @@
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
 
+#include <atomic>
 #include <cerrno>
 #include <map>
 #include <mutex>
@@ -19,6 +20,8 @@ std::mutex mutex;
 std::unique_ptr<rawtls::Context> process_context;
 // The identity of the OST at each address the MDS has resolved.
 std::map<std::string, std::string> ost_identities;
+// What request_reload() reaches from a signal handler, without the lock.
+std::atomic<rawtls::Context*> signal_context{nullptr};
 
 } // namespace
 
@@ -43,12 +46,21 @@ void initialize() {
         std::make_unique<rawtls::Context>(config);
     std::lock_guard<std::mutex> lock(mutex);
     process_context = std::move(context);
+    signal_context.store(process_context.get());
 }
 
 void terminate() noexcept {
     std::lock_guard<std::mutex> lock(mutex);
+    signal_context.store(nullptr);
     process_context.reset();
     ost_identities.clear();
+}
+
+void request_reload() noexcept {
+    rawtls::Context* c = signal_context.load();
+    if (c != nullptr) {
+        c->request_reload();
+    }
 }
 
 rawtls::Context* context() noexcept {

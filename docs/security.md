@@ -40,10 +40,10 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | Benchmark: TLS 1.3 / kTLS on the io_uring hot path | 0 | ✅ | [Measurements](#measurements) |
 | `HANDSHAKE`: feature bits, the first request of every connection (no protocol version) | 1 | ✅ | [Protocol](protocol.md) |
 | Owner tenant of an object in the protocol, chunk metadata, `LIST` and the MDS store; tenant registry; a default tenant | 1 | ✅ | [Tenants](tenants.md) |
-| mTLS (OpenSSL) on every port: OST, MDS, witness, client side | 2 | 🟡 | `librawtls`: TLS 1.3 sessions over memory BIOs, SPIFFE identity checks; no connection uses it yet |
+| mTLS (OpenSSL) on every port: OST, MDS, witness, client side | 2 | 🟡 | `librawtls`; the client library, `rawstor-ost` and `rawstor-mds` speak it when [configured](configuration.md#tls), and are plaintext when not |
 | kTLS offload of the data path | 2 | ❌ | optional, off by default (stage 0) |
-| `--insecure`: plaintext, no authentication, per service | 2 | ❌ | — |
-| Certificate and CA reload without downtime | 2 | 🟡 | `rawtls::Context::reload()`; no `SIGHUP` handler yet |
+| `--insecure`: plaintext, no authentication, per service | 2 | ❌ | TLS is off unless configured; making it the default and naming plaintext `--insecure` is the last step of the stage |
+| Certificate and CA reload without downtime | 2 | ✅ | `SIGHUP` and `SIGUSR1` in `rawstor-ost` and `rawstor-mds`, `SIGUSR1` in `rawstor-vhost` and `rawstor-vduse`; `rawstor_tls_request_reload()` |
 | Principals and roles in the MDS store, admin API (the tenant registry exists, see stage 1) | 3 | ❌ | — |
 | Capability tokens issued by `RESOLVE`, checked by OST | 3 | ❌ | — |
 | `rawstor pki` helper (own CA), external CA support | 4 | ❌ | — |

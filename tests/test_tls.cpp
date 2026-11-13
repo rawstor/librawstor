@@ -23,6 +23,7 @@
 
 #include <chrono>
 #include <exception>
+#include <filesystem>
 #include <future>
 #include <memory>
 #include <sstream>
@@ -303,5 +304,43 @@ TEST(TlsTest, the_wrong_ost_identity_is_refused) {
 
     fd = server.connect_raw();
     EXPECT_EQ(raw_handshake(fd, tls.pki, client, ost_uri(ost_id)), 0);
+    close(fd);
+}
+
+TEST(TlsTest, a_renewed_certificate_is_used_after_a_reload) {
+    rawstor::tests::TlsProcess tls(ost_uri(ost_id));
+    OstServer server(8908);
+
+    IssueOptions renewed_options;
+    renewed_options.uris = {ost_uri(other_ost_id)};
+    Identity renewed = tls.pki.issue("renewed", renewed_options);
+    IssueOptions client_options;
+    client_options.uris = {
+        "spiffe://" + domain +
+        "/tenant/018f4e2a-0000-7000-8000-0000000000cc/"
+        "client/vm1"
+    };
+    Identity client = tls.pki.issue("client", client_options);
+
+    int fd = server.connect_raw();
+    EXPECT_EQ(raw_handshake(fd, tls.pki, client, ost_uri(ost_id)), 0);
+    close(fd);
+
+    std::filesystem::copy_file(
+        renewed.cert_file, tls.identity.cert_file,
+        std::filesystem::copy_options::overwrite_existing
+    );
+    std::filesystem::copy_file(
+        renewed.key_file, tls.identity.key_file,
+        std::filesystem::copy_options::overwrite_existing
+    );
+    rawstor_tls_request_reload();
+
+    // Connections made from now on present the renewed certificate.
+    fd = server.connect_raw();
+    EXPECT_EQ(raw_handshake(fd, tls.pki, client, ost_uri(ost_id)), EACCES);
+    close(fd);
+    fd = server.connect_raw();
+    EXPECT_EQ(raw_handshake(fd, tls.pki, client, ost_uri(other_ost_id)), 0);
     close(fd);
 }

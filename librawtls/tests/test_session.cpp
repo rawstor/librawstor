@@ -466,6 +466,49 @@ TEST_F(SessionTest, FailedReloadKeepsTheContext) {
     EXPECT_EQ(result.server, 0);
 }
 
+TEST_F(SessionTest, RequestedReloadAppliesToTheNextSession) {
+    Identity renewed = pki.issue("renewed", with_uri(ost_uri(ost_b)));
+    rawtls::Context client_context(config(pki, client_identity));
+    rawtls::Context server_context(config(pki, server_identity));
+
+    std::filesystem::copy_file(
+        renewed.cert_file, server_identity.cert_file,
+        std::filesystem::copy_options::overwrite_existing
+    );
+    std::filesystem::copy_file(
+        renewed.key_file, server_identity.key_file,
+        std::filesystem::copy_options::overwrite_existing
+    );
+    server_context.request_reload();
+
+    rawtls::Session client(
+        client_context, rawtls::Session::Mode::client, ost_uri(ost_b)
+    );
+    rawtls::Session server(server_context, rawtls::Session::Mode::server);
+    Handshake result = handshake(client, server);
+    EXPECT_EQ(result.client, 0);
+    EXPECT_EQ(result.server, 0);
+}
+
+TEST_F(SessionTest, RequestedReloadOfBrokenFilesKeepsTheContext) {
+    rawtls::Context client_context(config(pki, client_identity));
+    rawtls::Context server_context(config(pki, server_identity));
+
+    {
+        std::ofstream broken(server_identity.key_file, std::ios::trunc);
+        broken << "not a key\n";
+    }
+    server_context.request_reload();
+
+    rawtls::Session client(
+        client_context, rawtls::Session::Mode::client, ost_uri(ost_a)
+    );
+    rawtls::Session server(server_context, rawtls::Session::Mode::server);
+    Handshake result = handshake(client, server);
+    EXPECT_EQ(result.client, 0);
+    EXPECT_EQ(result.server, 0);
+}
+
 TEST_F(SessionTest, ContextRejectsBrokenFiles) {
     rawtls::Config good = config(pki, server_identity);
 

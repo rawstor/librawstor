@@ -80,12 +80,33 @@ std::shared_ptr<ssl_ctx_st> build(const Config& config) {
 
 } // namespace
 
-Context::Context(const Config& config) : _config(config), _ctx(build(config)) {
+Context::Context(const Config& config) :
+    _config(config),
+    _ctx(build(config)),
+    _reload_requested(false) {
 }
 
 std::shared_ptr<ssl_ctx_st> Context::_snapshot() {
+    std::shared_ptr<ssl_ctx_st> fresh;
+    if (_reload_requested.exchange(false)) {
+        try {
+            fresh = build(_config);
+            rawstd_info("TLS settings reloaded\n");
+        } catch (const std::system_error& e) {
+            rawstd_error(
+                "TLS settings not reloaded, the old ones stay: %s\n", e.what()
+            );
+        }
+    }
     std::lock_guard<std::mutex> lock(_mutex);
+    if (fresh) {
+        _ctx = std::move(fresh);
+    }
     return _ctx;
+}
+
+void Context::request_reload() noexcept {
+    _reload_requested.store(true);
 }
 
 void Context::reload() {
