@@ -102,7 +102,7 @@ int rawstor_cli_tenant_remove(const char* location, const char* tenant) {
 }
 
 int rawstor_cli_transfer(const char* target, const char* tenant) {
-    fprintf(stderr, "Transferring object %s to tenant %s\n", target, tenant);
+    fprintf(stderr, "Transferring object to tenant %s\n", tenant);
 
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);
