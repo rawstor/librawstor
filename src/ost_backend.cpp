@@ -78,7 +78,8 @@ rawstd::Task<void> Backend::remove(
 }
 
 rawstd::Task<void> Backend::set_owner(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& owner
 ) {
     return _wire_set_owner(id, offset, owner);
 }

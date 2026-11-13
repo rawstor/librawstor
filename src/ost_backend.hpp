@@ -41,7 +41,8 @@ public:
     ) override;
 
     rawstd::Task<void> set_owner(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& owner
     ) override;
 
     rawstd::Task<void> remove_version(

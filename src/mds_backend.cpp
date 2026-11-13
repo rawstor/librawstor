@@ -347,9 +347,11 @@ rawstd::Task<WireResized> Backend::_obj_resize(
     }
     RawstorFrameObjResizedPayload out;
     memcpy(&out, data.data(), sizeof(out));
-    co_return WireResized{
-        .map_epoch = out.map_epoch, .old_nchunks = out.old_nchunks
+    WireResized ret{
+        .map_epoch = out.map_epoch, .old_nchunks = out.old_nchunks, .owner = {}
     };
+    memcpy(ret.owner.bytes, out.tenant_id, sizeof(ret.owner.bytes));
+    co_return ret;
 }
 
 rawstd::Task<WireMap>
@@ -701,39 +703,6 @@ rawstd::Task<void> Backend::remove(
     }
 }
 
-// The owner an object records: its first copy that answers has it.
-rawstd::Task<RawstdUUID> Backend::_owner_of(const WireMap& map) {
-    std::exception_ptr error;
-    for (const WireSlot& member : map.chunks.at(0)) {
-        if (member.location.empty()) {
-            continue;
-        }
-        auto slot = co_await Slot::create(_queue, slot_location(member));
-        RawstdUUID owner{};
-        bool found = false;
-        try {
-            std::vector<RawstorObjectMeta> metas =
-                co_await slot->meta(map.id, 0);
-            if (!metas.empty()) {
-                memcpy(
-                    owner.bytes, metas.front().tenant_id, sizeof(owner.bytes)
-                );
-                found = true;
-            }
-        } catch (const std::system_error&) {
-            error = std::current_exception();
-        }
-        co_await slot->close();
-        if (found) {
-            co_return owner;
-        }
-    }
-    if (error) {
-        std::rethrow_exception(error);
-    }
-    RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
-}
-
 rawstd::Task<void> Backend::resize(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t,
     uint64_t new_size
@@ -765,8 +734,8 @@ rawstd::Task<void> Backend::resize(
     /* Re-fetch: the map now has whatever new chunks the MDS reserved. */
     WireMap after = co_await _resolve(id, RawstdUUID{});
 
-    /* The new chunks belong to the object's own owner. */
-    RawstdUUID owner = co_await _owner_of(before);
+    /* The new chunks belong to the object's own owner, as the MDS has it. */
+    const RawstdUUID& owner = resized.owner;
 
     /*
      * Materialize the new chunks, one copy at a time: a copy that already
@@ -803,18 +772,23 @@ rawstd::Task<void> Backend::resize(
     }
 }
 
-rawstd::Task<void>
-Backend::set_owner(const RawstdUUID& id, uint64_t, const RawstdUUID& owner) {
-    RawstorFrameBasic request{
+rawstd::Task<void> Backend::set_owner(
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t,
+    const RawstdUUID& owner
+) {
+    RawstorFrameObjOp request{
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
                 .cmd = RAWSTOR_CMD_OBJ_TRANSFER,
                 .cid = 0,
             },
-        .payload = {},
+        .payload = {
+            .id = {}, .idempotency_key = {}, .version_id = {}, .val = 0
+        },
     };
-    uuid_to_bytes(id, request.payload.object_id);
+    uuid_to_bytes(id, request.payload.id);
+    uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
     uuid_to_bytes(owner, request.payload.version_id);
     co_await exchange(&request, sizeof(request), RAWSTOR_CMD_OBJ_TRANSFER, 0);
 

@@ -287,6 +287,7 @@ enum class MutationType : unsigned {
     remove_version = 5,
     create_tenant = 6,
     remove_tenant = 7,
+    transfer = 8,
 };
 
 // How long a record is kept: far beyond any client's retry window.
@@ -701,11 +702,17 @@ void ObjectStore::remove_witness(const RawstdUUID& id, uint64_t offset) {
     }
 }
 
-void ObjectStore::transfer(const RawstdUUID& id, const RawstdUUID& tenant) {
+void ObjectStore::transfer(
+    const RawstdUUID& idempotency_key, const RawstdUUID& id,
+    const RawstdUUID& tenant
+) {
     if (rawstd_uuid_is_nil(&tenant)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     std::lock_guard<std::mutex> guard(_mutex);
+    if (replay_mutation(_db, idempotency_key, MutationType::transfer, id)) {
+        return;
+    }
     Transaction tx(_db);
     _require_tenant(tenant);
     Stmt update(_db, "UPDATE objects SET tenant_id=? WHERE id=?");
@@ -715,6 +722,7 @@ void ObjectStore::transfer(const RawstdUUID& id, const RawstdUUID& tenant) {
     if (sqlite3_changes(_db) == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
+    record_mutation(_db, idempotency_key, MutationType::transfer, id, {});
     tx.commit();
 }
 
@@ -1100,6 +1108,17 @@ ObjectMap ObjectStore::_open_live(const RawstdUUID& id) {
     return ret;
 }
 
+/* The owner of the object, nil if there is none. */
+static RawstdUUID object_owner(sqlite3* db, const RawstdUUID& id) {
+    Stmt select(db, "SELECT tenant_id FROM objects WHERE id = ?;");
+    select.bind_blob(1, id.bytes, sizeof(id.bytes));
+    RawstdUUID ret{};
+    if (select.step()) {
+        select.column_uuid(0, &ret);
+    }
+    return ret;
+}
+
 ResizeResult ObjectStore::resize(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t new_size
 ) {
@@ -1110,6 +1129,8 @@ ResizeResult ObjectStore::resize(
         ResizeResult ret{};
         ret.map_epoch = r.get<uint64_t>();
         ret.old_nchunks = r.get<uint64_t>();
+        // Not recorded: the owner may have changed since.
+        ret.tenant = object_owner(_db, id);
         return ret;
     }
 
@@ -1155,7 +1176,11 @@ ResizeResult ObjectStore::resize(
     tx.commit();
     _notify_space_change(std::move(touched));
 
-    return ResizeResult{.map_epoch = map_epoch, .old_nchunks = old_chunks};
+    return ResizeResult{
+        .map_epoch = map_epoch,
+        .old_nchunks = old_chunks,
+        .tenant = object_owner(_db, id)
+    };
 }
 
 void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {

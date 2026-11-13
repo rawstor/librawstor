@@ -442,19 +442,30 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
         );
         break;
     }
-    case RAWSTOR_CMD_SET_OWNER:
-    case RAWSTOR_CMD_OBJ_TRANSFER: {
+    case RAWSTOR_CMD_SET_OWNER: {
         RawstorFrameBasicPayload payload{};
         co_await recv_all(queue, fd, &payload, sizeof(payload));
         int32_t res = 0;
         try {
-            RawstdUUID id = uuid_of(payload.object_id);
-            RawstdUUID owner = uuid_of(payload.version_id);
-            if (head.cmd == RAWSTOR_CMD_OBJ_TRANSFER) {
-                store.transfer(id, owner);
-            } else {
-                store.set_witness_owner(id, payload.offset, owner);
-            }
+            store.set_witness_owner(
+                uuid_of(payload.object_id), payload.offset,
+                uuid_of(payload.version_id)
+            );
+        } catch (const std::system_error& e) {
+            res = -e.code().value();
+        }
+        co_await client->_send_response(head.cmd, head.cid, res);
+        break;
+    }
+    case RAWSTOR_CMD_OBJ_TRANSFER: {
+        RawstorFrameObjOpPayload payload{};
+        co_await recv_all(queue, fd, &payload, sizeof(payload));
+        int32_t res = 0;
+        try {
+            store.transfer(
+                uuid_of(payload.idempotency_key), uuid_of(payload.id),
+                uuid_of(payload.version_id)
+            );
         } catch (const std::system_error& e) {
             res = -e.code().value();
         }
@@ -638,6 +649,7 @@ Client::_dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head) {
             );
             out.map_epoch = result.map_epoch;
             out.old_nchunks = static_cast<uint32_t>(result.old_nchunks);
+            memcpy(out.tenant_id, result.tenant.bytes, sizeof(out.tenant_id));
         } catch (const std::system_error& e) {
             res = -e.code().value();
         }

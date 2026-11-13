@@ -61,10 +61,14 @@ struct ScanRecord {
     RawstorObjectMeta meta;
 };
 
-/* What resize() did: the new map_epoch and the chunk count it grew from. */
+/*
+ * What resize() did: the new map_epoch, the chunk count it grew from and the
+ * owner of the object now (nil if it is gone).
+ */
 struct ResizeResult {
     uint64_t map_epoch;
     uint64_t old_nchunks;
+    RawstdUUID tenant;
 };
 
 /* One chunk copy holding a version. */
@@ -140,9 +144,14 @@ public:
     /*
      * Makes `tenant` the owner of the object (docs/tenants.md): ENOENT for an
      * unknown object or an unregistered tenant, EINVAL for the nil tenant.
-     * Idempotent. set_witness_owner() does the same for a witness record.
+     * Idempotent by `idempotency_key` like every mutation: a repeat of it
+     * is answered without applying it again. set_witness_owner() does the
+     * same for a witness record, which a repeat leaves as it is anyway.
      */
-    void transfer(const RawstdUUID& id, const RawstdUUID& tenant);
+    void transfer(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        const RawstdUUID& tenant
+    );
     void set_witness_owner(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& tenant
     );

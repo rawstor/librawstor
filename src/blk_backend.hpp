@@ -218,7 +218,8 @@ public:
     ) override final;
 
     rawstd::Task<void> set_owner(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& owner
     ) override final;
 
     rawstd::Task<bool> sync_prepare(

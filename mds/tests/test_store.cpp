@@ -1241,22 +1241,80 @@ TEST_F(ObjectStoreTest, an_object_is_transferred_to_another_tenant) {
         acme, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
     );
 
-    EXPECT_EQ(errno_of([&] { store.transfer(id, RawstdUUID{}); }), EINVAL);
-    EXPECT_EQ(errno_of([&] { store.transfer(id, make_id()); }), ENOENT);
-    EXPECT_EQ(errno_of([&] { store.transfer(make_id(), other); }), ENOENT);
+    EXPECT_EQ(
+        errno_of([&] { store.transfer(RawstdUUID{}, id, RawstdUUID{}); }),
+        EINVAL
+    );
+    EXPECT_EQ(
+        errno_of([&] { store.transfer(RawstdUUID{}, id, make_id()); }), ENOENT
+    );
+    EXPECT_EQ(
+        errno_of([&] { store.transfer(RawstdUUID{}, make_id(), other); }),
+        ENOENT
+    );
     EXPECT_EQ(
         errno_of([&] { store.remove_tenant(RawstdUUID{}, acme); }), EBUSY
     );
 
-    store.transfer(id, other);
+    store.transfer(RawstdUUID{}, id, other);
     // Idempotent.
-    store.transfer(id, other);
+    store.transfer(RawstdUUID{}, id, other);
 
     RawstdUUID token{};
     EXPECT_EQ(store.list_chunks(other, token, 0).size(), 1u);
     token = {};
     EXPECT_TRUE(store.list_chunks(acme, token, 0).empty());
     store.remove_tenant(RawstdUUID{}, acme);
+}
+
+// A transfer resent after a lost reply is answered, not applied again: it
+// does not undo what was transferred since.
+TEST_F(ObjectStoreTest, a_replayed_transfer_does_not_undo_a_later_one) {
+    ObjectStore store = make_store();
+    RawstdUUID first = make_id();
+    RawstdUUID second = make_id();
+    store.create_tenant(RawstdUUID{}, first);
+    store.create_tenant(RawstdUUID{}, second);
+    RawstdUUID id = make_id();
+    store.create(
+        first, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
+    );
+    RawstdUUID key = make_id();
+
+    store.transfer(key, id, second);
+    store.transfer(make_id(), id, first);
+    store.transfer(key, id, second);
+
+    RawstdUUID token{};
+    EXPECT_EQ(store.list_chunks(first, token, 0).size(), 1u);
+    token = {};
+    EXPECT_TRUE(store.list_chunks(second, token, 0).empty());
+
+    // The key belongs to that request: another object with it is refused.
+    EXPECT_EQ(
+        errno_of([&] { store.transfer(key, make_id(), second); }), EINVAL
+    );
+}
+
+// resize reports the owner of the object, which the chunks it adds are
+// created for.
+TEST_F(ObjectStoreTest, resize_reports_the_owner) {
+    ObjectStore store = make_store();
+    RawstdUUID acme = make_id();
+    RawstdUUID other = make_id();
+    store.create_tenant(RawstdUUID{}, acme);
+    store.create_tenant(RawstdUUID{}, other);
+    RawstdUUID id = make_id();
+    store.create(
+        acme, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
+    );
+
+    ResizeResult grown = store.resize(RawstdUUID{}, id, 2 * chunk_size);
+    EXPECT_EQ(rawstd_uuid_cmp(&grown.tenant, &acme), 0);
+
+    store.transfer(RawstdUUID{}, id, other);
+    grown = store.resize(RawstdUUID{}, id, 3 * chunk_size);
+    EXPECT_EQ(rawstd_uuid_cmp(&grown.tenant, &other), 0);
 }
 
 TEST_F(ObjectStoreTest, tenants_are_created_and_removed) {

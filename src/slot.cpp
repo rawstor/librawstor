@@ -1184,7 +1184,8 @@ rawstd::Task<void> Slot::set_owner(
         co_await member->record.lock(_queue);
         RecordLockGuard guard{member->record};
         co_await _with_retry(
-            func_name, trace_event, &Backend::set_owner, id, offset, owner
+            func_name, trace_event, &Backend::set_owner, new_idempotency_key(),
+            id, offset, owner
         );
         _finish(t_call);
     } catch (...) {

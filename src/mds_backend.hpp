@@ -37,10 +37,14 @@ struct WireMap {
     std::vector<std::vector<WireSlot>> chunks;
 };
 
-/* What OBJ_RESIZE did: the new map_epoch and the chunk count it grew from. */
+/*
+ * What OBJ_RESIZE did: the new map_epoch, the chunk count it grew from and the
+ * owner of the object.
+ */
 struct WireResized {
     uint64_t map_epoch;
     uint64_t old_nchunks;
+    RawstdUUID owner;
 };
 
 /* One chunk copy holding a version. */
@@ -66,9 +70,6 @@ struct WireVersionMember {
 class Backend final : public wire::Backend {
 private:
     // OBJ commands share the member transport and preserve caller mutation IDs.
-    // The owner an object records, read off its first copy that answers.
-    rawstd::Task<RawstdUUID> _owner_of(const WireMap& map);
-
     rawstd::Task<uint64_t> _obj_create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t logical_size, uint64_t chunk_size,
@@ -137,7 +138,8 @@ public:
     // member's own record, one at a time. Repeating it after a failure
     // finishes the job.
     rawstd::Task<void> set_owner(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& owner
     ) override;
 
     // One page of the tenants registered in the MDS.

@@ -197,7 +197,8 @@ rawstd::Task<void> Backend::set_state(
 }
 
 rawstd::Task<void> Backend::set_owner(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& owner
 ) {
     RawstorObjectMeta meta =
         (co_await this->meta(id, offset, RawstdUUID{})).front();

@@ -664,7 +664,15 @@ Location::remove_tenant(rawio::Queue& queue, const RawstdUUID& tenant) const {
         std::list<Target> targets;
         co_await owned.list(queue, 0, targets, token);
         for (const Target& target : targets) {
-            co_await target.remove(queue);
+            try {
+                co_await target.remove(queue);
+            } catch (const std::system_error& e) {
+                // Removed by someone else since it was listed: gone is
+                // what is asked for.
+                if (e.code().value() != ENOENT) {
+                    throw;
+                }
+            }
         }
         next = decode_token(token);
     } while (!rawstd_uuid_is_nil(&next));

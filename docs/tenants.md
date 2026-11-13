@@ -188,7 +188,8 @@ only then send `TENANT_REMOVE`, which itself still answers `-EBUSY` while the
 tenant owns an object. The default tenant is refused (`-EPERM`) before any
 object is touched. A failure part-way leaves the objects not yet removed and
 the tenant registered, and running the removal again finishes it. An object
-created for the tenant meanwhile can make the last step answer `-EBUSY`.
+removed by someone else meanwhile is skipped. An object created for the tenant
+meanwhile can make the last step answer `-EBUSY`.
 
 `--reconstruct` rebuilds the map from what the OSTs hold, and the owner is part
 of a chunk's metadata, so owners come back with it; a tenant found as an owner is
@@ -210,13 +211,22 @@ column of the MDS, so a transfer writes all of them:
   record, an `ost://` one asks its server to), and no registry is consulted:
   only an MDS has one.
 
-Both commands are idempotent: setting the owner a copy already has changes
-nothing, and nothing else in the record (state, roles, ballots, size) moves. A
-transfer that fails part-way, say with a copy unreachable, leaves copies with
-different owners until it is run again, which finishes it; until then `--reconstruct`
-refuses the object (`-EINVAL`: its copies disagree on the owner). The old address still finds the
-object, as every address does, by its id. The default tenant can be a source
-or a destination, and the nil UUID is never a destination.
+Both commands are idempotent. `SET_OWNER` is by its nature, like the commands
+on a copy: setting the owner a copy already has changes nothing, and nothing
+else in the record (state, roles, ballots, size) moves. `OBJ_TRANSFER` carries
+an `idempotency_key` like every mutating `OBJ_*` request ([MDS
+design](mds.md), "Idempotent mutations"): a transfer resent after a lost reply
+is answered with its recorded result and is not applied again, so it does not
+undo a transfer made since.
+
+A transfer that fails part-way, say with a copy unreachable, leaves copies with
+different owners until it is run again, which finishes it; until then
+`--reconstruct` refuses the object (`-EINVAL`: its copies disagree on the
+owner). A `resize` meanwhile is not affected: the chunks it adds are created for
+the owner the MDS has, which `OBJ_RESIZE` reports, not for the owner some copy
+records. The old address still finds the object, as every address does, by its
+id. The default tenant can be a source or a destination, and the nil UUID is
+never a destination.
 
 ## CLI
 
