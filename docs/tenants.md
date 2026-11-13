@@ -136,7 +136,7 @@ the MDS: `LIST_TENANTS`, `TENANT_CREATE` and `TENANT_REMOVE`. An OST answers
 `-ENOSYS`. `LIST_TENANTS` is paginated like `LIST`: a page in ascending
 order after a token, and a trailing row that resumes it (`RawstorFrameListTenantsPayload`);
 `rawstor_location_tenants()` takes a limit and a token the same way, and
-`Location.tenants()` reads every page.
+`Location.tenants()` yields every page.
 
 Frame layouts and the metadata record are not compatible with earlier ones, and
 no older format is read or written.
@@ -209,14 +209,14 @@ own (`tenant`), also for an administrator, whose location names no tenant. The
 ```python
 admin = rawstor.Location("mds://10.0.0.2:7776")
 tenant = admin.create_tenant()            # a random UUID, or create_tenant(uuid)
-admin.tenants()                           # the registered tenants, as strings
+admin.tenants()                           # yields the registered tenants, as strings
 admin.remove_tenant(tenant)
 
 mine = rawstor.Location(f"mds://{tenant}@10.0.0.2:7776")
 target = mine.create(size=10 << 30, width=1, chunk_size=256 << 20)
 target.tenant                             # the owner named by the target
 target.meta()[0].tenant                   # the owner the copy records
-[t.tenant for t in mine]                  # what `mine` lists: its own objects
+[t.tenant for t in mine.objects()]        # what `mine` lists: its own objects
 rawstor.DEFAULT_TENANT                    # the owner when none is named
 ```
 

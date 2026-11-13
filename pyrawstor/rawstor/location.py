@@ -64,18 +64,17 @@ class Location:
     def info(self) -> librawstor.LocationInfo:
         return librawstor.location_info(self._uri)
 
-    def tenants(self) -> list[str]:
-        """The tenants registered in the MDS this location names, as UUID
-        strings in ascending order. Raises OSError (ENOTSUP) for a
-        location that is not an mds:// one: only an MDS keeps a tenant
-        registry (docs/tenants.md)."""
-        tenants: list[str] = []
+    def tenants(self) -> Iterator[str]:
+        """Yield the tenants registered in the MDS this location names, as
+        UUID strings in ascending order, a page at a time. Raises OSError
+        (ENOTSUP) for a location that is not an mds:// one: only an MDS
+        keeps a tenant registry (docs/tenants.md)."""
         token = None
         while True:
             page, token = librawstor.tenant_list(self._uri, 0, token)
-            tenants.extend(page)
+            yield from page
             if token is None:
-                return tenants
+                break
 
     def create_tenant(self, tenant: str | None = None) -> str:
         """Register `tenant`, a UUID string (a random one if None), in the
@@ -93,7 +92,9 @@ class Location:
         librawstor.tenant_remove(self._uri, tenant)
 
     def objects(self) -> Iterator[Target]:
-        """Yield the objects of this location, a page at a time."""
+        """Yield the objects of this location, a page at a time. A location
+        that names a tenant yields that tenant's objects, any other every
+        object (docs/tenants.md)."""
         token = None
         while True:
             page, token = librawstor.object_list(self._uri, 0, token)

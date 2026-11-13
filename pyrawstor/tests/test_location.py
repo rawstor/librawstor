@@ -125,7 +125,7 @@ class TestTenants(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             location = rawstor.Location(f"file://{temp_dir}")
             for call in (
-                    location.tenants,
+                    lambda: list(location.tenants()),
                     lambda: location.create_tenant(self.TENANT),
                     lambda: location.remove_tenant(self.TENANT)):
                 with self.assertRaises(OSError) as error:
