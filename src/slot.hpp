@@ -216,6 +216,11 @@ public:
         unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
     );
 
+    // Records `owner` as the owner of the copy `id`/`offset`, under the copy's
+    // record lock like every other rewrite of its metadata.
+    rawstd::Task<void>
+    set_owner(const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner);
+
     rawstd::Task<void> create_tenant(const RawstdUUID& tenant);
 
     rawstd::Task<void> remove_tenant(const RawstdUUID& tenant);

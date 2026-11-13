@@ -149,6 +149,14 @@ extern "C" {
 #define RAWSTOR_CMD_THAW 0x13
 
 /*
+ * SET_OWNER (docs/tenants.md): records the tenant in `version_id` as the owner
+ * of the member `object_id`/`offset` names, in the member's own metadata.
+ * Rides RawstorFrameBasic, has no response payload and is idempotent: setting
+ * the owner a member already has changes nothing.
+ */
+#define RAWSTOR_CMD_SET_OWNER 0x14
+
+/*
  * The tenants registered in an MDS (docs/tenants.md): rides RawstorFrameBasic
  * (every field unused), its response payload is a packed array of
  * RawstorFrameTenantEntry (body.res = count * sizeof(RawstorFrameTenantEntry)),
@@ -189,6 +197,14 @@ extern "C" {
  */
 #define RAWSTOR_CMD_TENANT_CREATE 0x47
 #define RAWSTOR_CMD_TENANT_REMOVE 0x48
+/*
+ * OBJ_TRANSFER: makes the tenant in `version_id` the owner of the object
+ * `object_id` (-ENOENT for an unknown object or an unregistered tenant,
+ * -EINVAL for the nil tenant). Rides RawstorFrameBasic, has no response
+ * payload and is idempotent. The client then records the owner with every
+ * member through SET_OWNER.
+ */
+#define RAWSTOR_CMD_OBJ_TRANSFER 0x49
 
 typedef uint16_t RawstorCommandType;
 

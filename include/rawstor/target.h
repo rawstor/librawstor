@@ -1080,6 +1080,37 @@ int rawstor_target_resize(
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
+/**
+ * @brief Asynchronously make another tenant the owner of an object.
+ *
+ * The owner is recorded with every member of the object (every copy of every
+ * chunk), and, for an `mds://` target, in the MDS first. The target need not
+ * name the current owner. Afterwards the object is addressed by a target that
+ * names @p tenant (see @ref rawstor_target_tenant); the old address still
+ * finds it, since an object is found by its id.
+ *
+ * A failure part-way (an unreachable member) can leave members with different
+ * owners; repeating the call finishes the job.
+ *
+ * @param queue     Queue used to drive the asynchronous operation.
+ * @param target    The object.
+ * @param tenant    UUID string of the new owner, not the nil UUID. An MDS
+ *                  answers @c -ENOENT for a tenant it does not know.
+ * @param cb        Callback invoked on completion; @p result is zero on
+ *                  success, or a negative errno.
+ * @param data      Passed to @p cb.
+ *
+ * @return 0 if the operation was started; a negative errno otherwise
+ *         (@c -EINVAL for a bad @p tenant), in which case @p cb is never
+ *         invoked.
+ *
+ * @see https://github.com/rawstor/librawstor/blob/main/docs/tenants.md
+ */
+int rawstor_target_transfer(
+    RawIOQueue* queue, const char* target, const char* tenant,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
 #ifdef __cplusplus
 }
 #endif

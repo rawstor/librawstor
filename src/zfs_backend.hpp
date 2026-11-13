@@ -111,7 +111,8 @@ public:
     rawstd::Task<void> _write_meta(
         const RawstdUUID& id, uint64_t offset,
         RawstorObjectSyncStateValue state, const RawstorObjectConfig& config,
-        const RawstorObjectBallot& promised, const RawstorObjectBallot& accepted
+        const RawstorObjectBallot& promised,
+        const RawstorObjectBallot& accepted, const RawstdUUID* owner
     ) override;
 
     // The v1 CoW backend (docs/mds.md, "Versions"): a native

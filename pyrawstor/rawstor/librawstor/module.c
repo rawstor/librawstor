@@ -18,6 +18,7 @@ static PyMethodDef librawstor_methods[] = {
     {"object_sync_accept", py_rawstor_object_sync_accept, METH_VARARGS, NULL},
     {"object_remove", py_rawstor_object_remove, METH_VARARGS, NULL},
     {"object_resize", py_rawstor_object_resize, METH_VARARGS, NULL},
+    {"object_transfer", py_rawstor_object_transfer, METH_VARARGS, NULL},
     {"object_chunks", py_rawstor_object_chunks, METH_VARARGS, NULL},
     {"object_slots", py_rawstor_object_slots, METH_VARARGS, NULL},
     {"object_versions", py_rawstor_object_versions, METH_VARARGS, NULL},

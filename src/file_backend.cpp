@@ -628,7 +628,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
 rawstd::Task<void> Backend::_write_meta(
     const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
     const RawstorObjectConfig& config, const RawstorObjectBallot& promised,
-    const RawstorObjectBallot& accepted
+    const RawstorObjectBallot& accepted, const RawstdUUID* owner
 ) {
     std::string location_path = get_location_path(location());
 
@@ -670,6 +670,9 @@ rawstd::Task<void> Backend::_write_meta(
         // META_MAX_SIZE bytes so this file's own byte length stays fixed
         // across every rewrite -- required here specifically, since this
         // is an in-place overwrite without O_TRUNC (see above).
+        if (owner != nullptr) {
+            identity.tenant = *owner;
+        }
         std::string encoded =
             meta_encode(state, config, promised, accepted, identity);
         disk.fill('\0');

@@ -20,13 +20,14 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | MDS: owner of an object, tenant registry, `TENANT_CREATE` / `TENANT_REMOVE` / `LIST_TENANTS` | ✅ | `mds/src/store.cpp`, `mds/src/client.cpp` |
 | `--reconstruct` restores owners and registers their tenants | ✅ | `mds/src/store.cpp` |
 | CLI: `rawstor tenant create/list/remove` | ✅ | `cli/tenant.c` |
+| Transfer of an object to another tenant: `SET_OWNER`, `OBJ_TRANSFER`, `rawstor object transfer` | ✅ | `src/target.cpp`, `src/blk_backend.cpp`, `mds/src/store.cpp` |
 | Checking the caller's rights against the owner | ❌ | [Security design](security.md) |
 | Authentication, binding a tenant to a certificate | ❌ | [Security design](security.md) |
 
 ## Model
 
-- An object has **one tenant**, its owner, set when it is created and never
-  changed. It is 16 bytes, a UUID. An object created without naming a tenant
+- An object has **one tenant**, its owner, set when it is created and changed
+  only by a [transfer](#transfer). It is 16 bytes, a UUID. An object created without naming a tenant
   belongs to the **default tenant** (`00000000-0000-0000-0000-000000000001`),
   which every MDS registers and nobody can create or remove. The nil UUID
   owns nothing: in a request it means **no filter**, and a request that
@@ -184,6 +185,30 @@ that creates them keeps its own.
 of a chunk's metadata, so owners come back with it; a tenant found as an owner is
 registered again.
 
+## Transfer
+
+`rawstor object transfer TARGET TENANT` (`rawstor_target_transfer()`, pyrawstor
+`Target.transfer()`) makes another tenant the owner of an object. The owner is
+a field of every copy's own metadata record, and for an `mds://` object also a
+column of the MDS, so a transfer writes all of them:
+
+- on an `mds://` target the MDS goes first (`OBJ_TRANSFER`: `-ENOENT` for a
+  tenant it does not know, `-EINVAL` for the nil one), then the client records
+  the owner with every member of every chunk, witnesses included, one at a
+  time;
+- on any other target the client records it with every URI of the target
+  (`SET_OWNER`; a `file://`, `lvm://` or `zfs://` member rewrites its
+  record, an `ost://` one asks its server to), and no registry is consulted:
+  only an MDS has one.
+
+Both commands are idempotent: setting the owner a copy already has changes
+nothing, and nothing else in the record (state, roles, ballots, size) moves. A
+transfer that fails part-way, say with a copy unreachable, leaves copies with
+different owners until it is run again, which finishes it; until then `--reconstruct`
+refuses the object (`-EINVAL`: its copies disagree on the owner). The old address still finds the
+object, as every address does, by its id. The default tenant can be a source
+or a destination, and the nil UUID is never a destination.
+
 ## CLI
 
 ```bash
@@ -197,6 +222,7 @@ rawstor object create mds://<tenant>@10.0.0.2:7776 --size 10G ...   # owned by <
 rawstor object create mds://10.0.0.2:7776 ...                       # owned by the default tenant
 rawstor object list   mds://<tenant>@10.0.0.2:7776                  # what <tenant> owns
 rawstor object list   mds://10.0.0.2:7776                           # every object
+rawstor object transfer mds://10.0.0.2:7776/<uuid> <tenant>         # <tenant> becomes its owner
 ```
 
 `create`, `list` and `show` print the owner of the object as a column of its
@@ -220,6 +246,8 @@ target.meta()[0].tenant                   # the owner the copy records
 rawstor.DEFAULT_TENANT                    # the owner when none is named
 ```
 
+`Target.transfer(tenant)` is a transfer; it returns nothing, and the target that
+names the new owner is the old one with `<tenant>@` as user information.
 `Target.tenant` reads the address only. `ObjectMeta.tenant` is the owner a copy
 records. `Location.tenants()`, `create_tenant()` and `remove_tenant()` raise
 `OSError` (`ENOTSUP`) for a location that is not an `mds://` one.

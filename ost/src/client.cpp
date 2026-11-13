@@ -550,6 +550,20 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
             }
+            case RAWSTOR_CMD_SET_OWNER: {
+                RawstorFrameBasicPayload basic;
+                co_await recv_frame(
+                    stream, &basic, sizeof(basic), fd, "request payload",
+                    &stream_failed
+                );
+                client = weak.lock();
+                if (client == nullptr) {
+                    co_return;
+                }
+                _set_owner(weak, head, basic);
+                rawstd::DetachedTask::rethrow_if_pending();
+                break;
+            }
             case RAWSTOR_CMD_CREATE_VERSION: {
                 RawstorFrameBasicPayload basic;
                 co_await recv_frame(
@@ -1028,6 +1042,50 @@ rawstd::DetachedTask Client::_release(
     try {
         co_await client->_send_response(
             RAWSTOR_CMD_RELEASE, head.cid, result, 0
+        );
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        send_failed = true;
+    }
+    if (send_failed) {
+        co_await client->_server.del_client(client->_fd);
+    }
+}
+
+// SET_OWNER of the member `payload` names (RAWSTOR_CMD_SET_OWNER).
+rawstd::DetachedTask Client::_set_owner(
+    std::weak_ptr<Client> weak, RawstorFrameHead head,
+    RawstorFrameBasicPayload payload
+) {
+    std::shared_ptr<Client> client = weak.lock();
+    if (client == nullptr) {
+        co_return;
+    }
+
+    RawstdUUID uuid;
+    memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
+    RawstdUUID owner;
+    memcpy(owner.bytes, payload.version_id, sizeof(payload.version_id));
+
+    int result = 0;
+    try {
+        if (rawstd_uuid_is_nil(&owner)) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        co_await with_slot(
+            client->_queue, client->_server.locations(),
+            [&](rawstor::Slot& slot) -> rawstd::Task<void> {
+                co_await slot.set_owner(uuid, payload.offset, owner);
+            }
+        );
+    } catch (const std::system_error& error) {
+        result = -error.code().value();
+    }
+
+    bool send_failed = false;
+    try {
+        co_await client->_send_response(
+            RAWSTOR_CMD_SET_OWNER, head.cid, result, 0
         );
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());

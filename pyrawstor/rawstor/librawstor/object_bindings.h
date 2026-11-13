@@ -34,6 +34,7 @@ PyObject* py_rawstor_object_sync_accept(PyObject* self, PyObject* args);
 PyObject* py_rawstor_object_remove(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_resize(PyObject* self, PyObject* args);
+PyObject* py_rawstor_object_transfer(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_tenant_list(PyObject* self, PyObject* args);
 PyObject* py_rawstor_tenant_create(PyObject* self, PyObject* args);

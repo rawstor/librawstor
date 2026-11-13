@@ -116,6 +116,11 @@ private:
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameBasicPayload payload
     );
+    // The tenant in `payload.version_id` becomes the owner of the member.
+    static rawstd::DetachedTask _set_owner(
+        std::weak_ptr<Client> weak, RawstorFrameHead head,
+        RawstorFrameBasicPayload payload
+    );
     static rawstd::DetachedTask _create_version(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameBasicPayload payload

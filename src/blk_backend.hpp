@@ -155,12 +155,14 @@ protected:
         std::vector<ChunkGroup>& chunks, RawstdUUID& token
     );
 
-    // Durably writes the copy metadata, preserving its ChunkIdentity.
+    // Durably writes the copy metadata, preserving its ChunkIdentity except
+    // for the owner: a non-null `owner` replaces the recorded one.
     // Slot holds the copy's record lock while applying metadata requests.
     virtual rawstd::Task<void> _write_meta(
         const RawstdUUID& id, uint64_t offset,
         RawstorObjectSyncStateValue state, const RawstorObjectConfig& config,
-        const RawstorObjectBallot& promised, const RawstorObjectBallot& accepted
+        const RawstorObjectBallot& promised,
+        const RawstorObjectBallot& accepted, const RawstdUUID* owner = nullptr
     ) = 0;
 
     // Encodes/decodes the copy state and configuration plus a ChunkIdentity
@@ -212,6 +214,10 @@ public:
     rawstd::Task<void> set_state(
         const RawstdUUID& id, uint64_t offset,
         RawstorObjectSyncStateValue expected, RawstorObjectSyncStateValue state
+    ) override final;
+
+    rawstd::Task<void> set_owner(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner
     ) override final;
 
     rawstd::Task<bool> sync_prepare(

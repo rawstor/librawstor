@@ -138,6 +138,16 @@ public:
     void remove_witness(const RawstdUUID& id, uint64_t offset);
 
     /*
+     * Makes `tenant` the owner of the object (docs/tenants.md): ENOENT for an
+     * unknown object or an unregistered tenant, EINVAL for the nil tenant.
+     * Idempotent. set_witness_owner() does the same for a witness record.
+     */
+    void transfer(const RawstdUUID& id, const RawstdUUID& tenant);
+    void set_witness_owner(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& tenant
+    );
+
+    /*
      * The witness is a CASPaxos acceptor of the chunk's configuration
      * register (docs/multiattach.md, "The register"). Both return the
      * record as it stands after the request, whether `ok` or not, durable

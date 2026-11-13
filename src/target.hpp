@@ -340,6 +340,13 @@ public:
     // single mds:// one (mds::Backend::resize()); see Backend::resize()'s
     // own doc comment.
     rawstd::Task<void> resize(rawio::Queue& queue, uint64_t new_size) const;
+
+    // Makes `tenant` the owner of the object (docs/tenants.md): of every
+    // member's own record, and, for an mds:// target, of the MDS's too (which
+    // answers ENOENT for a tenant it does not know). EINVAL for the nil
+    // tenant. Repeating it after a failure finishes the job.
+    rawstd::Task<void>
+    transfer(rawio::Queue& queue, const RawstdUUID& tenant) const;
 };
 
 } // namespace rawstor

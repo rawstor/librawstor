@@ -462,6 +462,29 @@ resize_one(rawio::Queue& queue, const rawstd::URI& target, uint64_t new_size) {
     }
 }
 
+rawstd::Task<void> transfer_one(
+    rawio::Queue& queue, const rawstd::URI& target, const RawstdUUID& tenant
+) {
+    RawstdUUID id = uuid_from_target(target);
+    uint64_t offset = extract_offset(target);
+    RawstdUUID version_id = extract_version_id(target);
+    if (!rawstd_uuid_is_nil(&version_id)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, strip_path(target));
+    std::exception_ptr error;
+    try {
+        co_await slot->set_owner(id, offset, tenant);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+}
+
 // One location's worth of resolve_spec()/resolve_meta() below: connect a
 // single-backend Slot just for this call, meta() it, close it again --
 // same connect/close shape as create_one()/remove_one() above, but for a
@@ -838,6 +861,30 @@ rawstd::DetachedTask launch_create_version_op_coro(
     ssize_t result = length;
     try {
         co_await t.create_version(*queue);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+rawstd::DetachedTask launch_transfer_op_coro(
+    rawstor::Target t, rawio::Queue* queue, RawstdUUID tenant,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        co_await t.transfer(*queue, tenant);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -1939,6 +1986,20 @@ Target::resize(rawio::Queue& queue, uint64_t new_size) const {
     });
 }
 
+rawstd::Task<void>
+Target::transfer(rawio::Queue& queue, const RawstdUUID& tenant) const {
+    if (is_logical_chunk(_uris) || rawstd_uuid_is_nil(&tenant)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    // Every URI of every chunk records the owner concurrently, the way
+    // remove() reaches them. An mds:// URI is one call: its backend
+    // transfers the object in the MDS and then in every member.
+    co_await rawstd::gather(_uris.size(), [&](size_t i) {
+        return transfer_one(queue, _uris[i], tenant);
+    });
+}
+
 // Opens the object this target addresses. Only the last chunk is opened
 // eagerly -- for the ordinary, single-chunk case that's the only chunk
 // there is (and exactly the eagerly-opened Chunk a SingleChunkObject
@@ -2137,6 +2198,35 @@ int rawstor_target_resize(
         rawstor::Target t(rawstd::URI::uriv(target));
         launch_resize_op_coro(
             std::move(t), static_cast<rawio::Queue*>(queue), new_size, cb, data
+        );
+        rawstd::DetachedTask::rethrow_if_pending();
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_target_transfer(
+    RawIOQueue* queue, const char* target, const char* tenant,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        RawstdUUID id;
+        if (rawstd_uuid_from_string(&id, tenant) < 0 ||
+            rawstd_uuid_is_nil(&id)) {
+            return -EINVAL;
+        }
+        rawstor::Target t(rawstd::URI::uriv(target));
+        launch_transfer_op_coro(
+            std::move(t), static_cast<rawio::Queue*>(queue), id, cb, data
         );
         rawstd::DetachedTask::rethrow_if_pending();
         return 0;

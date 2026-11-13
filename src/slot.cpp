@@ -1169,6 +1169,30 @@ rawstd::Task<void> Slot::list_chunks(
     }
 }
 
+rawstd::Task<void> Slot::set_owner(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner
+) {
+    OperationGuard operation(*this);
+
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        std::shared_ptr<CopyState> member = _copy_state(id, offset);
+        co_await member->record.lock(_queue);
+        RecordLockGuard guard{member->record};
+        co_await _with_retry(
+            func_name, trace_event, &Backend::set_owner, id, offset, owner
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
 rawstd::Task<void> Slot::create_tenant(const RawstdUUID& tenant) {
     OperationGuard operation(*this);
 

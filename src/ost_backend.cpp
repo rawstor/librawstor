@@ -77,6 +77,12 @@ rawstd::Task<void> Backend::remove(
     return _wire_remove(idempotency_key, id, offset);
 }
 
+rawstd::Task<void> Backend::set_owner(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner
+) {
+    return _wire_set_owner(id, offset, owner);
+}
+
 rawstd::Task<void> Backend::remove_version(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
     const RawstdUUID& version_id

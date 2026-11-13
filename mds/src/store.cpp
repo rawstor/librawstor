@@ -701,6 +701,44 @@ void ObjectStore::remove_witness(const RawstdUUID& id, uint64_t offset) {
     }
 }
 
+void ObjectStore::transfer(const RawstdUUID& id, const RawstdUUID& tenant) {
+    if (rawstd_uuid_is_nil(&tenant)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    std::lock_guard<std::mutex> guard(_mutex);
+    Transaction tx(_db);
+    _require_tenant(tenant);
+    Stmt update(_db, "UPDATE objects SET tenant_id=? WHERE id=?");
+    update.bind_blob(1, tenant.bytes, sizeof(tenant.bytes))
+        .bind_blob(2, id.bytes, sizeof(id.bytes))
+        .step();
+    if (sqlite3_changes(_db) == 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+    tx.commit();
+}
+
+void ObjectStore::set_witness_owner(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& tenant
+) {
+    if (rawstd_uuid_is_nil(&tenant)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    std::lock_guard<std::mutex> guard(_mutex);
+    Transaction tx(_db);
+    RawstorObjectMeta meta = _load_witness(id, offset);
+    memcpy(meta.tenant_id, tenant.bytes, sizeof(meta.tenant_id));
+    _store_witness(id, offset, meta);
+    Stmt update(
+        _db, "UPDATE witnesses SET tenant_id=? WHERE id=? AND chunk_offset=?"
+    );
+    update.bind_blob(1, tenant.bytes, sizeof(tenant.bytes))
+        .bind_blob(2, id.bytes, sizeof(id.bytes))
+        .bind_int64(3, offset)
+        .step();
+    tx.commit();
+}
+
 std::vector<ChunkEntry> ObjectStore::list_chunks(
     const RawstdUUID& tenant, RawstdUUID& token, unsigned int limit
 ) {

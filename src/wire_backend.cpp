@@ -1119,6 +1119,21 @@ rawstd::Task<void> Backend::_wire_remove(
     co_return;
 }
 
+rawstd::Task<void> Backend::_wire_set_owner(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner
+) {
+    try {
+        co_await _basic_request(
+            RAWSTOR_CMD_SET_OWNER, "set_owner", id, offset, 0, owner
+        );
+    } catch (const std::system_error&) {
+        throw;
+    } catch (...) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    co_return;
+}
+
 rawstd::Task<void> Backend::_wire_remove_version(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
     const RawstdUUID& version_id

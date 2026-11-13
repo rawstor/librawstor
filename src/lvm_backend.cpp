@@ -756,7 +756,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
 rawstd::Task<void> Backend::_write_meta(
     const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
     const RawstorObjectConfig& config, const RawstorObjectBallot& promised,
-    const RawstorObjectBallot& accepted
+    const RawstorObjectBallot& accepted, const RawstdUUID* owner
 ) {
     std::string path = _device_path(id, offset);
 
@@ -775,6 +775,9 @@ rawstd::Task<void> Backend::_write_meta(
         &old_record_accepted, &identity
     );
 
+    if (owner != nullptr) {
+        identity.tenant = *owner;
+    }
     std::string new_tag =
         std::string(rawstor_tag_prefix) +
         meta_encode(state, config, promised, accepted, identity);

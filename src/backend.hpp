@@ -130,6 +130,14 @@ public:
         RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
     ) = 0;
 
+    // Records `owner` as the owner of the copy `id`/`offset` in the copy's own
+    // metadata (docs/tenants.md); setting the owner it already has changes
+    // nothing. mds::Backend makes `owner` the owner of the whole object, in
+    // the MDS and in every member; offset is unused there. ENOTSUP by
+    // default.
+    virtual rawstd::Task<void>
+    set_owner(const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner);
+
     // One page of the tenants registered in an MDS, ascending, strictly
     // after `token` (nil = from the start). `token` comes back as the last
     // tenant of the page while more follow, nil on the last page. A `limit`

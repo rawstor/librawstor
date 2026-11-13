@@ -101,6 +101,33 @@ int rawstor_cli_tenant_remove(const char* location, const char* tenant) {
     return EXIT_SUCCESS;
 }
 
+int rawstor_cli_transfer(const char* target, const char* tenant) {
+    fprintf(stderr, "Transferring object %s to tenant %s\n", target, tenant);
+
+    RawstorCliOp op;
+    int res = rawstor_cli_op_init(&op);
+    if (res < 0) {
+        fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
+        return rawstd_exitcode_for_errno(-res);
+    }
+
+    int sres = rawstor_target_transfer(
+        op.queue, target, tenant, rawstor_cli_op_cb, &op
+    );
+    ssize_t result = rawstor_cli_op_wait(&op, sres);
+    rawstor_cli_op_destroy(&op);
+    if (result < 0) {
+        fprintf(
+            stderr, "rawstor_target_transfer() failed: %s\n",
+            strerror((int)-result)
+        );
+        return rawstd_exitcode_for_errno((int)-result);
+    }
+
+    fprintf(stderr, "Object transferred\n");
+    return EXIT_SUCCESS;
+}
+
 int rawstor_cli_tenant_list(
     const char* location, const RawstorCliOutput* output
 ) {

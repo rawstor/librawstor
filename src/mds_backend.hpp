@@ -133,6 +133,13 @@ public:
         RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
     ) override;
 
+    // Makes `owner` the owner of the whole object: the MDS first, then every
+    // member's own record, one at a time. Repeating it after a failure
+    // finishes the job.
+    rawstd::Task<void> set_owner(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner
+    ) override;
+
     // One page of the tenants registered in the MDS.
     rawstd::Task<void> list_tenants(
         unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token

@@ -197,6 +197,17 @@ rawstd::Task<void> Backend::set_state(
     }
 }
 
+rawstd::Task<void> Backend::set_owner(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner
+) {
+    RawstorObjectMeta meta =
+        (co_await this->meta(id, offset, RawstdUUID{})).front();
+    co_await _write_meta(
+        id, offset, meta.state, meta.config, meta.promised, meta.accepted,
+        &owner
+    );
+}
+
 rawstd::Task<bool> Backend::sync_prepare(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot&,
     bool proposed, RawstorObjectMeta& meta

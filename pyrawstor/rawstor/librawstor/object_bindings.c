@@ -1319,6 +1319,33 @@ PyObject* py_rawstor_object_resize(PyObject* Py_UNUSED(self), PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject*
+py_rawstor_object_transfer(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* target;
+    const char* tenant;
+    if (!PyArg_ParseTuple(args, "ss", &target, &tenant)) {
+        return NULL;
+    }
+
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres = rawstor_target_transfer(
+        op.queue, target, tenant, rawstor_sync_op_cb, &op
+    );
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
+    if (res < 0) {
+        set_os_error((int)-res);
+        return NULL;
+    }
+
+    Py_RETURN_NONE;
+}
+
 typedef int (*TargetListFunction)(
     RawIOQueue*, const char*, RawstorStringList**, int (*)(ssize_t, void*),
     void*

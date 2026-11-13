@@ -10,6 +10,7 @@
 
 #include <rawstor/location.h>
 #include <rawstor/protocol.h>
+#include <rawstor/target.h>
 
 #include <rawio/queue.hpp>
 
@@ -401,6 +402,86 @@ TEST(TenantTest, an_object_id_is_unique_across_tenants) {
         run(*queue, rawstor::Location({rawstor::with_tenant(plain, new_id())})
                         .create(*queue, id, small_spec())),
         std::system_error
+    );
+}
+
+// A transfer records the new owner with every copy of the object, wherever the
+// copy is, and listings follow; doing it again changes nothing.
+TEST(TenantTest, a_transfer_makes_another_tenant_the_owner_of_every_copy) {
+    rawstor::tests::TmpDir first;
+    rawstor::tests::TmpDir second;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    RawstdUUID acme_id = new_id();
+    RawstdUUID other_id = new_id();
+    rawstd::URI first_uri(first.uri());
+    rawstd::URI second_uri(second.uri());
+
+    RawstorObjectSpec spec = small_spec();
+    spec.width = 2;
+    rawstor::Target target =
+        run(*queue,
+            rawstor::Location({rawstor::with_tenant(first_uri, acme_id),
+                               rawstor::with_tenant(second_uri, acme_id)})
+                .create(*queue, spec));
+
+    auto owners = [&] {
+        std::vector<RawstdUUID> ret;
+        for (const auto& meta : run(*queue, target.meta(*queue))) {
+            RawstdUUID owner;
+            memcpy(owner.bytes, meta.tenant_id, sizeof(owner.bytes));
+            ret.push_back(owner);
+        }
+        return ret;
+    };
+    auto listed_for = [&](const RawstdUUID& tenant) {
+        return listed(*queue, rawstor::with_tenant(first_uri, tenant)) +
+               listed(*queue, rawstor::with_tenant(second_uri, tenant));
+    };
+
+    EXPECT_EQ(listed_for(acme_id), 2u);
+    EXPECT_EQ(listed_for(other_id), 0u);
+
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        run(*queue, target.transfer(*queue, other_id));
+        std::vector<RawstdUUID> got = owners();
+        ASSERT_EQ(got.size(), 2u);
+        for (const RawstdUUID& owner : got) {
+            EXPECT_EQ(rawstd_uuid_cmp(&owner, &other_id), 0);
+        }
+    }
+    EXPECT_EQ(listed_for(acme_id), 0u);
+    EXPECT_EQ(listed_for(other_id), 2u);
+
+    // The state of the copy is untouched.
+    for (const auto& meta : run(*queue, target.meta(*queue))) {
+        EXPECT_EQ(meta.spec.size, spec.size);
+        EXPECT_EQ(meta.member_role, RAWSTOR_MEMBER_DATA);
+    }
+}
+
+TEST(TenantTest, a_transfer_needs_a_tenant) {
+    rawstor::tests::TmpDir dir;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    rawstor::Target target = run(
+        *queue,
+        rawstor::Location({rawstd::URI(dir.uri())}).create(*queue, small_spec())
+    );
+
+    try {
+        run(*queue, target.transfer(*queue, RawstdUUID{}));
+        FAIL() << "transferred to the nil tenant";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EINVAL);
+    }
+
+    // The C API refuses what is not a tenant before it starts anything.
+    std::string address = rawstd::URI::uris(target.uris());
+    EXPECT_EQ(
+        rawstor_target_transfer(
+            queue.get(), address.c_str(), "nonsense",
+            [](ssize_t, void*) { return 0; }, nullptr
+        ),
+        -EINVAL
     );
 }
 

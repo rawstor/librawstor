@@ -139,6 +139,14 @@ class Target:
             raise ValueError("size cannot be negative")
         librawstor.object_resize(self._uri, size)
 
+    def transfer(self, tenant: str) -> None:
+        """Make `tenant`, a UUID string, the owner of this object, with every
+        copy of every chunk (and in the MDS, for an mds:// object). Raises
+        OSError: ENOENT if an MDS does not know the tenant, EINVAL if it is
+        not a UUID or is the nil one. Repeating it after a failure finishes
+        the job (docs/tenants.md)."""
+        librawstor.object_transfer(self._uri, tenant)
+
     def chunks(self) -> list["Target"]:
         """Addressable physical chunk targets, in ascending offset order."""
         return [Target(uri) for uri in librawstor.object_chunks(self._uri)]

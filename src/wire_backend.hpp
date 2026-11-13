@@ -127,6 +127,10 @@ protected:
         unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
     );
 
+    rawstd::Task<void> _wire_set_owner(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner
+    );
+
     rawstd::Task<void> _wire_create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstorObjectSpec& sp,

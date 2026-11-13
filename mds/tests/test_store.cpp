@@ -1228,6 +1228,37 @@ TEST_F(ObjectStoreTest, tenants_are_listed_a_page_at_a_time) {
     EXPECT_EQ(rawstd_uuid_cmp(&token, &page.back()), 0);
 }
 
+// A transfer moves the object between tenants: listings follow it, the old
+// owner can then be removed, and the new one must be registered.
+TEST_F(ObjectStoreTest, an_object_is_transferred_to_another_tenant) {
+    ObjectStore store = make_store();
+    RawstdUUID acme = make_id();
+    RawstdUUID other = make_id();
+    store.create_tenant(RawstdUUID{}, acme);
+    store.create_tenant(RawstdUUID{}, other);
+    RawstdUUID id = make_id();
+    store.create(
+        acme, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
+    );
+
+    EXPECT_EQ(errno_of([&] { store.transfer(id, RawstdUUID{}); }), EINVAL);
+    EXPECT_EQ(errno_of([&] { store.transfer(id, make_id()); }), ENOENT);
+    EXPECT_EQ(errno_of([&] { store.transfer(make_id(), other); }), ENOENT);
+    EXPECT_EQ(
+        errno_of([&] { store.remove_tenant(RawstdUUID{}, acme); }), EBUSY
+    );
+
+    store.transfer(id, other);
+    // Idempotent.
+    store.transfer(id, other);
+
+    RawstdUUID token{};
+    EXPECT_EQ(store.list_chunks(other, token, 0).size(), 1u);
+    token = {};
+    EXPECT_TRUE(store.list_chunks(acme, token, 0).empty());
+    store.remove_tenant(RawstdUUID{}, acme);
+}
+
 TEST_F(ObjectStoreTest, tenants_are_created_and_removed) {
     ObjectStore store = make_store();
     RawstdUUID acme = make_id();

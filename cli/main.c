@@ -103,6 +103,8 @@ static void object_usage(void) {
         "  show                  Show rawstor object\n"
         "  slots                 List the member slots of an object's "
         "chunks\n"
+        "  transfer              Make another tenant the owner of an "
+        "object\n"
         "\n"
         "An object is addressed as TARGET, a version of it as "
         "TARGET/VERSION_ID\n"
@@ -901,6 +903,69 @@ static int command_resize(int argc, char** argv) {
     }
 
     return rawstor_cli_resize(target_arg, new_size);
+}
+
+static void command_transfer_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] object transfer TARGET TENANT\n"
+        "\n"
+        "Makes TENANT the owner of the object: its record on every copy "
+        "of every\n"
+        "chunk, and for an mds:// object the MDS's own, which refuses a "
+        "tenant it\n"
+        "does not know (-ENOENT). If a copy is unreachable the transfer "
+        "fails\n"
+        "part-way; run it again to finish.\n"
+        "\n"
+        "  TARGET                The object.\n"
+        "  TENANT                The UUID of the new owner.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
+    );
+}
+
+static int command_transfer(int argc, char** argv) {
+    const char* optstring = "h";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {},
+    };
+
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_transfer_usage();
+            return EXIT_SUCCESS;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    char* args[2] = {NULL, NULL};
+    if (tenant_args(argc, argv, args, 2) != 0) {
+        return EX_USAGE;
+    }
+    if (args[0] == NULL) {
+        fprintf(stderr, "target required\n");
+        return EX_USAGE;
+    }
+    if (args[1] == NULL) {
+        fprintf(stderr, "tenant required\n");
+        return EX_USAGE;
+    }
+
+    return rawstor_cli_transfer(args[0], args[1]);
 }
 
 static void command_list_usage(void) {
@@ -1976,6 +2041,8 @@ static int run_object(int argc, char** argv) {
         return command_show(argc, argv, TARGET_OBJECT);
     } else if (strcmp(sub, "slots") == 0) {
         return command_slots(argc, argv);
+    } else if (strcmp(sub, "transfer") == 0) {
+        return command_transfer(argc, argv);
     }
     fprintf(stderr, "Unexpected object subcommand: %s\n", sub);
     return EX_USAGE;

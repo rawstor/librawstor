@@ -790,6 +790,64 @@ TEST(ObjectTenantTest, the_registry_is_listed_a_page_at_a_time) {
     }
 }
 
+// A transfer through an MDS moves the object, in the MDS and in every chunk
+// on the OSTs; an MDS refuses a tenant it does not know.
+TEST(ObjectTenantTest, a_transfer_moves_the_object_and_its_chunks) {
+    rawstor::tests::ObjectEnv env(8902, 8903);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    rawstd::URI mds(env.location());
+    rawstor::Location admin({mds});
+    RawstdUUID acme;
+    RawstdUUID other;
+    ASSERT_EQ(rawstd_uuid7_init(&acme), 0);
+    ASSERT_EQ(rawstd_uuid7_init(&other), 0);
+    run(*queue, admin.create_tenant(*queue, acme));
+    run(*queue, admin.create_tenant(*queue, other));
+
+    const char* id = "018f4e2a-3000-7000-8000-000000000041";
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    spec.width = 1;
+    spec.chunk_size = 512ull << 10;
+    rawstor::Target target({rawstd::URI(rawstor::with_tenant(mds, acme), id)});
+    run(*queue, target.create(*queue, spec));
+
+    RawstdUUID unknown;
+    ASSERT_EQ(rawstd_uuid7_init(&unknown), 0);
+    try {
+        run(*queue, target.transfer(*queue, unknown));
+        FAIL() << "transferred to an unregistered tenant";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOENT);
+    }
+
+    run(*queue, target.transfer(*queue, other));
+
+    for (uint64_t offset : {0ull, 512ull << 10}) {
+        std::ostringstream hex;
+        hex << std::hex << offset;
+        rawstor::Target chunk({rawstd::URI(rawstd::URI(mds, id), hex.str())});
+        auto metas = run(*queue, chunk.meta(*queue));
+        ASSERT_FALSE(metas.empty());
+        RawstdUUID got;
+        memcpy(got.bytes, metas.front().tenant_id, sizeof(got.bytes));
+        EXPECT_EQ(rawstd_uuid_cmp(&got, &other), 0) << "offset " << offset;
+    }
+
+    auto count_for = [&](const RawstdUUID& tenant) {
+        std::list<rawstor::Target> targets;
+        RawstorPaginationToken token = {};
+        run(*queue, rawstor::Location({rawstor::with_tenant(mds, tenant)})
+                        .list(*queue, 0, targets, token));
+        return targets.size();
+    };
+    EXPECT_EQ(count_for(acme), 0u);
+    EXPECT_EQ(count_for(other), 1u);
+
+    run(*queue, rawstor::Target({rawstd::URI(mds, id)}).remove(*queue));
+}
+
 // Grow-only: the MDS itself rejects a smaller new_size.
 TEST(ObjectResizeTest, shrink_is_einval) {
     rawstor::tests::ObjectEnv env(8780, 8781);

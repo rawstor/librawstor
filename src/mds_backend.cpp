@@ -804,6 +804,42 @@ rawstd::Task<void> Backend::resize(
     }
 }
 
+rawstd::Task<void>
+Backend::set_owner(const RawstdUUID& id, uint64_t, const RawstdUUID& owner) {
+    RawstorFrameBasic request{
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_OBJ_TRANSFER,
+                .cid = 0,
+            },
+        .payload = {},
+    };
+    uuid_to_bytes(id, request.payload.object_id);
+    uuid_to_bytes(owner, request.payload.version_id);
+    co_await exchange(&request, sizeof(request), RAWSTOR_CMD_OBJ_TRANSFER, 0);
+
+    WireMap map = co_await _resolve(id, RawstdUUID{});
+    for (uint64_t i = 0; i < map.chunks.size(); ++i) {
+        for (const auto& member : map.chunks[i]) {
+            if (member.location.empty()) {
+                continue;
+            }
+            auto slot = co_await Slot::create(_queue, slot_location(member));
+            std::exception_ptr error;
+            try {
+                co_await slot->set_owner(map.id, i * map.chunk_size, owner);
+            } catch (...) {
+                error = std::current_exception();
+            }
+            co_await slot->close();
+            if (error) {
+                std::rethrow_exception(error);
+            }
+        }
+    }
+}
+
 rawstd::Task<void> Backend::create_version(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t,
     const RawstdUUID& version_id
