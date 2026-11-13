@@ -1,6 +1,7 @@
 #ifndef RAWTLS_CONTEXT_HPP
 #define RAWTLS_CONTEXT_HPP
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -41,7 +42,9 @@ private:
     Config _config;
     std::mutex _mutex;
     std::shared_ptr<ssl_ctx_st> _ctx;
+    std::atomic<bool> _reload_requested;
 
+    // What a new Session starts from; first applies a requested reload.
     std::shared_ptr<ssl_ctx_st> _snapshot();
 
 public:
@@ -65,6 +68,13 @@ public:
      * take the process down.
      */
     void reload();
+
+    /*
+     * Asks for reload() to happen before the next Session is created. Safe in
+     * a signal handler. A reload that fails then is logged and leaves the
+     * Context unchanged, as there is no caller to throw to.
+     */
+    void request_reload() noexcept;
 };
 
 } // namespace rawtls

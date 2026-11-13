@@ -77,6 +77,10 @@ int rawstor_initialize(const RawstorOpts* opts) noexcept {
     }
 }
 
+void rawstor_tls_request_reload() noexcept {
+    rawstor::tls::request_reload();
+}
+
 void rawstor_terminate() noexcept {
     rawstor::telemetry::dump();
     rawstor::tls::terminate();

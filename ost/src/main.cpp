@@ -128,6 +128,12 @@ void sact_handler(int) {
     }
 }
 
+// SIGHUP and SIGUSR1 (which spiffe-helper sends by default after a renewal):
+// the certificate is read again before the next connection. Safe in a handler.
+void reload_handler(int) {
+    rawstor_tls_request_reload();
+}
+
 // Each worker is a thread with its own rawstor::ostserver::Server (own
 // RawIOQueue -- the reactor stays single-threaded per queue, see
 // CLAUDE.md), all sharing the one listening socket bind_listen() opens
@@ -181,6 +187,20 @@ void ost(
         throw std::system_error(
             errsv, std::generic_category(), "Failed to register SIGTERM handler"
         );
+    }
+
+    struct sigaction reload_sact = {};
+    reload_sact.sa_handler = reload_handler;
+    sigemptyset(&reload_sact.sa_mask);
+    for (int sig : {SIGHUP, SIGUSR1}) {
+        if (sigaction(sig, &reload_sact, nullptr) == -1) {
+            int errsv = errno;
+            errno = 0;
+            throw std::system_error(
+                errsv, std::generic_category(),
+                "Failed to register the certificate reload handler"
+            );
+        }
     }
 
     // One write barrier for all workers: the writers of a chunk member may

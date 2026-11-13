@@ -308,7 +308,7 @@ void reload_topology(
 // incoming connection, same as rawstor-ost -- and the one ObjectStore
 // (one SQLite connection, every call serialized by the store itself).
 //
-// SIGINT/SIGTERM/SIGHUP are blocked before any worker starts (they
+// SIGINT/SIGTERM/SIGHUP/SIGUSR1 are blocked before any worker starts (they
 // inherit the mask) and taken synchronously by this thread with
 // sigwait(): none of them can interrupt a worker's own rawio_wait(), so
 // SIGHUP never doubles as a stop, and a reload runs as ordinary code, not
@@ -325,6 +325,7 @@ void mds(
     sigaddset(&signals, SIGINT);
     sigaddset(&signals, SIGTERM);
     sigaddset(&signals, SIGHUP);
+    sigaddset(&signals, SIGUSR1);
     int res = pthread_sigmask(SIG_BLOCK, &signals, nullptr);
     if (res != 0) {
         throw std::system_error(
@@ -397,9 +398,15 @@ void mds(
             rawstd_error("sigwait: %s\n", strerror(res));
             break;
         }
+        // spiffe-helper signals SIGUSR1 after it renews the certificate.
+        if (sig == SIGUSR1) {
+            rawstor_tls_request_reload();
+            continue;
+        }
         if (sig != SIGHUP) {
             break;
         }
+        rawstor_tls_request_reload();
         reload_topology(store, topology_path);
         monitor.reload();
     }
