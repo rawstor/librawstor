@@ -38,13 +38,13 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | Feature | Stage | Status | Where |
 |---|---|---|---|
 | Benchmark: TLS 1.3 / kTLS on the io_uring hot path | 0 | ✅ | [Measurements](#measurements) |
-| Protocol version + feature bits in the `SET_OBJECT` handshake | 1 | ❌ | also planned in [MDS design](mds.md) |
-| `tenant_id` in the protocol and in the MDS store (single `default` tenant) | 1 | ❌ | — |
+| `HANDSHAKE`: feature bits, the first request of every connection (no protocol version) | 1 | ✅ | [Protocol](protocol.md) |
+| Owner tenant of an object in the protocol, chunk metadata, `LIST` and the MDS store; tenant registry; a default tenant | 1 | ✅ | [Tenants](tenants.md) |
 | mTLS (OpenSSL) on every port: OST, MDS, witness, client side | 2 | ❌ | — |
 | kTLS offload of the data path | 2 | ❌ | optional, off by default (stage 0) |
 | `--insecure`: plaintext, no authentication, per service | 2 | ❌ | — |
 | Certificate and CA reload without downtime | 2 | ❌ | — |
-| Principals, roles, tenants in the MDS store, admin API | 3 | ❌ | — |
+| Principals and roles in the MDS store, admin API (the tenant registry exists, see stage 1) | 3 | ❌ | — |
 | Capability tokens issued by `RESOLVE`, checked by OST | 3 | ❌ | — |
 | `rawstor pki` helper (own CA), external CA support | 4 | ❌ | — |
 | At-rest encryption, server side (ZFS / dm-crypt) | 5 | ❌ | documentation only |
@@ -286,10 +286,10 @@ MDS on the IO path.
    not_after, client certificate fingerprint}`, signed by the MDS.
 3. The client sends the token in `SET_OBJECT` to the OST. The OST verifies the
    signature, the expiry, that the fingerprint equals that of the connection's
-   TLS peer, and that **both** `tenant_id` and `object_id` match those in the
-   `SET_OBJECT` (object ids are only unique within a tenant, so the pair is the
-   key). The tenant of the token must also equal the tenant in the peer's
-   certificate. The result is cached
+   TLS peer, and that the `object_id` of the token is the one in the
+   `SET_OBJECT` (an object id is unique on its own, the tenant is the owner
+   and not part of the key). The `tenant_id` of the token must also equal the
+   tenant in the peer's certificate. The result is cached
    in the connection's Slot. The token is verified once per connection, not
    per request.
 
@@ -312,8 +312,8 @@ sequenceDiagram
     M->>M: principal's tenant and role vs object's tenant
     M-->>C: chunk locations + signed token per chunk
     C->>O: mTLS handshake (client verifies spiffe://.../ost/ost_id)
-    C->>O: SET_OBJECT(tenant, object, token)
-    O->>O: signature, expiry, certificate fingerprint, tenant + object
+    C->>O: SET_OBJECT(object, token)
+    O->>O: signature, expiry, certificate fingerprint, object, tenant vs certificate
     O-->>C: ok, rights cached in the Slot
     loop IO
         C->>O: READ / WRITE (no token check per request)
@@ -356,6 +356,7 @@ OST commands:
 
 | Command | Tenant principal: token right | `mds` | `admin` |
 |---|---|---|---|
+| `HANDSHAKE` | any | any | any |
 | `SET_OBJECT` | any right in the token; `RAWSTOR_READONLY` needs `read`, a read-write open needs `write` | role | role |
 | `READ`, `META`, `LIST_VERSIONS` | `read` | role | role |
 | `WRITE`, `FLUSH`, `LEAVE` | `write` | — | — |
@@ -363,6 +364,7 @@ OST commands:
 | `DISCARD`, `WRITE_ZEROES` with `UNMAP` | `discard` | — | — |
 | `WRITE_ZEROES` without `UNMAP` | `write` | — | — |
 | `ALLOCATE`, `RELEASE`, `CREATE_VERSION`, `FREEZE`, `THAW` | `manage` | — | role |
+| `SET_OWNER` (records the owner in one member; `rawstor object transfer` sends it to every member) | — | — | role |
 | `LIST` | — | role | role |
 | `LOCATION_INFO` | — | role | role |
 
@@ -370,14 +372,17 @@ MDS commands:
 
 | Command | Tenant principal: role | `mds` | `admin` |
 |---|---|---|---|
-| `SET_OBJECT` (plain handshake) | any | — | role |
+| `HANDSHAKE` | any | any | any |
+| `SET_OBJECT` (binds nothing on an MDS) | any | — | role |
 | `RESOLVE` | `reader`; the token carries at most the rights of the role | — | role |
 | `LIST_VERSIONS` | `reader` | — | role |
 | `LIST` | any, answers only the tenant of the certificate | — | role: any tenant or all |
 | `OBJ_CREATE`, `OBJ_RESIZE`, `OBJ_REMOVE`, `OBJ_COMMIT_VERSION`, `OBJ_REMOVE_VERSION` | `manager` | — | role |
 | `ALLOCATE`, `RELEASE`, `META`, `SYNC_PREPARE`, `SYNC_ACCEPT` on a witness hosted by the MDS | as the same command on an OST (`SYNC_*`: `write`), by token | — | as on an OST |
 | `LOCATION_INFO` | — | — | role |
-| tenant, principal and role management (admin API) | — | — | role |
+| `LIST_TENANTS`, `TENANT_CREATE`, `TENANT_REMOVE` | — | — | role |
+| `OBJ_TRANSFER` (changes the owner of an object) | — | — | role |
+| principal and role management (admin API) | — | — | role |
 
 `SYNC_PREPARE` and `SYNC_ACCEPT` are how a writer records which copies are in
 sync, excludes one and takes it back, so every writer needs them and a
@@ -392,8 +397,9 @@ command added later is refused until it is added here.
 Rules that apply to every row:
 
 - The tenant is taken from the certificate, never from the request. A tenant
-  principal whose request names another `tenant_id` is refused as if the
-  object did not exist.
+  principal whose request names another `tenant_id` (the owner in `LIST` or
+  `OBJ_CREATE`) is refused as if the object did not exist. Until stage 3 the
+  tenant a caller names is asserted by the caller ([Tenants](tenants.md)).
 - An object of another tenant is `-ENOENT`, in every command, so a tenant
   cannot probe for ids. A known object of its own tenant that the role does
   not allow is `-EACCES`.
@@ -402,7 +408,10 @@ Rules that apply to every row:
   token for an OST command, except `LIST` and `LOCATION_INFO`, which no
   tenant principal may call on an OST.
 - `LIST` on an OST names every chunk of every tenant, which is why it is
-  reserved for `mds` and `admin`; rows carry `tenant_id`.
+  reserved for `mds` and `admin`; rows carry the owner.
+- Tenants own objects and nothing else: only an `admin` changes the owner of
+  an object or touches the registry, so a tenant cannot give an object away
+  or create a tenant.
 
 ## Tenants
 
@@ -423,20 +432,25 @@ principal), then issues certificates. C can be layered on later by a service
 that maps an OIDC identity to a rawstor certificate; it needs nothing from
 the core.
 
-Groundwork that is cheap now and expensive later (stage 1):
+Stage 1 is in place ([Tenants](tenants.md), [Protocol](protocol.md)):
 
-- every object id is scoped by `tenant_id` (128 bit, nil-free; `default` is a
-  fixed UUID) in the MDS store, in `LIST`, in the OST slot key and in the
-  on-disk metadata the OST keeps per chunk;
-- the protocol carries `tenant_id` where `object_id` is carried, and the
-  `SET_OBJECT` handshake advertises a protocol version and feature bits so
-  a mixed cluster can be upgraded;
-- `LIST` on an MDS is scoped to the tenant of the caller's certificate (an
-  `admin` may name a tenant or ask for all); its pagination cursor is an id
-  inside that tenant. `LIST` on an OST is reserved for `mds` and `admin` and
-  returns rows with `tenant_id`;
+- an object has one owner tenant (128 bit UUID, `default` is a fixed one that
+  every MDS registers), recorded in the MDS store, in the on-disk metadata of
+  every chunk, in `META` and in the rows of `LIST`. An object id is unique on
+  its own: the tenant is not part of an address, a path or a key;
+- the MDS keeps the tenant registry (`LIST_TENANTS`, `TENANT_CREATE`,
+  `TENANT_REMOVE`), and an object changes owner by `OBJ_TRANSFER` and
+  `SET_OWNER`;
+- the first request of every connection is `HANDSHAKE`, which negotiates
+  feature bits so a mixed cluster can be upgraded; there is no protocol
+  version;
+- `LIST` takes the tenant to filter by (nil = every object), named by the
+  location the caller uses. Stage 3 takes the tenant from the caller's
+  certificate instead: an `admin` may name a tenant or ask for all, and
+  a tenant principal gets only its own;
 - `--reconstruct` is a provider operation: it runs as `mds`, scans `LIST` and
-  `META` of every OST and rebuilds the objects of all tenants at once.
+  `META` of every OST and rebuilds the objects of all tenants at once,
+  restoring their owners and registering the tenants.
 
 Quotas, rate limits and noisy-neighbour control are a separate task.
 
@@ -747,7 +761,7 @@ for the certificate to expire, and cannot rebuild redundancy.
 ```mermaid
 flowchart TD
     s0["0. Benchmark: TLS mode"] --> s2
-    s1["1. Protocol groundwork:<br/>version, tenant_id, crypto_params"] --> s2["2. Transport: mTLS"]
+    s1["1. Protocol groundwork:<br/>HANDSHAKE, owner tenant, crypto_params"] --> s2["2. Transport: mTLS"]
     s1 --> s3
     s2 --> s3["3. Authorization: tenants, tokens"]
     s2 --> s4["4. PKI tooling"]
@@ -765,9 +779,9 @@ require re-doing earlier ones.
    Output: the TLS mode (kTLS or userspace) and the minimum kernel. Done:
    see [Measurements](#measurements); the minimum kernel is not established,
    only 7.0 was tested.
-1. **Protocol groundwork.** Version + feature bits in the handshake;
-   `tenant_id` in protocol, MDS store, OST slot key, `LIST`; `crypto_params`
-   reserved in the object record. Single `default` tenant; behaviour unchanged.
+1. **Protocol groundwork.** Feature bits in `HANDSHAKE`; the owner tenant in
+   protocol, MDS store, chunk metadata and `LIST`, with a registry and a
+   default tenant (done); `crypto_params` reserved in the object record.
 2. **Transport.** An OpenSSL layer under `rawio` (client and server side),
    mTLS, identity extraction from the SAN, config options on every service,
    reload on `SIGHUP`, `--insecure`. kTLS as an option. Service and CLI test
