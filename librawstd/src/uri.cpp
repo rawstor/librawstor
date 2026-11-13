@@ -49,7 +49,7 @@ void parse_uri(
                 uri.substr(scheme_delim, colon_delim - scheme_delim - 1);
             *password = uri.substr(colon_delim, at_delim - colon_delim - 1);
         } else {
-            *username = uri.substr(scheme_delim, at_delim - scheme_delim);
+            *username = uri.substr(scheme_delim, at_delim - scheme_delim - 1);
             *password = "";
         }
     } else {

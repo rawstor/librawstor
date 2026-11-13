@@ -13,7 +13,7 @@ class TestLocation(unittest.TestCase):
 
             target = location.create(size=1 << 20, width=1)
 
-            read_targets = list(location)
+            read_targets = list(location.objects())
             self.assertEqual(read_targets, [target])
 
             target.remove()
@@ -21,10 +21,10 @@ class TestLocation(unittest.TestCase):
     def test_empty(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             location = rawstor.Location(f"file://{temp_dir}")
-            targets = list(location)
+            targets = list(location.objects())
             self.assertEqual(targets, [])
 
-    def test_iter(self):
+    def test_objects(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             location = rawstor.Location(f"file://{temp_dir}")
 
@@ -34,7 +34,7 @@ class TestLocation(unittest.TestCase):
                 targets.append(target)
             targets.sort()
 
-            read_targets = list(location)
+            read_targets = list(location.objects())
             self.assertEqual(read_targets, targets)
 
             for target in targets:
@@ -43,7 +43,7 @@ class TestLocation(unittest.TestCase):
     def test_not_found(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             location = rawstor.Location(f"file://{temp_dir}_not_found")
-            self.assertRaises(FileNotFoundError, lambda: list(location))
+            self.assertRaises(FileNotFoundError, lambda: list(location.objects()))
 
     def test_info(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -79,7 +79,7 @@ class TestLocation(unittest.TestCase):
 
             target = location.create(
                 size=1 << 20, width=1, failure_domain="server")
-            self.assertEqual(list(location), [target])
+            self.assertEqual(list(location.objects()), [target])
 
             target.remove()
 
@@ -101,9 +101,9 @@ class TestWitnessLocation(unittest.TestCase):
                              [rawstor.MEMBER_DATA, rawstor.MEMBER_DATA,
                               rawstor.MEMBER_WITNESS])
             self.assertEqual(metadata[2].size, 65536)
-            self.assertEqual(list(location), [target])
+            self.assertEqual(list(location.objects()), [target])
             target.remove()
-            self.assertEqual(list(location), [])
+            self.assertEqual(list(location.objects()), [])
 
     def test_odd_data_count_is_rejected(self):
         from contextlib import ExitStack

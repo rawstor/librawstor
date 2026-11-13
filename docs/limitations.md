@@ -49,7 +49,7 @@ deciding how to deploy.
   can use it. Run them on a trusted network.
 - **No protocol version or feature negotiation** in the wire protocol yet; see
   [Protocol](protocol.md).
-- **Free space is reported by sampling.** `rawstor info mds://` shows the last
+- **Free space is reported by sampling.** `rawstor location info mds://` shows the last
   probe of every OST. A create, grow or remove makes the MDS probe the OSTs it
   touched after `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY`, but a client that is
   still working on the OSTs by then may be seen half done until the next

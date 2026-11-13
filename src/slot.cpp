@@ -164,7 +164,9 @@ RawstdUUID new_idempotency_key() {
 // ECONNABORTED instead, which stays retryable).
 // A stale epoch (ESTALE) also rejects the request permanently: reconnecting
 // cannot make that epoch current. EILSEQ marks malformed persisted metadata;
-// reconnecting cannot repair its encoding.
+// reconnecting cannot repair its encoding. A refusal for lack of rights (EPERM,
+// EACCES) is the server's answer to what was asked, not a fault of the
+// connection: asking again changes nothing.
 // Anything else defaults to retryable -- safer to spend a few pointless
 // retries on a genuinely transient rejection we don't recognize than to
 // silently give up on one that would have gone away on its own (e.g.
@@ -172,7 +174,8 @@ RawstdUUID new_idempotency_key() {
 bool is_permanent_backend_error(int error) {
     return error == ENOENT || error == EEXIST || error == EINVAL ||
            error == ENOTSUP || error == EOPNOTSUPP || error == ENOSYS ||
-           error == ECANCELED || error == ESTALE || error == EILSEQ;
+           error == ECANCELED || error == ESTALE || error == EILSEQ ||
+           error == EPERM || error == EACCES;
 }
 
 // Binds `backend` to `id`/`offset`'s live version, or one previously

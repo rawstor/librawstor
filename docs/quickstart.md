@@ -52,7 +52,7 @@ echo "BIND_ADDR=0.0.0.0" | sudo tee /etc/rawstor/ost/${OST}.conf
 sudo systemctl enable --now rawstor-ost@${OST}
 
 echo ${OST}                                   # for the topology below
-rawstor info ost://192.168.0.11               # serving? (.12 on the other)
+rawstor location info ost://192.168.0.11               # serving? (.12 on the other)
 journalctl -u rawstor-ost@${OST}              # log
 ```
 
@@ -79,7 +79,7 @@ EOF
 echo "BIND_ADDR=0.0.0.0" | sudo tee /etc/rawstor/mds/${CLUSTER}.conf
 sudo systemctl enable --now rawstor-mds@${CLUSTER}
 
-rawstor info mds://192.168.0.13               # serving?
+rawstor location info mds://192.168.0.13               # serving?
 ```
 
 Each member sits on its own server, so a chunk's two copies and its witness

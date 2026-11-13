@@ -1293,7 +1293,7 @@ Interprocess mirror coordination remains multiattach stage 2.
 
 ## Backend health and location information
 
-`rawstor info mds://host:port` sends `LOCATION_INFO` to the MDS and reads
+`rawstor location info mds://host:port` sends `LOCATION_INFO` to the MDS and reads
 cached space accounting from its SQLite database. `used` and `total` are
 sums of the latest successful INFO samples from the OSTs in the current
 topology. They are physical backend counters, without dividing by mirror
