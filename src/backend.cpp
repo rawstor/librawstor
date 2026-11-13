@@ -79,11 +79,6 @@ Backend::resolve_targets(const RawstdUUID&, const RawstdUUID&) {
 }
 
 rawstd::Task<void>
-Backend::set_owner(const RawstdUUID&, uint64_t, const RawstdUUID&) {
-    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
-}
-
-rawstd::Task<void>
 Backend::list_tenants(unsigned int, std::vector<RawstdUUID>&, RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
