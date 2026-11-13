@@ -28,7 +28,7 @@ namespace blk {
 class Backend : public rawstor::Backend {
 private:
     // Versioned native metadata includes the logical member size.
-    static constexpr unsigned int META_FORMAT_VERSION = 2;
+    static constexpr unsigned int META_FORMAT_VERSION = 1;
 
     rawstd::Task<void> _bind_object(
         const RawstdUUID& id, uint64_t offset, int flags,
