@@ -72,6 +72,12 @@ static void usage(void) {
         "  testio                Test rawstor IO routines\n"
         "  version               Work with versions of an object\n"
         "\n"
+        "shorthand:\n"
+        "  create                = object create\n"
+        "  list(ls)              = object list\n"
+        "  remove(rm)            = object remove\n"
+        "  info                  = location info\n"
+        "\n"
         "Run `rawstor <command> --help` to list a command's subcommands and "
         "`rawstor <command> <subcommand> --help` to show its usage.\n"
     );
@@ -1710,6 +1716,14 @@ static int run_command(
         ret = run_location(argc, argv);
     } else if (strcmp(command, "object") == 0) {
         ret = run_object(argc, argv);
+    } else if (strcmp(command, "create") == 0) {
+        ret = command_create(argc, argv);
+    } else if (strcmp(command, "list") == 0 || strcmp(command, "ls") == 0) {
+        ret = command_list(argc, argv);
+    } else if (strcmp(command, "remove") == 0 || strcmp(command, "rm") == 0) {
+        ret = command_remove(argc, argv, TARGET_OBJECT);
+    } else if (strcmp(command, "info") == 0) {
+        ret = command_info(argc, argv);
     } else if (strcmp(command, "testio") == 0) {
         ret = command_testio(argc, argv);
     } else if (strcmp(command, "version") == 0) {
