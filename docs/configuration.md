@@ -4,7 +4,7 @@ Environment variables tuning the Rawstor client and servers. Defaults are shown 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RAWSTOR_LOCATION` | *(none)* | Fallback `LOCATION` for `rawstor object create`, `rawstor object list` and `rawstor location info` when it's omitted from the command line. |
+| `RAWSTOR_LOCATION` | *(none)* | Fallback `LOCATION` for `rawstor object create`, `rawstor object list`, `rawstor location info` and `rawstor tenant` when it's omitted from the command line. |
 | `RAWSTOR_MDS_OPTS_INFO_INTERVAL` | `300000` | MDS backend INFO/health polling interval in milliseconds; each OST is polled once per interval at its own fixed offset, spreading probes evenly. Must be positive. |
 | `RAWSTOR_MDS_OPTS_INFO_CONCURRENCY` | `128` | Maximum concurrent MDS backend probes, including retries (1–1024); see [MDS health and location information](mds.md#backend-health-and-location-information). |
 | `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY` | `5000` | Milliseconds after an object create, grow or remove before the OSTs holding its slots are probed again, ahead of their regular slot (`0` probes at once); see [MDS health and location information](mds.md#backend-health-and-location-information). |

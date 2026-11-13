@@ -25,12 +25,20 @@ int rawstor_cli_show(const char* target, const RawstorCliOutput* output) {
     int sres =
         rawstor_target_spec(op.queue, target, &spec, rawstor_cli_op_cb, &op);
     ssize_t result = rawstor_cli_op_wait(&op, sres);
-    rawstor_cli_op_destroy(&op);
     if (result < 0) {
+        rawstor_cli_op_destroy(&op);
         fprintf(
             stderr, "rawstor_target_spec() failed: %s\n", strerror((int)-result)
         );
         return rawstd_exitcode_for_errno((int)-result);
+    }
+
+    char tenant[64];
+    int ores = rawstor_cli_op_owner(&op, target, tenant, sizeof(tenant));
+    rawstor_cli_op_destroy(&op);
+    if (ores < 0) {
+        fprintf(stderr, "rawstor_target_meta() failed: %s\n", strerror(-ores));
+        return rawstd_exitcode_for_errno(-ores);
     }
 
     /* version_id is a column only when TARGET names a version. */
@@ -41,28 +49,30 @@ int rawstor_cli_show(const char* target, const RawstorCliOutput* output) {
     );
     int has_version = version_id[0] != '\0';
     static const char* const version_columns[] = {"object_id", "version_id",
-                                                  "target",    "location",
-                                                  "size",      "mirrors"};
+                                                  "tenant",    "target",
+                                                  "location",  "size",
+                                                  "mirrors"};
     static const enum RawstorCliColumnType version_types[] = {
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
-        RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_NUMBER
-    };
-    static const char* const live_columns[] = {
-        "object_id", "target", "location", "size", "mirrors"
-    };
-    static const enum RawstorCliColumnType live_types[] = {
-        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_SIZE,
         RAWSTOR_CLI_COLUMN_NUMBER
+    };
+    static const char* const live_columns[] = {"object_id", "tenant",
+                                               "target",    "location",
+                                               "size",      "mirrors"};
+    static const enum RawstorCliColumnType live_types[] = {
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+        RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+        RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_NUMBER
     };
 
     RawstorCliTable* table =
         has_version
             ? rawstor_cli_record_create(
-                  "object", version_columns, version_types, 6
+                  "object", version_columns, version_types, 7
               )
-            : rawstor_cli_record_create("object", live_columns, live_types, 5);
+            : rawstor_cli_record_create("object", live_columns, live_types, 6);
     if (table == NULL) {
         fprintf(stderr, "Out of memory\n");
         return EXIT_FAILURE;
@@ -70,12 +80,13 @@ int rawstor_cli_show(const char* target, const RawstorCliOutput* output) {
 
     char mirrors_buf[32];
     snprintf(mirrors_buf, sizeof(mirrors_buf), "%u", spec.width);
-    RawstorCliCell cells[6];
+    RawstorCliCell cells[7];
     size_t ncells = 0;
     cells[ncells++] = rawstor_cli_cell_string(object_id);
     if (has_version) {
         cells[ncells++] = rawstor_cli_cell_string(version_id);
     }
+    cells[ncells++] = rawstor_cli_cell_optional(tenant);
     cells[ncells++] = rawstor_cli_cell_string(target);
     char location[1024];
     rawstor_cli_target_location(target, location, sizeof(location));

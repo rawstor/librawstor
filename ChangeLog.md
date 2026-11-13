@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Tenants ([design](docs/tenants.md)): an object has an owner tenant, named in a location as optional user information (`ost://<tenant>@host:port`); `list` shows the objects a tenant owns and each one's tenant, or every object without a tenant; `create` without a tenant creates for the default tenant; an MDS keeps a tenant registry, and `rawstor tenant create`/`list`/`remove` manage it, and removing a tenant removes its objects with their versions; `rawstor object transfer TARGET TENANT` (`rawstor_target_transfer()`) makes another tenant the owner of an object; pyrawstor has `Location.tenants()`/`create_tenant()`/`remove_tenant()`, `Target.transfer()`, `Target.tenant`, `ObjectMeta.tenant` and `DEFAULT_TENANT`.
 - Every connection begins with `HANDSHAKE`, which negotiates optional capabilities as feature bits (no protocol version); a server serves nothing before it, and none is defined yet.
 - Host names work wherever an IPv4 address did: `ost://`/`mds://` locations, topology files and the `rawstor-ost`/`rawstor-mds` listen address are resolved (IPv4 only).
 - `rawstor-vhost` supports QEMU live migration: it logs the guest pages it writes (`VHOST_USER_PROTOCOL_F_LOG_SHMFD`, `VHOST_F_LOG_ALL`) and accepts the migration-time `SET_CONFIG`.
@@ -18,8 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rawstor version create` works on `file://` members as a fake snapshot: the member's data file is copied into a per-version subdirectory under the write barrier.
 - A write barrier across `rawstor version create`: the OSTs hold new writes to every DATA member of every chunk (`FREEZE`/`THAW`, [design](docs/mds.md#the-write-barrier)), drain and flush the admitted ones, and release them once the version is registered, so a version is one consistent point in time even with a live writer; a lease releases them by itself if the caller dies.
 - `rawstor create`, `list`(`ls`), `remove`(`rm`) and `info` are shorthands for `rawstor object create|list|remove` and `rawstor location info`.
-- `ls` and `rm` are aliases for `list` and `remove` in `rawstor object` and `rawstor version`; usage shows them as `list(ls)` and `remove(rm)`.
-- `rawstor object list|show|chunks|slots|create|resolve`, `rawstor version list|create|show` and `rawstor location info` take `--format table|json|value` (default `table`, a bordered table wrapped to the terminal width) and `--column COL[,COL...]` to choose and order the columns.
+- `ls` and `rm` are aliases for `list` and `remove` in `rawstor object`, `rawstor version` and `rawstor tenant`; usage shows them as `list(ls)` and `remove(rm)`.
+- `rawstor object list|show|chunks|slots|create|resolve`, `rawstor version list|create|show`, `rawstor tenant create|list` and `rawstor location info` take `--format table|json|value` (default `table`, a bordered table wrapped to the terminal width) and `--column COL[,COL...]` to choose and order the columns.
 - New MDS chunks with an even DATA width automatically place one witness in an unused failure domain; topology requires a `role` column (`data`, `witness` or both), with MDS witnesses addressed through `ost://`.
 - `rawstor_target_slots()` and Python `Target.slots()` enumerate physical member URIs, also shown per member by `rawstor object slots`.
 - Metadata-only witness members on OST, MDS and local backends, with synchronous membership barriers and witness-assisted quorum for even numbers of data copies.
@@ -40,8 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A URI prints without its password: `user:password@host` is shown as `user@host` wherever a URI or target is printed or listed.
 - Incompatible: every connection must begin with `HANDSHAKE`.
 - Incompatible: the CLI groups its commands. `rawstor object create|list|show|remove|resize|chunks|slots|resolve` and `rawstor version create|list|show|remove` replace the top-level commands, `info` moves to `rawstor location info`, `testio` stays; `object remove` and `object show` take only the address of an object, `version remove` and `version show` only that of a version.
+- Incompatible: `ALLOCATE`, `OBJ_CREATE`, `LIST` and `META` carry a tenant, chunk metadata records the owner, and an MDS database from before tenants is refused at start; there is no migration.
 - The service reference moved out of `README.md` into `docs/` (`rawstor-ost`, `rawstor-mds`, `rawstor-vhost`, `rawstor-vduse`, configuration, witness members, troubleshooting, building from source), a quick start from packages and a new page of known limitations; the README keeps the key ideas and an index, and the source tarball, the `librawstor` deb and rpm ship `docs/` next to it (under `/usr/share/doc/librawstor/`).
 - An open `mds://` object talks to its OSTs directly: the MDS is read once at open, and I/O errors no longer re-resolve the map or reopen the object.
 - `rawstor object create|resolve|list|show`, `rawstor version create|list` and `rawstor location info` print a table by default instead of plain lines; scripts that read a target from stdout use `--format value --column target`. `rawstor object show -v` is gone: `rawstor object chunks` and `rawstor object slots` list the chunks and the member slots.

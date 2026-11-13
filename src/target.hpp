@@ -192,6 +192,12 @@ public:
     // stored shape as object_id() above.
     const RawstdUUID& version_id() const;
 
+    // The tenant that owns the object (docs/tenants.md): the one the URIs
+    // name as user information, the default tenant when they name none.
+    // EINVAL if one names something that is not a tenant, or they name
+    // different ones.
+    RawstdUUID owner() const;
+
     // Every backend location this target's own URIs touch, across every
     // chunk, not just the first -- each URI's own identity path
     // segments stripped back off (Location::create()'s own inverse),
@@ -221,6 +227,13 @@ public:
     // method's, so there is no dispatch on version_id() here at all.
     rawstd::Task<void>
     create(rawio::Queue& queue, const RawstorObjectSpec& sp) const;
+
+    // The same, for `owner`, the tenant the object belongs to, rather than
+    // the one the URIs of this target stand for (docs/tenants.md).
+    rawstd::Task<void> create(
+        rawio::Queue& queue, const RawstorObjectSpec& sp,
+        const RawstdUUID& owner
+    ) const;
 
     // Creates a native CoW version of the live object as the version
     // `this` is bound to (version_id() above, a target string of the form
@@ -333,6 +346,13 @@ public:
     // single mds:// one (mds::Backend::resize()); see Backend::resize()'s
     // own doc comment.
     rawstd::Task<void> resize(rawio::Queue& queue, uint64_t new_size) const;
+
+    // Makes `tenant` the owner of the object (docs/tenants.md): of every
+    // member's own record, and, for an mds:// target, of the MDS's too (which
+    // answers ENOENT for a tenant it does not know). EINVAL for the nil
+    // tenant. Repeating it after a failure finishes the job.
+    rawstd::Task<void>
+    transfer(rawio::Queue& queue, const RawstdUUID& tenant) const;
 };
 
 } // namespace rawstor

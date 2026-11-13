@@ -1,0 +1,300 @@
+# Tenants
+
+A **tenant** is a field of an object: the party that owns it. An object is
+addressed by its id alone (ids are unique on their own), and the tenant is
+what a later check of rights looks at. Rights are not implemented yet, and
+nothing authenticates a caller: the tenant a caller names is **asserted by
+the caller**. Today the tenant owns, filters a listing and is recorded; it is
+not yet a security boundary ([Security design](security.md)).
+
+## Status
+
+Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
+
+| Feature | Status | Where |
+|---|---|---|
+| Tenant in the location URI (`<tenant>@`), optional | ✅ | `src/location.cpp`, `librawstd/src/uri.cpp` |
+| Owner recorded with every chunk (`ALLOCATE`, chunk metadata, `META`) | ✅ | `src/blk_backend.cpp`, `include/rawstor/protocol.h` |
+| `LIST` by owner, every row carrying its owner; no tenant lists every object | ✅ | `src/blk_backend.cpp`, `mds/src/store.cpp` |
+| The default tenant owns what is created without naming one | ✅ | `src/location.cpp`, `mds/src/store.cpp` |
+| MDS: owner of an object, tenant registry, `TENANT_CREATE` / `TENANT_REMOVE` / `LIST_TENANTS` | ✅ | `mds/src/store.cpp`, `mds/src/client.cpp` |
+| `--reconstruct` restores owners and registers their tenants | ✅ | `mds/src/store.cpp` |
+| CLI: `rawstor tenant create/list/remove` | ✅ | `cli/tenant.c` |
+| Transfer of an object to another tenant: `SET_OWNER`, `OBJ_TRANSFER`, `rawstor object transfer` | ✅ | `src/target.cpp`, `src/blk_backend.cpp`, `mds/src/store.cpp` |
+| Checking the caller's rights against the owner | ❌ | [Security design](security.md) |
+| Authentication, binding a tenant to a certificate | ❌ | [Security design](security.md) |
+
+## Model
+
+- An object has **one tenant**, its owner, set when it is created and changed
+  only by a [transfer](#transfer). It is 16 bytes, a UUID. An object created without naming a tenant
+  belongs to the **default tenant** (`00000000-0000-0000-0000-000000000001`),
+  which every MDS registers and nobody can create or remove. The nil UUID
+  owns nothing: in a `LIST` it means **no filter**, and creating an object for
+  it, or transferring one to it, is refused with `-EINVAL`.
+- An object id is **globally unique**: the tenant is not part of an address,
+  a path on disk or a database key. Creating an id that exists is `-EEXIST`
+  whoever asks.
+- A location names a tenant as its **user information**, optionally. It is
+  the tenant whose objects the location addresses: the owner of what is
+  created through it, and the filter of what is listed through it. It is not
+  who is calling: the caller is a separate matter (a certificate, later), so
+  an administrator creates an object for a user by naming that user in the
+  location. Until rights exist, nobody is refused.
+- `list` returns the objects **visible to the caller**. Until rights exist
+  that is the objects it owns; a caller that names no tenant, the
+  administrator, sees every object of the store.
+- A target names the owner of its object as the user information of its
+  URIs (`mds://<tenant>@host:port/<uuid>`), and none for an object of the
+  default tenant: an address without one stands for the default tenant, which
+  is the caller's own until a caller has an identity. So every row of a
+  listing carries its owner, also for the administrator, and
+  `rawstor_target_tenant()` reads it from the address.
+- Every other operation takes the tenant to be informational: an object is
+  found by its id, whoever the caller says it is.
+
+Who owns what, and what a `list` shows each caller:
+
+```mermaid
+flowchart LR
+    subgraph objects["objects of one store (ids are unique)"]
+        o1["object 1"]
+        o2["object 2"]
+        o3["object 3"]
+        o4["object 4"]
+    end
+
+    acme(["tenant acme"]) -- owns --> o1
+    acme -- owns --> o2
+    other(["tenant other"]) -- owns --> o3
+    fallback(["default tenant"]) -- owns --> o4
+
+    la["list as acme"] -.-> o1
+    la -.-> o2
+    lo["list as other"] -.-> o3
+    ladmin["list without a tenant<br/>(administrator)"] -.-> o1
+    ladmin -.-> o2
+    ladmin -.-> o3
+    ladmin -.-> o4
+
+    classDef tenant fill:#e3ecff,stroke:#3b5bdb
+    classDef view fill:#fff4cc,stroke:#b8860b
+    class acme,other,fallback tenant
+    class la,lo,ladmin view
+```
+
+## Addressing
+
+```text
+ost://<tenant>@10.0.0.1:7777
+mds://<tenant>@10.0.0.2:7776/<object-uuid>
+file://<tenant>@/var/lib/rawstor
+zfs://<tenant>@tank/rawstor
+```
+
+The tenant is read from the address where the user's request enters the
+library (`Location`, `Target`) and handed down as an argument: the owner of a
+`create`, the filter of a `list`. A backend has no tenant of its own, and the
+MDS and the OSTs record what they are given. A user information that is not a
+non-nil UUID is refused with `-EINVAL`.
+
+How the tenant of a location reaches the stored object, through the MDS and an
+OST:
+
+```mermaid
+sequenceDiagram
+    participant C as client<br/>mds://acme@mds
+    participant M as MDS
+    participant O as OST
+
+    C->>M: OBJ_CREATE (tenant_id = acme)
+    M->>M: acme registered? (-ENOENT if not)
+    M-->>C: descriptor: OST locations
+    C->>O: ALLOCATE (tenant_id = acme)
+    O->>O: chunk metadata: owner = acme
+    O-->>C: ok
+
+    C->>M: LIST (tenant_id = acme)
+    M-->>C: objects owned by acme
+    C->>O: META
+    O-->>C: size, state, tenant_id = acme
+```
+
+A server takes no tenant from its own configuration: `LOCATION=file:///data`
+names a store, and the tenant of a request is the one in that request.
+
+## Wire protocol
+
+The tenant is data, not an address, so only the requests that set or filter it
+carry it: `RawstorFrameAllocatePayload` and `RawstorFrameObjCreatePayload`
+(the owner), `RawstorFrameListPayload` (the filter, nil = every object).
+`META`'s answer (`RawstorFrameMetaPayload`) reports the owner. Every other
+frame names an object by its id alone.
+
+Three commands concern the registry ([protocol](protocol.md)), all of them on
+the MDS: `LIST_TENANTS`, `TENANT_CREATE` and `TENANT_REMOVE`. An OST answers
+`-ENOSYS`. `LIST_TENANTS` is paginated like `LIST`: a page in ascending
+order after a token, and a trailing row that resumes it (`RawstorFrameListTenantsPayload`);
+`rawstor_location_tenants()` takes a limit and a token the same way, and
+`Location.tenants()` yields every page.
+
+Frame layouts and the metadata record are not compatible with earlier ones, and
+no older format is read or written.
+
+## Storage
+
+Backends keep the layout they had: `<location>/<uuid>/<offset>` on `file://`,
+a zvol per chunk on `zfs://`, a logical volume per chunk on `lvm://`. The owner
+is a field of the chunk's metadata record, next to its size and role, so it is
+stored with the chunk wherever the chunk is. A listing reads that record of
+each object in id order, so every row carries its owner, and skips the objects
+of other tenants before they count against the page: a page holds up to `limit`
+objects of the tenant.
+
+```mermaid
+flowchart LR
+    subgraph chunk["a chunk on file:// / zfs:// / lvm://"]
+        data["data"]
+        rec["metadata record<br/>size, role, owner"]
+    end
+    list["LIST for acme"] --> scan["read the record<br/>of each object"]
+    scan --> rec
+    scan --> keep{"owner = acme?"}
+    keep -- yes --> page["entry in the page"]
+    keep -- no --> skip["skipped"]
+```
+
+## MDS
+
+An object's owner is a column of the `objects` table (16 zero bytes for none)
+and of a witness, and `LIST` filters on it. An MDS database written before
+tenants is refused at start (`-EPROTO`) instead of being misread: there are no
+installations to migrate.
+
+The **tenant registry** holds the tenants an object can be created for. An
+object can be created for a registered tenant; any other tenant is `-ENOENT`.
+The default tenant is registered when the database is created.
+`TENANT_CREATE` registers an id (`-EEXIST` if it is, the default tenant
+included, `-EINVAL` for nil), `TENANT_REMOVE` removes a tenant that owns no
+object (`-EBUSY` while it owns one, `-EPERM` for the default tenant). Both are idempotent, and a retried creation of a tenant removed in
+between registers it again. Tenants have no names in rawstor: the control plane
+that creates them keeps its own.
+
+Removing a tenant removes its objects, the way removing an object removes its
+versions: `rawstor tenant remove`, `rawstor_location_remove_tenant()` and
+pyrawstor `remove_tenant()` list the objects the tenant owns a page at a time
+and remove each one (with its versions, from the MDS and from every OST), and
+only then send `TENANT_REMOVE`, which itself still answers `-EBUSY` while the
+tenant owns an object. The default tenant is refused (`-EPERM`) before any
+object is touched. A failure part-way leaves the objects not yet removed and
+the tenant registered, and running the removal again finishes it. An object
+removed by someone else meanwhile is skipped. An object created for the tenant
+meanwhile can make the last step answer `-EBUSY`. The removal acts on the
+objects by their ids: an object transferred out of the tenant between the
+listing and its removal is removed with the rest, and nothing stops it, as nothing
+yet checks who may remove what (rights are the next stage, [Security
+design](security.md), and will be checked per object).
+
+`--reconstruct` rebuilds the map from what the OSTs hold, and the owner is part
+of a chunk's metadata, so owners come back with it; a tenant found as an owner is
+registered again.
+
+## Transfer
+
+`rawstor object transfer TARGET TENANT` (`rawstor_target_transfer()`, pyrawstor
+`Target.transfer()`) makes another tenant the owner of an object. The owner is
+a field of every copy's own metadata record, and for an `mds://` object also a
+column of the MDS, so a transfer writes all of them:
+
+- on an `mds://` target the MDS goes first (`OBJ_TRANSFER`: `-ENOENT` for a
+  tenant it does not know, `-EINVAL` for the nil one), then the client records
+  the owner with every member of every chunk, witnesses included, one at a
+  time;
+- on any other target the client records it with every URI of the target
+  (`SET_OWNER`; a `file://`, `lvm://` or `zfs://` member rewrites its
+  record, an `ost://` one asks its server to), and no registry is consulted:
+  only an MDS has one.
+
+Both commands are idempotent. `SET_OWNER` is by its nature, like the commands
+on a copy: setting the owner a copy already has changes nothing, and nothing
+else in the record (state, roles, ballots, size) moves. `OBJ_TRANSFER` carries
+an `idempotency_key` like every mutating `OBJ_*` request ([MDS
+design](mds.md), "Idempotent mutations"): a transfer resent after a lost reply
+is answered with its recorded result and is not applied again, so it does not
+undo a transfer made since.
+
+Two transfers of one object can reach the MDS in one order and the members in
+another. The transfer therefore does not take the members for done when it has
+written them: it asks the MDS again (the same request, which applies nothing and
+answers with the owner as it is then), and if the owner is no longer the one it
+wrote, it writes the members with that one and asks again. Whoever writes a
+member last has read the MDS after it, so the members end with the owner the
+MDS has; a storm that does not settle in 16 rounds fails with `-EAGAIN`.
+
+A `resize` does the same for the chunks it adds: it creates them for the owner
+`OBJ_RESIZE` reports, asks again afterwards (the same request, which applies
+nothing), and while the owner is not the one the new chunks were written with,
+writes them with the new one, so a transfer that came in meanwhile and did not
+find these chunks does not leave them with the old owner.
+
+A transfer that fails part-way, say with a copy unreachable, leaves copies with
+different owners until it is run again, which finishes it. A member the MDS has
+no address for (its OST is gone from the topology) is unreachable too: the
+other members are done, then the transfer fails with `-ENOTCONN` instead of
+reporting success; until then
+`--reconstruct` refuses the object (`-EINVAL`: its copies disagree on the
+owner). A `resize` meanwhile is not affected: the chunks it adds are created for
+the owner the MDS has, which `OBJ_RESIZE` reports, not for the owner some copy
+records. The old address still finds the object, as every address does, by its
+id. The default tenant can be a source or a destination, and the nil UUID is
+never a destination.
+
+## CLI
+
+```bash
+rawstor tenant create mds://10.0.0.2:7776            # prints the new tenant_id
+rawstor tenant create mds://10.0.0.2:7776 --uuid <uuid>
+rawstor tenant create mds://10.0.0.2:7776 --format value   # just the id
+rawstor tenant list   mds://10.0.0.2:7776
+rawstor tenant remove mds://10.0.0.2:7776 <uuid>       # with every object it owns
+
+rawstor object create mds://<tenant>@10.0.0.2:7776 --size 10G ...   # owned by <tenant>
+rawstor object create mds://10.0.0.2:7776 ...                       # owned by the default tenant
+rawstor object list   mds://<tenant>@10.0.0.2:7776                  # what <tenant> owns
+rawstor object list   mds://10.0.0.2:7776                           # every object
+rawstor object transfer mds://10.0.0.2:7776/<uuid> <tenant>         # <tenant> becomes its owner
+```
+
+`create`, `list` and `show` print the owner of the object as a column of its
+own (`tenant`), also for an administrator, whose location names no tenant. The
+`target` column names the owner too, unless it is the default tenant.
+`create -t TARGET` makes the object for the tenant its target names.
+
+## Python
+
+```python
+admin = rawstor.Location("mds://10.0.0.2:7776")
+tenant = admin.create_tenant()            # a random UUID, or create_tenant(uuid)
+admin.tenants()                           # yields the registered tenants, as strings
+admin.remove_tenant(tenant)
+
+mine = rawstor.Location(f"mds://{tenant}@10.0.0.2:7776")
+target = mine.create(size=10 << 30, width=1, chunk_size=256 << 20)
+target.tenant                             # the owner named by the target
+target.meta()[0].tenant                   # the owner the copy records
+[t.tenant for t in mine.objects()]        # what `mine` lists: its own objects
+rawstor.DEFAULT_TENANT                    # the owner when none is named
+```
+
+`Target.transfer(tenant)` is a transfer; it returns nothing, and the target that
+names the new owner is the old one with `<tenant>@` as user information.
+`Target.tenant` reads the address only. `ObjectMeta.tenant` is the owner a copy
+records. `Location.tenants()`, `create_tenant()` and `remove_tenant()` raise
+`OSError` (`ENOTSUP`) for a location that is not an `mds://` one.
+
+## Not here
+
+Authentication, the binding of a tenant to a certificate, rights, quotas and
+per-tenant limits are separate work ([Security design](security.md)). Until
+then any client can name any tenant, and the registry does not stop an OST from
+storing an object for a tenant it does not list.

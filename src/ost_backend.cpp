@@ -58,22 +58,30 @@ rawstd::Task<void> Backend::close() {
 
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID version_id
+    RawstdUUID& token, RawstdUUID tenant, RawstdUUID version_id
 ) {
-    return _wire_list_chunks(id, limit, chunks, token, version_id);
+    return _wire_list_chunks(id, limit, chunks, token, tenant, version_id);
 }
 
 rawstd::Task<void> Backend::create(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
-    const RawstorObjectSpec& sp, RawstorMemberRole member_role
+    const RawstorObjectSpec& sp, RawstorMemberRole member_role,
+    const RawstdUUID& owner
 ) {
-    return _wire_create(idempotency_key, id, offset, sp, member_role);
+    return _wire_create(idempotency_key, id, offset, sp, member_role, owner);
 }
 
 rawstd::Task<void> Backend::remove(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
 ) {
     return _wire_remove(idempotency_key, id, offset);
+}
+
+rawstd::Task<void> Backend::set_owner(
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& owner
+) {
+    return _wire_set_owner(id, offset, owner);
 }
 
 rawstd::Task<void> Backend::remove_version(

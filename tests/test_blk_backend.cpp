@@ -3,6 +3,7 @@
 #include "location.hpp"
 #include "object_env.hpp"
 #include "opts.h"
+#include "owner.hpp"
 #include "slot.hpp"
 #include "target.hpp"
 #include "tmp_dir.hpp"
@@ -503,7 +504,7 @@ TEST(BlkBackendTest, meta_encode_fits_the_widest_record) {
         r = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     }
     rawstor::blk::Backend::ChunkIdentity identity{
-        RAWSTOR_MEMBER_WITNESS, 255, ~0ull, ~0ull
+        RAWSTOR_MEMBER_WITNESS, 255, ~0ull, ~0ull, {}
     };
 
     std::string encoded = MetadataBackend::meta_encode(
@@ -656,7 +657,10 @@ TEST(BlkBackendTest, witness_member_holds_no_data_and_refuses_real_io) {
 
     std::unique_ptr<rawstor::Slot> slot =
         run(*queue, rawstor::Slot::create(*queue, location));
-    run(*queue, slot->create(id, 0, spec, RAWSTOR_MEMBER_WITNESS));
+    run(*queue,
+        slot->create(
+            id, 0, spec, RAWSTOR_MEMBER_WITNESS, rawstor::tests::default_owner()
+        ));
 
     // Holds no data: its own "data" file exists (still enumerable --
     // e.g. rawstor-mds's reconstruct scan, which tells it apart from a

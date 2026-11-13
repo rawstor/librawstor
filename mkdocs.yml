@@ -45,6 +45,7 @@ nav:
   - Design:
       - Protocol: protocol.md
       - MDS design: mds.md
+      - Tenants: tenants.md
       - Mirroring: mirroring.md
       - Multi-attach: multiattach.md
       - CASPaxos: caspaxos.md

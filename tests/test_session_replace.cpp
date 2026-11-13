@@ -1,6 +1,7 @@
 #include "object.hpp"
 #include "object_env.hpp"
 #include "opts.h"
+#include "owner.hpp"
 #include "slot.hpp"
 #include "target.hpp"
 #include "tmp_dir.hpp"
@@ -369,7 +370,10 @@ TEST(SessionReplaceTest, adopted_departure_wait_leaves_the_next_departure) {
     RawstorObjectSpec spec{};
     spec.size = 4096;
     spec.width = 1;
-    run(*first_queue, first->create(id, 0, spec, RAWSTOR_MEMBER_DATA));
+    run(*first_queue,
+        first->create(
+            id, 0, spec, RAWSTOR_MEMBER_DATA, rawstor::tests::default_owner()
+        ));
     first->set_departure_grace(grace, nullptr);
     run(*first_queue, first->open(session, id, 0, 0, RawstdUUID{}));
     run(*first_queue, first->pwrite(data.data(), data.size(), 0, false, 0));

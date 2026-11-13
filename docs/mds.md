@@ -424,9 +424,10 @@ does the wrong thing (a resize that already grew the map "sees" no chunks left
 to create). So every mutating request is made idempotent:
 
 - **`idempotency_key`.** `Slot` generates a UUID once per mutating call (create, remove,
-  resize, create_version, remove_version), before its retry loop, and every
-  attempt carries that same one. `OBJ_CREATE`, `OBJ_RESIZE`, `OBJ_REMOVE`,
-  `OBJ_COMMIT_VERSION` and `OBJ_REMOVE_VERSION` send it ([protocol](protocol.md)).
+  resize, create_version, remove_version, set_owner), before its retry loop,
+  and every attempt carries that same one. `OBJ_CREATE`, `OBJ_RESIZE`,
+  `OBJ_REMOVE`, `OBJ_COMMIT_VERSION`, `OBJ_REMOVE_VERSION` and `OBJ_TRANSFER`
+  send it ([protocol](protocol.md)).
 - **The MDS records what it applied.** An `applied_mutations` table maps `idempotency_key` to the
   command, the object and the reply's result, written in the same SQLite
   transaction as the mutation itself -- a committed mutation always has its

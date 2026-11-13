@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from uuid import uuid4
 
 from . import librawstor
 from .constants import OBJ_DOMAIN_DEFAULT
@@ -63,8 +64,37 @@ class Location:
     def info(self) -> librawstor.LocationInfo:
         return librawstor.location_info(self._uri)
 
+    def tenants(self) -> Iterator[str]:
+        """Yield the tenants registered in the MDS this location names, as
+        UUID strings in ascending order, a page at a time. Raises OSError
+        (ENOTSUP) for a location that is not an mds:// one: only an MDS
+        keeps a tenant registry (docs/tenants.md)."""
+        token = None
+        while True:
+            page, token = librawstor.tenant_list(self._uri, 0, token)
+            yield from page
+            if token is None:
+                break
+
+    def create_tenant(self, tenant: str | None = None) -> str:
+        """Register `tenant`, a UUID string (a random one if None), in the
+        MDS this location names, and return it. Raises OSError: EEXIST if
+        it is registered, EINVAL if it is not a UUID or is the nil one."""
+        if tenant is None:
+            tenant = str(uuid4())
+        librawstor.tenant_create(self._uri, tenant)
+        return tenant
+
+    def remove_tenant(self, tenant: str) -> None:
+        """Remove `tenant` from the MDS this location names. Raises
+        OSError: ENOENT if it is not registered, EPERM for the default
+        tenant (refused before anything is removed)."""
+        librawstor.tenant_remove(self._uri, tenant)
+
     def objects(self) -> Iterator[Target]:
-        """Yield the objects of this location, a page at a time."""
+        """Yield the objects of this location, a page at a time. A location
+        that names a tenant yields that tenant's objects, any other every
+        object (docs/tenants.md)."""
         token = None
         while True:
             page, token = librawstor.object_list(self._uri, 0, token)

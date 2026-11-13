@@ -25,10 +25,12 @@ namespace rawstor {
 // mds:// volume specifically, every one of its own chunks (mds::Backend's
 // own chunk_slot_target(), docs/mds.md's "Chunk identity": obj_id =
 // volume_id). Empty offsets address the object as a whole; {0} addresses
-// its chunk at offset zero. An absent object has no entry.
+// its chunk at offset zero. An absent object has no entry. `tenant` is the
+// owner of the object, nil for none; a listing of one `id` leaves it nil.
 struct ChunkGroup {
     RawstdUUID id;
     std::vector<uint64_t> offsets;
+    RawstdUUID tenant;
 };
 
 class Backend : public std::enable_shared_from_this<Backend> {
@@ -117,20 +119,51 @@ public:
     // group per object, offset 0) and the filtered form off its own
     // WireMap.
     //
+    // A non-nil `tenant` (only with a nil `id`) lists the objects of that
+    // tenant alone (docs/tenants.md); nil lists them all.
+    //
     // A non-nil `version_id` (only with a non-nil `id`) lists the chunks
     // that version of `id` has instead of the live ones; ENOTSUP on a
     // backend without versions.
     virtual rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID version_id = {}
+        RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
     ) = 0;
 
+    // Records `owner` as the owner of the copy `id`/`offset` in the copy's own
+    // metadata (docs/tenants.md); setting the owner it already has changes
+    // nothing. mds::Backend makes `owner` the owner of the whole object, in
+    // the MDS and in every member; offset is unused there.
+    virtual rawstd::Task<void> set_owner(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& owner
+    ) = 0;
+
+    // One page of the tenants registered in an MDS, ascending, strictly
+    // after `token` (nil = from the start). `token` comes back as the last
+    // tenant of the page while more follow, nil on the last page. A `limit`
+    // of 0 is the server's own cap. ENOTSUP elsewhere: only an MDS keeps a
+    // registry.
+    virtual rawstd::Task<void> list_tenants(
+        unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+    );
+
+    // Registers / removes a tenant (docs/tenants.md); only an MDS keeps a
+    // tenant registry, so the default is ENOTSUP.
+    virtual rawstd::Task<void>
+    create_tenant(const RawstdUUID& idempotency_key, const RawstdUUID& tenant);
+    virtual rawstd::Task<void>
+    remove_tenant(const RawstdUUID& idempotency_key, const RawstdUUID& tenant);
+
     // Creates one data or metadata-only witness member. member_role is
-    // placement identity, distinct from the chunk-wide specification.
+    // placement identity, distinct from the chunk-wide specification. `owner`
+    // is the tenant the object belongs to (docs/tenants.md), recorded with it
+    // until set_owner() records another. It is never the nil UUID: Slot and
+    // the servers refuse that with EINVAL.
     virtual rawstd::Task<void> create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        RawstorMemberRole member_role, const RawstdUUID& owner
     ) = 0;
 
     // Removes the live version of `id`/`offset`. A version

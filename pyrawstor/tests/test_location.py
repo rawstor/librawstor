@@ -115,3 +115,61 @@ class TestWitnessLocation(unittest.TestCase):
             with self.assertRaises(OSError) as error:
                 location.create(size=65536, width=3)
             self.assertEqual(error.exception.errno, errno.EINVAL)
+
+
+class TestTenants(unittest.TestCase):
+    TENANT = "0197e0a2-7c3b-7d4e-8f10-3a5b6c7d8e9f"
+    OTHER = "0197e0a2-7c3b-7d4e-8f10-3a5b6c7d8ea0"
+
+    def test_the_registry_is_the_mds(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            location = rawstor.Location(f"file://{temp_dir}")
+            for call in (
+                    lambda: list(location.tenants()),
+                    lambda: location.create_tenant(self.TENANT),
+                    lambda: location.remove_tenant(self.TENANT)):
+                with self.assertRaises(OSError) as error:
+                    call()
+                self.assertEqual(error.exception.errno, errno.ENOTSUP)
+
+    def test_an_object_has_the_tenant_of_its_location(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            location = rawstor.Location(f"file://{self.TENANT}@{temp_dir}")
+
+            target = location.create(size=1 << 20, width=1)
+
+            self.assertEqual(target.tenant, self.TENANT)
+            self.assertIn(f"{self.TENANT}@", target.uri)
+            [meta] = target.meta()
+            self.assertEqual(meta.tenant, self.TENANT)
+
+    def test_the_default_tenant_is_not_named(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            location = rawstor.Location(f"file://{temp_dir}")
+
+            target = location.create(size=1 << 20, width=1)
+
+            self.assertNotIn("@", target.uri)
+            self.assertEqual(target.tenant, rawstor.DEFAULT_TENANT)
+            [meta] = target.meta()
+            self.assertEqual(meta.tenant, rawstor.DEFAULT_TENANT)
+
+    def test_a_location_lists_the_objects_of_its_tenant(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            acme = rawstor.Location(f"file://{self.TENANT}@{temp_dir}")
+            other = rawstor.Location(f"file://{self.OTHER}@{temp_dir}")
+            nobody = rawstor.Location(f"file://{temp_dir}")
+            owned = acme.create(size=1 << 20, width=1)
+            foreign = other.create(size=1 << 20, width=1)
+            fallback = nobody.create(size=1 << 20, width=1)
+
+            self.assertEqual(list(acme.objects()), [owned])
+            self.assertEqual(list(other.objects()), [foreign])
+            # The administrator sees every object, each target naming its
+            # own owner.
+            listed = sorted(nobody.objects(), key=lambda target: target.tenant)
+            self.assertEqual(
+                sorted(target.tenant for target in listed),
+                sorted([self.TENANT, self.OTHER, rawstor.DEFAULT_TENANT]))
+            self.assertEqual(
+                sorted(listed), sorted([owned, foreign, fallback]))

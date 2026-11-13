@@ -29,6 +29,8 @@ int rawstor_cli_create(
     const RawstorCliOutput* output
 );
 
+/* The tenant `location` names owns the object, the default tenant when it
+ * names none. */
 int rawstor_cli_create_at(
     const char* location, const char* uuid, uint64_t size, uint64_t chunk_size,
     unsigned int mirrors, unsigned int failure_domain, uint64_t stripe_width,

@@ -212,6 +212,7 @@ void expect_flush_write_order(bool later_first) {
     rawstd::URI location("ost://127.0.0.1:8753");
 
     RawstorFrameMetaPayload clean_meta = {
+        .tenant_id = {},
         .size = 1ull << 20,
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
@@ -390,6 +391,7 @@ TEST(ChunkTest, flush_flushes_the_write_it_waited_for) {
     rawstd::URI location("ost://127.0.0.1:8753");
 
     RawstorFrameMetaPayload clean_meta = {
+        .tenant_id = {},
         .size = 1ull << 20,
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,

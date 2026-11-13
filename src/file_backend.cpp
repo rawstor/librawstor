@@ -204,7 +204,7 @@ rawstd::Task<int> Backend::_open_version(
 
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID version_id
+    RawstdUUID& token, RawstdUUID tenant, RawstdUUID version_id
 ) {
     if (!rawstd_uuid_is_nil(&version_id)) {
         // A version is described by meta() only; its chunks are not listed.
@@ -276,7 +276,7 @@ rawstd::Task<void> Backend::list_chunks(
             }
 
             std::sort(offsets.begin(), offsets.end());
-            found.push_back(ChunkGroup{uuid, std::move(offsets)});
+            found.push_back(ChunkGroup{uuid, std::move(offsets), {}});
         }
 
         std::sort(
@@ -296,21 +296,9 @@ rawstd::Task<void> Backend::list_chunks(
             )
         );
 
-        if (limit == 0) {
-            limit = rawstor_opts_list_limit();
-        } else {
-            limit = std::min(limit, rawstor_opts_list_limit());
-        }
-
-        bool capped = found.size() > limit;
-        if (capped) {
-            found.resize(limit);
-        }
-
-        chunks = std::move(found);
-        if (capped) {
-            token = chunks.back().id;
-        }
+        co_await _page_owned(
+            id, tenant, std::move(found), limit, chunks, token
+        );
     } catch (const std::system_error&) {
         throw;
     } catch (const std::exception& e) {
@@ -326,7 +314,8 @@ rawstd::Task<void> Backend::list_chunks(
 
 rawstd::Task<void> Backend::create(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
-    const RawstorObjectSpec& sp, RawstorMemberRole member_role
+    const RawstorObjectSpec& sp, RawstorMemberRole member_role,
+    const RawstdUUID& owner
 ) {
     std::string location_path = get_location_path(location());
     mkdir_or_exist(location_path);
@@ -461,6 +450,7 @@ rawstd::Task<void> Backend::create(
             identity.width = static_cast<uint8_t>(sp.width);
             identity.chunk_size = sp.chunk_size;
             identity.size = sp.size;
+            identity.tenant = owner;
 
             // meta_encode()'s own (shorter, variable-length) return value
             // is NUL-padded out to a fixed META_MAX_SIZE bytes here,
@@ -626,6 +616,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
+    memcpy(ret.tenant_id, identity.tenant.bytes, sizeof(ret.tenant_id));
     ret.state = state;
     ret.config = config;
     ret.promised = promised;
@@ -637,7 +628,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
 rawstd::Task<void> Backend::_write_meta(
     const RawstdUUID& id, uint64_t offset, RawstorObjectSyncStateValue state,
     const RawstorObjectConfig& config, const RawstorObjectBallot& promised,
-    const RawstorObjectBallot& accepted
+    const RawstorObjectBallot& accepted, const RawstdUUID* owner
 ) {
     std::string location_path = get_location_path(location());
 
@@ -679,6 +670,9 @@ rawstd::Task<void> Backend::_write_meta(
         // META_MAX_SIZE bytes so this file's own byte length stays fixed
         // across every rewrite -- required here specifically, since this
         // is an in-place overwrite without O_TRUNC (see above).
+        if (owner != nullptr) {
+            identity.tenant = *owner;
+        }
         std::string encoded =
             meta_encode(state, config, promised, accepted, identity);
         disk.fill('\0');

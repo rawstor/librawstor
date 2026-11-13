@@ -35,6 +35,7 @@ namespace {
 // member -- Chunk::create()'s own overall spec comes straight out of
 // that same answer, no separate round trip.
 const RawstorFrameMetaPayload clean_meta_1mb = {
+    .tenant_id = {},
     .size = 1ull << 20,
     .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
     .chunk_shift = 0,

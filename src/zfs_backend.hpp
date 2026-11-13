@@ -79,13 +79,13 @@ public:
 
     rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID version_id = {}
+        RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
     ) override;
 
     rawstd::Task<void> create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        RawstorMemberRole member_role, const RawstdUUID& owner
     ) override;
 
     rawstd::Task<void> remove(
@@ -111,7 +111,8 @@ public:
     rawstd::Task<void> _write_meta(
         const RawstdUUID& id, uint64_t offset,
         RawstorObjectSyncStateValue state, const RawstorObjectConfig& config,
-        const RawstorObjectBallot& promised, const RawstorObjectBallot& accepted
+        const RawstorObjectBallot& promised,
+        const RawstorObjectBallot& accepted, const RawstdUUID* owner
     ) override;
 
     // The v1 CoW backend (docs/mds.md, "Versions"): a native

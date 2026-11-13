@@ -209,8 +209,21 @@ public:
     // Backend) already bound to one location.
     rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID version_id = {}
+        RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
     );
+
+    rawstd::Task<void> list_tenants(
+        unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+    );
+
+    // Records `owner` as the owner of the copy `id`/`offset`, under the copy's
+    // record lock like every other rewrite of its metadata.
+    rawstd::Task<void>
+    set_owner(const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner);
+
+    rawstd::Task<void> create_tenant(const RawstdUUID& tenant);
+
+    rawstd::Task<void> remove_tenant(const RawstdUUID& tenant);
 
     rawstd::Task<void> create_version(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
@@ -221,7 +234,7 @@ public:
 
     rawstd::Task<void> create(
         const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        RawstorMemberRole member_role, const RawstdUUID& owner
     );
 
     rawstd::Task<void> remove(const RawstdUUID& id, uint64_t offset);

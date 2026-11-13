@@ -29,6 +29,9 @@ public:
 
 class URI {
 private:
+    // The URI as written, with its password: what a child is built from.
+    std::string _source;
+    // The URI as it is printed: the same without the password.
     std::string _uri;
     std::string _scheme;
     std::string _userinfo;
@@ -57,6 +60,9 @@ public:
         return _uri < other._uri;
     }
 
+    // The URI without its password (`user:password@host` is `user@host`), so
+    // that printing, logging or listing it never discloses one. password()
+    // still reads it, for whoever really needs it.
     inline const std::string& str() const noexcept { return _uri; }
 
     inline const std::string& scheme() const noexcept { return _scheme; }

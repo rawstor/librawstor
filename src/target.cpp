@@ -37,6 +37,42 @@
 
 namespace {
 
+// The owner an address stands for (docs/tenants.md): the tenant it names as
+// user information, the default tenant when it names none. EINVAL for a
+// tenant that is not a non-nil UUID.
+RawstdUUID owner_of(const rawstd::URI& uri) {
+    RawstdUUID id;
+    const std::string& name = uri.username();
+    if (name.empty()) {
+        rawstd_uuid_from_string(&id, RAWSTOR_DEFAULT_TENANT);
+        return id;
+    }
+    if (rawstd_uuid_from_string(&id, name.c_str()) < 0 ||
+        rawstd_uuid_is_nil(&id)) {
+        // Not the whole URI: its user information may carry a password.
+        rawstd_error(
+            "%s://%s%s: tenant \"%s\" is not a UUID\n", uri.scheme().c_str(),
+            uri.host().c_str(), uri.path().str().c_str(), name.c_str()
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    return id;
+}
+
+// The owner every URI of an address stands for: they must all agree, EINVAL
+// otherwise.
+RawstdUUID owner_of(const std::vector<rawstd::URI>& uris) {
+    RawstdUUID owner = owner_of(uris.front());
+    for (const rawstd::URI& uri : uris) {
+        RawstdUUID other = owner_of(uri);
+        if (rawstd_uuid_cmp(&owner, &other) != 0) {
+            rawstd_error("target names different tenants\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
+    return owner;
+}
+
 // How long a version's write barrier may stand if its holder dies
 // (docs/mds.md, "Versions").
 const std::chrono::milliseconds version_freeze_lease{30000};
@@ -250,7 +286,7 @@ void validate_same_uuid(
 // exception with a second one.
 rawstd::Task<void> create_one(
     rawio::Queue& queue, const rawstd::URI& target, const RawstorObjectSpec& sp,
-    RawstorMemberRole role = RAWSTOR_MEMBER_DATA
+    const RawstdUUID& owner, RawstorMemberRole role = RAWSTOR_MEMBER_DATA
 ) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t offset = extract_offset(target);
@@ -258,7 +294,7 @@ rawstd::Task<void> create_one(
         co_await rawstor::Slot::create(queue, strip_path(target));
     std::exception_ptr error;
     try {
-        co_await slot->create(id, offset, sp, role);
+        co_await slot->create(id, offset, sp, role, owner);
     } catch (...) {
         error = std::current_exception();
     }
@@ -461,6 +497,29 @@ resize_one(rawio::Queue& queue, const rawstd::URI& target, uint64_t new_size) {
     }
 }
 
+rawstd::Task<void> transfer_one(
+    rawio::Queue& queue, const rawstd::URI& target, const RawstdUUID& tenant
+) {
+    RawstdUUID id = uuid_from_target(target);
+    uint64_t offset = extract_offset(target);
+    RawstdUUID version_id = extract_version_id(target);
+    if (!rawstd_uuid_is_nil(&version_id)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, strip_path(target));
+    std::exception_ptr error;
+    try {
+        co_await slot->set_owner(id, offset, tenant);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+}
+
 // One location's worth of resolve_spec()/resolve_meta() below: connect a
 // single-backend Slot just for this call, meta() it, close it again --
 // same connect/close shape as create_one()/remove_one() above, but for a
@@ -512,7 +571,7 @@ rawstd::Task<std::vector<uint64_t>> chunks_one(
     RawstdUUID token{};
     std::exception_ptr error;
     try {
-        co_await slot->list_chunks(id, 0, groups, token, version_id);
+        co_await slot->list_chunks(id, 0, groups, token, {}, version_id);
     } catch (...) {
         error = std::current_exception();
     }
@@ -837,6 +896,30 @@ rawstd::DetachedTask launch_create_version_op_coro(
     ssize_t result = length;
     try {
         co_await t.create_version(*queue);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+rawstd::DetachedTask launch_transfer_op_coro(
+    rawstor::Target t, rawio::Queue* queue, RawstdUUID tenant,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    try {
+        co_await t.transfer(*queue, tenant);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -1289,8 +1372,18 @@ const RawstdUUID& Target::version_id() const {
     return _version_id;
 }
 
+RawstdUUID Target::owner() const {
+    return owner_of(_uris);
+}
+
 rawstd::Task<void>
 Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
+    co_await create(queue, sp, owner());
+}
+
+rawstd::Task<void> Target::create(
+    rawio::Queue& queue, const RawstorObjectSpec& sp, const RawstdUUID& owner
+) const {
     if (is_logical_chunk(_uris)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -1418,7 +1511,9 @@ Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
             RawstorMemberRole role = witness && index + 1 == uris.size()
                                          ? RAWSTOR_MEMBER_WITNESS
                                          : RAWSTOR_MEMBER_DATA;
-            tasks.push_back(create_one(queue, uris[index], chunk_sp, role));
+            tasks.push_back(
+                create_one(queue, uris[index], chunk_sp, owner, role)
+            );
         }
 
         // co_await isn't allowed inside a catch block, so the failure is
@@ -1930,6 +2025,20 @@ Target::resize(rawio::Queue& queue, uint64_t new_size) const {
     });
 }
 
+rawstd::Task<void>
+Target::transfer(rawio::Queue& queue, const RawstdUUID& tenant) const {
+    if (is_logical_chunk(_uris) || rawstd_uuid_is_nil(&tenant)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
+    // Every URI of every chunk records the owner concurrently, the way
+    // remove() reaches them. An mds:// URI is one call: its backend
+    // transfers the object in the MDS and then in every member.
+    co_await rawstd::gather(_uris.size(), [&](size_t i) {
+        return transfer_one(queue, _uris[i], tenant);
+    });
+}
+
 // Opens the object this target addresses. Only the last chunk is opened
 // eagerly -- for the ordinary, single-chunk case that's the only chunk
 // there is (and exactly the eagerly-opened Chunk a SingleChunkObject
@@ -2144,6 +2253,35 @@ int rawstor_target_resize(
     }
 }
 
+int rawstor_target_transfer(
+    RawIOQueue* queue, const char* target, const char* tenant,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        RawstdUUID id;
+        if (rawstd_uuid_from_string(&id, tenant) < 0 ||
+            rawstd_uuid_is_nil(&id)) {
+            return -EINVAL;
+        }
+        rawstor::Target t(rawstd::URI::uriv(target));
+        launch_transfer_op_coro(
+            std::move(t), static_cast<rawio::Queue*>(queue), id, cb, data
+        );
+        rawstd::DetachedTask::rethrow_if_pending();
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
 int rawstor_target_spec(
     RawIOQueue* queue, const char* target, RawstorObjectSpec* sp,
     int (*cb)(ssize_t result, void* data), void* data
@@ -2225,6 +2363,29 @@ int rawstor_target_id(const char* target, char* buf, size_t size) noexcept {
         RawstdUUIDString uuid;
         rawstd_uuid_to_string(&id, &uuid);
         int res = snprintf(buf, size, "%s", uuid);
+        if (res < 0) {
+            RAWSTD_THROW_ERRNO();
+        }
+        return res;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_target_tenant(const char* target, char* buf, size_t size) noexcept {
+    try {
+        RawstdUUID owner = rawstor::Target(rawstd::URI::uriv(target)).owner();
+        RawstdUUIDString text;
+        rawstd_uuid_to_string(&owner, &text);
+        int res = snprintf(buf, size, "%s", text);
         if (res < 0) {
             RAWSTD_THROW_ERRNO();
         }

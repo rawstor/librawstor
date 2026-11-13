@@ -45,7 +45,7 @@ flowchart TD
 | Component | What it is |
 |---|---|
 | `librawstor` | Client library with a C API; create, open, read, write and list objects. |
-| `rawstor` | Command-line client: `location`, `object`, `testio`, `version`. |
+| `rawstor` | Command-line client: `location`, `object`, `tenant`, `testio`, `version`. |
 | `rawstor-ost` | Object storage server. Serves a local directory or proxies to other OSTs. |
 | `rawstor-mds` | Metadata server for chunked objects: placement across OSTs, versions. |
 | `rawstor-vhost`, `rawstor-vduse` | Expose an object as a `virtio-blk` disk over vhost-user or VDUSE. |
@@ -68,8 +68,8 @@ Rawstor, read the [known limitations](limitations.md).
   [rawstor-vhost](vhost.md), [rawstor-vduse](vduse.md),
   [configuration](configuration.md) and [witness members](witness.md).
 - Design: [Protocol](protocol.md), [MDS design](mds.md),
-  [Mirroring](mirroring.md), [Multi-attach](multiattach.md) and
-  [CASPaxos](caspaxos.md).
+  [Tenants](tenants.md), [Mirroring](mirroring.md),
+  [Multi-attach](multiattach.md) and [CASPaxos](caspaxos.md).
 - [Building from source](building.md): for developers.
 - [Known limitations](limitations.md): what is not implemented yet.
 - [Troubleshooting](troubleshooting.md): `io_uring` problems.

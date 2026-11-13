@@ -120,13 +120,21 @@ protected:
 
     rawstd::Task<void> _wire_list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID version_id = {}
+        RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
+    );
+
+    rawstd::Task<void> _wire_list_tenants(
+        unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+    );
+
+    rawstd::Task<void> _wire_set_owner(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner
     );
 
     rawstd::Task<void> _wire_create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        RawstorMemberRole member_role, const RawstdUUID& owner
     );
 
     rawstd::Task<void> _wire_remove(

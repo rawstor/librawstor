@@ -44,6 +44,13 @@ ssize_t rawstor_cli_op_chunks(
     RawstorCliOp* op, const char* target, RawstorStringList** chunks
 );
 
+/* The tenant that owns the object `target` addresses, as a UUID string; empty
+ * when it has none. It is recorded with the object's first chunk. Returns 0 or
+ * a negative errno. */
+int rawstor_cli_op_owner(
+    RawstorCliOp* op, const char* target, char* tenant, size_t tenant_size
+);
+
 #ifdef __cplusplus
 }
 #endif

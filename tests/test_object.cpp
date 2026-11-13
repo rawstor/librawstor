@@ -10,6 +10,7 @@
 #include "location.hpp"
 #include "object.hpp"
 #include "object_env.hpp"
+#include "owner.hpp"
 #include "rawio_sync.hpp"
 #include "register.hpp"
 #include "target.hpp"
@@ -717,6 +718,204 @@ TEST(ObjectResizeTest, grows_and_creates_new_chunks) {
     EXPECT_EQ(read_spec.size, 2ull << 20);
 
     EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
+// The chunks a grow adds belong to the owner of the object, whichever address
+// the grow is asked through (docs/tenants.md).
+TEST(ObjectResizeTest, new_chunks_belong_to_the_owner_of_the_object) {
+    rawstor::tests::ObjectEnv env(8898, 8899);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    rawstd::URI mds(env.location());
+    RawstdUUID owner;
+    ASSERT_EQ(rawstd_uuid7_init(&owner), 0);
+    run(*queue, rawstor::Location({mds}).create_tenant(*queue, owner));
+
+    const char* id = "018f4e2a-3000-7000-8000-000000000040";
+    RawstorObjectSpec spec{};
+    spec.size = 512ull << 10;
+    spec.width = 1;
+    spec.chunk_size = 512ull << 10;
+    run(*queue, rawstor::Target(
+                    {rawstd::URI(rawstor::tests::with_tenant(mds, owner), id)}
+                )
+                    .create(*queue, spec));
+
+    // Grown through an address that names no tenant.
+    run(*queue,
+        rawstor::Target({rawstd::URI(mds, id)}).resize(*queue, 2ull << 20));
+
+    for (uint64_t offset : {0ull, 512ull << 10, 1024ull << 10, 1536ull << 10}) {
+        std::ostringstream hex;
+        hex << std::hex << offset;
+        rawstor::Target chunk({rawstd::URI(rawstd::URI(mds, id), hex.str())});
+        auto metas = run(*queue, chunk.meta(*queue));
+        ASSERT_FALSE(metas.empty());
+        RawstdUUID got;
+        memcpy(got.bytes, metas.front().tenant_id, sizeof(got.bytes));
+        EXPECT_EQ(rawstd_uuid_cmp(&got, &owner), 0) << "offset " << offset;
+    }
+
+    run(*queue, rawstor::Target({rawstd::URI(mds, id)}).remove(*queue));
+}
+
+// The registry is read a page at a time through the MDS: each tenant once, in
+// ascending order, the default tenant among them.
+TEST(ObjectTenantTest, the_registry_is_listed_a_page_at_a_time) {
+    rawstor::tests::ObjectEnv env(8900, 8901);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    rawstor::Location location({rawstd::URI(env.location())});
+    for (int i = 0; i < 4; ++i) {
+        RawstdUUID tenant;
+        ASSERT_EQ(rawstd_uuid7_init(&tenant), 0);
+        run(*queue, location.create_tenant(*queue, tenant));
+    }
+
+    std::vector<RawstdUUID> all;
+    RawstorPaginationToken token = {};
+    size_t pages = 0;
+    do {
+        std::vector<RawstdUUID> page;
+        run(*queue, location.tenants(*queue, 2, page, token));
+        EXPECT_LE(page.size(), 2u);
+        all.insert(all.end(), page.begin(), page.end());
+        ++pages;
+    } while (!rawstor_pagination_token_empty(&token));
+
+    // The default tenant and the four created.
+    ASSERT_EQ(all.size(), 5u);
+    EXPECT_GE(pages, 3u);
+    for (size_t i = 1; i < all.size(); ++i) {
+        EXPECT_LT(rawstd_uuid_cmp(&all[i - 1], &all[i]), 0);
+    }
+}
+
+// A transfer through an MDS moves the object, in the MDS and in every chunk
+// on the OSTs; an MDS refuses a tenant it does not know.
+TEST(ObjectTenantTest, a_transfer_moves_the_object_and_its_chunks) {
+    rawstor::tests::ObjectEnv env(8902, 8903);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    rawstd::URI mds(env.location());
+    rawstor::Location admin({mds});
+    RawstdUUID acme;
+    RawstdUUID other;
+    ASSERT_EQ(rawstd_uuid7_init(&acme), 0);
+    ASSERT_EQ(rawstd_uuid7_init(&other), 0);
+    run(*queue, admin.create_tenant(*queue, acme));
+    run(*queue, admin.create_tenant(*queue, other));
+
+    const char* id = "018f4e2a-3000-7000-8000-000000000041";
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    spec.width = 1;
+    spec.chunk_size = 512ull << 10;
+    rawstor::Target target(
+        {rawstd::URI(rawstor::tests::with_tenant(mds, acme), id)}
+    );
+    run(*queue, target.create(*queue, spec));
+
+    RawstdUUID unknown;
+    ASSERT_EQ(rawstd_uuid7_init(&unknown), 0);
+    try {
+        run(*queue, target.transfer(*queue, unknown));
+        FAIL() << "transferred to an unregistered tenant";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOENT);
+    }
+
+    run(*queue, target.transfer(*queue, other));
+
+    for (uint64_t offset : {0ull, 512ull << 10}) {
+        std::ostringstream hex;
+        hex << std::hex << offset;
+        rawstor::Target chunk({rawstd::URI(rawstd::URI(mds, id), hex.str())});
+        auto metas = run(*queue, chunk.meta(*queue));
+        ASSERT_FALSE(metas.empty());
+        RawstdUUID got;
+        memcpy(got.bytes, metas.front().tenant_id, sizeof(got.bytes));
+        EXPECT_EQ(rawstd_uuid_cmp(&got, &other), 0) << "offset " << offset;
+    }
+
+    auto count_for = [&](const RawstdUUID& tenant) {
+        std::list<rawstor::Target> targets;
+        RawstorPaginationToken token = {};
+        run(*queue,
+            rawstor::Location({rawstor::tests::with_tenant(mds, tenant)})
+                .list(*queue, 0, targets, token));
+        return targets.size();
+    };
+    EXPECT_EQ(count_for(acme), 0u);
+    EXPECT_EQ(count_for(other), 1u);
+
+    run(*queue, rawstor::Target({rawstd::URI(mds, id)}).remove(*queue));
+}
+
+// Removing a tenant removes the objects it owns, each with its chunks; the
+// default tenant is refused before any object is touched.
+TEST(ObjectTenantTest, removing_a_tenant_removes_its_objects) {
+    rawstor::tests::ObjectEnv env(8904, 8905);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    rawstd::URI mds(env.location());
+    rawstor::Location admin({mds});
+    RawstdUUID acme;
+    ASSERT_EQ(rawstd_uuid7_init(&acme), 0);
+    run(*queue, admin.create_tenant(*queue, acme));
+
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    spec.width = 1;
+    spec.chunk_size = 512ull << 10;
+    const char* ids[] = {
+        "018f4e2a-3000-7000-8000-000000000051",
+        "018f4e2a-3000-7000-8000-000000000052",
+        "018f4e2a-3000-7000-8000-000000000053",
+    };
+    for (const char* id : ids) {
+        run(*queue,
+            rawstor::Target(
+                {rawstd::URI(rawstor::tests::with_tenant(mds, acme), id)}
+            )
+                .create(*queue, spec));
+    }
+    // An object of the default tenant stays.
+    const char* kept = "018f4e2a-3000-7000-8000-000000000054";
+    run(*queue, rawstor::Target({rawstd::URI(mds, kept)}).create(*queue, spec));
+
+    auto count_for = [&](const RawstdUUID& tenant) {
+        std::list<rawstor::Target> targets;
+        RawstorPaginationToken token = {};
+        run(*queue,
+            rawstor::Location({rawstor::tests::with_tenant(mds, tenant)})
+                .list(*queue, 0, targets, token));
+        return targets.size();
+    };
+    ASSERT_EQ(count_for(acme), 3u);
+
+    try {
+        run(*queue,
+            admin.remove_tenant(*queue, rawstor::tests::default_owner()));
+        FAIL() << "removed the default tenant";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EPERM);
+    }
+    EXPECT_EQ(count_for(rawstor::tests::default_owner()), 1u);
+
+    run(*queue, admin.remove_tenant(*queue, acme));
+    EXPECT_EQ(count_for(acme), 0u);
+    EXPECT_EQ(count_for(rawstor::tests::default_owner()), 1u);
+
+    // The tenant is gone too.
+    try {
+        run(*queue, admin.remove_tenant(*queue, acme));
+        FAIL() << "removed a tenant twice";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOENT);
+    }
+
+    run(*queue, rawstor::Target({rawstd::URI(mds, kept)}).remove(*queue));
 }
 
 // Grow-only: the MDS itself rejects a smaller new_size.

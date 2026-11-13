@@ -9,6 +9,7 @@
 #include "resolve.h"
 #include "show.h"
 #include "slots.h"
+#include "tenant.h"
 #include "testio.h"
 
 #include "config.h"
@@ -69,6 +70,7 @@ static void usage(void) {
         "command:\n"
         "  location              Show information about a location\n"
         "  object                Work with rawstor objects\n"
+        "  tenant                Work with tenants\n"
         "  testio                Test rawstor IO routines\n"
         "  version               Work with versions of an object\n"
         "\n"
@@ -101,6 +103,8 @@ static void object_usage(void) {
         "  show                  Show rawstor object\n"
         "  slots                 List the member slots of an object's "
         "chunks\n"
+        "  transfer              Make another tenant the owner of an "
+        "object\n"
         "\n"
         "An object is addressed as TARGET, a version of it as "
         "TARGET/VERSION_ID\n"
@@ -192,6 +196,11 @@ static void command_create_usage(void) {
         "RAWSTOR_LOCATION environment variable.\n"
         "                        If -u is omitted, a random UUIDv7 is "
         "generated.\n"
+        "                        The tenant LOCATION names as user "
+        "information\n"
+        "                        (mds://tenant@host) owns the object, and "
+        "the default\n"
+        "                        tenant when it names none.\n"
         "  -u, --uuid UUID       Explicit UUID for the object (only valid "
         "when creating by location).\n"
         "\n"
@@ -561,6 +570,251 @@ static int command_remove(int argc, char** argv, enum TargetType type) {
     return rawstor_cli_remove(target_arg, type == TARGET_VERSION);
 }
 
+static void command_tenant_create_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] tenant create LOCATION [-u UUID]\n"
+        "\n"
+        "Registers a tenant in the MDS at LOCATION and prints its id.\n"
+        "\n"
+        "  LOCATION              An mds:// location. If omitted, falls back "
+        "to the\n"
+        "                        RAWSTOR_LOCATION environment variable.\n"
+        "  -u, --uuid UUID       Register this UUID instead of a new one.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and "
+        "exit\n" RAWSTOR_CLI_OUTPUT_USAGE
+    );
+}
+
+static void command_tenant_list_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] tenant list(ls) LOCATION\n"
+        "\n"
+        "Lists the tenants registered in the MDS at LOCATION, one id per "
+        "line.\n"
+        "\n"
+        "  LOCATION              An mds:// location. If omitted, falls back "
+        "to the\n"
+        "                        RAWSTOR_LOCATION environment variable.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and "
+        "exit\n" RAWSTOR_CLI_OUTPUT_USAGE
+    );
+}
+
+static void command_tenant_remove_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] tenant remove(rm) [LOCATION] TENANT\n"
+        "\n"
+        "Removes a tenant from the MDS at LOCATION together with the "
+        "objects it\n"
+        "owns, each with its versions. The default tenant is never "
+        "removed, and\n"
+        "nothing is removed in that case.\n"
+        "\n"
+        "  LOCATION              An mds:// location. If omitted, falls back "
+        "to the\n"
+        "                        RAWSTOR_LOCATION environment variable.\n"
+        "  TENANT                The UUID of the tenant to remove.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
+    );
+}
+
+/* The positional arguments after the options: at most `max` of them, put into
+ * args[]. Returns 0, or EX_USAGE. */
+static int tenant_args(int argc, char** argv, char** args, int max) {
+    int n = 0;
+    while (optind < argc) {
+        if (n == max) {
+            fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+            return EX_USAGE;
+        }
+        args[n++] = argv[optind++];
+    }
+    return 0;
+}
+
+/* The location a tenant command works on: `arg`, or RAWSTOR_LOCATION. */
+static const char* tenant_location(const char* arg) {
+    if (arg == NULL) {
+        arg = getenv("RAWSTOR_LOCATION");
+    }
+    if (arg == NULL) {
+        fprintf(stderr, "location required\n");
+    }
+    return arg;
+}
+
+static int command_tenant_create(int argc, char** argv) {
+    const char* optstring = "hu:";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"uuid", required_argument, NULL, 'u'},
+        {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
+        {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
+        {},
+    };
+
+    const char* uuid_arg = NULL;
+    RawstorCliOutput output_arg = {.unit = global_unit};
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_tenant_create_usage();
+            return EXIT_SUCCESS;
+
+        case 'u':
+            uuid_arg = optarg;
+            break;
+
+        case RAWSTOR_CLI_OPT_FORMAT:
+            if (rawstor_cli_output_set_format(&output_arg, optarg) != 0) {
+                fprintf(
+                    stderr, "Unknown format: %s (table, json or value)\n",
+                    optarg
+                );
+                return EX_USAGE;
+            }
+            break;
+
+        case RAWSTOR_CLI_OPT_COLUMN:
+            output_arg.columns = optarg;
+            break;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    char* args[1] = {NULL};
+    int res = tenant_args(argc, argv, args, 1);
+    if (res != 0) {
+        return res;
+    }
+    const char* location = tenant_location(args[0]);
+    if (location == NULL) {
+        return EX_USAGE;
+    }
+
+    return rawstor_cli_tenant_create(location, uuid_arg, &output_arg);
+}
+
+static int command_tenant_list(int argc, char** argv) {
+    const char* optstring = "h";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
+        {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
+        {},
+    };
+
+    RawstorCliOutput output_arg = {.unit = global_unit};
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_tenant_list_usage();
+            return EXIT_SUCCESS;
+
+        case RAWSTOR_CLI_OPT_FORMAT:
+            if (rawstor_cli_output_set_format(&output_arg, optarg) != 0) {
+                fprintf(
+                    stderr, "Unknown format: %s (table, json or value)\n",
+                    optarg
+                );
+                return EX_USAGE;
+            }
+            break;
+
+        case RAWSTOR_CLI_OPT_COLUMN:
+            output_arg.columns = optarg;
+            break;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    char* args[1] = {NULL};
+    int res = tenant_args(argc, argv, args, 1);
+    if (res != 0) {
+        return res;
+    }
+    const char* location = tenant_location(args[0]);
+    if (location == NULL) {
+        return EX_USAGE;
+    }
+
+    return rawstor_cli_tenant_list(location, &output_arg);
+}
+
+static int command_tenant_remove(int argc, char** argv) {
+    const char* optstring = "h";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {},
+    };
+
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_tenant_remove_usage();
+            return EXIT_SUCCESS;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    char* args[2] = {NULL, NULL};
+    int res = tenant_args(argc, argv, args, 2);
+    if (res != 0) {
+        return res;
+    }
+    /* A lone argument is the tenant: the location is then the environment's. */
+    char* tenant = args[1] != NULL ? args[1] : args[0];
+    const char* location = tenant_location(args[1] != NULL ? args[0] : NULL);
+    if (location == NULL) {
+        return EX_USAGE;
+    }
+    if (tenant == NULL) {
+        fprintf(stderr, "tenant required\n");
+        return EX_USAGE;
+    }
+
+    return rawstor_cli_tenant_remove(location, tenant);
+}
+
 static void command_resize_usage(void) {
     fprintf(
         stdout,
@@ -653,6 +907,69 @@ static int command_resize(int argc, char** argv) {
     return rawstor_cli_resize(target_arg, new_size);
 }
 
+static void command_transfer_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] object transfer TARGET TENANT\n"
+        "\n"
+        "Makes TENANT the owner of the object: its record on every copy "
+        "of every\n"
+        "chunk, and for an mds:// object the MDS's own, which refuses a "
+        "tenant it\n"
+        "does not know (-ENOENT). If a copy is unreachable the transfer "
+        "fails\n"
+        "part-way; run it again to finish.\n"
+        "\n"
+        "  TARGET                The object.\n"
+        "  TENANT                The UUID of the new owner.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
+    );
+}
+
+static int command_transfer(int argc, char** argv) {
+    const char* optstring = "h";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {},
+    };
+
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_transfer_usage();
+            return EXIT_SUCCESS;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    char* args[2] = {NULL, NULL};
+    if (tenant_args(argc, argv, args, 2) != 0) {
+        return EX_USAGE;
+    }
+    if (args[0] == NULL) {
+        fprintf(stderr, "target required\n");
+        return EX_USAGE;
+    }
+    if (args[1] == NULL) {
+        fprintf(stderr, "tenant required\n");
+        return EX_USAGE;
+    }
+
+    return rawstor_cli_transfer(args[0], args[1]);
+}
+
 static void command_list_usage(void) {
     fprintf(
         stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
@@ -664,6 +981,12 @@ static void command_list_usage(void) {
                 "backend locations.\n"
                 "                        If omitted, falls back to the "
                 "RAWSTOR_LOCATION environment variable.\n"
+                "                        The tenant LOCATION names as user "
+                "information\n"
+                "                        (mds://tenant@host) limits the "
+                "listing to its\n"
+                "                        objects; without one, every object "
+                "is listed.\n"
                 "\n"
                 "command options:\n"
                 "  -h, --help            Show this help message and "
@@ -1604,6 +1927,57 @@ static int command_testio(int argc, char** argv) {
     );
 }
 
+static void tenant_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] tenant <subcommand> [command_options]\n"
+        "\n"
+        "An object has one tenant, its owner. A location names a tenant as "
+        "optional\n"
+        "user information: mds://TENANT@host:port. `object create` through "
+        "it makes\n"
+        "objects owned by that tenant, `object list` shows the objects it "
+        "owns; without\n"
+        "one, `object list` shows every object, and `object create` makes "
+        "them for the\n"
+        "default tenant. The tenants themselves are registered in an "
+        "MDS.\n"
+        "\n"
+        "subcommand:\n"
+        "  create                Register a tenant in an MDS\n"
+        "  list(ls)              List the tenants registered in an MDS\n"
+        "  remove(rm)            Remove an empty tenant from an MDS\n"
+        "\n"
+        "Run `rawstor tenant <subcommand> --help` to show its usage.\n"
+    );
+}
+
+static int run_tenant(int argc, char** argv) {
+    if (argc < 2) {
+        tenant_usage();
+        return EX_USAGE;
+    }
+    const char* sub = argv[1];
+    if (strcmp(sub, "-h") == 0 || strcmp(sub, "--help") == 0 ||
+        strcmp(sub, "help") == 0) {
+        tenant_usage();
+        return EXIT_SUCCESS;
+    }
+    argc--;
+    argv++;
+    if (strcmp(sub, "create") == 0) {
+        return command_tenant_create(argc, argv);
+    } else if (strcmp(sub, "list") == 0 || strcmp(sub, "ls") == 0) {
+        return command_tenant_list(argc, argv);
+    } else if (strcmp(sub, "remove") == 0 || strcmp(sub, "rm") == 0) {
+        return command_tenant_remove(argc, argv);
+    }
+    fprintf(stderr, "Unexpected tenant subcommand: %s\n", sub);
+    return EX_USAGE;
+}
+
 static void location_usage(void) {
     fprintf(
         stdout,
@@ -1669,6 +2043,8 @@ static int run_object(int argc, char** argv) {
         return command_show(argc, argv, TARGET_OBJECT);
     } else if (strcmp(sub, "slots") == 0) {
         return command_slots(argc, argv);
+    } else if (strcmp(sub, "transfer") == 0) {
+        return command_transfer(argc, argv);
     }
     fprintf(stderr, "Unexpected object subcommand: %s\n", sub);
     return EX_USAGE;
@@ -1724,6 +2100,8 @@ static int run_command(
         ret = command_remove(argc, argv, TARGET_OBJECT);
     } else if (strcmp(command, "info") == 0) {
         ret = command_info(argc, argv);
+    } else if (strcmp(command, "tenant") == 0) {
+        ret = run_tenant(argc, argv);
     } else if (strcmp(command, "testio") == 0) {
         ret = command_testio(argc, argv);
     } else if (strcmp(command, "version") == 0) {

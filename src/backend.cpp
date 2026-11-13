@@ -77,6 +77,21 @@ Backend::resolve_targets(const RawstdUUID&, const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
+rawstd::Task<void>
+Backend::list_tenants(unsigned int, std::vector<RawstdUUID>&, RawstdUUID&) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
+rawstd::Task<void>
+Backend::create_tenant(const RawstdUUID&, const RawstdUUID&) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
+rawstd::Task<void>
+Backend::remove_tenant(const RawstdUUID&, const RawstdUUID&) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
 rawstd::Task<void> Backend::set_version(
     const RawstdUUID&, const RawstdUUID&, uint64_t, const RawstdUUID&
 ) {

@@ -39,16 +39,16 @@ static void log_spec(FILE* output, const struct RawstorObjectSpec* spec) {
 }
 
 static const char* const created_columns[] = {
-    "object_id",  "target",         "size",         "mirrors",
-    "chunk_size", "failure_domain", "stripe_width",
+    "object_id", "tenant",     "target",         "size",
+    "mirrors",   "chunk_size", "failure_domain", "stripe_width",
 };
 static const enum RawstorCliColumnType created_types[] = {
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
-    RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_NUMBER,
-    RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_NUMBER,
-    RAWSTOR_CLI_COLUMN_NUMBER,
+    RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_SIZE,
+    RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_SIZE,
+    RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
 };
-enum { CREATED_COLUMNS = 7 };
+enum { CREATED_COLUMNS = 8 };
 
 /* Rejects a bad --column before an object is created: once it exists, the
  * only thing left to report is its target, and a retry would create another
@@ -87,8 +87,22 @@ static int print_created(
     rawstor_cli_target_ids(
         target, uuid, sizeof(uuid), version, sizeof(version)
     );
+    /* The owner is read back: it is what was stored, not what was asked. */
+    char tenant[64] = "";
+    RawstorCliOp op;
+    if (rawstor_cli_op_init(&op) == 0) {
+        int ores = rawstor_cli_op_owner(&op, target, tenant, sizeof(tenant));
+        rawstor_cli_op_destroy(&op);
+        if (ores < 0) {
+            fprintf(
+                stderr, "rawstor_target_meta() failed: %s\n", strerror(-ores)
+            );
+            tenant[0] = '\0';
+        }
+    }
     RawstorCliCell cells[] = {
         rawstor_cli_cell_optional(uuid),
+        rawstor_cli_cell_optional(tenant),
         rawstor_cli_cell_string(target),
         rawstor_cli_cell_size(spec->size),
         rawstor_cli_cell_number(mirrors_buf, spec->width),

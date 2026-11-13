@@ -1,5 +1,6 @@
 #include "client.hpp"
 
+#include <rawstor/location.h>
 #include <rawstor/target.h>
 
 #include <rawstd/gpp.hpp>
@@ -55,7 +56,11 @@ namespace rawstor {
 namespace ostserver {
 namespace tests {
 
-Client::Client(int fd) : _fd(fd), _next_cid(0) {
+Client::Client(int fd) : _fd(fd), _next_cid(0), _tenant{} {
+}
+
+void Client::set_tenant(const RawstdUUID& tenant) {
+    _tenant = tenant;
 }
 
 Client::~Client() {
@@ -64,8 +69,10 @@ Client::~Client() {
     }
 }
 
-uint16_t
-Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
+uint16_t Client::send_allocate_for(
+    const RawstdUUID& owner, const RawstdUUID& id, uint64_t size,
+    unsigned int width
+) {
     uint16_t cid = _next_cid++;
     RawstorFrameAllocate frame = {
         .head =
@@ -75,6 +82,7 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
                 .cid = cid,
             },
         .payload = {
+            .tenant_id = {},
             .object_id = {},
             .chunk_offset = 0,
             .size = size,
@@ -85,9 +93,26 @@ Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
             .member_role = RAWSTOR_MEMBER_DATA,
         },
     };
+    std::memcpy(
+        frame.payload.tenant_id, owner.bytes, sizeof(frame.payload.tenant_id)
+    );
     std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));
     send_all(_fd, &frame, sizeof(frame));
     return cid;
+}
+
+RawstdUUID Client::default_owner() {
+    RawstdUUID id;
+    rawstd_uuid_from_string(&id, RAWSTOR_DEFAULT_TENANT);
+    return id;
+}
+
+uint16_t
+Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
+    return send_allocate_for(
+        rawstd_uuid_is_nil(&_tenant) ? default_owner() : _tenant, id, size,
+        width
+    );
 }
 
 uint16_t Client::send_set_object(
@@ -275,8 +300,11 @@ uint16_t Client::send_list(const RawstdUUID& token, uint32_t limit) {
                 .cmd = RAWSTOR_CMD_LIST,
                 .cid = cid,
             },
-        .payload = {.token_id = {}, .limit = limit},
+        .payload = {.tenant_id = {}, .token_id = {}, .limit = limit},
     };
+    std::memcpy(
+        frame.payload.tenant_id, _tenant.bytes, sizeof(frame.payload.tenant_id)
+    );
     std::memcpy(frame.payload.token_id, token.bytes, sizeof(token.bytes));
     send_all(_fd, &frame, sizeof(frame));
     return cid;
@@ -292,6 +320,16 @@ uint16_t Client::send_handshake(uint64_t features) {
                 .cid = cid,
             },
         .payload = {.features = features},
+    };
+    send_all(_fd, &frame, sizeof(frame));
+    return cid;
+}
+
+uint16_t Client::send_list_tenants() {
+    uint16_t cid = _next_cid++;
+    RawstorFrameBasic frame{};
+    frame.head = {
+        .magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_LIST_TENANTS, .cid = cid
     };
     send_all(_fd, &frame, sizeof(frame));
     return cid;
@@ -315,6 +353,10 @@ RawstorFrameResponse Client::recv_response(void* payload, size_t payload_size) {
         recv_all(_fd, payload, payload_size);
     }
     return response;
+}
+
+void Client::recv_payload(void* payload, size_t size) {
+    recv_all(_fd, payload, size);
 }
 
 size_t Client::bytes_available() const {

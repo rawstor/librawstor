@@ -196,6 +196,18 @@ rawstd::Task<void> Backend::set_state(
     }
 }
 
+rawstd::Task<void> Backend::set_owner(
+    const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& owner
+) {
+    RawstorObjectMeta meta =
+        (co_await this->meta(id, offset, RawstdUUID{})).front();
+    co_await _write_meta(
+        id, offset, meta.state, meta.config, meta.promised, meta.accepted,
+        &owner
+    );
+}
+
 rawstd::Task<bool> Backend::sync_prepare(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot&,
     bool proposed, RawstorObjectMeta& meta
@@ -249,6 +261,55 @@ rawstd::Task<void> Backend::_bind_object(
     set_fd(opened);
 }
 
+rawstd::Task<void> Backend::_page_owned(
+    const RawstdUUID& id, const RawstdUUID& tenant,
+    std::vector<ChunkGroup> found, unsigned int limit,
+    std::vector<ChunkGroup>& chunks, RawstdUUID& token
+) {
+    if (limit == 0) {
+        limit = rawstor_opts_list_limit();
+    } else {
+        limit = std::min(limit, rawstor_opts_list_limit());
+    }
+
+    chunks.clear();
+    token = {};
+    for (size_t i = 0; i < found.size(); ++i) {
+        if (chunks.size() == limit) {
+            token = chunks.back().id;
+            break;
+        }
+        ChunkGroup& group = found[i];
+        if (!rawstd_uuid_is_nil(&id)) {
+            chunks.push_back(std::move(group));
+            continue;
+        }
+        std::vector<RawstorObjectMeta> metas;
+        try {
+            metas = co_await meta(
+                group.id, group.offsets.empty() ? 0 : group.offsets.front()
+            );
+        } catch (const std::system_error& e) {
+            // Removed since it was listed.
+            if (e.code().value() == ENOENT) {
+                continue;
+            }
+            throw;
+        }
+        if (metas.empty()) {
+            continue;
+        }
+        memcpy(
+            group.tenant.bytes, metas.front().tenant_id,
+            sizeof(group.tenant.bytes)
+        );
+        if (rawstd_uuid_is_nil(&tenant) ||
+            rawstd_uuid_cmp(&group.tenant, &tenant) == 0) {
+            chunks.push_back(std::move(group));
+        }
+    }
+}
+
 std::string Backend::meta_encode(
     RawstorObjectSyncStateValue state, const RawstorObjectConfig& config,
     const RawstorObjectBallot& promised, const RawstorObjectBallot& accepted,
@@ -263,20 +324,23 @@ std::string Backend::meta_encode(
         roles += static_cast<char>('0' + (c.roles[i] & 0x7));
     }
 
+    RawstdUUIDString tenant_text;
+    rawstd_uuid_to_string(&identity.tenant, &tenant_text);
+
     char buf[META_MAX_SIZE];
     int n = snprintf(
         buf, sizeof(buf),
         "version=%u:state=%u:epoch=%" PRIx64 ":sync_id=%" PRIx64 ":h0=%" PRIx64
         ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64 ":resync_owner=%" PRIx64
         ":promised=%" PRIx64 ".%" PRIx64 ":accepted=%" PRIx64 ".%" PRIx64
-        ":roles=%s:member_role=%u:width=%u:chunk_size=%" PRIx64
-        ":size=%" PRIx64,
+        ":roles=%s:member_role=%u:width=%u:chunk_size=%" PRIx64 ":size=%" PRIx64
+        ":tenant=%s",
         META_FORMAT_VERSION, (unsigned int)state, c.epoch, c.sync_id,
         c.sync_id_history[0], c.sync_id_history[1], c.sync_id_history[2],
         c.sync_id_history[3], c.resync_owner, promised.counter,
         promised.proposer, accepted.counter, accepted.proposer, roles.c_str(),
         (unsigned int)identity.member_role, (unsigned int)identity.width,
-        identity.chunk_size, identity.size
+        identity.chunk_size, identity.size, tenant_text
     );
     if (n < 0 || static_cast<size_t>(n) >= sizeof(buf)) {
         RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
@@ -300,6 +364,7 @@ void Backend::meta_decode(
     unsigned int member_role = 0;
     unsigned int width = 0;
     char roles[RAWSTOR_OBJECT_MAX_WIDTH + 2] = {};
+    char tenant_text[sizeof(RawstdUUIDString)] = {};
     int consumed = 0;
 
     std::string v = trim(value);
@@ -309,14 +374,16 @@ void Backend::meta_decode(
         ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64 ":resync_owner=%" SCNx64
         ":promised=%" SCNx64 ".%" SCNx64 ":accepted=%" SCNx64 ".%" SCNx64
         ":roles=%256[0-9-]:member_role=%u:width=%u:chunk_size=%" SCNx64
-        ":size=%" SCNx64 "%n",
+        ":size=%" SCNx64 ":tenant=%36[0-9a-fA-F-]%n",
         &version, &parsed_state, &c.epoch, &c.sync_id, &c.sync_id_history[0],
         &c.sync_id_history[1], &c.sync_id_history[2], &c.sync_id_history[3],
         &c.resync_owner, &(*promised).counter, &(*promised).proposer,
         &(*accepted).counter, &(*accepted).proposer, roles, &member_role,
-        &width, &identity->chunk_size, &identity->size, &consumed
+        &width, &identity->chunk_size, &identity->size, tenant_text, &consumed
     );
-    if (n != 18 || static_cast<size_t>(consumed) != v.size() ||
+    if (n != 19 ||
+        rawstd_uuid_from_string(&identity->tenant, tenant_text) < 0 ||
+        static_cast<size_t>(consumed) != v.size() ||
         version != META_FORMAT_VERSION ||
         parsed_state > RAWSTOR_OBJECT_SYNC_STATE_LOST || width == 0 ||
         width > UINT8_MAX ||

@@ -265,7 +265,7 @@ namespace mds {
 rawstd::Task<uint64_t> Backend::_obj_create(
     const RawstdUUID& idempotency_key, const RawstdUUID& id,
     uint64_t logical_size, uint64_t chunk_size,
-    const RawstorFrameObjPolicy& policy
+    const RawstorFrameObjPolicy& policy, const RawstdUUID& owner
 ) {
     RawstorFrameObjCreate request{
         .head =
@@ -276,6 +276,10 @@ rawstd::Task<uint64_t> Backend::_obj_create(
             },
         .payload = {},
     };
+    memcpy(
+        request.payload.tenant_id, owner.bytes,
+        sizeof(request.payload.tenant_id)
+    );
     uuid_to_bytes(id, request.payload.id);
     uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
     request.payload.logical_size = logical_size;
@@ -343,9 +347,11 @@ rawstd::Task<WireResized> Backend::_obj_resize(
     }
     RawstorFrameObjResizedPayload out;
     memcpy(&out, data.data(), sizeof(out));
-    co_return WireResized{
-        .map_epoch = out.map_epoch, .old_nchunks = out.old_nchunks
+    WireResized ret{
+        .map_epoch = out.map_epoch, .old_nchunks = out.old_nchunks, .owner = {}
     };
+    memcpy(ret.owner.bytes, out.tenant_id, sizeof(ret.owner.bytes));
+    co_return ret;
 }
 
 rawstd::Task<WireMap>
@@ -493,11 +499,13 @@ rawstd::Task<void> Backend::_connect() {
 // object's WireMap.
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID version_id
+    RawstdUUID& token, RawstdUUID tenant, RawstdUUID version_id
 ) {
     chunks.clear();
     if (rawstd_uuid_is_nil(&id)) {
-        co_await _wire_list_chunks({}, limit, chunks, token, version_id);
+        co_await _wire_list_chunks(
+            {}, limit, chunks, token, tenant, version_id
+        );
         std::vector<RawstdUUID> objects;
         for (const auto& group : chunks) {
             if (group.offsets.empty()) {
@@ -526,7 +534,7 @@ rawstd::Task<void> Backend::list_chunks(
         co_return;
     }
 
-    ChunkGroup group{id, {}};
+    ChunkGroup group{id, {}, {}};
     group.offsets.reserve(map.chunks.size());
     for (uint64_t i = 0; i < map.chunks.size(); ++i) {
         group.offsets.push_back(i * map.chunk_size);
@@ -536,9 +544,50 @@ rawstd::Task<void> Backend::list_chunks(
     }
 }
 
+rawstd::Task<void> Backend::list_tenants(
+    unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+) {
+    return _wire_list_tenants(limit, tenants, token);
+}
+
+rawstd::Task<void> Backend::create_tenant(
+    const RawstdUUID& idempotency_key, const RawstdUUID& tenant
+) {
+    RawstorFrameTenantOp request{
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_TENANT_CREATE,
+                .cid = 0,
+            },
+        .payload = {.tenant_id = {}, .idempotency_key = {}},
+    };
+    uuid_to_bytes(tenant, request.payload.tenant_id);
+    uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
+    co_await exchange(&request, sizeof(request), RAWSTOR_CMD_TENANT_CREATE, 0);
+}
+
+rawstd::Task<void> Backend::remove_tenant(
+    const RawstdUUID& idempotency_key, const RawstdUUID& tenant
+) {
+    RawstorFrameTenantOp request{
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_TENANT_REMOVE,
+                .cid = 0,
+            },
+        .payload = {.tenant_id = {}, .idempotency_key = {}},
+    };
+    uuid_to_bytes(tenant, request.payload.tenant_id);
+    uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
+    co_await exchange(&request, sizeof(request), RAWSTOR_CMD_TENANT_REMOVE, 0);
+}
+
 rawstd::Task<void> Backend::create(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset,
-    const RawstorObjectSpec& sp, RawstorMemberRole member_role
+    const RawstorObjectSpec& sp, RawstorMemberRole member_role,
+    const RawstdUUID& owner
 ) {
     if (member_role != RAWSTOR_MEMBER_DATA || offset != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -554,7 +603,9 @@ rawstd::Task<void> Backend::create(
     // Replayed, not re-applied, when this is a retry of a create whose
     // reply got lost (docs/mds.md, "Idempotent mutations"); a retry after
     // the rollback below creates the object afresh.
-    co_await _obj_create(idempotency_key, id, sp.size, sp.chunk_size, policy);
+    co_await _obj_create(
+        idempotency_key, id, sp.size, sp.chunk_size, policy, owner
+    );
 
     /* Materialize every chunk object on its OSTs. */
     WireMap map = co_await _resolve(id, RawstdUUID{});
@@ -570,7 +621,7 @@ rawstd::Task<void> Backend::create(
         // to create before a later one's own failure -- only the object
         // map registration itself is left for this call to roll back.
         co_await Target(build_target_uris(map, RawstdUUID{}))
-            .create(_queue, object_spec(map));
+            .create(_queue, object_spec(map), owner);
     } catch (...) {
         error = std::current_exception();
     }
@@ -683,6 +734,9 @@ rawstd::Task<void> Backend::resize(
     /* Re-fetch: the map now has whatever new chunks the MDS reserved. */
     WireMap after = co_await _resolve(id, RawstdUUID{});
 
+    /* The new chunks belong to the object's own owner, as the MDS has it. */
+    RawstdUUID owner = resized.owner;
+
     /*
      * Materialize the new chunks, one copy at a time: a copy that already
      * exists was made by an earlier attempt of this same resize, so a
@@ -700,7 +754,8 @@ rawstd::Task<void> Backend::resize(
                                       ? RAWSTOR_MEMBER_WITNESS
                                       : RAWSTOR_MEMBER_DATA;
                 co_await slot->create(
-                    after.id, i * after.chunk_size, chunk_spec(after), role
+                    after.id, i * after.chunk_size, chunk_spec(after), role,
+                    owner
                 );
             } catch (const std::system_error& e) {
                 if (e.code().value() != EEXIST) {
@@ -715,6 +770,127 @@ rawstd::Task<void> Backend::resize(
             }
         }
     }
+
+    // A transfer meanwhile writes the members of the chunks it finds in the
+    // map, and these were not there yet, or did not exist. So the owner is
+    // asked again after they are created (the same OBJ_RESIZE, which applies
+    // nothing and reports the owner as it is then), and the new chunks follow
+    // it until the owner is the one they were written with.
+    const unsigned int max_rounds = 16;
+    for (unsigned int round = 0; round < max_rounds; ++round) {
+        mds::WireResized again =
+            co_await _obj_resize(idempotency_key, id, new_size);
+        if (rawstd_uuid_is_nil(&again.owner)) {
+            // Removed meanwhile.
+            RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+        }
+        if (rawstd_uuid_cmp(&again.owner, &owner) == 0) {
+            co_return;
+        }
+        owner = again.owner;
+        co_await _set_members_owner(after, resized.old_nchunks, owner);
+    }
+    RAWSTD_THROW_SYSTEM_ERROR(EAGAIN);
+}
+
+// OBJ_TRANSFER: the owner the object has when the MDS answers. Sent again with
+// the same idempotency_key it applies nothing and reads the owner as it is
+// then.
+rawstd::Task<RawstdUUID> Backend::_obj_transfer(
+    const RawstdUUID& idempotency_key, const RawstdUUID& id,
+    const RawstdUUID& owner
+) {
+    RawstorFrameObjOp request{
+        .head =
+            {
+                .magic = RAWSTOR_MAGIC,
+                .cmd = RAWSTOR_CMD_OBJ_TRANSFER,
+                .cid = 0,
+            },
+        .payload = {
+            .id = {}, .idempotency_key = {}, .version_id = {}, .val = 0
+        },
+    };
+    uuid_to_bytes(id, request.payload.id);
+    uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
+    uuid_to_bytes(owner, request.payload.version_id);
+
+    std::vector<unsigned char> data = co_await exchange(
+        &request, sizeof(request), RAWSTOR_CMD_OBJ_TRANSFER,
+        sizeof(RawstorFrameObjTransferredPayload)
+    );
+    if (data.size() != sizeof(RawstorFrameObjTransferredPayload)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+    RawstorFrameObjTransferredPayload out;
+    memcpy(&out, data.data(), sizeof(out));
+    RawstdUUID ret;
+    memcpy(ret.bytes, out.tenant_id, sizeof(ret.bytes));
+    co_return ret;
+}
+
+// Records `owner` with every member of the chunks of `map` from `first_chunk`
+// on, one at a time.
+rawstd::Task<void> Backend::_set_members_owner(
+    const WireMap& map, uint64_t first_chunk, const RawstdUUID& owner
+) {
+    bool unaddressed = false;
+    for (uint64_t i = first_chunk; i < map.chunks.size(); ++i) {
+        for (const auto& member : map.chunks[i]) {
+            // A member the topology has no address for cannot be reached:
+            // the others are done first, then the transfer fails, so that
+            // the caller does not take it for complete.
+            if (member.location.empty()) {
+                unaddressed = true;
+                continue;
+            }
+            auto slot = co_await Slot::create(_queue, slot_location(member));
+            std::exception_ptr error;
+            try {
+                co_await slot->set_owner(map.id, i * map.chunk_size, owner);
+            } catch (...) {
+                error = std::current_exception();
+            }
+            co_await slot->close();
+            if (error) {
+                std::rethrow_exception(error);
+            }
+        }
+    }
+    if (unaddressed) {
+        rawstd_error("transfer: a member of the object has no address\n");
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+    }
+}
+
+// Two transfers of one object can reach the MDS in one order and their members
+// in another, so the members are not taken for done until the MDS, asked again
+// after they were written, still has the owner they were written with: if it
+// has another by then, that is the owner they are written with next. Whoever
+// writes a member last has read the MDS after it, so they agree in the end.
+rawstd::Task<void> Backend::set_owner(
+    const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t,
+    const RawstdUUID& owner
+) {
+    RawstdUUID written = co_await _obj_transfer(idempotency_key, id, owner);
+
+    // A transfer storm can go on, but not forever.
+    const unsigned int max_rounds = 16;
+    for (unsigned int round = 0; round < max_rounds; ++round) {
+        WireMap map = co_await _resolve(id, RawstdUUID{});
+        co_await _set_members_owner(map, 0, written);
+
+        RawstdUUID current = co_await _obj_transfer(idempotency_key, id, owner);
+        if (rawstd_uuid_is_nil(&current)) {
+            // Removed meanwhile.
+            RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+        }
+        if (rawstd_uuid_cmp(&current, &written) == 0) {
+            co_return;
+        }
+        written = current;
+    }
+    RAWSTD_THROW_SYSTEM_ERROR(EAGAIN);
 }
 
 rawstd::Task<void> Backend::create_version(

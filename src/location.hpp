@@ -38,10 +38,27 @@ public:
 
     rawstd::Task<RawstorLocationInfo> info(rawio::Queue& queue) const;
 
+    // The targets name their owners (docs/tenants.md).
     rawstd::Task<void> list(
         rawio::Queue& queue, unsigned int limit, std::list<Target>& targets,
         RawstorPaginationToken& token
     ) const;
+
+    // One page of the tenants registered in the MDS this location names
+    // (docs/tenants.md), ascending; ENOTSUP for a store without a registry.
+    // `token` resumes the listing like list()'s: empty to start, and empty
+    // again on return once nothing is left.
+    rawstd::Task<void> tenants(
+        rawio::Queue& queue, unsigned int limit,
+        std::vector<RawstdUUID>& tenants, RawstorPaginationToken& token
+    ) const;
+
+    // Registers / removes `tenant` in the MDS this location names (exactly
+    // one mds:// URI; ENOTSUP otherwise).
+    rawstd::Task<void>
+    create_tenant(rawio::Queue& queue, const RawstdUUID& tenant) const;
+    rawstd::Task<void>
+    remove_tenant(rawio::Queue& queue, const RawstdUUID& tenant) const;
 
     // Creates a new object at this location under a fresh UUID v7 and
     // returns the Target addressing it.

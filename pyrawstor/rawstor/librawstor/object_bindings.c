@@ -8,11 +8,30 @@
 #include <Python.h>
 
 #include <errno.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 static void set_os_error(int error) {
     errno = error;
     PyErr_SetFromErrno(PyExc_OSError);
+}
+
+/* `bytes` as a canonical UUID string; empty for the nil UUID, which is no
+ * tenant. */
+static void uuid_to_string(const uint8_t bytes[16], char out[37]) {
+    static const uint8_t zero[16] = {0};
+    if (memcmp(bytes, zero, sizeof(zero)) == 0) {
+        out[0] = '\0';
+        return;
+    }
+    snprintf(
+        out, 37,
+        "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6],
+        bytes[7], bytes[8], bytes[9], bytes[10], bytes[11], bytes[12],
+        bytes[13], bytes[14], bytes[15]
+    );
 }
 
 typedef struct {
@@ -594,6 +613,8 @@ typedef struct {
     unsigned long long epoch;
     unsigned long long sync_id;
     unsigned long long sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
+    /* The owner as a UUID string, empty for none. */
+    char tenant[37];
 } PyObjectMeta;
 
 static void PyObjectMeta_dealloc(PyObjectMeta* self) {
@@ -612,6 +633,14 @@ static PyObject* PyObjectMeta_repr(PyObjectMeta* self) {
         self->failure_domain, self->member_role, self->state, self->role,
         self->writers, self->epoch, self->sync_id
     );
+}
+
+static PyObject*
+PyObjectMeta_get_tenant(PyObjectMeta* self, void* Py_UNUSED(closure)) {
+    if (self->tenant[0] == '\0') {
+        Py_RETURN_NONE;
+    }
+    return PyUnicode_FromString(self->tenant);
 }
 
 static PyObject*
@@ -689,6 +718,7 @@ PyObjectMeta_get_sync_id_history(PyObjectMeta* self, void* Py_UNUSED(closure)) {
 }
 
 static PyGetSetDef PyObjectMeta_getset[] = {
+    {"tenant", (getter)PyObjectMeta_get_tenant, NULL, NULL, NULL},
     {"size", (getter)PyObjectMeta_get_size, NULL, NULL, NULL},
     {"width", (getter)PyObjectMeta_get_width, NULL, NULL, NULL},
     {"chunk_size", (getter)PyObjectMeta_get_chunk_size, NULL, NULL, NULL},
@@ -759,7 +789,14 @@ static void free_pagination_token(PyObject* capsule) {
     free(token);
 }
 
-PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
+typedef int (*LocationPageFunction)(
+    RawIOQueue*, const char*, unsigned int, RawstorStringList**,
+    RawstorPaginationToken*, int (*)(ssize_t, void*), void*
+);
+
+// One page of strings and the token that resumes after it (None on the last
+// page), from a paginated rawstor_location_*() listing.
+static PyObject* location_page(PyObject* args, LocationPageFunction enumerate) {
     const char* location;
     unsigned int limit;
     PyObject* py_token;
@@ -797,7 +834,7 @@ PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
         set_os_error(-ires);
         goto error;
     }
-    int sres = rawstor_location_list(
+    int sres = enumerate(
         op.queue, location, limit, &list, &token, rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);
@@ -860,6 +897,10 @@ error:
     rawstor_string_list_delete(list);
     Py_XDECREF(py_list);
     return NULL;
+}
+
+PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
+    return location_page(args, rawstor_location_list);
 }
 
 PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
@@ -1075,6 +1116,7 @@ build_mirror_meta(const struct RawstorObjectMeta* meta, ssize_t index) {
     if (py_meta == NULL) {
         return NULL;
     }
+    uuid_to_string(meta->tenant_id, py_meta->tenant);
     py_meta->size = meta->spec.size;
     py_meta->width = meta->spec.width;
     py_meta->chunk_size = meta->spec.chunk_size;
@@ -1277,6 +1319,33 @@ PyObject* py_rawstor_object_resize(PyObject* Py_UNUSED(self), PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject*
+py_rawstor_object_transfer(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* target;
+    const char* tenant;
+    if (!PyArg_ParseTuple(args, "ss", &target, &tenant)) {
+        return NULL;
+    }
+
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres = rawstor_target_transfer(
+        op.queue, target, tenant, rawstor_sync_op_cb, &op
+    );
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
+    if (res < 0) {
+        set_os_error((int)-res);
+        return NULL;
+    }
+
+    Py_RETURN_NONE;
+}
+
 typedef int (*TargetListFunction)(
     RawIOQueue*, const char*, RawstorStringList**, int (*)(ssize_t, void*),
     void*
@@ -1321,6 +1390,62 @@ static PyObject* target_list(PyObject* args, TargetListFunction enumerate) {
     }
     rawstor_string_list_delete(list);
     return py_list;
+}
+
+PyObject* py_rawstor_tenant_list(PyObject* Py_UNUSED(self), PyObject* args) {
+    return location_page(args, rawstor_location_tenants);
+}
+
+static PyObject* tenant_mutation(
+    PyObject* args,
+    int (*mutate)(
+        RawIOQueue*, const char*, const char*, int (*)(ssize_t, void*), void*
+    )
+) {
+    const char* location;
+    const char* tenant;
+    if (!PyArg_ParseTuple(args, "ss", &location, &tenant)) {
+        return NULL;
+    }
+
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres = mutate(op.queue, location, tenant, rawstor_sync_op_cb, &op);
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
+    if (res < 0) {
+        set_os_error((int)-res);
+        return NULL;
+    }
+
+    Py_RETURN_NONE;
+}
+
+PyObject* py_rawstor_tenant_create(PyObject* Py_UNUSED(self), PyObject* args) {
+    return tenant_mutation(args, rawstor_location_create_tenant);
+}
+
+PyObject* py_rawstor_tenant_remove(PyObject* Py_UNUSED(self), PyObject* args) {
+    return tenant_mutation(args, rawstor_location_remove_tenant);
+}
+
+PyObject* py_rawstor_target_tenant(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* target;
+    if (!PyArg_ParseTuple(args, "s", &target)) {
+        return NULL;
+    }
+
+    char tenant[64];
+    int res = rawstor_target_tenant(target, tenant, sizeof(tenant));
+    if (res < 0) {
+        set_os_error(-res);
+        return NULL;
+    }
+    return PyUnicode_FromString(tenant);
 }
 
 PyObject* py_rawstor_object_chunks(PyObject* Py_UNUSED(self), PyObject* args) {

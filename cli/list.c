@@ -11,15 +11,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char* const columns[] = {"object_id", "target", "location"};
+static const char* const columns[] = {
+    "object_id", "tenant", "target", "location"
+};
 static const enum RawstorCliColumnType types[] = {
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
-    RAWSTOR_CLI_COLUMN_STRING
+    RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING
 };
 
 int rawstor_cli_list(const char* location, const RawstorCliOutput* output) {
     RawstorCliTable* table =
-        rawstor_cli_table_create("targets", columns, types, 3);
+        rawstor_cli_table_create("targets", columns, types, 4);
     if (table == NULL) {
         fprintf(stderr, "Out of memory\n");
         return EXIT_FAILURE;
@@ -57,12 +59,17 @@ int rawstor_cli_list(const char* location, const RawstorCliOutput* output) {
             rawstor_cli_target_ids(
                 *it, uuid, sizeof(uuid), version, sizeof(version)
             );
+            char tenant[64];
+            if (rawstor_target_tenant(*it, tenant, sizeof(tenant)) < 0) {
+                tenant[0] = '\0';
+            }
             char location_buf[1024];
             rawstor_cli_target_location(
                 *it, location_buf, sizeof(location_buf)
             );
             RawstorCliCell cells[] = {
                 rawstor_cli_cell_optional(uuid),
+                rawstor_cli_cell_optional(tenant),
                 rawstor_cli_cell_string(*it),
                 rawstor_cli_cell_string(location_buf),
             };

@@ -3,6 +3,7 @@
 #include "object.hpp"
 #include "object_env.hpp"
 #include "opts.h"
+#include "owner.hpp"
 #include "register.hpp"
 #include "server.hpp"
 #include "session.hpp"
@@ -167,7 +168,8 @@ TEST_F(WitnessTest, rejects_member_role_inconsistent_with_location_order) {
         run(*queue,
             slot->create(
                 id, 0, spec,
-                index == 2 ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS
+                index == 2 ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS,
+                rawstor::tests::default_owner()
             ));
         run(*queue, slot->close());
         EXPECT_THROW(run(*queue, target->open(*queue, 0)), std::system_error);
@@ -1245,7 +1247,8 @@ TEST_F(WitnessTest, conflicting_member_shapes_require_an_agreeing_quorum) {
         run(*queue,
             slot->create(
                 id, 0, oversized,
-                index == 0 ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS
+                index == 0 ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS,
+                rawstor::tests::default_owner()
             ));
         run(*queue, rawstor::tests::force_config(*slot, id, 0, index, config));
         run(*queue, slot->close());
@@ -1328,7 +1331,10 @@ TEST_F(WitnessTest, data_only_mirror_uses_the_matching_quorum) {
     run(*queue, divergent->remove(id, 0));
     auto wrong = spec;
     wrong.size *= 2;
-    run(*queue, divergent->create(id, 0, wrong, RAWSTOR_MEMBER_DATA));
+    run(*queue,
+        divergent->create(
+            id, 0, wrong, RAWSTOR_MEMBER_DATA, rawstor::tests::default_owner()
+        ));
     run(*queue, rawstor::tests::force_config(*divergent, id, 0, 0, config));
     for (int flags : {RAWSTOR_READONLY, 0}) {
         auto object = run(*queue, target->open(*queue, flags));
@@ -1373,7 +1379,10 @@ TEST_F(WitnessTest, divergent_spec_fields_do_not_override_the_quorum) {
         auto slot =
             run(*queue, rawstor::Slot::create(*queue, rawstd::URI(a.uri())));
         run(*queue, slot->remove(id, 0));
-        run(*queue, slot->create(id, 0, wrong, RAWSTOR_MEMBER_DATA));
+        run(*queue, slot->create(
+                        id, 0, wrong, RAWSTOR_MEMBER_DATA,
+                        rawstor::tests::default_owner()
+                    ));
         run(*queue, rawstor::tests::force_config(*slot, id, 0, 0, config));
         auto object = run(*queue, target->open(*queue, 0));
         std::string tail = "tail";
@@ -1411,7 +1420,8 @@ TEST_F(WitnessTest, replacements_use_the_quorum_spec_with_a_divergent_member) {
         run(*queue,
             divergent->create(
                 id, 0, wrong,
-                index == 0 ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS
+                index == 0 ? RAWSTOR_MEMBER_DATA : RAWSTOR_MEMBER_WITNESS,
+                rawstor::tests::default_owner()
             ));
         run(*queue,
             rawstor::tests::force_config(*divergent, id, 0, index, config));
@@ -1457,7 +1467,8 @@ TEST_F(WitnessTest, spec_and_configuration_must_have_the_same_quorum) {
             run(*queue,
                 slot->create(
                     id, 0, wrong,
-                    index == 4 ? RAWSTOR_MEMBER_WITNESS : RAWSTOR_MEMBER_DATA
+                    index == 4 ? RAWSTOR_MEMBER_WITNESS : RAWSTOR_MEMBER_DATA,
+                    rawstor::tests::default_owner()
                 ));
         }
         run(*queue, rawstor::tests::force_config(*slot, id, 0, index, other));
@@ -1488,7 +1499,8 @@ TEST_F(WitnessTest, excluded_member_does_not_supply_a_spec_vote) {
             run(*queue,
                 slot->create(
                     id, 0, wrong,
-                    index == 4 ? RAWSTOR_MEMBER_WITNESS : RAWSTOR_MEMBER_DATA
+                    index == 4 ? RAWSTOR_MEMBER_WITNESS : RAWSTOR_MEMBER_DATA,
+                    rawstor::tests::default_owner()
                 ));
         }
         run(*queue, rawstor::tests::force_config(*slot, id, 0, index, config));
@@ -1513,7 +1525,10 @@ TEST_F(WitnessTest, repaired_spec_rejoins_through_the_probe) {
     run(*queue, slot->remove(id, 0));
     auto wrong = spec;
     wrong.size *= 2;
-    run(*queue, slot->create(id, 0, wrong, RAWSTOR_MEMBER_WITNESS));
+    run(*queue, slot->create(
+                    id, 0, wrong, RAWSTOR_MEMBER_WITNESS,
+                    rawstor::tests::default_owner()
+                ));
     run(*queue, rawstor::tests::force_config(*slot, id, 0, 2, config));
     auto object = run(*queue, target->open(*queue, 0));
     write(*object);

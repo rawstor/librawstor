@@ -2,9 +2,13 @@
 
 #include <rawstor.h>
 
+#include <rawstd/uuid.h>
+
 #include <errno.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 int rawstor_cli_op_init(RawstorCliOp* op) {
     op->result = 0;
@@ -57,4 +61,28 @@ ssize_t rawstor_cli_op_chunks(
         op,
         rawstor_target_chunks(op->queue, target, chunks, rawstor_cli_op_cb, op)
     );
+}
+
+int rawstor_cli_op_owner(
+    RawstorCliOp* op, const char* target, char* tenant, size_t tenant_size
+) {
+    struct RawstorObjectMeta meta;
+    memset(&meta, 0, sizeof(meta));
+    op->done = 0;
+    ssize_t result = rawstor_cli_op_wait(
+        op,
+        rawstor_target_meta(op->queue, target, &meta, 1, rawstor_cli_op_cb, op)
+    );
+    if (result < 0) {
+        return (int)result;
+    }
+    struct RawstdUUID owner;
+    memcpy(owner.bytes, meta.tenant_id, sizeof(owner.bytes));
+    tenant[0] = '\0';
+    if (!rawstd_uuid_is_nil(&owner)) {
+        RawstdUUIDString text;
+        rawstd_uuid_to_string(&owner, &text);
+        snprintf(tenant, tenant_size, "%s", text);
+    }
+    return 0;
 }

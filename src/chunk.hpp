@@ -90,6 +90,9 @@ private:
     // locations than that -- rawstor-ost opens only its own copy, an
     // mds:// location stands for the whole object.
     RawstorObjectSpec _spec;
+    // The tenant the object belongs to, as its copies record it: a copy
+    // recreated later belongs to it too.
+    RawstdUUID _owner;
     std::vector<Member> _members;
 
     // Opened RAWSTOR_READONLY (create()'s `flags`): nothing that would
@@ -506,7 +509,8 @@ public:
     Chunk(
         Private, rawio::Queue& queue, const RawstdUUID& id, uint64_t offset,
         bool readonly, bool force, RawstorObjectSpec spec,
-        std::vector<Member> members, std::shared_ptr<MirrorControl> control
+        const RawstdUUID& owner, std::vector<Member> members,
+        std::shared_ptr<MirrorControl> control
     );
     Chunk(const Chunk&) = delete;
     Chunk(Chunk&&) = delete;

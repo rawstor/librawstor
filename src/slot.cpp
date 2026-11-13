@@ -1148,7 +1148,7 @@ const rawstd::URI* Slot::location() const noexcept {
 
 rawstd::Task<void> Slot::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID version_id
+    RawstdUUID& token, RawstdUUID tenant, RawstdUUID version_id
 ) {
     OperationGuard operation(*this);
 
@@ -1160,7 +1160,94 @@ rawstd::Task<void> Slot::list_chunks(
     try {
         co_await _with_retry(
             func_name, trace_event, &Backend::list_chunks, id, limit, chunks,
-            token, version_id
+            token, tenant, version_id
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void> Slot::set_owner(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner
+) {
+    OperationGuard operation(*this);
+
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        std::shared_ptr<CopyState> member = _copy_state(id, offset);
+        co_await member->record.lock(_queue);
+        RecordLockGuard guard{member->record};
+        co_await _with_retry(
+            func_name, trace_event, &Backend::set_owner, new_idempotency_key(),
+            id, offset, owner
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void> Slot::create_tenant(const RawstdUUID& tenant) {
+    OperationGuard operation(*this);
+
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::create_tenant,
+            new_idempotency_key(), tenant
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void> Slot::remove_tenant(const RawstdUUID& tenant) {
+    OperationGuard operation(*this);
+
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::remove_tenant,
+            new_idempotency_key(), tenant
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
+rawstd::Task<void> Slot::list_tenants(
+    unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+) {
+    OperationGuard operation(*this);
+
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::list_tenants, limit, tenants,
+            token
         );
         _finish(t_call);
     } catch (...) {
@@ -1225,8 +1312,13 @@ Slot::resize(const RawstdUUID& id, uint64_t offset, uint64_t new_size) {
 
 rawstd::Task<void> Slot::create(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
-    RawstorMemberRole member_role
+    RawstorMemberRole member_role, const RawstdUUID& owner
 ) {
+    // Every object has an owner (docs/tenants.md).
+    if (rawstd_uuid_is_nil(&owner)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+
     OperationGuard operation(*this);
 
     const char* func_name = __FUNCTION__;
@@ -1237,7 +1329,7 @@ rawstd::Task<void> Slot::create(
     try {
         co_await _with_retry(
             func_name, trace_event, &Backend::create, new_idempotency_key(), id,
-            offset, sp, member_role
+            offset, sp, member_role, owner
         );
         _finish(t_call);
     } catch (...) {

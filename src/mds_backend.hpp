@@ -37,10 +37,14 @@ struct WireMap {
     std::vector<std::vector<WireSlot>> chunks;
 };
 
-/* What OBJ_RESIZE did: the new map_epoch and the chunk count it grew from. */
+/*
+ * What OBJ_RESIZE did: the new map_epoch, the chunk count it grew from and the
+ * owner of the object.
+ */
 struct WireResized {
     uint64_t map_epoch;
     uint64_t old_nchunks;
+    RawstdUUID owner;
 };
 
 /* One chunk copy holding a version. */
@@ -69,7 +73,7 @@ private:
     rawstd::Task<uint64_t> _obj_create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t logical_size, uint64_t chunk_size,
-        const RawstorFrameObjPolicy& policy
+        const RawstorFrameObjPolicy& policy, const RawstdUUID& owner
     );
 
     rawstd::Task<WireMap>
@@ -78,6 +82,15 @@ private:
     rawstd::Task<WireResized> _obj_resize(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t new_size
+    );
+
+    rawstd::Task<RawstdUUID> _obj_transfer(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        const RawstdUUID& owner
+    );
+
+    rawstd::Task<void> _set_members_owner(
+        const WireMap& map, uint64_t first_chunk, const RawstdUUID& owner
     );
 
     /* Returns the map the object had, for the fan-out destroy. */
@@ -127,14 +140,35 @@ public:
     // own real chunk offsets, off its own WireMap.
     rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID version_id = {}
+        RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
+    ) override;
+
+    // Makes `owner` the owner of the whole object: the MDS first, then every
+    // member's own record, one at a time, and again until the MDS still has the
+    // owner they were written with, which another transfer meanwhile can
+    // change. Repeating it after a failure finishes the job.
+    rawstd::Task<void> set_owner(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& owner
+    ) override;
+
+    // One page of the tenants registered in the MDS.
+    rawstd::Task<void> list_tenants(
+        unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+    ) override;
+
+    rawstd::Task<void> create_tenant(
+        const RawstdUUID& idempotency_key, const RawstdUUID& tenant
+    ) override;
+    rawstd::Task<void> remove_tenant(
+        const RawstdUUID& idempotency_key, const RawstdUUID& tenant
     ) override;
 
     // DATA creates a whole placed object; WITNESS creates one metadata member.
     rawstd::Task<void> create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        RawstorMemberRole member_role, const RawstdUUID& owner
     ) override;
 
     // Unregisters and destroys the whole object (docs/mds.md, deletion

@@ -27,17 +27,22 @@ public:
 
     rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID version_id = {}
+        RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
     ) override;
 
     rawstd::Task<void> create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstorObjectSpec& sp,
-        RawstorMemberRole member_role
+        RawstorMemberRole member_role, const RawstdUUID& owner
     ) override;
 
     rawstd::Task<void> remove(
         const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t offset
+    ) override;
+
+    rawstd::Task<void> set_owner(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t offset, const RawstdUUID& owner
     ) override;
 
     rawstd::Task<void> remove_version(
