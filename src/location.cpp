@@ -148,27 +148,6 @@ RawstdUUID named_tenant(const RawstdUUID& owner) {
     return owner;
 }
 
-// The owner an address stands for: the tenant it names, the default tenant
-// when it names none. EINVAL for a tenant that is not a non-nil UUID.
-RawstdUUID owner_of(const rawstd::URI& uri) {
-    RawstdUUID id = tenant_of(uri);
-    return rawstd_uuid_is_nil(&id) ? default_tenant() : id;
-}
-
-// The owner every URI of an address stands for: they must all agree, EINVAL
-// otherwise.
-RawstdUUID owner_of(const std::vector<rawstd::URI>& uris) {
-    RawstdUUID owner = owner_of(uris.front());
-    for (const rawstd::URI& uri : uris) {
-        RawstdUUID other = owner_of(uri);
-        if (rawstd_uuid_cmp(&owner, &other) != 0) {
-            rawstd_error("target names different tenants\n");
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-    }
-    return owner;
-}
-
 // `uri` with `tenant` as its user information, none for the nil UUID.
 rawstd::URI with_tenant(const rawstd::URI& uri, const RawstdUUID& tenant) {
     std::string info;
@@ -191,13 +170,13 @@ rawstd::URI address_of(const rawstd::URI& uri, const RawstdUUID& owner) {
     return with_tenant(uri, named_tenant(owner));
 }
 
-// `uris` as the address of what is created through them: each names its own
-// owner, the default tenant by naming none.
-std::vector<rawstd::URI> address_of(const std::vector<rawstd::URI>& uris) {
+// The same for every URI of one object.
+std::vector<rawstd::URI>
+address_of(const std::vector<rawstd::URI>& uris, const RawstdUUID& owner) {
     std::vector<rawstd::URI> ret;
     ret.reserve(uris.size());
     for (const rawstd::URI& uri : uris) {
-        ret.push_back(address_of(uri, owner_of(uri)));
+        ret.push_back(address_of(uri, owner));
     }
     return ret;
 }
@@ -698,10 +677,6 @@ Location::Location(const std::vector<rawstd::URI>& uris) : _uris(uris) {
     validate_different_uris(_uris);
 }
 
-RawstdUUID Location::owner() const {
-    return owner_of(_uris);
-}
-
 rawstd::Task<RawstorLocationInfo> Location::info(rawio::Queue& queue) const {
     std::vector<RawstorLocationInfo> infos =
         co_await rawstd::gather(_uris.size(), [&](size_t i) {
@@ -866,7 +841,7 @@ rawstd::Task<Target> Location::create(
     Target t(build_create_uris(_uris, uuid_string, sp));
     co_await t.create(queue, sp);
 
-    co_return Target(address_of(t.uris()));
+    co_return Target(address_of(t.uris(), t.owner()));
 }
 
 } // namespace rawstor
@@ -987,7 +962,9 @@ int rawstor_location_create(
             build_create_uris(uris, uuid_string, *spec);
 
         res = snprintf(
-            target, size, "%s", rawstd::URI::uris(address_of(ret)).c_str()
+            target, size, "%s",
+            rawstd::URI::uris(address_of(ret, rawstor::Target(ret).owner()))
+                .c_str()
         );
         if (res < 0) {
             return res;

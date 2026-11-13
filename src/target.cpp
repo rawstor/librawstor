@@ -37,6 +37,42 @@
 
 namespace {
 
+// The owner an address stands for (docs/tenants.md): the tenant it names as
+// user information, the default tenant when it names none. EINVAL for a
+// tenant that is not a non-nil UUID.
+RawstdUUID owner_of(const rawstd::URI& uri) {
+    RawstdUUID id;
+    const std::string& name = uri.username();
+    if (name.empty()) {
+        rawstd_uuid_from_string(&id, RAWSTOR_DEFAULT_TENANT);
+        return id;
+    }
+    if (rawstd_uuid_from_string(&id, name.c_str()) < 0 ||
+        rawstd_uuid_is_nil(&id)) {
+        // Not the whole URI: its user information may carry a password.
+        rawstd_error(
+            "%s://%s%s: tenant \"%s\" is not a UUID\n", uri.scheme().c_str(),
+            uri.host().c_str(), uri.path().str().c_str(), name.c_str()
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    return id;
+}
+
+// The owner every URI of an address stands for: they must all agree, EINVAL
+// otherwise.
+RawstdUUID owner_of(const std::vector<rawstd::URI>& uris) {
+    RawstdUUID owner = owner_of(uris.front());
+    for (const rawstd::URI& uri : uris) {
+        RawstdUUID other = owner_of(uri);
+        if (rawstd_uuid_cmp(&owner, &other) != 0) {
+            rawstd_error("target names different tenants\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
+    return owner;
+}
+
 // How long a version's write barrier may stand if its holder dies
 // (docs/mds.md, "Versions").
 const std::chrono::milliseconds version_freeze_lease{30000};
@@ -1336,9 +1372,13 @@ const RawstdUUID& Target::version_id() const {
     return _version_id;
 }
 
+RawstdUUID Target::owner() const {
+    return owner_of(_uris);
+}
+
 rawstd::Task<void>
 Target::create(rawio::Queue& queue, const RawstorObjectSpec& sp) const {
-    co_await create(queue, sp, location().owner());
+    co_await create(queue, sp, owner());
 }
 
 rawstd::Task<void> Target::create(
@@ -2342,8 +2382,7 @@ int rawstor_target_id(const char* target, char* buf, size_t size) noexcept {
 
 int rawstor_target_tenant(const char* target, char* buf, size_t size) noexcept {
     try {
-        RawstdUUID owner =
-            rawstor::Target(rawstd::URI::uriv(target)).location().owner();
+        RawstdUUID owner = rawstor::Target(rawstd::URI::uriv(target)).owner();
         RawstdUUIDString text;
         rawstd_uuid_to_string(&owner, &text);
         int res = snprintf(buf, size, "%s", text);

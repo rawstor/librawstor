@@ -192,6 +192,12 @@ public:
     // stored shape as object_id() above.
     const RawstdUUID& version_id() const;
 
+    // The tenant that owns the object (docs/tenants.md): the one the URIs
+    // name as user information, the default tenant when they name none.
+    // EINVAL if one names something that is not a tenant, or they name
+    // different ones.
+    RawstdUUID owner() const;
+
     // Every backend location this target's own URIs touch, across every
     // chunk, not just the first -- each URI's own identity path
     // segments stripped back off (Location::create()'s own inverse),

@@ -71,8 +71,13 @@ size_t listed(rawio::Queue& queue, const rawstd::URI& location) {
 
 namespace {
 
+// The owner the address of an object stands for.
 RawstdUUID owner_of_address(const std::string& address) {
-    return rawstor::Location({rawstd::URI(address)}).owner();
+    return rawstor::Target({rawstd::URI(
+                               rawstd::URI(address),
+                               "0197e0a2-7c3b-7d4e-8f10-000000000001"
+                           )})
+        .owner();
 }
 
 } // namespace
@@ -104,21 +109,27 @@ TEST(Tenant, address_with_bad_tenant) {
     }
 }
 
-// The URIs of a location agree on the owner.
-TEST(Tenant, a_location_names_one_tenant) {
-    rawstd::URI first("ost://10.0.0.1:7777");
-    rawstd::URI second("ost://10.0.0.2:7777");
+// The URIs of a target agree on the owner.
+TEST(Tenant, a_target_names_one_tenant) {
+    rawstd::URI first(
+        rawstd::URI("ost://10.0.0.1:7777"),
+        "0197e0a2-7c3b-7d4e-8f10-000000000001"
+    );
+    rawstd::URI second(
+        rawstd::URI("ost://10.0.0.2:7777"),
+        "0197e0a2-7c3b-7d4e-8f10-000000000001"
+    );
     RawstdUUID owner = uuid(acme);
 
     EXPECT_NO_THROW(
-        rawstor::Location({rawstor::tests::with_tenant(first, owner),
-                           rawstor::tests::with_tenant(second, owner)})
+        rawstor::Target({rawstor::tests::with_tenant(first, owner),
+                         rawstor::tests::with_tenant(second, owner)})
             .owner()
     );
     try {
-        rawstor::Location({rawstor::tests::with_tenant(first, owner), second})
+        rawstor::Target({rawstor::tests::with_tenant(first, owner), second})
             .owner();
-        FAIL() << "a location names two tenants";
+        FAIL() << "a target names two tenants";
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), EINVAL);
     }
@@ -129,7 +140,7 @@ TEST(Tenant, tenant_follows_a_child_uri) {
         rawstd::URI("mds://10.0.0.2:7776"), uuid(acme)
     );
     rawstd::URI child(named, "0197e0a2-7c3b-7d4e-8f10-000000000001");
-    RawstdUUID id = rawstor::Target({child}).location().owner();
+    RawstdUUID id = rawstor::Target({child}).owner();
     RawstdUUID expected = uuid(acme);
     EXPECT_EQ(rawstd_uuid_cmp(&id, &expected), 0);
 }
@@ -273,7 +284,7 @@ TEST(TenantTest, listed_targets_name_their_owner) {
         for (const rawstd::URI& uri : target.uris()) {
             RawstdUUID named = rawstor::tests::named_owner(uri);
             if (rawstd_uuid_is_nil(&named)) {
-                RawstdUUID owner = rawstor::Target({uri}).location().owner();
+                RawstdUUID owner = rawstor::Target({uri}).owner();
                 RawstdUUID fallback = rawstor::tests::default_owner();
                 EXPECT_EQ(rawstd_uuid_cmp(&owner, &fallback), 0);
             } else {
