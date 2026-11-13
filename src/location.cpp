@@ -109,21 +109,6 @@ std::vector<rawstd::URI> build_create_uris(
     return ret;
 }
 
-// `uris` as the address of what is created through them: each names its
-// owner, the default tenant by naming none.
-std::vector<rawstd::URI> address_of(const std::vector<rawstd::URI>& uris) {
-    std::vector<rawstd::URI> ret;
-    ret.reserve(uris.size());
-    for (const rawstd::URI& uri : uris) {
-        ret.push_back(
-            rawstor::with_tenant(
-                uri, rawstor::named_tenant(rawstor::owner_of(uri))
-            )
-        );
-    }
-    return ret;
-}
-
 // RawstorPaginationToken now holds exactly a RawstdUUID's own bytes --
 // direct copies, not an encoding of anything.
 RawstdUUID decode_token(const RawstorPaginationToken& token) {
@@ -684,8 +669,7 @@ rawstd::Task<void> Location::list(
             rawstd_uuid_to_string(&group.id, &uuid_string);
             // The target names the owner of the object, not the tenant the
             // listing was asked for.
-            const rawstd::URI owned =
-                with_tenant(location, named_tenant(group.tenant));
+            const rawstd::URI owned = address_of(location, group.tenant);
             if (group.offsets.empty()) {
                 entries.emplace_back(0, rawstd::URI(owned, uuid_string));
                 continue;
@@ -907,7 +891,8 @@ int rawstor_location_create(
             build_create_uris(uris, uuid_string, *spec);
 
         res = snprintf(
-            target, size, "%s", rawstd::URI::uris(address_of(ret)).c_str()
+            target, size, "%s",
+            rawstd::URI::uris(rawstor::address_of(ret)).c_str()
         );
         if (res < 0) {
             return res;

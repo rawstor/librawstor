@@ -33,6 +33,14 @@ RawstdUUID owner_of(const std::vector<rawstd::URI>& uris);
 // `uri` with `tenant` as its user information, none for the nil UUID.
 rawstd::URI with_tenant(const rawstd::URI& uri, const RawstdUUID& tenant);
 
+// `uri` as the address of an object owned by `owner`: it names the owner,
+// the default tenant by naming none.
+rawstd::URI address_of(const rawstd::URI& uri, const RawstdUUID& owner);
+
+// `uris` as the address of what is created through them: each names its own
+// owner, the default tenant by naming none.
+std::vector<rawstd::URI> address_of(const std::vector<rawstd::URI>& uris);
+
 } // namespace rawstor
 
 #endif // RAWSTOR_TENANT_HPP

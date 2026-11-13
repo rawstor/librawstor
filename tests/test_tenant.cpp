@@ -118,6 +118,31 @@ TEST(Tenant, with_tenant_keeps_a_host_less_address) {
     EXPECT_EQ(named.path().str(), "/var/lib/rawstor");
 }
 
+// An address names its owner unless it is the default tenant.
+TEST(Tenant, address_of_names_the_owner_unless_it_is_the_default) {
+    rawstd::URI plain("mds://10.0.0.2:7776");
+    RawstdUUID owner = uuid(acme);
+
+    EXPECT_EQ(
+        rawstor::address_of(plain, owner).str(),
+        rawstor::with_tenant(plain, owner).str()
+    );
+    EXPECT_EQ(
+        rawstor::address_of(
+            rawstor::with_tenant(plain, owner), rawstor::default_tenant()
+        )
+            .str(),
+        plain.str()
+    );
+
+    // Each URI is addressed for its own owner.
+    std::vector<rawstd::URI> addressed =
+        rawstor::address_of({rawstor::with_tenant(plain, owner), plain});
+    ASSERT_EQ(addressed.size(), 2u);
+    EXPECT_EQ(addressed[0].str(), rawstor::with_tenant(plain, owner).str());
+    EXPECT_EQ(addressed[1].str(), plain.str());
+}
+
 TEST(Tenant, tenant_follows_a_child_uri) {
     rawstd::URI named =
         rawstor::with_tenant(rawstd::URI("mds://10.0.0.2:7776"), uuid(acme));

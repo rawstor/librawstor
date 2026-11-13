@@ -73,4 +73,17 @@ rawstd::URI with_tenant(const rawstd::URI& uri, const RawstdUUID& tenant) {
     return rawstd::URI(ret);
 }
 
+rawstd::URI address_of(const rawstd::URI& uri, const RawstdUUID& owner) {
+    return with_tenant(uri, named_tenant(owner));
+}
+
+std::vector<rawstd::URI> address_of(const std::vector<rawstd::URI>& uris) {
+    std::vector<rawstd::URI> ret;
+    ret.reserve(uris.size());
+    for (const rawstd::URI& uri : uris) {
+        ret.push_back(address_of(uri, owner_of(uri)));
+    }
+    return ret;
+}
+
 } // namespace rawstor
