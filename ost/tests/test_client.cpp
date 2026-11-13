@@ -97,7 +97,11 @@ std::pair<std::shared_ptr<rawstor::ostserver::Client>, int> connect_client(
     }
 
     std::shared_ptr<rawstor::ostserver::Client> client =
-        rawstor::ostserver::Client::create(queue, server, fds[0]).get();
+        rawstor::ostserver::Client::create(
+            queue, server, fds[0],
+            rawtls::Transport::plain(*static_cast<rawio::Queue*>(queue), fds[0])
+        )
+            .get();
     if (handshake) {
         RawstorFrameHandshake request = {
             .head =

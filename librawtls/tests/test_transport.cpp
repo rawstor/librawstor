@@ -370,6 +370,22 @@ TEST_F(TransportTest, RefusedServerFailsTheClientHandshake) {
     EXPECT_THROW(s.get(), std::system_error);
 }
 
+TEST_F(TransportTest, SilentPeerTimesTheHandshakeOut) {
+    rawtls::Context server_context(config(pki, server_identity));
+    rawstd::Task<std::unique_ptr<Transport>> s = Transport::tls(
+        *queue, pair.fds[1], server_context, rawtls::Session::Mode::server, "",
+        std::nullopt, 100
+    );
+    EXPECT_FALSE(pump(*queue, [&]() { return s.done(); }, 30));
+    ASSERT_TRUE(pump(*queue, [&]() { return s.done(); }));
+    try {
+        s.get();
+        FAIL() << "the handshake completed without a peer";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ETIMEDOUT);
+    }
+}
+
 TEST_F(TransportTest, PlainPeerFailsTheTlsHandshake) {
     rawtls::Context server_context(config(pki, server_identity));
     rawstd::Task<std::unique_ptr<Transport>> s = Transport::tls(

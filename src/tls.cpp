@@ -95,5 +95,16 @@ rawstd::Task<std::unique_ptr<rawtls::Transport>> connect(
     );
 }
 
+rawstd::Task<std::unique_ptr<rawtls::Transport>>
+accept(rawio::Queue& queue, int fd) {
+    rawtls::Context* c = context();
+    if (c == nullptr) {
+        co_return rawtls::Transport::plain(queue, fd);
+    }
+    co_return co_await rawtls::Transport::tls(
+        queue, fd, *c, rawtls::Session::Mode::server
+    );
+}
+
 } // namespace tls
 } // namespace rawstor

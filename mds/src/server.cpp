@@ -2,6 +2,8 @@
 
 #include <mds/client.hpp>
 
+#include "tls.hpp"
+
 #include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
@@ -59,11 +61,24 @@ Server::Server(
 
 Server::~Server() {
     _clients.clear();
+    for (int fd : _handshaking) {
+        if (::shutdown(fd, SHUT_RDWR) == -1 && errno != ENOTCONN) {
+            rawstd_warning("Failed to shut down client: %s\n", strerror(errno));
+        }
+    }
 
     if (_accept_event != nullptr) {
         int res = rawio_cancel(_queue, _accept_event);
         if (res < 0) {
             rawstd_warning("Failed to cancel event: %s\n", strerror(-res));
+        }
+    }
+
+    while (_handshakes != 0) {
+        int res = rawio_wait(_queue);
+        if (res < 0 && res != -EINTR) {
+            rawstd_warning("Failed to drain clients: %s\n", strerror(-res));
+            break;
         }
     }
 
@@ -108,7 +123,12 @@ rawstd::Task<void> Server::_add_client(int fd) {
     std::exception_ptr error;
     std::shared_ptr<Client> client;
     try {
-        client = co_await Client::create(_queue, *this, fd);
+        std::unique_ptr<rawtls::Transport> transport =
+            co_await rawstor::tls::accept(
+                *static_cast<rawio::Queue*>(_queue), fd
+            );
+        client =
+            co_await Client::create(_queue, *this, fd, std::move(transport));
     } catch (...) {
         error = std::current_exception();
     }
@@ -120,6 +140,18 @@ rawstd::Task<void> Server::_add_client(int fd) {
 
     rawstd_info("MDS client connected: fd=%d\n", fd);
     _clients.emplace(fd, std::move(client));
+}
+
+rawstd::DetachedTask Server::_admit(int fd) {
+    ++_handshakes;
+    _handshaking.insert(fd);
+    try {
+        co_await _add_client(fd);
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+    }
+    _handshaking.erase(fd);
+    --_handshakes;
 }
 
 rawstd::Task<void> Server::del_client(int fd) {
@@ -162,11 +194,8 @@ rawstd::DetachedTask Server::_accept_task() {
                 break;
             }
 
-            try {
-                co_await _add_client(fd);
-            } catch (const std::exception& e) {
-                rawstd_error("%s\n", e.what());
-            }
+            _admit(fd);
+            rawstd::DetachedTask::rethrow_if_pending();
         }
 
         if (error != ENOBUFS) {
