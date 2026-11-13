@@ -588,7 +588,32 @@ Location::create_tenant(rawio::Queue& queue, const RawstdUUID& tenant) const {
 
 rawstd::Task<void>
 Location::remove_tenant(rawio::Queue& queue, const RawstdUUID& tenant) const {
-    return tenant_op(queue, _uris, tenant, false);
+    if (_uris.size() != 1 || _uris.front().scheme() != "mds") {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
+
+    // Refused before anything is removed.
+    RawstdUUID fallback = default_tenant();
+    if (rawstd_uuid_cmp(&tenant, &fallback) == 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPERM);
+    }
+
+    // The tenant goes with its objects, each with its versions, the way
+    // an object goes with its versions: a page at a time, removing what the
+    // page lists, which does not move the listing's resume point.
+    Location owned({with_tenant(_uris.front(), tenant)});
+    RawstorPaginationToken token = {};
+    RawstdUUID next{};
+    do {
+        std::list<Target> targets;
+        co_await owned.list(queue, 0, targets, token);
+        for (const Target& target : targets) {
+            co_await target.remove(queue);
+        }
+        next = decode_token(token);
+    } while (!rawstd_uuid_is_nil(&next));
+
+    co_await tenant_op(queue, _uris, tenant, false);
 }
 
 Location::Location(const std::vector<rawstd::URI>& uris) : _uris(uris) {

@@ -245,11 +245,15 @@ int rawstor_location_create_tenant(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously remove an empty tenant from an MDS.
+ * @brief Asynchronously remove a tenant from an MDS, with its objects.
  *
- * @p location must name exactly one `mds://` URI. The MDS answers -ENOENT
- * for an unknown tenant, -EBUSY while the tenant has objects and -EPERM for
- * the default tenant.
+ * @p location must name exactly one `mds://` URI. Every object the tenant owns
+ * is removed first, each with its versions, then the tenant itself: -EPERM
+ * for the default tenant, which is refused before anything is removed, and
+ * -ENOENT for an unknown tenant. A failure part-way leaves the objects not
+ * yet removed and the tenant registered; repeating the call finishes the job.
+ * An object created for the tenant while it is being removed can make the
+ * last step answer -EBUSY.
  *
  * @return 0 if the operation was started, a negative errno otherwise.
  */

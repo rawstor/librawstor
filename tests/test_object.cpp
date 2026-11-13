@@ -848,6 +848,68 @@ TEST(ObjectTenantTest, a_transfer_moves_the_object_and_its_chunks) {
     run(*queue, rawstor::Target({rawstd::URI(mds, id)}).remove(*queue));
 }
 
+// Removing a tenant removes the objects it owns, each with its chunks; the
+// default tenant is refused before any object is touched.
+TEST(ObjectTenantTest, removing_a_tenant_removes_its_objects) {
+    rawstor::tests::ObjectEnv env(8904, 8905);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    rawstd::URI mds(env.location());
+    rawstor::Location admin({mds});
+    RawstdUUID acme;
+    ASSERT_EQ(rawstd_uuid7_init(&acme), 0);
+    run(*queue, admin.create_tenant(*queue, acme));
+
+    RawstorObjectSpec spec{};
+    spec.size = 1ull << 20;
+    spec.width = 1;
+    spec.chunk_size = 512ull << 10;
+    const char* ids[] = {
+        "018f4e2a-3000-7000-8000-000000000051",
+        "018f4e2a-3000-7000-8000-000000000052",
+        "018f4e2a-3000-7000-8000-000000000053",
+    };
+    for (const char* id : ids) {
+        run(*queue,
+            rawstor::Target({rawstd::URI(rawstor::with_tenant(mds, acme), id)})
+                .create(*queue, spec));
+    }
+    // An object of the default tenant stays.
+    const char* kept = "018f4e2a-3000-7000-8000-000000000054";
+    run(*queue, rawstor::Target({rawstd::URI(mds, kept)}).create(*queue, spec));
+
+    auto count_for = [&](const RawstdUUID& tenant) {
+        std::list<rawstor::Target> targets;
+        RawstorPaginationToken token = {};
+        run(*queue, rawstor::Location({rawstor::with_tenant(mds, tenant)})
+                        .list(*queue, 0, targets, token));
+        return targets.size();
+    };
+    ASSERT_EQ(count_for(acme), 3u);
+
+    try {
+        run(*queue, admin.remove_tenant(*queue, rawstor::default_tenant()));
+        FAIL() << "removed the default tenant";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EPERM);
+    }
+    EXPECT_EQ(count_for(rawstor::default_tenant()), 1u);
+
+    run(*queue, admin.remove_tenant(*queue, acme));
+    EXPECT_EQ(count_for(acme), 0u);
+    EXPECT_EQ(count_for(rawstor::default_tenant()), 1u);
+
+    // The tenant is gone too.
+    try {
+        run(*queue, admin.remove_tenant(*queue, acme));
+        FAIL() << "removed a tenant twice";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOENT);
+    }
+
+    run(*queue, rawstor::Target({rawstd::URI(mds, kept)}).remove(*queue));
+}
+
 // Grow-only: the MDS itself rejects a smaller new_size.
 TEST(ObjectResizeTest, shrink_is_einval) {
     rawstor::tests::ObjectEnv env(8780, 8781);

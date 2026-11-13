@@ -87,8 +87,8 @@ class Location:
 
     def remove_tenant(self, tenant: str) -> None:
         """Remove `tenant` from the MDS this location names. Raises
-        OSError: ENOENT if it is not registered, EBUSY while it owns an
-        object, EPERM for the default tenant."""
+        OSError: ENOENT if it is not registered, EPERM for the default
+        tenant (refused before anything is removed)."""
         librawstor.tenant_remove(self._uri, tenant)
 
     def objects(self) -> Iterator[Target]:

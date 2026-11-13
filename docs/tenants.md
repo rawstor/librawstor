@@ -181,6 +181,16 @@ object (`-EBUSY` while it owns one, `-EPERM` for the default tenant). Both are i
 between registers it again. Tenants have no names in rawstor: the control plane
 that creates them keeps its own.
 
+Removing a tenant removes its objects, the way removing an object removes its
+versions: `rawstor tenant remove`, `rawstor_location_remove_tenant()` and
+pyrawstor `remove_tenant()` list the objects the tenant owns a page at a time
+and remove each one (with its versions, from the MDS and from every OST), and
+only then send `TENANT_REMOVE`, which itself still answers `-EBUSY` while the
+tenant owns an object. The default tenant is refused (`-EPERM`) before any
+object is touched. A failure part-way leaves the objects not yet removed and
+the tenant registered, and running the removal again finishes it. An object
+created for the tenant meanwhile can make the last step answer `-EBUSY`.
+
 `--reconstruct` rebuilds the map from what the OSTs hold, and the owner is part
 of a chunk's metadata, so owners come back with it; a tenant found as an owner is
 registered again.
@@ -216,7 +226,7 @@ rawstor tenant create mds://10.0.0.2:7776            # prints the new tenant_id
 rawstor tenant create mds://10.0.0.2:7776 --uuid <uuid>
 rawstor tenant create mds://10.0.0.2:7776 --format value   # just the id
 rawstor tenant list   mds://10.0.0.2:7776
-rawstor tenant remove mds://10.0.0.2:7776 <uuid>
+rawstor tenant remove mds://10.0.0.2:7776 <uuid>       # with every object it owns
 
 rawstor object create mds://<tenant>@10.0.0.2:7776 --size 10G ...   # owned by <tenant>
 rawstor object create mds://10.0.0.2:7776 ...                       # owned by the default tenant
