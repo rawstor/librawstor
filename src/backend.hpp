@@ -157,7 +157,7 @@ public:
     // Creates one data or metadata-only witness member. member_role is
     // placement identity, distinct from the chunk-wide specification. `owner`
     // is the tenant the object belongs to (docs/tenants.md), recorded with it
-    // and never changed; the nil UUID records none.
+    // until set_owner() records another; the nil UUID records none.
     virtual rawstd::Task<void> create(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         uint64_t offset, const RawstorObjectSpec& sp,

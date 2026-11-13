@@ -76,13 +76,14 @@ private:
 public:
     // A chunk's own logical size and placement identity (docs/mds.md,
     // chunk_meta), separate from mutable copy metadata: stamped at create,
-    // immutable afterwards, persisted alongside the copy metadata by
-    // meta_encode()/meta_decode() below. _write_meta() must read the existing
-    // record and carry this part through unchanged rather than reset it, since
-    // it never receives this identity itself. chunk_size here is always the
-    // full byte value -- RawstorFrameAllocatePayload's own chunk_shift is only
-    // a wire-transfer encoding (its own doc comment on why), already converted
-    // back to bytes before reaching this local record.
+    // immutable afterwards except for the owner (set_owner()), persisted
+    // alongside the copy metadata by meta_encode()/meta_decode() below.
+    // _write_meta() must read the existing record and carry this part through
+    // unchanged rather than reset it, since it never receives this identity
+    // itself; only a non-null `owner` replaces the recorded tenant. chunk_size
+    // here is always the full byte value -- RawstorFrameAllocatePayload's own
+    // chunk_shift is only a wire-transfer encoding (its own doc comment on
+    // why), already converted back to bytes before reaching this local record.
     struct ChunkIdentity {
         RawstorMemberRole member_role;
         uint8_t width;
@@ -166,10 +167,10 @@ protected:
     ) = 0;
 
     // Encodes/decodes the copy state and configuration plus a ChunkIdentity
-    // (the latter stamped at create and never changed again) as a compact
-    // colon-separated string of hex fields, the roles one digit per member
-    // (enum RawstorObjectMemberRole), "-" when none are recorded, and a ballot
-    // as "counter.proposer", e.g. "version=1:state=1:epoch=0:sync_id=0:
+    // (the latter stamped at create, its owner changed only by set_owner()) as
+    // a compact colon-separated string of hex fields, the roles one digit per
+    // member (enum RawstorObjectMemberRole), "-" when none are recorded, and a
+    // ballot as "counter.proposer", e.g. "version=1:state=1:epoch=0:sync_id=0:
     // h0=0:h1=0:h2=0:h3=0:resync_owner=0:promised=0.0:accepted=0.0:
     // roles=-:member_role=1:width=0:chunk_size=0:size=0" -- shared by every
     // blk-backed subclass's own native per-copy metadata storage:
