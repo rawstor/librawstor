@@ -220,7 +220,10 @@ is answered with its recorded result and is not applied again, so it does not
 undo a transfer made since.
 
 A transfer that fails part-way, say with a copy unreachable, leaves copies with
-different owners until it is run again, which finishes it; until then
+different owners until it is run again, which finishes it. A member the MDS has
+no address for (its OST is gone from the topology) is unreachable too: the
+other members are done, then the transfer fails with `-ENOTCONN` instead of
+reporting success; until then
 `--reconstruct` refuses the object (`-EINVAL`: its copies disagree on the
 owner). A `resize` meanwhile is not affected: the chunks it adds are created for
 the owner the MDS has, which `OBJ_RESIZE` reports, not for the owner some copy

@@ -793,9 +793,14 @@ rawstd::Task<void> Backend::set_owner(
     co_await exchange(&request, sizeof(request), RAWSTOR_CMD_OBJ_TRANSFER, 0);
 
     WireMap map = co_await _resolve(id, RawstdUUID{});
+    bool unaddressed = false;
     for (uint64_t i = 0; i < map.chunks.size(); ++i) {
         for (const auto& member : map.chunks[i]) {
+            // A member the topology has no address for cannot be reached:
+            // the others are done first, then the transfer fails, so that
+            // the caller does not take it for complete.
             if (member.location.empty()) {
+                unaddressed = true;
                 continue;
             }
             auto slot = co_await Slot::create(_queue, slot_location(member));
@@ -810,6 +815,10 @@ rawstd::Task<void> Backend::set_owner(
                 std::rethrow_exception(error);
             }
         }
+    }
+    if (unaddressed) {
+        rawstd_error("transfer: a member of the object has no address\n");
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
 }
 
