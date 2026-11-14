@@ -38,7 +38,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev libsqlite3-dev libtool pkg-config ${{ matrix.packages }}
+        sudo apt-get install -y libxxhash-dev libssl-dev libsqlite3-dev libtool pkg-config ${{ matrix.packages }}
     - uses: actions/checkout@v7
       with:
         path: librawstor
