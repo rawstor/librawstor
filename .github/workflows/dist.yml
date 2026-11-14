@@ -56,7 +56,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev libgtest-dev python3-build
+        sudo apt-get install -y libxxhash-dev libssl-dev liburing-dev libgtest-dev python3-build
     - uses: actions/checkout@v7
       with:
         fetch-depth: 0
@@ -92,7 +92,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev libgtest-dev python3-build ${{ matrix.packages }}
+        sudo apt-get install -y libxxhash-dev libssl-dev libgtest-dev python3-build ${{ matrix.packages }}
     - uses: actions/download-artifact@v8
       with:
         name: sources
@@ -137,7 +137,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev python3-build ${{ matrix.packages }}
+        sudo apt-get install -y libxxhash-dev libssl-dev python3-build ${{ matrix.packages }}
     - uses: actions/download-artifact@v8
       with:
         name: sources
@@ -193,7 +193,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev libsqlite3-dev debhelper build-essential
+        sudo apt-get install -y libxxhash-dev libssl-dev liburing-dev libsqlite3-dev debhelper build-essential
     - uses: actions/download-artifact@v8
       with:
         name: sources
@@ -283,7 +283,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev liburing-dev python3-build debhelper dh-python python3-all-dev build-essential pkg-config
+        sudo apt-get install -y libxxhash-dev libssl-dev liburing-dev python3-build debhelper dh-python python3-all-dev build-essential pkg-config
     - uses: actions/download-artifact@v8
     - name: install librawstor
       run: |
@@ -430,7 +430,7 @@ jobs:
       run: |
         dnf -y install epel-release
         dnf config-manager --set-enabled crb
-        dnf -y install xxhash-devel liburing-devel sqlite-devel gcc-c++ make pkgconfig systemd-rpm-macros rpm-build rpmlint
+        dnf -y install xxhash-devel openssl-devel liburing-devel sqlite-devel gcc-c++ make pkgconfig systemd-rpm-macros rpm-build rpmlint
     - uses: actions/download-artifact@v8
       with:
         name: sources
@@ -496,7 +496,7 @@ jobs:
       run: |
         dnf -y install epel-release
         dnf config-manager --set-enabled crb
-        dnf -y install xxhash-devel liburing-devel gcc-c++ make pkgconfig python3-devel python3-rpm-macros python3-pip python3-wheel python3-build python3-setuptools rpm-build rpmlint
+        dnf -y install xxhash-devel openssl-devel liburing-devel gcc-c++ make pkgconfig python3-devel python3-rpm-macros python3-pip python3-wheel python3-build python3-setuptools rpm-build rpmlint
     - uses: actions/download-artifact@v8
     - name: install librawstor
       run: dnf -y install ./librawstor.rpm/librawstor-[0-9]*.rpm ./librawstor.rpm/librawstor-devel-*.rpm
@@ -643,7 +643,7 @@ jobs:
       run: |
         dnf -y install epel-release
         dnf config-manager --set-enabled crb
-        dnf -y install xxhash-devel liburing-devel gcc-c++ make pkgconfig python3-devel python3-pip python3-wheel python3-build python3-setuptools patchelf
+        dnf -y install xxhash-devel openssl-devel liburing-devel gcc-c++ make pkgconfig python3-devel python3-pip python3-wheel python3-build python3-setuptools patchelf
         python3 -m pip install auditwheel
     - uses: actions/download-artifact@v8
     - name: install librawstor
