@@ -538,7 +538,14 @@ handshake_deadline(std::shared_ptr<TlsState> s, unsigned int timeout_ms) {
     s->timer = nullptr;
     if (s->handshaking) {
         s->timed_out = true;
-        cancel_receive_now(*s);
+        // Everything the handshake has pending on the socket, a send held up
+        // by a peer that does not read as much as a recv.
+        s->cancelled = true;
+        try {
+            s->queue.cancel(s->fd);
+        } catch (const std::exception& e) {
+            rawstd_warning("Failed to cancel the handshake: %s\n", e.what());
+        }
     }
 }
 

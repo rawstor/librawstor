@@ -87,20 +87,18 @@ Context::Context(const Config& config) :
 }
 
 std::shared_ptr<ssl_ctx_st> Context::_snapshot() {
-    std::shared_ptr<ssl_ctx_st> fresh;
+    // The rebuild is done under the lock: a session created while it runs
+    // waits for it instead of starting from the credentials being replaced.
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_reload_requested.exchange(false)) {
         try {
-            fresh = build(_config);
+            _ctx = build(_config);
             rawstd_info("TLS settings reloaded\n");
         } catch (const std::system_error& e) {
             rawstd_error(
                 "TLS settings not reloaded, the old ones stay: %s\n", e.what()
             );
         }
-    }
-    std::lock_guard<std::mutex> lock(_mutex);
-    if (fresh) {
-        _ctx = std::move(fresh);
     }
     return _ctx;
 }
