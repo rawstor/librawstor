@@ -20,7 +20,8 @@ The table maps the page's components to what exists today.
 | Client-side redundancy (writes to multiple OSTs) | ✅ | mirroring, `src/chunk.cpp` |
 | Parallel reads from multiple OSTs | ❌ | reads go to one IN-SYNC mirror |
 | Hashsum | 🟡 | transport hash only (xxh3); no stored checksums |
-| Compression / encryption | ❌ | — |
+| Compression | ❌ | — |
+| Encryption | ❌ | planned in [Security design](security.md) |
 | `flush` / `version` in the client API | ✅ | `rawstor_object_flush()`, `rawstor_target_create_version()` |
 | Block storage client (VM) | ✅ | `vhost/`, `vhost-qemu/`, `vduse/` |
 | S3 gateway | ❌ | — |

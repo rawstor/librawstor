@@ -36,7 +36,8 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Tenant: owner of an object (`ALLOCATE`, `OBJ_CREATE`, `META`), filter of `LIST`; registry `LIST_TENANTS`, `TENANT_CREATE` / `TENANT_REMOVE` on the MDS | ✅ | OST `ost/src/client.cpp`, MDS `mds/src/client.cpp`; [Tenants](tenants.md) |
 | Explicit `len` field in the response (`{res, len, hash}`) | ❌ | `res` still carries the payload size |
 | `map_epoch` in the IO frame (epoch-fence) | ❌ | planned in [MDS design](mds.md) |
-| Auth / capabilities | ❌ | open question |
+| Authentication: mutual TLS on every connection, identity from the certificate | ❌ | planned in [Security design](security.md) (stage 2) |
+| Authorization: capability tokens issued by `RESOLVE` and checked by the OST, per-command rights | ❌ | planned in [Security design](security.md) (stage 3) |
 
 One binary protocol is spoken by every rawstor server role: `rawstor-ost`
 (object storage) and `rawstor-mds` (metadata server). The authoritative
@@ -65,7 +66,7 @@ A client may pipeline requests: each carries a `cid` (command id) and its
 response echoes it back, so responses are matched by `cid`, not by order.
 
 The first request on a connection is `HANDSHAKE`: the client offers its
-capabilities and the server answers with the ones it accepts. A server serves
+features and the server answers with the ones it accepts. A server serves
 nothing before it: any other first request is answered `-EPROTO` and the
 connection is closed, and so is a second `HANDSHAKE`. Then, on an OST,
 `SET_OBJECT` binds the connection to a copy through a Slot, identified by `object_id`, `offset`
@@ -226,10 +227,10 @@ none any more -- the lease ran out and the barrier lifted itself.
 ### Handshake — 8 bytes
 
 `HANDSHAKE`'s request and response payload. `features` is the set of optional
-capabilities, a bit mask; no bit is defined yet. The client offers what it has
-and the server answers with the subset it accepts, which the connection then
-uses; each side ignores the bits it does not know. There is no protocol
-version: capabilities are the only negotiation.
+protocol features, a bit mask; no bit is defined yet. The client offers what it
+has and the server answers with the subset it accepts, which the connection
+then uses; each side ignores the bits it does not know. There is no protocol
+version: features are the only negotiation.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
