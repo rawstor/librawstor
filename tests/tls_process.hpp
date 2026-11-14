@@ -32,7 +32,10 @@ public:
     rawtls::testing::Pki pki;
     rawtls::testing::Identity identity;
 
-    explicit TlsProcess(const std::string& uri) {
+    // `mds_id`, if given, is the name of the one MDS this process accepts.
+    explicit TlsProcess(
+        const std::string& uri, const std::string& mds_id = ""
+    ) {
         rawtls::testing::IssueOptions options;
         options.uris = {uri};
         identity = pki.issue("process", options);
@@ -40,6 +43,9 @@ public:
         setenv("RAWSTOR_TLS_CERT", identity.cert_file.c_str(), 1);
         setenv("RAWSTOR_TLS_KEY", identity.key_file.c_str(), 1);
         setenv("RAWSTOR_TLS_CA", pki.ca_file().c_str(), 1);
+        if (!mds_id.empty()) {
+            setenv("RAWSTOR_TLS_MDS_ID", mds_id.c_str(), 1);
+        }
         restart();
     }
 
@@ -51,6 +57,7 @@ public:
         unsetenv("RAWSTOR_TLS_CERT");
         unsetenv("RAWSTOR_TLS_KEY");
         unsetenv("RAWSTOR_TLS_CA");
+        unsetenv("RAWSTOR_TLS_MDS_ID");
         restart();
     }
 };

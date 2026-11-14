@@ -63,6 +63,55 @@ TEST(OptsTest, zero_disables_timeouts) {
     EXPECT_EQ(rawstor_opts_so_rcvtimeo(), 0u);
 }
 
+TEST(OptsTest, tls_settings_come_together_or_not_at_all) {
+    EXPECT_EQ(rawstor_opts_tls_trust_domain(), nullptr);
+    {
+        ScopedEnv cert("RAWSTOR_TLS_CERT", "/etc/rawstor/tls/cert.pem");
+        EXPECT_EQ(rawstor_opts_initialize(nullptr), -EINVAL);
+    }
+    {
+        ScopedEnv domain("RAWSTOR_TLS_TRUST_DOMAIN", "cluster.example");
+        ScopedEnv cert("RAWSTOR_TLS_CERT", "/etc/rawstor/tls/cert.pem");
+        ScopedEnv key("RAWSTOR_TLS_KEY", "/etc/rawstor/tls/key.pem");
+        EXPECT_EQ(rawstor_opts_initialize(nullptr), -EINVAL);
+    }
+    {
+        ScopedEnv domain("RAWSTOR_TLS_TRUST_DOMAIN", "");
+        EXPECT_EQ(rawstor_opts_initialize(nullptr), -EINVAL);
+    }
+}
+
+TEST(OptsTest, tls_extras_need_the_tls_settings) {
+    {
+        ScopedEnv mds("RAWSTOR_TLS_MDS_ID", "mds-1");
+        EXPECT_EQ(rawstor_opts_initialize(nullptr), -EINVAL);
+    }
+    {
+        ScopedEnv crl("RAWSTOR_TLS_CRL", "/etc/rawstor/tls/ca.crl");
+        EXPECT_EQ(rawstor_opts_initialize(nullptr), -EINVAL);
+    }
+}
+
+TEST(OptsTest, tls_settings_are_read) {
+    {
+        ScopedEnv domain("RAWSTOR_TLS_TRUST_DOMAIN", "cluster.example");
+        ScopedEnv cert("RAWSTOR_TLS_CERT", "/etc/rawstor/tls/cert.pem");
+        ScopedEnv key("RAWSTOR_TLS_KEY", "/etc/rawstor/tls/key.pem");
+        ScopedEnv ca("RAWSTOR_TLS_CA", "/etc/rawstor/tls/ca.pem");
+        ScopedEnv crl("RAWSTOR_TLS_CRL", "/etc/rawstor/tls/ca.crl");
+        ScopedEnv mds("RAWSTOR_TLS_MDS_ID", "mds-1");
+        EXPECT_EQ(rawstor_opts_initialize(nullptr), 0);
+        EXPECT_STREQ(rawstor_opts_tls_trust_domain(), "cluster.example");
+        EXPECT_STREQ(rawstor_opts_tls_cert(), "/etc/rawstor/tls/cert.pem");
+        EXPECT_STREQ(rawstor_opts_tls_key(), "/etc/rawstor/tls/key.pem");
+        EXPECT_STREQ(rawstor_opts_tls_ca(), "/etc/rawstor/tls/ca.pem");
+        EXPECT_STREQ(rawstor_opts_tls_crl(), "/etc/rawstor/tls/ca.crl");
+        EXPECT_STREQ(rawstor_opts_tls_mds_id(), "mds-1");
+    }
+    EXPECT_EQ(rawstor_opts_tls_trust_domain(), nullptr);
+    EXPECT_EQ(rawstor_opts_tls_mds_id(), nullptr);
+}
+
 TEST(OptsTest, invalid_struct_values_fail) {
     RawstorOpts opts{};
     opts.io_retry_backoff_jitter = 101;
