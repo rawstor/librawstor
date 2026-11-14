@@ -138,22 +138,19 @@ namespace rawstor {
 namespace mdsserver {
 
 rawstd::Task<std::shared_ptr<Client>> Client::create(
-    RawIOQueue* queue, Server& server, int fd,
-    std::unique_ptr<rawtls::Transport> transport
+    Server& server, int fd, std::unique_ptr<rawtls::Transport> transport
 ) {
-    std::shared_ptr<Client> client = std::make_shared<Client>(
-        Private(), queue, server, fd, std::move(transport)
-    );
+    std::shared_ptr<Client> client =
+        std::make_shared<Client>(Private(), server, fd, std::move(transport));
     _recv_pump(client);
     rawstd::DetachedTask::rethrow_if_pending();
     co_return client;
 }
 
 Client::Client(
-    Private, RawIOQueue* queue, Server& server, int fd,
+    Private, Server& server, int fd,
     std::unique_ptr<rawtls::Transport> transport
 ) :
-    _queue(queue),
     _server(server),
     _fd(fd),
     _transport(std::move(transport)) {

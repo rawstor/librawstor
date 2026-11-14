@@ -36,7 +36,6 @@ private:
         explicit Private() = default;
     };
 
-    RawIOQueue* _queue;
     Server& _server;
     int _fd;
     // The connection's bytes, plain or through TLS.
@@ -60,12 +59,11 @@ private:
 public:
     // `transport` is the connection on `fd`, after any TLS handshake.
     static rawstd::Task<std::shared_ptr<Client>> create(
-        RawIOQueue* queue, Server& server, int fd,
-        std::unique_ptr<rawtls::Transport> transport
+        Server& server, int fd, std::unique_ptr<rawtls::Transport> transport
     );
 
     Client(
-        Private, RawIOQueue* queue, Server& server, int fd,
+        Private, Server& server, int fd,
         std::unique_ptr<rawtls::Transport> transport
     );
     Client(const Client&) = delete;

@@ -127,8 +127,7 @@ rawstd::Task<void> Server::_add_client(int fd) {
             co_await rawstor::tls::accept(
                 *static_cast<rawio::Queue*>(_queue), fd
             );
-        client =
-            co_await Client::create(_queue, *this, fd, std::move(transport));
+        client = co_await Client::create(*this, fd, std::move(transport));
     } catch (...) {
         error = std::current_exception();
     }
