@@ -18,8 +18,6 @@
 
 #include <sys/uio.h>
 
-namespace rawtls {
-
 namespace {
 
 // Hands a lock to coroutines one at a time, in the order they asked. The
@@ -80,7 +78,7 @@ private:
     }
 };
 
-class PlainTransport final : public Transport {
+class PlainTransport final : public rawtls::Transport {
 private:
     rawio::Queue& _queue;
     int _fd;
@@ -90,11 +88,12 @@ public:
         _queue(queue),
         _fd(fd) {}
 
-    Op<size_t> send(const void* buf, size_t size, unsigned int flags) override {
+    rawtls::Op<size_t>
+    send(const void* buf, size_t size, unsigned int flags) override {
         return _queue.send(_fd, buf, size, flags);
     }
 
-    Op<size_t> sendmsg(const msghdr* msg, unsigned int flags) override {
+    rawtls::Op<size_t> sendmsg(const msghdr* msg, unsigned int flags) override {
         return _queue.sendmsg(_fd, msg, flags);
     }
 
@@ -104,11 +103,11 @@ public:
         return _queue.recv_multishot(_fd, entry_size, entries, size, flags);
     }
 
-    Op<void> cancel_receive(rawio::Event* event) override {
+    rawtls::Op<void> cancel_receive(rawio::Event* event) override {
         return _queue.cancel(event);
     }
 
-    const SpiffeId* peer() const noexcept override { return nullptr; }
+    const rawtls::SpiffeId* peer() const noexcept override { return nullptr; }
 };
 
 const size_t cipher_size = 1 << 16;
@@ -120,7 +119,7 @@ const size_t record_size = 1 << 14;
 struct TlsState {
     rawio::Queue& queue;
     int fd;
-    Session session;
+    rawtls::Session session;
     // Orders everything written to the socket: a send takes it from encrypting
     // until the last byte of its records is out.
     AsyncMutex write_mutex;
@@ -139,8 +138,9 @@ struct TlsState {
     bool timed_out = false;
 
     TlsState(
-        rawio::Queue& q, int f, Context& context, Session::Mode mode,
-        const std::string& expected_peer, std::optional<Role> expected_role
+        rawio::Queue& q, int f, rawtls::Context& context,
+        rawtls::Session::Mode mode, const std::string& expected_peer,
+        std::optional<rawtls::Role> expected_role
     ) :
         queue(q),
         fd(f),
@@ -269,6 +269,33 @@ rawstd::Task<void> tls_handshake(std::shared_ptr<TlsState> s) {
     } catch (...) {
     }
     std::rethrow_exception(error);
+}
+
+// Ends the handshake if the peer has not finished it in time, by cancelling the
+// recv it is waiting in.
+rawstd::DetachedTask
+handshake_deadline(std::shared_ptr<TlsState> s, unsigned int timeout_ms) {
+    rawio::Awaitable<void> timer = s->queue.timeout(timeout_ms * 1000u);
+    s->timer = timer.event();
+    try {
+        co_await timer;
+    } catch (const std::system_error&) {
+        // Cancelled: the handshake ended first.
+        s->timer = nullptr;
+        co_return;
+    }
+    s->timer = nullptr;
+    if (s->handshaking) {
+        s->timed_out = true;
+        // Everything the handshake has pending on the socket, a send held up
+        // by a peer that does not read as much as a recv.
+        s->cancelled = true;
+        try {
+            s->queue.cancel(s->fd);
+        } catch (const std::exception& e) {
+            rawstd_warning("Failed to cancel the handshake: %s\n", e.what());
+        }
+    }
 }
 
 /*
@@ -483,7 +510,7 @@ public:
     }
 };
 
-class TlsTransport final : public Transport {
+class TlsTransport final : public rawtls::Transport {
 private:
     std::shared_ptr<TlsState> _s;
 
@@ -491,11 +518,12 @@ public:
     explicit TlsTransport(std::shared_ptr<TlsState> state) :
         _s(std::move(state)) {}
 
-    Op<size_t> send(const void* buf, size_t size, unsigned int) override {
+    rawtls::Op<size_t>
+    send(const void* buf, size_t size, unsigned int) override {
         return tls_send(_s, buf, size);
     }
 
-    Op<size_t> sendmsg(const msghdr* msg, unsigned int) override {
+    rawtls::Op<size_t> sendmsg(const msghdr* msg, unsigned int) override {
         return tls_sendmsg(_s, msg);
     }
 
@@ -505,51 +533,22 @@ public:
         return rawio::RecvStream(std::make_shared<TlsRecv>(_s));
     }
 
-    Op<void> cancel_receive(rawio::Event*) override {
+    rawtls::Op<void> cancel_receive(rawio::Event*) override {
         return cancel_receive_task(_s);
     }
 
-    const SpiffeId* peer() const noexcept override {
+    const rawtls::SpiffeId* peer() const noexcept override {
         return &_s->session.peer();
     }
 };
 
 } // namespace
 
+namespace rawtls {
+
 std::unique_ptr<Transport> Transport::plain(rawio::Queue& queue, int fd) {
     return std::make_unique<PlainTransport>(queue, fd);
 }
-
-namespace {
-
-// Ends the handshake if the peer has not finished it in time, by cancelling the
-// recv it is waiting in.
-rawstd::DetachedTask
-handshake_deadline(std::shared_ptr<TlsState> s, unsigned int timeout_ms) {
-    rawio::Awaitable<void> timer = s->queue.timeout(timeout_ms * 1000u);
-    s->timer = timer.event();
-    try {
-        co_await timer;
-    } catch (const std::system_error&) {
-        // Cancelled: the handshake ended first.
-        s->timer = nullptr;
-        co_return;
-    }
-    s->timer = nullptr;
-    if (s->handshaking) {
-        s->timed_out = true;
-        // Everything the handshake has pending on the socket, a send held up
-        // by a peer that does not read as much as a recv.
-        s->cancelled = true;
-        try {
-            s->queue.cancel(s->fd);
-        } catch (const std::exception& e) {
-            rawstd_warning("Failed to cancel the handshake: %s\n", e.what());
-        }
-    }
-}
-
-} // namespace
 
 rawstd::Task<std::unique_ptr<Transport>> Transport::tls(
     rawio::Queue& queue, int fd, Context& context, Session::Mode mode,
