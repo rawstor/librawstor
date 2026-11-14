@@ -27,6 +27,27 @@ jobs:
     - name: clang-format
       run: ./.github/tools/clang-format.sh
 
+  docs:
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: pip
+        cache-dependency-path: docs/requirements.txt
+    - name: install dependencies
+      run: pip install -r docs/requirements.txt
+    - name: mkdocs build --strict
+      run: mkdocs build --strict
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   sources:
 
     runs-on: ubuntu-latest
@@ -744,6 +765,7 @@ jobs:
   release:
     needs:
     - linter
+    - docs
     - sources
     - sources-unittest
     - sources-testio
