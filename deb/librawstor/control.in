@@ -3,6 +3,7 @@ Section: libs
 Priority: optional
 Maintainer: @MAINTAINER@
 Build-Depends: debhelper (>= 12),
+               libssl-dev,
                libsqlite3-dev
 Standards-Version: 4.7.0
 

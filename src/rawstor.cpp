@@ -2,6 +2,7 @@
 
 #include "opts.h"
 #include "telemetry.hpp"
+#include "tls.hpp"
 
 #include <rawio/queue.hpp>
 
@@ -54,6 +55,14 @@ int rawstor_initialize(const RawstorOpts* opts) noexcept {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
 
+        try {
+            rawstor::tls::initialize();
+        } catch (...) {
+            rawstor_opts_terminate();
+            rawstd_logging_terminate();
+            throw;
+        }
+
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();
@@ -68,8 +77,13 @@ int rawstor_initialize(const RawstorOpts* opts) noexcept {
     }
 }
 
+void rawstor_tls_request_reload() noexcept {
+    rawstor::tls::request_reload();
+}
+
 void rawstor_terminate() noexcept {
     rawstor::telemetry::dump();
+    rawstor::tls::terminate();
     rawstor_opts_terminate();
     rawstd_logging_terminate();
 }

@@ -122,6 +122,10 @@ AS_IF([test "x$with_libxxhash" = "xyes"], [
 ])
 
 
+AC_SUBST([OPENSSL_MIN_VERSION], ["3.0"])
+PKG_CHECK_MODULES([OPENSSL], [openssl >= $OPENSSL_MIN_VERSION])
+
+
 AC_ARG_WITH([sqlite3], [AS_HELP_STRING([--without-sqlite3],
     [disable sqlite3 support (also disables the MDS server, which needs it)])],
     [with_sqlite3=$withval],
@@ -175,6 +179,9 @@ AC_CONFIG_FILES(
     [librawthread/Makefile]
     [librawthread/src/Makefile]
     [librawthread/tests/Makefile]
+    [librawtls/Makefile]
+    [librawtls/src/Makefile]
+    [librawtls/tests/Makefile]
     [src/Makefile]
     [src/rawstor.pc]
     [cli/Makefile]

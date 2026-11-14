@@ -115,147 +115,6 @@ rawstd::Task<void> co_close_fd(RawIOQueue* queue, int fd) {
     co_await awaiter;
 }
 
-// rawio_send()/rawio_sendmsg() share this callback shape (ssize_t
-// result/data, same as co_close_fd()'s close_fd_trampoline() above, but
-// non-negative on success rather than close_fd_trampoline()'s "0 or
-// -errno"). CallbackAwaitable<size_t>::complete() still wants a
-// non-negative value and a separate error code, so split it back apart
-// here.
-int send_trampoline(ssize_t result, void* data) {
-    size_t value = result < 0 ? 0 : static_cast<size_t>(result);
-    int error = result < 0 ? static_cast<int>(-result) : 0;
-    static_cast<rawstd::CallbackAwaitable<size_t>*>(data)->complete(
-        value, error
-    );
-    return 0;
-}
-
-rawstd::Task<size_t> co_send(
-    RawIOQueue* queue, int fd, const void* buf, size_t size, unsigned int flags
-) {
-    rawstd::CallbackAwaitable<size_t> awaiter;
-    int res =
-        rawio_send(queue, fd, buf, size, flags, send_trampoline, &awaiter);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_return co_await awaiter;
-}
-
-rawstd::Task<size_t>
-co_sendmsg(RawIOQueue* queue, int fd, const msghdr* msg, unsigned int flags) {
-    rawstd::CallbackAwaitable<size_t> awaiter;
-    int res = rawio_sendmsg(queue, fd, msg, flags, send_trampoline, &awaiter);
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    co_return co_await awaiter;
-}
-
-// ---------------------------------------------------------------------
-// rawstd::CallbackStream<T> bridge over rawio_recv_multishot()'s "want N
-// bytes next" flow control (the callback's return value specifies the
-// size of the next buffer): wraps CallbackStream<size_t> (just the byte
-// count actually delivered -- unlike ost/src/ost_backend.cpp's
-// rawio::RecvStream, which extends the ring buffer's own lifetime via a
-// shared_ptr internally, this can't offer that over the C ABI, but it
-// doesn't need to either: recv_trampoline() below copies straight into
-// whatever destination the awaiting coroutine already owns -- a stack
-// wire struct or a pre-sized vector, both passed to recv_frame() below --
-// instead of handing back a fresh buffer of its own for the caller to
-// then copy out of again) with the extra
-// bookkeeping recv_multishot's callback shape needs that
-// accept_multishot's plain int result doesn't: the size (and now
-// destination) to request next has to come FROM the awaiting coroutine
-// (via next()), not just echo a fixed value the way accept_trampoline()
-// does.
-//
-// Unlike every other CallbackStream<T>/CallbackAwaitable<T> instance in
-// this file (always a named local in the *awaiting* coroutine's own
-// frame), this one is heap-allocated and outlives whichever coroutine is
-// consuming it -- see recv_trampoline() below for why.
-//
-// IMPORTANT: recv_trampoline()'s return value must never be negative.
-// librawio's own C-ABI bridge for this call (launch_recv_stream_op_coro()
-// in librawio/src/rawio.cpp) throws RAWSTD_THROW_SYSTEM_ERROR(-res) on a
-// negative return -- from inside *its own* DetachedTask, unrelated to
-// this Client's -- which then surfaces from the very next, unrelated
-// rawio_wait()/rawio_wait_timeout() call to notice it pending. Returning
-// 0 ("nothing wanted next") is the correct, safe way to stop consuming:
-// per librawio/src/uring_buffer.cpp's BufferRing::try_produce(), a
-// terminal condition (error, EOF, or an explicit rawio_cancel()) is still
-// delivered promptly even while `want == 0` -- only *ordinary* data
-// delivery pauses.
-class RecvCallbackStream {
-private:
-    rawstd::CallbackStream<size_t> _stream;
-    void* _dest;
-    size_t _want;
-
-public:
-    RecvCallbackStream() noexcept : _stream(), _dest(nullptr), _want(0) {}
-    RecvCallbackStream(const RecvCallbackStream&) = delete;
-    RecvCallbackStream& operator=(const RecvCallbackStream&) = delete;
-    RecvCallbackStream(RecvCallbackStream&&) = delete;
-    RecvCallbackStream& operator=(RecvCallbackStream&&) = delete;
-
-    // `dest` must stay valid (and have room for at least `want` bytes)
-    // until this resumes -- typically a stack local or a vector already
-    // sized to `want` in the awaiting coroutine's own frame, which is
-    // exactly what stays alive across a suspension.
-    auto next(void* dest, size_t want) noexcept {
-        _dest = dest;
-        _want = want;
-        return _stream.next();
-    }
-
-    void* dest() const noexcept { return _dest; }
-
-    // Called by recv_trampoline(): resets `_dest`/`_want` *before*
-    // resuming whatever's awaiting the previous delivery, then returns
-    // whatever `_want` holds once that's done. The synchronous ping-pong
-    // every CallbackStream<T> in this codebase relies on (complete()
-    // resumes the awaiter inline, running it to its next suspension point
-    // before complete() itself returns) means that if the resumed
-    // coroutine calls next() again (asking for more), `_want` reflects
-    // that fresh value by the time this returns; if it doesn't -- the
-    // pump is pausing or stopping -- `_want` stays 0.
-    size_t complete(size_t nbytes, int error) noexcept {
-        _dest = nullptr;
-        _want = 0;
-        _stream.complete(nbytes, error);
-        return _want;
-    }
-};
-
-ssize_t recv_trampoline(
-    const iovec* iov, unsigned int niov, ssize_t result, void* data
-) noexcept {
-    auto* stream = static_cast<RecvCallbackStream*>(data);
-    // Any non-zero error terminates this multishot registration for good
-    // (see rawio.h) -- this is the one and only callback still holding
-    // `stream` alive, so it's this callback's job to free it then, same
-    // as ost/src/server.cpp's accept_trampoline()'s CallbackStream<int>
-    // doesn't need to (that one lives in the awaiting coroutine's own
-    // frame) but the weak_ptr<Client> the old synchronous recv callback
-    // used to own here did.
-    int error = result < 0 ? static_cast<int>(-result) : 0;
-    std::unique_ptr<RecvCallbackStream> owner(error ? stream : nullptr);
-
-    size_t nbytes = 0;
-    if (!error) {
-        nbytes = static_cast<size_t>(result);
-        // The ring buffer's iovecs are only valid for the duration of
-        // this callback, so this is the one unavoidable copy: straight
-        // into the awaiting coroutine's own destination (never a
-        // freshly-allocated buffer of this trampoline's own, which the
-        // caller would then have to copy out of again).
-        rawstd_iovec_to_buf(iov, niov, 0, stream->dest(), nbytes);
-    }
-
-    return static_cast<ssize_t>(stream->complete(nbytes, error));
-}
-
 // Reads exactly `size` bytes of the next part of a request frame (its
 // fixed head, a command's fixed-size payload, or WRITE's trailing raw
 // payload) directly into `*dest` -- a stack-local wire struct in every
@@ -269,19 +128,23 @@ ssize_t recv_trampoline(
 // shared catch block to handle, same as if stream->next() itself had
 // thrown.
 rawstd::Task<void> recv_frame(
-    RecvCallbackStream* stream, void* dest, size_t size, int fd,
+    rawio::RecvStream* stream, void* dest, size_t size, int fd,
     const char* what, bool* stream_failed
 ) {
     *stream_failed = true;
-    size_t got = co_await stream->next(dest, size);
+    rawio::RecvStream::Item item = co_await stream->next(size);
     *stream_failed = false;
 
-    if (got != size) {
+    if (item.size() != size) {
         rawstd_error(
-            "fd %d: Unexpected %s size: %zu != %zu\n", fd, what, got, size
+            "fd %d: Unexpected %s size: %zu != %zu\n", fd, what, item.size(),
+            size
         );
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
+    // The ring's buffers are only valid while the item is alive: this is the
+    // one copy, straight into the awaiting coroutine's own destination.
+    rawstd_iovec_to_buf(item.iov(), item.niov(), 0, dest, size);
 }
 
 } // namespace
@@ -289,18 +152,21 @@ rawstd::Task<void> recv_frame(
 namespace rawstor {
 namespace ostserver {
 
-rawstd::Task<std::shared_ptr<Client>>
-Client::create(RawIOQueue* queue, Server& server, int fd) {
+rawstd::Task<std::shared_ptr<Client>> Client::create(
+    RawIOQueue* queue, Server& server, int fd,
+    std::unique_ptr<rawtls::Transport> transport
+) {
     // _recv_pump() needs weak_from_this(), which isn't wired up yet while
     // the constructor itself is still running (enable_shared_from_this's
     // weak_ptr is only set by make_shared() right before returning) --
     // arm the recv here instead.
-    std::shared_ptr<Client> client =
-        std::make_shared<Client>(Private(), queue, server, fd);
+    std::shared_ptr<Client> client = std::make_shared<Client>(
+        Private(), queue, server, fd, std::move(transport)
+    );
     // A DetachedTask never throws directly -- it stashes a synchronous
-    // failure (e.g. rawio_recv_multishot()'s own registration call
-    // rejecting fd/queue) for this to surface immediately after.
-    _recv_pump(client, queue, fd);
+    // failure (e.g. the transport rejecting the stream registration) for
+    // this to surface immediately after.
+    _recv_pump(client, fd);
     try {
         rawstd::DetachedTask::rethrow_if_pending();
     } catch (...) {
@@ -317,10 +183,14 @@ Client::create(RawIOQueue* queue, Server& server, int fd) {
     co_return client;
 }
 
-Client::Client(Private, RawIOQueue* queue, Server& server, int fd) :
+Client::Client(
+    Private, RawIOQueue* queue, Server& server, int fd,
+    std::unique_ptr<rawtls::Transport> transport
+) :
     _queue(queue),
     _server(server),
     _fd(fd),
+    _transport(std::move(transport)),
     _recv_event(nullptr),
     _slot(nullptr) {
     ++_server._live_clients;
@@ -340,13 +210,10 @@ Client::~Client() noexcept {
         _server._abandon_slot(std::move(_slot));
     }
     if (_recv_event != nullptr) {
-        int res = rawio_cancel(_queue, _recv_event);
-        // ENOENT means the multishot recv already terminated on its own
-        // (e.g. the peer disconnected) and its completion is already
-        // queued, uncancellable -- not an error, just too late; see
-        // _recv_pump()'s comment for how the eventual callback copes.
-        if (res < 0 && res != -ENOENT) {
-            rawstd_warning("Failed to cancel event: %s\n", strerror(-res));
+        try {
+            _transport->cancel_receive(_recv_event);
+        } catch (const std::exception& e) {
+            rawstd_warning("Failed to cancel event: %s\n", e.what());
         }
     }
     if (_fd != -1) {
@@ -357,9 +224,10 @@ Client::~Client() noexcept {
 
 rawstd::Task<void> Client::close() {
     if (_recv_event != nullptr) {
-        int res = rawio_cancel(_queue, _recv_event);
-        if (res < 0 && res != -ENOENT) {
-            rawstd_warning("Failed to cancel event: %s\n", strerror(-res));
+        try {
+            _transport->cancel_receive(_recv_event);
+        } catch (const std::exception& e) {
+            rawstd_warning("Failed to cancel event: %s\n", e.what());
         }
         _recv_event = nullptr;
     }
@@ -389,19 +257,13 @@ rawstd::Task<void> Client::close() {
     }
 }
 
-rawstd::DetachedTask
-Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
-    // A multishot recv's terminal completion (peer disconnect -> EPIPE,
-    // ENOBUFS, ... -- any error is terminal, not just ECANCELED; see
-    // rawio.h) can already be sitting unprocessed in the completion queue
-    // by the time this Client is destroyed, so ~Client()'s rawio_cancel()
-    // can be too late to stop it. `stream` -- unlike every other
-    // CallbackStream<T> in this file -- is heap-allocated for the same
-    // reason: recv_trampoline() must be able to outlive this coroutine
-    // (see RecvCallbackStream's own doc comment).
-    auto stream_owner = std::make_unique<RecvCallbackStream>();
-    RecvCallbackStream* stream = stream_owner.get();
-    RawIOEvent* event = nullptr;
+rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
+    // The stream is a local of this coroutine: closing it, when the pump
+    // ends, cancels the registration if it is still alive.
+    std::shared_ptr<Client> first = weak.lock();
+    if (first == nullptr) {
+        co_return;
+    }
     // 64 * 16 buffers of 1u<<17 (128KiB) each = 128MiB: comfortably covers
     // this client's usual worst case (rawstor-vhost's default
     // write-throttle-limit of 128 concurrent requests, each up to a
@@ -410,44 +272,26 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
     // healthy range: the kernel can't find a free buffer for more
     // incoming data, the multishot registration terminates with ENOBUFS,
     // and whatever request was mid-read gets torn down as a short read
-    // (client.cpp:406's "Unexpected request data size") -- indistinguishable
+    // ("Unexpected request data size") -- indistinguishable
     // from a real transport failure to everything downstream, so it
     // reconnects and retries, immediately overflowing again under the same
     // sustained load and burning through rawstor_opts_io_attempts() for
     // real.
-    int res = rawio_recv_multishot(
-        queue, fd, 1u << 17, 64 * 16, sizeof(RawstorFrameHead), 0,
-        recv_trampoline, stream, &event
+    rawio::RecvStream stream_owner = first->_transport->recv_multishot(
+        1u << 17, 64 * 16, sizeof(RawstorFrameHead), 0
     );
-    if (res < 0) {
-        RAWSTD_THROW_SYSTEM_ERROR(-res);
-    }
-    stream_owner.release(); // owned by recv_trampoline() from here on
-
-    {
-        std::shared_ptr<Client> client = weak.lock();
-        if (client == nullptr) {
-            // Nobody left to hand this registration to -- cancel it
-            // right away rather than leave it running with nowhere to
-            // deliver into (recv_trampoline() frees `stream` once the
-            // resulting ECANCELED completion tells it to stop).
-            rawio_cancel(queue, event);
-            co_return;
-        }
-        client->_recv_event = event;
-    }
+    rawio::RecvStream* stream = &stream_owner;
+    first->_recv_event = stream_owner.event();
+    first.reset();
 
     // Tracks whether the exception a catch clause below is handling came
     // from stream->next() itself (a genuine recv-level failure -- the
-    // registration is already confirmed dead, recv_trampoline() has
-    // freed `stream`, and _recv_event must be cleared so ~Client()/
-    // close() don't try to cancel an already-gone event) or from this
-    // loop's own validation, after a successful read (the registration
-    // is still alive, just paused -- see RecvCallbackStream's doc
-    // comment -- so _recv_event must stay put for ~Client()/close() to
-    // eventually cancel it for real, which is what actually frees
-    // `stream`). Set right before each stream->next(), cleared right
-    // after it returns successfully.
+    // registration is already confirmed dead and _recv_event must be
+    // cleared so ~Client()/close() don't try to cancel an already-gone
+    // event) or from this loop's own validation, after a successful read
+    // (the registration is still alive, so _recv_event must stay put for
+    // ~Client()/close() to cancel it for real). Set right before each
+    // stream->next(), cleared right after it returns successfully.
     bool stream_failed = false;
 
     try {
@@ -816,9 +660,8 @@ Client::_recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd) {
     if (client != nullptr) {
         if (stream_failed) {
             // stream->next() itself is what threw: the registration is
-            // already confirmed dead (recv_trampoline() has freed
-            // `stream`), so there's nothing left for ~Client()/close()'s
-            // own rawio_cancel() to do.
+            // already confirmed dead, so there's nothing left for
+            // ~Client()/close()'s own cancel to do.
             client->_recv_event = nullptr;
         }
         co_await client->_server.del_client(fd);
@@ -1716,8 +1559,7 @@ rawstd::DetachedTask Client::_write(
     }
 
     // `data` is already _recv_pump()'s own owned copy of the payload
-    // (RecvCallbackStream's deliveries never alias the ring buffer past
-    // a single C callback -- see its doc comment), so this hashes it
+    // (recv_frame() copies out of the ring buffer), so this hashes it
     // directly instead of copying it out again first.
     uint64_t hash = rawstd_hash_scalar(data->data(), data->size());
     if (hash != payload.hash) {
@@ -2046,8 +1888,8 @@ rawstd::Task<void> Client::_send_response(
         },
     };
 
-    size_t sent = co_await co_send(
-        _queue, _fd, &response, sizeof(response), RAWSTD_MSG_NOSIGNAL
+    size_t sent = co_await _transport->send(
+        &response, sizeof(response), RAWSTD_MSG_NOSIGNAL
     );
     int error = validate_result(_fd, sizeof(response), sent);
     if (error) {
@@ -2095,7 +1937,7 @@ rawstd::Task<void> Client::_send_response(
         .msg_flags = 0,
     };
 
-    size_t sent = co_await co_sendmsg(_queue, _fd, &msg, RAWSTD_MSG_NOSIGNAL);
+    size_t sent = co_await _transport->sendmsg(&msg, RAWSTD_MSG_NOSIGNAL);
     int error = validate_result(_fd, sizeof(response) + data.size(), sent);
     if (error) {
         RAWSTD_THROW_SYSTEM_ERROR(error);

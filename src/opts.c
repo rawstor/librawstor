@@ -6,6 +6,8 @@
 #include <errno.h>
 #include <limits.h>
 #include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define RAWSTOR_OPTS_IO_ATTEMPTS 10
 #define RAWSTOR_OPTS_SO_SNDTIMEO 5000
@@ -31,6 +33,85 @@
 #define RAWSTOR_OPTS_MIRROR_RESYNC_LEASE 30000
 
 static struct RawstorOpts _rawstor_opts = {};
+
+struct TlsOpts {
+    char* trust_domain;
+    char* cert;
+    char* key;
+    char* ca;
+    char* crl;
+    char* mds_id;
+};
+
+static struct TlsOpts _rawstor_tls = {};
+
+static void free_tls_opts(struct TlsOpts* tls) {
+    free(tls->trust_domain);
+    free(tls->cert);
+    free(tls->key);
+    free(tls->ca);
+    free(tls->crl);
+    free(tls->mds_id);
+    memset(tls, 0, sizeof(*tls));
+}
+
+// An unset variable leaves *out NULL; one that is set must not be empty.
+static int read_tls_string(const char* name, char** out) {
+    const char* value = getenv(name);
+    if (value == NULL) {
+        *out = NULL;
+        return 0;
+    }
+    if (value[0] == '\0') {
+        rawstd_error("Empty %s\n", name);
+        return -EINVAL;
+    }
+    *out = strdup(value);
+    return *out != NULL ? 0 : -ENOMEM;
+}
+
+// The four settings TLS needs are given together or not at all: a process that
+// names a certificate but not a CA must not quietly go without TLS.
+static int read_tls_opts(struct TlsOpts* tls) {
+    int res = read_tls_string("RAWSTOR_TLS_TRUST_DOMAIN", &tls->trust_domain);
+    if (res == 0) {
+        res = read_tls_string("RAWSTOR_TLS_CERT", &tls->cert);
+    }
+    if (res == 0) {
+        res = read_tls_string("RAWSTOR_TLS_KEY", &tls->key);
+    }
+    if (res == 0) {
+        res = read_tls_string("RAWSTOR_TLS_CA", &tls->ca);
+    }
+    if (res == 0) {
+        res = read_tls_string("RAWSTOR_TLS_CRL", &tls->crl);
+    }
+    if (res == 0) {
+        res = read_tls_string("RAWSTOR_TLS_MDS_ID", &tls->mds_id);
+    }
+    if (res == 0) {
+        int given = (tls->trust_domain != NULL) + (tls->cert != NULL) +
+                    (tls->key != NULL) + (tls->ca != NULL);
+        if (given != 0 && given != 4) {
+            rawstd_error(
+                "RAWSTOR_TLS_TRUST_DOMAIN, RAWSTOR_TLS_CERT, "
+                "RAWSTOR_TLS_KEY and RAWSTOR_TLS_CA must be set "
+                "together\n"
+            );
+            res = -EINVAL;
+        } else if (given == 0 && (tls->crl != NULL || tls->mds_id != NULL)) {
+            rawstd_error(
+                "RAWSTOR_TLS_CRL and RAWSTOR_TLS_MDS_ID need the TLS "
+                "settings\n"
+            );
+            res = -EINVAL;
+        }
+    }
+    if (res != 0) {
+        free_tls_opts(tls);
+    }
+    return res;
+}
 
 // Millisecond values that get scaled to microseconds in an unsigned int.
 #define RAWSTOR_OPTS_MAX_MS (UINT_MAX / 1000)
@@ -119,14 +200,21 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts) {
     if (res != 0) {
         return res;
     }
+
+    struct TlsOpts tls = {};
+    res = read_tls_opts(&tls);
+    if (res != 0) {
+        return res;
+    }
+
+    free_tls_opts(&_rawstor_tls);
+    _rawstor_tls = tls;
     _rawstor_opts = resolved;
     return 0;
 }
 
 void rawstor_opts_terminate(void) {
-    /**
-     * Free opts here.
-     */
+    free_tls_opts(&_rawstor_tls);
 }
 
 unsigned int rawstor_opts_io_attempts(void) {
@@ -175,4 +263,28 @@ unsigned int rawstor_opts_mirror_probe_interval(void) {
 
 unsigned int rawstor_opts_mirror_resync_lease(void) {
     return _rawstor_opts.mirror_resync_lease;
+}
+
+const char* rawstor_opts_tls_trust_domain(void) {
+    return _rawstor_tls.trust_domain;
+}
+
+const char* rawstor_opts_tls_cert(void) {
+    return _rawstor_tls.cert;
+}
+
+const char* rawstor_opts_tls_key(void) {
+    return _rawstor_tls.key;
+}
+
+const char* rawstor_opts_tls_ca(void) {
+    return _rawstor_tls.ca;
+}
+
+const char* rawstor_opts_tls_crl(void) {
+    return _rawstor_tls.crl;
+}
+
+const char* rawstor_opts_tls_mds_id(void) {
+    return _rawstor_tls.mds_id;
 }

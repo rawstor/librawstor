@@ -625,8 +625,8 @@ rawstd::Task<size_t> Backend::pread(void* buf, size_t size, uint64_t offset) {
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()
@@ -652,8 +652,8 @@ Backend::preadv(iovec* iov, unsigned int niov, size_t size, uint64_t offset) {
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()
@@ -694,9 +694,8 @@ rawstd::Task<size_t> Backend::_pwrite(
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.sendmsg(
-            fd(), op->request_msg(), RAWSTD_MSG_NOSIGNAL
-        );
+        size_t result =
+            co_await _sendmsg(op->request_msg(), RAWSTD_MSG_NOSIGNAL);
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()
         );
@@ -724,9 +723,8 @@ rawstd::Task<size_t> Backend::pwritev(
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.sendmsg(
-            fd(), op->request_msg(), RAWSTD_MSG_NOSIGNAL
-        );
+        size_t result =
+            co_await _sendmsg(op->request_msg(), RAWSTD_MSG_NOSIGNAL);
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()
         );
@@ -751,8 +749,8 @@ Backend::discard(size_t size, uint64_t offset, uint64_t epoch) {
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()
@@ -795,8 +793,8 @@ rawstd::Task<size_t> Backend::_write_zeroes(
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()
@@ -819,8 +817,8 @@ rawstd::Task<void> Backend::flush(uint64_t epoch) {
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()

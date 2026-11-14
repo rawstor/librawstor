@@ -2,6 +2,7 @@
 
 #include "slot.hpp"
 #include "target.hpp"
+#include "tls.hpp"
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
@@ -99,6 +100,13 @@ WireMap decode_object_map(const std::vector<unsigned char>& data) {
             slots[s].ost_id = uuid_from_bytes(wire_slot.ost_id);
             slots[s].location.resize(wire_slot.location_len);
             take(slots[s].location.data(), wire_slot.location_len);
+            // The MDS names the OST at this address: a TLS connection to it
+            // must be to that OST.
+            if (!slots[s].location.empty()) {
+                rawstor::tls::expect_ost(
+                    rawstd::URI(slots[s].location).host(), slots[s].ost_id
+                );
+            }
         }
     }
 

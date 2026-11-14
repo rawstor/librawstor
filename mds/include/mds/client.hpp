@@ -6,6 +6,10 @@
 #include <rawstor/protocol.h>
 #include <rawstor/rawio.h>
 
+#include <rawio/stream.hpp>
+
+#include <rawtls/transport.hpp>
+
 #include <rawstd/coro.hpp>
 
 #include <memory>
@@ -35,13 +39,18 @@ private:
     RawIOQueue* _queue;
     Server& _server;
     int _fd;
+    // The connection's bytes, plain or through TLS.
+    std::unique_ptr<rawtls::Transport> _transport;
     // Set by HANDSHAKE, the first request: nothing is served before it.
     bool _handshaken = false;
 
     static rawstd::DetachedTask _recv_pump(std::weak_ptr<Client> weak);
 
-    static rawstd::Task<void>
-    _dispatch(std::weak_ptr<Client> weak, const RawstorFrameHead& head);
+    // `stream` is the connection's request stream, owned by _recv_pump().
+    static rawstd::Task<void> _dispatch(
+        std::weak_ptr<Client> weak, const RawstorFrameHead& head,
+        rawio::RecvStream& stream
+    );
 
     rawstd::Task<void> _send_response(
         RawstorCommandType type, uint16_t cid, int32_t res,
@@ -49,10 +58,16 @@ private:
     );
 
 public:
-    static rawstd::Task<std::shared_ptr<Client>>
-    create(RawIOQueue* queue, Server& server, int fd);
+    // `transport` is the connection on `fd`, after any TLS handshake.
+    static rawstd::Task<std::shared_ptr<Client>> create(
+        RawIOQueue* queue, Server& server, int fd,
+        std::unique_ptr<rawtls::Transport> transport
+    );
 
-    Client(Private, RawIOQueue* queue, Server& server, int fd);
+    Client(
+        Private, RawIOQueue* queue, Server& server, int fd,
+        std::unique_ptr<rawtls::Transport> transport
+    );
     Client(const Client&) = delete;
     Client(Client&&) = delete;
     ~Client();
