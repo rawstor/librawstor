@@ -40,6 +40,7 @@ struct TlsOpts {
     char* key;
     char* ca;
     char* crl;
+    char* mds_id;
 };
 
 static struct TlsOpts _rawstor_tls = {};
@@ -50,6 +51,7 @@ static void free_tls_opts(struct TlsOpts* tls) {
     free(tls->key);
     free(tls->ca);
     free(tls->crl);
+    free(tls->mds_id);
     memset(tls, 0, sizeof(*tls));
 }
 
@@ -85,6 +87,9 @@ static int read_tls_opts(struct TlsOpts* tls) {
         res = read_tls_string("RAWSTOR_TLS_CRL", &tls->crl);
     }
     if (res == 0) {
+        res = read_tls_string("RAWSTOR_TLS_MDS_ID", &tls->mds_id);
+    }
+    if (res == 0) {
         int given = (tls->trust_domain != NULL) + (tls->cert != NULL) +
                     (tls->key != NULL) + (tls->ca != NULL);
         if (given != 0 && given != 4) {
@@ -94,8 +99,11 @@ static int read_tls_opts(struct TlsOpts* tls) {
                 "together\n"
             );
             res = -EINVAL;
-        } else if (given == 0 && tls->crl != NULL) {
-            rawstd_error("RAWSTOR_TLS_CRL is set without the TLS settings\n");
+        } else if (given == 0 && (tls->crl != NULL || tls->mds_id != NULL)) {
+            rawstd_error(
+                "RAWSTOR_TLS_CRL and RAWSTOR_TLS_MDS_ID need the TLS "
+                "settings\n"
+            );
             res = -EINVAL;
         }
     }
@@ -275,4 +283,8 @@ const char* rawstor_opts_tls_ca(void) {
 
 const char* rawstor_opts_tls_crl(void) {
     return _rawstor_tls.crl;
+}
+
+const char* rawstor_opts_tls_mds_id(void) {
+    return _rawstor_tls.mds_id;
 }

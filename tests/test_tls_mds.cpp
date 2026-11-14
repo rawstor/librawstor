@@ -145,3 +145,27 @@ TEST(TlsMdsTest, an_ost_identity_is_not_accepted_for_an_mds) {
     RawstorLocationInfo info = {};
     EXPECT_NE(location_info(*queue, server.location(), &info), 0);
 }
+
+TEST(TlsMdsTest, the_configured_mds_name_is_required) {
+    rawstor::tests::TlsProcess tls(
+        "spiffe://" + rawstor::tests::TlsProcess::trust_domain + "/mds/mds-1",
+        "mds-2"
+    );
+    MdsServer server(8909);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorLocationInfo info = {};
+    EXPECT_NE(location_info(*queue, server.location(), &info), 0);
+}
+
+TEST(TlsMdsTest, the_configured_mds_name_is_accepted) {
+    rawstor::tests::TlsProcess tls(
+        "spiffe://" + rawstor::tests::TlsProcess::trust_domain + "/mds/mds-1",
+        "mds-1"
+    );
+    MdsServer server(8910);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorLocationInfo info = {};
+    EXPECT_EQ(location_info(*queue, server.location(), &info), 0);
+}

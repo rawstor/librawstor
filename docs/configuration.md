@@ -46,6 +46,7 @@ authenticated, and the process logs that at start.
 | `RAWSTOR_TLS_KEY` | The private key of the certificate, PEM. |
 | `RAWSTOR_TLS_CA` | The CAs a peer's certificate must chain to, PEM; several may be listed. |
 | `RAWSTOR_TLS_CRL` | Optional: a CRL, PEM, checked for the peer's certificate. It must cover the CA. |
+| `RAWSTOR_TLS_MDS_ID` | Optional: the name of the MDS this process connects to, the last segment of its SPIFFE ID (`mds-1` for `spiffe://cluster.example/mds/mds-1`). Every `mds://` connection must then present exactly that ID. |
 
 The SPIFFE ID of a process says what it is:
 
@@ -58,9 +59,15 @@ The SPIFFE ID of a process says what it is:
 
 A client takes a server to be an OST or an MDS by its ID: an `ost://` address
 needs an OST and an `mds://` one an MDS. An OST the MDS has resolved must also
-present the ID the MDS named for it, so one OST cannot answer for another. An
-address the MDS has not named, and every `mds://` address, accepts any server
-of that role in the trust domain.
+present the ID the MDS named for it, so one OST cannot answer for another. The
+MDS is held to the name in `RAWSTOR_TLS_MDS_ID` when it is set; without it, as
+for an `ost://` address the MDS has not named, any server of that role in the
+trust domain is accepted, so set it wherever a client talks to one MDS.
+
+The OST an address stands for is remembered by the address, for the life of the
+process: when an OST is replaced at the same address, an object resolved before
+the replacement fails to connect (the new OST's ID is not the one it was told)
+until it is resolved again.
 
 The certificate is read again, for the connections made after it, on `SIGHUP`
 and `SIGUSR1` in `rawstor-ost` and `rawstor-mds`, and on `SIGUSR1` in

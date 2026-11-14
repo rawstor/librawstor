@@ -18,6 +18,9 @@ namespace {
 
 std::mutex mutex;
 std::unique_ptr<rawtls::Context> process_context;
+// The identity required of every MDS, empty to accept any MDS of the trust
+// domain.
+std::string mds_identity;
 // The identity of the OST at each address the MDS has resolved.
 std::map<std::string, std::string> ost_identities;
 // What request_reload() reaches from a signal handler, without the lock.
@@ -44,8 +47,26 @@ void initialize() {
     }
     std::unique_ptr<rawtls::Context> context =
         std::make_unique<rawtls::Context>(config);
+    std::string mds;
+    if (rawstor_opts_tls_mds_id() != nullptr) {
+        mds = "spiffe://" + config.trust_domain + "/mds/" +
+              rawstor_opts_tls_mds_id();
+        // Only the name of an MDS in this trust domain makes an identity.
+        bool valid = false;
+        try {
+            valid = rawtls::SpiffeId::parse(mds).role == rawtls::Role::mds;
+        } catch (const std::system_error&) {
+        }
+        if (!valid) {
+            rawstd_error(
+                "Invalid RAWSTOR_TLS_MDS_ID: %s\n", rawstor_opts_tls_mds_id()
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+    }
     std::lock_guard<std::mutex> lock(mutex);
     process_context = std::move(context);
+    mds_identity = std::move(mds);
     signal_context.store(process_context.get());
 }
 
@@ -53,6 +74,7 @@ void terminate() noexcept {
     std::lock_guard<std::mutex> lock(mutex);
     signal_context.store(nullptr);
     process_context.reset();
+    mds_identity.clear();
     ost_identities.clear();
 }
 
@@ -99,6 +121,8 @@ rawstd::Task<std::unique_ptr<rawtls::Transport>> connect(
         }
     } else if (scheme == "mds") {
         role = rawtls::Role::mds;
+        std::lock_guard<std::mutex> lock(mutex);
+        expected_peer = mds_identity;
     } else {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
