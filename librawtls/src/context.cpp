@@ -9,8 +9,6 @@
 
 #include <cerrno>
 
-namespace rawtls {
-
 namespace {
 
 void log_errors(const char* what, const std::string& file) {
@@ -22,7 +20,7 @@ void log_errors(const char* what, const std::string& file) {
     }
 }
 
-std::shared_ptr<ssl_ctx_st> build(const Config& config) {
+std::shared_ptr<ssl_ctx_st> build(const rawtls::Config& config) {
     ERR_clear_error();
     SSL_CTX* raw = SSL_CTX_new(TLS_method());
     if (raw == nullptr) {
@@ -79,6 +77,8 @@ std::shared_ptr<ssl_ctx_st> build(const Config& config) {
 }
 
 } // namespace
+
+namespace rawtls {
 
 Context::Context(const Config& config) :
     _config(config),

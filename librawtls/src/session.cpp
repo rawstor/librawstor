@@ -15,8 +15,6 @@
 #include <cstdint>
 #include <cstring>
 
-namespace rawtls {
-
 namespace {
 
 int chunk(size_t size) noexcept {
@@ -38,6 +36,8 @@ void log_errors(const char* what) {
 }
 
 } // namespace
+
+namespace rawtls {
 
 Session::Session(
     Context& context, Mode mode, const std::string& expected_peer,

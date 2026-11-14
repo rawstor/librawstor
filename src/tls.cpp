@@ -11,9 +11,6 @@
 #include <mutex>
 #include <optional>
 
-namespace rawstor {
-namespace tls {
-
 namespace {
 
 std::mutex mutex;
@@ -27,6 +24,9 @@ std::map<std::string, std::string> ost_identities;
 std::atomic<rawtls::Context*> signal_context{nullptr};
 
 } // namespace
+
+namespace rawstor {
+namespace tls {
 
 void initialize() {
     const char* trust_domain = rawstor_opts_tls_trust_domain();

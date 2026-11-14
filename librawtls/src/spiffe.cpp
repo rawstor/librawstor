@@ -7,8 +7,6 @@
 #include <string_view>
 #include <vector>
 
-namespace rawtls {
-
 namespace {
 
 const size_t max_uri_size = 2048;
@@ -78,6 +76,8 @@ std::vector<std::string> split(std::string_view path) {
 }
 
 } // namespace
+
+namespace rawtls {
 
 SpiffeId SpiffeId::parse(const std::string& uri) {
     if (uri.size() > max_uri_size ||

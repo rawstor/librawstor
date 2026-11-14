@@ -573,6 +573,9 @@ Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     _pump() {
 }
 
+} // namespace wire
+} // namespace rawstor
+
 namespace {
 
 rawstd::Task<size_t> no_connection() {
@@ -581,6 +584,9 @@ rawstd::Task<size_t> no_connection() {
 }
 
 } // namespace
+
+namespace rawstor {
+namespace wire {
 
 rawtls::Op<size_t>
 Backend::_send(const void* buf, size_t size, unsigned int flags) {
