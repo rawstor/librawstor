@@ -11,7 +11,7 @@ namespace {
 
 const size_t max_uri_size = 2048;
 const size_t max_trust_domain_size = 255;
-const std::string_view scheme = "spiffe://";
+const std::string_view scheme = "spiffe";
 
 bool is_segment_char(char c) noexcept {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
@@ -79,50 +79,40 @@ std::vector<std::string> split(std::string_view path) {
 
 namespace rawtls {
 
-SpiffeId SpiffeId::parse(const std::string& uri) {
-    if (uri.size() > max_uri_size ||
-        uri.compare(0, scheme.size(), scheme) != 0) {
+SpiffeId::SpiffeId(const std::string& uri) : _uri(uri), _role(Role::ost) {
+    const std::string& trust_domain = _uri.hostname();
+    const std::string& path = _uri.path().str();
+    // URI drops what it cannot read as a port or a password, so the ID must
+    // be exactly what its parts spell out: nothing is left unchecked.
+    if (uri.size() > max_uri_size || _uri.scheme() != scheme ||
+        uri != std::string(scheme) + "://" + trust_domain + path ||
+        !is_trust_domain(trust_domain) || path.empty() || path[0] != '/') {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    std::string_view rest(uri);
-    rest.remove_prefix(scheme.size());
-
-    size_t slash = rest.find('/');
-    if (slash == std::string_view::npos) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    std::string_view trust_domain = rest.substr(0, slash);
-    if (!is_trust_domain(trust_domain)) {
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    }
-    std::vector<std::string> segments = split(rest.substr(slash + 1));
+    std::vector<std::string> segments = split(std::string_view(path).substr(1));
     for (const std::string& segment : segments) {
         if (!is_segment(segment)) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
     }
 
-    SpiffeId id;
-    id.uri = uri;
-    id.trust_domain = std::string(trust_domain);
     if (segments.size() == 2 && segments[0] == "ost" && is_uuid(segments[1])) {
-        id.role = Role::ost;
-        id.name = segments[1];
+        _role = Role::ost;
+        _name = segments[1];
     } else if (segments.size() == 2 && segments[0] == "mds") {
-        id.role = Role::mds;
-        id.name = segments[1];
+        _role = Role::mds;
+        _name = segments[1];
     } else if (segments.size() == 2 && segments[0] == "admin") {
-        id.role = Role::admin;
-        id.name = segments[1];
+        _role = Role::admin;
+        _name = segments[1];
     } else if (segments.size() == 4 && segments[0] == "tenant" &&
                is_uuid(segments[1]) && segments[2] == "client") {
-        id.role = Role::client;
-        id.tenant = segments[1];
-        id.name = segments[3];
+        _role = Role::client;
+        _tenant = segments[1];
+        _name = segments[3];
     } else {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    return id;
 }
 
 } // namespace rawtls

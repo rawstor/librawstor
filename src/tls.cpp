@@ -54,7 +54,7 @@ void initialize() {
         // Only the name of an MDS in this trust domain makes an identity.
         bool valid = false;
         try {
-            valid = rawtls::SpiffeId::parse(mds).role == rawtls::Role::mds;
+            valid = rawtls::SpiffeId(mds).role() == rawtls::Role::mds;
         } catch (const std::system_error&) {
         }
         if (!valid) {

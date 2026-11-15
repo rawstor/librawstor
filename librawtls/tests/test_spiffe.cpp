@@ -13,7 +13,7 @@ const std::string uuid_b = "0198f1a2-3b4c-7d5e-8f90-0123456789ab";
 
 void expect_rejected(const std::string& uri) {
     try {
-        rawtls::SpiffeId::parse(uri);
+        static_cast<void>(rawtls::SpiffeId(uri));
         FAIL() << "accepted " << uri;
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), EINVAL) << uri;
@@ -24,45 +24,45 @@ void expect_rejected(const std::string& uri) {
 
 TEST(SpiffeTest, Ost) {
     rawtls::SpiffeId id =
-        rawtls::SpiffeId::parse("spiffe://cluster.example/ost/" + uuid_a);
-    EXPECT_EQ(id.role, rawtls::Role::ost);
-    EXPECT_EQ(id.trust_domain, "cluster.example");
-    EXPECT_EQ(id.name, uuid_a);
-    EXPECT_TRUE(id.tenant.empty());
+        rawtls::SpiffeId("spiffe://cluster.example/ost/" + uuid_a);
+    EXPECT_EQ(id.role(), rawtls::Role::ost);
+    EXPECT_EQ(id.trust_domain(), "cluster.example");
+    EXPECT_EQ(id.name(), uuid_a);
+    EXPECT_TRUE(id.tenant().empty());
     EXPECT_TRUE(id.is_server());
 }
 
 TEST(SpiffeTest, Mds) {
     rawtls::SpiffeId id =
-        rawtls::SpiffeId::parse("spiffe://cluster.example/mds/mds-1");
-    EXPECT_EQ(id.role, rawtls::Role::mds);
-    EXPECT_EQ(id.name, "mds-1");
+        rawtls::SpiffeId("spiffe://cluster.example/mds/mds-1");
+    EXPECT_EQ(id.role(), rawtls::Role::mds);
+    EXPECT_EQ(id.name(), "mds-1");
     EXPECT_TRUE(id.is_server());
 }
 
 TEST(SpiffeTest, Admin) {
     rawtls::SpiffeId id =
-        rawtls::SpiffeId::parse("spiffe://cluster.example/admin/ops_2");
-    EXPECT_EQ(id.role, rawtls::Role::admin);
-    EXPECT_EQ(id.name, "ops_2");
+        rawtls::SpiffeId("spiffe://cluster.example/admin/ops_2");
+    EXPECT_EQ(id.role(), rawtls::Role::admin);
+    EXPECT_EQ(id.name(), "ops_2");
     EXPECT_FALSE(id.is_server());
 }
 
 TEST(SpiffeTest, Client) {
     std::string uri =
         "spiffe://cluster.example/tenant/" + uuid_b + "/client/vm42.disk0";
-    rawtls::SpiffeId id = rawtls::SpiffeId::parse(uri);
-    EXPECT_EQ(id.role, rawtls::Role::client);
-    EXPECT_EQ(id.tenant, uuid_b);
-    EXPECT_EQ(id.name, "vm42.disk0");
-    EXPECT_EQ(id.uri, uri);
+    rawtls::SpiffeId id(uri);
+    EXPECT_EQ(id.role(), rawtls::Role::client);
+    EXPECT_EQ(id.tenant(), uuid_b);
+    EXPECT_EQ(id.name(), "vm42.disk0");
+    EXPECT_EQ(id.uri().str(), uri);
     EXPECT_FALSE(id.is_server());
 }
 
 TEST(SpiffeTest, NamesAreCaseSensitive) {
     rawtls::SpiffeId id =
-        rawtls::SpiffeId::parse("spiffe://cluster.example/mds/MDS-One");
-    EXPECT_EQ(id.name, "MDS-One");
+        rawtls::SpiffeId("spiffe://cluster.example/mds/MDS-One");
+    EXPECT_EQ(id.name(), "MDS-One");
 }
 
 TEST(SpiffeTest, Scheme) {
@@ -78,11 +78,14 @@ TEST(SpiffeTest, TrustDomain) {
     expect_rejected("spiffe://cluster.example");
     expect_rejected("spiffe://Cluster.Example/mds/a");
     expect_rejected("spiffe://cluster.example:8080/mds/a");
+    expect_rejected("spiffe://cluster.example:port/mds/a");
+    expect_rejected("spiffe://cluster.example:/mds/a");
+    expect_rejected("spiffe://user:password@cluster.example/mds/a");
     expect_rejected("spiffe://user@cluster.example/mds/a");
     expect_rejected("spiffe://cluster example/mds/a");
     expect_rejected("spiffe://" + std::string(256, 'a') + "/mds/a");
     EXPECT_NO_THROW(
-        rawtls::SpiffeId::parse("spiffe://" + std::string(255, 'a') + "/mds/a")
+        rawtls::SpiffeId("spiffe://" + std::string(255, 'a') + "/mds/a")
     );
 }
 
@@ -135,7 +138,7 @@ TEST(SpiffeTest, Uuids) {
 TEST(SpiffeTest, Length) {
     std::string prefix = "spiffe://cluster.example/mds/";
     EXPECT_NO_THROW(
-        rawtls::SpiffeId::parse(prefix + std::string(2048 - prefix.size(), 'a'))
+        rawtls::SpiffeId(prefix + std::string(2048 - prefix.size(), 'a'))
     );
     expect_rejected(prefix + std::string(2049 - prefix.size(), 'a'));
 }

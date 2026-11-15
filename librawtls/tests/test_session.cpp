@@ -147,11 +147,11 @@ TEST_F(SessionTest, MutualHandshakeNamesBothPeers) {
     EXPECT_EQ(result.server, 0);
     EXPECT_TRUE(client.handshake_done());
     EXPECT_TRUE(server.handshake_done());
-    EXPECT_EQ(client.peer().role, rawtls::Role::ost);
-    EXPECT_EQ(client.peer().name, ost_a);
-    EXPECT_EQ(server.peer().role, rawtls::Role::client);
-    EXPECT_EQ(server.peer().tenant, tenant);
-    EXPECT_EQ(server.peer().name, "vm42");
+    EXPECT_EQ(client.peer().role(), rawtls::Role::ost);
+    EXPECT_EQ(client.peer().name(), ost_a);
+    EXPECT_EQ(server.peer().role(), rawtls::Role::client);
+    EXPECT_EQ(server.peer().tenant(), tenant);
+    EXPECT_EQ(server.peer().name(), "vm42");
 }
 
 TEST_F(SessionTest, DataGoesBothWays) {
@@ -534,7 +534,7 @@ TEST_F(SessionTest, ClientMayExpectOnlyTheRoleOfTheServer) {
         rawtls::Session server(server_context, rawtls::Session::Mode::server);
         Handshake result = handshake(client, server);
         EXPECT_EQ(result.client, 0);
-        EXPECT_EQ(client.peer().name, ost_a);
+        EXPECT_EQ(client.peer().name(), ost_a);
     }
     {
         rawtls::Session client(

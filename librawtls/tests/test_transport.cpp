@@ -179,10 +179,10 @@ TEST_F(TransportTest, HandshakeNamesThePeers) {
     ASSERT_NE(server, nullptr);
     ASSERT_NE(client->peer(), nullptr);
     ASSERT_NE(server->peer(), nullptr);
-    EXPECT_EQ(client->peer()->role, rawtls::Role::ost);
-    EXPECT_EQ(client->peer()->name, ost_id);
-    EXPECT_EQ(server->peer()->role, rawtls::Role::client);
-    EXPECT_EQ(server->peer()->tenant, tenant);
+    EXPECT_EQ(client->peer()->role(), rawtls::Role::ost);
+    EXPECT_EQ(client->peer()->name(), ost_id);
+    EXPECT_EQ(server->peer()->role(), rawtls::Role::client);
+    EXPECT_EQ(server->peer()->tenant(), tenant);
 }
 
 TEST_F(TransportTest, BytesGoBothWaysThroughTls) {

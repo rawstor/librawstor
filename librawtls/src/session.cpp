@@ -58,11 +58,11 @@ Session::Session(
         // A client that knows nothing about whom it is talking to would
         // accept any certificate of the CA.
         if (!expected_peer.empty()) {
-            SpiffeId id = SpiffeId::parse(expected_peer);
+            SpiffeId id(expected_peer);
             if (!id.is_server()) {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
-            _expected_role = id.role;
+            _expected_role = id.role();
         } else if (expected_role.has_value() && (*expected_role == Role::ost ||
                                                  *expected_role == Role::mds)) {
             _expected_role = *expected_role;
@@ -170,23 +170,24 @@ SpiffeId Session::_check_peer(x509_st* cert) const {
         refuse("the certificate must have exactly one URI SAN");
     }
 
-    SpiffeId id;
+    std::optional<SpiffeId> parsed;
     try {
-        id = SpiffeId::parse(uri);
+        parsed.emplace(uri);
     } catch (const std::system_error&) {
         refuse("the URI SAN is not a rawstor SPIFFE ID");
     }
-    if (id.trust_domain != _trust_domain) {
+    const SpiffeId& id = *parsed;
+    if (id.trust_domain() != _trust_domain) {
         refuse("the SPIFFE ID is in another trust domain");
     }
     if (_mode == Mode::client) {
         if (!id.is_server()) {
             refuse("the server's SPIFFE ID is not that of an OST or an MDS");
         }
-        if (id.role != _expected_role) {
+        if (id.role() != _expected_role) {
             refuse("the server's SPIFFE ID is not of the role expected");
         }
-        if (!_expected_peer.empty() && id.uri != _expected_peer) {
+        if (!_expected_peer.empty() && id.uri().str() != _expected_peer) {
             refuse("the server's SPIFFE ID is not the one expected");
         }
     }
