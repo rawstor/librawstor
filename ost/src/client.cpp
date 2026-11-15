@@ -125,8 +125,7 @@ rawstd::Task<void> co_close_fd(RawIOQueue* queue, int fd) {
 // mismatch throws EPROTO for _recv_pump()'s shared catch block to handle,
 // same as if stream->next() itself had thrown.
 rawstd::Task<void> recv_frame(
-    rawio::RecvStream* stream, void* dest, size_t size, int fd,
-    const char* what
+    rawio::RecvStream* stream, void* dest, size_t size, int fd, const char* what
 ) {
     rawio::RecvStream::Item item = co_await stream->next(size);
 

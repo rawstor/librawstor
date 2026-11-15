@@ -17,9 +17,9 @@
 
 #include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <cstring>
 #include <memory>
 #include <optional>
 #include <random>
@@ -362,8 +362,7 @@ TEST_F(TransportTest, RefusedServerFailsTheClientHandshake) {
     rawtls::Context client_context(config(pki, client_identity));
     rawtls::Context server_context(config(pki, impostor));
     rawstd::Task<std::unique_ptr<Transport>> c = Transport::tls(
-        *queue, pair.fds[0], client_context, rawtls::Mode::client,
-        server_uri()
+        *queue, pair.fds[0], client_context, rawtls::Mode::client, server_uri()
     );
     rawstd::Task<std::unique_ptr<Transport>> s = Transport::tls(
         *queue, pair.fds[1], server_context, rawtls::Mode::server
@@ -534,9 +533,7 @@ TEST_F(HandshakeTest, ExpiredCertificateIsRefused) {
     options.not_before = -7200;
     options.not_after = -3600;
     Identity expired = pki.issue("expired", options);
-    EXPECT_EQ(
-        run(server_uri(), client_identity, expired).client_error, EACCES
-    );
+    EXPECT_EQ(run(server_uri(), client_identity, expired).client_error, EACCES);
 }
 
 TEST_F(HandshakeTest, CertificateNotYetValidIsRefused) {
@@ -761,22 +758,23 @@ TEST_F(HandshakeTest, ContextRejectsBrokenFiles) {
 TEST_F(HandshakeTest, ClientNeedsAnExpectedServerIdentity) {
     rawtls::Context context(config(pki, client_identity));
     EXPECT_THROW(
-        Transport::tls(
-            *queue, pair.fds[0], context, rawtls::Mode::client
-        ).get(),
+        Transport::tls(*queue, pair.fds[0], context, rawtls::Mode::client)
+            .get(),
         std::system_error
     );
     EXPECT_THROW(
         Transport::tls(
             *queue, pair.fds[0], context, rawtls::Mode::client, "nonsense"
-        ).get(),
+        )
+            .get(),
         std::system_error
     );
     // The server it expects must be an OST or an MDS.
     EXPECT_THROW(
         Transport::tls(
             *queue, pair.fds[0], context, rawtls::Mode::client, client_uri()
-        ).get(),
+        )
+            .get(),
         std::system_error
     );
 }
@@ -804,7 +802,8 @@ TEST_F(HandshakeTest, ClientMayExpectOnlyTheRoleOfTheServer) {
         Transport::tls(
             *queue, pair.fds[0], client_context, rawtls::Mode::client, "",
             rawtls::Role::admin
-        ).get(),
+        )
+            .get(),
         std::system_error
     );
 }

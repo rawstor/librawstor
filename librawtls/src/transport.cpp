@@ -246,10 +246,9 @@ private:
         int error = SSL_get_error(_ssl, result);
         unsigned long first = ERR_peek_error();
         log_errors("TLS");
-        if (_verify_failed ||
-            (error == SSL_ERROR_SSL &&
-             ERR_GET_REASON(first) ==
-                 SSL_R_PEER_DID_NOT_RETURN_A_CERTIFICATE)) {
+        if (_verify_failed || (error == SSL_ERROR_SSL &&
+                               ERR_GET_REASON(first) ==
+                                   SSL_R_PEER_DID_NOT_RETURN_A_CERTIFICATE)) {
             RAWSTD_THROW_SYSTEM_ERROR(EACCES);
         }
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
@@ -528,9 +527,7 @@ public:
 
     void cancel_recv_multishot() noexcept override { _cancel_receive(); }
 
-    const rawtls::SpiffeId* peer() const noexcept override {
-        return &*_peer;
-    }
+    const rawtls::SpiffeId* peer() const noexcept override { return &*_peer; }
 };
 
 /*
@@ -766,7 +763,6 @@ public:
         return const_cast<TlsRecv*>(this);
     }
 };
-
 
 rawio::RecvStream
 TlsTransport::recv_multishot(size_t, unsigned int, size_t, unsigned int) {
