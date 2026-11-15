@@ -4,6 +4,7 @@
 #include <rawtls/spiffe.hpp>
 
 #include <rawio/awaitable.hpp>
+#include <rawio/with_timeout.hpp>
 
 #include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
@@ -142,33 +143,6 @@ private:
     // can follow it, and the sends waiting their turn fail instead of writing
     // to a socket that is being closed.
     bool _broken = false;
-    // The handshake's deadline: the timer, whether the handshake is still
-    // running, whether the timer is what ended it, and whether the deadline's
-    // coroutine is done with this object (and who waits for that).
-    rawio::Event* _timer = nullptr;
-    bool _handshaking = true;
-    bool _timed_out = false;
-    bool _deadline_over = false;
-    std::coroutine_handle<> _deadline_waiter;
-
-    // Ends the deadline's use of this object. Must be the last thing it does:
-    // the waiter may destroy the object.
-    void _deadline_finish() noexcept {
-        _deadline_over = true;
-        if (_deadline_waiter) {
-            std::exchange(_deadline_waiter, nullptr).resume();
-        }
-    }
-
-    struct DeadlineOver {
-        TlsTransport& t;
-        bool await_ready() const noexcept { return t._deadline_over; }
-        void await_suspend(std::coroutine_handle<> h) noexcept {
-            t._deadline_waiter = h;
-        }
-        void await_resume() const noexcept {}
-    };
-
     static int _verify(int ok, x509_store_ctx_st* store_ctx) {
         SSL* ssl = static_cast<SSL*>(X509_STORE_CTX_get_ex_data(
             store_ctx, SSL_get_ex_data_X509_STORE_CTX_idx()
@@ -447,18 +421,7 @@ private:
                 if (done) {
                     co_return;
                 }
-                // Registered so the deadline can cancel it.
-                rawio::Awaitable<size_t> op =
-                    _queue.recv(_fd, in.data(), in.size(), 0);
-                _inflight = op.event();
-                size_t n = 0;
-                try {
-                    n = co_await op;
-                } catch (...) {
-                    _inflight = nullptr;
-                    throw;
-                }
-                _inflight = nullptr;
+                size_t n = co_await _queue.recv(_fd, in.data(), in.size(), 0);
                 if (n == 0) {
                     RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
                 }
@@ -474,36 +437,6 @@ private:
         } catch (...) {
         }
         std::rethrow_exception(error);
-    }
-
-    // Ends the handshake if the peer has not finished it in time, by
-    // cancelling the recv it is waiting in.
-    rawstd::DetachedTask _deadline(unsigned int timeout_ms) {
-        rawio::Awaitable<void> timer = _queue.timeout(timeout_ms * 1000u);
-        _timer = timer.event();
-        try {
-            co_await timer;
-        } catch (const std::system_error&) {
-            // Cancelled: the handshake ended first.
-            _timer = nullptr;
-            _deadline_finish();
-            co_return;
-        }
-        _timer = nullptr;
-        if (_handshaking) {
-            _timed_out = true;
-            // Everything the handshake has pending on the socket, a send held
-            // up by a peer that does not read as much as a recv.
-            _cancelled = true;
-            try {
-                _queue.cancel(_fd);
-            } catch (const std::exception& e) {
-                rawstd_warning(
-                    "Failed to cancel the handshake: %s\n", e.what()
-                );
-            }
-        }
-        _deadline_finish();
     }
 
 public:
@@ -572,36 +505,12 @@ public:
 
     ~TlsTransport() override;
 
-    // Runs the handshake within `timeout_ms`. Throws ETIMEDOUT if the deadline
-    // is what ended it.
+    // Runs the handshake within `timeout_ms`. Throws ETIMEDOUT if it takes
+    // longer.
     rawstd::Task<void> handshake(unsigned int timeout_ms) {
-        _deadline(timeout_ms);
-        rawstd::DetachedTask::rethrow_if_pending();
-
-        std::exception_ptr error;
-        try {
-            co_await _run_handshake();
-        } catch (...) {
-            error = std::current_exception();
-        }
-        _handshaking = false;
-        if (_timer != nullptr) {
-            try {
-                _queue.cancel(_timer);
-            } catch (const std::exception& e) {
-                rawstd_warning("Failed to cancel event: %s\n", e.what());
-            }
-        }
-        // The deadline touches this object until it is done.
-        co_await DeadlineOver{*this};
-        if (error) {
-            if (_timed_out) {
-                RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
-            }
-            std::rethrow_exception(error);
-        }
-        // The deadline's cancel is not the stream's: a stream starts afresh.
-        _cancelled = false;
+        co_await rawio::with_timeout(
+            _queue, timeout_ms * 1000u, _run_handshake()
+        );
     }
 
     rawstd::Task<size_t>
