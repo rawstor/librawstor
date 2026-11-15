@@ -31,7 +31,9 @@ rawstd::Task<int> nested(rawio::Queue& queue, unsigned int usec) {
     co_return co_await sleep_then(queue, usec, 5);
 }
 
-rawstd::Task<int> immediate() { co_return 3; }
+rawstd::Task<int> immediate() {
+    co_return 3;
+}
 
 // Takes the cancellation as an interruption of its wait and finishes anyway.
 rawstd::Task<int> swallow_cancel(rawio::Queue& queue, unsigned int usec) {
@@ -112,8 +114,7 @@ TEST_F(WithTimeoutTest, task_in_time_gives_its_result) {
 }
 
 TEST_F(WithTimeoutTest, task_that_is_already_done) {
-    rawstd::Task<int> t =
-        rawio::with_timeout(*_queue, 5'000'000, immediate());
+    rawstd::Task<int> t = rawio::with_timeout(*_queue, 5'000'000, immediate());
     ASSERT_TRUE(drive(t));
     EXPECT_EQ(t.get(), 3);
 }
@@ -181,9 +182,8 @@ TEST_F(WithTimeoutTest, task_that_handles_the_cancel_is_not_a_timeout) {
 
 TEST_F(WithTimeoutTest, errors_of_the_task_are_not_changed) {
     {
-        rawstd::Task<int> t = rawio::with_timeout(
-            *_queue, 5'000'000, fail_with(*_queue, EPIPE)
-        );
+        rawstd::Task<int> t =
+            rawio::with_timeout(*_queue, 5'000'000, fail_with(*_queue, EPIPE));
         ASSERT_TRUE(drive(t));
         EXPECT_EQ(error_of(t), EPIPE);
     }
