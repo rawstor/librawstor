@@ -588,7 +588,7 @@ rawstd::Task<size_t> no_connection() {
 namespace rawstor {
 namespace wire {
 
-rawtls::Op<size_t>
+rawstd::Task<size_t>
 Backend::_send(const void* buf, size_t size, unsigned int flags) {
     if (_transport == nullptr) {
         return no_connection();
@@ -596,7 +596,7 @@ Backend::_send(const void* buf, size_t size, unsigned int flags) {
     return _transport->send(buf, size, flags);
 }
 
-rawtls::Op<size_t> Backend::_sendmsg(const msghdr* msg, unsigned int flags) {
+rawstd::Task<size_t> Backend::_sendmsg(const msghdr* msg, unsigned int flags) {
     if (_transport == nullptr) {
         return no_connection();
     }
@@ -812,7 +812,7 @@ rawstd::Task<void> Backend::_ensure_large_receive_ring() {
     std::exception_ptr error;
     try {
         if (_read_event != nullptr) {
-            co_await _transport->cancel_receive(_read_event);
+            _transport->cancel_receive(_read_event);
             _read_event = nullptr;
         }
         co_await _pump.settle();
@@ -849,12 +849,11 @@ rawstd::Task<void> Backend::_wire_close() {
     _fail_in_flight(ECONNABORTED);
 
     if (_read_event != nullptr) {
-        co_await _transport->cancel_receive(_read_event);
+        _transport->cancel_receive(_read_event);
         _read_event = nullptr;
     }
-    // The cancel above only resolves once the cancel request itself is
-    // processed; the pump returns only once it sees its registration's own
-    // final ECANCELED completion, which can come later. Waiting for it here
+    // The cancel above is only a request; the pump returns only once it sees
+    // its registration's own final ECANCELED completion. Waiting for it here
     // means nothing of this connection is left suspended on the queue once
     // close() returns -- a caller free to destroy the queue right after
     // would otherwise leave the pump's frame and its buffer ring behind for

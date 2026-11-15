@@ -68,8 +68,9 @@ protected:
 
     // Send on the connection: the whole of `buf` (or `msg`), failing with
     // EBADF if there is no connection, as a send on a closed socket does.
-    rawtls::Op<size_t> _send(const void* buf, size_t size, unsigned int flags);
-    rawtls::Op<size_t> _sendmsg(const msghdr* msg, unsigned int flags);
+    rawstd::Task<size_t>
+    _send(const void* buf, size_t size, unsigned int flags);
+    rawstd::Task<size_t> _sendmsg(const msghdr* msg, unsigned int flags);
 
 private:
     // The cid-dispatched counterpart of the old basic_request_async():

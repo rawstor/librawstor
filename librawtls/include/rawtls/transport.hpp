@@ -2,7 +2,6 @@
 #define RAWTLS_TRANSPORT_HPP
 
 #include <rawtls/context.hpp>
-#include <rawtls/op.hpp>
 #include <rawtls/session.hpp>
 #include <rawtls/spiffe.hpp>
 
@@ -51,9 +50,10 @@ public:
     // went out: a plain connection may send less, like a socket, and a TLS
     // connection always sends all of it. Sends on a TLS Transport reach the
     // peer whole and in the order they were started.
-    virtual Op<size_t>
+    virtual rawstd::Task<size_t>
     send(const void* buf, size_t size, unsigned int flags) = 0;
-    virtual Op<size_t> sendmsg(const msghdr* msg, unsigned int flags) = 0;
+    virtual rawstd::Task<size_t>
+    sendmsg(const msghdr* msg, unsigned int flags) = 0;
 
     /*
      * What the peer sent, as items of exactly the size asked for with next(),
@@ -65,9 +65,10 @@ public:
         size_t entry_size, unsigned int entries, size_t size, unsigned int flags
     ) = 0;
 
-    // Stops the stream above: its pending next() fails with ECANCELED.
-    // `event` is the stream's event().
-    virtual Op<void> cancel_receive(rawio::Event* event) = 0;
+    // Stops the stream above: its pending next() fails with ECANCELED. Like
+    // Queue::cancel(), it only requests the cancellation. `event` is the
+    // stream's event().
+    virtual void cancel_receive(rawio::Event* event) = 0;
 
     // The identity of the peer, null on a plain connection.
     virtual const SpiffeId* peer() const noexcept = 0;

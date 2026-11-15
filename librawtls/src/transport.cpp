@@ -88,13 +88,14 @@ public:
         _queue(queue),
         _fd(fd) {}
 
-    rawtls::Op<size_t>
+    rawstd::Task<size_t>
     send(const void* buf, size_t size, unsigned int flags) override {
-        return _queue.send(_fd, buf, size, flags);
+        co_return co_await _queue.send(_fd, buf, size, flags);
     }
 
-    rawtls::Op<size_t> sendmsg(const msghdr* msg, unsigned int flags) override {
-        return _queue.sendmsg(_fd, msg, flags);
+    rawstd::Task<size_t>
+    sendmsg(const msghdr* msg, unsigned int flags) override {
+        co_return co_await _queue.sendmsg(_fd, msg, flags);
     }
 
     rawio::RecvStream recv_multishot(
@@ -103,9 +104,7 @@ public:
         return _queue.recv_multishot(_fd, entry_size, entries, size, flags);
     }
 
-    rawtls::Op<void> cancel_receive(rawio::Event* event) override {
-        return _queue.cancel(event);
-    }
+    void cancel_receive(rawio::Event* event) override { _queue.cancel(event); }
 
     const rawtls::SpiffeId* peer() const noexcept override { return nullptr; }
 };
@@ -189,29 +188,27 @@ rawstd::Task<void> flush_locked(std::shared_ptr<TlsState> s) {
     co_await flush(s);
 }
 
+// Encrypts the `count` buffers of `iov` and sends them, whole and in order.
+// `iov` must outlive the call.
 rawstd::Task<size_t>
-tls_send(std::shared_ptr<TlsState> s, const void* buf, size_t size) {
-    co_await s->write_mutex.lock();
-    AsyncMutex::Guard guard(s->write_mutex);
-    s->session.encrypt(buf, size);
-    co_await flush(s);
-    co_return size;
-}
-
-rawstd::Task<size_t>
-tls_sendmsg(std::shared_ptr<TlsState> s, const msghdr* msg) {
+tls_write(std::shared_ptr<TlsState> s, const iovec* iov, size_t count) {
     co_await s->write_mutex.lock();
     AsyncMutex::Guard guard(s->write_mutex);
     size_t total = 0;
-    for (size_t i = 0; i < static_cast<size_t>(msg->msg_iovlen); ++i) {
-        const iovec& v = msg->msg_iov[i];
-        if (v.iov_len > 0) {
-            s->session.encrypt(v.iov_base, v.iov_len);
-            total += v.iov_len;
+    for (size_t i = 0; i < count; ++i) {
+        if (iov[i].iov_len > 0) {
+            s->session.encrypt(iov[i].iov_base, iov[i].iov_len);
+            total += iov[i].iov_len;
         }
     }
     co_await flush(s);
     co_return total;
+}
+
+rawstd::Task<size_t>
+tls_send(std::shared_ptr<TlsState> s, const void* buf, size_t size) {
+    iovec iov{const_cast<void*>(buf), size};
+    co_return co_await tls_write(std::move(s), &iov, 1);
 }
 
 // Stops the recv in flight and makes the next one fail. A cancel that finds
@@ -225,11 +222,6 @@ void cancel_receive_now(TlsState& s) noexcept {
             rawstd_warning("Failed to cancel event: %s\n", e.what());
         }
     }
-}
-
-rawstd::Task<void> cancel_receive_task(std::shared_ptr<TlsState> s) {
-    cancel_receive_now(*s);
-    co_return;
 }
 
 rawstd::Task<void> tls_handshake(std::shared_ptr<TlsState> s) {
@@ -518,13 +510,15 @@ public:
     explicit TlsTransport(std::shared_ptr<TlsState> state) :
         _s(std::move(state)) {}
 
-    rawtls::Op<size_t>
+    rawstd::Task<size_t>
     send(const void* buf, size_t size, unsigned int) override {
         return tls_send(_s, buf, size);
     }
 
-    rawtls::Op<size_t> sendmsg(const msghdr* msg, unsigned int) override {
-        return tls_sendmsg(_s, msg);
+    rawstd::Task<size_t> sendmsg(const msghdr* msg, unsigned int) override {
+        return tls_write(
+            _s, msg->msg_iov, static_cast<size_t>(msg->msg_iovlen)
+        );
     }
 
     rawio::RecvStream
@@ -533,9 +527,7 @@ public:
         return rawio::RecvStream(std::make_shared<TlsRecv>(_s));
     }
 
-    rawtls::Op<void> cancel_receive(rawio::Event*) override {
-        return cancel_receive_task(_s);
-    }
+    void cancel_receive(rawio::Event*) override { cancel_receive_now(*_s); }
 
     const rawtls::SpiffeId* peer() const noexcept override {
         return &_s->session.peer();
