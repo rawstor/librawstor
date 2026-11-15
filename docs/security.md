@@ -783,13 +783,18 @@ require re-doing earlier ones.
 1. **Protocol groundwork.** Feature bits in `HANDSHAKE`; the owner tenant in
    protocol, MDS store, chunk metadata and `LIST`, with a registry and a
    default tenant (done); `crypto_params` reserved in the object record.
-2. **Transport.** An OpenSSL layer under `rawio` (client and server side),
-   mTLS, identity extraction from the SAN, config options on every service,
-   reload on `SIGHUP`, `--insecure`. kTLS as an option. Service and CLI test
-   suites run over TLS. Every TLS option is both a command-line flag and a
-   `KEY=value` entry of the service's configuration file (the
-   `/etc/rawstor/*/<name>.conf` files that the systemd units and orchestrators
-   already use), and a changed certificate is applied by `systemctl reload`.
+2. **Transport (done).** An OpenSSL layer under `rawio` (client and server
+   side), mTLS, identity extraction from the SAN, reload on `SIGHUP`,
+   `--insecure`. The TLS settings are environment entries, like every other
+   setting of rawstor: `KEY=value` lines of the service's configuration file
+   (the `/etc/rawstor/*/<name>.conf` files that the systemd units and
+   orchestrators already use); only `--insecure` is also a command-line flag.
+   A changed certificate is applied by `systemctl reload`. The TLS code is
+   tested in process (`librawtls`, `tests/test_tls*.cpp`, with a PKI the tests
+   make) and end to end in CI, where the OST and the CLI are separate
+   processes with certificates of their own; the other suites talk to fakes
+   and run with `--insecure`. kTLS stays an option that is not built (stage 0
+   measured it).
 3. **Authorization.** Tenants, principals and roles in the MDS store and admin
    API; capability tokens in `RESOLVE`, verified by the OST; per-command rights
    table; `-EACCES` / `-ENOENT` semantics (a foreign object is `-ENOENT`).
