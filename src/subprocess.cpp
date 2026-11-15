@@ -29,8 +29,6 @@
 extern char** environ;
 #endif
 
-namespace rawstor {
-
 namespace {
 
 char** current_environ() {
@@ -283,6 +281,8 @@ std::string run_command_capture_sync(const std::vector<std::string>& argv) {
 }
 
 } // namespace
+
+namespace rawstor {
 
 rawstd::Task<void>
 run_command(rawio::Queue& queue, std::vector<std::string> argv) {

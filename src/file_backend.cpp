@@ -692,6 +692,9 @@ rawstd::Task<void> Backend::_write_meta(
     }
 }
 
+} // namespace file
+} // namespace rawstor
+
 namespace {
 
 // The fake snapshot is copied one block at a time through the Queue, so the
@@ -788,6 +791,9 @@ std::string staging_suffix() {
 }
 
 } // namespace
+
+namespace rawstor {
+namespace file {
 
 rawstd::Task<void> Backend::create_version(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
