@@ -151,12 +151,12 @@ protected:
     ) {
         rawtls::Context client_context(config(pki, client_identity));
         rawtls::Context server_context(config(pki, server_identity));
-        rawstd::Task<std::unique_ptr<Transport>> c = Transport::open(
-            *queue, pair.fds[0], &client_context, rawtls::Mode::client,
+        rawstd::Task<std::unique_ptr<Transport>> c = Transport::tls(
+            *queue, pair.fds[0], client_context, rawtls::Mode::client,
             server_uri()
         );
-        rawstd::Task<std::unique_ptr<Transport>> s = Transport::open(
-            *queue, pair.fds[1], &server_context, rawtls::Mode::server
+        rawstd::Task<std::unique_ptr<Transport>> s = Transport::tls(
+            *queue, pair.fds[1], server_context, rawtls::Mode::server
         );
         ASSERT_TRUE(pump(*queue, [&]() { return c.done() && s.done(); }));
         client = c.get();
@@ -167,16 +167,8 @@ protected:
 } // namespace
 
 TEST_F(TransportTest, PlainCarriesBytesAsTheyAre) {
-    std::unique_ptr<Transport> a =
-        Transport::open(
-            *queue, pair.fds[0], nullptr, rawtls::Mode::client
-        )
-            .get();
-    std::unique_ptr<Transport> b =
-        Transport::open(
-            *queue, pair.fds[1], nullptr, rawtls::Mode::server
-        )
-            .get();
+    std::unique_ptr<Transport> a = Transport::plain(*queue, pair.fds[0]);
+    std::unique_ptr<Transport> b = Transport::plain(*queue, pair.fds[1]);
     EXPECT_EQ(a->peer(), nullptr);
 
     rawio::RecvStream stream = b->recv_multishot(4096, 8, 5, 0);
@@ -369,12 +361,12 @@ TEST_F(TransportTest, RefusedServerFailsTheClientHandshake) {
     );
     rawtls::Context client_context(config(pki, client_identity));
     rawtls::Context server_context(config(pki, impostor));
-    rawstd::Task<std::unique_ptr<Transport>> c = Transport::open(
-        *queue, pair.fds[0], &client_context, rawtls::Mode::client,
+    rawstd::Task<std::unique_ptr<Transport>> c = Transport::tls(
+        *queue, pair.fds[0], client_context, rawtls::Mode::client,
         server_uri()
     );
-    rawstd::Task<std::unique_ptr<Transport>> s = Transport::open(
-        *queue, pair.fds[1], &server_context, rawtls::Mode::server
+    rawstd::Task<std::unique_ptr<Transport>> s = Transport::tls(
+        *queue, pair.fds[1], server_context, rawtls::Mode::server
     );
     ASSERT_TRUE(pump(*queue, [&]() { return c.done() && s.done(); }));
     try {
@@ -388,8 +380,8 @@ TEST_F(TransportTest, RefusedServerFailsTheClientHandshake) {
 
 TEST_F(TransportTest, SilentPeerTimesTheHandshakeOut) {
     rawtls::Context server_context(config(pki, server_identity));
-    rawstd::Task<std::unique_ptr<Transport>> s = Transport::open(
-        *queue, pair.fds[1], &server_context, rawtls::Mode::server, "",
+    rawstd::Task<std::unique_ptr<Transport>> s = Transport::tls(
+        *queue, pair.fds[1], server_context, rawtls::Mode::server, "",
         std::nullopt, 100
     );
     EXPECT_FALSE(pump(*queue, [&]() { return s.done(); }, 30));
@@ -404,8 +396,8 @@ TEST_F(TransportTest, SilentPeerTimesTheHandshakeOut) {
 
 TEST_F(TransportTest, PlainPeerFailsTheTlsHandshake) {
     rawtls::Context server_context(config(pki, server_identity));
-    rawstd::Task<std::unique_ptr<Transport>> s = Transport::open(
-        *queue, pair.fds[1], &server_context, rawtls::Mode::server
+    rawstd::Task<std::unique_ptr<Transport>> s = Transport::tls(
+        *queue, pair.fds[1], server_context, rawtls::Mode::server
     );
     const char junk[] = "GET / HTTP/1.1\r\n\r\n";
     ASSERT_EQ(write(pair.fds[0], junk, sizeof(junk)), (ssize_t)sizeof(junk));
@@ -452,12 +444,12 @@ protected:
         std::optional<rawtls::Role> role = std::nullopt
     ) {
         Opened result;
-        rawstd::Task<std::unique_ptr<Transport>> c = Transport::open(
-            *queue, fds.fds[0], &client_context, rawtls::Mode::client, expected,
+        rawstd::Task<std::unique_ptr<Transport>> c = Transport::tls(
+            *queue, fds.fds[0], client_context, rawtls::Mode::client, expected,
             role
         );
-        rawstd::Task<std::unique_ptr<Transport>> s = Transport::open(
-            *queue, fds.fds[1], &server_context, rawtls::Mode::server
+        rawstd::Task<std::unique_ptr<Transport>> s = Transport::tls(
+            *queue, fds.fds[1], server_context, rawtls::Mode::server
         );
         EXPECT_TRUE(pump(*queue, [&]() { return c.done() && s.done(); }));
         result.client_error = finish(c, result.client);
@@ -647,8 +639,8 @@ TEST_F(HandshakeTest, CertificateNotOnTheCrlIsAccepted) {
 
 TEST_F(HandshakeTest, TlsOneTwoIsRefused) {
     rawtls::Context server_context(config(pki, server_identity));
-    rawstd::Task<std::unique_ptr<Transport>> s = Transport::open(
-        *queue, pair.fds[1], &server_context, rawtls::Mode::server
+    rawstd::Task<std::unique_ptr<Transport>> s = Transport::tls(
+        *queue, pair.fds[1], server_context, rawtls::Mode::server
     );
 
     SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
@@ -769,21 +761,21 @@ TEST_F(HandshakeTest, ContextRejectsBrokenFiles) {
 TEST_F(HandshakeTest, ClientNeedsAnExpectedServerIdentity) {
     rawtls::Context context(config(pki, client_identity));
     EXPECT_THROW(
-        Transport::open(
-            *queue, pair.fds[0], &context, rawtls::Mode::client
+        Transport::tls(
+            *queue, pair.fds[0], context, rawtls::Mode::client
         ).get(),
         std::system_error
     );
     EXPECT_THROW(
-        Transport::open(
-            *queue, pair.fds[0], &context, rawtls::Mode::client, "nonsense"
+        Transport::tls(
+            *queue, pair.fds[0], context, rawtls::Mode::client, "nonsense"
         ).get(),
         std::system_error
     );
     // The server it expects must be an OST or an MDS.
     EXPECT_THROW(
-        Transport::open(
-            *queue, pair.fds[0], &context, rawtls::Mode::client, client_uri()
+        Transport::tls(
+            *queue, pair.fds[0], context, rawtls::Mode::client, client_uri()
         ).get(),
         std::system_error
     );
@@ -809,8 +801,8 @@ TEST_F(HandshakeTest, ClientMayExpectOnlyTheRoleOfTheServer) {
     }
     // Only the roles of a server can be expected of one.
     EXPECT_THROW(
-        Transport::open(
-            *queue, pair.fds[0], &client_context, rawtls::Mode::client, "",
+        Transport::tls(
+            *queue, pair.fds[0], client_context, rawtls::Mode::client, "",
             rawtls::Role::admin
         ).get(),
         std::system_error

@@ -36,11 +36,13 @@ class Transport {
 public:
     virtual ~Transport() = default;
 
+    // A connection that carries its bytes as they are.
+    static std::unique_ptr<Transport> plain(rawio::Queue& queue, int fd);
+
     /*
-     * The Transport of the connected socket `fd`. Without a `context` it
-     * carries the bytes as they are, and nothing else is looked at. With one
-     * it runs the TLS handshake on `fd` as the client or the server, and
-     * returns once the peer is verified.
+     * A TLS connection: runs the handshake on the connected socket `fd` as
+     * the client or the server and returns the Transport once the peer is
+     * verified.
      *
      * A client gives `expected_peer`, the exact SPIFFE ID it requires of the
      * server, or leaves it empty and gives `expected_role`, ost or mds, to
@@ -62,12 +64,11 @@ public:
      * before the server has checked the client's certificate: a client that
      * is refused learns it from its stream, which fails with EPROTO.
      */
-    static rawstd::Task<std::unique_ptr<Transport>> open(
-        rawio::Queue& queue, int fd, Context* context, Mode mode,
+    static rawstd::Task<std::unique_ptr<Transport>>
+    tls(rawio::Queue& queue, int fd, Context& context, Mode mode,
         const std::string& expected_peer = "",
         std::optional<Role> expected_role = std::nullopt,
-        unsigned int handshake_timeout_ms = 10000
-    );
+        unsigned int handshake_timeout_ms = 10000);
 
     // Sends `buf` (or `msg`) and completes with the number of its bytes that
     // went out: a plain connection may send less, like a socket, and a TLS

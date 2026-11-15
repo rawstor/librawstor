@@ -148,8 +148,8 @@ int raw_handshake(
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(8);
     rawio::Queue::setup_fd(fd);
     rawstd::Task<std::unique_ptr<rawtls::Transport>> task =
-        rawtls::Transport::open(
-            *queue, fd, &context, rawtls::Mode::client, expected_peer,
+        rawtls::Transport::tls(
+            *queue, fd, context, rawtls::Mode::client, expected_peer,
             rawtls::Role::ost, 5000
         );
     std::chrono::steady_clock::time_point deadline =

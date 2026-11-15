@@ -876,16 +876,17 @@ TlsTransport::~TlsTransport() {
 
 namespace rawtls {
 
-rawstd::Task<std::unique_ptr<Transport>> Transport::open(
-    rawio::Queue& queue, int fd, Context* context, Mode mode,
+std::unique_ptr<Transport> Transport::plain(rawio::Queue& queue, int fd) {
+    return std::make_unique<PlainTransport>(queue, fd);
+}
+
+rawstd::Task<std::unique_ptr<Transport>> Transport::tls(
+    rawio::Queue& queue, int fd, Context& context, Mode mode,
     const std::string& expected_peer, std::optional<Role> expected_role,
     unsigned int handshake_timeout_ms
 ) {
-    if (context == nullptr) {
-        co_return std::make_unique<PlainTransport>(queue, fd);
-    }
     std::unique_ptr<TlsTransport> transport = std::make_unique<TlsTransport>(
-        queue, fd, *context, mode, expected_peer, expected_role
+        queue, fd, context, mode, expected_peer, expected_role
     );
     co_await transport->handshake(handshake_timeout_ms);
     co_return transport;
