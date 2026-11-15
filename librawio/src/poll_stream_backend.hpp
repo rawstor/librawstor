@@ -274,6 +274,15 @@ inline void RecvMultishotBackend::close() noexcept {
     }
 }
 
+inline void RecvMultishotBackend::cancel() noexcept {
+    if (_event != nullptr && !_has_terminal && !_closed) {
+        try {
+            _q.cancel(_event);
+        } catch (...) {
+        }
+    }
+}
+
 } // namespace poll
 } // namespace rawio
 

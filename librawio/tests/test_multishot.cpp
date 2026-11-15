@@ -691,6 +691,85 @@ TEST_F(MultishotTest, recv_cancel_in_cb) {
     EXPECT_NO_THROW(_queue->cancel(stream.event()));
 }
 
+// cancel() ends a stream that is waiting for data, with ECANCELED, from where
+// the RecvStream itself is not at hand.
+TEST_F(MultishotTest, recv_canceller_ends_pending_next) {
+    rawio::RecvStream stream = _queue->recv_multishot(_fd, 8, 4, 4, 0);
+    rawio::RecvStream::Canceller canceller = stream.canceller();
+
+    rawstd::Task<rawio::RecvStream::Item> next =
+        rawio::tests::wrap<rawio::RecvStream::Item>(stream.next(4));
+    EXPECT_FALSE(next.done());
+    canceller.cancel();
+
+    try {
+        rawio::tests::run(*_queue, std::move(next));
+        FAIL() << "expected ECANCELED";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ECANCELED);
+    }
+}
+
+// What arrived before the cancellation is delivered first, like it is after
+// Queue::cancel().
+TEST_F(MultishotTest, recv_cancel_delivers_what_arrived) {
+    {
+        const char server_buf[] = "dat1";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.wait();
+    }
+
+    rawio::RecvStream stream = _queue->recv_multishot(_fd, 8, 4, 4, 0);
+    rawio::RecvStream::Item item = rawio::tests::run(
+        *_queue, rawio::tests::wrap<rawio::RecvStream::Item>(stream.next(4))
+    );
+    EXPECT_EQ(item.size(), (size_t)4);
+
+    stream.cancel();
+    try {
+        rawio::tests::run(
+            *_queue, rawio::tests::wrap<rawio::RecvStream::Item>(stream.next(4))
+        );
+        FAIL() << "expected ECANCELED";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ECANCELED);
+    }
+}
+
+// A canceller outlives its stream: after the stream ended on its own, and
+// after it was destroyed, cancel() does nothing.
+TEST_F(MultishotTest, recv_canceller_after_the_stream_is_over) {
+    {
+        const char server_buf[] = "dat1";
+        _server.write(server_buf, sizeof(server_buf) - 1);
+        _server.close();
+        _server.wait();
+    }
+
+    rawio::RecvStream::Canceller canceller;
+    {
+        rawio::RecvStream stream = _queue->recv_multishot(_fd, 8, 4, 4, 0);
+        canceller = stream.canceller();
+
+        rawio::tests::run(
+            *_queue, rawio::tests::wrap<rawio::RecvStream::Item>(stream.next(4))
+        );
+        try {
+            rawio::tests::run(
+                *_queue,
+                rawio::tests::wrap<rawio::RecvStream::Item>(stream.next(4))
+            );
+            FAIL() << "expected EPIPE";
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), EPIPE);
+        }
+        // Ended on its own.
+        EXPECT_NO_THROW(canceller.cancel());
+    }
+    // Destroyed.
+    EXPECT_NO_THROW(canceller.cancel());
+}
+
 // io_uring ends a multishot recv on its own when a completion can't be
 // posted (e.g. the completion ring is full): the last completion still
 // carries data but no IORING_CQE_F_MORE. The stream must then deliver

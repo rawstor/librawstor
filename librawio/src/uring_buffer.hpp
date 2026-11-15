@@ -116,6 +116,7 @@ public:
         int* error
     ) noexcept override;
     void close() noexcept override;
+    void cancel() noexcept override;
     rawio::Event* event() const noexcept override { return _event; }
 };
 
