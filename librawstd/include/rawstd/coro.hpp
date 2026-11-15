@@ -290,8 +290,8 @@ public:
     // the task handles and carries on from, is gone, and the task may wait
     // for the next thing as long as it likes. This one is kept: every
     // Cancellable awaitable the task co_awaits afterwards is cancelled as it
-    // is reached, however many there are, and the nested Tasks it awaits get
-    // the same treatment (gather() and any() get a plain cancel()). For a
+    // is reached, however many there are, and the nested Tasks it awaits, the
+    // tasks of gather() and any() included, get the same treatment. For a
     // deadline, which must hold whatever the task does after it.
     bool cancel_sticky() {
         if (done()) {
@@ -419,11 +419,11 @@ namespace detail {
 // wait for either way -- not worth skipping the remaining tasks or
 // failing the caller's own cancel() over.
 template <typename T>
-bool cancel_all(std::vector<Task<T>>& tasks) noexcept {
+bool cancel_all(std::vector<Task<T>>& tasks, bool sticky = false) noexcept {
     bool cancelled = false;
     for (Task<T>& t : tasks) {
         try {
-            cancelled |= t.cancel();
+            cancelled |= sticky ? t.cancel_sticky() : t.cancel();
         } catch (...) {
         }
     }
@@ -454,6 +454,8 @@ public:
     T await_resume() { return _task.await_resume(); }
 
     bool cancel() noexcept { return cancel_all(_tasks); }
+
+    bool cancel_sticky() noexcept { return cancel_all(_tasks, true); }
 };
 
 } // namespace detail
@@ -659,6 +661,8 @@ struct AnyState {
     std::coroutine_handle<> waiter;
 
     bool cancel() noexcept { return cancel_all(tasks); }
+
+    bool cancel_sticky() noexcept { return cancel_all(tasks, true); }
 };
 
 // Drives one of any()'s tasks to completion on its behalf: a task has a
@@ -719,6 +723,8 @@ public:
     void await_resume() const noexcept {}
 
     bool cancel() noexcept { return _state.cancel(); }
+
+    bool cancel_sticky() noexcept { return _state.cancel_sticky(); }
 };
 
 } // namespace detail

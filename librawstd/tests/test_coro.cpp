@@ -285,6 +285,70 @@ TEST(TaskCancelTest, sticky_cancel_propagates_through_nested_tasks) {
     EXPECT_EQ(ecanceled_or_value(t), -ECANCELED);
 }
 
+TEST(TaskCancelTest, sticky_cancel_reaches_the_tasks_of_gather) {
+    std::coroutine_handle<> first[2];
+    std::coroutine_handle<> second[2];
+    rawstd::Task<std::vector<int>> t = rawstd::gather(2, [&](size_t i) {
+        return lost_race_then_cancellable(&first[i], &second[i]);
+    });
+
+    EXPECT_TRUE(t.cancel_sticky());
+    for (size_t i = 0; i < 2; ++i) {
+        ASSERT_TRUE(first[i]);
+        first[i].resume();
+    }
+    for (size_t i = 0; i < 2; ++i) {
+        ASSERT_TRUE(second[i]);
+        second[i].resume();
+    }
+    ASSERT_TRUE(t.done());
+    try {
+        t.get();
+        FAIL() << "the tasks were not cancelled again";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ECANCELED);
+    }
+}
+
+TEST(TaskCancelTest, sticky_cancel_reaches_the_tasks_of_any) {
+    std::coroutine_handle<> first[2];
+    std::coroutine_handle<> second[2];
+    rawstd::Task<int> t = rawstd::any(2, [&](size_t i) {
+        return lost_race_then_cancellable(&first[i], &second[i]);
+    });
+
+    EXPECT_TRUE(t.cancel_sticky());
+    for (size_t i = 0; i < 2; ++i) {
+        ASSERT_TRUE(first[i]);
+        first[i].resume();
+    }
+    for (size_t i = 0; i < 2; ++i) {
+        ASSERT_TRUE(second[i]);
+        second[i].resume();
+    }
+    ASSERT_TRUE(t.done());
+    EXPECT_EQ(ecanceled_or_value(t), -ECANCELED);
+}
+
+// A plain cancel() of gather() leaves them as they were.
+TEST(TaskCancelTest, plain_cancel_of_gather_is_not_sticky) {
+    std::coroutine_handle<> first[2];
+    std::coroutine_handle<> second[2];
+    rawstd::Task<std::vector<int>> t = rawstd::gather(2, [&](size_t i) {
+        return lost_race_then_cancellable(&first[i], &second[i]);
+    });
+
+    EXPECT_TRUE(t.cancel());
+    for (size_t i = 0; i < 2; ++i) {
+        first[i].resume();
+    }
+    for (size_t i = 0; i < 2; ++i) {
+        second[i].resume();
+    }
+    ASSERT_TRUE(t.done());
+    EXPECT_EQ(t.get(), (std::vector<int>{7, 7}));
+}
+
 TEST(TaskCancelTest, sticky_cancel_of_a_done_task_returns_false) {
     rawstd::Task<int> t = immediate_value(1);
     EXPECT_FALSE(t.cancel_sticky());

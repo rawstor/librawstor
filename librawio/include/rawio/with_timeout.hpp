@@ -26,7 +26,8 @@ namespace detail {
 struct TimeoutState {
     // The timer's event while it is in flight.
     Event* timer = nullptr;
-    // The timer is what asked the task to stop.
+    // The timer ran out while the task was still running, and asked it to
+    // stop.
     bool expired = false;
     // The watcher is done with this state, and who waits for that.
     bool watcher_over = false;
@@ -52,13 +53,16 @@ rawstd::DetachedTask watch_timeout(
     }
     state.timer = nullptr;
     if (ran_out) {
-        state.expired = true;
         try {
             // Sticky: a cancel that lost the race against the end of the
             // operation the task was in, or that the task took and went on
-            // from, would leave it without a deadline.
-            task.cancel_sticky();
+            // from, would leave it without a deadline. A task that has
+            // finished already was not stopped by the deadline, whatever it
+            // ended with.
+            state.expired = task.cancel_sticky();
         } catch (const std::exception& e) {
+            // Only a task that is still running can fail to be cancelled.
+            state.expired = true;
             rawstd_warning("Failed to cancel the task: %s\n", e.what());
         }
     }
@@ -105,6 +109,9 @@ public:
  *   task that never reaches a cancellable awaitable runs to its end, and
  *   with_timeout() waits for it.
  * - Cancelling the returned task cancels `task` and the timer.
+ * - The timer is cancelled once the task has finished. If that cancellation
+ *   cannot be submitted (the queue has no room for it), the result is
+ *   delivered when the timer runs out instead.
  */
 template <typename T>
 rawstd::Task<T>
