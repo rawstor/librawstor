@@ -22,13 +22,6 @@ namespace {
 
 std::string engine_name = "uring";
 
-} // namespace
-
-namespace rawio {
-namespace uring {
-
-namespace {
-
 // Runs setup_fd() on a successful accept() raw result, folding any
 // setup_fd() failure into a negative errno rather than leaking the fd.
 // Shared by accept()'s AcceptCompletion and accept_multishot()'s
@@ -255,7 +248,7 @@ public:
 template <typename BackendBase, bool dedup>
 class SingleSlotStreamBackend final : public BackendBase {
 private:
-    Queue& _q;
+    rawio::uring::Queue& _q;
     unsigned int _last_generation;
 
     std::coroutine_handle<> _waiter;
@@ -271,10 +264,12 @@ private:
     bool _terminated;
     int _terminal_error;
 
-    Event* _event;
+    rawio::Event* _event;
 
 public:
-    SingleSlotStreamBackend(Queue& q, unsigned int last_generation) :
+    SingleSlotStreamBackend(
+        rawio::uring::Queue& q, unsigned int last_generation
+    ) :
         _q(q),
         _last_generation(last_generation),
         _waiter(),
@@ -289,7 +284,7 @@ public:
         _terminal_error(0),
         _event(nullptr) {}
 
-    inline void set_event(Event* event) noexcept { _event = event; }
+    inline void set_event(rawio::Event* event) noexcept { _event = event; }
 
     bool try_produce(int& out, int& error) noexcept override {
         if (_has_pending) {
@@ -519,11 +514,12 @@ public:
 // bookkeeping), so `flags` is forwarded rather than ignored.
 class RecvMultishotCompletion final : public Completion {
 private:
-    std::shared_ptr<BufferRing> _buffer;
+    std::shared_ptr<rawio::uring::BufferRing> _buffer;
 
 public:
     RecvMultishotCompletion(
-        rawstd::TraceEvent trace_event, std::shared_ptr<BufferRing> buffer
+        rawstd::TraceEvent trace_event,
+        std::shared_ptr<rawio::uring::BufferRing> buffer
     ) :
         Completion(std::move(trace_event)),
         _buffer(std::move(buffer)) {}
@@ -534,6 +530,9 @@ public:
 };
 
 } // namespace
+
+namespace rawio {
+namespace uring {
 
 Queue::Queue(unsigned int depth) :
     rawio::Queue(depth),

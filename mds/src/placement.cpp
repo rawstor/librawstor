@@ -177,9 +177,15 @@ std::vector<PlacementSlot> place(
     return ret;
 }
 
+} // namespace mdsserver
+} // namespace rawstor
+
 namespace {
-Topology select_role(const Topology& topology, Role role) {
-    Topology result;
+
+rawstor::mdsserver::Topology select_role(
+    const rawstor::mdsserver::Topology& topology, rawstor::mdsserver::Role role
+) {
+    rawstor::mdsserver::Topology result;
     for (const auto& backend : topology.osts()) {
         if (backend.supports(role)) {
             result.add(backend);
@@ -188,10 +194,11 @@ Topology select_role(const Topology& topology, Role role) {
     return result;
 }
 
-Topology exclude_domain(
-    const Topology& topology, const std::string& domain, Level level
+rawstor::mdsserver::Topology exclude_domain(
+    const rawstor::mdsserver::Topology& topology, const std::string& domain,
+    rawstor::mdsserver::Level level
 ) {
-    Topology result;
+    rawstor::mdsserver::Topology result;
     for (const auto& backend : topology.osts()) {
         if (backend.domain(level) != domain) {
             result.add(backend);
@@ -200,7 +207,8 @@ Topology exclude_domain(
     return result;
 }
 
-const TopologyOST& backend_of(const Topology& topology, const RawstdUUID& id) {
+const TopologyOST&
+backend_of(const rawstor::mdsserver::Topology& topology, const RawstdUUID& id) {
     for (const auto& backend : topology.osts()) {
         if (rawstd_uuid_cmp(&id, &backend.id) == 0) {
             return backend;
@@ -210,19 +218,22 @@ const TopologyOST& backend_of(const Topology& topology, const RawstdUUID& id) {
 }
 
 // A witness must leave enough distinct DATA domains for the whole chunk.
-Topology
-witness_candidates(const Topology& topology, const PlacementPolicy& policy) {
-    const auto data = select_role(topology, Role::Data);
+rawstor::mdsserver::Topology witness_candidates(
+    const rawstor::mdsserver::Topology& topology,
+    const rawstor::mdsserver::PlacementPolicy& policy
+) {
+    const auto data = select_role(topology, rawstor::mdsserver::Role::Data);
     std::set<std::string> data_domains;
     for (const auto& backend : data.osts()) {
         if (backend.weight != 0) {
             data_domains.insert(backend.domain(policy.failure_domain));
         }
     }
-    Topology result;
+    rawstor::mdsserver::Topology result;
     for (const auto& backend : topology.osts()) {
         const auto domain = backend.domain(policy.failure_domain);
-        if (backend.weight != 0 && backend.supports(Role::Witness) &&
+        if (backend.weight != 0 &&
+            backend.supports(rawstor::mdsserver::Role::Witness) &&
             data_domains.size() - data_domains.count(domain) >= policy.width) {
             result.add(backend);
         }
@@ -230,6 +241,9 @@ witness_candidates(const Topology& topology, const PlacementPolicy& policy) {
     return result;
 }
 } // namespace
+
+namespace rawstor {
+namespace mdsserver {
 
 std::vector<PlacementSlot> place_chunk(
     const Topology& topology, const RawstdUUID& id, uint64_t index,

@@ -377,21 +377,26 @@ public:
     }
 };
 
+} // namespace rawstor
+
 namespace {
 
-// The transitions of a member's MemberState (docs/mirroring.md, the member
-// state diagram).
-constexpr auto member_transitions = rawstd::fsm_transitions<MemberState>({
-    {MemberState::IN_SYNC, MemberState::LEAVING},
-    {MemberState::LEAVING, MemberState::LEAVING},
-    {MemberState::LEAVING, MemberState::STALE},
-    {MemberState::STALE, MemberState::SYNCING},
-    {MemberState::SYNCING, MemberState::LEAVING},
-    {MemberState::SYNCING, MemberState::STALE},
-    {MemberState::SYNCING, MemberState::IN_SYNC},
-});
+// The transitions of a member's rawstor::MemberState (docs/mirroring.md, the
+// member state diagram).
+constexpr auto member_transitions =
+    rawstd::fsm_transitions<rawstor::MemberState>({
+        {rawstor::MemberState::IN_SYNC, rawstor::MemberState::LEAVING},
+        {rawstor::MemberState::LEAVING, rawstor::MemberState::LEAVING},
+        {rawstor::MemberState::LEAVING, rawstor::MemberState::STALE},
+        {rawstor::MemberState::STALE, rawstor::MemberState::SYNCING},
+        {rawstor::MemberState::SYNCING, rawstor::MemberState::LEAVING},
+        {rawstor::MemberState::SYNCING, rawstor::MemberState::STALE},
+        {rawstor::MemberState::SYNCING, rawstor::MemberState::IN_SYNC},
+    });
 
 } // namespace
+
+namespace rawstor {
 
 // Shared configuration and resync lifecycle. Atomic queries serve the I/O
 // path; operations ending in _locked require mutex() to be held. Metadata
@@ -899,18 +904,20 @@ public:
     }
 };
 
+} // namespace rawstor
+
 namespace {
 
-// The MirrorControl every writable open of chunk `id`/`offset` in this
+// The rawstor::MirrorControl every writable open of chunk `id`/`offset` in this
 // process shares. The process opens a chunk on one location list only: an
 // open naming another one fails with EINVAL.
-std::shared_ptr<MirrorControl> shared_control(
+std::shared_ptr<rawstor::MirrorControl> shared_control(
     const RawstdUUID& id, uint64_t offset,
     const std::vector<rawstd::URI>& locations
 ) {
     using Key = std::pair<std::string, uint64_t>;
     static std::mutex registry_mu;
-    static std::map<Key, std::weak_ptr<MirrorControl>> registry;
+    static std::map<Key, std::weak_ptr<rawstor::MirrorControl>> registry;
 
     std::lock_guard<std::mutex> guard(registry_mu);
     for (auto it = registry.begin(); it != registry.end();) {
@@ -920,10 +927,10 @@ std::shared_ptr<MirrorControl> shared_control(
         std::string(reinterpret_cast<const char*>(id.bytes), sizeof(id.bytes)),
         offset
     };
-    std::weak_ptr<MirrorControl>& slot = registry[key];
-    std::shared_ptr<MirrorControl> ret = slot.lock();
+    std::weak_ptr<rawstor::MirrorControl>& slot = registry[key];
+    std::shared_ptr<rawstor::MirrorControl> ret = slot.lock();
     if (!ret) {
-        ret = std::make_shared<MirrorControl>(locations);
+        ret = std::make_shared<rawstor::MirrorControl>(locations);
         slot = ret;
         return ret;
     }
@@ -939,6 +946,8 @@ std::shared_ptr<MirrorControl> shared_control(
 }
 
 } // namespace
+
+namespace rawstor {
 
 MemberState Chunk::_state(size_t idx) const noexcept {
     return _control->state(idx);
@@ -1123,10 +1132,12 @@ Chunk::~Chunk() {
     }
 }
 
+} // namespace rawstor
+
 namespace {
 
 rawstd::Task<RawstorObjectMeta>
-inspect_member(Slot& slot, const RawstdUUID& id, uint64_t offset) {
+inspect_member(rawstor::Slot& slot, const RawstdUUID& id, uint64_t offset) {
     auto metas = co_await slot.meta(id, offset, RawstdUUID{});
     for (const auto& meta : metas) {
         if (meta.state != RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
@@ -1137,7 +1148,7 @@ inspect_member(Slot& slot, const RawstdUUID& id, uint64_t offset) {
 }
 
 rawstd::Task<RawstorObjectMeta> open_member(
-    Slot& slot, const RawstdUUID& id, uint64_t offset, int flags,
+    rawstor::Slot& slot, const RawstdUUID& id, uint64_t offset, int flags,
     const RawstdUUID& version_id, bool data_io,
     const RawstdUUID& session_id = {}
 ) {
@@ -1203,7 +1214,7 @@ rawstd::Task<void> recreate_missing(
         RawstorObjectMeta meta{};
         bool failed = false;
         try {
-            slot = co_await Slot::create(queue, locations[i]);
+            slot = co_await rawstor::Slot::create(queue, locations[i]);
             const bool data =
                 !has_witness(sp, locations.size()) || i + 1 < locations.size();
             RawstdUUID survivor_owner;
@@ -1241,6 +1252,8 @@ rawstd::Task<void> recreate_missing(
 }
 
 } // namespace
+
+namespace rawstor {
 
 rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     rawio::Queue& queue, const std::vector<rawstd::URI>& locations,

@@ -607,6 +607,8 @@ rawstd::Task<void> Location::tenants(
     encode_token(next, token);
 }
 
+} // namespace rawstor
+
 namespace {
 
 // The tenant registry is the MDS's own: one mds:// URI.
@@ -636,6 +638,8 @@ rawstd::Task<void> tenant_op(
 }
 
 } // namespace
+
+namespace rawstor {
 
 rawstd::Task<void>
 Location::create_tenant(rawio::Queue& queue, const RawstdUUID& tenant) const {

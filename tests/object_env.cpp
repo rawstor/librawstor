@@ -15,9 +15,6 @@
 
 #include <unistd.h>
 
-namespace rawstor {
-namespace tests {
-
 namespace {
 
 // Runs `body` (which constructs a Server and calls its blocking loop())
@@ -36,6 +33,9 @@ std::thread spawn_server(ConstructAndLoop&& body) {
 }
 
 } // namespace
+
+namespace rawstor {
+namespace tests {
 
 ObjectEnv::ObjectEnv(
     unsigned int mds_port, unsigned int ost_port,

@@ -14,9 +14,6 @@
 #include <cstdint>
 #include <cstdio>
 
-namespace rawstor {
-namespace telemetry {
-
 namespace {
 
 rawstd::Stats slat_stats;
@@ -32,10 +29,10 @@ std::atomic<int> in_flight{0};
 // record_op() takes its fields individually, so nothing outside needs
 // the type itself.
 struct Op {
-    TimePoint lat;
-    TimePoint slat;
-    TimePoint rtt;
-    TimePoint clat;
+    rawstor::telemetry::TimePoint lat;
+    rawstor::telemetry::TimePoint slat;
+    rawstor::telemetry::TimePoint rtt;
+    rawstor::telemetry::TimePoint clat;
     const char* op;
     size_t size;
     uint64_t offset;
@@ -89,7 +86,7 @@ public:
 
 TopN top_slow(10);
 
-double usec(TimePoint ns) {
+double usec(rawstor::telemetry::TimePoint ns) {
     return static_cast<double>(ns) / 1000.0;
 }
 
@@ -137,6 +134,9 @@ void print_stat(const char* label, const rawstd::Stats& s) {
 }
 
 } // namespace
+
+namespace rawstor {
+namespace telemetry {
 
 void record_slat(TimePoint ns) {
     slat_stats.add(usec(ns));

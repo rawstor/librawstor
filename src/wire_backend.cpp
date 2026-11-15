@@ -583,6 +583,9 @@ Backend::~Backend() {
     }
 }
 
+} // namespace wire
+} // namespace rawstor
+
 namespace {
 
 // Connects a new non-blocking socket to `servaddr`; closes it again and
@@ -650,6 +653,9 @@ connect_socket(rawio::Queue& queue, const sockaddr_in& servaddr) {
 }
 
 } // namespace
+
+namespace rawstor {
+namespace wire {
 
 rawstd::Task<void> Backend::_wire_connect() {
     // Every failure below -- including a malformed location, which can't
