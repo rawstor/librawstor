@@ -70,8 +70,19 @@ Environment=WRITE_CACHE=on
 #Environment=RAWSTOR_OPTS_LIST_LIMIT=1000
 #Environment=RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT=128
 #Environment=RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY=256M
+# TLS (docs/configuration.md#tls): the instance needs these, set here or in the
+# file below, and exits with EX_CONFIG without them. RAWSTOR_INSECURE=1 runs it
+# without TLS instead: plaintext, no peer is authenticated.
+#Environment=RAWSTOR_TLS_TRUST_DOMAIN=cluster.example
+#Environment=RAWSTOR_TLS_CERT=/etc/rawstor/tls/cert.pem
+#Environment=RAWSTOR_TLS_KEY=/etc/rawstor/tls/key.pem
+#Environment=RAWSTOR_TLS_CA=/etc/rawstor/tls/ca.pem
+#Environment=RAWSTOR_INSECURE=1
 EnvironmentFile=-/etc/rawstor-vduse.conf
 ExecStart=/usr/bin/rawstor-vduse --write-cache=${WRITE_CACHE} ${LOCATION}/%i
+# Reads the TLS certificate, key and CAs again for the connections made after
+# it (SIGUSR1; SIGHUP re-reads the size of the object).
+ExecReload=/bin/kill -USR1 $MAINPID
 Restart=always
 RestartSec=2
 # sysexits.h codes rawstor-vduse exits with when retrying won't help:
