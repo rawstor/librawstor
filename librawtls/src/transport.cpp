@@ -69,6 +69,7 @@ class PlainTransport final : public rawtls::Transport {
 private:
     rawio::Queue& _queue;
     int _fd;
+    rawio::RecvStream::Canceller _recv;
 
 public:
     PlainTransport(rawio::Queue& queue, int fd) noexcept :
@@ -88,10 +89,13 @@ public:
     rawio::RecvStream recv_multishot(
         size_t entry_size, unsigned int entries, size_t size, unsigned int flags
     ) override {
-        return _queue.recv_multishot(_fd, entry_size, entries, size, flags);
+        rawio::RecvStream stream =
+            _queue.recv_multishot(_fd, entry_size, entries, size, flags);
+        _recv = stream.canceller();
+        return stream;
     }
 
-    void cancel_receive(rawio::Event* event) override { _queue.cancel(event); }
+    void cancel_recv_multishot() noexcept override { _recv.cancel(); }
 
     const rawtls::SpiffeId* peer() const noexcept override { return nullptr; }
 };
@@ -613,7 +617,7 @@ public:
     rawio::RecvStream
     recv_multishot(size_t, unsigned int, size_t, unsigned int) override;
 
-    void cancel_receive(rawio::Event*) override { _cancel_receive(); }
+    void cancel_recv_multishot() noexcept override { _cancel_receive(); }
 
     const rawtls::SpiffeId* peer() const noexcept override {
         return &*_peer;
@@ -841,7 +845,9 @@ public:
     // The Transport is being destroyed.
     void orphan() noexcept { _t = nullptr; }
 
-    void close() noexcept override {
+    void close() noexcept override { cancel(); }
+
+    void cancel() noexcept override {
         if (_t != nullptr) {
             _t->_cancel_receive();
         }

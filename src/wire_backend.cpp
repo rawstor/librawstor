@@ -533,7 +533,7 @@ BackendOp* Backend::_find_op(uint16_t cid) {
 }
 
 void Backend::_add_op(const std::shared_ptr<BackendOp>& op) {
-    if (_read_event == nullptr) {
+    if (!_receiving) {
         // _recv_pump has already exited (e.g. the connection died right
         // after a previous op's response, before this one was ever
         // issued -- _connect() itself and this op's own caller can both
@@ -568,7 +568,7 @@ void Backend::_remove_op(uint16_t cid) {
 Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::Backend(p, queue, location),
     _cid_counter(0),
-    _read_event(nullptr),
+    _receiving(false),
     _ops(),
     _pump() {
 }
@@ -604,13 +604,8 @@ rawstd::Task<size_t> Backend::_sendmsg(const msghdr* msg, unsigned int flags) {
 }
 
 Backend::~Backend() {
-    if (_read_event != nullptr && _transport != nullptr) {
-        try {
-            _transport->cancel_receive(_read_event);
-        } catch (const std::exception& e) {
-            rawstd_warning("Failed to cancel event: %s\n", e.what());
-        }
-        _read_event = nullptr;
+    if (_transport != nullptr) {
+        _transport->cancel_recv_multishot();
     }
 }
 
@@ -783,7 +778,7 @@ void Backend::_start_receive_ring() {
         _large_receive_ring ? 1u << 17 : 4096,
         _large_receive_ring ? 64 * 16 : 8, sizeof(RawstorFrameResponse), 0
     );
-    _read_event = stream.event();
+    _receiving = true;
     _pump.begin();
     try {
         _recv_pump(
@@ -811,9 +806,9 @@ rawstd::Task<void> Backend::_ensure_large_receive_ring() {
     _receive_resize.begin();
     std::exception_ptr error;
     try {
-        if (_read_event != nullptr) {
-            _transport->cancel_receive(_read_event);
-            _read_event = nullptr;
+        if (_receiving) {
+            _transport->cancel_recv_multishot();
+            _receiving = false;
         }
         co_await _pump.settle();
         _large_receive_ring = true;
@@ -848,9 +843,9 @@ rawstd::Task<void> Backend::_wire_close() {
     // (the common case).
     _fail_in_flight(ECONNABORTED);
 
-    if (_read_event != nullptr) {
-        _transport->cancel_receive(_read_event);
-        _read_event = nullptr;
+    if (_receiving) {
+        _transport->cancel_recv_multishot();
+        _receiving = false;
     }
     // The cancel above is only a request; the pump returns only once it sees
     // its registration's own final ECANCELED completion. Waiting for it here
@@ -1421,7 +1416,7 @@ rawstd::Task<void> Backend::_send_set_object(
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
-    if (_read_event == nullptr) {
+    if (!_receiving) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
 
@@ -1604,12 +1599,11 @@ void Backend::_recv_pump_failed(const std::weak_ptr<Backend>& weak, int error) {
 
     // The stream is no longer trustworthy (either a real transport-level/
     // framing error, a cid we can't resync past, or a cancellation): stop
-    // the pump for good and fail everything still in flight. _read_event
-    // must not outlive it -- ~Backend() would otherwise try to cancel() an
-    // Event that's already gone -- and is cleared first: a failed op's
-    // caller may issue another one right away, which _add_op() must then
-    // fail instead of registering it with a pump that never answers.
-    backend->_read_event = nullptr;
+    // the pump for good and fail everything still in flight. _receiving is
+    // cleared first: a failed op's caller may issue another one right away,
+    // which _add_op() must then fail instead of registering it with a pump
+    // that never answers.
+    backend->_receiving = false;
     backend->_fail_in_flight(error);
 }
 

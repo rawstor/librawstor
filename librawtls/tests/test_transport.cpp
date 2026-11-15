@@ -320,7 +320,7 @@ TEST_F(TransportTest, CancelReceiveFailsThePendingRead) {
     rawstd::Task<void> read = read_exact(stream, 4, received);
     EXPECT_FALSE(pump(*queue, [&]() { return read.done(); }, 50));
 
-    server->cancel_receive(stream.event());
+    server->cancel_recv_multishot();
     ASSERT_TRUE(pump(*queue, [&]() { return read.done(); }));
     try {
         read.get();

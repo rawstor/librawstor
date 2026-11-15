@@ -90,9 +90,10 @@ public:
     ) = 0;
 
     // Stops the stream above: its pending next() fails with ECANCELED. Like
-    // Queue::cancel(), it only requests the cancellation. `event` is the
-    // stream's event().
-    virtual void cancel_receive(rawio::Event* event) = 0;
+    // Queue::cancel(), it only requests the cancellation. Safe at any time:
+    // before there is a stream, after it has ended and after it was
+    // destroyed.
+    virtual void cancel_recv_multishot() noexcept = 0;
 
     // The identity of the peer, null on a plain connection.
     virtual const SpiffeId* peer() const noexcept = 0;

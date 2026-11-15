@@ -45,7 +45,8 @@ private:
     // gone after _wire_close().
     std::unique_ptr<rawtls::Transport> _transport;
 
-    rawio::Event* _read_event;
+    // True while the receive pump is reading the connection.
+    bool _receiving;
     std::unordered_map<uint16_t, std::shared_ptr<BackendOp>> _ops;
 
     // Running for as long as _recv_pump() is: begun by _connect() when it

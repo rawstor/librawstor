@@ -41,7 +41,6 @@ private:
     std::unique_ptr<rawtls::Transport> _transport;
     // Set by HANDSHAKE, the first request: nothing is served before it.
     bool _handshaken = false;
-    RawIOEvent* _recv_event;
     std::shared_ptr<Slot> _slot;
     uint64_t _size = 0;
     // The write barrier of the chunk member `_slot` is bound to, looked up
@@ -220,7 +219,7 @@ public:
     // Never throws -- every failure along the way is logged and otherwise
     // ignored, same as ~Client()'s own (synchronous) cleanup. Not required
     // before destruction: ~Client() falls back to the same cleanup,
-    // for whichever of _slot/_fd/_recv_event this didn't
+    // for whichever of _slot/_fd this didn't
     // already get to (each is cleared here as it's closed, so the two
     // never redo each other's work).
     rawstd::Task<void> close();

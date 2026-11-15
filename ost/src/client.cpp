@@ -121,19 +121,14 @@ rawstd::Task<void> co_close_fd(RawIOQueue* queue, int fd) {
 // case but WRITE's, which sizes a vector to the wire-declared length
 // first -- and validates the length, letting _recv_pump()'s single
 // switch (head.cmd) read each command's frame without repeating the
-// "co_await, then check the size" boilerplate in every case.
-// `*stream_failed` is set for exactly the duration of the underlying
-// stream->next() call -- see _recv_pump()'s own doc comment on why that
-// matters -- and a length mismatch throws EPROTO for _recv_pump()'s
-// shared catch block to handle, same as if stream->next() itself had
-// thrown.
+// "co_await, then check the size" boilerplate in every case. A length
+// mismatch throws EPROTO for _recv_pump()'s shared catch block to handle,
+// same as if stream->next() itself had thrown.
 rawstd::Task<void> recv_frame(
     rawio::RecvStream* stream, void* dest, size_t size, int fd,
-    const char* what, bool* stream_failed
+    const char* what
 ) {
-    *stream_failed = true;
     rawio::RecvStream::Item item = co_await stream->next(size);
-    *stream_failed = false;
 
     if (item.size() != size) {
         rawstd_error(
@@ -191,7 +186,6 @@ Client::Client(
     _server(server),
     _fd(fd),
     _transport(std::move(transport)),
-    _recv_event(nullptr),
     _slot(nullptr) {
     ++_server._live_clients;
 }
@@ -201,21 +195,15 @@ Client::GateRef Client::_gate_ref() const {
 }
 
 Client::~Client() noexcept {
-    // Fallback cleanup for whichever of _slot/_recv_event/_fd
-    // close() (see there) didn't already get to -- each is cleared as
-    // it's closed, by either one, so the two never redo each other's
-    // work; a caller that awaited close() before letting this Client be
-    // destroyed finds nothing left to do here at all.
+    // Fallback cleanup for whichever of _slot/_fd close() (see there)
+    // didn't already get to -- each is cleared as it's closed, by either
+    // one, so the two never redo each other's work; a caller that awaited
+    // close() before letting this Client be destroyed finds nothing left
+    // to do here at all (cancelling the receive stream again is a no-op).
     if (_slot) {
         _server._abandon_slot(std::move(_slot));
     }
-    if (_recv_event != nullptr) {
-        try {
-            _transport->cancel_receive(_recv_event);
-        } catch (const std::exception& e) {
-            rawstd_warning("Failed to cancel event: %s\n", e.what());
-        }
-    }
+    _transport->cancel_recv_multishot();
     if (_fd != -1) {
         ::close(_fd);
     }
@@ -223,14 +211,7 @@ Client::~Client() noexcept {
 }
 
 rawstd::Task<void> Client::close() {
-    if (_recv_event != nullptr) {
-        try {
-            _transport->cancel_receive(_recv_event);
-        } catch (const std::exception& e) {
-            rawstd_warning("Failed to cancel event: %s\n", e.what());
-        }
-        _recv_event = nullptr;
-    }
+    _transport->cancel_recv_multishot();
 
     if (_slot != nullptr) {
         std::shared_ptr<rawstor::Slot> slot = std::move(_slot);
@@ -281,25 +262,14 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
         1u << 17, 64 * 16, sizeof(RawstorFrameHead), 0
     );
     rawio::RecvStream* stream = &stream_owner;
-    first->_recv_event = stream_owner.event();
     first.reset();
-
-    // Tracks whether the exception a catch clause below is handling came
-    // from stream->next() itself (a genuine recv-level failure -- the
-    // registration is already confirmed dead and _recv_event must be
-    // cleared so ~Client()/close() don't try to cancel an already-gone
-    // event) or from this loop's own validation, after a successful read
-    // (the registration is still alive, so _recv_event must stay put for
-    // ~Client()/close() to cancel it for real). Set right before each
-    // stream->next(), cleared right after it returns successfully.
-    bool stream_failed = false;
 
     try {
         while (true) {
             // --- read and parse this request's frame head ---
             RawstorFrameHead head;
             co_await recv_frame(
-                stream, &head, sizeof(head), fd, "request head", &stream_failed
+                stream, &head, sizeof(head), fd, "request head"
             );
 
             std::shared_ptr<Client> client = weak.lock();
@@ -332,8 +302,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
             case RAWSTOR_CMD_HANDSHAKE: {
                 RawstorFrameHandshakePayload handshake;
                 co_await recv_frame(
-                    stream, &handshake, sizeof(handshake), fd,
-                    "request payload", &stream_failed
+                    stream, &handshake, sizeof(handshake), fd, "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -355,7 +324,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 RawstorFrameSetObjectPayload set_object;
                 co_await recv_frame(
                     stream, &set_object, sizeof(set_object), fd,
-                    "request payload", &stream_failed
+                    "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -368,8 +337,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
             case RAWSTOR_CMD_ALLOCATE: {
                 RawstorFrameAllocatePayload spec;
                 co_await recv_frame(
-                    stream, &spec, sizeof(spec), fd, "request payload",
-                    &stream_failed
+                    stream, &spec, sizeof(spec), fd, "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -382,8 +350,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
             case RAWSTOR_CMD_RELEASE: {
                 RawstorFrameBasicPayload basic;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
-                    &stream_failed
+                    stream, &basic, sizeof(basic), fd, "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -396,8 +363,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
             case RAWSTOR_CMD_SET_OWNER: {
                 RawstorFrameBasicPayload basic;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
-                    &stream_failed
+                    stream, &basic, sizeof(basic), fd, "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -410,8 +376,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
             case RAWSTOR_CMD_CREATE_VERSION: {
                 RawstorFrameBasicPayload basic;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
-                    &stream_failed
+                    stream, &basic, sizeof(basic), fd, "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -425,8 +390,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
             case RAWSTOR_CMD_THAW: {
                 RawstorFrameBasicPayload basic;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
-                    &stream_failed
+                    stream, &basic, sizeof(basic), fd, "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -440,7 +404,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 RawstorFrameListPayload list_payload;
                 co_await recv_frame(
                     stream, &list_payload, sizeof(list_payload), fd,
-                    "request payload", &stream_failed
+                    "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -453,8 +417,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
             case RAWSTOR_CMD_META: {
                 RawstorFrameBasicPayload basic;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
-                    &stream_failed
+                    stream, &basic, sizeof(basic), fd, "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -467,8 +430,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
             case RAWSTOR_CMD_LIST_VERSIONS: {
                 RawstorFrameBasicPayload basic;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
-                    &stream_failed
+                    stream, &basic, sizeof(basic), fd, "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -481,8 +443,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
             case RAWSTOR_CMD_LOCATION_INFO: {
                 RawstorFrameBasicPayload basic;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
-                    &stream_failed
+                    stream, &basic, sizeof(basic), fd, "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -495,8 +456,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
             case RAWSTOR_CMD_FLUSH: {
                 RawstorFrameBasicPayload basic;
                 co_await recv_frame(
-                    stream, &basic, sizeof(basic), fd, "request payload",
-                    &stream_failed
+                    stream, &basic, sizeof(basic), fd, "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -510,7 +470,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 RawstorFrameBasicPayload leave_payload;
                 co_await recv_frame(
                     stream, &leave_payload, sizeof(leave_payload), fd,
-                    "request payload", &stream_failed
+                    "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -525,7 +485,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 RawstorFrameSyncProposePayload propose_payload;
                 co_await recv_frame(
                     stream, &propose_payload, sizeof(propose_payload), fd,
-                    "request payload", &stream_failed
+                    "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -538,8 +498,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
             case RAWSTOR_CMD_READ: {
                 RawstorFrameIOPayload io;
                 co_await recv_frame(
-                    stream, &io, sizeof(io), fd, "request payload",
-                    &stream_failed
+                    stream, &io, sizeof(io), fd, "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -552,8 +511,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
             case RAWSTOR_CMD_DISCARD: {
                 RawstorFrameIOPayload io;
                 co_await recv_frame(
-                    stream, &io, sizeof(io), fd, "request payload",
-                    &stream_failed
+                    stream, &io, sizeof(io), fd, "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -566,8 +524,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
             case RAWSTOR_CMD_WRITE_ZEROES: {
                 RawstorFrameIOPayload io;
                 co_await recv_frame(
-                    stream, &io, sizeof(io), fd, "request payload",
-                    &stream_failed
+                    stream, &io, sizeof(io), fd, "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -580,8 +537,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
             case RAWSTOR_CMD_WRITE: {
                 RawstorFrameIOPayload io;
                 co_await recv_frame(
-                    stream, &io, sizeof(io), fd, "request payload",
-                    &stream_failed
+                    stream, &io, sizeof(io), fd, "request payload"
                 );
                 client = weak.lock();
                 if (client == nullptr) {
@@ -608,8 +564,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 std::vector<unsigned char> write_data(io.len);
                 if (io.len > 0) {
                     co_await recv_frame(
-                        stream, write_data.data(), io.len, fd, "request data",
-                        &stream_failed
+                        stream, write_data.data(), io.len, fd, "request data"
                     );
                     client = weak.lock();
                     if (client == nullptr) {
@@ -658,12 +613,6 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
 
     std::shared_ptr<Client> client = weak.lock();
     if (client != nullptr) {
-        if (stream_failed) {
-            // stream->next() itself is what threw: the registration is
-            // already confirmed dead, so there's nothing left for
-            // ~Client()/close()'s own cancel to do.
-            client->_recv_event = nullptr;
-        }
         co_await client->_server.del_client(fd);
     }
 }
