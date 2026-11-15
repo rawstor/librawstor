@@ -2,6 +2,7 @@
 
 #include <rawio/awaitable.hpp>
 
+#include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
 #include <rawstd/socket.h>
@@ -11,7 +12,6 @@
 #include <coroutine>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <exception>
 #include <utility>
 #include <vector>
@@ -20,62 +20,17 @@
 
 namespace {
 
-// Hands a lock to coroutines one at a time, in the order they asked. The
-// Queue is single-threaded, so this needs no atomics: it only keeps one TLS
-// record stream from being interleaved by two sends that are both partly
-// written.
-class AsyncMutex final {
+// Gives the unit back to the semaphore when the coroutine that took it ends.
+class Release final {
 private:
-    bool _locked = false;
-    std::deque<std::coroutine_handle<>> _waiters;
+    rawstd::Semaphore& _semaphore;
 
 public:
-    class Acquire final {
-    private:
-        AsyncMutex& _mutex;
-
-    public:
-        explicit Acquire(AsyncMutex& mutex) noexcept : _mutex(mutex) {}
-
-        bool await_ready() noexcept {
-            if (_mutex._locked) {
-                return false;
-            }
-            _mutex._locked = true;
-            return true;
-        }
-
-        void await_suspend(std::coroutine_handle<> h) {
-            _mutex._waiters.push_back(h);
-        }
-
-        void await_resume() noexcept {}
-    };
-
-    class Guard final {
-    private:
-        AsyncMutex& _mutex;
-
-    public:
-        explicit Guard(AsyncMutex& mutex) noexcept : _mutex(mutex) {}
-        Guard(const Guard&) = delete;
-        Guard& operator=(const Guard&) = delete;
-        ~Guard() { _mutex._unlock(); }
-    };
-
-    Acquire lock() noexcept { return Acquire(*this); }
-
-private:
-    // The lock passes to the first waiter without being released.
-    void _unlock() {
-        if (_waiters.empty()) {
-            _locked = false;
-            return;
-        }
-        std::coroutine_handle<> h = _waiters.front();
-        _waiters.pop_front();
-        h.resume();
-    }
+    explicit Release(rawstd::Semaphore& semaphore) noexcept :
+        _semaphore(semaphore) {}
+    Release(const Release&) = delete;
+    Release& operator=(const Release&) = delete;
+    ~Release() { _semaphore.release(); }
 };
 
 class PlainTransport final : public rawtls::Transport {
@@ -121,7 +76,7 @@ struct TlsState {
     rawtls::Session session;
     // Orders everything written to the socket: a send takes it from encrypting
     // until the last byte of its records is out.
-    AsyncMutex write_mutex;
+    rawstd::Semaphore write_mutex{1};
     std::vector<unsigned char> out;
     // The recv in flight, if any, and whether the stream was told to stop.
     rawio::Event* inflight = nullptr;
@@ -183,8 +138,8 @@ rawstd::Task<void> flush(std::shared_ptr<TlsState> s) {
 }
 
 rawstd::Task<void> flush_locked(std::shared_ptr<TlsState> s) {
-    co_await s->write_mutex.lock();
-    AsyncMutex::Guard guard(s->write_mutex);
+    co_await s->write_mutex.acquire();
+    Release release(s->write_mutex);
     co_await flush(s);
 }
 
@@ -192,8 +147,8 @@ rawstd::Task<void> flush_locked(std::shared_ptr<TlsState> s) {
 // `iov` must outlive the call.
 rawstd::Task<size_t>
 tls_write(std::shared_ptr<TlsState> s, const iovec* iov, size_t count) {
-    co_await s->write_mutex.lock();
-    AsyncMutex::Guard guard(s->write_mutex);
+    co_await s->write_mutex.acquire();
+    Release release(s->write_mutex);
     size_t total = 0;
     for (size_t i = 0; i < count; ++i) {
         if (iov[i].iov_len > 0) {
