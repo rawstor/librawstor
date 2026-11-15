@@ -216,6 +216,81 @@ TEST(TaskCancelTest, propagates_through_nested_tasks) {
     EXPECT_EQ(ecanceled_or_value(t), -ECANCELED);
 }
 
+// Stands for an operation that finishes normally although it was asked to
+// stop: a cancel() that lost the race against the completion.
+struct lost_race_once {
+    std::coroutine_handle<>* slot;
+
+    bool await_ready() const noexcept { return false; }
+
+    void await_suspend(std::coroutine_handle<> h) noexcept { *slot = h; }
+
+    void await_resume() const noexcept {}
+
+    bool cancel() noexcept { return true; }
+};
+
+rawstd::Task<int> lost_race_then_cancellable(
+    std::coroutine_handle<>* first, std::coroutine_handle<>* second
+) {
+    co_await lost_race_once{first};
+    cancellable_once op{second};
+    co_await op;
+    co_return 7;
+}
+
+TEST(TaskCancelTest, cancel_that_lost_the_race_is_gone) {
+    std::coroutine_handle<> first;
+    std::coroutine_handle<> second;
+    rawstd::Task<int> t = lost_race_then_cancellable(&first, &second);
+
+    EXPECT_TRUE(t.cancel());
+    ASSERT_TRUE(first);
+    first.resume();
+
+    // The task went on to a second wait that nothing cancelled.
+    ASSERT_TRUE(second);
+    EXPECT_FALSE(t.done());
+    second.resume();
+    EXPECT_EQ(t.get(), 7);
+}
+
+TEST(TaskCancelTest, sticky_cancel_reaches_the_later_waits) {
+    std::coroutine_handle<> first;
+    std::coroutine_handle<> second;
+    rawstd::Task<int> t = lost_race_then_cancellable(&first, &second);
+
+    EXPECT_TRUE(t.cancel_sticky());
+    ASSERT_TRUE(first);
+    first.resume();
+
+    ASSERT_TRUE(second);
+    EXPECT_FALSE(t.done());
+    second.resume();
+    EXPECT_EQ(ecanceled_or_value(t), -ECANCELED);
+}
+
+TEST(TaskCancelTest, sticky_cancel_propagates_through_nested_tasks) {
+    std::coroutine_handle<> first;
+    std::coroutine_handle<> second;
+    rawstd::Task<int> t =
+        outer_of(outer_of(lost_race_then_cancellable(&first, &second)));
+
+    EXPECT_TRUE(t.cancel_sticky());
+    ASSERT_TRUE(first);
+    first.resume();
+
+    ASSERT_TRUE(second);
+    second.resume();
+    EXPECT_EQ(ecanceled_or_value(t), -ECANCELED);
+}
+
+TEST(TaskCancelTest, sticky_cancel_of_a_done_task_returns_false) {
+    rawstd::Task<int> t = immediate_value(1);
+    EXPECT_FALSE(t.cancel_sticky());
+    EXPECT_EQ(t.get(), 1);
+}
+
 TEST(TaskCancelTest, uncancelled_task_completes_normally) {
     std::coroutine_handle<> slot;
     rawstd::Task<int> t = cancellable_then_return(&slot);
