@@ -47,6 +47,7 @@ nav:
       - MDS design: mds.md
       - Tenants: tenants.md
       - Mirroring: mirroring.md
+      - Security: security.md
       - Multi-attach: multiattach.md
       - CASPaxos: caspaxos.md
   - Development:

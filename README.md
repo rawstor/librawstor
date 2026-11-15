@@ -63,6 +63,7 @@ on Rawstor, read the [known limitations](docs/limitations.md).
 | [Protocol](docs/protocol.md) | Commands and frame layouts of the wire protocol. |
 | [MDS design](docs/mds.md) | Placement, chunk allocation, versions. |
 | [Tenants](docs/tenants.md) | Namespaces of objects: addressing, wire protocol, storage layout. |
+| [Security](docs/security.md) | Planned authentication, authorization, TLS, tenants and at-rest encryption. |
 | [Mirroring](docs/mirroring.md) | The N-way mirror failure model and recovery. |
 | [Multi-attach](docs/multiattach.md), [CASPaxos](docs/caspaxos.md) | Several writers of one mirrored object. |
 | [Building from source](docs/building.md) | For developers: build and run every service by hand on one machine. |

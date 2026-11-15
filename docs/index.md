@@ -68,7 +68,8 @@ Rawstor, read the [known limitations](limitations.md).
   [rawstor-vhost](vhost.md), [rawstor-vduse](vduse.md),
   [configuration](configuration.md) and [witness members](witness.md).
 - Design: [Protocol](protocol.md), [MDS design](mds.md),
-  [Tenants](tenants.md), [Mirroring](mirroring.md),
+  [Tenants](tenants.md), [Security](security.md),
+  [Mirroring](mirroring.md),
   [Multi-attach](multiattach.md) and [CASPaxos](caspaxos.md).
 - [Building from source](building.md): for developers.
 - [Known limitations](limitations.md): what is not implemented yet.
