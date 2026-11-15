@@ -92,7 +92,8 @@ public:
     // Stops the stream above: its pending next() fails with ECANCELED. Like
     // Queue::cancel(), it only requests the cancellation. Safe at any time:
     // before there is a stream, after it has ended and after it was
-    // destroyed.
+    // destroyed. Destroying the Transport does the same, so the stream does
+    // not outlive its connection waiting for data.
     virtual void cancel_recv_multishot() noexcept = 0;
 
     // The identity of the peer, null on a plain connection.

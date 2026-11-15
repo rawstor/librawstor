@@ -202,7 +202,8 @@ Client::~Client() noexcept {
     if (_slot) {
         _server._abandon_slot(std::move(_slot));
     }
-    _transport->cancel_recv_multishot();
+    // Destroying the transport stops the receive stream, before the fd goes.
+    _transport.reset();
     if (_fd != -1) {
         ::close(_fd);
     }

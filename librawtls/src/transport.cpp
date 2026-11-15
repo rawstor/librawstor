@@ -77,6 +77,8 @@ public:
         _queue(queue),
         _fd(fd) {}
 
+    ~PlainTransport() override { cancel_recv_multishot(); }
+
     rawstd::Task<size_t>
     send(const void* buf, size_t size, unsigned int flags) override {
         co_return co_await _queue.send(_fd, buf, size, flags);

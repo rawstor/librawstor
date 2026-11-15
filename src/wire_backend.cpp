@@ -604,9 +604,9 @@ rawstd::Task<size_t> Backend::_sendmsg(const msghdr* msg, unsigned int flags) {
 }
 
 Backend::~Backend() {
-    if (_transport != nullptr) {
-        _transport->cancel_recv_multishot();
-    }
+    // Destroying the transport stops the receive stream, while everything
+    // the pump touches is still here.
+    _transport.reset();
 }
 
 } // namespace wire

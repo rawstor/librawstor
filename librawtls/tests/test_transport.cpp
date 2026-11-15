@@ -330,6 +330,42 @@ TEST_F(TransportTest, CancelReceiveFailsThePendingRead) {
     }
 }
 
+// A stream does not wait for data of a connection that is gone.
+TEST_F(TransportTest, DestroyingTheTransportEndsItsStream) {
+    std::unique_ptr<Transport> plain = Transport::plain(*queue, pair.fds[1]);
+    rawio::RecvStream stream = plain->recv_multishot(4096, 8, 4, 0);
+    std::string received;
+    rawstd::Task<void> read = read_exact(stream, 4, received);
+    EXPECT_FALSE(pump(*queue, [&]() { return read.done(); }, 50));
+
+    plain.reset();
+    ASSERT_TRUE(pump(*queue, [&]() { return read.done(); }));
+    try {
+        read.get();
+        FAIL() << "the read was not cancelled";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ECANCELED);
+    }
+}
+
+TEST_F(TransportTest, DestroyingTheTlsTransportEndsItsStream) {
+    std::unique_ptr<Transport> client, server;
+    connect_tls(client, server);
+    rawio::RecvStream stream = server->recv_multishot(4096, 8, 4, 0);
+    std::string received;
+    rawstd::Task<void> read = read_exact(stream, 4, received);
+    EXPECT_FALSE(pump(*queue, [&]() { return read.done(); }, 50));
+
+    server.reset();
+    ASSERT_TRUE(pump(*queue, [&]() { return read.done(); }));
+    try {
+        read.get();
+        FAIL() << "the read was not cancelled";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ECANCELED);
+    }
+}
+
 TEST_F(TransportTest, StreamCanBeStartedAgainAfterCancel) {
     std::unique_ptr<Transport> client, server;
     connect_tls(client, server);
