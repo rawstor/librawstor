@@ -1,5 +1,8 @@
 #include <rawtls/transport.hpp>
 
+#include <rawtls/context.hpp>
+#include <rawtls/spiffe.hpp>
+
 #include <rawio/awaitable.hpp>
 
 #include <rawstd/coro.hpp>
@@ -9,12 +12,23 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <climits>
 #include <coroutine>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <exception>
+#include <memory>
+#include <optional>
+#include <string>
 #include <utility>
 #include <vector>
+
+#include <openssl/bio.h>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
 
 #include <sys/uio.h>
 
@@ -32,6 +46,24 @@ public:
     Release& operator=(const Release&) = delete;
     ~Release() { _semaphore.release(); }
 };
+
+int chunk(size_t size) noexcept {
+    return static_cast<int>(std::min<size_t>(size, INT_MAX));
+}
+
+void log_errors(const char* what) {
+    unsigned long code;
+    char text[256];
+    while ((code = ERR_get_error()) != 0) {
+        ERR_error_string_n(code, text, sizeof(text));
+        rawstd_error("%s: %s\n", what, text);
+    }
+}
+
+[[noreturn]] void refuse(const char* reason) {
+    rawstd_warning("Peer refused: %s\n", reason);
+    RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+}
 
 class PlainTransport final : public rawtls::Transport {
 private:
@@ -70,9 +102,10 @@ const size_t record_size = 1 << 14;
 class TlsRecv;
 
 /*
- * A Transport over a TLS Session. Its receive stream reads through it, so the
- * stream must not outlive it: the code that owns both stops the stream (and
- * waits for it to settle) before it drops the Transport.
+ * A Transport over a TLS connection. Operations started on it (sends, the
+ * handshake) must have finished before it is destroyed. Its receive stream
+ * need not: the stream outlives it when the code that reads it is still
+ * unwinding, and fails with ECANCELED from then on.
  */
 class TlsTransport final : public rawtls::Transport {
 private:
@@ -80,7 +113,19 @@ private:
 
     rawio::Queue& _queue;
     int _fd;
-    rawtls::Session _session;
+    std::shared_ptr<ssl_ctx_st> _ctx;
+    ssl_st* _ssl = nullptr;
+    bio_st* _rbio = nullptr;
+    bio_st* _wbio = nullptr;
+    rawtls::Mode _mode;
+    std::string _trust_domain;
+    std::string _expected_peer;
+    rawtls::Role _expected_role = rawtls::Role::ost;
+    std::optional<rawtls::SpiffeId> _peer;
+    bool _handshake_done = false;
+    bool _verify_failed = false;
+    // True once the peer has said it will send no more.
+    bool _closed = false;
     // Orders everything written to the socket: a send takes it from encrypting
     // until the last byte of its records is out.
     rawstd::Semaphore _write_mutex{1};
@@ -88,6 +133,7 @@ private:
     // The recv in flight, if any, and whether the stream was told to stop.
     rawio::Event* _inflight = nullptr;
     bool _cancelled = false;
+    std::weak_ptr<TlsRecv> _recv;
     // Set once a write failed: part of a record may be on the wire, so nothing
     // can follow it, and the sends waiting their turn fail instead of writing
     // to a socket that is being closed.
@@ -119,6 +165,203 @@ private:
         void await_resume() const noexcept {}
     };
 
+    static int _verify(int ok, x509_store_ctx_st* store_ctx) {
+        SSL* ssl = static_cast<SSL*>(X509_STORE_CTX_get_ex_data(
+            store_ctx, SSL_get_ex_data_X509_STORE_CTX_idx()
+        ));
+        TlsTransport* self = static_cast<TlsTransport*>(SSL_get_app_data(ssl));
+        if (!ok) {
+            self->_verify_failed = true;
+            return 0;
+        }
+        // The chain is walked from the root down to the peer's own
+        // certificate, which is the one that carries the identity.
+        if (X509_STORE_CTX_get_error_depth(store_ctx) != 0) {
+            return 1;
+        }
+        try {
+            self->_peer =
+                self->_check_peer(X509_STORE_CTX_get_current_cert(store_ctx));
+        } catch (const std::system_error&) {
+            self->_verify_failed = true;
+            X509_STORE_CTX_set_error(
+                store_ctx, X509_V_ERR_APPLICATION_VERIFICATION
+            );
+            return 0;
+        }
+        return 1;
+    }
+
+    // The identity `cert` stands for, or std::system_error(EACCES).
+    rawtls::SpiffeId _check_peer(x509_st* cert) const {
+        if (X509_check_ca(cert) != 0) {
+            refuse("the certificate is a CA");
+        }
+
+        // Absent extended key usage is not "any": the certificate must say it
+        // may be used for the end of the connection it is on.
+        uint32_t usage = X509_get_extended_key_usage(cert);
+        uint32_t needed =
+            _mode == rawtls::Mode::client ? XKU_SSL_SERVER : XKU_SSL_CLIENT;
+        if (usage == UINT32_MAX || !(usage & needed)) {
+            refuse("the certificate lacks the extended key usage");
+        }
+
+        GENERAL_NAMES* names = static_cast<GENERAL_NAMES*>(
+            X509_get_ext_d2i(cert, NID_subject_alt_name, nullptr, nullptr)
+        );
+        if (names == nullptr) {
+            refuse("the certificate has no subject alternative name");
+        }
+        std::string uri;
+        int uris = 0;
+        bool embedded_nul = false;
+        for (int i = 0; i < sk_GENERAL_NAME_num(names); ++i) {
+            const GENERAL_NAME* name = sk_GENERAL_NAME_value(names, i);
+            if (name->type != GEN_URI) {
+                continue;
+            }
+            ++uris;
+            const ASN1_IA5STRING* value = name->d.uniformResourceIdentifier;
+            const char* data =
+                reinterpret_cast<const char*>(ASN1_STRING_get0_data(value));
+            size_t size = static_cast<size_t>(ASN1_STRING_length(value));
+            if (memchr(data, 0, size) != nullptr) {
+                embedded_nul = true;
+            }
+            uri.assign(data, size);
+        }
+        GENERAL_NAMES_free(names);
+        if (uris != 1 || embedded_nul) {
+            refuse("the certificate must have exactly one URI SAN");
+        }
+
+        std::optional<rawtls::SpiffeId> parsed;
+        try {
+            parsed.emplace(uri);
+        } catch (const std::system_error&) {
+            refuse("the URI SAN is not a rawstor SPIFFE ID");
+        }
+        const rawtls::SpiffeId& id = *parsed;
+        if (id.trust_domain() != _trust_domain) {
+            refuse("the SPIFFE ID is in another trust domain");
+        }
+        if (_mode == rawtls::Mode::client) {
+            if (!id.is_server()) {
+                refuse(
+                    "the server's SPIFFE ID is not that of an OST or an MDS"
+                );
+            }
+            if (id.role() != _expected_role) {
+                refuse("the server's SPIFFE ID is not of the role expected");
+            }
+            if (!_expected_peer.empty() && id.uri().str() != _expected_peer) {
+                refuse("the server's SPIFFE ID is not the one expected");
+            }
+        }
+        return id;
+    }
+
+    // Throws EACCES for a refused peer, EPROTO for any other failure of the
+    // TLS call that returned `result`.
+    [[noreturn]] void _fail(int result) {
+        int error = SSL_get_error(_ssl, result);
+        unsigned long first = ERR_peek_error();
+        log_errors("TLS");
+        if (_verify_failed ||
+            (error == SSL_ERROR_SSL &&
+             ERR_GET_REASON(first) ==
+                 SSL_R_PEER_DID_NOT_RETURN_A_CERTIFICATE)) {
+            RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+        }
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+
+    // Takes bytes received from the peer.
+    void _feed(const void* data, size_t size) {
+        const char* p = static_cast<const char*>(data);
+        while (size > 0) {
+            int n = BIO_write(_rbio, p, chunk(size));
+            if (n <= 0) {
+                RAWSTD_THROW_SYSTEM_ERROR(ENOMEM);
+            }
+            p += n;
+            size -= static_cast<size_t>(n);
+        }
+    }
+
+    // The number of bytes waiting to be sent to the peer.
+    size_t _output_size() const noexcept { return BIO_ctrl_pending(_wbio); }
+
+    // Moves up to `size` bytes waiting to be sent into `buf`, and returns how
+    // many.
+    size_t _take_output(void* buf, size_t size) noexcept {
+        if (size == 0) {
+            return 0;
+        }
+        int n = BIO_read(_wbio, buf, chunk(size));
+        return n > 0 ? static_cast<size_t>(n) : 0;
+    }
+
+    // Advances the handshake; true once it is complete.
+    bool _handshake_step() {
+        if (_handshake_done) {
+            return true;
+        }
+        ERR_clear_error();
+        int result = SSL_do_handshake(_ssl);
+        if (result == 1) {
+            // The verify callback ran for every full handshake; a handshake
+            // that finished without it has no identity to go by.
+            if (!_peer.has_value()) {
+                refuse("no identity was established");
+            }
+            _handshake_done = true;
+            return true;
+        }
+        int error = SSL_get_error(_ssl, result);
+        if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) {
+            return false;
+        }
+        _fail(result);
+    }
+
+    // Encrypts all of `data` into the output.
+    void _encrypt(const void* data, size_t size) {
+        const char* p = static_cast<const char*>(data);
+        while (size > 0) {
+            ERR_clear_error();
+            int n = SSL_write(_ssl, p, chunk(size));
+            if (n <= 0) {
+                _fail(n);
+            }
+            p += n;
+            size -= static_cast<size_t>(n);
+        }
+    }
+
+    // Decrypts up to `size` bytes of what was fed. Returns 0 if there is no
+    // complete record yet or the peer has closed; _closed tells the two apart.
+    size_t _decrypt(void* buf, size_t size) {
+        if (size == 0) {
+            return 0;
+        }
+        ERR_clear_error();
+        int n = SSL_read(_ssl, buf, chunk(size));
+        if (n > 0) {
+            return static_cast<size_t>(n);
+        }
+        int error = SSL_get_error(_ssl, n);
+        if (error == SSL_ERROR_WANT_READ) {
+            return 0;
+        }
+        if (error == SSL_ERROR_ZERO_RETURN) {
+            _closed = true;
+            return 0;
+        }
+        _fail(n);
+    }
+
     rawstd::Task<void> _write_all(const unsigned char* p, size_t n) {
         while (n > 0) {
             size_t written = 0;
@@ -144,12 +387,12 @@ private:
             RAWSTD_THROW_SYSTEM_ERROR(ECONNABORTED);
         }
         for (;;) {
-            size_t n = _session.output_size();
+            size_t n = _output_size();
             if (n == 0) {
                 co_return;
             }
             _out.resize(n);
-            _session.take_output(_out.data(), n);
+            _take_output(_out.data(), n);
             co_await _write_all(_out.data(), n);
         }
     }
@@ -168,7 +411,7 @@ private:
         size_t total = 0;
         for (size_t i = 0; i < count; ++i) {
             if (iov[i].iov_len > 0) {
-                _session.encrypt(iov[i].iov_base, iov[i].iov_len);
+                _encrypt(iov[i].iov_base, iov[i].iov_len);
                 total += iov[i].iov_len;
             }
         }
@@ -195,7 +438,7 @@ private:
         std::exception_ptr error;
         try {
             for (;;) {
-                bool done = _session.handshake();
+                bool done = _handshake_step();
                 co_await _flush();
                 if (done) {
                     co_return;
@@ -215,7 +458,7 @@ private:
                 if (n == 0) {
                     RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
                 }
-                _session.feed(in.data(), n);
+                _feed(in.data(), n);
             }
         } catch (...) {
             error = std::current_exception();
@@ -251,21 +494,79 @@ private:
             try {
                 _queue.cancel(_fd);
             } catch (const std::exception& e) {
-                rawstd_warning("Failed to cancel the handshake: %s\n", e.what());
+                rawstd_warning(
+                    "Failed to cancel the handshake: %s\n", e.what()
+                );
             }
         }
         _deadline_finish();
     }
 
 public:
+    // A client gives `expected_peer`, the exact SPIFFE ID it requires of the
+    // server, or leaves it empty and gives `expected_role`, ost or mds, to
+    // accept any server of that role in the trust domain; one of the two is
+    // required (std::system_error(EINVAL) otherwise). A server accepts any
+    // peer the rules allow and ignores both.
     TlsTransport(
         rawio::Queue& queue, int fd, rawtls::Context& context,
-        rawtls::Session::Mode mode, const std::string& expected_peer,
+        rawtls::Mode mode, const std::string& expected_peer,
         std::optional<rawtls::Role> expected_role
     ) :
         _queue(queue),
         _fd(fd),
-        _session(context, mode, expected_peer, expected_role) {}
+        _ctx(context.snapshot()),
+        _mode(mode),
+        _trust_domain(context.trust_domain()),
+        _expected_peer(expected_peer) {
+        if (mode == rawtls::Mode::client) {
+            // A client that knows nothing about whom it is talking to would
+            // accept any certificate of the CA.
+            if (!expected_peer.empty()) {
+                rawtls::SpiffeId id(expected_peer);
+                if (!id.is_server()) {
+                    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+                }
+                _expected_role = id.role();
+            } else if (expected_role.has_value() &&
+                       (*expected_role == rawtls::Role::ost ||
+                        *expected_role == rawtls::Role::mds)) {
+                _expected_role = *expected_role;
+            } else {
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
+        }
+
+        _ssl = SSL_new(_ctx.get());
+        if (_ssl == nullptr) {
+            log_errors("TLS session");
+            RAWSTD_THROW_SYSTEM_ERROR(ENOMEM);
+        }
+        _rbio = BIO_new(BIO_s_mem());
+        _wbio = BIO_new(BIO_s_mem());
+        if (_rbio == nullptr || _wbio == nullptr) {
+            BIO_free(_rbio);
+            BIO_free(_wbio);
+            SSL_free(_ssl);
+            RAWSTD_THROW_SYSTEM_ERROR(ENOMEM);
+        }
+        // The SSL owns both BIOs from here on.
+        SSL_set_bio(_ssl, _rbio, _wbio);
+        SSL_set_app_data(_ssl, this);
+        SSL_set_verify(
+            _ssl, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, _verify
+        );
+        if (mode == rawtls::Mode::client) {
+            SSL_set_connect_state(_ssl);
+        } else {
+            SSL_set_accept_state(_ssl);
+        }
+    }
+
+    TlsTransport(const TlsTransport&) = delete;
+    TlsTransport& operator=(const TlsTransport&) = delete;
+
+    ~TlsTransport() override;
 
     // Runs the handshake within `timeout_ms`. Throws ETIMEDOUT if the deadline
     // is what ended it.
@@ -315,7 +616,7 @@ public:
     void cancel_receive(rawio::Event*) override { _cancel_receive(); }
 
     const rawtls::SpiffeId* peer() const noexcept override {
-        return &_session.peer();
+        return &*_peer;
     }
 };
 
@@ -328,7 +629,9 @@ public:
 class TlsRecv final : public rawio::RecvStream::Backend,
                       public std::enable_shared_from_this<TlsRecv> {
 private:
-    TlsTransport& _t;
+    // Null once the Transport is gone: the stream may be read, and dropped,
+    // after it.
+    TlsTransport* _t;
     std::vector<unsigned char> _cipher;
     std::vector<unsigned char> _scratch;
     // The decrypted bytes not yet handed out are _plain[_head..].
@@ -357,10 +660,13 @@ private:
         if (_terminal != 0) {
             return;
         }
+        if (_t == nullptr) {
+            _fail(ECANCELED);
+            return;
+        }
         try {
             for (;;) {
-                size_t n =
-                    _t._session.decrypt(_scratch.data(), _scratch.size());
+                size_t n = _t->_decrypt(_scratch.data(), _scratch.size());
                 if (n == 0) {
                     break;
                 }
@@ -368,7 +674,7 @@ private:
                     _plain.end(), _scratch.begin(), _scratch.begin() + n
                 );
             }
-            if (_t._session.closed()) {
+            if (_t->_closed) {
                 _fail(EPIPE);
             }
         } catch (const std::system_error& e) {
@@ -401,7 +707,7 @@ private:
 
     // The part of try_produce() that does not touch the session.
     bool _take(size_t want, rawio::RecvStream::Item& out, int& error) noexcept {
-        if (_t._cancelled) {
+        if (_t == nullptr || _t->_cancelled) {
             _fail(ECANCELED);
         }
         size_t available = _available();
@@ -454,12 +760,12 @@ private:
     }
 
     static rawstd::DetachedTask _run(std::shared_ptr<TlsRecv> self) {
-        TlsTransport& s = self->_t;
         for (;;) {
-            if (s._cancelled) {
+            if (self->_t == nullptr || self->_t->_cancelled) {
                 self->_fail(ECANCELED);
             } else {
                 try {
+                    TlsTransport& s = *self->_t;
                     rawio::Awaitable<size_t> op = s._queue.recv(
                         s._fd, self->_cipher.data(), self->_cipher.size(), 0
                     );
@@ -468,14 +774,22 @@ private:
                     try {
                         n = co_await op;
                     } catch (...) {
-                        s._inflight = nullptr;
+                        // The Transport may have been destroyed while the
+                        // recv was in flight.
+                        if (self->_t != nullptr) {
+                            self->_t->_inflight = nullptr;
+                        }
                         throw;
                     }
-                    s._inflight = nullptr;
-                    if (n == 0) {
-                        self->_fail(EPIPE);
+                    if (self->_t == nullptr) {
+                        self->_fail(ECANCELED);
                     } else {
-                        s._session.feed(self->_cipher.data(), n);
+                        self->_t->_inflight = nullptr;
+                        if (n == 0) {
+                            self->_fail(EPIPE);
+                        } else {
+                            self->_t->_feed(self->_cipher.data(), n);
+                        }
                     }
                 } catch (const std::system_error& e) {
                     self->_fail(e.code().value());
@@ -483,9 +797,9 @@ private:
                 self->_decrypt_buffered();
                 // A key update the peer asked for, or an alert, waits in the
                 // output.
-                if (self->_terminal == 0 && s._session.output_size() > 0) {
+                if (self->_terminal == 0 && self->_t->_output_size() > 0) {
                     try {
-                        co_await s._flush_locked();
+                        co_await self->_t->_flush_locked();
                     } catch (const std::system_error& e) {
                         self->_fail(e.code().value());
                     }
@@ -499,7 +813,7 @@ private:
 
 public:
     explicit TlsRecv(TlsTransport& transport) :
-        _t(transport),
+        _t(&transport),
         _cipher(cipher_size),
         _scratch(record_size) {}
 
@@ -524,7 +838,14 @@ public:
         }
     }
 
-    void close() noexcept override { _t._cancel_receive(); }
+    // The Transport is being destroyed.
+    void orphan() noexcept { _t = nullptr; }
+
+    void close() noexcept override {
+        if (_t != nullptr) {
+            _t->_cancel_receive();
+        }
+    }
 
     rawio::Event* event() const noexcept override {
         return const_cast<TlsRecv*>(this);
@@ -535,7 +856,20 @@ public:
 rawio::RecvStream
 TlsTransport::recv_multishot(size_t, unsigned int, size_t, unsigned int) {
     _cancelled = false;
-    return rawio::RecvStream(std::make_shared<TlsRecv>(*this));
+    std::shared_ptr<TlsRecv> recv = std::make_shared<TlsRecv>(*this);
+    _recv = recv;
+    return rawio::RecvStream(std::move(recv));
+}
+
+TlsTransport::~TlsTransport() {
+    // The recv in flight, if any, ends on its own; the stream no longer
+    // reaches this object.
+    _cancel_receive();
+    std::shared_ptr<TlsRecv> recv = _recv.lock();
+    if (recv != nullptr) {
+        recv->orphan();
+    }
+    SSL_free(_ssl);
 }
 
 } // namespace
@@ -543,7 +877,7 @@ TlsTransport::recv_multishot(size_t, unsigned int, size_t, unsigned int) {
 namespace rawtls {
 
 rawstd::Task<std::unique_ptr<Transport>> Transport::open(
-    rawio::Queue& queue, int fd, Context* context, Session::Mode mode,
+    rawio::Queue& queue, int fd, Context* context, Mode mode,
     const std::string& expected_peer, std::optional<Role> expected_role,
     unsigned int handshake_timeout_ms
 ) {

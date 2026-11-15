@@ -101,7 +101,7 @@ std::pair<std::shared_ptr<rawstor::ostserver::Client>, int> connect_client(
             queue, server, fds[0],
             rawtls::Transport::open(
                 *static_cast<rawio::Queue*>(queue), fds[0], nullptr,
-                rawtls::Session::Mode::server
+                rawtls::Mode::server
             )
                 .get()
         )

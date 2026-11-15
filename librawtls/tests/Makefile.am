@@ -17,7 +17,6 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) -pthread \
 
 test_all_SOURCES = main.cpp \
                    pki.hpp \
-                   test_session.cpp \
                    test_spiffe.cpp \
                    test_transport.cpp
 test_all_LDADD = $(top_builddir)/librawtls/src/librawtls.la \

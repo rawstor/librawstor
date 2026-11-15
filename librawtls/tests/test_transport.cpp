@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 
 #include <rawtls/context.hpp>
-#include <rawtls/session.hpp>
 #include <rawtls/transport.hpp>
 
 #include "pki.hpp"
@@ -12,9 +11,17 @@
 #include <rawstd/coro.hpp>
 #include <rawstd/socket.h>
 
+#include <openssl/bio.h>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+
+#include <cerrno>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <system_error>
@@ -49,8 +56,10 @@ IssueOptions with_uri(const std::string& uri) {
     return options;
 }
 
-rawtls::Config config(const Pki& pki, const Identity& identity) {
+rawtls::Config
+config(const Pki& pki, const Identity& identity, const std::string& crl = "") {
     rawtls::Config c;
+    c.crl_file = crl;
     c.trust_domain = domain;
     c.cert_file = identity.cert_file;
     c.key_file = identity.key_file;
@@ -143,11 +152,11 @@ protected:
         rawtls::Context client_context(config(pki, client_identity));
         rawtls::Context server_context(config(pki, server_identity));
         rawstd::Task<std::unique_ptr<Transport>> c = Transport::open(
-            *queue, pair.fds[0], &client_context, rawtls::Session::Mode::client,
+            *queue, pair.fds[0], &client_context, rawtls::Mode::client,
             server_uri()
         );
         rawstd::Task<std::unique_ptr<Transport>> s = Transport::open(
-            *queue, pair.fds[1], &server_context, rawtls::Session::Mode::server
+            *queue, pair.fds[1], &server_context, rawtls::Mode::server
         );
         ASSERT_TRUE(pump(*queue, [&]() { return c.done() && s.done(); }));
         client = c.get();
@@ -160,12 +169,12 @@ protected:
 TEST_F(TransportTest, PlainCarriesBytesAsTheyAre) {
     std::unique_ptr<Transport> a =
         Transport::open(
-            *queue, pair.fds[0], nullptr, rawtls::Session::Mode::client
+            *queue, pair.fds[0], nullptr, rawtls::Mode::client
         )
             .get();
     std::unique_ptr<Transport> b =
         Transport::open(
-            *queue, pair.fds[1], nullptr, rawtls::Session::Mode::server
+            *queue, pair.fds[1], nullptr, rawtls::Mode::server
         )
             .get();
     EXPECT_EQ(a->peer(), nullptr);
@@ -361,11 +370,11 @@ TEST_F(TransportTest, RefusedServerFailsTheClientHandshake) {
     rawtls::Context client_context(config(pki, client_identity));
     rawtls::Context server_context(config(pki, impostor));
     rawstd::Task<std::unique_ptr<Transport>> c = Transport::open(
-        *queue, pair.fds[0], &client_context, rawtls::Session::Mode::client,
+        *queue, pair.fds[0], &client_context, rawtls::Mode::client,
         server_uri()
     );
     rawstd::Task<std::unique_ptr<Transport>> s = Transport::open(
-        *queue, pair.fds[1], &server_context, rawtls::Session::Mode::server
+        *queue, pair.fds[1], &server_context, rawtls::Mode::server
     );
     ASSERT_TRUE(pump(*queue, [&]() { return c.done() && s.done(); }));
     try {
@@ -380,7 +389,7 @@ TEST_F(TransportTest, RefusedServerFailsTheClientHandshake) {
 TEST_F(TransportTest, SilentPeerTimesTheHandshakeOut) {
     rawtls::Context server_context(config(pki, server_identity));
     rawstd::Task<std::unique_ptr<Transport>> s = Transport::open(
-        *queue, pair.fds[1], &server_context, rawtls::Session::Mode::server, "",
+        *queue, pair.fds[1], &server_context, rawtls::Mode::server, "",
         std::nullopt, 100
     );
     EXPECT_FALSE(pump(*queue, [&]() { return s.done(); }, 30));
@@ -396,10 +405,414 @@ TEST_F(TransportTest, SilentPeerTimesTheHandshakeOut) {
 TEST_F(TransportTest, PlainPeerFailsTheTlsHandshake) {
     rawtls::Context server_context(config(pki, server_identity));
     rawstd::Task<std::unique_ptr<Transport>> s = Transport::open(
-        *queue, pair.fds[1], &server_context, rawtls::Session::Mode::server
+        *queue, pair.fds[1], &server_context, rawtls::Mode::server
     );
     const char junk[] = "GET / HTTP/1.1\r\n\r\n";
     ASSERT_EQ(write(pair.fds[0], junk, sizeof(junk)), (ssize_t)sizeof(junk));
     ASSERT_TRUE(pump(*queue, [&]() { return s.done(); }));
     EXPECT_THROW(s.get(), std::system_error);
+}
+
+namespace {
+
+const std::string ost_b = "0198f1a2-3b4c-7d5e-8f90-b1b2c3d4e5f6";
+
+std::string ost_uri(const std::string& id) {
+    return "spiffe://" + domain + "/ost/" + id;
+}
+
+// The two ends of a handshake: the Transport each one ended with (null for an
+// end that failed) and the error it failed with (0 for none).
+struct Opened {
+    std::unique_ptr<Transport> client;
+    std::unique_ptr<Transport> server;
+    int client_error = 0;
+    int server_error = 0;
+};
+
+int finish(
+    rawstd::Task<std::unique_ptr<Transport>>& task,
+    std::unique_ptr<Transport>& out
+) {
+    try {
+        out = task.get();
+    } catch (const std::system_error& e) {
+        return e.code().value();
+    }
+    return 0;
+}
+
+class HandshakeTest : public TransportTest {
+protected:
+    // Opens the two ends of `fds`, a client that expects `expected` (or a
+    // server of `role`) against a server.
+    Opened open_both(
+        Pair& fds, rawtls::Context& client_context,
+        rawtls::Context& server_context, const std::string& expected,
+        std::optional<rawtls::Role> role = std::nullopt
+    ) {
+        Opened result;
+        rawstd::Task<std::unique_ptr<Transport>> c = Transport::open(
+            *queue, fds.fds[0], &client_context, rawtls::Mode::client, expected,
+            role
+        );
+        rawstd::Task<std::unique_ptr<Transport>> s = Transport::open(
+            *queue, fds.fds[1], &server_context, rawtls::Mode::server
+        );
+        EXPECT_TRUE(pump(*queue, [&]() { return c.done() && s.done(); }));
+        result.client_error = finish(c, result.client);
+        result.server_error = finish(s, result.server);
+        return result;
+    }
+
+    // A handshake between a client holding `client_id` that expects
+    // `expected` and a server holding `server_id`.
+    Opened
+    run(const std::string& expected, const Identity& client_id,
+        const Identity& server_id, const std::string& crl = "") {
+        rawtls::Context client_context(config(pki, client_id, crl));
+        rawtls::Context server_context(config(pki, server_id));
+        return open_both(pair, client_context, server_context, expected);
+    }
+
+    void replace_server_identity(const Identity& renewed) {
+        std::filesystem::copy_file(
+            renewed.cert_file, server_identity.cert_file,
+            std::filesystem::copy_options::overwrite_existing
+        );
+        std::filesystem::copy_file(
+            renewed.key_file, server_identity.key_file,
+            std::filesystem::copy_options::overwrite_existing
+        );
+    }
+};
+
+} // namespace
+
+TEST_F(HandshakeTest, WrongServerIdentityIsRefused) {
+    Opened r = run(ost_uri(ost_b), client_identity, server_identity);
+    EXPECT_EQ(r.client_error, EACCES);
+}
+
+TEST_F(HandshakeTest, ServerInAnotherTrustDomainIsRefused) {
+    Identity other = pki.issue(
+        "other-domain", with_uri("spiffe://other.example/ost/" + ost_id)
+    );
+    Opened r = run(server_uri(), client_identity, other);
+    EXPECT_EQ(r.client_error, EACCES);
+}
+
+TEST_F(HandshakeTest, ClientInAnotherTrustDomainIsRefused) {
+    Identity other = pki.issue(
+        "other-client",
+        with_uri("spiffe://other.example/tenant/" + tenant + "/client/vm42")
+    );
+    Opened r = run(server_uri(), other, server_identity);
+    EXPECT_EQ(r.server_error, EACCES);
+}
+
+TEST_F(HandshakeTest, ServerWithAClientIdentityIsRefused) {
+    Identity impostor = pki.issue("impostor", with_uri(client_uri()));
+    Opened r = run(server_uri(), client_identity, impostor);
+    EXPECT_EQ(r.client_error, EACCES);
+}
+
+TEST_F(HandshakeTest, CertificateOfAnotherCaIsRefused) {
+    Pki foreign;
+    Identity foreign_server =
+        foreign.issue("foreign-server", with_uri(server_uri()));
+    Identity foreign_client =
+        foreign.issue("foreign-client", with_uri(client_uri()));
+
+    EXPECT_EQ(
+        run(server_uri(), client_identity, foreign_server).client_error, EACCES
+    );
+    Pair second;
+    rawtls::Context client_context(config(pki, foreign_client));
+    rawtls::Context server_context(config(pki, server_identity));
+    EXPECT_EQ(
+        open_both(second, client_context, server_context, server_uri())
+            .server_error,
+        EACCES
+    );
+}
+
+TEST_F(HandshakeTest, ExpiredCertificateIsRefused) {
+    IssueOptions options = with_uri(server_uri());
+    options.not_before = -7200;
+    options.not_after = -3600;
+    Identity expired = pki.issue("expired", options);
+    EXPECT_EQ(
+        run(server_uri(), client_identity, expired).client_error, EACCES
+    );
+}
+
+TEST_F(HandshakeTest, CertificateNotYetValidIsRefused) {
+    IssueOptions options = with_uri(server_uri());
+    options.not_before = 3600;
+    options.not_after = 7200;
+    Identity early = pki.issue("early", options);
+    EXPECT_EQ(run(server_uri(), client_identity, early).client_error, EACCES);
+}
+
+TEST_F(HandshakeTest, NoUriSanIsRefused) {
+    Identity bare = pki.issue("bare", IssueOptions());
+    EXPECT_EQ(run(server_uri(), client_identity, bare).client_error, EACCES);
+}
+
+TEST_F(HandshakeTest, SeveralUriSansAreRefused) {
+    IssueOptions options;
+    options.uris = {server_uri(), ost_uri(ost_b)};
+    Identity two = pki.issue("two", options);
+    EXPECT_EQ(run(server_uri(), client_identity, two).client_error, EACCES);
+}
+
+TEST_F(HandshakeTest, UriSanThatIsNotAnIdIsRefused) {
+    Identity web = pki.issue("web", with_uri("https://example.com/ost"));
+    EXPECT_EQ(run(server_uri(), client_identity, web).client_error, EACCES);
+}
+
+TEST_F(HandshakeTest, MissingExtendedKeyUsageIsRefused) {
+    IssueOptions options = with_uri(server_uri());
+    options.usage = false;
+    Identity unrestricted = pki.issue("unrestricted", options);
+    EXPECT_EQ(
+        run(server_uri(), client_identity, unrestricted).client_error, EACCES
+    );
+}
+
+TEST_F(HandshakeTest, ExtendedKeyUsageOfTheOtherEndIsRefused) {
+    IssueOptions as_client = with_uri(server_uri());
+    as_client.server_auth = false;
+    Identity client_only = pki.issue("client-only", as_client);
+    EXPECT_EQ(
+        run(server_uri(), client_identity, client_only).client_error, EACCES
+    );
+
+    Pair second;
+    IssueOptions as_server = with_uri(client_uri());
+    as_server.client_auth = false;
+    Identity server_only = pki.issue("server-only", as_server);
+    rawtls::Context client_context(config(pki, server_only));
+    rawtls::Context server_context(config(pki, server_identity));
+    EXPECT_EQ(
+        open_both(second, client_context, server_context, server_uri())
+            .server_error,
+        EACCES
+    );
+}
+
+TEST_F(HandshakeTest, CaCertificateAsALeafIsRefused) {
+    IssueOptions options = with_uri(server_uri());
+    options.ca = true;
+    Identity ca_leaf = pki.issue("ca-leaf", options);
+    EXPECT_EQ(run(server_uri(), client_identity, ca_leaf).client_error, EACCES);
+}
+
+TEST_F(HandshakeTest, RefusedClientLearnsOnTheNextRead) {
+    Identity other = pki.issue(
+        "other-client",
+        with_uri("spiffe://other.example/tenant/" + tenant + "/client/vm42")
+    );
+    Opened r = run(server_uri(), other, server_identity);
+    EXPECT_EQ(r.server_error, EACCES);
+    ASSERT_NE(r.client, nullptr);
+
+    rawio::RecvStream stream = r.client->recv_multishot(4096, 8, 1, 0);
+    std::string received;
+    rawstd::Task<void> read = read_exact(stream, 1, received);
+    ASSERT_TRUE(pump(*queue, [&]() { return read.done(); }));
+    try {
+        read.get();
+        FAIL() << "the alert did not arrive";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EPROTO);
+    }
+}
+
+TEST_F(HandshakeTest, RevokedCertificateIsRefused) {
+    std::string crl = pki.crl({server_identity.serial});
+    EXPECT_EQ(
+        run(server_uri(), client_identity, server_identity, crl).client_error,
+        EACCES
+    );
+}
+
+TEST_F(HandshakeTest, CertificateNotOnTheCrlIsAccepted) {
+    std::string crl = pki.crl({server_identity.serial + 100});
+    Opened r = run(server_uri(), client_identity, server_identity, crl);
+    EXPECT_EQ(r.client_error, 0);
+    EXPECT_EQ(r.server_error, 0);
+}
+
+TEST_F(HandshakeTest, TlsOneTwoIsRefused) {
+    rawtls::Context server_context(config(pki, server_identity));
+    rawstd::Task<std::unique_ptr<Transport>> s = Transport::open(
+        *queue, pair.fds[1], &server_context, rawtls::Mode::server
+    );
+
+    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
+    ASSERT_NE(ctx, nullptr);
+    SSL_CTX_set_max_proto_version(ctx, TLS1_2_VERSION);
+    SSL* ssl = SSL_new(ctx);
+    BIO* rbio = BIO_new(BIO_s_mem());
+    BIO* wbio = BIO_new(BIO_s_mem());
+    SSL_set_bio(ssl, rbio, wbio);
+    SSL_set_connect_state(ssl);
+    SSL_do_handshake(ssl);
+
+    std::vector<char> hello(BIO_ctrl_pending(wbio));
+    ASSERT_GT(BIO_read(wbio, hello.data(), static_cast<int>(hello.size())), 0);
+    ASSERT_EQ(
+        write(pair.fds[0], hello.data(), hello.size()),
+        static_cast<ssize_t>(hello.size())
+    );
+    ASSERT_TRUE(pump(*queue, [&]() { return s.done(); }));
+    try {
+        s.get();
+        FAIL() << "a TLS 1.2 client was accepted";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EPROTO);
+    }
+
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
+    ERR_clear_error();
+}
+
+TEST_F(HandshakeTest, ReloadServesNewConnectionsWithTheNewCertificate) {
+    Identity renewed = pki.issue("renewed", with_uri(ost_uri(ost_b)));
+    rawtls::Context client_context(config(pki, client_identity));
+    rawtls::Context server_context(config(pki, server_identity));
+
+    Opened first =
+        open_both(pair, client_context, server_context, server_uri());
+    ASSERT_NE(first.client, nullptr);
+    ASSERT_NE(first.server, nullptr);
+
+    replace_server_identity(renewed);
+    server_context.request_reload();
+    // A new connection is what applies it.
+    server_context.snapshot();
+
+    // An established connection keeps going over a reload.
+    rawio::RecvStream stream = first.server->recv_multishot(4096, 8, 10, 0);
+    std::string received;
+    rawstd::Task<void> read = read_exact(stream, 10, received);
+    rawstd::Task<size_t> sent = send_all(*first.client, "still here");
+    ASSERT_TRUE(pump(*queue, [&]() { return read.done() && sent.done(); }));
+    read.get();
+    EXPECT_EQ(received, "still here");
+
+    Pair second;
+    EXPECT_EQ(
+        open_both(second, client_context, server_context, server_uri())
+            .client_error,
+        EACCES
+    );
+
+    Pair third;
+    Opened renewed_pair =
+        open_both(third, client_context, server_context, ost_uri(ost_b));
+    EXPECT_EQ(renewed_pair.client_error, 0);
+    EXPECT_EQ(renewed_pair.server_error, 0);
+}
+
+TEST_F(HandshakeTest, RequestedReloadAppliesToTheNextConnection) {
+    Identity renewed = pki.issue("renewed", with_uri(ost_uri(ost_b)));
+    rawtls::Context client_context(config(pki, client_identity));
+    rawtls::Context server_context(config(pki, server_identity));
+
+    replace_server_identity(renewed);
+    server_context.request_reload();
+
+    Opened r = open_both(pair, client_context, server_context, ost_uri(ost_b));
+    EXPECT_EQ(r.client_error, 0);
+    EXPECT_EQ(r.server_error, 0);
+}
+
+TEST_F(HandshakeTest, RequestedReloadOfBrokenFilesKeepsTheContext) {
+    rawtls::Context client_context(config(pki, client_identity));
+    rawtls::Context server_context(config(pki, server_identity));
+
+    {
+        std::ofstream broken(server_identity.key_file, std::ios::trunc);
+        broken << "not a key\n";
+    }
+    server_context.request_reload();
+
+    Opened r = open_both(pair, client_context, server_context, server_uri());
+    EXPECT_EQ(r.client_error, 0);
+    EXPECT_EQ(r.server_error, 0);
+}
+
+TEST_F(HandshakeTest, ContextRejectsBrokenFiles) {
+    rawtls::Config good = config(pki, server_identity);
+
+    rawtls::Config missing_cert = good;
+    missing_cert.cert_file = (pki.dir() / "nope.crt").string();
+    EXPECT_THROW(rawtls::Context{missing_cert}, std::system_error);
+
+    rawtls::Config missing_ca = good;
+    missing_ca.ca_file = (pki.dir() / "nope.ca").string();
+    EXPECT_THROW(rawtls::Context{missing_ca}, std::system_error);
+
+    rawtls::Config mismatched = good;
+    mismatched.key_file = client_identity.key_file;
+    EXPECT_THROW(rawtls::Context{mismatched}, std::system_error);
+
+    rawtls::Config missing_crl = good;
+    missing_crl.crl_file = (pki.dir() / "nope.crl").string();
+    EXPECT_THROW(rawtls::Context{missing_crl}, std::system_error);
+}
+
+TEST_F(HandshakeTest, ClientNeedsAnExpectedServerIdentity) {
+    rawtls::Context context(config(pki, client_identity));
+    EXPECT_THROW(
+        Transport::open(
+            *queue, pair.fds[0], &context, rawtls::Mode::client
+        ).get(),
+        std::system_error
+    );
+    EXPECT_THROW(
+        Transport::open(
+            *queue, pair.fds[0], &context, rawtls::Mode::client, "nonsense"
+        ).get(),
+        std::system_error
+    );
+    // The server it expects must be an OST or an MDS.
+    EXPECT_THROW(
+        Transport::open(
+            *queue, pair.fds[0], &context, rawtls::Mode::client, client_uri()
+        ).get(),
+        std::system_error
+    );
+}
+
+TEST_F(HandshakeTest, ClientMayExpectOnlyTheRoleOfTheServer) {
+    rawtls::Context client_context(config(pki, client_identity));
+    rawtls::Context server_context(config(pki, server_identity));
+    {
+        Opened r = open_both(
+            pair, client_context, server_context, "", rawtls::Role::ost
+        );
+        EXPECT_EQ(r.client_error, 0);
+        ASSERT_NE(r.client, nullptr);
+        EXPECT_EQ(r.client->peer()->name(), ost_id);
+    }
+    {
+        Pair second;
+        Opened r = open_both(
+            second, client_context, server_context, "", rawtls::Role::mds
+        );
+        EXPECT_EQ(r.client_error, EACCES);
+    }
+    // Only the roles of a server can be expected of one.
+    EXPECT_THROW(
+        Transport::open(
+            *queue, pair.fds[0], &client_context, rawtls::Mode::client, "",
+            rawtls::Role::admin
+        ).get(),
+        std::system_error
+    );
 }

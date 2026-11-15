@@ -16,7 +16,6 @@
 #include <rawstor/rawstor.h>
 
 #include <rawtls/context.hpp>
-#include <rawtls/session.hpp>
 #include <rawtls/transport.hpp>
 
 #include <gtest/gtest.h>
@@ -150,7 +149,7 @@ int raw_handshake(
     rawio::Queue::setup_fd(fd);
     rawstd::Task<std::unique_ptr<rawtls::Transport>> task =
         rawtls::Transport::open(
-            *queue, fd, &context, rawtls::Session::Mode::client, expected_peer,
+            *queue, fd, &context, rawtls::Mode::client, expected_peer,
             rawtls::Role::ost, 5000
         );
     std::chrono::steady_clock::time_point deadline =

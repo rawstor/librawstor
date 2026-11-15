@@ -27,8 +27,8 @@ struct Config {
 /*
  * What a process needs to speak TLS 1.3 with mutual authentication, built from
  * the files of a Config. One Context serves every connection of the process,
- * client and server side; a Session takes the certificate, key and CAs the
- * Context holds when it is created.
+ * client and server side; a TLS connection takes the certificate, key and CAs
+ * the Context holds when it is opened.
  *
  * Session tickets are off: every connection makes a full handshake, so a peer's
  * certificate is checked against the CAs and the CRL of the moment.
@@ -55,18 +55,19 @@ public:
     }
 
     /*
-     * The credentials a new Session starts from: the certificate, key and
-     * CAs as they are now, after any reload that was requested. Sessions
+     * The credentials a new connection starts from: the certificate, key and
+     * CAs as they are now, after any reload that was requested. Connections
      * made from one snapshot are unaffected by later reloads.
      */
     std::shared_ptr<ssl_ctx_st> snapshot();
 
     /*
      * Asks for the certificate, key and CAs to be read again before the next
-     * Session is created. New sessions use the result; established ones keep
-     * what they started with. Safe in a signal handler. A reload that fails,
-     * because a file is unreadable or broken, is logged and leaves the Context
-     * unchanged, so a half-written renewal does not take the process down.
+     * connection is opened. New connections use the result; established ones
+     * keep what they started with. Safe in a signal handler. A reload that
+     * fails, because a file is unreadable or broken, is logged and leaves the
+     * Context unchanged, so a half-written renewal does not take the process
+     * down.
      */
     void request_reload() noexcept;
 };

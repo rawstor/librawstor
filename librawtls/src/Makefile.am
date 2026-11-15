@@ -13,11 +13,9 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
 librawtls_la_SOURCES = $(top_srcdir)/librawtls/include/rawtls/context.hpp \
-                       $(top_srcdir)/librawtls/include/rawtls/session.hpp \
                        $(top_srcdir)/librawtls/include/rawtls/spiffe.hpp \
                        $(top_srcdir)/librawtls/include/rawtls/transport.hpp \
                        context.cpp \
-                       session.cpp \
                        spiffe.cpp \
                        transport.cpp
 

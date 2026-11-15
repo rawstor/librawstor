@@ -126,14 +126,14 @@ rawstd::Task<std::unique_ptr<rawtls::Transport>> connect(
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     co_return co_await rawtls::Transport::open(
-        queue, fd, c, rawtls::Session::Mode::client, expected_peer, role
+        queue, fd, c, rawtls::Mode::client, expected_peer, role
     );
 }
 
 rawstd::Task<std::unique_ptr<rawtls::Transport>>
 accept(rawio::Queue& queue, int fd) {
     co_return co_await rawtls::Transport::open(
-        queue, fd, context(), rawtls::Session::Mode::server
+        queue, fd, context(), rawtls::Mode::server
     );
 }
 
