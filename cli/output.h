@@ -12,6 +12,8 @@ extern "C" {
 enum {
     RAWSTOR_CLI_OPT_FORMAT = 1000,
     RAWSTOR_CLI_OPT_COLUMN,
+    /* A global option, not every command's: no TLS, see docs/security.md. */
+    RAWSTOR_CLI_OPT_INSECURE,
 };
 
 /* The usage lines of those options, for a command's own help text. */

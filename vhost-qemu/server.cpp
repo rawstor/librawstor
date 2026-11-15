@@ -108,7 +108,7 @@ namespace vhost {
 Server::Server(
     unsigned int queue_size, const std::string& target,
     const std::string& socket_path, bool write_cache_enabled, bool readonly,
-    bool force
+    bool force, bool insecure
 ) :
     _queue_size(queue_size),
     _target(target),
@@ -117,7 +117,9 @@ Server::Server(
     _readonly(readonly),
     _force(force),
     _fd(open_unix_socket(_socket_path)) {
-    int res = rawstor_initialize(NULL);
+    RawstorOpts rawstor_opts = {};
+    rawstor_opts.insecure = insecure ? 1 : 0;
+    int res = rawstor_initialize(&rawstor_opts);
     if (res) {
         // No destructor runs for a constructor that throws: remove the
         // socket here, or it blocks the next start's bind().

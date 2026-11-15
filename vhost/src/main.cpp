@@ -45,6 +45,8 @@ int wake_write_fd = -1;
 // wake_write_fd.
 int resize_write_fd = -1;
 
+constexpr int opt_insecure = 1000;
+
 void usage() {
     std::cout << "Rawstor VHOST " << PACKAGE_VERSION << std::endl
               << std::endl
@@ -76,6 +78,9 @@ void usage() {
               << "  --readonly            "
                  "Export the object read-only (VIRTIO_BLK_F_RO); "
                  "required for a version target"
+              << std::endl
+              << "  --insecure            "
+                 "Run without TLS: plaintext, and no peer is authenticated"
               << std::endl
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl
@@ -147,6 +152,7 @@ int main(int argc, char** argv) {
         {"force", no_argument, nullptr, 'f'},
         {"readonly", no_argument, nullptr, 'r'},
         {"socket-path", required_argument, nullptr, 's'},
+        {"insecure", no_argument, nullptr, opt_insecure},
         {"version", no_argument, nullptr, 'v'},
         {"write-cache", required_argument, nullptr, 'w'},
         {},
@@ -158,6 +164,7 @@ int main(int argc, char** argv) {
     const char* write_cache_arg = nullptr;
     bool readonly = false;
     bool force = false;
+    bool insecure = false;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, nullptr);
         if (c == -1) {
@@ -191,6 +198,10 @@ int main(int argc, char** argv) {
 
         case 'w':
             write_cache_arg = optarg;
+            break;
+
+        case opt_insecure:
+            insecure = true;
             break;
 
         default:
@@ -241,7 +252,9 @@ int main(int argc, char** argv) {
         }
     }
 
-    int res = rawstor_initialize(NULL);
+    RawstorOpts rawstor_opts = {};
+    rawstor_opts.insecure = insecure ? 1 : 0;
+    int res = rawstor_initialize(&rawstor_opts);
     if (res) {
         std::cerr << "Failed to initialize rawstor: " << strerror(-res)
                   << std::endl;

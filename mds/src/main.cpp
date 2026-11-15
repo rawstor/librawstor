@@ -53,6 +53,8 @@ public:
     int get() const noexcept { return _fd; }
 };
 
+constexpr int opt_insecure = 1000;
+
 void usage() {
     std::cout
         << "Rawstor MDS server " << PACKAGE_VERSION << std::endl
@@ -70,6 +72,9 @@ void usage() {
         << "                        of every OST in the topology before"
         << std::endl
         << "                        serving (docs/mds.md)" << std::endl
+        << "  --insecure            "
+           "Run without TLS: plaintext, and no peer is authenticated"
+        << std::endl
         << "  -v, --version         Rawstor version" << std::endl
         << "  -w, --workers N       Number of worker threads (default: "
         << DEFAULT_WORKERS << ")" << std::endl
@@ -464,6 +469,7 @@ int main(int argc, char** argv) {
         {"queue-size", required_argument, nullptr, 'q'},
         {"reconstruct", no_argument, nullptr, 'r'},
         {"topology", required_argument, nullptr, 't'},
+        {"insecure", no_argument, nullptr, opt_insecure},
         {"version", no_argument, nullptr, 'v'},
         {"workers", required_argument, nullptr, 'w'},
         {},
@@ -475,6 +481,7 @@ int main(int argc, char** argv) {
     const char* topology_arg = nullptr;
     const char* workers_arg = nullptr;
     bool do_reconstruct = false;
+    bool insecure = false;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, nullptr);
         if (c == -1) {
@@ -512,6 +519,10 @@ int main(int argc, char** argv) {
 
         case 'w':
             workers_arg = optarg;
+            break;
+
+        case opt_insecure:
+            insecure = true;
             break;
 
         default:
@@ -570,7 +581,9 @@ int main(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    int res = rawstor_initialize(nullptr);
+    RawstorOpts rawstor_opts = {};
+    rawstor_opts.insecure = insecure ? 1 : 0;
+    int res = rawstor_initialize(&rawstor_opts);
     if (res < 0) {
         std::cerr << "Failed to initialize rawstor: " << strerror(-res)
                   << std::endl;
