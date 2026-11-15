@@ -8,13 +8,14 @@
 
 ## Usage
 
-`rawstor-ost [-h] -b ADDR LOCATION`
+`rawstor-ost [-h] [--insecure] -b ADDR LOCATION`
 
 ## Options
 
 | Option | Description |
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
+| `--insecure` | Run without TLS: plaintext, and no peer is authenticated. Without it the process needs [TLS settings](configuration.md#tls) and refuses to start without them. |
 | `LOCATION` | Comma‑separated list of backend locations (e.g., `file:///path`, `ost://host:port`). |
 | `-b, --bind ADDR` | Bind address in `<ip>[:<port>]` format (e.g., `127.0.0.1:7777`); the port defaults to 7777. |
 | `-w, --workers N` | Number of worker threads, each with its own client connections and I/O queue, all accepting on the same listening socket (default: `12`). |
@@ -58,6 +59,8 @@ The config is an environment file (`KEY=VALUE` lines):
 | `LOCATION` | `file:///var/lib/rawstor/ost/<uuid>` | Backing store this instance serves. |
 | `QUEUE_SIZE` | `4096` | `--queue-size`. |
 | `WORKERS` | `12` | `--workers`. |
+| `RAWSTOR_TLS_*` | | TLS settings, see [Configuration](configuration.md#tls). |
+| `RAWSTOR_INSECURE` | `0` | `1` runs the instance without TLS. Without it, and without `RAWSTOR_TLS_*`, the instance refuses to start. |
 | `RAWSTOR_OPTS_*` | | Tuning knobs, see [Configuration](configuration.md). |
 
 The instance runs as the `rawstor` user under `ProtectSystem=strict`. Its
@@ -77,13 +80,14 @@ Two OSTs on one host:
 ```bash
 OST1=$(cat /proc/sys/kernel/random/uuid)
 OST2=$(cat /proc/sys/kernel/random/uuid)
-echo "BIND_ADDR=0.0.0.0:7777" | sudo tee /etc/rawstor/ost/${OST1}.conf
-echo "BIND_ADDR=0.0.0.0:7778" | sudo tee /etc/rawstor/ost/${OST2}.conf
+# without TLS, to keep the example short: see Configuration for TLS
+printf 'BIND_ADDR=0.0.0.0:7777\nRAWSTOR_INSECURE=1\n' | sudo tee /etc/rawstor/ost/${OST1}.conf
+printf 'BIND_ADDR=0.0.0.0:7778\nRAWSTOR_INSECURE=1\n' | sudo tee /etc/rawstor/ost/${OST2}.conf
 sudo systemctl enable --now rawstor-ost@${OST1} rawstor-ost@${OST2}
 
 systemctl status rawstor-ost@${OST1}       # state
 journalctl -u rawstor-ost@${OST1}          # log
-rawstor location info ost://127.0.0.1:7777          # serving?
+RAWSTOR_INSECURE=1 rawstor location info ost://127.0.0.1:7777   # serving?
 sudo systemctl restart rawstor-ost@${OST1}
 ```
 

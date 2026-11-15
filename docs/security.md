@@ -40,9 +40,9 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | Benchmark: TLS 1.3 / kTLS on the io_uring hot path | 0 | ✅ | [Measurements](#measurements) |
 | `HANDSHAKE`: feature bits, the first request of every connection (no protocol version) | 1 | ✅ | [Protocol](protocol.md) |
 | Owner tenant of an object in the protocol, chunk metadata, `LIST` and the MDS store; tenant registry; a default tenant | 1 | ✅ | [Tenants](tenants.md) |
-| mTLS (OpenSSL) on every port: OST, MDS, witness, client side | 2 | 🟡 | `librawtls`; the client library, `rawstor-ost` and `rawstor-mds` speak it when [configured](configuration.md#tls), and are plaintext when not |
+| mTLS (OpenSSL) on every port: OST, MDS, witness, client side | 2 | ✅ | `librawtls`; the client library and every service speak it, and refuse to start without [TLS settings](configuration.md#tls) unless run with `--insecure` |
 | kTLS offload of the data path | 2 | ❌ | optional, off by default (stage 0) |
-| `--insecure`: plaintext, no authentication, per service | 2 | ❌ | TLS is off unless configured; making it the default and naming plaintext `--insecure` is the last step of the stage |
+| `--insecure`: plaintext, no authentication, per process | 2 | ✅ | `--insecure` or `RAWSTOR_INSECURE=1` on every executable; [Without TLS](configuration.md#without-tls) |
 | Certificate and CA reload without downtime | 2 | ✅ | `SIGHUP` and `SIGUSR1` in `rawstor-ost` and `rawstor-mds`, `SIGUSR1` in `rawstor-vhost` and `rawstor-vduse`; `rawstor_tls_request_reload()` |
 | Principals and roles in the MDS store, admin API (the tenant registry exists, see stage 1) | 3 | ❌ | — |
 | Capability tokens issued by `RESOLVE`, checked by OST | 3 | ❌ | — |
@@ -605,8 +605,9 @@ integrity of the wire, which XTS does not give, still come from TLS.
 
 ### Insecure mode
 
-`--insecure` (on every server and every client process) turns TLS off for that
-process. Traffic is then **plaintext, and no peer is authenticated**: there is
+`--insecure` (on every server and every client process, or `RAWSTOR_INSECURE=1`)
+turns TLS off for that process. It is the only way: a process that has no TLS
+settings and is not told to go without refuses to start. Traffic is then **plaintext, and no peer is authenticated**: there is
 no certificate to read an identity, a tenant or a role from, so the rights
 table, tokens and tenant isolation do not apply and every peer that can reach
 the port can do everything, as before this design. It is meant for a storage
@@ -616,8 +617,8 @@ tests; the operator takes responsibility for the network.
 - A port is TLS or plaintext, never both and never auto-detected, so a
   client cannot be downgraded: a plaintext client against a TLS server (or
   the reverse) fails the connection.
-- A service refuses to start with `--insecure` and a certificate configured at
-  the same time.
+- `--insecure` wins over the TLS settings: they are not looked at, complete or
+  not, and the process warns if it has some.
 - The service logs the mode loudly at start.
 - It is a per-process choice. Mixing modes inside one cluster is not
   supported except while moving a cluster from one mode to the other (see

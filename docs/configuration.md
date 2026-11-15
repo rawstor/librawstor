@@ -33,11 +33,11 @@ exits with `EX_CONFIG` (78), which the shipped systemd units do not restart.
 ## TLS
 
 Every connection between rawstor processes -- a client to an OST or an MDS, an
-OST to another OST -- can run over TLS 1.3 with mutual authentication; see the
-[Security design](security.md). TLS is on when all four of these are set, and
-off when none is: a process that sets some but not all refuses to start with
-`EX_CONFIG`. While it is off the connections are plaintext and no peer is
-authenticated, and the process logs that at start.
+OST to another OST -- runs over TLS 1.3 with mutual authentication; see the
+[Security design](security.md). A process needs the first four of these, and
+refuses to start with `EX_CONFIG` if it has none of them or only some. The one
+way to run without TLS is to say so, with `--insecure` or `RAWSTOR_INSECURE=1`:
+see [Without TLS](#without-tls).
 
 | Variable | Description |
 |----------|-------------|
@@ -75,3 +75,25 @@ and `SIGUSR1` in `rawstor-ost` and `rawstor-mds`, and on `SIGUSR1` in
 of the object. The connections already open keep the certificate they started
 with. A file that cannot be read is logged and the old certificate stays.
 Session tickets are off, so each connection makes a full handshake.
+
+### Without TLS
+
+`--insecure` on the command line of `rawstor`, `rawstor-ost`, `rawstor-mds`,
+`rawstor-vhost`, `rawstor-vduse` and `rawstor-vhost-qemu`, or `RAWSTOR_INSECURE=1`
+in the environment, runs a process without TLS: its connections are plaintext
+and **no peer is authenticated**, so every peer that can reach a port can do
+everything. In a systemd instance the variable goes into its config file. A
+program that links librawstor sets `RawstorOpts::insecure` or the variable.
+Use it for a storage network that no untrusted party can reach, and for
+development and tests.
+
+| Variable | Description |
+|----------|-------------|
+| `RAWSTOR_INSECURE` | `1` runs the process without TLS, `0` (the default) does not. The command-line flag, or `RawstorOpts::insecure`, wins over it. |
+
+The TLS settings are not looked at in this mode: a process started with
+`--insecure` ignores them, complete or not, and warns that it does when it has
+some. It logs `INSECURE` at start. A port is TLS or plaintext, never both and
+never detected, so a plaintext process cannot talk to a TLS one, in either
+direction; mixing the two in a cluster is meant only for moving it from one
+mode to the other.

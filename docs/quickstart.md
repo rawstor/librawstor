@@ -20,6 +20,13 @@ a network split. The witness is that vote: it stores no data, only the
 mirror's state, and the MDS can host it, so no fifth machine is needed. With
 it, the disk stays available when either storage host goes down.
 
+Every connection runs over TLS, and a process without TLS settings refuses to
+start. To keep the commands short this guide runs everything **without TLS**:
+each config file below sets `RAWSTOR_INSECURE=1`, and the `rawstor` commands
+run with it exported. Nothing is authenticated that way, so use it only on a
+network no untrusted party can reach; a real deployment sets up TLS instead,
+see [Configuration](configuration.md#tls).
+
 Download the packages from [Downloads](downloads.md). Every host needs
 `librawstor` (the library and the `rawstor` CLI) next to its own package:
 
@@ -48,10 +55,11 @@ user), and note its id, the metadata host needs it:
 
 ```
 OST=$(cat /proc/sys/kernel/random/uuid)
-echo "BIND_ADDR=0.0.0.0" | sudo tee /etc/rawstor/ost/${OST}.conf
+printf 'BIND_ADDR=0.0.0.0\nRAWSTOR_INSECURE=1\n' | sudo tee /etc/rawstor/ost/${OST}.conf
 sudo systemctl enable --now rawstor-ost@${OST}
 
 echo ${OST}                                   # for the topology below
+export RAWSTOR_INSECURE=1                     # for the rawstor CLI
 rawstor location info ost://192.168.0.11               # serving? (.12 on the other)
 journalctl -u rawstor-ost@${OST}              # log
 ```
@@ -76,7 +84,7 @@ ${OST1} ost://192.168.0.11 100 data dc1/row1/rack1/host1
 ${OST2} ost://192.168.0.12 100 data dc1/row1/rack2/host2
 ${WITNESS} ost://192.168.0.13:7776 100 witness dc1/row1/rack3/host3
 EOF
-echo "BIND_ADDR=0.0.0.0" | sudo tee /etc/rawstor/mds/${CLUSTER}.conf
+printf 'BIND_ADDR=0.0.0.0\nRAWSTOR_INSECURE=1\n' | sudo tee /etc/rawstor/mds/${CLUSTER}.conf
 sudo systemctl enable --now rawstor-mds@${CLUSTER}
 
 rawstor location info mds://192.168.0.13               # serving?
@@ -110,7 +118,7 @@ opens `${LOCATION}/<object>`, with `LOCATION` taken from
 `/etc/rawstor-vhost.conf`, so point it at the MDS:
 
 ```
-echo "LOCATION=mds://192.168.0.13" | sudo tee /etc/rawstor-vhost.conf
+printf 'LOCATION=mds://192.168.0.13\nRAWSTOR_INSECURE=1\n' | sudo tee /etc/rawstor-vhost.conf
 sudo systemctl enable --now rawstor-vhost@${OBJECT}
 ```
 
