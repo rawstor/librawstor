@@ -376,12 +376,6 @@ private:
         }
     }
 
-    rawstd::Task<void> _flush_locked() {
-        co_await _write_mutex.acquire();
-        Release release(_write_mutex);
-        co_await _flush();
-    }
-
     // Encrypts the `count` buffers of `iov` and sends them, whole and in
     // order. `iov` must outlive the call.
     rawstd::Task<size_t> _write(const iovec* iov, size_t count) {
@@ -706,16 +700,13 @@ private:
                 } catch (const std::system_error& e) {
                     self->_fail(e.code().value());
                 }
+                // What decrypting leaves to say, a key update the peer asked
+                // for or an alert, stays in the output until the next send
+                // puts it ahead of its own records: the answer to a key
+                // update is due before the next application data, not at
+                // once (RFC 8446, 4.6.3). The stream writes nothing, so it
+                // never holds the Transport across a send.
                 self->_decrypt_buffered();
-                // A key update the peer asked for, or an alert, waits in the
-                // output.
-                if (self->_terminal == 0 && self->_t->_output_size() > 0) {
-                    try {
-                        co_await self->_t->_flush_locked();
-                    } catch (const std::system_error& e) {
-                        self->_fail(e.code().value());
-                    }
-                }
             }
             if (self->_deliver()) {
                 co_return;
