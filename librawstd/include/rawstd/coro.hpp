@@ -48,12 +48,16 @@ private:
 
     // The Cancellable awaitable this coroutine is currently suspended on,
     // if any (see CancelPoint).
-    bool (*_cancel_fn)(void*) = nullptr;
+    bool (*_cancel_fn)(void*, bool) = nullptr;
     void* _cancel_arg = nullptr;
 
     // A cancel() that found nothing cancellable to deliver to: handed to
     // the next Cancellable awaitable this coroutine co_awaits instead.
     bool _cancel_pending = false;
+
+    // A cancel_sticky(): every Cancellable awaitable this coroutine
+    // co_awaits from now on is cancelled as it is reached.
+    bool _cancel_sticky = false;
 
     class final_awaiter {
     public:
@@ -77,8 +81,11 @@ public:
         _continuation = h;
     }
 
-    void cancel() {
-        if (_cancel_fn != nullptr && _cancel_fn(_cancel_arg)) {
+    void cancel(bool sticky = false) {
+        if (sticky) {
+            _cancel_sticky = true;
+        }
+        if (_cancel_fn != nullptr && _cancel_fn(_cancel_arg, sticky)) {
             return;
         }
         _cancel_pending = true;
@@ -105,8 +112,16 @@ private:
     A& _inner;
     TaskPromiseBase& _promise;
 
-    static bool _cancel(void* inner) {
-        return static_cast<A*>(inner)->cancel();
+    // A nested Task is told whether the cancellation is sticky; the other
+    // awaitables have no use for it.
+    static bool _cancel(void* inner, bool sticky) {
+        A* a = static_cast<A*>(inner);
+        if constexpr (requires { a->cancel_sticky(); }) {
+            if (sticky) {
+                return a->cancel_sticky();
+            }
+        }
+        return a->cancel();
     }
 
 public:
@@ -116,7 +131,8 @@ public:
 
     bool await_ready() {
         if constexpr (Cancellable<A>) {
-            if (_promise._cancel_pending && _inner.cancel()) {
+            if ((_promise._cancel_pending || _promise._cancel_sticky) &&
+                _cancel(&_inner, _promise._cancel_sticky)) {
                 _promise._cancel_pending = false;
             }
         }
@@ -269,6 +285,22 @@ public:
         return true;
     }
 
+    // cancel() that does not end with the operation it reached. A cancel()
+    // that loses the race against the completion of that operation, or that
+    // the task handles and carries on from, is gone, and the task may wait
+    // for the next thing as long as it likes. This one is kept: every
+    // Cancellable awaitable the task co_awaits afterwards is cancelled as it
+    // is reached, however many there are, and the nested Tasks it awaits, the
+    // tasks of gather() and any() included, get the same treatment. For a
+    // deadline, which must hold whatever the task does after it.
+    bool cancel_sticky() {
+        if (done()) {
+            return false;
+        }
+        _h.promise().cancel(true);
+        return true;
+    }
+
     // Awaitable interface: lets one Task<T> be `co_await`-ed from inside
     // another coroutine's body.
     bool await_ready() const noexcept { return _h.done(); }
@@ -359,6 +391,15 @@ public:
         return true;
     }
 
+    // See Task<T>::cancel_sticky().
+    bool cancel_sticky() {
+        if (done()) {
+            return false;
+        }
+        _h.promise().cancel(true);
+        return true;
+    }
+
     bool await_ready() const noexcept { return _h.done(); }
 
     void await_suspend(std::coroutine_handle<> awaiting) noexcept {
@@ -378,11 +419,11 @@ namespace detail {
 // wait for either way -- not worth skipping the remaining tasks or
 // failing the caller's own cancel() over.
 template <typename T>
-bool cancel_all(std::vector<Task<T>>& tasks) noexcept {
+bool cancel_all(std::vector<Task<T>>& tasks, bool sticky = false) noexcept {
     bool cancelled = false;
     for (Task<T>& t : tasks) {
         try {
-            cancelled |= t.cancel();
+            cancelled |= sticky ? t.cancel_sticky() : t.cancel();
         } catch (...) {
         }
     }
@@ -413,6 +454,8 @@ public:
     T await_resume() { return _task.await_resume(); }
 
     bool cancel() noexcept { return cancel_all(_tasks); }
+
+    bool cancel_sticky() noexcept { return cancel_all(_tasks, true); }
 };
 
 } // namespace detail
@@ -618,6 +661,8 @@ struct AnyState {
     std::coroutine_handle<> waiter;
 
     bool cancel() noexcept { return cancel_all(tasks); }
+
+    bool cancel_sticky() noexcept { return cancel_all(tasks, true); }
 };
 
 // Drives one of any()'s tasks to completion on its behalf: a task has a
@@ -678,6 +723,8 @@ public:
     void await_resume() const noexcept {}
 
     bool cancel() noexcept { return _state.cancel(); }
+
+    bool cancel_sticky() noexcept { return _state.cancel_sticky(); }
 };
 
 } // namespace detail
