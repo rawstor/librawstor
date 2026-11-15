@@ -64,6 +64,7 @@ TEST(OptsTest, zero_disables_timeouts) {
 }
 
 TEST(OptsTest, tls_settings_come_together_or_not_at_all) {
+    ScopedEnv insecure("RAWSTOR_INSECURE", "0");
     EXPECT_EQ(rawstor_opts_tls_trust_domain(), nullptr);
     {
         ScopedEnv cert("RAWSTOR_TLS_CERT", "/etc/rawstor/tls/cert.pem");
@@ -82,6 +83,7 @@ TEST(OptsTest, tls_settings_come_together_or_not_at_all) {
 }
 
 TEST(OptsTest, tls_extras_need_the_tls_settings) {
+    ScopedEnv insecure("RAWSTOR_INSECURE", "0");
     {
         ScopedEnv mds("RAWSTOR_TLS_MDS_ID", "mds-1");
         EXPECT_EQ(rawstor_opts_initialize(nullptr), -EINVAL);
@@ -93,6 +95,7 @@ TEST(OptsTest, tls_extras_need_the_tls_settings) {
 }
 
 TEST(OptsTest, tls_settings_are_read) {
+    ScopedEnv insecure("RAWSTOR_INSECURE", "0");
     {
         ScopedEnv domain("RAWSTOR_TLS_TRUST_DOMAIN", "cluster.example");
         ScopedEnv cert("RAWSTOR_TLS_CERT", "/etc/rawstor/tls/cert.pem");
@@ -108,6 +111,52 @@ TEST(OptsTest, tls_settings_are_read) {
         EXPECT_STREQ(rawstor_opts_tls_crl(), "/etc/rawstor/tls/ca.crl");
         EXPECT_STREQ(rawstor_opts_tls_mds_id(), "mds-1");
     }
+    EXPECT_EQ(rawstor_opts_tls_trust_domain(), nullptr);
+    EXPECT_EQ(rawstor_opts_tls_mds_id(), nullptr);
+}
+
+TEST(OptsTest, insecure_comes_from_the_environment_or_the_struct) {
+    {
+        ScopedEnv env("RAWSTOR_INSECURE", "0");
+        EXPECT_EQ(rawstor_opts_initialize(nullptr), 0);
+        EXPECT_EQ(rawstor_opts_insecure(), 0u);
+    }
+    {
+        ScopedEnv env("RAWSTOR_INSECURE", "1");
+        EXPECT_EQ(rawstor_opts_initialize(nullptr), 0);
+        EXPECT_EQ(rawstor_opts_insecure(), 1u);
+    }
+    {
+        ScopedEnv env("RAWSTOR_INSECURE", "0");
+        RawstorOpts opts{};
+        opts.insecure = 1;
+        EXPECT_EQ(rawstor_opts_initialize(&opts), 0);
+        EXPECT_EQ(rawstor_opts_insecure(), 1u);
+    }
+}
+
+TEST(OptsTest, insecure_is_a_switch) {
+    {
+        ScopedEnv env("RAWSTOR_INSECURE", "2");
+        EXPECT_EQ(rawstor_opts_initialize(nullptr), -EINVAL);
+    }
+    {
+        ScopedEnv env("RAWSTOR_INSECURE", "yes");
+        EXPECT_EQ(rawstor_opts_initialize(nullptr), -EINVAL);
+    }
+    RawstorOpts opts{};
+    opts.insecure = 2;
+    EXPECT_EQ(rawstor_opts_initialize(&opts), -EINVAL);
+}
+
+// A process that goes without TLS does not look at the settings of TLS: a
+// half-set or a broken one cannot stop it, and none is taken.
+TEST(OptsTest, insecure_does_not_look_at_the_tls_settings) {
+    ScopedEnv insecure("RAWSTOR_INSECURE", "1");
+    ScopedEnv cert("RAWSTOR_TLS_CERT", "/etc/rawstor/tls/cert.pem");
+    ScopedEnv mds("RAWSTOR_TLS_MDS_ID", "mds-1");
+    EXPECT_EQ(rawstor_opts_initialize(nullptr), 0);
+    EXPECT_EQ(rawstor_opts_tls_cert(), nullptr);
     EXPECT_EQ(rawstor_opts_tls_trust_domain(), nullptr);
     EXPECT_EQ(rawstor_opts_tls_mds_id(), nullptr);
 }

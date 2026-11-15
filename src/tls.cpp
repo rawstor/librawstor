@@ -29,13 +29,21 @@ namespace rawstor {
 namespace tls {
 
 void initialize() {
-    const char* trust_domain = rawstor_opts_tls_trust_domain();
-    if (trust_domain == nullptr) {
+    if (rawstor_opts_insecure()) {
         rawstd_warning(
-            "TLS is not configured: connections are plaintext and no peer is "
-            "authenticated\n"
+            "INSECURE: this process runs without TLS, its connections are "
+            "plaintext and no peer is authenticated\n"
         );
         return;
+    }
+    const char* trust_domain = rawstor_opts_tls_trust_domain();
+    if (trust_domain == nullptr) {
+        rawstd_error(
+            "TLS is not configured: set RAWSTOR_TLS_TRUST_DOMAIN, "
+            "RAWSTOR_TLS_CERT, RAWSTOR_TLS_KEY and RAWSTOR_TLS_CA, or run "
+            "without TLS with --insecure (RAWSTOR_INSECURE=1)\n"
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     rawtls::Config config;
     config.trust_domain = trust_domain;

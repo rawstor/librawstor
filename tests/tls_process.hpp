@@ -8,6 +8,7 @@
 #include <rawstor/rawstor.h>
 
 #include <cstdlib>
+#include <optional>
 #include <string>
 
 namespace rawstor {
@@ -18,6 +19,9 @@ namespace tests {
 // is issued by `pki`, which a peer must trust to talk to it.
 class TlsProcess {
 private:
+    // What the suite set RAWSTOR_INSECURE to, to put back.
+    std::optional<std::string> _insecure;
+
     static void restart() {
         rawstor_terminate();
         int res = rawstor_initialize(nullptr);
@@ -39,6 +43,10 @@ public:
         rawtls::testing::IssueOptions options;
         options.uris = {uri};
         identity = pki.issue("process", options);
+        if (const char* old = getenv("RAWSTOR_INSECURE")) {
+            _insecure = old;
+        }
+        setenv("RAWSTOR_INSECURE", "0", 1);
         setenv("RAWSTOR_TLS_TRUST_DOMAIN", trust_domain.c_str(), 1);
         setenv("RAWSTOR_TLS_CERT", identity.cert_file.c_str(), 1);
         setenv("RAWSTOR_TLS_KEY", identity.key_file.c_str(), 1);
@@ -58,6 +66,11 @@ public:
         unsetenv("RAWSTOR_TLS_KEY");
         unsetenv("RAWSTOR_TLS_CA");
         unsetenv("RAWSTOR_TLS_MDS_ID");
+        if (_insecure) {
+            setenv("RAWSTOR_INSECURE", _insecure->c_str(), 1);
+        } else {
+            unsetenv("RAWSTOR_INSECURE");
+        }
         restart();
     }
 };

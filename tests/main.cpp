@@ -31,6 +31,12 @@ int main(int argc, char** argv) {
     // 5000 ms production default would make that wait needlessly slow.
     setenv("RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL", "200", 0);
 
+    // These suites talk to a fake or an in-process server without a
+    // certificate: without TLS settings a process refuses to start unless it
+    // is told to go without TLS. `overwrite = 0` so an explicit environment
+    // still wins; the TLS tests set up their own.
+    setenv("RAWSTOR_INSECURE", "1", 0);
+
     int res = rawstor_initialize(nullptr);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);

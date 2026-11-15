@@ -113,6 +113,25 @@ static int read_tls_opts(struct TlsOpts* tls) {
     return res;
 }
 
+// A process that is told to go without TLS but has settings for it is most
+// likely misconfigured: say so, once.
+static void warn_tls_ignored(void) {
+    static const char* const names[] = {
+        "RAWSTOR_TLS_TRUST_DOMAIN", "RAWSTOR_TLS_CERT", "RAWSTOR_TLS_KEY",
+        "RAWSTOR_TLS_CA",           "RAWSTOR_TLS_CRL",  "RAWSTOR_TLS_MDS_ID",
+    };
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        if (getenv(names[i]) != NULL) {
+            rawstd_warning(
+                "Running without TLS: the TLS settings, %s among them, are "
+                "ignored\n",
+                names[i]
+            );
+            return;
+        }
+    }
+}
+
 // Millisecond values that get scaled to microseconds in an unsigned int.
 #define RAWSTOR_OPTS_MAX_MS (UINT_MAX / 1000)
 
@@ -185,6 +204,8 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts) {
         {given.mirror_resync_lease, "RAWSTOR_OPTS_MIRROR_RESYNC_LEASE", 0,
          RAWSTOR_OPTS_MIRROR_RESYNC_LEASE, 1, RAWSTOR_OPTS_MAX_MS,
          &resolved.mirror_resync_lease},
+        // A switch, not a number: 0 or 1.
+        {given.insecure, "RAWSTOR_INSECURE", 0, 0, 0, 1, &resolved.insecure},
     };
     // Every option is checked, so one run reports every invalid one.
     int res = 0;
@@ -201,10 +222,16 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts) {
         return res;
     }
 
+    // Without TLS the settings of TLS are not looked at, so a broken one
+    // cannot stop a process that was told to go without.
     struct TlsOpts tls = {};
-    res = read_tls_opts(&tls);
-    if (res != 0) {
-        return res;
+    if (resolved.insecure) {
+        warn_tls_ignored();
+    } else {
+        res = read_tls_opts(&tls);
+        if (res != 0) {
+            return res;
+        }
     }
 
     free_tls_opts(&_rawstor_tls);
@@ -263,6 +290,10 @@ unsigned int rawstor_opts_mirror_probe_interval(void) {
 
 unsigned int rawstor_opts_mirror_resync_lease(void) {
     return _rawstor_opts.mirror_resync_lease;
+}
+
+unsigned int rawstor_opts_insecure(void) {
+    return _rawstor_opts.insecure;
 }
 
 const char* rawstor_opts_tls_trust_domain(void) {
