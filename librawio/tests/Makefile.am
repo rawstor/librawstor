@@ -27,7 +27,8 @@ test_all_SOURCES = main.cpp \
                    test_overflow.cpp \
                    test_pollhup.cpp \
                    test_rawio_c_api.cpp \
-                   test_timeout.cpp
+                   test_timeout.cpp \
+                   test_with_timeout.cpp
 test_all_LDADD = $(top_builddir)/librawio/src/librawio.la \
                  $(top_builddir)/librawstd/src/librawstd.la
 

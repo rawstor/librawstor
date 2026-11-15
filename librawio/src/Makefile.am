@@ -19,6 +19,7 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 librawio_la_SOURCES = $(top_srcdir)/librawio/include/rawio/awaitable.hpp \
                       $(top_srcdir)/librawio/include/rawio/queue.hpp \
                       $(top_srcdir)/librawio/include/rawio/stream.hpp \
+                      $(top_srcdir)/librawio/include/rawio/with_timeout.hpp \
                       queue.cpp \
                       rawio.cpp
 
