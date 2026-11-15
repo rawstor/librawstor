@@ -57,6 +57,7 @@ public:
     open(const char* path, int flags, mode_t mode) override;
 
     rawio::Awaitable<int> close(int fd) override;
+    rawio::Awaitable<int> shutdown(int fd, int how) override;
 
     rawio::Awaitable<int> poll(int fd, unsigned int mask) override;
 

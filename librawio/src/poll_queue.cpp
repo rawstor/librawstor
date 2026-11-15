@@ -500,6 +500,25 @@ rawio::Awaitable<int> Queue::close(int fd) {
     return rawio::Awaitable<int>(this, ret);
 }
 
+rawio::Awaitable<int> Queue::shutdown(int fd, int how) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "fd = %d, how = %d\n", fd, how);
+
+    std::unique_ptr<EventEval> event =
+        std::make_unique<EventEval>(*this, trace_event, [fd, how]() -> int {
+            int res = ::shutdown(fd, how);
+            if (res == -1) {
+                res = -errno;
+                errno = 0;
+            }
+            return res;
+        });
+
+    rawio::Event* ret = static_cast<rawio::Event*>(event.get());
+    _eval(std::move(event));
+    return rawio::Awaitable<int>(this, ret);
+}
+
 rawio::Awaitable<int> Queue::poll(int fd, unsigned int mask) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);

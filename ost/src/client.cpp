@@ -4,6 +4,7 @@
 
 #include "slot.hpp"
 
+#include <rawio/awaitable.hpp>
 #include <rawio/queue.hpp>
 
 #include <rawstd/coro.hpp>
@@ -362,6 +363,25 @@ rawstd::Task<void> Client::close() {
             rawstd_warning("Failed to cancel event: %s\n", strerror(-res));
         }
         _recv_event = nullptr;
+    }
+
+    // Tell the peer first: closing the slot persists the member's last state
+    // and can take a while, and everything the peer has asked for waits on
+    // this connection for all of it. What was admitted already cannot answer
+    // any more, as if the peer had gone. ENOTCONN: it has.
+    if (_fd != -1) {
+        try {
+            co_await static_cast<rawio::Queue*>(_queue)->shutdown(
+                _fd, SHUT_RDWR
+            );
+        } catch (const std::system_error& e) {
+            if (e.code().value() != ENOTCONN) {
+                rawstd_warning(
+                    "Failed to shut down fd %d: %s\n", _fd,
+                    strerror(e.code().value())
+                );
+            }
+        }
     }
 
     if (_slot != nullptr) {

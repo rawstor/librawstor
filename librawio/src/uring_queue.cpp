@@ -741,6 +741,17 @@ rawio::Awaitable<int> Queue::close(int fd) {
     return rawio::Awaitable<int>(this, static_cast<rawio::Event*>(c.release()));
 }
 
+rawio::Awaitable<int> Queue::shutdown(int fd, int how) {
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('|', "fd = %d, how = %d\n", fd, how);
+    io_uring_sqe* sqe = _get_sqe();
+    auto c = std::make_unique<Completion>(std::move(trace_event));
+    io_uring_prep_shutdown(sqe, fd, how);
+    io_uring_sqe_set_data(sqe, c.get());
+
+    return rawio::Awaitable<int>(this, static_cast<rawio::Event*>(c.release()));
+}
+
 rawio::Awaitable<int> Queue::poll(int fd, unsigned int mask) {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('|', "fd = %d, mask = %u\n", fd, mask);

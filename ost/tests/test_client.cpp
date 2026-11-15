@@ -465,6 +465,38 @@ TEST(OstClientTest, unknown_command_answers_enosys_then_closes) {
 // already failed. CI's asan job (--without-liburing) caught exactly this,
 // twice, as a LeakSanitizer failure even after the drain-more-at-the-end
 // attempt.
+// close() ends the connection for the peer, and does not mind a peer that is
+// gone already.
+TEST(OstClientTest, close_ends_the_connection_for_the_peer) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+    rawstor::ostserver::tests::Queue queue;
+
+    {
+        auto [raw_client, client_fd] = connect_client(server, queue);
+        ClientCleanup server_client(std::move(raw_client), queue);
+
+        rawstd::Task<void> closing = server_client->close();
+        ASSERT_TRUE(pump_until(queue, [&] { return closing.done(); }));
+        EXPECT_NO_THROW(closing.get());
+
+        char buf[1];
+        EXPECT_EQ(::recv(client_fd, buf, sizeof(buf), MSG_DONTWAIT), 0);
+        ::close(client_fd);
+    }
+
+    {
+        auto [raw_client, client_fd] = connect_client(server, queue);
+        ClientCleanup server_client(std::move(raw_client), queue);
+        ::close(client_fd);
+
+        rawstd::Task<void> closing = server_client->close();
+        ASSERT_TRUE(pump_until(queue, [&] { return closing.done(); }));
+        EXPECT_NO_THROW(closing.get());
+    }
+}
+
 TEST(OstClientTest, disconnect_races_client_destruction) {
     constexpr unsigned int iterations = 100;
 
