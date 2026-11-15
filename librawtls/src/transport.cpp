@@ -67,183 +67,257 @@ public:
 const size_t cipher_size = 1 << 16;
 const size_t record_size = 1 << 14;
 
-// What a TLS Transport and its receive stream share. The stream outlives the
-// Transport when the code that reads it is still unwinding, so both hold it
-// through a shared_ptr.
-struct TlsState {
-    rawio::Queue& queue;
-    int fd;
-    rawtls::Session session;
+class TlsRecv;
+
+/*
+ * A Transport over a TLS Session. Its receive stream reads through it, so the
+ * stream must not outlive it: the code that owns both stops the stream (and
+ * waits for it to settle) before it drops the Transport.
+ */
+class TlsTransport final : public rawtls::Transport {
+private:
+    friend class TlsRecv;
+
+    rawio::Queue& _queue;
+    int _fd;
+    rawtls::Session _session;
     // Orders everything written to the socket: a send takes it from encrypting
     // until the last byte of its records is out.
-    rawstd::Semaphore write_mutex{1};
-    std::vector<unsigned char> out;
+    rawstd::Semaphore _write_mutex{1};
+    std::vector<unsigned char> _out;
     // The recv in flight, if any, and whether the stream was told to stop.
-    rawio::Event* inflight = nullptr;
-    bool cancelled = false;
+    rawio::Event* _inflight = nullptr;
+    bool _cancelled = false;
     // Set once a write failed: part of a record may be on the wire, so nothing
     // can follow it, and the sends waiting their turn fail instead of writing
     // to a socket that is being closed.
-    bool broken = false;
+    bool _broken = false;
     // The handshake's deadline: the timer, whether the handshake is still
-    // running, and whether the timer is what ended it.
-    rawio::Event* timer = nullptr;
-    bool handshaking = true;
-    bool timed_out = false;
+    // running, whether the timer is what ended it, and whether the deadline's
+    // coroutine is done with this object (and who waits for that).
+    rawio::Event* _timer = nullptr;
+    bool _handshaking = true;
+    bool _timed_out = false;
+    bool _deadline_over = false;
+    std::coroutine_handle<> _deadline_waiter;
 
-    TlsState(
-        rawio::Queue& q, int f, rawtls::Context& context,
+    // Ends the deadline's use of this object. Must be the last thing it does:
+    // the waiter may destroy the object.
+    void _deadline_finish() noexcept {
+        _deadline_over = true;
+        if (_deadline_waiter) {
+            std::exchange(_deadline_waiter, nullptr).resume();
+        }
+    }
+
+    struct DeadlineOver {
+        TlsTransport& t;
+        bool await_ready() const noexcept { return t._deadline_over; }
+        void await_suspend(std::coroutine_handle<> h) noexcept {
+            t._deadline_waiter = h;
+        }
+        void await_resume() const noexcept {}
+    };
+
+    rawstd::Task<void> _write_all(const unsigned char* p, size_t n) {
+        while (n > 0) {
+            size_t written = 0;
+            try {
+                written = co_await _queue.send(_fd, p, n, RAWSTD_MSG_NOSIGNAL);
+            } catch (...) {
+                _broken = true;
+                throw;
+            }
+            if (written == 0) {
+                _broken = true;
+                RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
+            }
+            p += written;
+            n -= written;
+        }
+    }
+
+    // Sends what the session has to say. The caller must be the only one
+    // writing: holding _write_mutex, or before the Transport is handed out.
+    rawstd::Task<void> _flush() {
+        if (_broken) {
+            RAWSTD_THROW_SYSTEM_ERROR(ECONNABORTED);
+        }
+        for (;;) {
+            size_t n = _session.output_size();
+            if (n == 0) {
+                co_return;
+            }
+            _out.resize(n);
+            _session.take_output(_out.data(), n);
+            co_await _write_all(_out.data(), n);
+        }
+    }
+
+    rawstd::Task<void> _flush_locked() {
+        co_await _write_mutex.acquire();
+        Release release(_write_mutex);
+        co_await _flush();
+    }
+
+    // Encrypts the `count` buffers of `iov` and sends them, whole and in
+    // order. `iov` must outlive the call.
+    rawstd::Task<size_t> _write(const iovec* iov, size_t count) {
+        co_await _write_mutex.acquire();
+        Release release(_write_mutex);
+        size_t total = 0;
+        for (size_t i = 0; i < count; ++i) {
+            if (iov[i].iov_len > 0) {
+                _session.encrypt(iov[i].iov_base, iov[i].iov_len);
+                total += iov[i].iov_len;
+            }
+        }
+        co_await _flush();
+        co_return total;
+    }
+
+    // Stops the recv in flight and makes the next one fail. A cancel that
+    // finds nothing in flight (the reader is between recvs) is remembered for
+    // the next.
+    void _cancel_receive() noexcept {
+        _cancelled = true;
+        if (_inflight != nullptr) {
+            try {
+                _queue.cancel(_inflight);
+            } catch (const std::exception& e) {
+                rawstd_warning("Failed to cancel event: %s\n", e.what());
+            }
+        }
+    }
+
+    rawstd::Task<void> _run_handshake() {
+        std::vector<unsigned char> in(record_size);
+        std::exception_ptr error;
+        try {
+            for (;;) {
+                bool done = _session.handshake();
+                co_await _flush();
+                if (done) {
+                    co_return;
+                }
+                // Registered so the deadline can cancel it.
+                rawio::Awaitable<size_t> op =
+                    _queue.recv(_fd, in.data(), in.size(), 0);
+                _inflight = op.event();
+                size_t n = 0;
+                try {
+                    n = co_await op;
+                } catch (...) {
+                    _inflight = nullptr;
+                    throw;
+                }
+                _inflight = nullptr;
+                if (n == 0) {
+                    RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
+                }
+                _session.feed(in.data(), n);
+            }
+        } catch (...) {
+            error = std::current_exception();
+        }
+        // A refused handshake leaves an alert for the peer. Failing to send it
+        // must not hide why the handshake failed.
+        try {
+            co_await _flush();
+        } catch (...) {
+        }
+        std::rethrow_exception(error);
+    }
+
+    // Ends the handshake if the peer has not finished it in time, by
+    // cancelling the recv it is waiting in.
+    rawstd::DetachedTask _deadline(unsigned int timeout_ms) {
+        rawio::Awaitable<void> timer = _queue.timeout(timeout_ms * 1000u);
+        _timer = timer.event();
+        try {
+            co_await timer;
+        } catch (const std::system_error&) {
+            // Cancelled: the handshake ended first.
+            _timer = nullptr;
+            _deadline_finish();
+            co_return;
+        }
+        _timer = nullptr;
+        if (_handshaking) {
+            _timed_out = true;
+            // Everything the handshake has pending on the socket, a send held
+            // up by a peer that does not read as much as a recv.
+            _cancelled = true;
+            try {
+                _queue.cancel(_fd);
+            } catch (const std::exception& e) {
+                rawstd_warning("Failed to cancel the handshake: %s\n", e.what());
+            }
+        }
+        _deadline_finish();
+    }
+
+public:
+    TlsTransport(
+        rawio::Queue& queue, int fd, rawtls::Context& context,
         rawtls::Session::Mode mode, const std::string& expected_peer,
         std::optional<rawtls::Role> expected_role
     ) :
-        queue(q),
-        fd(f),
-        session(context, mode, expected_peer, expected_role) {}
-};
+        _queue(queue),
+        _fd(fd),
+        _session(context, mode, expected_peer, expected_role) {}
 
-rawstd::Task<void>
-write_all(std::shared_ptr<TlsState> s, const unsigned char* p, size_t n) {
-    while (n > 0) {
-        size_t written = 0;
+    // Runs the handshake within `timeout_ms`. Throws ETIMEDOUT if the deadline
+    // is what ended it.
+    rawstd::Task<void> handshake(unsigned int timeout_ms) {
+        _deadline(timeout_ms);
+        rawstd::DetachedTask::rethrow_if_pending();
+
+        std::exception_ptr error;
         try {
-            written = co_await s->queue.send(s->fd, p, n, RAWSTD_MSG_NOSIGNAL);
+            co_await _run_handshake();
         } catch (...) {
-            s->broken = true;
-            throw;
+            error = std::current_exception();
         }
-        if (written == 0) {
-            s->broken = true;
-            RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
-        }
-        p += written;
-        n -= written;
-    }
-}
-
-// Sends what the session has to say. The caller must be the only one writing:
-// holding write_mutex, or before the Transport exists.
-rawstd::Task<void> flush(std::shared_ptr<TlsState> s) {
-    if (s->broken) {
-        RAWSTD_THROW_SYSTEM_ERROR(ECONNABORTED);
-    }
-    for (;;) {
-        size_t n = s->session.output_size();
-        if (n == 0) {
-            co_return;
-        }
-        s->out.resize(n);
-        s->session.take_output(s->out.data(), n);
-        co_await write_all(s, s->out.data(), n);
-    }
-}
-
-rawstd::Task<void> flush_locked(std::shared_ptr<TlsState> s) {
-    co_await s->write_mutex.acquire();
-    Release release(s->write_mutex);
-    co_await flush(s);
-}
-
-// Encrypts the `count` buffers of `iov` and sends them, whole and in order.
-// `iov` must outlive the call.
-rawstd::Task<size_t>
-tls_write(std::shared_ptr<TlsState> s, const iovec* iov, size_t count) {
-    co_await s->write_mutex.acquire();
-    Release release(s->write_mutex);
-    size_t total = 0;
-    for (size_t i = 0; i < count; ++i) {
-        if (iov[i].iov_len > 0) {
-            s->session.encrypt(iov[i].iov_base, iov[i].iov_len);
-            total += iov[i].iov_len;
-        }
-    }
-    co_await flush(s);
-    co_return total;
-}
-
-rawstd::Task<size_t>
-tls_send(std::shared_ptr<TlsState> s, const void* buf, size_t size) {
-    iovec iov{const_cast<void*>(buf), size};
-    co_return co_await tls_write(std::move(s), &iov, 1);
-}
-
-// Stops the recv in flight and makes the next one fail. A cancel that finds
-// nothing in flight (the reader is between recvs) is remembered for the next.
-void cancel_receive_now(TlsState& s) noexcept {
-    s.cancelled = true;
-    if (s.inflight != nullptr) {
-        try {
-            s.queue.cancel(s.inflight);
-        } catch (const std::exception& e) {
-            rawstd_warning("Failed to cancel event: %s\n", e.what());
-        }
-    }
-}
-
-rawstd::Task<void> tls_handshake(std::shared_ptr<TlsState> s) {
-    std::vector<unsigned char> in(record_size);
-    std::exception_ptr error;
-    try {
-        for (;;) {
-            bool done = s->session.handshake();
-            co_await flush(s);
-            if (done) {
-                co_return;
-            }
-            // Registered so the deadline can cancel it.
-            rawio::Awaitable<size_t> op =
-                s->queue.recv(s->fd, in.data(), in.size(), 0);
-            s->inflight = op.event();
-            size_t n = 0;
+        _handshaking = false;
+        if (_timer != nullptr) {
             try {
-                n = co_await op;
-            } catch (...) {
-                s->inflight = nullptr;
-                throw;
+                _queue.cancel(_timer);
+            } catch (const std::exception& e) {
+                rawstd_warning("Failed to cancel event: %s\n", e.what());
             }
-            s->inflight = nullptr;
-            if (n == 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
-            }
-            s->session.feed(in.data(), n);
         }
-    } catch (...) {
-        error = std::current_exception();
+        // The deadline touches this object until it is done.
+        co_await DeadlineOver{*this};
+        if (error) {
+            if (_timed_out) {
+                RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
+            }
+            std::rethrow_exception(error);
+        }
+        // The deadline's cancel is not the stream's: a stream starts afresh.
+        _cancelled = false;
     }
-    // A refused handshake leaves an alert for the peer. Failing to send it
-    // must not hide why the handshake failed.
-    try {
-        co_await flush(s);
-    } catch (...) {
-    }
-    std::rethrow_exception(error);
-}
 
-// Ends the handshake if the peer has not finished it in time, by cancelling the
-// recv it is waiting in.
-rawstd::DetachedTask
-handshake_deadline(std::shared_ptr<TlsState> s, unsigned int timeout_ms) {
-    rawio::Awaitable<void> timer = s->queue.timeout(timeout_ms * 1000u);
-    s->timer = timer.event();
-    try {
-        co_await timer;
-    } catch (const std::system_error&) {
-        // Cancelled: the handshake ended first.
-        s->timer = nullptr;
-        co_return;
+    rawstd::Task<size_t>
+    send(const void* buf, size_t size, unsigned int) override {
+        iovec iov{const_cast<void*>(buf), size};
+        co_return co_await _write(&iov, 1);
     }
-    s->timer = nullptr;
-    if (s->handshaking) {
-        s->timed_out = true;
-        // Everything the handshake has pending on the socket, a send held up
-        // by a peer that does not read as much as a recv.
-        s->cancelled = true;
-        try {
-            s->queue.cancel(s->fd);
-        } catch (const std::exception& e) {
-            rawstd_warning("Failed to cancel the handshake: %s\n", e.what());
-        }
+
+    rawstd::Task<size_t> sendmsg(const msghdr* msg, unsigned int) override {
+        return _write(msg->msg_iov, static_cast<size_t>(msg->msg_iovlen));
     }
-}
+
+    rawio::RecvStream
+    recv_multishot(size_t, unsigned int, size_t, unsigned int) override;
+
+    void cancel_receive(rawio::Event*) override { _cancel_receive(); }
+
+    const rawtls::SpiffeId* peer() const noexcept override {
+        return &_session.peer();
+    }
+};
 
 /*
  * The decrypted bytes of a connection, handed out like rawio's own receive
@@ -254,7 +328,7 @@ handshake_deadline(std::shared_ptr<TlsState> s, unsigned int timeout_ms) {
 class TlsRecv final : public rawio::RecvStream::Backend,
                       public std::enable_shared_from_this<TlsRecv> {
 private:
-    std::shared_ptr<TlsState> _s;
+    TlsTransport& _t;
     std::vector<unsigned char> _cipher;
     std::vector<unsigned char> _scratch;
     // The decrypted bytes not yet handed out are _plain[_head..].
@@ -286,7 +360,7 @@ private:
         try {
             for (;;) {
                 size_t n =
-                    _s->session.decrypt(_scratch.data(), _scratch.size());
+                    _t._session.decrypt(_scratch.data(), _scratch.size());
                 if (n == 0) {
                     break;
                 }
@@ -294,7 +368,7 @@ private:
                     _plain.end(), _scratch.begin(), _scratch.begin() + n
                 );
             }
-            if (_s->session.closed()) {
+            if (_t._session.closed()) {
                 _fail(EPIPE);
             }
         } catch (const std::system_error& e) {
@@ -327,7 +401,7 @@ private:
 
     // The part of try_produce() that does not touch the session.
     bool _take(size_t want, rawio::RecvStream::Item& out, int& error) noexcept {
-        if (_s->cancelled) {
+        if (_t._cancelled) {
             _fail(ECANCELED);
         }
         size_t available = _available();
@@ -380,28 +454,28 @@ private:
     }
 
     static rawstd::DetachedTask _run(std::shared_ptr<TlsRecv> self) {
-        TlsState& s = *self->_s;
+        TlsTransport& s = self->_t;
         for (;;) {
-            if (s.cancelled) {
+            if (s._cancelled) {
                 self->_fail(ECANCELED);
             } else {
                 try {
-                    rawio::Awaitable<size_t> op = s.queue.recv(
-                        s.fd, self->_cipher.data(), self->_cipher.size(), 0
+                    rawio::Awaitable<size_t> op = s._queue.recv(
+                        s._fd, self->_cipher.data(), self->_cipher.size(), 0
                     );
-                    s.inflight = op.event();
+                    s._inflight = op.event();
                     size_t n = 0;
                     try {
                         n = co_await op;
                     } catch (...) {
-                        s.inflight = nullptr;
+                        s._inflight = nullptr;
                         throw;
                     }
-                    s.inflight = nullptr;
+                    s._inflight = nullptr;
                     if (n == 0) {
                         self->_fail(EPIPE);
                     } else {
-                        s.session.feed(self->_cipher.data(), n);
+                        s._session.feed(self->_cipher.data(), n);
                     }
                 } catch (const std::system_error& e) {
                     self->_fail(e.code().value());
@@ -409,9 +483,9 @@ private:
                 self->_decrypt_buffered();
                 // A key update the peer asked for, or an alert, waits in the
                 // output.
-                if (self->_terminal == 0 && s.session.output_size() > 0) {
+                if (self->_terminal == 0 && s._session.output_size() > 0) {
                     try {
-                        co_await flush_locked(self->_s);
+                        co_await s._flush_locked();
                     } catch (const std::system_error& e) {
                         self->_fail(e.code().value());
                     }
@@ -424,8 +498,8 @@ private:
     }
 
 public:
-    explicit TlsRecv(std::shared_ptr<TlsState> state) :
-        _s(std::move(state)),
+    explicit TlsRecv(TlsTransport& transport) :
+        _t(transport),
         _cipher(cipher_size),
         _scratch(record_size) {}
 
@@ -450,44 +524,19 @@ public:
         }
     }
 
-    void close() noexcept override { cancel_receive_now(*_s); }
+    void close() noexcept override { _t._cancel_receive(); }
 
     rawio::Event* event() const noexcept override {
         return const_cast<TlsRecv*>(this);
     }
 };
 
-class TlsTransport final : public rawtls::Transport {
-private:
-    std::shared_ptr<TlsState> _s;
 
-public:
-    explicit TlsTransport(std::shared_ptr<TlsState> state) :
-        _s(std::move(state)) {}
-
-    rawstd::Task<size_t>
-    send(const void* buf, size_t size, unsigned int) override {
-        return tls_send(_s, buf, size);
-    }
-
-    rawstd::Task<size_t> sendmsg(const msghdr* msg, unsigned int) override {
-        return tls_write(
-            _s, msg->msg_iov, static_cast<size_t>(msg->msg_iovlen)
-        );
-    }
-
-    rawio::RecvStream
-    recv_multishot(size_t, unsigned int, size_t, unsigned int) override {
-        _s->cancelled = false;
-        return rawio::RecvStream(std::make_shared<TlsRecv>(_s));
-    }
-
-    void cancel_receive(rawio::Event*) override { cancel_receive_now(*_s); }
-
-    const rawtls::SpiffeId* peer() const noexcept override {
-        return &_s->session.peer();
-    }
-};
+rawio::RecvStream
+TlsTransport::recv_multishot(size_t, unsigned int, size_t, unsigned int) {
+    _cancelled = false;
+    return rawio::RecvStream(std::make_shared<TlsRecv>(*this));
+}
 
 } // namespace
 
@@ -501,35 +550,11 @@ rawstd::Task<std::unique_ptr<Transport>> Transport::open(
     if (context == nullptr) {
         co_return std::make_unique<PlainTransport>(queue, fd);
     }
-    std::shared_ptr<TlsState> state = std::make_shared<TlsState>(
+    std::unique_ptr<TlsTransport> transport = std::make_unique<TlsTransport>(
         queue, fd, *context, mode, expected_peer, expected_role
     );
-    handshake_deadline(state, handshake_timeout_ms);
-    rawstd::DetachedTask::rethrow_if_pending();
-
-    std::exception_ptr error;
-    try {
-        co_await tls_handshake(state);
-    } catch (...) {
-        error = std::current_exception();
-    }
-    state->handshaking = false;
-    if (state->timer != nullptr) {
-        try {
-            queue.cancel(state->timer);
-        } catch (const std::exception& e) {
-            rawstd_warning("Failed to cancel event: %s\n", e.what());
-        }
-    }
-    if (error) {
-        if (state->timed_out) {
-            RAWSTD_THROW_SYSTEM_ERROR(ETIMEDOUT);
-        }
-        std::rethrow_exception(error);
-    }
-    // The deadline's cancel is not the stream's: a stream starts afresh.
-    state->cancelled = false;
-    co_return std::make_unique<TlsTransport>(std::move(state));
+    co_await transport->handshake(handshake_timeout_ms);
+    co_return transport;
 }
 
 } // namespace rawtls
