@@ -263,5 +263,14 @@ void BufferRing::close() noexcept {
     }
 }
 
+void BufferRing::cancel() noexcept {
+    if (_event != nullptr && !_has_terminal && !_closed) {
+        try {
+            _q.cancel(_event);
+        } catch (...) {
+        }
+    }
+}
+
 } // namespace uring
 } // namespace rawio

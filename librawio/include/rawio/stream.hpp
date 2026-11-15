@@ -321,7 +321,29 @@ public:
             std::coroutine_handle<> h, size_t want, Item* out, int* error
         ) noexcept = 0;
         virtual void close() noexcept = 0;
+        // Requests the end of the stream, see RecvStream::cancel().
+        virtual void cancel() noexcept = 0;
         virtual rawio::Event* event() const noexcept = 0;
+    };
+
+    // RecvStream::cancel() for code that does not hold the stream: the
+    // stream's owner is in a coroutine, and whoever wants it stopped is
+    // elsewhere. Unlike event(), it is safe to use at any time: after the
+    // stream has ended, and after it was destroyed.
+    class Canceller final {
+    private:
+        std::weak_ptr<Backend> _backend;
+
+    public:
+        Canceller() noexcept = default;
+        explicit Canceller(std::weak_ptr<Backend> backend) noexcept :
+            _backend(std::move(backend)) {}
+
+        void cancel() const noexcept {
+            if (std::shared_ptr<Backend> backend = _backend.lock()) {
+                backend->cancel();
+            }
+        }
     };
 
     class Next {
@@ -374,6 +396,19 @@ public:
             _backend->close();
         }
     }
+
+    // Asks the stream to end: a pending or later next() fails with
+    // ECANCELED once what already arrived is delivered. Like Queue::cancel()
+    // it only requests the cancellation, and unlike close() it leaves the
+    // stream usable for reading that outcome. Does nothing if the stream has
+    // already ended.
+    void cancel() noexcept {
+        if (_backend) {
+            _backend->cancel();
+        }
+    }
+
+    Canceller canceller() const noexcept { return Canceller(_backend); }
 
     Event* event() const noexcept {
         return _backend ? _backend->event() : nullptr;
