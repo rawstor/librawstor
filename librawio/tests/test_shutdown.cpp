@@ -3,6 +3,7 @@
 #include <rawio/queue.hpp>
 
 #include <rawstd/coro.hpp>
+#include <rawstd/socket.h>
 
 #include <gtest/gtest.h>
 
@@ -33,6 +34,10 @@ protected:
 
     void SetUp() override {
         ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, _fds), 0);
+        // What keeps the send() the tests make from raising SIGPIPE on
+        // macOS, which has no flag for it.
+        ASSERT_EQ(rawstd_socket_set_nosigpipe(_fds[0]), 0);
+        ASSERT_EQ(rawstd_socket_set_nosigpipe(_fds[1]), 0);
         rawio::Queue::setup_fd(_fds[0]);
         rawio::Queue::setup_fd(_fds[1]);
     }
@@ -82,9 +87,9 @@ TEST_F(ShutdownTest, write_side_ends_the_stream_of_the_peer) {
     char buf[1];
     EXPECT_EQ(recv(_fds[1], buf, sizeof(buf), MSG_DONTWAIT), 0);
     // Our own sending is over, and the peer's way back is open.
-    EXPECT_EQ(send(_fds[0], "x", 1, MSG_NOSIGNAL), -1);
+    EXPECT_EQ(send(_fds[0], "x", 1, RAWSTD_MSG_NOSIGNAL), -1);
     EXPECT_EQ(errno, EPIPE);
-    EXPECT_EQ(send(_fds[1], "x", 1, MSG_NOSIGNAL), 1);
+    EXPECT_EQ(send(_fds[1], "x", 1, RAWSTD_MSG_NOSIGNAL), 1);
 }
 
 TEST_F(ShutdownTest, pending_recv_completes_with_the_end_of_the_stream) {
