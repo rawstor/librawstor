@@ -69,6 +69,15 @@ public:
 
     virtual Awaitable<int> close(int fd) = 0;
 
+    // shutdown(2) of the connected socket `fd`: `how` is SHUT_RD, SHUT_WR or
+    // SHUT_RDWR. Ends the connection in that direction without closing the
+    // descriptor: the peer sees the end of the stream at once, a recv waiting
+    // on `fd` completes with the end of the stream and a send fails with
+    // EPIPE, where close() leaves them waiting and cancel() fails them with
+    // ECANCELED. Fails with ENOTCONN if the socket is not connected (the
+    // peer has gone already, usually).
+    virtual Awaitable<int> shutdown(int fd, int how) = 0;
+
     virtual Awaitable<int> poll(int fd, unsigned int mask) = 0;
 
     virtual PollStream poll_multishot(int fd, unsigned int mask) = 0;
