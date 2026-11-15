@@ -43,7 +43,7 @@ Session::Session(
     Context& context, Mode mode, const std::string& expected_peer,
     std::optional<Role> expected_role
 ) :
-    _ctx(context._snapshot()),
+    _ctx(context.snapshot()),
     _ssl(nullptr),
     _rbio(nullptr),
     _wbio(nullptr),

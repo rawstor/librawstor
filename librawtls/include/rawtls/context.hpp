@@ -10,8 +10,6 @@ struct ssl_ctx_st;
 
 namespace rawtls {
 
-class Session;
-
 struct Config {
     // The trust domain of this cluster: a peer whose SPIFFE ID is in another
     // trust domain is rejected, whoever signed its certificate.
@@ -36,16 +34,11 @@ struct Config {
  * certificate is checked against the CAs and the CRL of the moment.
  */
 class Context final {
-    friend class Session;
-
 private:
     Config _config;
     std::mutex _mutex;
     std::shared_ptr<ssl_ctx_st> _ctx;
     std::atomic<bool> _reload_requested;
-
-    // What a new Session starts from; first applies a requested reload.
-    std::shared_ptr<ssl_ctx_st> _snapshot();
 
 public:
     // Throws std::system_error if a file cannot be read or does not hold what
@@ -68,6 +61,13 @@ public:
      * take the process down.
      */
     void reload();
+
+    /*
+     * The credentials a new Session starts from: the certificate, key and
+     * CAs as they are now, after any reload that was requested. Sessions
+     * made from one snapshot are unaffected by later reloads.
+     */
+    std::shared_ptr<ssl_ctx_st> snapshot();
 
     /*
      * Asks for reload() to happen before the next Session is created. Safe in
