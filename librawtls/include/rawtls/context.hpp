@@ -55,14 +55,6 @@ public:
     }
 
     /*
-     * Reads the files again. New sessions use the result; established ones
-     * keep what they started with. If a file is unreadable or broken this
-     * throws and the Context is unchanged, so a half-written renewal does not
-     * take the process down.
-     */
-    void reload();
-
-    /*
      * The credentials a new Session starts from: the certificate, key and
      * CAs as they are now, after any reload that was requested. Sessions
      * made from one snapshot are unaffected by later reloads.
@@ -70,9 +62,11 @@ public:
     std::shared_ptr<ssl_ctx_st> snapshot();
 
     /*
-     * Asks for reload() to happen before the next Session is created. Safe in
-     * a signal handler. A reload that fails then is logged and leaves the
-     * Context unchanged, as there is no caller to throw to.
+     * Asks for the certificate, key and CAs to be read again before the next
+     * Session is created. New sessions use the result; established ones keep
+     * what they started with. Safe in a signal handler. A reload that fails,
+     * because a file is unreadable or broken, is logged and leaves the Context
+     * unchanged, so a half-written renewal does not take the process down.
      */
     void request_reload() noexcept;
 };

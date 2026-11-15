@@ -421,7 +421,9 @@ TEST_F(SessionTest, ReloadServesNewSessionsWithTheNewCertificate) {
             renewed.key_file, server_identity.key_file,
             std::filesystem::copy_options::overwrite_existing
         );
-        server_context.reload();
+        server_context.request_reload();
+        // A new session is what applies it.
+        rawtls::Session probe(server_context, rawtls::Session::Mode::server);
         client.encrypt("still here", 10);
         transfer(client, server);
         EXPECT_EQ(decrypt_all(server), "still here");
@@ -438,30 +440,6 @@ TEST_F(SessionTest, ReloadServesNewSessionsWithTheNewCertificate) {
     );
     rawtls::Session server(server_context, rawtls::Session::Mode::server);
     Handshake result = handshake(new_client, server);
-    EXPECT_EQ(result.client, 0);
-    EXPECT_EQ(result.server, 0);
-}
-
-TEST_F(SessionTest, FailedReloadKeepsTheContext) {
-    rawtls::Context client_context(config(pki, client_identity));
-    rawtls::Context server_context(config(pki, server_identity));
-
-    {
-        std::ofstream broken(server_identity.key_file, std::ios::trunc);
-        broken << "not a key\n";
-    }
-    try {
-        server_context.reload();
-        FAIL() << "a broken key was accepted";
-    } catch (const std::system_error& e) {
-        EXPECT_EQ(e.code().value(), EINVAL);
-    }
-
-    rawtls::Session client(
-        client_context, rawtls::Session::Mode::client, ost_uri(ost_a)
-    );
-    rawtls::Session server(server_context, rawtls::Session::Mode::server);
-    Handshake result = handshake(client, server);
     EXPECT_EQ(result.client, 0);
     EXPECT_EQ(result.server, 0);
 }

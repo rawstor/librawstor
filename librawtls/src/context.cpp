@@ -107,10 +107,4 @@ void Context::request_reload() noexcept {
     _reload_requested.store(true);
 }
 
-void Context::reload() {
-    std::shared_ptr<ssl_ctx_st> ctx = build(_config);
-    std::lock_guard<std::mutex> lock(_mutex);
-    _ctx = std::move(ctx);
-}
-
 } // namespace rawtls
