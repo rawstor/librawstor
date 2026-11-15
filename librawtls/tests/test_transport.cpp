@@ -142,12 +142,12 @@ protected:
     ) {
         rawtls::Context client_context(config(pki, client_identity));
         rawtls::Context server_context(config(pki, server_identity));
-        rawstd::Task<std::unique_ptr<Transport>> c = Transport::tls(
-            *queue, pair.fds[0], client_context, rawtls::Session::Mode::client,
+        rawstd::Task<std::unique_ptr<Transport>> c = Transport::open(
+            *queue, pair.fds[0], &client_context, rawtls::Session::Mode::client,
             server_uri()
         );
-        rawstd::Task<std::unique_ptr<Transport>> s = Transport::tls(
-            *queue, pair.fds[1], server_context, rawtls::Session::Mode::server
+        rawstd::Task<std::unique_ptr<Transport>> s = Transport::open(
+            *queue, pair.fds[1], &server_context, rawtls::Session::Mode::server
         );
         ASSERT_TRUE(pump(*queue, [&]() { return c.done() && s.done(); }));
         client = c.get();
@@ -158,8 +158,16 @@ protected:
 } // namespace
 
 TEST_F(TransportTest, PlainCarriesBytesAsTheyAre) {
-    std::unique_ptr<Transport> a = Transport::plain(*queue, pair.fds[0]);
-    std::unique_ptr<Transport> b = Transport::plain(*queue, pair.fds[1]);
+    std::unique_ptr<Transport> a =
+        Transport::open(
+            *queue, pair.fds[0], nullptr, rawtls::Session::Mode::client
+        )
+            .get();
+    std::unique_ptr<Transport> b =
+        Transport::open(
+            *queue, pair.fds[1], nullptr, rawtls::Session::Mode::server
+        )
+            .get();
     EXPECT_EQ(a->peer(), nullptr);
 
     rawio::RecvStream stream = b->recv_multishot(4096, 8, 5, 0);
@@ -352,12 +360,12 @@ TEST_F(TransportTest, RefusedServerFailsTheClientHandshake) {
     );
     rawtls::Context client_context(config(pki, client_identity));
     rawtls::Context server_context(config(pki, impostor));
-    rawstd::Task<std::unique_ptr<Transport>> c = Transport::tls(
-        *queue, pair.fds[0], client_context, rawtls::Session::Mode::client,
+    rawstd::Task<std::unique_ptr<Transport>> c = Transport::open(
+        *queue, pair.fds[0], &client_context, rawtls::Session::Mode::client,
         server_uri()
     );
-    rawstd::Task<std::unique_ptr<Transport>> s = Transport::tls(
-        *queue, pair.fds[1], server_context, rawtls::Session::Mode::server
+    rawstd::Task<std::unique_ptr<Transport>> s = Transport::open(
+        *queue, pair.fds[1], &server_context, rawtls::Session::Mode::server
     );
     ASSERT_TRUE(pump(*queue, [&]() { return c.done() && s.done(); }));
     try {
@@ -371,8 +379,8 @@ TEST_F(TransportTest, RefusedServerFailsTheClientHandshake) {
 
 TEST_F(TransportTest, SilentPeerTimesTheHandshakeOut) {
     rawtls::Context server_context(config(pki, server_identity));
-    rawstd::Task<std::unique_ptr<Transport>> s = Transport::tls(
-        *queue, pair.fds[1], server_context, rawtls::Session::Mode::server, "",
+    rawstd::Task<std::unique_ptr<Transport>> s = Transport::open(
+        *queue, pair.fds[1], &server_context, rawtls::Session::Mode::server, "",
         std::nullopt, 100
     );
     EXPECT_FALSE(pump(*queue, [&]() { return s.done(); }, 30));
@@ -387,8 +395,8 @@ TEST_F(TransportTest, SilentPeerTimesTheHandshakeOut) {
 
 TEST_F(TransportTest, PlainPeerFailsTheTlsHandshake) {
     rawtls::Context server_context(config(pki, server_identity));
-    rawstd::Task<std::unique_ptr<Transport>> s = Transport::tls(
-        *queue, pair.fds[1], server_context, rawtls::Session::Mode::server
+    rawstd::Task<std::unique_ptr<Transport>> s = Transport::open(
+        *queue, pair.fds[1], &server_context, rawtls::Session::Mode::server
     );
     const char junk[] = "GET / HTTP/1.1\r\n\r\n";
     ASSERT_EQ(write(pair.fds[0], junk, sizeof(junk)), (ssize_t)sizeof(junk));

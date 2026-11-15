@@ -31,20 +31,21 @@ class Transport {
 public:
     virtual ~Transport() = default;
 
-    // A connection that carries its bytes as they are.
-    static std::unique_ptr<Transport> plain(rawio::Queue& queue, int fd);
-
-    // A TLS connection: runs the handshake on `fd` as the client or the
-    // server and returns the Transport once the peer is verified. A client
-    // says whom it expects, as Session does. Throws what Session
-    // throws, or the std::system_error of the socket; a peer that has not
-    // completed the handshake within `handshake_timeout_ms` fails it with
-    // ETIMEDOUT.
-    static rawstd::Task<std::unique_ptr<Transport>>
-    tls(rawio::Queue& queue, int fd, Context& context, Session::Mode mode,
+    /*
+     * The Transport of the connected socket `fd`. Without a `context` it
+     * carries the bytes as they are, and nothing else is looked at. With one
+     * it runs the TLS handshake on `fd` as the client or the server, and
+     * returns once the peer is verified. A client says whom it expects, as
+     * Session does. Throws what Session throws, or the std::system_error of
+     * the socket; a peer that has not completed the handshake within
+     * `handshake_timeout_ms` fails it with ETIMEDOUT.
+     */
+    static rawstd::Task<std::unique_ptr<Transport>> open(
+        rawio::Queue& queue, int fd, Context* context, Session::Mode mode,
         const std::string& expected_peer = "",
         std::optional<Role> expected_role = std::nullopt,
-        unsigned int handshake_timeout_ms = 10000);
+        unsigned int handshake_timeout_ms = 10000
+    );
 
     // Sends `buf` (or `msg`) and completes with the number of its bytes that
     // went out: a plain connection may send less, like a socket, and a TLS

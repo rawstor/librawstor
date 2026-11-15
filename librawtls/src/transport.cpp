@@ -538,17 +538,16 @@ public:
 
 namespace rawtls {
 
-std::unique_ptr<Transport> Transport::plain(rawio::Queue& queue, int fd) {
-    return std::make_unique<PlainTransport>(queue, fd);
-}
-
-rawstd::Task<std::unique_ptr<Transport>> Transport::tls(
-    rawio::Queue& queue, int fd, Context& context, Session::Mode mode,
+rawstd::Task<std::unique_ptr<Transport>> Transport::open(
+    rawio::Queue& queue, int fd, Context* context, Session::Mode mode,
     const std::string& expected_peer, std::optional<Role> expected_role,
     unsigned int handshake_timeout_ms
 ) {
+    if (context == nullptr) {
+        co_return std::make_unique<PlainTransport>(queue, fd);
+    }
     std::shared_ptr<TlsState> state = std::make_shared<TlsState>(
-        queue, fd, context, mode, expected_peer, expected_role
+        queue, fd, *context, mode, expected_peer, expected_role
     );
     handshake_deadline(state, handshake_timeout_ms);
     rawstd::DetachedTask::rethrow_if_pending();

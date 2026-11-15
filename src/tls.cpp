@@ -106,12 +106,11 @@ rawstd::Task<std::unique_ptr<rawtls::Transport>> connect(
     const std::string& host
 ) {
     rawtls::Context* c = context();
-    if (c == nullptr) {
-        co_return rawtls::Transport::plain(queue, fd);
-    }
     std::optional<rawtls::Role> role;
     std::string expected_peer;
-    if (scheme == "ost") {
+    if (c == nullptr) {
+        // Plain: nobody is expected.
+    } else if (scheme == "ost") {
         role = rawtls::Role::ost;
         std::lock_guard<std::mutex> lock(mutex);
         std::map<std::string, std::string>::const_iterator it =
@@ -126,19 +125,15 @@ rawstd::Task<std::unique_ptr<rawtls::Transport>> connect(
     } else {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    co_return co_await rawtls::Transport::tls(
-        queue, fd, *c, rawtls::Session::Mode::client, expected_peer, role
+    co_return co_await rawtls::Transport::open(
+        queue, fd, c, rawtls::Session::Mode::client, expected_peer, role
     );
 }
 
 rawstd::Task<std::unique_ptr<rawtls::Transport>>
 accept(rawio::Queue& queue, int fd) {
-    rawtls::Context* c = context();
-    if (c == nullptr) {
-        co_return rawtls::Transport::plain(queue, fd);
-    }
-    co_return co_await rawtls::Transport::tls(
-        queue, fd, *c, rawtls::Session::Mode::server
+    co_return co_await rawtls::Transport::open(
+        queue, fd, context(), rawtls::Session::Mode::server
     );
 }
 
