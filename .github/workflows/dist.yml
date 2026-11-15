@@ -160,27 +160,27 @@ jobs:
     - name: start rawstor-ost
       run: |
         mkdir /tmp/ost_objects
-        ./${LIBRAWSTOR}/ost/src/rawstor-ost --bind 127.0.0.1:7777 file:///tmp/ost_objects/ &
+        ./${LIBRAWSTOR}/ost/src/rawstor-ost --insecure --bind 127.0.0.1:7777 file:///tmp/ost_objects/ &
         sleep 10
     - name: create object file,ost
       run: |
         mkdir /tmp/file_objects
-        target=$(./${LIBRAWSTOR}/cli/rawstor object create file:///tmp/file_objects,ost://127.0.0.1:7777 --size=1G --mirrors=2 --format value --column target)
+        target=$(./${LIBRAWSTOR}/cli/rawstor --insecure object create file:///tmp/file_objects,ost://127.0.0.1:7777 --size=1G --mirrors=2 --format value --column target)
         echo "TARGET=${target}" >> $GITHUB_ENV
-        ./${LIBRAWSTOR}/cli/rawstor object list file:///tmp/file_objects,ost://127.0.0.1:7777
+        ./${LIBRAWSTOR}/cli/rawstor --insecure object list file:///tmp/file_objects,ost://127.0.0.1:7777
     - name: testio file,ost
       run: |
-        ./${LIBRAWSTOR}/cli/rawstor testio ${TARGET} --block-size=4K --io-depth=1 --count=10
-        ./${LIBRAWSTOR}/cli/rawstor testio ${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
+        ./${LIBRAWSTOR}/cli/rawstor --insecure testio ${TARGET} --block-size=4K --io-depth=1 --count=10
+        ./${LIBRAWSTOR}/cli/rawstor --insecure testio ${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
     - name: create object ost,file
       run: |
-        target=$(./${LIBRAWSTOR}/cli/rawstor object create ost://127.0.0.1:7777,file:///tmp/file_objects --size=1G --mirrors=2 --format value --column target)
+        target=$(./${LIBRAWSTOR}/cli/rawstor --insecure object create ost://127.0.0.1:7777,file:///tmp/file_objects --size=1G --mirrors=2 --format value --column target)
         echo "TARGET=${target}" >> $GITHUB_ENV
-        ./${LIBRAWSTOR}/cli/rawstor object list ost://127.0.0.1:7777,file:///tmp/file_objects
+        ./${LIBRAWSTOR}/cli/rawstor --insecure object list ost://127.0.0.1:7777,file:///tmp/file_objects
     - name: testio ost,file
       run: |
-        ./${LIBRAWSTOR}/cli/rawstor testio ${TARGET} --block-size=4K --io-depth=1 --count=10
-        ./${LIBRAWSTOR}/cli/rawstor testio ${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
+        ./${LIBRAWSTOR}/cli/rawstor --insecure testio ${TARGET} --block-size=4K --io-depth=1 --count=10
+        ./${LIBRAWSTOR}/cli/rawstor --insecure testio ${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
     - name: stop rawstor_ost
       run: killall rawstor-ost
 

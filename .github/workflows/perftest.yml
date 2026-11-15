@@ -69,21 +69,23 @@ jobs:
       if: "${{ matrix.backend == 'ost' }}"
       run: |
         mkdir ${GITHUB_WORKSPACE}/objects
-        rawstor-ost --bind 127.0.0.1:7777 file://${GITHUB_WORKSPACE}/objects &
+        rawstor-ost --insecure --bind 127.0.0.1:7777 file://${GITHUB_WORKSPACE}/objects &
         sleep 10
     - name: start rawstor-mds
       run: |
         mkdir -p /tmp/objects
         echo "$(cat /proc/sys/kernel/random/uuid) ${{ matrix.store }} 100 data,witness host1" > ${GITHUB_WORKSPACE}/topology.conf
-        rawstor-mds --bind 127.0.0.1:7776 --db ${GITHUB_WORKSPACE}/mds.db --topology ${GITHUB_WORKSPACE}/topology.conf &
+        rawstor-mds --insecure --bind 127.0.0.1:7776 --db ${GITHUB_WORKSPACE}/mds.db --topology ${GITHUB_WORKSPACE}/topology.conf &
         sleep 5
     - name: create object
       run: |
-        target=$(rawstor object create mds://127.0.0.1:7776 --size=1G --chunk-size=256M --mirrors=1 --format value --column target)
+        target=$(rawstor --insecure object create mds://127.0.0.1:7776 --size=1G --chunk-size=256M --mirrors=1 --format value --column target)
         echo "TARGET=${target}" >> $GITHUB_ENV
-        rawstor object list mds://127.0.0.1:7776
-        rawstor testio ${target} --block-size=4K --io-depth=1 --count=1
+        rawstor --insecure object list mds://127.0.0.1:7776
+        rawstor --insecure testio ${target} --block-size=4K --io-depth=1 --count=1
     - name: fio
+      env:
+        RAWSTOR_INSECURE: "1"
       run: |
         echo "# perftest" >> $GITHUB_STEP_SUMMARY
         echo "## fio ${{ matrix.without-liburing }} ${{ matrix.backend }}" >> $GITHUB_STEP_SUMMARY
@@ -106,7 +108,7 @@ jobs:
           ./fio.json
         if-no-files-found: error
     - name: remove object
-      run: rawstor object remove ${TARGET}
+      run: rawstor --insecure object remove ${TARGET}
     - name: stop rawstor-mds
       run: killall rawstor-mds
     - name: (ost) stop rawstor-ost
