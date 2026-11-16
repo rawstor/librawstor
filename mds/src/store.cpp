@@ -726,7 +726,7 @@ ObjectStore::Access ObjectStore::authorize(
     const RawstdUUID& mutation
 ) {
     Access result{
-        std::unique_lock<std::recursive_mutex>(_mutex), RAWSTOR_RIGHT_ALL, {}
+        std::unique_lock<std::recursive_mutex>(_mutex), RAWSTOR_PERM_ALL, {}
     };
     if (!peer)
         return result;
@@ -803,19 +803,19 @@ ObjectStore::Access ObjectStore::authorize(
     switch (command) {
     case RAWSTOR_CMD_SET_OBJECT:
     case RAWSTOR_CMD_LIST:
-        required = RAWSTOR_RIGHT_READ;
+        required = RAWSTOR_PERM_READ;
         break;
     case RAWSTOR_CMD_RESOLVE:
         break;
     case RAWSTOR_CMD_LIST_VERSIONS:
-        required = RAWSTOR_RIGHT_READ;
+        required = RAWSTOR_PERM_READ;
         break;
     case RAWSTOR_CMD_OBJ_CREATE:
     case RAWSTOR_CMD_OBJ_RESIZE:
     case RAWSTOR_CMD_OBJ_REMOVE:
     case RAWSTOR_CMD_OBJ_COMMIT_VERSION:
     case RAWSTOR_CMD_OBJ_REMOVE_VERSION:
-        required = RAWSTOR_RIGHT_MANAGE;
+        required = RAWSTOR_PERM_MANAGE;
         break;
     default:
         RAWSTD_THROW_SYSTEM_ERROR(EACCES);
@@ -830,7 +830,7 @@ ObjectStore::Access ObjectStore::authorize_witness(
     const RawstdUUID& object, uint64_t offset, const RawstdUUID& tenant
 ) {
     Access result{
-        std::unique_lock<std::recursive_mutex>(_mutex), RAWSTOR_RIGHT_ALL, {}
+        std::unique_lock<std::recursive_mutex>(_mutex), RAWSTOR_PERM_ALL, {}
     };
     if (!peer)
         return result;

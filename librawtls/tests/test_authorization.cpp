@@ -57,8 +57,8 @@ TEST(AuthorizationTest, roles_are_intersected_with_object_masks) {
         EACCES
     );
     connection.identity.permissions(
-        {RAWSTOR_ACCESS_WRITER,
-         {{object, RAWSTOR_RIGHT_READ | RAWSTOR_RIGHT_MANAGE}}}
+        {RAWSTOR_ROLE_WRITER,
+         {{object, RAWSTOR_PERM_READ | RAWSTOR_PERM_MANAGE}}}
     );
     EXPECT_EQ(
         authorization.check(connection, RAWSTOR_CMD_READ, id.bytes, 0, nullptr),
@@ -106,7 +106,7 @@ TEST(AuthorizationTest, roles_are_intersected_with_object_masks) {
 
 TEST(AuthorizationTest, expired_certificates_and_foreign_owners_are_denied) {
     Connection connection;
-    connection.identity.permissions({RAWSTOR_ACCESS_MANAGER, {}});
+    connection.identity.permissions({RAWSTOR_ROLE_MANAGER, {}});
     rawtls::Authorization authorization;
     RawstdUUID owner{}, other{};
     ASSERT_EQ(rawstd_uuid_from_string(&owner, tenant.c_str()), 0);
@@ -128,7 +128,7 @@ TEST(AuthorizationTest, expired_certificates_and_foreign_owners_are_denied) {
 
 TEST(AuthorizationTest, snapshots_remain_readonly_for_managers) {
     Connection connection;
-    connection.identity.permissions({RAWSTOR_ACCESS_MANAGER, {}});
+    connection.identity.permissions({RAWSTOR_ROLE_MANAGER, {}});
     rawtls::Authorization authorization;
     RawstdUUID version{};
     ASSERT_EQ(rawstd_uuid7_init(&version), 0);
@@ -166,7 +166,7 @@ TEST(
     Cert certificate(X509_new(), X509_free);
     ASSERT_NE(certificate, nullptr);
     EXPECT_EQ(rawtls::certificate_permissions(certificate.get()).rights(), 0u);
-    rawtls::Permissions policy{RAWSTOR_ACCESS_MANAGER, {{object, 0}}};
+    rawtls::Permissions policy{RAWSTOR_ROLE_MANAGER, {{object, 0}}};
     rawtls::certificate_permissions(certificate.get(), policy);
     auto decoded = rawtls::certificate_permissions(certificate.get());
     EXPECT_EQ(decoded.role, policy.role);
@@ -174,7 +174,7 @@ TEST(
     RawstdUUID id{};
     ASSERT_EQ(rawstd_uuid_from_string(&id, object.c_str()), 0);
     EXPECT_EQ(decoded.rights(id.bytes), 0u);
-    EXPECT_EQ(decoded.rights(), RAWSTOR_RIGHT_ALL);
+    EXPECT_EQ(decoded.rights(), RAWSTOR_PERM_ALL);
 }
 
 TEST(
@@ -182,7 +182,7 @@ TEST(
 ) {
     Cert certificate(X509_new(), X509_free);
     rawtls::certificate_permissions(
-        certificate.get(), {RAWSTOR_ACCESS_READER, {}}
+        certificate.get(), {RAWSTOR_ROLE_READER, {}}
     );
     ASSERT_EQ(X509_get_ext_count(certificate.get()), 1);
     ASSERT_EQ(
@@ -209,13 +209,13 @@ TEST(AuthorizationTest, invalid_policy_cannot_be_issued) {
     );
     EXPECT_THROW(
         rawtls::certificate_permissions(
-            certificate.get(), {RAWSTOR_ACCESS_READER, {{object, 16}}}
+            certificate.get(), {RAWSTOR_ROLE_READER, {{object, 16}}}
         ),
         std::system_error
     );
     EXPECT_THROW(
         rawtls::certificate_permissions(
-            certificate.get(), {RAWSTOR_ACCESS_READER, {{"not-a-uuid", 1}}}
+            certificate.get(), {RAWSTOR_ROLE_READER, {{"not-a-uuid", 1}}}
         ),
         std::system_error
     );

@@ -27,8 +27,8 @@ constexpr size_t max_objects = 128;
 }
 
 std::string encode(const rawtls::Permissions& policy) {
-    if (policy.role < RAWSTOR_ACCESS_READER ||
-        policy.role > RAWSTOR_ACCESS_MANAGER ||
+    if (policy.role < RAWSTOR_ROLE_READER ||
+        policy.role > RAWSTOR_ROLE_MANAGER ||
         policy.objects.size() > max_objects)
         fail(EINVAL);
     std::string text =
@@ -37,7 +37,7 @@ std::string encode(const rawtls::Permissions& policy) {
         RawstdUUID id{};
         RawstdUUIDString canonical;
         if (rawstd_uuid_from_string(&id, object.c_str()) < 0 ||
-            rawstd_uuid_is_nil(&id) || (rights & ~RAWSTOR_RIGHT_ALL))
+            rawstd_uuid_is_nil(&id) || (rights & ~RAWSTOR_PERM_ALL))
             fail(EINVAL);
         rawstd_uuid_to_string(&id, &canonical);
         if (object != canonical)
@@ -51,12 +51,12 @@ std::string encode(const rawtls::Permissions& policy) {
 namespace rawtls {
 uint32_t role_rights(uint32_t role) {
     switch (role) {
-    case RAWSTOR_ACCESS_READER:
-        return RAWSTOR_RIGHT_READ;
-    case RAWSTOR_ACCESS_WRITER:
-        return RAWSTOR_RIGHT_READ | RAWSTOR_RIGHT_WRITE | RAWSTOR_RIGHT_DISCARD;
-    case RAWSTOR_ACCESS_MANAGER:
-        return RAWSTOR_RIGHT_ALL;
+    case RAWSTOR_ROLE_READER:
+        return RAWSTOR_PERM_READ;
+    case RAWSTOR_ROLE_WRITER:
+        return RAWSTOR_PERM_READ | RAWSTOR_PERM_WRITE | RAWSTOR_PERM_DISCARD;
+    case RAWSTOR_ROLE_MANAGER:
+        return RAWSTOR_PERM_ALL;
     case 0:
         return 0;
     default:
@@ -66,30 +66,30 @@ uint32_t role_rights(uint32_t role) {
 uint32_t member_right(RawstorCommandType command, uint64_t flags) {
     switch (command) {
     case RAWSTOR_CMD_SET_OBJECT:
-        return flags & RAWSTOR_READONLY ? RAWSTOR_RIGHT_READ
-                                        : RAWSTOR_RIGHT_WRITE;
+        return flags & RAWSTOR_READONLY ? RAWSTOR_PERM_READ
+                                        : RAWSTOR_PERM_WRITE;
     case RAWSTOR_CMD_READ:
     case RAWSTOR_CMD_META:
     case RAWSTOR_CMD_LIST_VERSIONS:
     case RAWSTOR_CMD_LIST:
-        return RAWSTOR_RIGHT_READ;
+        return RAWSTOR_PERM_READ;
     case RAWSTOR_CMD_WRITE:
     case RAWSTOR_CMD_FLUSH:
     case RAWSTOR_CMD_LEAVE:
     case RAWSTOR_CMD_SYNC_PREPARE:
     case RAWSTOR_CMD_SYNC_ACCEPT:
-        return RAWSTOR_RIGHT_WRITE;
+        return RAWSTOR_PERM_WRITE;
     case RAWSTOR_CMD_DISCARD:
-        return RAWSTOR_RIGHT_DISCARD;
+        return RAWSTOR_PERM_DISCARD;
     case RAWSTOR_CMD_WRITE_ZEROES:
-        return flags & RAWSTOR_FLAG_UNMAP ? RAWSTOR_RIGHT_DISCARD
-                                          : RAWSTOR_RIGHT_WRITE;
+        return flags & RAWSTOR_FLAG_UNMAP ? RAWSTOR_PERM_DISCARD
+                                          : RAWSTOR_PERM_WRITE;
     case RAWSTOR_CMD_ALLOCATE:
     case RAWSTOR_CMD_RELEASE:
     case RAWSTOR_CMD_CREATE_VERSION:
     case RAWSTOR_CMD_FREEZE:
     case RAWSTOR_CMD_THAW:
-        return RAWSTOR_RIGHT_MANAGE;
+        return RAWSTOR_PERM_MANAGE;
     default:
         return 0;
     }
@@ -247,14 +247,14 @@ int Authorization::check(
     if (!required || (rights & required) != required)
         return EACCES;
     if ((command == RAWSTOR_CMD_FREEZE || command == RAWSTOR_CMD_THAW) &&
-        !(rights & RAWSTOR_RIGHT_MANAGE))
+        !(rights & RAWSTOR_PERM_MANAGE))
         return EACCES;
     // Snapshots are immutable, even when the certificate grants live writes.
     RawstdUUID selected{};
     if (version)
         memcpy(selected.bytes, version, sizeof(selected.bytes));
     if (!rawstd_uuid_is_nil(&selected) &&
-        (required & (RAWSTOR_RIGHT_WRITE | RAWSTOR_RIGHT_DISCARD)))
+        (required & (RAWSTOR_PERM_WRITE | RAWSTOR_PERM_DISCARD)))
         return EACCES;
     return 0;
 }

@@ -13,17 +13,17 @@
 extern "C" {
 #endif
 
-/** Rights and tenant access roles signed into client certificates. */
-#define RAWSTOR_RIGHT_READ 1u
-#define RAWSTOR_RIGHT_WRITE 2u
-#define RAWSTOR_RIGHT_DISCARD 4u
-#define RAWSTOR_RIGHT_MANAGE 8u
-#define RAWSTOR_RIGHT_ALL                                                      \
-    (RAWSTOR_RIGHT_READ | RAWSTOR_RIGHT_WRITE | RAWSTOR_RIGHT_DISCARD |        \
-     RAWSTOR_RIGHT_MANAGE)
-#define RAWSTOR_ACCESS_READER 1u
-#define RAWSTOR_ACCESS_WRITER 2u
-#define RAWSTOR_ACCESS_MANAGER 3u
+/** Permissions and tenant roles signed into client certificates. */
+#define RAWSTOR_PERM_READ 1u
+#define RAWSTOR_PERM_WRITE 2u
+#define RAWSTOR_PERM_DISCARD 4u
+#define RAWSTOR_PERM_MANAGE 8u
+#define RAWSTOR_PERM_ALL                                                       \
+    (RAWSTOR_PERM_READ | RAWSTOR_PERM_WRITE | RAWSTOR_PERM_DISCARD |           \
+     RAWSTOR_PERM_MANAGE)
+#define RAWSTOR_ROLE_READER 1u
+#define RAWSTOR_ROLE_WRITER 2u
+#define RAWSTOR_ROLE_MANAGER 3u
 
 /**
  * A small certificate authority for installations that have none: a directory
@@ -76,7 +76,7 @@ struct RawstorPkiObjectRights {
 
 struct RawstorPkiPermissions {
     unsigned int
-        role; /* RAWSTOR_ACCESS_READER, WRITER or MANAGER; 0 grants none */
+        role; /* RAWSTOR_ROLE_READER, WRITER or MANAGER; 0 grants none */
     size_t count;
     struct RawstorPkiObjectRights objects[RAWSTOR_PKI_MAX_OBJECT_RIGHTS];
 };

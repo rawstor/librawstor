@@ -628,7 +628,7 @@ rawstd::Task<void> Client::_dispatch(
                     !(client->_transport->peer()->permissions().rights(
                           record.id.bytes
                       ) &
-                      RAWSTOR_RIGHT_READ))
+                      RAWSTOR_PERM_READ))
                     continue;
                 RawstorFrameListEntry entry{};
                 memcpy(entry.id, record.id.bytes, sizeof(entry.id));

@@ -426,10 +426,10 @@ static RawstorCliTable* identity_table(const struct RawstorPkiInfo* info) {
         return NULL;
     }
     const char* access_role =
-        info->permissions.role == RAWSTOR_ACCESS_READER    ? "reader"
-        : info->permissions.role == RAWSTOR_ACCESS_WRITER  ? "writer"
-        : info->permissions.role == RAWSTOR_ACCESS_MANAGER ? "manager"
-                                                           : "";
+        info->permissions.role == RAWSTOR_ROLE_READER    ? "reader"
+        : info->permissions.role == RAWSTOR_ROLE_WRITER  ? "writer"
+        : info->permissions.role == RAWSTOR_ROLE_MANAGER ? "manager"
+                                                         : "";
     char object_rights[RAWSTOR_PKI_MAX_OBJECT_RIGHTS * 41 + 1] = {0};
     size_t used = 0;
     for (size_t i = 0; i < info->permissions.count; ++i) {
@@ -540,11 +540,11 @@ static int command_issue(int argc, char** argv, int renew) {
                 return EX_USAGE;
             }
             if (!strcmp(optarg, "reader"))
-                permissions.role = RAWSTOR_ACCESS_READER;
+                permissions.role = RAWSTOR_ROLE_READER;
             else if (!strcmp(optarg, "writer"))
-                permissions.role = RAWSTOR_ACCESS_WRITER;
+                permissions.role = RAWSTOR_ROLE_WRITER;
             else if (!strcmp(optarg, "manager"))
-                permissions.role = RAWSTOR_ACCESS_MANAGER;
+                permissions.role = RAWSTOR_ROLE_MANAGER;
             else {
                 fprintf(stderr, "--role must be reader, writer or manager\n");
                 return EX_USAGE;
@@ -563,7 +563,7 @@ static int command_issue(int argc, char** argv, int renew) {
             }
             errno = 0;
             unsigned long mask = strtoul(separator + 1, &end, 10);
-            if (!separator[1] || *end || errno || mask > RAWSTOR_RIGHT_ALL) {
+            if (!separator[1] || *end || errno || mask > RAWSTOR_PERM_ALL) {
                 fprintf(stderr, "MASK must be 0..15\n");
                 return EX_USAGE;
             }

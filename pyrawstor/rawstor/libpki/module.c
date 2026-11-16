@@ -90,7 +90,7 @@ static PyObject* py_pki_issue(PyObject* Py_UNUSED(self), PyObject* args) {
                 return NULL;
             }
             if (size != 36 || memchr(object, 0, (size_t)size) ||
-                rights > RAWSTOR_RIGHT_ALL) {
+                rights > RAWSTOR_PERM_ALL) {
                 Py_DECREF(encoded);
                 PyErr_SetString(
                     PyExc_ValueError,

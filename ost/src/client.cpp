@@ -994,7 +994,7 @@ rawstd::DetachedTask Client::_list(
                 !(client->_transport->peer()->permissions().rights(
                       group.id.bytes
                   ) &
-                  RAWSTOR_RIGHT_READ))
+                  RAWSTOR_PERM_READ))
                 continue;
             RawstorFrameListEntry entry{};
             memcpy(entry.id, group.id.bytes, sizeof(entry.id));
