@@ -26,14 +26,12 @@ constexpr size_t max_objects = 128;
     );
 }
 
-std::string encode(const rawtls::Permissions& policy, bool legacy = false) {
-    if ((legacy && policy.role == RAWSTOR_ROLE_NONE) ||
-        policy.role > RAWSTOR_ROLE_MANAGER ||
+std::string encode(const rawtls::Permissions& policy) {
+    if (policy.role > RAWSTOR_ROLE_MANAGER ||
         policy.objects.size() > max_objects)
         fail(EINVAL);
     std::string text =
-        std::string(legacy ? "rawstor-access-v1\n" : "rawstor-access-v2\n") +
-        std::to_string(policy.role) + "\n";
+        std::string("rawstor-access\n") + std::to_string(policy.role) + "\n";
     for (const auto& [object, mask] : policy.objects) {
         RawstdUUID id{};
         RawstdUUIDString canonical;
@@ -165,12 +163,11 @@ Permissions certificate_permissions(X509* cert) {
     std::string line;
     if (!std::getline(lines, line))
         fail(EINVAL);
-    bool legacy = line == "rawstor-access-v1";
-    if (!legacy && line != "rawstor-access-v2")
+    if (line != "rawstor-access")
         fail(EINVAL);
     Permissions result;
-    if (!std::getline(lines, line) || line.size() != 1 ||
-        line[0] < (legacy ? '1' : '0') || line[0] > '3')
+    if (!std::getline(lines, line) || line.size() != 1 || line[0] < '0' ||
+        line[0] > '3')
         fail(EINVAL);
     result.role = line[0] - '0';
     while (std::getline(lines, line)) {
@@ -186,14 +183,8 @@ Permissions certificate_permissions(X509* cert) {
             fail(EINVAL);
     }
     // Re-encoding enforces canonical UUIDs, masks, order, and a final newline.
-    if (encode(result, legacy) != text)
+    if (encode(result) != text)
         fail(EINVAL);
-    // Preserve the effective permissions of certificates issued with v1's
-    // intersecting masks; renewing them must not silently grant more access.
-    if (legacy) {
-        for (auto& [object, mask] : result.objects)
-            mask &= role_permissions(result.role);
-    }
     return result;
 }
 

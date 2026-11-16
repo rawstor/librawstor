@@ -4,13 +4,11 @@
 #include <rawstd/uuid.h>
 
 #include <gtest/gtest.h>
-#include <openssl/asn1.h>
 #include <openssl/x509.h>
 
 #include <cstring>
 #include <memory>
 #include <system_error>
-#include <vector>
 
 namespace {
 const std::string tenant = "018f4e2a-0000-7000-8000-000000000001";
@@ -293,33 +291,4 @@ TEST(AuthorizationTest, none_grants_only_explicit_object_permissions) {
         authorization.check(connection, RAWSTOR_CMD_LIST, nullptr, 0, nullptr),
         EACCES
     );
-}
-
-TEST(AuthorizationTest, v1_policy_preserves_intersecting_masks) {
-    Cert certificate(X509_new(), X509_free);
-    rawtls::certificate_permissions(
-        certificate.get(), {RAWSTOR_ROLE_READER, {{object, RAWSTOR_PERM_ALL}}}
-    );
-    std::string text = "rawstor-access-v1\n1\n" + object + "=15\n";
-    std::unique_ptr<ASN1_UTF8STRING, decltype(&ASN1_UTF8STRING_free)> value(
-        ASN1_UTF8STRING_new(), ASN1_UTF8STRING_free
-    );
-    ASSERT_EQ(ASN1_STRING_set(value.get(), text.data(), text.size()), 1);
-    int size = i2d_ASN1_UTF8STRING(value.get(), nullptr);
-    ASSERT_GT(size, 0);
-    std::vector<unsigned char> der(size);
-    unsigned char* cursor = der.data();
-    ASSERT_EQ(i2d_ASN1_UTF8STRING(value.get(), &cursor), size);
-    ASSERT_EQ(
-        ASN1_OCTET_STRING_set(
-            X509_EXTENSION_get_data(X509_get_ext(certificate.get(), 0)),
-            der.data(), der.size()
-        ),
-        1
-    );
-    auto policy = rawtls::certificate_permissions(certificate.get());
-    RawstdUUID id{};
-    ASSERT_EQ(rawstd_uuid_from_string(&id, object.c_str()), 0);
-    EXPECT_EQ(policy.mask(id.bytes), RAWSTOR_PERM_READ);
-    EXPECT_EQ(policy.mask(), RAWSTOR_PERM_READ);
 }

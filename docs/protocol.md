@@ -974,7 +974,7 @@ OID `2.25.110097391626234565544022595913142399087` (UUID
 of a UTF8String with this canonical ASCII content:
 
 ```text
-rawstor-access-v2
+rawstor-access
 3
 018f4e2a-2222-7000-8000-000000000002=1
 018f4e2a-2222-7000-8000-000000000003=0
@@ -993,13 +993,6 @@ covers all chunks and versions of that object. Objects not listed retain the
 role's defaults. With `none`, every unlisted object is denied. All snapshot
 data is read-only; a manager may manage versions of an allowed object.
 The certificate SAN provides the tenant; it is not duplicated in the policy.
-
-The v1 policy format (`rawstor-access-v1`) remains readable with its original
-semantics: object masks intersect reader/writer/manager defaults. Its decoded
-object permissions are normalized to those effective masks before use or
-renewal. New policies use v2, including role `none` and overriding masks. Thus
-upgrading or renewing an existing v1 certificate does not silently widen its
-permissions.
 
 The policy is noncritical so standard TLS certificate verification remains
 in effect without suppressing unknown-critical-extension errors. Rawstor
