@@ -181,6 +181,13 @@ jobs:
       run: |
         ./${LIBRAWSTOR}/cli/rawstor --insecure testio ${TARGET} --block-size=4K --io-depth=1 --count=10
         ./${LIBRAWSTOR}/cli/rawstor --insecure testio ${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
+    - name: stop rawstor-ost
+      # One OST at a time: a second one next to it leaves the queue of the next
+      # client without the memory it needs (rawio_queue_create() fails with
+      # ENOMEM), so the plain one goes before the TLS one starts.
+      run: |
+        killall rawstor-ost
+        while pgrep -x rawstor-ost > /dev/null; do sleep 0.2; done
     - name: TLS, issue the certificates
       run: |
         mkdir /tmp/pki /tmp/tls_ost_objects /tmp/tls_file_objects
