@@ -35,6 +35,25 @@ if __name__ == "__main__":
         ],
         ext_modules=[
             Extension(
+                "rawstor.libpki",
+                sources=[
+                    "rawstor/libpki/module.c",
+                ],
+                include_dirs=[
+                    "../include",
+                ],
+                libraries=[
+                    "rawstor",
+                ],
+                library_dirs=[
+                    "../src/.libs",
+                ],
+                extra_compile_args=os.getenv('CFLAGS', '').split(),
+                extra_link_args=os.getenv('LDFLAGS', '').split(),
+                py_limited_api=True,
+                define_macros=[("Py_LIMITED_API", PY_LIMITED_API)],
+            ),
+            Extension(
                 "rawstor.librawstor",
                 sources=[
                     "rawstor/librawstor/module.c",

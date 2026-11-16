@@ -12,6 +12,7 @@ AM_CFLAGS = $(GENERIC_CFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 C_SOURCES = \
+    rawstor/libpki/module.c \
     rawstor/librawstor/module.c \
     rawstor/librawstor/object_bindings.c \
     rawstor/librawstor/object_bindings.h \
@@ -23,6 +24,7 @@ SOURCES = \
     rawstor/__init__.py \
     rawstor/constants.py \
     rawstor/location.py \
+    rawstor/pki.py \
     rawstor/target.py \
     config.py \
     MANIFEST.in \
@@ -32,6 +34,7 @@ if ENABLE_TESTS
 SOURCES += \
     tests/__init__.py \
     tests/test_location.py \
+    tests/test_pki.py \
     tests/test_target.py
 endif
 
