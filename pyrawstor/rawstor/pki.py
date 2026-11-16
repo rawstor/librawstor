@@ -15,7 +15,7 @@ certificate this CA did not issue).
 
 import datetime
 import os
-from typing import Optional, Union
+from typing import NamedTuple, Optional, Union
 
 from . import libpki
 
@@ -125,6 +125,33 @@ def issue_client(
     tenant ``tenant`` (a UUID), such as rawstor-vhost."""
     return _issue(
         directory, _CLIENT, tenant, name, cert_file, key_file, validity
+    )
+
+
+class Info(NamedTuple):
+    """What a certificate says."""
+
+    #: The SPIFFE ID of the process it is for.
+    identity: str
+    #: When it expires.
+    not_after: datetime.datetime
+    #: Whether the CA given to ``show()`` signed it, None without a CA.
+    issued: Optional[bool]
+
+
+def show(cert_file: Path, directory: Optional[Path] = None) -> Info:
+    """Reads the certificate ``cert_file`` of a process, whoever issued it; it
+    changes nothing. With ``directory``, a CA, ``issued`` tells whether that CA
+    signed it. Raises ``OSError`` (``errno.EINVAL``) for a file that is not a
+    certificate that names a process of rawstor."""
+    identity, not_after, issued = libpki.show(
+        os.fspath(cert_file),
+        None if directory is None else os.fspath(directory),
+    )
+    return Info(
+        identity,
+        datetime.datetime.fromtimestamp(not_after, datetime.timezone.utc),
+        issued,
     )
 
 

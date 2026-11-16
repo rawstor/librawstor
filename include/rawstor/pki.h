@@ -83,6 +83,28 @@ int rawstor_pki_renew(
     unsigned long validity, char* identity, size_t size
 );
 
+/** What a certificate says, for rawstor_pki_show(). */
+struct RawstorPkiInfo {
+    /** The SPIFFE ID of the process the certificate is for. */
+    char identity[RAWSTOR_PKI_IDENTITY_SIZE];
+    /** When it expires, in seconds since the epoch. */
+    long long not_after;
+    /** Whether the CA given to rawstor_pki_show() signed it: 1 or 0, and -1 if
+     * no CA was given. */
+    int issued;
+};
+
+/**
+ * Reads the certificate `cert_file` of a process, whoever issued it, and
+ * fills `info`; does not change anything. With `dir`, the directory of a CA,
+ * it also tells whether that CA signed it; without (NULL), `issued` is -1.
+ * Fails with EINVAL if the file is not a certificate that names a process of
+ * rawstor, and with ENOENT if it or the CA is not there.
+ */
+int rawstor_pki_show(
+    const char* cert_file, const char* dir, struct RawstorPkiInfo* info
+);
+
 /**
  * What went wrong in the last call of this thread that failed, or an empty
  * string. Valid until the next call of one of the functions above.

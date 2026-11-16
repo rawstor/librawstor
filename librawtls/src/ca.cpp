@@ -14,6 +14,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -498,18 +499,41 @@ std::string CA::renew(
     std::chrono::seconds validity
 ) const {
     ERR_clear_error();
-    Cert old = read_cert(cert_file);
-    Cert ca = read_cert(join(_dir, "ca.crt"));
-    Key ca_key = read_key(join(_dir, "ca.key"));
     // Not a certificate of this CA: whoever holds it must go through issue.
-    if (X509_check_issued(ca.get(), old.get()) != X509_V_OK ||
-        X509_verify(old.get(), ca_key.get()) != 1) {
-        ERR_clear_error();
+    if (!issued(cert_file)) {
         raise(EINVAL, cert_file + " was not issued by this CA");
     }
+    Cert old = read_cert(cert_file);
     return issue_id(
         identity_of(old.get(), cert_file), validity, cert_file, key_file
     );
+}
+
+bool CA::issued(const std::string& cert_file) const {
+    ERR_clear_error();
+    Cert cert = read_cert(cert_file);
+    Cert ca = read_cert(join(_dir, "ca.crt"));
+    Key ca_key = read_key(join(_dir, "ca.key"));
+    bool ok = X509_check_issued(ca.get(), cert.get()) == X509_V_OK &&
+              X509_verify(cert.get(), ca_key.get()) == 1;
+    ERR_clear_error();
+    return ok;
+}
+
+CertInfo inspect(const std::string& cert_file) {
+    ERR_clear_error();
+    Cert cert = read_cert(cert_file);
+    std::string identity = identity_of(cert.get(), cert_file);
+    try {
+        static_cast<void>(SpiffeId(identity));
+    } catch (const std::system_error&) {
+        raise(EINVAL, cert_file + " does not name a process of rawstor");
+    }
+    struct tm tm;
+    if (ASN1_TIME_to_tm(X509_get0_notAfter(cert.get()), &tm) != 1) {
+        raise(EINVAL, cert_file + " has no expiry");
+    }
+    return CertInfo{identity, static_cast<long long>(timegm(&tm))};
 }
 
 } // namespace rawtls

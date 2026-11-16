@@ -93,7 +93,36 @@ static PyObject* py_pki_renew(PyObject* Py_UNUSED(self), PyObject* args) {
     return PyUnicode_FromString(identity);
 }
 
+/* show(cert_file, dir) -> (identity, not_after, issued), dir None without a
+ * CA and issued None then, otherwise a bool. */
+static PyObject* py_pki_show(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* cert_file;
+    const char* dir;
+    if (!PyArg_ParseTuple(args, "sz", &cert_file, &dir)) {
+        return NULL;
+    }
+    struct RawstorPkiInfo info;
+    int res;
+    Py_BEGIN_ALLOW_THREADS;
+    res = rawstor_pki_show(cert_file, dir, &info);
+    Py_END_ALLOW_THREADS;
+    if (res < 0) {
+        return pki_error(res);
+    }
+    PyObject* issued;
+    if (info.issued < 0) {
+        issued = Py_NewRef(Py_None);
+    } else {
+        issued = PyBool_FromLong(info.issued);
+    }
+    PyObject* ret =
+        Py_BuildValue("(sLO)", info.identity, info.not_after, issued);
+    Py_DECREF(issued);
+    return ret;
+}
+
 static PyMethodDef libpki_methods[] = {
+    {"show", py_pki_show, METH_VARARGS, NULL},
     {"init", py_pki_init, METH_VARARGS, NULL},
     {"issue", py_pki_issue, METH_VARARGS, NULL},
     {"renew", py_pki_renew, METH_VARARGS, NULL},

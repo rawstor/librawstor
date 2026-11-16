@@ -8,6 +8,22 @@
 
 namespace rawtls {
 
+// What a certificate of a process says.
+struct CertInfo {
+    // The SPIFFE ID of its one URI SAN.
+    std::string identity;
+    // When it expires, in seconds since the epoch.
+    long long not_after;
+};
+
+/*
+ * Reads a certificate of a process, issued by whoever: its identity, which is
+ * checked to be one of the shapes of SpiffeId, and when it expires. Throws
+ * ENOENT for a file that is not there and EINVAL for a file that is not a
+ * certificate with such an identity.
+ */
+CertInfo inspect(const std::string& cert_file);
+
 /*
  * A small certificate authority for installations that have none: a directory
  * with the CA certificate (`ca.crt`, what every process lists in
@@ -72,6 +88,10 @@ public:
         std::chrono::seconds validity, const std::string& cert_file,
         const std::string& key_file
     ) const;
+
+    // True if `cert_file` is a certificate this CA signed. Neither its
+    // expiry nor its identity is looked at.
+    bool issued(const std::string& cert_file) const;
 
     // Issues a new certificate and key for the identity of `cert_file`, which
     // this CA must have issued, over the same files. Used before the old one

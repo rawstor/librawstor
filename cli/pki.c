@@ -43,6 +43,7 @@ static void pki_usage(void) {
         "  issue                 Issue a certificate and a key for a process\n"
         "  renew                 Issue a new certificate and key for the "
         "process of one\n"
+        "  show                  Show what a certificate says\n"
         "\n"
         "Run `rawstor pki <subcommand> --help` to show its usage.\n"
     );
@@ -102,13 +103,14 @@ static void issue_usage(void) {
         "  --key FILE            Where the private key goes\n"
         "  --validity DURATION   How long the certificate is valid "
         "(default: 7d)\n" RAWSTOR_CLI_OUTPUT_USAGE "\n"
-        "Columns: identity (the SPIFFE ID), role, trust_domain, name (of an "
-        "admin or a\n"
-        "client), ost_id (of an ost), mds_id (of an mds) and tenant_id (of a "
-        "client); the\n"
-        "ones that do not apply are empty, null in json. `--format value "
-        "--column ost_id`\n"
-        "prints just an OST's id.\n"
+        "Columns: identity (the SPIFFE ID), role, trust_domain, id (of an ost "
+        "or an mds),\n"
+        "name (of an admin or a client), tenant_id (of a client), not_after "
+        "(when the\n"
+        "certificate expires, UTC) and issued (yes); the ones that do not "
+        "apply are empty,\n"
+        "null in json. `--format value --column id` prints just an OST's or "
+        "an MDS's id.\n"
     );
 }
 
@@ -135,6 +137,23 @@ static void renew_usage(void) {
     );
 }
 
+static void show_usage(void) {
+    fprintf(
+        stdout,
+        "usage: rawstor pki show --cert FILE [--ca DIR]\n"
+        "\n"
+        "Shows what the certificate of a process says, whoever issued it, and "
+        "changes\n"
+        "nothing. With --ca it also tells whether that CA signed it.\n"
+        "\n"
+        "options:\n"
+        "  --cert FILE           The certificate\n"
+        "  --ca DIR              A CA made by `pki init`: fills the issued "
+        "column (yes or no)\n" RAWSTOR_CLI_OUTPUT_USAGE "\n"
+        "Columns are those of `pki issue`; issued is empty without --ca.\n"
+    );
+}
+
 /* A validity in seconds from "90", "90s", "15m", "12h" or "30d". Returns 0, or
  * EX_USAGE. */
 static int parse_validity(const char* text, unsigned long* seconds) {
@@ -148,6 +167,16 @@ static int parse_validity(const char* text, unsigned long* seconds) {
     }
     *seconds = (unsigned long)value;
     return 0;
+}
+
+/* `seconds` since the epoch as 2036-11-13T10:56:28Z. */
+static void format_time(long long seconds, char* buf, size_t size) {
+    buf[0] = '\0';
+    time_t t = (time_t)seconds;
+    struct tm utc;
+    if (gmtime_r(&t, &utc) != NULL) {
+        strftime(buf, size, "%Y-%m-%dT%H:%M:%SZ", &utc);
+    }
 }
 
 static int report(const char* what, int res) {
@@ -248,12 +277,10 @@ static int command_init(int argc, char** argv) {
     }
 
     /* The CA is valid from now for `validity` seconds, to the second. */
-    char not_after[32] = "";
-    time_t end = now + (time_t)validity;
-    struct tm utc;
-    if (gmtime_r(&end, &utc) != NULL) {
-        strftime(not_after, sizeof(not_after), "%Y-%m-%dT%H:%M:%SZ", &utc);
-    }
+    char not_after[32];
+    format_time(
+        (long long)now + (long long)validity, not_after, sizeof(not_after)
+    );
     char ca_file[4096];
     snprintf(ca_file, sizeof(ca_file), "%s/ca.crt", dir);
 
@@ -330,41 +357,40 @@ static int parse_process(
 }
 
 static const char* const identity_columns[] = {
-    "identity", "role", "trust_domain", "name", "ost_id", "mds_id", "tenant_id",
+    "identity", "role",      "trust_domain", "id",
+    "name",     "tenant_id", "not_after",    "issued",
 };
 static const enum RawstorCliColumnType identity_types[] = {
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
-    RAWSTOR_CLI_COLUMN_STRING,
+    RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
 };
 #define IDENTITY_NCOLUMNS                                                      \
     (sizeof(identity_columns) / sizeof(identity_columns[0]))
 
-/* The table of one process, from the SPIFFE ID the CA printed:
+/* The table of one process, from what its certificate says. The library has
+ * checked the shape of the ID:
  *   spiffe://<trust domain>/ost/<id>
  *   spiffe://<trust domain>/mds/<id>
  *   spiffe://<trust domain>/admin/<name>
  *   spiffe://<trust domain>/tenant/<tenant>/client/<name>
- * The CA made the ID, so its shape is known. */
-static RawstorCliTable* identity_table(const char* identity) {
+ */
+static RawstorCliTable* identity_table(const struct RawstorPkiInfo* info) {
     char text[RAWSTOR_PKI_IDENTITY_SIZE];
-    snprintf(text, sizeof(text), "%s", identity);
+    snprintf(text, sizeof(text), "%s", info->identity);
 
     const char* domain = text + strlen("spiffe://");
     char* path = strchr(text + strlen("spiffe://"), '/');
     *path++ = '\0';
     const char* role = path;
+    const char* id = "";
     const char* name = "";
-    const char* ost_id = "";
-    const char* mds_id = "";
     const char* tenant_id = "";
     char* slash = strchr(path, '/');
     *slash++ = '\0';
-    if (strcmp(role, "ost") == 0) {
-        ost_id = slash;
-    } else if (strcmp(role, "mds") == 0) {
-        mds_id = slash;
+    if (strcmp(role, "ost") == 0 || strcmp(role, "mds") == 0) {
+        id = slash;
     } else if (strcmp(role, "tenant") == 0) {
         /* tenant/<tenant>/client/<name> */
         role = "client";
@@ -375,6 +401,9 @@ static RawstorCliTable* identity_table(const char* identity) {
     } else {
         name = slash;
     }
+    char not_after[32];
+    format_time(info->not_after, not_after, sizeof(not_after));
+    const char* issued = info->issued < 0 ? "" : info->issued ? "yes" : "no";
 
     RawstorCliTable* table = rawstor_cli_record_create(
         "pki", identity_columns, identity_types, IDENTITY_NCOLUMNS
@@ -383,16 +412,53 @@ static RawstorCliTable* identity_table(const char* identity) {
         return NULL;
     }
     RawstorCliCell cells[] = {
-        rawstor_cli_cell_string(identity),    rawstor_cli_cell_string(role),
-        rawstor_cli_cell_string(domain),      rawstor_cli_cell_optional(name),
-        rawstor_cli_cell_optional(ost_id),    rawstor_cli_cell_optional(mds_id),
+        rawstor_cli_cell_string(info->identity),
+        rawstor_cli_cell_string(role),
+        rawstor_cli_cell_string(domain),
+        rawstor_cli_cell_optional(id),
+        rawstor_cli_cell_optional(name),
         rawstor_cli_cell_optional(tenant_id),
+        rawstor_cli_cell_optional(not_after),
+        rawstor_cli_cell_optional(issued),
     };
     if (rawstor_cli_table_add_row(table, cells) < 0) {
         rawstor_cli_table_delete(table);
         return NULL;
     }
     return table;
+}
+
+/* Checks --column, so that a command can refuse a bad one before it changes
+ * anything. Returns 0, or a usage error reported on stderr. */
+static int check_output(const RawstorCliOutput* output) {
+    RawstorCliTable* probe = rawstor_cli_record_create(
+        "pki", identity_columns, identity_types, IDENTITY_NCOLUMNS
+    );
+    if (probe == NULL) {
+        fprintf(stderr, "Out of memory\n");
+        return EXIT_FAILURE;
+    }
+    int checked = rawstor_cli_output_check(output, &probe, 1);
+    rawstor_cli_table_delete(probe);
+    return checked;
+}
+
+static int print_certificate(
+    const RawstorCliOutput* output, const char* cert, const char* ca
+) {
+    struct RawstorPkiInfo info;
+    int res = rawstor_pki_show(cert, ca, &info);
+    if (res != 0) {
+        return report("Failed to read the certificate", res);
+    }
+    RawstorCliTable* table = identity_table(&info);
+    if (table == NULL) {
+        fprintf(stderr, "Out of memory\n");
+        return EXIT_FAILURE;
+    }
+    int ret = rawstor_cli_output_print(output, &table, 1);
+    rawstor_cli_table_delete(table);
+    return ret;
 }
 
 static int command_issue(int argc, char** argv, int renew) {
@@ -460,31 +526,20 @@ static int command_issue(int argc, char** argv, int renew) {
     }
 
     /* A bad --column is refused before a certificate is issued: afterwards
-     * the only thing left to report is the identity, and a retry would issue
+     * the only thing left to report is the certificate, and a retry would issue
      * another key. */
-    RawstorCliTable* probe = rawstor_cli_record_create(
-        "pki", identity_columns, identity_types, IDENTITY_NCOLUMNS
-    );
-    if (probe == NULL) {
-        fprintf(stderr, "Out of memory\n");
-        return EXIT_FAILURE;
-    }
-    int checked = rawstor_cli_output_check(&output, &probe, 1);
-    rawstor_cli_table_delete(probe);
+    int checked = check_output(&output);
     if (checked != EXIT_SUCCESS) {
         return checked;
     }
 
-    char identity[RAWSTOR_PKI_IDENTITY_SIZE];
     int res;
     if (renew) {
         if (optind != argc) {
             fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
             return EX_USAGE;
         }
-        res = rawstor_pki_renew(
-            ca, cert, key, validity, identity, sizeof(identity)
-        );
+        res = rawstor_pki_renew(ca, cert, key, validity, NULL, 0);
         if (res != 0) {
             return report("Failed to renew the certificate", res);
         }
@@ -497,21 +552,70 @@ static int command_issue(int argc, char** argv, int renew) {
             return res;
         }
         res = rawstor_pki_issue(
-            ca, role, tenant, name, validity, cert, key, identity,
-            sizeof(identity)
+            ca, role, tenant, name, validity, cert, key, NULL, 0
         );
         if (res != 0) {
             return report("Failed to issue the certificate", res);
         }
     }
-    RawstorCliTable* table = identity_table(identity);
-    if (table == NULL) {
-        fprintf(stderr, "Out of memory\n");
-        return EXIT_FAILURE;
+    /* What was written, read back: the certificate's own word for it. */
+    return print_certificate(&output, cert, ca);
+}
+
+static int command_show(int argc, char** argv) {
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"ca", required_argument, NULL, 'c'},
+        {"cert", required_argument, NULL, 'C'},
+        {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
+        {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
+        {},
+    };
+    RawstorCliOutput output = {};
+    const char* ca = NULL;
+    const char* cert = NULL;
+    optind = 0;
+    int c;
+    while ((c = getopt_long(argc, argv, "h", longopts, NULL)) != -1) {
+        switch (c) {
+        case 'h':
+            show_usage();
+            return EXIT_SUCCESS;
+        case 'c':
+            ca = optarg;
+            break;
+        case 'C':
+            cert = optarg;
+            break;
+        case RAWSTOR_CLI_OPT_FORMAT:
+            if (rawstor_cli_output_set_format(&output, optarg) != 0) {
+                fprintf(
+                    stderr, "Unknown format: %s (table, json or value)\n",
+                    optarg
+                );
+                return EX_USAGE;
+            }
+            break;
+        case RAWSTOR_CLI_OPT_COLUMN:
+            output.columns = optarg;
+            break;
+        default:
+            return EX_USAGE;
+        }
     }
-    int ret = rawstor_cli_output_print(&output, &table, 1);
-    rawstor_cli_table_delete(table);
-    return ret;
+    if (cert == NULL) {
+        fprintf(stderr, "--cert is required\n");
+        return EX_USAGE;
+    }
+    if (optind != argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EX_USAGE;
+    }
+    int checked = check_output(&output);
+    if (checked != EXIT_SUCCESS) {
+        return checked;
+    }
+    return print_certificate(&output, cert, ca);
 }
 
 int rawstor_cli_pki(int argc, char** argv) {
@@ -533,6 +637,8 @@ int rawstor_cli_pki(int argc, char** argv) {
         return command_issue(argc, argv, 0);
     } else if (strcmp(sub, "renew") == 0) {
         return command_issue(argc, argv, 1);
+    } else if (strcmp(sub, "show") == 0) {
+        return command_show(argc, argv);
     }
     fprintf(stderr, "Unexpected pki subcommand: %s\n", sub);
     return EX_USAGE;

@@ -70,6 +70,32 @@ class TestPki(unittest.TestCase):
         self.assertTrue(first.startswith("spiffe://cluster.example/mds/"))
         self.assertNotEqual(first, second)
 
+    def test_show(self):
+        pki.init(self.ca, "cluster.example")
+        other = self.dir / "other"
+        pki.init(other, "cluster.example")
+        cert = self.dir / "ost.crt"
+        key = self.dir / "ost.key"
+        identity = pki.issue_ost(self.ca, cert, key, OST, validity=3600)
+
+        info = pki.show(cert)
+        self.assertEqual(info.identity, identity)
+        self.assertIsNone(info.issued)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        self.assertGreater(info.not_after, now)
+        self.assertLess(info.not_after, now + datetime.timedelta(hours=2))
+
+        self.assertTrue(pki.show(cert, self.ca).issued)
+        self.assertFalse(pki.show(cert, other).issued)
+
+    def test_show_what_is_not_a_certificate_of_a_process(self):
+        pki.init(self.ca, "cluster.example")
+        with self.assertRaises(FileNotFoundError):
+            pki.show(self.dir / "none.crt")
+        with self.assertRaises(OSError) as raised:
+            pki.show(self.ca / "ca.crt")
+        self.assertEqual(raised.exception.errno, errno.EINVAL)
+
     def test_roles(self):
         pki.init(self.ca, "cluster.example")
         crt = self.dir / "x.crt"

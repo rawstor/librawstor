@@ -91,6 +91,7 @@ rawstor pki issue --ca ca --cert mds.crt --key mds.key mds       # a new id
 rawstor pki issue --ca ca --cert hv1.crt --key hv1.key admin hv1
 rawstor pki issue --ca ca --cert vm.crt --key vm.key client <tenant uuid> vm-1
 rawstor pki renew --ca ca --cert ost.crt --key ost.key
+rawstor pki show --cert ost.crt                                  # what it says
 ```
 
 A CA is made for the trust domain of one cluster and keeps it, so every
@@ -106,12 +107,19 @@ process reads them again on `SIGHUP` or `SIGUSR1`.
 `ca_file` (`<dir>/ca.crt`, what a process lists as `RAWSTOR_TLS_CA`) and
 `not_after` (when the CA expires, UTC).
 
-`issue` and `renew` print what the certificate names, as the other commands
-print their data
-(`--format table|json|value`, `--column`): `identity` (the SPIFFE ID), `role`,
-`trust_domain`, `name`, `ost_id` and `tenant_id`. The ones the role does not
-have are empty, `null` in json; `--format value --column ost_id` is how a
-script gets the id of a new OST.
+`issue`, `renew` and `show` print what a certificate says, as the other
+commands print their data (`--format table|json|value`, `--column`):
+`identity` (the SPIFFE ID), `role`, `trust_domain`, `id` (of an OST or an MDS),
+`name` (of an admin or a client), `tenant_id` (of a client), `not_after` (when it
+expires, UTC) and `issued` (whether the CA signed it). The ones the role does
+not have are empty, `null` in json; `--format value --column id` is how a script
+gets the id of a new OST or MDS.
+
+`show` reads a certificate and changes nothing: it is how the id is read from
+a certificate that was issued earlier, and, given the CA with `--ca`, whether
+that CA signed it (`issued` is `yes` or `no`, and empty without `--ca`). It
+takes a certificate whoever issued it, as long as it names a process of
+rawstor.
 
 A certificate is valid for 7 days and a CA for 3650 unless `--validity` says
 otherwise (a number and `s`, `m`, `h` or `d`). Keys are EC P-256. There is no
@@ -119,9 +127,10 @@ revocation beyond expiry and the optional `RAWSTOR_TLS_CRL`, so keep
 certificates short.
 
 The same is available to programs: `rawstor_pki_init()`, `rawstor_pki_issue()`
-and `rawstor_pki_renew()` in `<rawstor/pki.h>`, which need no
+`rawstor_pki_renew()` and `rawstor_pki_show()` in `<rawstor/pki.h>`, which need no
 `rawstor_initialize()`, and `rawstor.pki` (`init()`, `issue_ost()`,
-`issue_mds()`, `issue_admin()`, `issue_client()`, `renew()`) in pyrawstor, which
+`issue_mds()`, `issue_admin()`, `issue_client()`, `renew()`, `show()`) in
+pyrawstor, which
 does not start rawstor when imported, so a program can make its certificates and
 set `RAWSTOR_TLS_*` before it first uses `Location` or `Target`.
 

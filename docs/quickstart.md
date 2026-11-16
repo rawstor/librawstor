@@ -60,9 +60,9 @@ TD=cluster.example
 CLUSTER=$(cat /proc/sys/kernel/random/uuid)
 
 rawstor pki init --trust-domain ${TD} ca
-# an OST's id is made with its certificate, and `issue` prints it as `ost_id`
-OST1=$(rawstor pki issue --ca ca --cert ost1.crt --key ost1.key --format value --column ost_id ost)
-OST2=$(rawstor pki issue --ca ca --cert ost2.crt --key ost2.key --format value --column ost_id ost)
+# an OST's id is made with its certificate, and `issue` prints it as `id`
+OST1=$(rawstor pki issue --ca ca --cert ost1.crt --key ost1.key --format value --column id ost)
+OST2=$(rawstor pki issue --ca ca --cert ost2.crt --key ost2.key --format value --column id ost)
 rawstor pki issue --ca ca --cert mds.crt --key mds.key mds
 rawstor pki issue --ca ca --cert hv1.crt --key hv1.key admin hv1
 ```

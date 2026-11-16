@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -392,4 +393,52 @@ TEST_F(CATest, a_failed_write_leaves_the_old_pair) {
 
     EXPECT_EQ(read_file(dir.path("ost.key")), key);
     EXPECT_EQ(read_file(dir.path("ost.crt")), cert);
+}
+
+TEST_F(CATest, inspect_reads_what_a_certificate_says) {
+    init();
+    rawtls::CA ca(dir.path("ca"));
+    ca.issue(
+        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        dir.path("ost.key")
+    );
+
+    rawtls::CertInfo info = rawtls::inspect(dir.path("ost.crt"));
+    EXPECT_EQ(info.identity, ost_uri);
+    long long now = time(nullptr);
+    EXPECT_GT(info.not_after, now);
+    EXPECT_LE(info.not_after, now + 3600 + 5);
+}
+
+TEST_F(CATest, inspect_refuses_what_names_no_process) {
+    init();
+    expect_errno(ENOENT, [&] { rawtls::inspect(dir.path("none.crt")); });
+    // The CA's own certificate has no URI SAN.
+    expect_errno(EINVAL, [&] { rawtls::inspect(dir.path("ca/ca.crt")); });
+
+    // A SAN that is not an identity of rawstor.
+    rawtls::testing::Pki other;
+    rawtls::testing::IssueOptions options;
+    options.uris = {"spiffe://cluster.example/nobody/x"};
+    rawtls::testing::Identity foreign = other.issue("foreign", options);
+    expect_errno(EINVAL, [&] { rawtls::inspect(foreign.cert_file); });
+}
+
+TEST_F(CATest, issued_tells_whose_certificate_it_is) {
+    init();
+    rawtls::CA ca(dir.path("ca"));
+    ca.issue(
+        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        dir.path("ost.key")
+    );
+    EXPECT_TRUE(ca.issued(dir.path("ost.crt")));
+
+    rawtls::CA::init(dir.path("other"), "cluster.example", hour);
+    EXPECT_FALSE(rawtls::CA(dir.path("other")).issued(dir.path("ost.crt")));
+
+    rawtls::testing::Pki foreign_pki;
+    rawtls::testing::IssueOptions options;
+    options.uris = {ost_uri};
+    EXPECT_FALSE(ca.issued(foreign_pki.issue("foreign", options).cert_file));
+    expect_errno(ENOENT, [&] { ca.issued(dir.path("none.crt")); });
 }

@@ -4,6 +4,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <string>
 #include <system_error>
@@ -221,4 +222,45 @@ TEST_F(PkiTest, failures_are_errno_and_a_message) {
         ),
         -ENOENT
     );
+}
+
+TEST_F(PkiTest, show_reads_a_certificate) {
+    std::string ca = path("ca");
+    std::string other = path("other");
+    ASSERT_EQ(rawstor_pki_init(ca.c_str(), "cluster.example", 86400), 0);
+    ASSERT_EQ(rawstor_pki_init(other.c_str(), "cluster.example", 86400), 0);
+    std::string cert = path("ost.crt");
+    std::string key = path("ost.key");
+    ASSERT_EQ(
+        rawstor_pki_issue(
+            ca.c_str(), RAWSTOR_PKI_OST, nullptr, ost_id, 3600, cert.c_str(),
+            key.c_str(), nullptr, 0
+        ),
+        0
+    );
+
+    RawstorPkiInfo info;
+    ASSERT_EQ(rawstor_pki_show(cert.c_str(), nullptr, &info), 0);
+    EXPECT_EQ(
+        std::string(info.identity),
+        std::string("spiffe://cluster.example/ost/") + ost_id
+    );
+    EXPECT_EQ(info.issued, -1);
+    EXPECT_GT(info.not_after, (long long)time(nullptr));
+    EXPECT_LE(info.not_after, (long long)time(nullptr) + 3600 + 5);
+
+    ASSERT_EQ(rawstor_pki_show(cert.c_str(), ca.c_str(), &info), 0);
+    EXPECT_EQ(info.issued, 1);
+    ASSERT_EQ(rawstor_pki_show(cert.c_str(), other.c_str(), &info), 0);
+    EXPECT_EQ(info.issued, 0);
+
+    EXPECT_EQ(
+        rawstor_pki_show(path("none.crt").c_str(), nullptr, &info), -ENOENT
+    );
+    EXPECT_EQ(
+        rawstor_pki_show(cert.c_str(), path("nope").c_str(), &info), -ENOENT
+    );
+    std::string ca_crt = ca + "/ca.crt";
+    EXPECT_EQ(rawstor_pki_show(ca_crt.c_str(), nullptr, &info), -EINVAL);
+    EXPECT_NE(std::string(rawstor_pki_error()).find(ca_crt), std::string::npos);
 }

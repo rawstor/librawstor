@@ -118,6 +118,23 @@ int rawstor_pki_renew(
     });
 }
 
+int rawstor_pki_show(
+    const char* cert_file, const char* dir, struct RawstorPkiInfo* info
+) {
+    return guarded([&] {
+        rawtls::CertInfo found = rawtls::inspect(cert_file);
+        int issued = -1;
+        if (dir != nullptr) {
+            issued = rawtls::CA(dir).issued(cert_file) ? 1 : 0;
+        }
+        std::memcpy(
+            info->identity, found.identity.c_str(), found.identity.size() + 1
+        );
+        info->not_after = found.not_after;
+        info->issued = issued;
+    });
+}
+
 const char* rawstor_pki_error(void) {
     return last_error.c_str();
 }
