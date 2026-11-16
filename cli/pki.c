@@ -1,6 +1,7 @@
 #include "pki.h"
 
 #include "config.h"
+#include "output.h"
 
 #include <rawstor.h>
 
@@ -94,7 +95,14 @@ static void issue_usage(void) {
         "  --cert FILE           Where the certificate goes\n"
         "  --key FILE            Where the private key goes\n"
         "  --validity DURATION   How long the certificate is valid "
-        "(default: 7d)\n"
+        "(default: 7d)\n" RAWSTOR_CLI_OUTPUT_USAGE "\n"
+        "Columns: identity (the SPIFFE ID), role, trust_domain, name (of an "
+        "mds, "
+        "an admin or\n"
+        "a client), ost_id (of an ost) and tenant_id (of a client); the ones "
+        "that do not\n"
+        "apply are empty, null in json. `--format value --column ost_id` "
+        "prints just an OST's id.\n"
     );
 }
 
@@ -116,7 +124,8 @@ static void renew_usage(void) {
         "one goes\n"
         "  --key FILE            Where the new private key goes\n"
         "  --validity DURATION   How long the certificate is valid "
-        "(default: 7d)\n"
+        "(default: 7d)\n" RAWSTOR_CLI_OUTPUT_USAGE "\n"
+        "Columns are those of `pki issue`.\n"
     );
 }
 
@@ -244,6 +253,67 @@ static int parse_process(
     return 0;
 }
 
+static const char* const identity_columns[] = {
+    "identity", "role", "trust_domain", "name", "ost_id", "tenant_id",
+};
+static const enum RawstorCliColumnType identity_types[] = {
+    RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+    RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+    RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+};
+#define IDENTITY_NCOLUMNS                                                      \
+    (sizeof(identity_columns) / sizeof(identity_columns[0]))
+
+/* The table of one process, from the SPIFFE ID the CA printed:
+ *   spiffe://<trust domain>/ost/<id>
+ *   spiffe://<trust domain>/mds/<name>
+ *   spiffe://<trust domain>/admin/<name>
+ *   spiffe://<trust domain>/tenant/<tenant>/client/<name>
+ * The CA made the ID, so its shape is known. */
+static RawstorCliTable* identity_table(const char* identity) {
+    char text[RAWSTOR_PKI_IDENTITY_SIZE];
+    snprintf(text, sizeof(text), "%s", identity);
+
+    const char* domain = text + strlen("spiffe://");
+    char* path = strchr(text + strlen("spiffe://"), '/');
+    *path++ = '\0';
+    const char* role = path;
+    const char* name = "";
+    const char* ost_id = "";
+    const char* tenant_id = "";
+    char* slash = strchr(path, '/');
+    *slash++ = '\0';
+    if (strcmp(role, "ost") == 0) {
+        ost_id = slash;
+    } else if (strcmp(role, "tenant") == 0) {
+        /* tenant/<tenant>/client/<name> */
+        role = "client";
+        tenant_id = slash;
+        char* rest = strchr(slash, '/');
+        *rest++ = '\0';
+        name = strchr(rest, '/') + 1;
+    } else {
+        name = slash;
+    }
+
+    RawstorCliTable* table = rawstor_cli_record_create(
+        "pki", identity_columns, identity_types, IDENTITY_NCOLUMNS
+    );
+    if (table == NULL) {
+        return NULL;
+    }
+    RawstorCliCell cells[] = {
+        rawstor_cli_cell_string(identity), rawstor_cli_cell_string(role),
+        rawstor_cli_cell_string(domain),   rawstor_cli_cell_optional(name),
+        rawstor_cli_cell_optional(ost_id), rawstor_cli_cell_optional(tenant_id),
+    };
+    if (rawstor_cli_table_add_row(table, cells) < 0) {
+        rawstor_cli_table_delete(table);
+        return NULL;
+    }
+    return table;
+}
+
 static int command_issue(int argc, char** argv, int renew) {
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -251,8 +321,11 @@ static int command_issue(int argc, char** argv, int renew) {
         {"cert", required_argument, NULL, 'C'},
         {"key", required_argument, NULL, 'k'},
         {"validity", required_argument, NULL, 'V'},
+        {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
+        {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
         {},
     };
+    RawstorCliOutput output = {};
     const char* ca = NULL;
     const char* cert = NULL;
     const char* key = NULL;
@@ -284,6 +357,18 @@ static int command_issue(int argc, char** argv, int renew) {
             }
             break;
         }
+        case RAWSTOR_CLI_OPT_FORMAT:
+            if (rawstor_cli_output_set_format(&output, optarg) != 0) {
+                fprintf(
+                    stderr, "Unknown format: %s (table, json or value)\n",
+                    optarg
+                );
+                return EX_USAGE;
+            }
+            break;
+        case RAWSTOR_CLI_OPT_COLUMN:
+            output.columns = optarg;
+            break;
         default:
             return EX_USAGE;
         }
@@ -291,6 +376,22 @@ static int command_issue(int argc, char** argv, int renew) {
     if (ca == NULL || cert == NULL || key == NULL) {
         fprintf(stderr, "--ca, --cert and --key are required\n");
         return EX_USAGE;
+    }
+
+    /* A bad --column is refused before a certificate is issued: afterwards
+     * the only thing left to report is the identity, and a retry would issue
+     * another key. */
+    RawstorCliTable* probe = rawstor_cli_record_create(
+        "pki", identity_columns, identity_types, IDENTITY_NCOLUMNS
+    );
+    if (probe == NULL) {
+        fprintf(stderr, "Out of memory\n");
+        return EXIT_FAILURE;
+    }
+    int checked = rawstor_cli_output_check(&output, &probe, 1);
+    rawstor_cli_table_delete(probe);
+    if (checked != EXIT_SUCCESS) {
+        return checked;
     }
 
     char identity[RAWSTOR_PKI_IDENTITY_SIZE];
@@ -322,8 +423,14 @@ static int command_issue(int argc, char** argv, int renew) {
             return report("Failed to issue the certificate", res);
         }
     }
-    printf("%s\n", identity);
-    return EXIT_SUCCESS;
+    RawstorCliTable* table = identity_table(identity);
+    if (table == NULL) {
+        fprintf(stderr, "Out of memory\n");
+        return EXIT_FAILURE;
+    }
+    int ret = rawstor_cli_output_print(&output, &table, 1);
+    rawstor_cli_table_delete(table);
+    return ret;
 }
 
 int rawstor_cli_pki(int argc, char** argv) {
