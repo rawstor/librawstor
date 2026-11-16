@@ -442,3 +442,74 @@ TEST_F(CATest, issued_tells_whose_certificate_it_is) {
     EXPECT_FALSE(ca.issued(foreign_pki.issue("foreign", options).cert_file));
     expect_errno(ENOENT, [&] { ca.issued(dir.path("none.crt")); });
 }
+
+TEST_F(CATest, init_can_retry_after_a_domain_publish_failure) {
+    fs::create_directories(dir.path("ca/trust_domain"));
+    EXPECT_THROW(init(), std::system_error);
+    EXPECT_FALSE(fs::exists(dir.path("ca/ca.key")));
+    EXPECT_FALSE(fs::exists(dir.path("ca/ca.crt")));
+    fs::remove(dir.path("ca/trust_domain"));
+    EXPECT_NO_THROW(init());
+    EXPECT_EQ(rawtls::CA(dir.path("ca")).trust_domain(), "cluster.example");
+}
+
+TEST_F(CATest, a_failed_certificate_publish_restores_the_old_key) {
+    init();
+    rawtls::CA ca(dir.path("ca"));
+    ca.issue(
+        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        dir.path("ost.key")
+    );
+    std::string key = read_file(dir.path("ost.key"));
+    std::string cert = read_file(dir.path("ost.crt"));
+    fs::create_directory(dir.path("blocked.crt"));
+    EXPECT_THROW(
+        ca.issue(
+            rawtls::Role::ost, "", ost_id, hour, dir.path("blocked.crt"),
+            dir.path("ost.key")
+        ),
+        std::system_error
+    );
+    EXPECT_EQ(read_file(dir.path("ost.key")), key);
+    EXPECT_EQ(read_file(dir.path("ost.crt")), cert);
+    EXPECT_NO_THROW(rawtls::Context context(config("ost")));
+}
+
+TEST_F(CATest, a_failed_certificate_publish_removes_a_new_key) {
+    init();
+    rawtls::CA ca(dir.path("ca"));
+    fs::create_directory(dir.path("blocked.crt"));
+    EXPECT_THROW(
+        ca.issue(
+            rawtls::Role::ost, "", ost_id, hour, dir.path("blocked.crt"),
+            dir.path("new.key")
+        ),
+        std::system_error
+    );
+    EXPECT_FALSE(fs::exists(dir.path("new.key")));
+}
+
+TEST_F(CATest, a_failed_certificate_publish_restores_a_key_symlink) {
+    init();
+    rawtls::CA ca(dir.path("ca"));
+    ca.issue(
+        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        dir.path("original.key")
+    );
+    std::string key = read_file(dir.path("original.key"));
+    fs::create_symlink(dir.path("original.key"), dir.path("ost.key"));
+    fs::create_directory(dir.path("blocked.crt"));
+    EXPECT_THROW(
+        ca.issue(
+            rawtls::Role::ost, "", ost_id, hour, dir.path("blocked.crt"),
+            dir.path("ost.key")
+        ),
+        std::system_error
+    );
+    EXPECT_TRUE(fs::is_symlink(dir.path("ost.key")));
+    EXPECT_EQ(read_file(dir.path("original.key")), key);
+    EXPECT_NO_THROW(rawtls::Context context(config("ost")));
+    for (const auto& entry : fs::directory_iterator(dir.path())) {
+        EXPECT_NE(entry.path().filename().string().front(), '.');
+    }
+}

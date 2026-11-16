@@ -242,6 +242,35 @@ public:
         }
         _tmp.clear();
     }
+
+    // Keep the previous key beside its destination until the certificate is
+    // published too. On failure restore the original directory entry, including
+    // a symlink, rather than writing through it.
+    void commit_pair(Staged& cert) {
+        Staged previous(_file, 0600, [](FILE*) { return true; });
+        if (unlink(previous._tmp.c_str()) != 0) {
+            raise(errno, "Cannot prepare backup of " + _file);
+        }
+        bool existed = link(_file.c_str(), previous._tmp.c_str()) == 0;
+        if (!existed && errno != ENOENT) {
+            raise(errno, "Cannot preserve " + _file);
+        }
+        try {
+            commit();
+            cert.commit();
+        } catch (...) {
+            int res = existed ? rename(previous._tmp.c_str(), _file.c_str())
+                              : unlink(_file.c_str());
+            if (res != 0 && (existed || errno != ENOENT)) {
+                int errsv = errno;
+                std::string backup = previous._tmp;
+                // Leave the backup available for recovery if restoration fails.
+                previous._tmp.clear();
+                raise(errsv, "Cannot restore " + _file + "; backup: " + backup);
+            }
+            throw;
+        }
+    }
 };
 
 Staged stage_cert(const std::string& file, X509* cert) {
@@ -399,11 +428,21 @@ void CA::init(
     Staged domain_file =
         stage_text(join(dir, "trust_domain"), trust_domain + "\n");
     Staged cert_file = stage_cert(join(dir, "ca.crt"), cert.get());
-    // The certificate last: a CA exists once it is there, and a failure before
-    // leaves no CA, only files a second init replaces.
+    // Publish the certificate last and remove incomplete initialization files
+    // on failure so initialization can be retried.
     key_file.commit();
-    domain_file.commit();
-    cert_file.commit();
+    bool domain_committed = false;
+    try {
+        domain_file.commit();
+        domain_committed = true;
+        cert_file.commit();
+    } catch (...) {
+        unlink(join(dir, "ca.key").c_str());
+        if (domain_committed) {
+            unlink(join(dir, "trust_domain").c_str());
+        }
+        throw;
+    }
 }
 
 CA::CA(const std::string& dir) : _dir(dir) {
@@ -452,13 +491,9 @@ std::string CA::issue_id(
         Profile{false, common_name, id}, key.get(), ca.get(), ca_key.get(),
         validity
     );
-    // Both aside before either is replaced: a failure to write leaves the old
-    // pair. Only a failure of the second rename can leave a new key with the
-    // old certificate, which a process refuses and keeps what it has.
     Staged staged_key = stage_key(key_file, key.get());
     Staged staged_cert = stage_cert(cert_file, cert.get());
-    staged_key.commit();
-    staged_cert.commit();
+    staged_key.commit_pair(staged_cert);
     return id;
 }
 

@@ -81,7 +81,9 @@ public:
      * SpiffeId.
      *
      * Both files are written aside and then renamed over the old ones, so a
-     * failure to write leaves the old pair as it was.
+     * failure to write leaves the old pair as it was. If publishing the
+     * certificate fails, the previous key is restored; if restoration fails,
+     * the error reports the backup path for recovery.
      */
     std::string issue(
         Role role, const std::string& tenant, const std::string& name,
