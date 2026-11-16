@@ -92,7 +92,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev libssl-dev libgtest-dev python3-build ${{ matrix.packages }}
+        sudo apt-get install -y libxxhash-dev libssl-dev libsqlite3-dev libgtest-dev python3-build ${{ matrix.packages }}
     - uses: actions/download-artifact@v8
       with:
         name: sources
@@ -116,6 +116,11 @@ jobs:
       run: |
         cd ${LIBRAWSTOR}
         make test
+    - name: TLS tenant authorization
+      # ctypes loads the ASan-instrumented library into Python. Native unit
+      # tests retain leak checks; this process excludes interpreter allocations.
+      run: |
+        LD_PRELOAD="$(gcc -print-file-name=libasan.so):$(g++ -print-file-name=libstdc++.so)" ASAN_OPTIONS=detect_odr_violation=0:detect_leaks=0 python3 ./${LIBRAWSTOR}/tests/security_authorization.py ./${LIBRAWSTOR}
 
   sources-testio:
     needs: sources
@@ -137,7 +142,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxxhash-dev libssl-dev libsqlite3-dev python3-build ${{ matrix.packages }}
+        sudo apt-get install -y libxxhash-dev libssl-dev ${{ matrix.packages }}
     - uses: actions/download-artifact@v8
       with:
         name: sources
@@ -152,7 +157,7 @@ jobs:
       run: |
         tar -xzf ${LIBRAWSTOR_TAR_GZ}
         cd ${LIBRAWSTOR}
-        ./configure --enable-asan --disable-tests --without-python3 ${{ matrix.without-liburing }}
+        ./configure --enable-asan --disable-tests --without-sqlite3 --without-python3 ${{ matrix.without-liburing }}
     - name: make
       run: |
         cd ${LIBRAWSTOR}
@@ -235,11 +240,6 @@ jobs:
       run: |
         killall rawstor-ost
         while pgrep -x rawstor-ost > /dev/null; do sleep 0.2; done
-    - name: TLS tenant authorization
-      # ctypes loads the ASan-instrumented library into Python. Native unit
-      # tests retain leak checks; this process excludes interpreter allocations.
-      run: |
-        LD_PRELOAD="$(gcc -print-file-name=libasan.so):$(g++ -print-file-name=libstdc++.so)" ASAN_OPTIONS=detect_odr_violation=0:detect_leaks=0 python3 ./${LIBRAWSTOR}/tests/security_authorization.py ./${LIBRAWSTOR}
 
   deb-librawstor:
     needs: sources
