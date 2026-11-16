@@ -105,7 +105,7 @@ static void issue_usage(void) {
         "                        Set permissions for one object and its "
         "versions "
         "(repeat up to 128 times)\n"
-        "                        read=1, write=2, discard=4, manage=8; 0 "
+        "                        read=1, write=2, manage=4; 0 "
         "denies access.\n"
         "                        The mask overrides the role; other objects "
         "keep role permissions.\n"
@@ -578,7 +578,7 @@ static int command_issue(int argc, char** argv, int renew) {
             errno = 0;
             unsigned long mask = strtoul(separator + 1, &end, 10);
             if (!separator[1] || *end || errno || mask > RAWSTOR_PERM_ALL) {
-                fprintf(stderr, "MASK must be 0..15\n");
+                fprintf(stderr, "MASK must be 0..7\n");
                 return EX_USAGE;
             }
             struct RawstorPkiObjectPermissions* entry =

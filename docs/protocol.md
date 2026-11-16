@@ -982,7 +982,7 @@ rawstor-access
 
 The second line is the default role: none=0, reader=1, writer=2, manager=3. Following lines
 are optional per-object restrictions, sorted by canonical lowercase UUID,
-with decimal masks (`read=1`, `write=2`, `discard=4`, `manage=8`). Each line,
+with decimal masks (`read=1`, `write=2`, `manage=4`). Each line,
 including the final one, ends in a newline. At most 128 objects are allowed;
 duplicate objects, nil UUIDs, unknown roles/bits, noncanonical content,
 trailing DER data and duplicate policy extensions are rejected. A missing

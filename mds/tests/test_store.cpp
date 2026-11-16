@@ -1593,10 +1593,10 @@ TEST_F(
         std::string("spiffe://cluster.example/tenant/") + tenant_text +
         "/client/vhost"
     );
-    peer.permissions({RAWSTOR_ROLE_NONE, {{object_text, 7}}});
+    peer.permissions({RAWSTOR_ROLE_NONE, {{object_text, 3}}});
     EXPECT_NO_THROW(store.authorize(&peer, RAWSTOR_CMD_SET_OBJECT));
     EXPECT_EQ(
-        store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object).permissions, 7u
+        store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object).permissions, 3u
     );
     EXPECT_THROW(
         store.authorize(&peer, RAWSTOR_CMD_RESOLVE, other), std::system_error

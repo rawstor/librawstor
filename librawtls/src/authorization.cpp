@@ -53,7 +53,7 @@ uint32_t role_permissions(uint32_t role) {
     case RAWSTOR_ROLE_READER:
         return RAWSTOR_PERM_READ;
     case RAWSTOR_ROLE_WRITER:
-        return RAWSTOR_PERM_READ | RAWSTOR_PERM_WRITE | RAWSTOR_PERM_DISCARD;
+        return RAWSTOR_PERM_READ | RAWSTOR_PERM_WRITE;
     case RAWSTOR_ROLE_MANAGER:
         return RAWSTOR_PERM_ALL;
     case RAWSTOR_ROLE_NONE:
@@ -78,12 +78,9 @@ uint32_t member_permission(RawstorCommandType command, uint64_t flags) {
     case RAWSTOR_CMD_LEAVE:
     case RAWSTOR_CMD_SYNC_PREPARE:
     case RAWSTOR_CMD_SYNC_ACCEPT:
-        return RAWSTOR_PERM_WRITE;
     case RAWSTOR_CMD_DISCARD:
-        return RAWSTOR_PERM_DISCARD;
     case RAWSTOR_CMD_WRITE_ZEROES:
-        return flags & RAWSTOR_FLAG_UNMAP ? RAWSTOR_PERM_DISCARD
-                                          : RAWSTOR_PERM_WRITE;
+        return RAWSTOR_PERM_WRITE;
     case RAWSTOR_CMD_ALLOCATE:
     case RAWSTOR_CMD_RELEASE:
     case RAWSTOR_CMD_CREATE_VERSION:
@@ -258,8 +255,7 @@ int Authorization::check(
     RawstdUUID selected{};
     if (version)
         memcpy(selected.bytes, version, sizeof(selected.bytes));
-    if (!rawstd_uuid_is_nil(&selected) &&
-        (required & (RAWSTOR_PERM_WRITE | RAWSTOR_PERM_DISCARD)))
+    if (!rawstd_uuid_is_nil(&selected) && (required & RAWSTOR_PERM_WRITE))
         return EACCES;
     return 0;
 }

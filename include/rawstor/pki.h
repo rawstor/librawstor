@@ -16,11 +16,9 @@ extern "C" {
 /** Permissions and tenant roles signed into client certificates. */
 #define RAWSTOR_PERM_READ 1u
 #define RAWSTOR_PERM_WRITE 2u
-#define RAWSTOR_PERM_DISCARD 4u
-#define RAWSTOR_PERM_MANAGE 8u
+#define RAWSTOR_PERM_MANAGE 4u
 #define RAWSTOR_PERM_ALL                                                       \
-    (RAWSTOR_PERM_READ | RAWSTOR_PERM_WRITE | RAWSTOR_PERM_DISCARD |           \
-     RAWSTOR_PERM_MANAGE)
+    (RAWSTOR_PERM_READ | RAWSTOR_PERM_WRITE | RAWSTOR_PERM_MANAGE)
 #define RAWSTOR_ROLE_NONE 0u
 #define RAWSTOR_ROLE_READER 1u
 #define RAWSTOR_ROLE_WRITER 2u

@@ -314,7 +314,7 @@ def main():
                                   '--mirrors', '1', '--format', 'value', '--column', 'target'], 'manager')
             run(['pki', 'issue', '--ca', directory / 'ca', '--cert', directory / 'scoped.crt',
                  '--key', directory / 'scoped.key', '--role', 'none', '--object-permissions',
-                 str(uuid.UUID(bytes=object_id)) + ':7', 'client', tenant, 'vhost'])
+                 str(uuid.UUID(bytes=object_id)) + ':3', 'client', tenant, 'vhost'])
             info = json.loads(run(['pki', 'show', '--cert', directory / 'scoped.crt', '--format', 'json']))
             assert info['access_role'] == 'none', info
             run(['pki', 'renew', '--ca', directory / 'ca', '--cert', directory / 'scoped.crt',

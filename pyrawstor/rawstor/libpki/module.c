@@ -95,7 +95,7 @@ static PyObject* py_pki_issue(PyObject* Py_UNUSED(self), PyObject* args) {
                 Py_DECREF(encoded);
                 PyErr_SetString(
                     PyExc_ValueError,
-                    "object_permissions requires UUID keys and masks in 0..15"
+                    "object_permissions requires UUID keys and masks in 0..7"
                 );
                 return NULL;
             }

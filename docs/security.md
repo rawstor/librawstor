@@ -294,7 +294,7 @@ apply its policy to commands and the object's owner. OST does not contact MDS
 for authorization, and a client can use a direct OST target while MDS is down.
 
 `none` grants no default permissions; `reader` grants read; `writer` adds
-write/discard; `manager` adds structural operations. Explicit object masks
+write (including discard and zeroing); `manager` adds structural operations. Explicit object masks
 override the role defaults and cover all chunks and versions. A zero mask denies
 the object; unspecified objects retain the role defaults. `none` plus one object
 mask therefore grants access only to that object, including its versions. Snapshots remain immutable. See the signed
@@ -320,7 +320,7 @@ Two kinds of principals, told apart by the path of their SPIFFE ID:
 
 - **Tenant principals** (`/tenant/<id>/client/...`) hold one role inside
   their own tenant, signed into the certificate:
-  `none` → no defaults; `reader` → `read`; `writer` → `read`, `write`, `discard`; `manager` →
+  `none` → no defaults; `reader` → `read`; `writer` → `read`, `write`; `manager` →
   those plus `manage` (structural changes: allocate, release, versions,
   freeze). Explicit object permissions override these defaults. A `none` client
   has no tenant-wide listing permission and may access only its named objects.
@@ -339,7 +339,7 @@ OST commands:
 | `READ`, `META`, `LIST_VERSIONS` | `read` | role | role |
 | `WRITE`, `FLUSH`, `LEAVE` | `write` | — | — |
 | `SYNC_PREPARE`, `SYNC_ACCEPT` (the chunk membership register, including witnesses) | `write` | — | role |
-| `DISCARD`, `WRITE_ZEROES` with `UNMAP` | `discard` | — | — |
+| `DISCARD`, `WRITE_ZEROES` with `UNMAP` | `write` | — | — |
 | `WRITE_ZEROES` without `UNMAP` | `write` | — | — |
 | `ALLOCATE`, `RELEASE`, `CREATE_VERSION`, `FREEZE`, `THAW` | `manage` | — | role |
 | `SET_OWNER` (records the owner in one member; `rawstor object transfer` sends it to every member) | — | — | role |

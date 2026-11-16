@@ -126,6 +126,37 @@ TEST(AuthorizationTest, object_masks_override_role_defaults) {
     );
 }
 
+TEST(AuthorizationTest, discard_and_zeroes_require_write_permission) {
+    Connection connection;
+    rawtls::Authorization authorization;
+    RawstdUUID version{};
+    ASSERT_EQ(rawstd_uuid7_init(&version), 0);
+    for (auto command : {RAWSTOR_CMD_DISCARD, RAWSTOR_CMD_WRITE_ZEROES}) {
+        for (uint64_t flags : {uint64_t{0}, uint64_t{RAWSTOR_FLAG_UNMAP}}) {
+            connection.identity.permissions({RAWSTOR_ROLE_READER, {}});
+            EXPECT_EQ(
+                authorization.check(
+                    connection, command, nullptr, 0, nullptr, flags
+                ),
+                EACCES
+            );
+            connection.identity.permissions({RAWSTOR_ROLE_WRITER, {}});
+            EXPECT_EQ(
+                authorization.check(
+                    connection, command, nullptr, 0, nullptr, flags
+                ),
+                0
+            );
+            EXPECT_EQ(
+                authorization.check(
+                    connection, command, nullptr, 0, version.bytes, flags
+                ),
+                EACCES
+            );
+        }
+    }
+}
+
 TEST(AuthorizationTest, expired_certificates_and_foreign_owners_are_denied) {
     Connection connection;
     connection.identity.permissions({RAWSTOR_ROLE_MANAGER, {}});
@@ -231,7 +262,7 @@ TEST(AuthorizationTest, invalid_policy_cannot_be_issued) {
     );
     EXPECT_THROW(
         rawtls::certificate_permissions(
-            certificate.get(), {RAWSTOR_ROLE_READER, {{object, 16}}}
+            certificate.get(), {RAWSTOR_ROLE_READER, {{object, 8}}}
         ),
         std::system_error
     );
@@ -246,7 +277,7 @@ TEST(AuthorizationTest, invalid_policy_cannot_be_issued) {
 TEST(AuthorizationTest, none_grants_only_explicit_object_permissions) {
     Cert certificate(X509_new(), X509_free);
     rawtls::certificate_permissions(
-        certificate.get(), {RAWSTOR_ROLE_NONE, {{object, 7}}}
+        certificate.get(), {RAWSTOR_ROLE_NONE, {{object, 3}}}
     );
     auto policy = rawtls::certificate_permissions(certificate.get());
     EXPECT_EQ(policy.role, RAWSTOR_ROLE_NONE);
@@ -254,7 +285,7 @@ TEST(AuthorizationTest, none_grants_only_explicit_object_permissions) {
     RawstdUUID id{}, other{};
     ASSERT_EQ(rawstd_uuid_from_string(&id, object.c_str()), 0);
     ASSERT_EQ(rawstd_uuid7_init(&other), 0);
-    EXPECT_EQ(policy.mask(id.bytes), 7u);
+    EXPECT_EQ(policy.mask(id.bytes), 3u);
     EXPECT_EQ(policy.mask(other.bytes), 0u);
     Connection connection;
     connection.identity.permissions(policy);

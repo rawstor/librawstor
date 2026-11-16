@@ -129,19 +129,19 @@ class TestPki(unittest.TestCase):
         self.assertEqual(after.object_permissions, permissions)
         with self.assertRaises((OSError, ValueError)):
             pki.issue_client(self.ca, TENANT, "vm", crt, key,
-                             role="manager", object_permissions={OST: 16})
+                             role="manager", object_permissions={OST: 8})
         self.assertEqual(pki.show(crt).object_permissions, permissions)
 
     def test_none_with_object_permissions_survives_renewal(self):
         pki.init(self.ca, "cluster.example")
         crt, key = self.dir / "vhost.crt", self.dir / "vhost.key"
         pki.issue_client(self.ca, TENANT, "vhost", crt, key,
-                         role="none", object_permissions={OST: 7})
+                         role="none", object_permissions={OST: 3})
         self.assertEqual(pki.show(crt).access_role, "none")
-        self.assertEqual(pki.show(crt).object_permissions, {OST: 7})
+        self.assertEqual(pki.show(crt).object_permissions, {OST: 3})
         pki.renew(self.ca, crt, key)
         self.assertEqual(pki.show(crt).access_role, "none")
-        self.assertEqual(pki.show(crt).object_permissions, {OST: 7})
+        self.assertEqual(pki.show(crt).object_permissions, {OST: 3})
         pki.issue_client(self.ca, TENANT, "empty", crt, key, role="none")
         self.assertEqual(pki.show(crt).access_role, "none")
         self.assertEqual(pki.show(crt).object_permissions, {})
