@@ -7,14 +7,19 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               -I$(top_srcdir)/librawstd/include \
               -I$(top_srcdir)/librawio/include \
               -I$(top_srcdir)/librawthread/include \
+              -I$(top_srcdir)/librawtls/include \
+              -I$(top_srcdir)/librawtls/tests \
+              $(OPENSSL_CFLAGS) \
               -I$(top_srcdir)/include \
               -I$(top_srcdir)/src
 
 AM_LDFLAGS = $(ASAN_LDFLAGS) -pthread \
+             $(OPENSSL_LIBS) \
              $(GTEST_LIBS)
 
 
 test_all_SOURCES = main.cpp \
+                   tls_process.hpp \
                    owner.hpp \
                    rawio_sync.hpp \
                    register.hpp \
@@ -30,6 +35,7 @@ test_all_SOURCES = main.cpp \
                    test_lifecycle.cpp \
                    test_list.cpp \
                    test_location_info.cpp \
+                   test_tls.cpp \
                    test_member_state.cpp \
                    test_subprocess.cpp \
                    test_tenant.cpp \
@@ -57,6 +63,7 @@ AM_LDFLAGS += -pthread
 test_all_SOURCES += object_env.cpp \
                     object_env.hpp \
                     test_barrier.cpp \
+                    test_tls_mds.cpp \
                     test_object.cpp \
                     test_resync_stress.cpp \
                     test_witness.cpp

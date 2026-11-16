@@ -9,6 +9,7 @@
 #include <rawstor/rawio.h>
 
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -33,6 +34,11 @@ private:
     unsigned int _departures = 0;
     rawstd::DetachedTask _abandon_slot(std::shared_ptr<Slot> slot);
 
+    // The connections still in their TLS handshake: not clients yet, but
+    // waiting on the queue, so ~Server() ends them and waits for them.
+    unsigned int _handshakes = 0;
+    std::set<int> _handshaking;
+
     RawIOQueue* _queue;
     int _fd;
     int _wake_fd;
@@ -49,6 +55,9 @@ private:
     // listening socket.
     rawstd::DetachedTask _accept_task();
     rawstd::Task<void> _add_client(int fd);
+    // Runs _add_client() on its own, so that a peer slow to finish its
+    // handshake holds up no one else; logs a failure.
+    rawstd::DetachedTask _admit(int fd);
 
     // Only launched when `_wake_fd` holds a real fd (see the constructor):
     // a single-shot read of one byte from it, which a caller elsewhere (a

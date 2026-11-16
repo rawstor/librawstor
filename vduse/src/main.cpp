@@ -158,6 +158,12 @@ void sighup_handler(int) {
     (void)n;
 }
 
+// SIGUSR1 (which spiffe-helper sends by default after a renewal): the
+// certificate is read again before the next connection. Safe in a handler.
+void reload_handler(int) {
+    rawstor_tls_request_reload();
+}
+
 void server(
     unsigned int queue_size, unsigned int num_queues, const std::string& target,
     bool write_cache_enabled, bool readonly, bool force, int wake_fd,
@@ -346,6 +352,18 @@ int main(int argc, char** argv) {
             int errsv = errno;
             errno = 0;
             std::cerr << "Failed to register SIGHUP handler: "
+                      << strerror(errsv) << std::endl;
+            return rawstd_exitcode_for_errno(errsv);
+        }
+
+        struct sigaction reload_sact = {};
+        reload_sact.sa_handler = reload_handler;
+        reload_sact.sa_flags = SA_RESTART;
+        sigemptyset(&reload_sact.sa_mask);
+        if (sigaction(SIGUSR1, &reload_sact, nullptr) == -1) {
+            int errsv = errno;
+            errno = 0;
+            std::cerr << "Failed to register SIGUSR1 handler: "
                       << strerror(errsv) << std::endl;
             return rawstd_exitcode_for_errno(errsv);
         }

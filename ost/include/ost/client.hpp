@@ -10,6 +10,8 @@
 
 #include <rawio/queue.hpp>
 
+#include <rawtls/transport.hpp>
+
 #include <rawstd/coro.hpp>
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
@@ -35,9 +37,10 @@ private:
     RawIOQueue* _queue;
     Server& _server;
     int _fd;
+    // The connection's bytes, plain or through TLS.
+    std::unique_ptr<rawtls::Transport> _transport;
     // Set by HANDSHAKE, the first request: nothing is served before it.
     bool _handshaken = false;
-    RawIOEvent* _recv_event;
     std::shared_ptr<Slot> _slot;
     uint64_t _size = 0;
     // The write barrier of the chunk member `_slot` is bound to, looked up
@@ -64,8 +67,7 @@ private:
     // all -- only actually reaching into one, via `weak`, once dispatch
     // begins. See the .cpp for why this can't just be a coroutine-local
     // recv stream the way ost/src/ost_backend.cpp's rawio::RecvStream is.
-    static rawstd::DetachedTask
-    _recv_pump(std::weak_ptr<Client> weak, RawIOQueue* queue, int fd);
+    static rawstd::DetachedTask _recv_pump(std::weak_ptr<Client> weak, int fd);
 
     // Every _*() below is `static` (no implicit `this`) and takes a
     // `weak_ptr<Client>` explicitly: each is a coroutine that may co_await
@@ -195,10 +197,16 @@ private:
     );
 
 public:
-    static rawstd::Task<std::shared_ptr<Client>>
-    create(RawIOQueue* queue, Server& server, int fd);
+    // `transport` is the connection on `fd`, after any TLS handshake.
+    static rawstd::Task<std::shared_ptr<Client>> create(
+        RawIOQueue* queue, Server& server, int fd,
+        std::unique_ptr<rawtls::Transport> transport
+    );
 
-    Client(Private, RawIOQueue* queue, Server& server, int fd);
+    Client(
+        Private, RawIOQueue* queue, Server& server, int fd,
+        std::unique_ptr<rawtls::Transport> transport
+    );
     Client(const Client&) = delete;
     Client(Client&&) = delete;
     ~Client() noexcept;
@@ -211,7 +219,7 @@ public:
     // Never throws -- every failure along the way is logged and otherwise
     // ignored, same as ~Client()'s own (synchronous) cleanup. Not required
     // before destruction: ~Client() falls back to the same cleanup,
-    // for whichever of _slot/_fd/_recv_event this didn't
+    // for whichever of _slot/_fd this didn't
     // already get to (each is cleared here as it's closed, so the two
     // never redo each other's work).
     rawstd::Task<void> close();

@@ -29,3 +29,49 @@ exits with `EX_CONFIG` (78), which the shipped systemd units do not restart.
 `RAWSTOR_OPTS_SO_SNDTIMEO`, `RAWSTOR_OPTS_SO_RCVTIMEO`,
 `RAWSTOR_OPTS_TCP_USER_TIMEOUT` and the retry backoff, and allows no backlog in
 `RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY`.
+
+## TLS
+
+Every connection between rawstor processes -- a client to an OST or an MDS, an
+OST to another OST -- can run over TLS 1.3 with mutual authentication; see the
+[Security design](security.md). TLS is on when all four of these are set, and
+off when none is: a process that sets some but not all refuses to start with
+`EX_CONFIG`. While it is off the connections are plaintext and no peer is
+authenticated, and the process logs that at start.
+
+| Variable | Description |
+|----------|-------------|
+| `RAWSTOR_TLS_TRUST_DOMAIN` | The trust domain of the cluster, the host part of every SPIFFE ID in it (`cluster.example` in `spiffe://cluster.example/ost/<uuid>`). A peer whose ID is in another trust domain is refused, whoever signed its certificate. |
+| `RAWSTOR_TLS_CERT` | This process's certificate, PEM, with the chain to the CA if it is not the CA itself. It must have exactly one URI SAN, the process's SPIFFE ID, and the extended key usages `serverAuth` and `clientAuth`. |
+| `RAWSTOR_TLS_KEY` | The private key of the certificate, PEM. |
+| `RAWSTOR_TLS_CA` | The CAs a peer's certificate must chain to, PEM; several may be listed. |
+| `RAWSTOR_TLS_CRL` | Optional: a CRL, PEM, checked for the peer's certificate. It must cover the CA. |
+| `RAWSTOR_TLS_MDS_ID` | Optional: the name of the MDS this process connects to, the last segment of its SPIFFE ID (`mds-1` for `spiffe://cluster.example/mds/mds-1`). Every `mds://` connection must then present exactly that ID. |
+
+The SPIFFE ID of a process says what it is:
+
+| ID | Process |
+|----|---------|
+| `spiffe://<trust_domain>/ost/<ost_id>` | an OST, `ost_id` being its id in the MDS topology |
+| `spiffe://<trust_domain>/mds/<name>` | an MDS |
+| `spiffe://<trust_domain>/admin/<name>` | an operator or control plane |
+| `spiffe://<trust_domain>/tenant/<tenant_id>/client/<name>` | a tenant's client |
+
+A client takes a server to be an OST or an MDS by its ID: an `ost://` address
+needs an OST and an `mds://` one an MDS. An OST the MDS has resolved must also
+present the ID the MDS named for it, so one OST cannot answer for another. The
+MDS is held to the name in `RAWSTOR_TLS_MDS_ID` when it is set; without it, as
+for an `ost://` address the MDS has not named, any server of that role in the
+trust domain is accepted, so set it wherever a client talks to one MDS.
+
+The OST an address stands for is remembered by the address, for the life of the
+process: when an OST is replaced at the same address, an object resolved before
+the replacement fails to connect (the new OST's ID is not the one it was told)
+until it is resolved again.
+
+The certificate is read again, for the connections made after it, on `SIGHUP`
+and `SIGUSR1` in `rawstor-ost` and `rawstor-mds`, and on `SIGUSR1` in
+`rawstor-vhost` and `rawstor-vduse`, where `SIGHUP` already re-reads the size
+of the object. The connections already open keep the certificate they started
+with. A file that cannot be read is logged and the old certificate stays.
+Session tickets are off, so each connection makes a full handshake.

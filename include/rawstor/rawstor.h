@@ -91,6 +91,21 @@ int rawstor_initialize(const struct RawstorOpts* opts) RAWSTOR_NOEXCEPT;
 
 void rawstor_terminate(void) RAWSTOR_NOEXCEPT;
 
+/**
+ * @brief Ask for the TLS certificate, key and CAs to be read again.
+ *
+ * The files named by the TLS settings (RAWSTOR_TLS_CERT, RAWSTOR_TLS_KEY,
+ * RAWSTOR_TLS_CA and RAWSTOR_TLS_CRL, see docs/configuration.md) are read
+ * again before the next connection is made. Connections already established
+ * keep the certificate they started with. If a file cannot be read the error
+ * is logged and the old settings stay. Does nothing when TLS is not
+ * configured.
+ *
+ * Safe to call from a signal handler, so a service can reload on SIGHUP or
+ * SIGUSR1 after a certificate renewal.
+ */
+void rawstor_tls_request_reload(void) RAWSTOR_NOEXCEPT;
+
 #ifdef __cplusplus
 }
 #endif

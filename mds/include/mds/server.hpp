@@ -8,6 +8,7 @@
 #include <rawstor/rawio.h>
 
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 
@@ -34,6 +35,14 @@ private:
 
     rawstd::DetachedTask _accept_task();
     rawstd::Task<void> _add_client(int fd);
+    // Runs _add_client() on its own, so that a peer slow to finish its TLS
+    // handshake holds up no one else; logs a failure.
+    rawstd::DetachedTask _admit(int fd);
+
+    // The connections still in their handshake: not clients yet, but waiting
+    // on the queue, so ~Server() ends them and waits for them.
+    unsigned int _handshakes = 0;
+    std::set<int> _handshaking;
 
     // Only launched when `wake_fd` (the constructor's last argument) holds
     // a real fd -- same self-pipe shutdown mechanism as ost::Server's own

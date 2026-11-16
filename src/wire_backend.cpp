@@ -3,6 +3,7 @@
 
 #include "opts.h"
 #include "telemetry.hpp"
+#include "tls.hpp"
 
 #include <rawio/awaitable.hpp>
 #include <rawio/queue.hpp>
@@ -532,7 +533,7 @@ BackendOp* Backend::_find_op(uint16_t cid) {
 }
 
 void Backend::_add_op(const std::shared_ptr<BackendOp>& op) {
-    if (_read_event == nullptr) {
+    if (!_receiving) {
         // _recv_pump has already exited (e.g. the connection died right
         // after a previous op's response, before this one was ever
         // issued -- _connect() itself and this op's own caller can both
@@ -567,20 +568,45 @@ void Backend::_remove_op(uint16_t cid) {
 Backend::Backend(Private p, rawio::Queue& queue, const rawstd::URI& location) :
     rawstor::Backend(p, queue, location),
     _cid_counter(0),
-    _read_event(nullptr),
+    _receiving(false),
     _ops(),
     _pump() {
 }
 
-Backend::~Backend() {
-    if (_read_event != nullptr) {
-        try {
-            _queue.cancel(_read_event);
-        } catch (const std::exception& e) {
-            rawstd_warning("Failed to cancel event: %s\n", e.what());
-        }
-        _read_event = nullptr;
+} // namespace wire
+} // namespace rawstor
+
+namespace {
+
+rawstd::Task<size_t> no_connection() {
+    RAWSTD_THROW_SYSTEM_ERROR(EBADF);
+    co_return 0;
+}
+
+} // namespace
+
+namespace rawstor {
+namespace wire {
+
+rawstd::Task<size_t>
+Backend::_send(const void* buf, size_t size, unsigned int flags) {
+    if (_transport == nullptr) {
+        return no_connection();
     }
+    return _transport->send(buf, size, flags);
+}
+
+rawstd::Task<size_t> Backend::_sendmsg(const msghdr* msg, unsigned int flags) {
+    if (_transport == nullptr) {
+        return no_connection();
+    }
+    return _transport->sendmsg(msg, flags);
+}
+
+Backend::~Backend() {
+    // Destroying the transport stops the receive stream, while everything
+    // the pump touches is still here.
+    _transport.reset();
 }
 
 } // namespace wire
@@ -695,6 +721,11 @@ rawstd::Task<void> Backend::_wire_connect() {
 
     set_fd(fd);
 
+    // TLS, when configured, is settled before the first byte of the protocol.
+    _transport = co_await tls::connect(
+        _queue, fd, location().scheme(), location().host()
+    );
+
     _start_receive_ring();
 
     co_await _wire_handshake();
@@ -743,11 +774,11 @@ void Backend::_start_receive_ring() {
         RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");
     // Short metadata responses need 32KiB. Data I/O and variable-sized
     // listings use 1024 buffers of 128KiB for burst headroom.
-    rawio::RecvStream stream = _queue.recv_multishot(
-        fd(), _large_receive_ring ? 1u << 17 : 4096,
+    rawio::RecvStream stream = _transport->recv_multishot(
+        _large_receive_ring ? 1u << 17 : 4096,
         _large_receive_ring ? 64 * 16 : 8, sizeof(RawstorFrameResponse), 0
     );
-    _read_event = stream.event();
+    _receiving = true;
     _pump.begin();
     try {
         _recv_pump(
@@ -775,9 +806,9 @@ rawstd::Task<void> Backend::_ensure_large_receive_ring() {
     _receive_resize.begin();
     std::exception_ptr error;
     try {
-        if (_read_event != nullptr) {
-            co_await _queue.cancel(_read_event);
-            _read_event = nullptr;
+        if (_receiving) {
+            _transport->cancel_recv_multishot();
+            _receiving = false;
         }
         co_await _pump.settle();
         _large_receive_ring = true;
@@ -812,13 +843,12 @@ rawstd::Task<void> Backend::_wire_close() {
     // (the common case).
     _fail_in_flight(ECONNABORTED);
 
-    if (_read_event != nullptr) {
-        co_await _queue.cancel(_read_event);
-        _read_event = nullptr;
+    if (_receiving) {
+        _transport->cancel_recv_multishot();
+        _receiving = false;
     }
-    // The cancel above only resolves once the cancel request itself is
-    // processed; the pump returns only once it sees its registration's own
-    // final ECANCELED completion, which can come later. Waiting for it here
+    // The cancel above is only a request; the pump returns only once it sees
+    // its registration's own final ECANCELED completion. Waiting for it here
     // means nothing of this connection is left suspended on the queue once
     // close() returns -- a caller free to destroy the queue right after
     // would otherwise leave the pump's frame and its buffer ring behind for
@@ -845,6 +875,7 @@ rawstd::Task<void> Backend::_wire_close() {
         co_await _queue.cancel(f);
         co_await _queue.close(f);
     }
+    _transport.reset();
 }
 
 template <typename T>
@@ -865,8 +896,8 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()
@@ -897,8 +928,8 @@ rawstd::Task<std::vector<unsigned char>> Backend::exchange(
     );
     _add_op(op);
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         op->request_cb(validate_result(op->request_size(), result));
     } catch (const std::system_error& e) {
@@ -952,8 +983,8 @@ rawstd::Task<void> Backend::_wire_list_chunks(
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()
@@ -1049,8 +1080,8 @@ rawstd::Task<void> Backend::_wire_list_tenants(
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()
@@ -1097,8 +1128,8 @@ rawstd::Task<void> Backend::_wire_create(
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()
@@ -1265,8 +1296,8 @@ rawstd::Task<bool> Backend::_sync_request(
     _add_op(op);
 
     try {
-        size_t result = co_await _queue.send(
-            fd(), op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
+        size_t result = co_await _send(
+            op->request_data(), op->request_size(), RAWSTD_MSG_NOSIGNAL
         );
         RAWSTD_TRACE_EVENT_MESSAGE(
             trace_event, "%zu of %zu\n", result, op->request_size()
@@ -1385,7 +1416,7 @@ rawstd::Task<void> Backend::_send_set_object(
     // The demultiplex pump is already running by now -- _connect() starts it
     // before this is ever reachable -- so this is just another
     // cid-dispatched request like list()/create()/....
-    if (_read_event == nullptr) {
+    if (!_receiving) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
     }
 
@@ -1568,12 +1599,11 @@ void Backend::_recv_pump_failed(const std::weak_ptr<Backend>& weak, int error) {
 
     // The stream is no longer trustworthy (either a real transport-level/
     // framing error, a cid we can't resync past, or a cancellation): stop
-    // the pump for good and fail everything still in flight. _read_event
-    // must not outlive it -- ~Backend() would otherwise try to cancel() an
-    // Event that's already gone -- and is cleared first: a failed op's
-    // caller may issue another one right away, which _add_op() must then
-    // fail instead of registering it with a pump that never answers.
-    backend->_read_event = nullptr;
+    // the pump for good and fail everything still in flight. _receiving is
+    // cleared first: a failed op's caller may issue another one right away,
+    // which _add_op() must then fail instead of registering it with a pump
+    // that never answers.
+    backend->_receiving = false;
     backend->_fail_in_flight(error);
 }
 

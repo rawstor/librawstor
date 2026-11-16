@@ -65,6 +65,23 @@ unsigned int rawstor_opts_mirror_probe_interval(void);
 // without a sign of life before the member it brings back is excluded.
 unsigned int rawstor_opts_mirror_resync_lease(void);
 
+// The TLS settings, read from the environment: RAWSTOR_TLS_TRUST_DOMAIN,
+// RAWSTOR_TLS_CERT, RAWSTOR_TLS_KEY and RAWSTOR_TLS_CA, all four or none,
+// and optionally RAWSTOR_TLS_CRL and RAWSTOR_TLS_MDS_ID. All are NULL when TLS
+// is not configured.
+const char* rawstor_opts_tls_trust_domain(void);
+
+const char* rawstor_opts_tls_cert(void);
+
+const char* rawstor_opts_tls_key(void);
+
+const char* rawstor_opts_tls_ca(void);
+
+const char* rawstor_opts_tls_crl(void);
+
+// The name of the MDS a client requires, the last segment of its SPIFFE ID.
+const char* rawstor_opts_tls_mds_id(void);
+
 #ifdef __cplusplus
 }
 #endif
