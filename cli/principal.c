@@ -1,5 +1,7 @@
-#include "principal.h"
+#include "config.h"
+
 #include "output.h"
+#include "principal.h"
 #include "rawio_sync.h"
 #include <rawstd/exitcode.h>
 #include <rawstor/principal.h>
@@ -8,33 +10,113 @@
 #include <string.h>
 #include <sysexits.h>
 
-int rawstor_cli_principal(int argc, char** argv) {
-    if (argc < 3 || !strcmp(argv[1], "--help")) {
-        fprintf(
-            stderr,
-            "usage: rawstor principal set LOCATION ID reader|writer|manager\n"
-            "       rawstor principal set LOCATION ID rights OBJECT MASK\n"
-            "       rawstor principal remove LOCATION ID [OBJECT]\n"
-            "       rawstor principal list LOCATION\n"
-            "MASK is a bitmask: read=1, write=2, discard=4, manage=8.\n"
+static void principal_usage(const char* command) {
+    printf("Rawstor CLI " PACKAGE_VERSION "\n\nAccess administration\n\n");
+    if (!command || !strcmp(command, "set")) {
+        printf(
+            "Usage: rawstor access set [LOCATION] ID reader|writer|manager\n"
+            "       rawstor access set [LOCATION] ID rights OBJECT MASK\n\n"
+            "Set a tenant principal role or restrict access to one object.\n"
+            "  reader   Read objects and versions.\n"
+            "  writer   Read, write and discard object data.\n"
+            "  manager  Writer rights plus object and version management.\n"
+            "MASK combines read=1, write=2, discard=4, manage=8 (0 denies "
+            "access).\n"
+            "Object restrictions intersect the principal's role.\n\n"
         );
-        return argc > 1 && !strcmp(argv[1], "--help") ? EXIT_SUCCESS : EX_USAGE;
+    }
+    if (!command || !strcmp(command, "remove")) {
+        printf(
+            "Usage: rawstor access remove [LOCATION] ID [OBJECT]\n\n"
+            "Remove a principal, or remove one object restriction to restore "
+            "role rights.\n\n"
+        );
+    }
+    if (!command || !strcmp(command, "list")) {
+        printf(
+            "Usage: rawstor access list [LOCATION] [OPTIONS]\n\n"
+            "List principal roles and object restrictions.\n"
+            "Columns: identity, role, object_id, "
+            "rights.\n" RAWSTOR_CLI_OUTPUT_USAGE "\n"
+        );
+    }
+    printf(
+        "LOCATION is one mds:// address; defaults to RAWSTOR_LOCATION.\n"
+        "An explicit LOCATION takes precedence over the environment.\n"
+        "ID is spiffe://DOMAIN/tenant/TENANT_UUID/client/NAME.\n"
+        "OBJECT is an object UUID. Provider admin credentials are required.\n"
+        "Changes apply to new capabilities; existing tokens last until "
+        "expiry.\n"
+        "  -h, --help  Show help for this command.\n\n"
+        "Examples:\n"
+        "  rawstor access list mds://localhost:7776\n"
+        "  RAWSTOR_LOCATION=mds://localhost:7776 rawstor access list\n"
+        "  rawstor access set mds://localhost:7776 "
+        "spiffe://cluster.example/tenant/00000000-0000-0000-0000-000000000001/"
+        "client/app reader\n"
+    );
+}
+
+int rawstor_cli_principal(int argc, char** argv) {
+    if (argc < 2) {
+        principal_usage(NULL);
+        return EX_USAGE;
+    }
+    if (!strcmp(argv[1], "--help") || !strcmp(argv[1], "-h")) {
+        principal_usage(NULL);
+        return EXIT_SUCCESS;
     }
     const char* command = argv[1];
-    const char* location = argv[2];
-    RawstorCliOutput output = {0};
-    if (!strcmp(command, "list")) {
-        for (int i = 3; i < argc; ++i) {
-            if (!strcmp(argv[i], "--format") && i + 1 < argc) {
-                if (rawstor_cli_output_set_format(&output, argv[++i]))
-                    return EX_USAGE;
-            } else if (!strcmp(argv[i], "--column") && i + 1 < argc) {
-                output.columns = argv[++i];
-            } else
-                return EX_USAGE;
-        }
-        argc = 3;
+    int list = !strcmp(command, "list");
+    if (!list && strcmp(command, "set") && strcmp(command, "remove")) {
+        fprintf(stderr, "Unknown access command: %s\n", command);
+        principal_usage(NULL);
+        return EX_USAGE;
     }
+    RawstorCliOutput output = {0};
+    char* positional[5];
+    int npos = 0;
+    for (int i = 2; i < argc; ++i) {
+        if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
+            principal_usage(command);
+            return EXIT_SUCCESS;
+        }
+        if (list && !strcmp(argv[i], "--format") && i + 1 < argc) {
+            if (rawstor_cli_output_set_format(&output, argv[++i]))
+                return EX_USAGE;
+        } else if (list && !strcmp(argv[i], "--column") && i + 1 < argc) {
+            output.columns = argv[++i];
+        } else if (npos < 5 && argv[i][0] != '-') {
+            positional[npos++] = argv[i];
+        } else {
+            principal_usage(command);
+            return EX_USAGE;
+        }
+    }
+    const char* location = getenv("RAWSTOR_LOCATION");
+    int explicit_location =
+        npos && (list || (strstr(positional[0], "://") &&
+                          strncmp(positional[0], "spiffe://", 9)));
+    if (explicit_location)
+        location = positional[0];
+    if (!location || !*location) {
+        fprintf(stderr, "Specify LOCATION or set RAWSTOR_LOCATION.\n");
+        principal_usage(command);
+        return EX_USAGE;
+    }
+    int arguments = npos - explicit_location;
+    if ((list && arguments != 0) ||
+        (!strcmp(command, "remove") && arguments != 1 && arguments != 2) ||
+        (!strcmp(command, "set") && arguments != 2 && arguments != 4)) {
+        principal_usage(command);
+        return EX_USAGE;
+    }
+    // Normalize optional LOCATION so all operations share the same dispatch.
+    char* normalized[7] = {argv[0], argv[1], (char*)location};
+    argc = 3;
+    for (int i = explicit_location; i < npos; ++i)
+        normalized[argc++] = positional[i];
+    argv = normalized;
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);
     if (res < 0)

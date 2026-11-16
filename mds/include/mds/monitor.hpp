@@ -67,16 +67,27 @@ private:
     std::unordered_map<std::string, uint64_t> _probe_applied;
 
     static std::string _key(const TopologyOST& ost);
+
     void _wake_up_control();
+
     void _fail(std::exception_ptr error);
+
     rawstd::Task<void> _probe(const TopologyOST& ost);
+
     rawstd::Task<void> _sleep_until(Watch& watch, Clock::time_point due);
+
     rawstd::Task<void> _watch(Watch& watch);
+
     rawstd::Task<void> _wake_up(std::vector<Watch*> watches);
+
     rawstd::Task<void> _retire(std::vector<Watch*> watches);
+
     rawstd::Task<void> _reload();
+
     rawstd::Task<void> _refresh_probe(TopologyOST ost, std::string key);
+
     void _refresh();
+
     rawstd::Task<void> _control();
 
 public:
@@ -84,6 +95,7 @@ public:
      * id and location, so repeated probes of a large topology spread
      * evenly over the interval instead of following one burst. */
     static Clock::duration phase(const TopologyOST& ost, unsigned int interval);
+
     /* The first time at the OST's phase that is at least half an interval
      * after `completed`. Probes shorter than half an interval then keep
      * exactly one interval between starts. */
@@ -95,21 +107,26 @@ public:
     // A witness with this MDS's own identity is local metadata, not a remote
     // data backend to probe through the provider protocol.
     Monitor(ObjectStore& store, Opts opts, RawstdUUID local_witness = {});
+
     Monitor(const Monitor&) = delete;
+
     Monitor& operator=(const Monitor&) = delete;
 
     /* Runs until stop(), or rethrows the first probe-loop failure. */
     void loop();
+
     /* Re-reads the store's topology: starts loops for new OSTs, stops
      * those of removed OSTs and of OSTs whose location changed, and
      * probes kept OSTs that are unavailable without waiting for their
      * next slot. */
     void reload();
+
     /* Probes the given OSTs again `info_refresh_delay` after now, ahead of
      * their regular slot: their space has just changed (an object was
      * created, grown or removed). A request for an OST already waiting for
      * its refresh restarts the wait. Cheap; may be called from any thread. */
     void refresh(const std::vector<RawstdUUID>& osts);
+
     void stop();
 };
 

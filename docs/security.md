@@ -45,7 +45,7 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | kTLS offload of the data path | 2 | ❌ | optional, off by default (stage 0) |
 | `--insecure`: plaintext, no authentication, per process | 2 | ✅ | `--insecure` on every executable, `RawstorOpts::insecure` in a program, never in a systemd unit; [Without TLS](configuration.md#without-tls) |
 | Certificate and CA reload without downtime | 2 | ✅ | `SIGHUP` and `SIGUSR1` in `rawstor-ost` and `rawstor-mds`, `SIGUSR1` in `rawstor-vhost` and `rawstor-vduse`; `rawstor_tls_request_reload()` |
-| Principals and roles in the MDS store, admin API (the tenant registry exists, see stage 1) | 3 | ✅ | MDS principals/object restrictions, `<rawstor/principal.h>`, `rawstor principal` |
+| Principals and roles in the MDS store, admin API (the tenant registry exists, see stage 1) | 3 | ✅ | MDS principals/object restrictions, `<rawstor/principal.h>`, `rawstor access` |
 | Capability tokens issued by `RESOLVE`, checked by OST | 3 | ✅ | Ed25519, certificate/tenant/object/version/chunk/server binding, `RENEW`, closed rights table |
 | `rawstor pki` helper (own CA: init, issue, renew), `rawstor_pki_*()`, pyrawstor `rawstor.pki` | 4 | ✅ | [Issuing certificates](configuration.md#issuing-certificates) |
 | External CA support (SPIRE with spiffe-helper, Vault PKI, step-ca, cert-manager) | 4 | ✅ | documentation: [Issuing certificates](#issuing-certificates) |
@@ -343,7 +343,7 @@ Choices:
 - **Binding to the connection's certificate** makes a leaked token useless
   without the matching private key.
 - **Short lifetime** (minutes). Long-lived connections renew by sending a new
-  token in `RENEW` ([wire format](protocol.md#authorization-extension-feature-bit-0)); an expired token on an open connection fails new
+  token in `RENEW` ([wire format](protocol.md#authorization)); an expired token on an open connection fails new
   commands with `-EACCES` and the client re-resolves.
 - `FREEZE`/`THAW` and the other lease holders keep their own tokens; they
   additionally require the `manage` right.

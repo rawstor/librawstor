@@ -171,6 +171,46 @@ TEST_F(AuthorizationTest, rights_and_scope_are_checked_after_installation) {
         EACCES
     );
 }
+TEST_F(AuthorizationTest, a_snapshot_manager_cannot_release_other_versions) {
+    setenv("RAWSTOR_AUTH_KEYS", pub.c_str(), 1);
+    RawstdUUID snapshot{}, other{};
+    ASSERT_EQ(rawstd_uuid7_init(&snapshot), 0);
+    ASSERT_EQ(rawstd_uuid7_init(&other), 0);
+    uint8_t live[16]{};
+    rawtls::Authorization auth;
+    // A live manager capability may clean up any version of its object.
+    auth.renew(token, connection);
+    EXPECT_EQ(
+        auth.check(connection, RAWSTOR_CMD_RELEASE, token.object_id, 0, live), 0
+    );
+    EXPECT_EQ(
+        auth.check(
+            connection, RAWSTOR_CMD_RELEASE, token.object_id, 0, snapshot.bytes
+        ),
+        0
+    );
+    memcpy(token.version_id, snapshot.bytes, 16);
+    token.rights = RAWSTOR_RIGHT_READ | RAWSTOR_RIGHT_MANAGE;
+    token = rawtls::sign_capability(token, key);
+    auth.renew(token, connection);
+    EXPECT_EQ(
+        auth.check(
+            connection, RAWSTOR_CMD_RELEASE, token.object_id, 0, snapshot.bytes
+        ),
+        0
+    );
+    EXPECT_EQ(
+        auth.check(connection, RAWSTOR_CMD_RELEASE, token.object_id, 0, live),
+        ENOENT
+    );
+    EXPECT_EQ(
+        auth.check(
+            connection, RAWSTOR_CMD_RELEASE, token.object_id, 0, other.bytes
+        ),
+        ENOENT
+    );
+}
+
 TEST(AuthorizationPolicyTest, closed_provider_table) {
     using rawtls::Role;
     EXPECT_TRUE(rawtls::provider_member(Role::mds, RAWSTOR_CMD_META));

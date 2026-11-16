@@ -4,6 +4,7 @@
 Run from a configured build tree: python3 /source/tests/security_authorization.py .
 Requires built OST/MDS/CLI and OpenSSL; no Python rawstor installation is needed.
 """
+from contextlib import ExitStack
 import ctypes
 import errno
 import json
@@ -105,11 +106,14 @@ def main():
     cli = root / 'cli/rawstor'
     processes = []
     files = []
-    with tempfile.TemporaryDirectory(prefix='rawstor-authorization-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='rawstor-authorization-') as temporary, ExitStack() as resources:
         directory = Path(temporary)
         base = {key: value for key, value in os.environ.items() if not key.startswith('RAWSTOR_')}
-        def run(arguments, who=None, success=True):
-            result = subprocess.run([str(cli), *map(str, arguments)], env=environment(who) if who else base,
+        def run(arguments, who=None, success=True, default_location=None):
+            settings = environment(who) if who else base.copy()
+            if default_location is not None:
+                settings["RAWSTOR_LOCATION"] = default_location
+            result = subprocess.run([str(cli), *map(str, arguments)], env=settings,
                                     text=True, capture_output=True, timeout=30)
             assert (result.returncode == 0) == success, (arguments, result.returncode, result.stdout, result.stderr)
             return result.stdout.strip()
@@ -132,11 +136,11 @@ def main():
             context.minimum_version = ssl.TLSVersion.TLSv1_3
             context.load_cert_chain(directory / (who + '.crt'), directory / (who + '.key'))
             connection = context.wrap_socket(socket.create_connection(('127.0.0.1', port), timeout=5))
-            result, data = request(connection, 0x07, struct.pack('<Q', 1))
+            result, data = request(connection, 0x07, struct.pack('<Q', 0))
             assert result == 8, (result, data)
             return connection
         def start(arguments, who, port):
-            log = open(directory / (who + '.log'), 'w+')
+            log = resources.enter_context(open(directory / (who + '.log'), 'w+'))
             files.append(log)
             process = subprocess.Popen(list(map(str, arguments)), env=environment(who), stdout=log, stderr=log)
             processes.append(process)
@@ -172,14 +176,16 @@ def main():
             topology.write_text(f'{ost_id} ost://127.0.0.1:{ost_port} 100 data,witness dc/row/rack/host\n')
             start([root / 'ost/src/rawstor-ost', '--workers', '1', '--queue-size', '128',
                    '--bind', f'127.0.0.1:{ost_port}', 'file://' + str(directory / 'objects')], 'ost', ost_port)
-            start([root / 'mds/src/rawstor-mds', '--bind', f'127.0.0.1:{mds_port}',
+            start([root / 'mds/src/rawstor-mds', '--workers', '1', '--queue-size', '128', '--bind', f'127.0.0.1:{mds_port}',
                    '--db', directory / 'mds.db', '--topology', topology], 'mds', mds_port)
             location = f'mds://127.0.0.1:{mds_port}'
             for owner in [tenant, other]:
                 run(['tenant', 'create', location, '--uuid', owner], 'admin')
             for who, owner, role in [('manager', tenant, 'manager'), ('reader', tenant, 'reader'), ('foreign', other, 'manager')]:
-                run(['principal', 'set', location, f'spiffe://cluster.example/tenant/{owner}/client/{who}', role], 'admin')
-            principals = json.loads(run(['principal', 'list', location, '--format', 'json'], 'admin'))
+                run(['access', 'set', f'spiffe://cluster.example/tenant/{owner}/client/{who}', role], 'admin', default_location=location)
+            assert 'RAWSTOR_LOCATION' in run(['access', 'list', '--help'], 'admin')
+            principals = json.loads(run(['access', 'list', '--format', 'json'], 'admin', default_location=location))
+            assert principals == json.loads(run(['access', 'list', location, '--format', 'json'], 'admin', default_location='mds://127.0.0.1:1'))
             assert 'manager' in str(principals), principals
             # Wait for the MDS monitor to make the OST available for placement.
             deadline = time.monotonic() + 15
@@ -223,6 +229,17 @@ def main():
             version = run(['version', 'create', target, '--format', 'value', '--column', 'target'], 'manager')
             renewal_probe(root, version, environment('reader'), readonly=True)
             run(['version', 'show', version], 'reader')
+            snapshot_id = uuid.UUID(version.rsplit('/', 1)[1]).bytes
+            with connect(mds_port, 'manager') as connection:
+                result, snapshot_map = request(connection, 0x41, struct.pack('<16sQ16sQ', object_id, 0, snapshot_id, 0))
+                assert result > 0, result
+                snapshot_token = snapshot_map[-220:]
+            with connect(ost_port, 'manager') as connection:
+                assert request(connection, 0x15, snapshot_token)[0] == 0
+                for wrong_version in [bytes(16), uuid.uuid4().bytes]:
+                    assert request(connection, 0x05, struct.pack('<16sQ16sQ', object_id, 0, wrong_version, 0))[0] == -errno.ENOENT
+                assert request(connection, 0x0c, struct.pack('<16sQ16sQ', object_id, 0, snapshot_id, 0))[0] > 0
+
             run(['version', 'remove', version], 'reader', success=False)
             run(['version', 'remove', version], 'manager')
             # An even DATA width adds a witness hosted by the MDS itself.
@@ -249,11 +266,26 @@ def main():
             run(['testio', mirror, '--block-size', '4K', '--io-depth', '1', '--count', '2'], 'manager')
             run(['object', 'show', mirror], 'reader')
             run(['object', 'remove', mirror], 'manager')
+            # A lost remove response can be retried within its original window,
+            # but replay must neither extend that window nor regain expired IO.
+            doomed = run(['object', 'create', location, '--size', '64K', '--chunk-size', '64K',
+                          '--mirrors', '1', '--format', 'value', '--column', 'target'], 'manager')
+            doomed_id = uuid.UUID(doomed.rsplit('/', 1)[1]).bytes
+            remove_payload = struct.pack('<16s16s16sQ', doomed_id, uuid.uuid4().bytes, bytes(16), 0)
+            with connect(mds_port, 'manager') as connection:
+                result, removed_map = request(connection, 0x43, remove_payload)
+                assert result > 0, result
+                original_expiry = struct.unpack_from('<Q', removed_map[-220:], 144)[0]
+                result, retried_map = request(connection, 0x43, remove_payload)
+                assert result > 0, result
+                assert struct.unpack_from('<Q', retried_map[-220:], 144)[0] == original_expiry
+                time.sleep(max(0, original_expiry - time.time()) + .1)
+                assert request(connection, 0x43, remove_payload)[0] == -errno.ENOENT
             # A role change and removal affect newly resolved capabilities.
             identity = f'spiffe://cluster.example/tenant/{tenant}/client/manager'
-            run(['principal', 'set', location, identity, 'rights', str(uuid.UUID(bytes=object_id)), '1'], 'admin')
+            run(['access', 'set', location, identity, 'rights', str(uuid.UUID(bytes=object_id)), '1'], 'admin')
             run(['object', 'remove', target], 'manager', success=False)
-            run(['principal', 'remove', location, identity], 'admin')
+            run(['access', 'remove', identity], 'admin', default_location=location)
             run(['object', 'show', target], 'manager', success=False)
             print('Authorization integration: PASS')
         except BaseException:
@@ -268,8 +300,6 @@ def main():
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     process.kill(); process.wait()
-            for log in files:
-                log.close()
 
 
 if __name__ == '__main__':

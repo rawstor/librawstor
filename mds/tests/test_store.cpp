@@ -1519,3 +1519,33 @@ TEST_F(
         std::system_error
     );
 }
+
+TEST_F(
+    ObjectStoreTest, remove_replays_preserve_the_original_capability_deadline
+) {
+    ObjectStore store = make_store();
+    RawstdUUID tenant = make_id(), object = make_id(), mutation = make_id();
+    store.create_tenant(make_id(), tenant);
+    RawstdUUIDString text;
+    rawstd_uuid_to_string(&tenant, &text);
+    std::string identity = std::string("spiffe://cluster.example/tenant/") +
+                           text + "/client/manager";
+    rawtls::SpiffeId peer(identity);
+    store.set_principal(identity, RAWSTOR_PRINCIPAL_MANAGER, {}, 0);
+    store.create(
+        tenant, make_id(), object, chunk_size, chunk_size, make_policy(1)
+    );
+    const uint64_t deadline = 12345;
+    store.remove(mutation, object, deadline);
+    EXPECT_EQ(
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object, {}, mutation)
+            .capability_deadline,
+        deadline
+    );
+    store.remove(mutation, object, deadline + 3600);
+    EXPECT_EQ(
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object, {}, mutation)
+            .capability_deadline,
+        deadline
+    );
+}

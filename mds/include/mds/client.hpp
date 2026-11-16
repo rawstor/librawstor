@@ -73,11 +73,15 @@ public:
         Private, Server& server, int fd,
         std::unique_ptr<rawtls::Transport> transport
     );
+
     Client(const Client&) = delete;
+
     Client(Client&&) = delete;
+
     ~Client();
 
     Client& operator=(const Client&) = delete;
+
     Client& operator=(Client&&) = delete;
 };
 

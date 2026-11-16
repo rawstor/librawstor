@@ -227,7 +227,7 @@ none any more -- the lease ran out and the barrier lifted itself.
 ### Handshake — 8 bytes
 
 `HANDSHAKE`'s request and response payload. `features` is the set of optional
-protocol features, a bit mask. Bit 0 (`RAWSTOR_FEATURE_AUTHORIZATION`) negotiates signed capabilities and the extended chunk map. The client offers what it
+protocol features, a bit mask. No feature bits are currently defined. The client offers what it
 has and the server answers with the subset it accepts, which the connection
 then uses; each side ignores the bits it does not know. There is no protocol
 version: features are the only negotiation.
@@ -958,14 +958,13 @@ offsets of an ID stay on one page. The row type alone says which kind of
 address was listed.
 
 
-## Authorization extension (feature bit 0)
+## Authorization
 
-TLS tenant connections require `RAWSTOR_FEATURE_AUTHORIZATION`; a missing bit
-never enables legacy access. Plaintext connections retain their explicit
-insecure behavior. Provider roles use the closed command tables in
+Authorization is part of the protocol. Plaintext connections retain their
+explicit insecure behavior. Provider roles use the closed command tables in
 [Security](security.md#roles-and-rights-per-command).
 
-With bit 0 negotiated, every `RawstorFrameObjChunkSlot` and its location string
+Every `RawstorFrameObjChunkSlot` and its location string
 in a `RESOLVE` or `OBJ_REMOVE` reply are followed by a 220-byte
 `RawstorCapability`. Provider/insecure replies carry a zero capability. A tenant
 reply carries an Ed25519 signature over the preceding 156 bytes:
@@ -1007,3 +1006,11 @@ Principal mutations are desired-state updates: repeats are harmless. The MDS
 validates the tenant against the identity and its registry. Unknown commands
 on an authenticated connection are denied. Foreign objects are `-ENOENT`;
 missing principals and insufficient rights on an owned object are `-EACCES`.
+
+
+A tenant's `OBJ_REMOVE` records the cleanup capability deadline in the same
+transaction as the deletion. Retries may return the recorded map only within
+that fixed window; they cannot extend its capabilities by changing the token
+lifetime or renewing the client certificate. After the window expires the
+tenant receives `-ENOENT`. Provider-admin cleanup remains available. A tenant
+removal requires a non-nil idempotency key.

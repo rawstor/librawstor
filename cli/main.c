@@ -75,7 +75,7 @@ static void usage(void) {
         "  location              Show information about a location\n"
         "  object                Work with rawstor objects\n"
         "  pki                   Issue the certificates TLS needs\n"
-        "  principal             Manage tenant principals and object rights\n"
+        "  access                Manage tenant roles and object rights\n"
         "  tenant                Work with tenants\n"
         "  testio                Test rawstor IO routines\n"
         "  version               Work with versions of an object\n"
@@ -2111,7 +2111,7 @@ static int run_command(
         ret = command_remove(argc, argv, TARGET_OBJECT);
     } else if (strcmp(command, "info") == 0) {
         ret = command_info(argc, argv);
-    } else if (strcmp(command, "principal") == 0) {
+    } else if (strcmp(command, "access") == 0) {
         ret = rawstor_cli_principal(argc, argv);
     } else if (strcmp(command, "tenant") == 0) {
         ret = run_tenant(argc, argv);

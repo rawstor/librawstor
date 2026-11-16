@@ -607,8 +607,6 @@ rawstd::Task<void> Backend::_authorize(
         _capability.chunk_offset == offset &&
         !memcmp(_capability.version_id, version.bytes, 16))
         co_return;
-    if (!(_features & RAWSTOR_FEATURE_AUTHORIZATION))
-        RAWSTD_THROW_SYSTEM_ERROR(EACCES);
     auto cached = tls::capability(location().host(), object, offset, version);
     if (cached.token.not_after <= now + 5) {
         auto resolver = co_await rawstor::Backend::create(
@@ -826,10 +824,6 @@ rawstd::Task<void> Backend::_wire_handshake() {
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
     _features = reply.features;
-    if (_transport->local() &&
-        _transport->local()->role() == rawtls::Role::client &&
-        !(_features & RAWSTOR_FEATURE_AUTHORIZATION))
-        RAWSTD_THROW_SYSTEM_ERROR(EACCES);
 }
 
 void Backend::_start_receive_ring() {

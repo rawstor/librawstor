@@ -223,10 +223,13 @@ int Authorization::check(
         return ENOENT;
     // CREATE_VERSION and FREEZE name a new version/lease, not the selected
     // version.
-    if (version && memcmp(version, _token.version_id, 16) &&
-        !(command == RAWSTOR_CMD_RELEASE &&
-          (_token.rights & RAWSTOR_RIGHT_MANAGE)))
-        return ENOENT;
+    if (version && memcmp(version, _token.version_id, 16)) {
+        const RawstdUUID live{};
+        if (command != RAWSTOR_CMD_RELEASE ||
+            !(_token.rights & RAWSTOR_RIGHT_MANAGE) ||
+            memcmp(_token.version_id, live.bytes, sizeof(live.bytes)))
+            return ENOENT;
+    }
     uint32_t right = member_right(command, flags);
     if (_token.not_after <= static_cast<uint64_t>(time(nullptr)) || !right ||
         (_token.rights & right) != right)

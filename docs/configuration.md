@@ -191,8 +191,8 @@ Using an admin certificate in the environment:
 
 ```sh
 rawstor tenant create mds://mds:7776 --uuid 018f4e2a-2222-7000-8000-000000000001
-rawstor principal set mds://mds:7776 spiffe://cluster.example/tenant/018f4e2a-2222-7000-8000-000000000001/client/vhost manager
-rawstor principal list mds://mds:7776
+rawstor access set mds://mds:7776 spiffe://cluster.example/tenant/018f4e2a-2222-7000-8000-000000000001/client/vhost manager
+rawstor access list mds://mds:7776
 ```
 
 The tenant client then uses its own certificate. A location without a named
@@ -200,10 +200,14 @@ tenant creates objects for the certificate's tenant; naming a different tenant
 is refused. `reader` can read and list its tenant's objects, `writer` adds data
 writes/discards, `manager` adds structural operations and versions. An admin
 can restrict a principal on one object using
-`rawstor principal set LOCATION ID rights OBJECT MASK`; rights are intersected
+`rawstor access set LOCATION ID rights OBJECT MASK`; rights are intersected
 with the role, and a zero mask denies the object. Removing that restriction
-restores the tenant role with `rawstor principal remove LOCATION ID OBJECT`.
+restores the tenant role with `rawstor access remove LOCATION ID OBJECT`.
 Removing the principal uses the same command without `OBJECT`.
+
+All `access` subcommands accept an optional `LOCATION`, defaulting to
+`RAWSTOR_LOCATION`; an explicit address takes precedence. Use
+`rawstor access --help` or `rawstor access set|list|remove --help` for details.
 
 The C API is `<rawstor/principal.h>`. Role changes, deletion and object
 restrictions affect new capabilities. Existing capabilities remain valid until

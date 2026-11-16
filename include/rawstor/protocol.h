@@ -28,8 +28,7 @@ extern "C" {
  * the union of the bits this build knows, what a client offers and what a
  * server accepts from an offer.
  */
-#define RAWSTOR_FEATURE_AUTHORIZATION UINT64_C(1)
-#define RAWSTOR_FEATURES_SUPPORTED RAWSTOR_FEATURE_AUTHORIZATION
+#define RAWSTOR_FEATURES_SUPPORTED UINT64_C(0)
 
 /*
  * Tenants (docs/tenants.md). An object has one tenant, its owner, recorded

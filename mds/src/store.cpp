@@ -108,6 +108,11 @@ constexpr const char* SCHEMA =
     " idempotency_key BLOB PRIMARY KEY REFERENCES "
     "applied_mutations(idempotency_key) ON DELETE CASCADE,"
     " id BLOB NOT NULL, tenant_id BLOB NOT NULL"
+    ") WITHOUT ROWID;"
+    "CREATE TABLE IF NOT EXISTS removal_capabilities ("
+    " idempotency_key BLOB PRIMARY KEY REFERENCES "
+    "applied_mutations(idempotency_key) ON DELETE CASCADE,"
+    " not_after INTEGER NOT NULL"
     ") WITHOUT ROWID;";
 
 [[noreturn]] void throw_sqlite(sqlite3* db, const char* what) {
@@ -808,13 +813,20 @@ ObjectStore::Access ObjectStore::authorize(
         if (rawstd_uuid_is_nil(&owner) && command == RAWSTOR_CMD_OBJ_REMOVE &&
             !rawstd_uuid_is_nil(&mutation)) {
             Stmt removed(
-                _db, "SELECT tenant_id FROM removed_owners WHERE "
-                     "idempotency_key=? AND id=?;"
+                _db, "SELECT "
+                     "removed_owners.tenant_id,COALESCE(removal_capabilities."
+                     "not_after,0) "
+                     "FROM removed_owners LEFT JOIN removal_capabilities "
+                     "USING(idempotency_key) "
+                     "WHERE removed_owners.idempotency_key=? AND "
+                     "removed_owners.id=?;"
             );
             removed.bind_blob(1, mutation.bytes, sizeof(mutation.bytes))
                 .bind_blob(2, object.bytes, sizeof(object.bytes));
-            if (removed.step())
+            if (removed.step()) {
                 removed.column_uuid(0, &owner);
+                result.capability_deadline = removed.column_int64(1);
+            }
         }
         if (rawstd_uuid_cmp(&owner, &result.tenant) && !new_object)
             RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
@@ -1594,8 +1606,10 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
     );
 }
 
-ObjectMap
-ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
+ObjectMap ObjectStore::remove(
+    const RawstdUUID& idempotency_key, const RawstdUUID& id,
+    uint64_t capability_deadline
+) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     if (std::optional<std::vector<unsigned char>> recorded =
             replay_mutation(_db, idempotency_key, MutationType::remove, id)) {
@@ -1641,6 +1655,14 @@ ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
         saved.bind_blob(1, idempotency_key.bytes, sizeof(idempotency_key.bytes))
             .bind_blob(2, id.bytes, sizeof(id.bytes))
             .bind_blob(3, owner.bytes, sizeof(owner.bytes))
+            .step();
+        Stmt deadline(
+            _db, "INSERT INTO removal_capabilities(idempotency_key,not_after) "
+                 "VALUES(?,?);"
+        );
+        deadline
+            .bind_blob(1, idempotency_key.bytes, sizeof(idempotency_key.bytes))
+            .bind_int64(2, capability_deadline)
             .step();
     }
 

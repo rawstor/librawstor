@@ -55,6 +55,7 @@ void remember_capability(
     const std::string& host, const RawstorCapability& token,
     const std::string& resolver
 );
+
 Capability capability(
     const std::string& host, const RawstdUUID& object, uint64_t offset,
     const RawstdUUID& version

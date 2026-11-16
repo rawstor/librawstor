@@ -108,19 +108,30 @@ private:
     std::function<void(const std::vector<RawstdUUID>&)> _on_space_change;
 
     void _check_layout();
+
     // ENOENT unless `tenant` is registered; the nil tenant (none) always is.
     void _require_tenant(const RawstdUUID& tenant);
+
     void _register_default_tenant();
+
     void _sync_backends(const Topology& topology);
+
     // The caller holds _mutex and has committed.
     void _notify_space_change(std::vector<RawstdUUID> osts);
+
     Topology _available_topology();
+
     void _check_topology(const Topology& topology);
+
     ObjectDescriptor _descriptor(const RawstdUUID& id);
+
     ObjectMap _open_live(const RawstdUUID& id);
+
     ObjectMap _open_version(const RawstdUUID& id, const RawstdUUID& version_id);
+
     // The caller holds _mutex, and a transaction when it stores.
     RawstorObjectMeta _load_witness(const RawstdUUID& id, uint64_t offset);
+
     void _store_witness(
         const RawstdUUID& id, uint64_t offset, const RawstorObjectMeta& meta
     );
@@ -130,6 +141,8 @@ public:
         std::unique_lock<std::recursive_mutex> lock;
         uint32_t rights;
         RawstdUUID tenant;
+        // A recorded deletion cannot extend its original cleanup window.
+        uint64_t capability_deadline = UINT64_MAX;
     };
     // Holds ownership/principal state stable through the synchronous operation.
     Access authorize(
@@ -137,20 +150,27 @@ public:
         const RawstdUUID& object = {}, const RawstdUUID& tenant = {},
         const RawstdUUID& mutation = {}
     );
+
     void set_principal(
         const std::string& identity, uint32_t role, const RawstdUUID& object,
         uint32_t rights
     );
+
     void
     remove_principal(const std::string& identity, const RawstdUUID& object);
+
     std::vector<RawstorFramePrincipalPayload> list_principals();
 
     ObjectStore(const std::string& path, Topology topology);
+
     ObjectStore(const ObjectStore&) = delete;
+
     ObjectStore(ObjectStore&&) = delete;
+
     ~ObjectStore();
 
     ObjectStore& operator=(const ObjectStore&) = delete;
+
     ObjectStore& operator=(ObjectStore&&) = delete;
 
     // `tenant` owns the object (docs/tenants.md); nil for none.
@@ -158,7 +178,9 @@ public:
         const RawstdUUID& tenant, const RawstdUUID& id, uint64_t offset,
         const RawstorObjectSpec& spec
     );
+
     RawstorObjectMeta witness_meta(const RawstdUUID& id, uint64_t offset);
+
     void remove_witness(const RawstdUUID& id, uint64_t offset);
 
     /*
@@ -175,6 +197,7 @@ public:
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
         const RawstdUUID& tenant
     );
+
     void set_witness_owner(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& tenant
     );
@@ -189,6 +212,7 @@ public:
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, bool& ok
     );
+
     RawstorObjectMeta sync_accept(
         const RawstdUUID& id, uint64_t offset,
         const RawstorObjectBallot& ballot, const RawstorObjectBallot& next,
@@ -211,6 +235,7 @@ public:
      */
     void
     create_tenant(const RawstdUUID& idempotency_key, const RawstdUUID& tenant);
+
     void
     remove_tenant(const RawstdUUID& idempotency_key, const RawstdUUID& tenant);
 
@@ -239,7 +264,9 @@ public:
     void set_space_change_listener(
         std::function<void(const std::vector<RawstdUUID>&)> listener
     );
+
     void reset_backend_availability();
+
     bool backend_available(const RawstdUUID& id);
 
     /*
@@ -291,7 +318,10 @@ public:
      * Returns the map the object had, for the caller's fan-out destroy
      * of its chunks.
      */
-    ObjectMap remove(const RawstdUUID& idempotency_key, const RawstdUUID& id);
+    ObjectMap remove(
+        const RawstdUUID& idempotency_key, const RawstdUUID& id,
+        uint64_t capability_deadline = 0
+    );
 
     /*
      * Registers the version: members = exactly the chunk copies that

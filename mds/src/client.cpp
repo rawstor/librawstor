@@ -82,7 +82,7 @@ std::string ost_location(const Topology& topology, const RawstdUUID& ost_id) {
 std::vector<unsigned char> encode_object_map(
     const Topology& topology, const ObjectMap& map,
     const std::function<RawstorCapability(size_t, const PlacementSlot&)>&
-        capability = {}
+        capability
 ) {
     RawstorFrameObjDescriptorPayload descriptor{};
     memcpy(descriptor.id, map.descriptor.id.bytes, sizeof(descriptor.id));
@@ -134,12 +134,10 @@ std::vector<unsigned char> encode_object_map(
                 data.data() + off + sizeof(wire_slot), location.data(),
                 location.size()
             );
-            if (capability) {
-                RawstorCapability token = capability(chunk, slot);
-                size_t start = data.size();
-                data.resize(start + sizeof(token));
-                memcpy(data.data() + start, &token, sizeof(token));
-            }
+            RawstorCapability token = capability(chunk, slot);
+            size_t start = data.size();
+            data.resize(start + sizeof(token));
+            memcpy(data.data() + start, &token, sizeof(token));
         }
         ++chunk;
     }
@@ -243,12 +241,6 @@ std::vector<unsigned char> Client::_encode_map(
     const ObjectMap& map, const RawstdUUID& version,
     const ObjectStore::Access& access
 ) {
-    if (!(_features & RAWSTOR_FEATURE_AUTHORIZATION)) {
-        if (_transport->peer() &&
-            _transport->peer()->role() == rawtls::Role::client)
-            RAWSTD_THROW_SYSTEM_ERROR(EACCES);
-        return encode_object_map(*_server.store().topology(), map);
-    }
     return encode_object_map(
         *_server.store().topology(), map,
         [&](size_t chunk, const PlacementSlot& slot) {
@@ -270,6 +262,12 @@ std::vector<unsigned char> Client::_encode_map(
                               Opts::from_env().capability_lifetime;
             token.not_after =
                 std::min(token.not_after, _transport->peer_expiry());
+            token.not_after = std::min(
+                static_cast<uint64_t>(token.not_after),
+                access.capability_deadline
+            );
+            if (token.not_after <= static_cast<uint64_t>(time(nullptr)))
+                RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
             token.rights = access.rights;
             if (!rawstd_uuid_is_nil(&version))
                 token.rights &= RAWSTOR_RIGHT_READ | RAWSTOR_RIGHT_MANAGE;
@@ -295,13 +293,6 @@ rawstd::Task<void> Client::_dispatch(
         co_await client->_send_response(head.cmd, head.cid, -EPROTO);
         rawstd_error("fd %d: Request %u before the handshake\n", fd, head.cmd);
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-    }
-
-    if (client->_handshaken && client->_transport->peer() &&
-        client->_transport->peer()->role() == rawtls::Role::client &&
-        !(client->_features & RAWSTOR_FEATURE_AUTHORIZATION)) {
-        co_await client->_send_response(head.cmd, head.cid, -EACCES);
-        RAWSTD_THROW_SYSTEM_ERROR(EACCES);
     }
 
     if (client->_transport->peer() &&
@@ -853,10 +844,28 @@ rawstd::Task<void> Client::_dispatch(
                 client->_transport->peer(), head.cmd, uuid_of(payload.id), {},
                 uuid_of(payload.idempotency_key)
             );
-            ObjectMap map = store.remove(
-                uuid_of(payload.idempotency_key), uuid_of(payload.id)
-            );
-            data = client->_encode_map(map, {}, access);
+            bool tenant =
+                client->_transport->peer() &&
+                client->_transport->peer()->role() == rawtls::Role::client;
+            RawstdUUID mutation = uuid_of(payload.idempotency_key);
+            if (tenant && rawstd_uuid_is_nil(&mutation))
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            uint64_t deadline = static_cast<uint64_t>(time(nullptr)) +
+                                Opts::from_env().capability_lifetime;
+            if (tenant)
+                deadline =
+                    std::min(deadline, client->_transport->peer_expiry());
+            ObjectMap map =
+                store.remove(mutation, uuid_of(payload.id), deadline);
+            if (tenant) {
+                auto cleanup = store.authorize(
+                    client->_transport->peer(), head.cmd, uuid_of(payload.id),
+                    {}, mutation
+                );
+                data = client->_encode_map(map, {}, cleanup);
+            } else {
+                data = client->_encode_map(map, {}, access);
+            }
         } catch (const std::system_error& e) {
             res = -e.code().value();
         }

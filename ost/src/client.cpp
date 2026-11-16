@@ -317,13 +317,6 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
             }
 
-            if (client->_handshaken && client->_transport->peer() &&
-                client->_transport->peer()->role() == rawtls::Role::client &&
-                !(client->_features & RAWSTOR_FEATURE_AUTHORIZATION)) {
-                co_await client->_send_response(head.cmd, head.cid, -EACCES, 0);
-                RAWSTD_THROW_SYSTEM_ERROR(EACCES);
-            }
-
             // --- read this request's frame payload and dispatch it ---
             switch (head.cmd) {
             case RAWSTOR_CMD_HANDSHAKE: {
