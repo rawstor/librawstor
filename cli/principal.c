@@ -11,10 +11,38 @@
 #include <sysexits.h>
 
 static void principal_usage(const char* command) {
-    printf("Rawstor CLI " PACKAGE_VERSION "\n\nAccess administration\n\n");
-    if (!command || !strcmp(command, "set")) {
+    printf("Rawstor CLI " PACKAGE_VERSION "\n\n");
+    if (!command) {
         printf(
-            "Usage: rawstor access set [LOCATION] ID reader|writer|manager\n"
+            "usage: rawstor access <subcommand> [command_options]\n\n"
+            "Manage tenant access through the MDS: set assigns a role to the\n"
+            "client identity in a certificate or restricts its rights on one "
+            "object,\n"
+            "list shows the assignments, and remove revokes a role or removes "
+            "an\n"
+            "object restriction. Roles are reader, writer and manager. A "
+            "certificate\n"
+            "identifies a client; the MDS assignments determine what it may "
+            "do.\n\n"
+            "These commands require provider admin credentials and one mds://\n"
+            "LOCATION, given explicitly or through RAWSTOR_LOCATION. Changes "
+            "apply\n"
+            "to new capabilities; existing tokens remain valid until they "
+            "expire.\n\n"
+            "subcommand:\n"
+            "  set                   Assign a tenant role or restrict object "
+            "rights\n"
+            "  list                  Show tenant roles and object "
+            "restrictions\n"
+            "  remove                Revoke a role or remove an object "
+            "restriction\n\n"
+            "Run `rawstor access <subcommand> --help` to show its usage.\n"
+        );
+        return;
+    }
+    if (!strcmp(command, "set")) {
+        printf(
+            "usage: rawstor access set [LOCATION] ID reader|writer|manager\n"
             "       rawstor access set [LOCATION] ID rights OBJECT MASK\n\n"
             "Set a tenant principal role or restrict access to one object.\n"
             "  reader   Read objects and versions.\n"
@@ -25,16 +53,16 @@ static void principal_usage(const char* command) {
             "Object restrictions intersect the principal's role.\n\n"
         );
     }
-    if (!command || !strcmp(command, "remove")) {
+    if (!strcmp(command, "remove")) {
         printf(
-            "Usage: rawstor access remove [LOCATION] ID [OBJECT]\n\n"
+            "usage: rawstor access remove [LOCATION] ID [OBJECT]\n\n"
             "Remove a principal, or remove one object restriction to restore "
             "role rights.\n\n"
         );
     }
-    if (!command || !strcmp(command, "list")) {
+    if (!strcmp(command, "list")) {
         printf(
-            "Usage: rawstor access list [LOCATION] [OPTIONS]\n\n"
+            "usage: rawstor access list [LOCATION] [OPTIONS]\n\n"
             "List principal roles and object restrictions.\n"
             "Columns: identity, role, object_id, "
             "rights.\n" RAWSTOR_CLI_OUTPUT_USAGE "\n"
