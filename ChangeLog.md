@@ -90,6 +90,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CLI object listings preserve explicitly supplied URI tenants and report the owner separately without adding it to unqualified URIs.
+
 - PKI renewal and inspection verify the same certificate they read, using only the CA public key for signature checks.
 
 - PKI publication failures restore the previous key and allow incomplete CA initialization to be retried.

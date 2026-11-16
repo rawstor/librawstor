@@ -192,6 +192,16 @@ def main():
             target = run(['object', 'create', location, '--size', '64K', '--chunk-size', '64K',
                           '--mirrors', '1', '--format', 'value', '--column', 'target'], 'manager')
             object_id = uuid.UUID(target.rsplit('/', 1)[1]).bytes
+            # Display only an explicitly selected URI tenant; retain the actual owner column.
+            for who in ['reader', 'admin']:
+                rows = json.loads(run(['list', '--format', 'json'], who, default_location=location))
+                assert len(rows) == 1 and rows[0]['tenant'] == tenant, rows
+                assert rows[0]['location'] == location, rows
+                assert rows[0]['target'] == location + '/' + str(uuid.UUID(bytes=object_id)), rows
+            selected = location.replace('://', '://' + tenant + '@')
+            rows = json.loads(run(['list', selected, '--format', 'json'], 'reader'))
+            assert rows[0]['location'] == selected, rows
+            assert rows[0]['target'] == selected + '/' + str(uuid.UUID(bytes=object_id)), rows
             run(['testio', target, '--block-size', '4K', '--io-depth', '1', '--count', '4'], 'manager')
             connection_probe(root, target, environment('manager'))
             connection_probe(root, target, environment('reader'), readonly=True)

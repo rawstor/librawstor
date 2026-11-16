@@ -51,7 +51,10 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
   tenant client uses its own tenant; a provider or insecure client uses the
   built-in default tenant. So every row of a
   listing carries its owner, also for the administrator, and
-  `rawstor_target_tenant()` reads it from the address.
+  `rawstor_target_tenant()` reads it from the address. In CLI `object list`,
+  the `tenant` column reports that owner, while displayed `target` and `location`
+  URIs retain only the tenant explicitly supplied in `LOCATION`. When omitted,
+  it is not added to those columns; a TLS client uses its certificate tenant.
 - Every other operation takes the tenant to be informational: an object is
   found by its id, whoever the caller says it is.
 
