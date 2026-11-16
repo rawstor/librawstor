@@ -589,65 +589,10 @@ rawstd::Task<size_t> no_connection() {
 namespace rawstor {
 namespace wire {
 
-rawstd::Task<void> Backend::_authorize(
-    const RawstdUUID& object, uint64_t offset, const RawstdUUID& version
-) {
-    if (!_transport || !_transport->local() ||
-        _transport->local()->role() != rawtls::Role::client ||
-        location().scheme() != "ost")
-        co_return;
-    co_await _authorization_lock.acquire();
-    struct Unlock {
-        rawstd::Semaphore& lock;
-        ~Unlock() { lock.release(); }
-    } unlock{_authorization_lock};
-    const uint64_t now = static_cast<uint64_t>(time(nullptr));
-    if (_capability.rights && _capability.not_after > now + 5 &&
-        !memcmp(_capability.object_id, object.bytes, 16) &&
-        _capability.chunk_offset == offset &&
-        !memcmp(_capability.version_id, version.bytes, 16))
-        co_return;
-    auto cached = tls::capability(location().host(), object, offset, version);
-    if (cached.token.not_after <= now + 5) {
-        auto resolver = co_await rawstor::Backend::create(
-            _queue, rawstd::URI(cached.resolver)
-        );
-        std::exception_ptr error;
-        try {
-            co_await resolver->resolve_targets(object, version);
-        } catch (...) {
-            error = std::current_exception();
-        }
-        co_await resolver->close();
-        if (error)
-            std::rethrow_exception(error);
-        cached = tls::capability(location().host(), object, offset, version);
-    }
-    auto fingerprint = _transport->fingerprint(true);
-    if (memcmp(
-            fingerprint.data(), cached.token.fingerprint, fingerprint.size()
-        ))
-        RAWSTD_THROW_SYSTEM_ERROR(ECONNRESET);
-    RawstorFrameRenew request{
-        {RAWSTOR_MAGIC, RAWSTOR_CMD_RENEW, 0}, cached.token
-    };
-    co_await exchange(&request, sizeof(request), RAWSTOR_CMD_RENEW, 0);
-    _capability = cached.token;
-}
-
 rawstd::Task<size_t>
 Backend::_send(const void* buf, size_t size, unsigned int flags) {
     if (_transport == nullptr) {
         co_return co_await no_connection();
-    }
-    if (size >= sizeof(RawstorFrameHead)) {
-        RawstorFrameHead head;
-        memcpy(&head, buf, sizeof(head));
-        if (head.cmd == RAWSTOR_CMD_READ || head.cmd == RAWSTOR_CMD_WRITE ||
-            head.cmd == RAWSTOR_CMD_DISCARD ||
-            head.cmd == RAWSTOR_CMD_WRITE_ZEROES ||
-            head.cmd == RAWSTOR_CMD_FLUSH || head.cmd == RAWSTOR_CMD_LEAVE)
-            co_await _authorize(_bound_object, _bound_offset, _bound_version);
     }
     co_return co_await _transport->send(buf, size, flags);
 }
@@ -656,7 +601,6 @@ rawstd::Task<size_t> Backend::_sendmsg(const msghdr* msg, unsigned int flags) {
     if (_transport == nullptr) {
         co_return co_await no_connection();
     }
-    co_await _authorize(_bound_object, _bound_offset, _bound_version);
     co_return co_await _transport->sendmsg(msg, flags);
 }
 
@@ -880,9 +824,6 @@ rawstd::Task<void> Backend::_ensure_large_receive_ring() {
 }
 
 rawstd::Task<void> Backend::_wire_close() {
-    _capability = {};
-    _bound_object = {};
-    _bound_version = {};
     // Anything still in _ops at this point was never told this backend
     // is going away otherwise. _recv_pump()'s own catch block below only
     // reaches _fail_in_flight() for a genuine framing/transport error it
@@ -945,15 +886,9 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
 ) {
     if (cmd != RAWSTOR_CMD_LOCATION_INFO && cmd != RAWSTOR_CMD_LEAVE &&
         cmd != RAWSTOR_CMD_FLUSH)
-        co_await _authorize(
-            id, offset,
-            (cmd == RAWSTOR_CMD_META || cmd == RAWSTOR_CMD_RELEASE)
-                ? version_id
-                : RawstdUUID{}
-        );
-    if (cmd == RAWSTOR_CMD_LIST_VERSIONS) {
-        co_await _ensure_large_receive_ring();
-    }
+        if (cmd == RAWSTOR_CMD_LIST_VERSIONS) {
+            co_await _ensure_large_receive_ring();
+        }
     co_await _receive_resize.settle();
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", op_name);
 
@@ -1187,7 +1122,6 @@ rawstd::Task<void> Backend::_wire_create(
     const RawstorObjectSpec& sp, RawstorMemberRole member_role,
     const RawstdUUID& owner
 ) {
-    co_await _authorize(id, offset);
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('c', "fd = %d\n", fd());
 
     std::shared_ptr<BackendOpAllocate> op = std::make_shared<BackendOpAllocate>(
@@ -1358,7 +1292,6 @@ rawstd::Task<bool> Backend::_sync_request(
 ) {
     RawstdUUID id{};
     memcpy(id.bytes, request.payload.object_id, 16);
-    co_await _authorize(id, request.payload.chunk_offset);
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", op_name);
 
     std::shared_ptr<BackendOpSync> op = std::make_shared<BackendOpSync>(
@@ -1486,13 +1419,13 @@ rawstd::Task<void> Backend::_send_set_object(
     int flags, const RawstdUUID& version_id
 ) {
     if (!rawstd_uuid_is_nil(&id))
-        co_await _authorize(id, offset, version_id);
-    // The demultiplex pump is already running by now -- _connect() starts it
-    // before this is ever reachable -- so this is just another
-    // cid-dispatched request like list()/create()/....
-    if (!_receiving) {
-        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
-    }
+        // The demultiplex pump is already running by now -- _connect() starts
+        // it
+        // before this is ever reachable -- so this is just another
+        // cid-dispatched request like list()/create()/....
+        if (!_receiving) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+        }
 
     if (!rawstd_uuid_is_nil(&id)) {
         co_await _ensure_large_receive_ring();
@@ -1522,9 +1455,6 @@ rawstd::Task<void> Backend::_send_set_object(
     );
     try {
         co_await exchange(&request, sizeof(request), RAWSTOR_CMD_SET_OBJECT, 0);
-        _bound_object = id;
-        _bound_offset = offset;
-        _bound_version = version_id;
     } catch (const std::system_error&) {
         throw;
     } catch (...) {

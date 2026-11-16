@@ -11,7 +11,6 @@
 #include <rawstor/location.h>
 #include <rawstor/object.h>
 #include <rawstor/pki.h>
-#include <rawstor/principal.h>
 #include <rawstor/protocol.h>
 #include <rawstor/rawio.h>
 #include <rawstor/rawstor.h>

@@ -44,12 +44,6 @@ private:
     // Set by HANDSHAKE, the first request: nothing is served before it.
     bool _handshaken = false;
     uint64_t _features = 0;
-    rawtls::Authorization _authorization;
-    std::vector<unsigned char> _encode_map(
-        const ObjectMap& map, const RawstdUUID& version,
-        const ObjectStore::Access& access
-    );
-
     static rawstd::DetachedTask _recv_pump(std::weak_ptr<Client> weak);
 
     // `stream` is the connection's request stream, owned by _recv_pump().

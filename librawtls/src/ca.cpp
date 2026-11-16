@@ -1,3 +1,4 @@
+#include <rawtls/authorization.hpp>
 #include <rawtls/ca.hpp>
 
 #include <rawtls/spiffe.hpp>
@@ -90,7 +91,7 @@ struct Profile {
 // extensions only.
 Cert build(
     const Profile& profile, EVP_PKEY* key, X509* issuer, EVP_PKEY* issuer_key,
-    std::chrono::seconds validity
+    std::chrono::seconds validity, const rawtls::Permissions& permissions = {}
 ) {
     if (validity.count() <= 0 || validity.count() > 100LL * 365 * 86400) {
         raise(EINVAL, "The validity is from a second to a hundred years");
@@ -160,6 +161,7 @@ Cert build(
             raw, signer, NID_subject_alt_name, ("URI:" + profile.uri).c_str()
         );
     }
+    rawtls::certificate_permissions(raw, permissions);
     check(
         X509_sign(raw, issuer_key != nullptr ? issuer_key : key, EVP_sha256()) >
             0,
@@ -470,7 +472,8 @@ std::string CA::ca_file() const {
 
 std::string CA::issue_id(
     const std::string& id, std::chrono::seconds validity,
-    const std::string& cert_file, const std::string& key_file
+    const std::string& cert_file, const std::string& key_file,
+    const Permissions& permissions
 ) const {
     // The shape is the one a process is going to be checked against. The
     // identity is the SAN alone; the subject only has to be something to read
@@ -487,6 +490,9 @@ std::string CA::issue_id(
             id + " is not in the trust domain " + _trust_domain + " of this CA"
         );
     }
+    if (parsed->role() != Role::client &&
+        (permissions.role || !permissions.objects.empty()))
+        raise(EINVAL, "Only a client has permissions");
     std::string common_name = parsed->name().substr(0, 64);
 
     Cert ca = read_cert(join(_dir, "ca.crt"));
@@ -498,7 +504,7 @@ std::string CA::issue_id(
     Key key = new_key();
     Cert cert = build(
         Profile{false, common_name, id}, key.get(), ca.get(), ca_key.get(),
-        validity
+        validity, permissions
     );
     Staged staged_key = stage_key(key_file, key.get());
     Staged staged_cert = stage_cert(cert_file, cert.get());
@@ -509,7 +515,7 @@ std::string CA::issue_id(
 std::string CA::issue(
     Role role, const std::string& tenant, const std::string& name,
     std::chrono::seconds validity, const std::string& cert_file,
-    const std::string& key_file
+    const std::string& key_file, const Permissions& permissions
 ) const {
     ERR_clear_error();
     std::string id = "spiffe://" + _trust_domain;
@@ -535,7 +541,10 @@ std::string CA::issue(
         id += "/tenant/" + tenant + "/client/" + name;
         break;
     }
-    return issue_id(id, validity, cert_file, key_file);
+    if (role != Role::client &&
+        (permissions.role || !permissions.objects.empty()))
+        raise(EINVAL, "Only a client has permissions");
+    return issue_id(id, validity, cert_file, key_file, permissions);
 }
 
 std::string CA::renew(
@@ -550,7 +559,8 @@ std::string CA::renew(
         raise(EINVAL, cert_file + " was not issued by this CA");
     }
     return issue_id(
-        identity_of(old.get(), cert_file), validity, cert_file, key_file
+        identity_of(old.get(), cert_file), validity, cert_file, key_file,
+        certificate_permissions(old.get())
     );
 }
 
@@ -579,7 +589,10 @@ CertInfo inspect(const std::string& cert_file, const std::string& ca_file) {
         Cert ca = read_cert(ca_file);
         issued = signed_by(cert.get(), ca.get()) ? 1 : 0;
     }
-    return CertInfo{identity, static_cast<long long>(timegm(&tm)), issued};
+    return CertInfo{
+        identity, static_cast<long long>(timegm(&tm)), issued,
+        certificate_permissions(cert.get())
+    };
 }
 
 } // namespace rawtls

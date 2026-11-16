@@ -109,9 +109,28 @@ class TestPki(unittest.TestCase):
             "spiffe://cluster.example/admin/ops",
         )
         self.assertEqual(
-            pki.issue_client(self.ca, TENANT, "vm-1", crt, key),
+            pki.issue_client(self.ca, TENANT, "vm-1", crt, key, role="reader"),
             f"spiffe://cluster.example/tenant/{TENANT}/client/vm-1",
         )
+
+    def test_client_permissions_survive_renewal(self):
+        pki.init(self.ca, "cluster.example")
+        crt, key = self.dir / "client.crt", self.dir / "client.key"
+        rights = {OST: 1, MDS: 0}
+        pki.issue_client(self.ca, TENANT, "vm", crt, key,
+                         role="manager", object_rights=rights)
+        before = pki.show(crt)
+        self.assertEqual(before.access_role, "manager")
+        self.assertEqual(before.object_rights, rights)
+        pki.renew(self.ca, crt, key)
+        after = pki.show(crt)
+        self.assertEqual(after.identity, before.identity)
+        self.assertEqual(after.access_role, before.access_role)
+        self.assertEqual(after.object_rights, rights)
+        with self.assertRaises((OSError, ValueError)):
+            pki.issue_client(self.ca, TENANT, "vm", crt, key,
+                             role="manager", object_rights={OST: 16})
+        self.assertEqual(pki.show(crt).object_rights, rights)
 
     def test_missing_ca(self):
         with self.assertRaises(FileNotFoundError):

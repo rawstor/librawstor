@@ -78,13 +78,10 @@ jobs:
         rawstor pki issue --ca ca --cert ost.pem --key ost.key ost ${OST_ID}
         rawstor pki issue --ca ca --cert mds.pem --key mds.key mds ${MDS_ID}
         rawstor pki issue --ca ca --cert admin.pem --key admin.key admin perftest-admin
-        rawstor pki issue --ca ca --cert cli.pem --key cli.key client ${TENANT_ID} perftest
-        openssl genpkey -algorithm ED25519 -out capability.key
-        openssl pkey -in capability.key -pubout -out capability.pub
+        rawstor pki issue --ca ca --cert cli.pem --key cli.key --role manager client ${TENANT_ID} perftest
         for who in ost mds; do
-          echo "RAWSTOR_TLS_TRUST_DOMAIN=${TD} RAWSTOR_TLS_CERT=${PWD}/${who}.pem RAWSTOR_TLS_KEY=${PWD}/${who}.key RAWSTOR_TLS_CA=${PWD}/ca/ca.crt RAWSTOR_AUTH_KEYS=${PWD}/capability.pub" > ${who}.env
+          echo "RAWSTOR_TLS_TRUST_DOMAIN=${TD} RAWSTOR_TLS_CERT=${PWD}/${who}.pem RAWSTOR_TLS_KEY=${PWD}/${who}.key RAWSTOR_TLS_CA=${PWD}/ca/ca.crt" > ${who}.env
         done
-        echo "RAWSTOR_AUTH_SIGNING_KEY=${PWD}/capability.key" >> mds.env
         echo "RAWSTOR_TLS_MDS_ID=${MDS_ID}" >> $GITHUB_ENV
         # The rawstor and fio of the next steps use a tenant manager.
         echo "RAWSTOR_TLS_TRUST_DOMAIN=${TD}" >> $GITHUB_ENV
@@ -103,11 +100,6 @@ jobs:
         echo "${OST_ID} ${{ matrix.store }} 100 data,witness host1" > ${GITHUB_WORKSPACE}/topology.conf
         env $(cat ${GITHUB_WORKSPACE}/pki/mds.env) rawstor-mds --bind 127.0.0.1:7776 --db ${GITHUB_WORKSPACE}/mds.db --topology ${GITHUB_WORKSPACE}/topology.conf &
         sleep 5
-    - name: authorize the perftest principal
-      run: |
-        env RAWSTOR_TLS_CERT=${GITHUB_WORKSPACE}/pki/admin.pem RAWSTOR_TLS_KEY=${GITHUB_WORKSPACE}/pki/admin.key \
-          rawstor access set mds://127.0.0.1:7776 \
-          spiffe://cluster.example/tenant/00000000-0000-0000-0000-000000000001/client/perftest manager
     - name: create object
       run: |
         target=$(rawstor object create mds://127.0.0.1:7776 --size=1G --chunk-size=256M --mirrors=1 --format value --column target)

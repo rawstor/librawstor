@@ -37,7 +37,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Explicit `len` field in the response (`{res, len, hash}`) | ❌ | `res` still carries the payload size |
 | `map_epoch` in the IO frame (epoch-fence) | ❌ | planned in [MDS design](mds.md) |
 | Authentication: mutual TLS on every connection, identity from the certificate | ❌ | planned in [Security design](security.md) (stage 2) |
-| Authorization: capability tokens issued by `RESOLVE` and checked by the OST, per-command rights | ✅ | [Security design](security.md), `librawtls/authorization.hpp`, MDS and OST dispatch |
+| Authorization: certificate tenant roles and object restrictions, checked by MDS and OST | ✅ | [Security design](security.md), `librawtls/authorization.hpp`, MDS and OST dispatch |
 
 One binary protocol is spoken by every rawstor server role: `rawstor-ost`
 (object storage) and `rawstor-mds` (metadata server). The authoritative
@@ -960,57 +960,44 @@ address was listed.
 
 ## Authorization
 
-Authorization is part of the protocol. Plaintext connections retain their
-explicit insecure behavior. Provider roles use the closed command tables in
-[Security](security.md#roles-and-rights-per-command).
+MDS and OST read the access policy from the authenticated leaf certificate.
+No authorization payload is added to `RESOLVE` or `OBJ_REMOVE` maps; their
+chunk slots contain the member identity and location. Both services check
+certificate expiry for new tenant commands, the closed command table in
+[Security](security.md#roles-and-rights-per-command), object restrictions and
+the object's owner. Foreign objects return `-ENOENT`; insufficient rights
+return `-EACCES`. The tenant of an allocation must match the certificate.
 
-Every `RawstorFrameObjChunkSlot` and its location string
-in a `RESOLVE` or `OBJ_REMOVE` reply are followed by a 220-byte
-`RawstorCapability`. Provider/insecure replies carry a zero capability. A tenant
-reply carries an Ed25519 signature over the preceding 156 bytes:
+The signed policy is a noncritical private X.509 extension with UUID-derived
+OID `2.25.110097391626234565544022595913142399087` (UUID
+`52d3fc80-54f7-49a5-932b-28eb45da706f`). Its extnValue contains the DER encoding
+of a UTF8String with this canonical ASCII content:
 
-| Field | Bytes |
-|---|---:|
-| format (`rstrcap` followed by byte 1) | 8 |
-| key ID (SHA-256 of the Ed25519 raw public key) | 32 |
-| tenant UUID | 16 |
-| object UUID | 16 |
-| server UUID (the OST/MDS certificate ID) | 16 |
-| version UUID (nil for live) | 16 |
-| SHA-256 fingerprint of the client's leaf certificate | 32 |
-| chunk offset | 8 |
-| expiry (UTC Unix seconds) | 8 |
-| rights (`read=1`, `write=2`, `discard=4`, `manage=8`) | 4 |
-| Ed25519 signature | 64 |
+```text
+rawstor-access-v1
+3
+018f4e2a-2222-7000-8000-000000000002=1
+018f4e2a-2222-7000-8000-000000000003=0
+```
 
-`RENEW` (`0x15`) carries this fixed payload (228 bytes including the head),
-installs or refreshes the connection's authorization and returns an empty
-success reply. The client sends it before `SET_OBJECT` and before metadata or
-structural operations, and refreshes it through `RESOLVE` before expiry.
-The server verifies the signature, key ID, tenant, certificate fingerprint,
-audience and expiry. Each command checks the cached scope, rights and expiry;
-requests admitted before expiry can finish. A version token cannot read the
-live object; a manager's live token may remove a version of that same object.
+The second line is the role: reader=1, writer=2, manager=3. Following lines
+are optional per-object restrictions, sorted by canonical lowercase UUID,
+with decimal masks (`read=1`, `write=2`, `discard=4`, `manage=8`). Each line,
+including the final one, ends in a newline. At most 128 objects are allowed;
+duplicate objects, nil UUIDs, unknown roles/bits, noncanonical content,
+trailing DER data and duplicate policy extensions are rejected. A missing
+extension grants no tenant rights. Provider certificates must not carry it.
 
-Provider-admin principal commands use `RawstorFramePrincipal` (2081 bytes,
-including the 8-byte head). Its payload is a NUL-terminated 2049-byte SPIFFE ID,
-a 16-byte object UUID, a 32-bit role and a 32-bit rights mask:
+An object mask intersects the tenant role and covers all chunks and versions
+of that object. Objects not listed retain the role's rights. All snapshot
+data is read-only; a manager may manage versions of an allowed object.
+The certificate SAN provides the tenant; it is not duplicated in the policy.
 
-| Command | Opcode | Effect |
-|---|---|---|
-| `PRINCIPAL_SET` | `0x4a` | Nil object: upsert reader=1, writer=2, manager=3. Non-nil object: role=0, restrict rights within the principal's role. |
-| `PRINCIPAL_REMOVE` | `0x4b` | Remove the principal, or its named object restriction. |
-| `PRINCIPAL_LIST` | `0x4c` | Empty request fields; reply is an array of the 2073-byte payloads. |
+The policy is noncritical so standard TLS certificate verification remains
+in effect without suppressing unknown-critical-extension errors. Rawstor
+itself requires a usable policy for tenant access and parses it strictly.
+The CA signs it along with the identity, expiry and other certificate fields.
 
-Principal mutations are desired-state updates: repeats are harmless. The MDS
-validates the tenant against the identity and its registry. Unknown commands
-on an authenticated connection are denied. Foreign objects are `-ENOENT`;
-missing principals and insufficient rights on an owned object are `-EACCES`.
-
-
-A tenant's `OBJ_REMOVE` records the cleanup capability deadline in the same
-transaction as the deletion. Retries may return the recorded map only within
-that fixed window; they cannot extend its capabilities by changing the token
-lifetime or renewing the client certificate. After the window expires the
-tenant receives `-ENOENT`. Provider-admin cleanup remains available. A tenant
-removal requires a non-nil idempotency key.
+A removal retry checks the certificate's current policy and the tenant saved
+with the removal record. It can return the recorded map only to the owning
+tenant or provider admin; OST independently checks the owner of each member.

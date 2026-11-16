@@ -101,12 +101,7 @@ public:
     // The identity of the peer, null on a plain connection.
     virtual const SpiffeId* peer() const noexcept = 0;
 
-    virtual const SpiffeId* local() const noexcept { return nullptr; }
-
     virtual uint64_t peer_expiry() const noexcept = 0;
-
-    // SHA-256 of the leaf certificate used by this connection.
-    virtual std::array<unsigned char, 32> fingerprint(bool local) const = 0;
 };
 
 } // namespace rawtls

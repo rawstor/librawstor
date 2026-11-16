@@ -101,6 +101,15 @@ static void issue_usage(void) {
         "  --ca DIR              The CA made by `pki init`\n"
         "  --cert FILE           Where the certificate goes\n"
         "  --key FILE            Where the private key goes\n"
+        "  --object-rights UUID:MASK\n"
+        "                        Restrict one object and its versions "
+        "(repeat up to 128 times)\n"
+        "                        read=1, write=2, discard=4, manage=8; 0 "
+        "denies access.\n"
+        "                        The mask intersects the role; other objects "
+        "keep role rights.\n"
+        "  --role ROLE           Client access: reader, writer or manager\n"
+        "                        Required for client certificates\n"
         "  --validity DURATION   How long the certificate is valid "
         "(default: 7d)\n" RAWSTOR_CLI_OUTPUT_USAGE "\n"
         "Columns: identity (the SPIFFE ID), role, trust_domain, id (of an ost "
@@ -109,7 +118,9 @@ static void issue_usage(void) {
         "(when the\n"
         "certificate expires, UTC) and issued (yes); the ones that do not "
         "apply are empty,\n"
-        "null in json. `--format value --column id` prints just an OST's or "
+        "null in json. access_role and object_rights show the signed client "
+        "permissions.\n"
+        "`--format value --column id` prints just an OST's or "
         "an MDS's id.\n"
     );
 }
@@ -125,6 +136,8 @@ static void renew_usage(void) {
         "must have issued, over the same files. A running process reads them "
         "again on\n"
         "SIGHUP (`systemctl reload`). Prints the SPIFFE ID.\n"
+        "Preserves the signed access role and object restrictions; use issue "
+        "to change them.\n"
         "\n"
         "options:\n"
         "  --ca DIR              The CA made by `pki init`\n"
@@ -357,10 +370,11 @@ static int parse_process(
 }
 
 static const char* const identity_columns[] = {
-    "identity", "role",      "trust_domain", "id",
-    "name",     "tenant_id", "not_after",    "issued",
+    "identity",  "role",      "trust_domain", "id",          "name",
+    "tenant_id", "not_after", "issued",       "access_role", "object_rights",
 };
 static const enum RawstorCliColumnType identity_types[] = {
+    RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
@@ -411,6 +425,21 @@ static RawstorCliTable* identity_table(const struct RawstorPkiInfo* info) {
     if (table == NULL) {
         return NULL;
     }
+    const char* access_role =
+        info->permissions.role == RAWSTOR_ACCESS_READER    ? "reader"
+        : info->permissions.role == RAWSTOR_ACCESS_WRITER  ? "writer"
+        : info->permissions.role == RAWSTOR_ACCESS_MANAGER ? "manager"
+                                                           : "";
+    char object_rights[RAWSTOR_PKI_MAX_OBJECT_RIGHTS * 41 + 1] = {0};
+    size_t used = 0;
+    for (size_t i = 0; i < info->permissions.count; ++i) {
+        const struct RawstorPkiObjectRights* entry =
+            &info->permissions.objects[i];
+        used += (size_t)snprintf(
+            object_rights + used, sizeof(object_rights) - used, "%s%s:%u",
+            i ? "," : "", entry->object_id, entry->rights
+        );
+    }
     RawstorCliCell cells[] = {
         rawstor_cli_cell_string(info->identity),
         rawstor_cli_cell_string(role),
@@ -420,6 +449,8 @@ static RawstorCliTable* identity_table(const struct RawstorPkiInfo* info) {
         rawstor_cli_cell_optional(tenant_id),
         rawstor_cli_cell_optional(not_after),
         rawstor_cli_cell_optional(issued),
+        rawstor_cli_cell_optional(access_role),
+        rawstor_cli_cell_optional(object_rights),
     };
     if (rawstor_cli_table_add_row(table, cells) < 0) {
         rawstor_cli_table_delete(table);
@@ -468,6 +499,8 @@ static int command_issue(int argc, char** argv, int renew) {
         {"cert", required_argument, NULL, 'C'},
         {"key", required_argument, NULL, 'k'},
         {"validity", required_argument, NULL, 'V'},
+        {"role", required_argument, NULL, 'r'},
+        {"object-rights", required_argument, NULL, 'o'},
         {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
         {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
         {},
@@ -477,6 +510,7 @@ static int command_issue(int argc, char** argv, int renew) {
     const char* cert = NULL;
     const char* key = NULL;
     unsigned long validity = DEFAULT_VALIDITY;
+    struct RawstorPkiPermissions permissions = {0};
     optind = 0;
     int c;
     while ((c = getopt_long(argc, argv, "h", longopts, NULL)) != -1) {
@@ -497,6 +531,49 @@ static int command_issue(int argc, char** argv, int renew) {
         case 'k':
             key = optarg;
             break;
+        case 'r':
+            if (renew) {
+                fprintf(
+                    stderr,
+                    "renew preserves permissions; use issue to change them\n"
+                );
+                return EX_USAGE;
+            }
+            if (!strcmp(optarg, "reader"))
+                permissions.role = RAWSTOR_ACCESS_READER;
+            else if (!strcmp(optarg, "writer"))
+                permissions.role = RAWSTOR_ACCESS_WRITER;
+            else if (!strcmp(optarg, "manager"))
+                permissions.role = RAWSTOR_ACCESS_MANAGER;
+            else {
+                fprintf(stderr, "--role must be reader, writer or manager\n");
+                return EX_USAGE;
+            }
+            break;
+        case 'o': {
+            const char* separator = strchr(optarg, ':');
+            char* end = NULL;
+            if (renew || !separator || separator - optarg != 36 ||
+                permissions.count == RAWSTOR_PKI_MAX_OBJECT_RIGHTS) {
+                fprintf(
+                    stderr, "--object-rights requires UUID:MASK (at most 128 "
+                            "entries); use issue to change permissions\n"
+                );
+                return EX_USAGE;
+            }
+            errno = 0;
+            unsigned long mask = strtoul(separator + 1, &end, 10);
+            if (!separator[1] || *end || errno || mask > RAWSTOR_RIGHT_ALL) {
+                fprintf(stderr, "MASK must be 0..15\n");
+                return EX_USAGE;
+            }
+            struct RawstorPkiObjectRights* entry =
+                &permissions.objects[permissions.count++];
+            memcpy(entry->object_id, optarg, 36);
+            entry->object_id[36] = '\0';
+            entry->rights = (unsigned int)mask;
+            break;
+        }
         case 'V': {
             int res = parse_validity(optarg, &validity);
             if (res != 0) {
@@ -551,8 +628,17 @@ static int command_issue(int argc, char** argv, int renew) {
         if (res != 0) {
             return res;
         }
+        if ((role == RAWSTOR_PKI_CLIENT && !permissions.role) ||
+            (role != RAWSTOR_PKI_CLIENT &&
+             (permissions.role || permissions.count))) {
+            fprintf(
+                stderr,
+                "--role is required for a client and applies only to clients\n"
+            );
+            return EX_USAGE;
+        }
         res = rawstor_pki_issue(
-            ca, role, tenant, name, validity, cert, key, NULL, 0
+            ca, role, tenant, name, validity, cert, key, NULL, 0, &permissions
         );
         if (res != 0) {
             return report("Failed to issue the certificate", res);

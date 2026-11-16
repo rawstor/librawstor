@@ -48,9 +48,7 @@ RawstdUUID uuid_from_bytes(const uint8_t bytes[16]) {
 // Deserializes an RESOLVE response payload (descriptor + per-chunk
 // entries + slots -- docs/mds.md, "Wire protocol"; the exact inverse of
 // mds/client.cpp's encode_object_map()) into a WireMap.
-WireMap decode_object_map(
-    const std::vector<unsigned char>& data, const std::string& resolver
-) {
+WireMap decode_object_map(const std::vector<unsigned char>& data) {
     WireMap map;
     size_t off = 0;
 
@@ -102,17 +100,6 @@ WireMap decode_object_map(
             slots[s].ost_id = uuid_from_bytes(wire_slot.ost_id);
             slots[s].location.resize(wire_slot.location_len);
             take(slots[s].location.data(), wire_slot.location_len);
-            RawstorCapability token{};
-            take(&token, sizeof(token));
-            if (token.rights) {
-                if (memcmp(token.object_id, map.id.bytes, 16) ||
-                    token.chunk_offset != i * map.chunk_size ||
-                    memcmp(token.server_id, slots[s].ost_id.bytes, 16))
-                    RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
-                rawstor::tls::remember_capability(
-                    rawstd::URI(slots[s].location).host(), token, resolver
-                );
-            }
             // The MDS names the OST at this address: a TLS connection to it
             // must be to that OST.
             if (!slots[s].location.empty()) {
@@ -339,7 +326,7 @@ Backend::_resolve(const RawstdUUID& id, const RawstdUUID& version_id) {
     std::vector<unsigned char> data = co_await exchange(
         &request, sizeof(request), RAWSTOR_CMD_RESOLVE, SIZE_MAX
     );
-    co_return decode_object_map(data, location().str());
+    co_return decode_object_map(data);
 }
 
 rawstd::Task<WireResized> Backend::_obj_resize(
@@ -394,7 +381,7 @@ Backend::_obj_remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
     std::vector<unsigned char> data = co_await exchange(
         &request, sizeof(request), RAWSTOR_CMD_OBJ_REMOVE, SIZE_MAX
     );
-    co_return decode_object_map(data, location().str());
+    co_return decode_object_map(data);
 }
 
 rawstd::Task<uint64_t> Backend::_obj_commit_version(

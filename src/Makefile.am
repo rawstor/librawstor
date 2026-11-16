@@ -29,8 +29,7 @@ librawstor_base_la_HEADERS = $(top_srcdir)/include/rawstor.h
 
 librawstor_ladir = $(includedir)/rawstor
 
-librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/principal.h \
-                       $(top_srcdir)/include/rawstor/list.h \
+librawstor_la_HEADERS = $(top_srcdir)/include/rawstor/list.h \
                         $(top_srcdir)/include/rawstor/location.h \
                         $(top_srcdir)/include/rawstor/object.h \
                         $(top_srcdir)/include/rawstor/pki.h \
@@ -61,7 +60,6 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         opts.c \
                         opts.h \
                         pki.cpp \
-                        principal.cpp \
                         wire_backend.cpp \
                         wire_backend.hpp \
                         wire_backend_op.hpp \

@@ -60,8 +60,6 @@ Environment=WORKERS=12
 #Environment=RAWSTOR_TLS_CERT=/etc/rawstor/tls/cert.pem
 #Environment=RAWSTOR_TLS_KEY=/etc/rawstor/tls/key.pem
 #Environment=RAWSTOR_TLS_CA=/etc/rawstor/tls/ca.pem
-# Capability verification keys (Ed25519 public PEM bundle).
-#Environment=RAWSTOR_AUTH_KEYS=/etc/rawstor/tls/capability.pub
 EnvironmentFile=/etc/rawstor/ost/%i.conf
 ExecStart=/usr/bin/rawstor-ost --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} ${LOCATION}
 # Reads the certificate, key and CAs again for the connections made after it

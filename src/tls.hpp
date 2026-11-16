@@ -47,20 +47,6 @@ void request_reload() noexcept;
  */
 void expect_ost(const std::string& host, const RawstdUUID& ost_id);
 
-struct Capability {
-    RawstorCapability token;
-    std::string resolver;
-};
-void remember_capability(
-    const std::string& host, const RawstorCapability& token,
-    const std::string& resolver
-);
-
-Capability capability(
-    const std::string& host, const RawstdUUID& object, uint64_t offset,
-    const RawstdUUID& version
-);
-
 /*
  * The Transport of a connected socket to the server at `host` of `scheme`
  * (`ost` or `mds`): plain when TLS is off, otherwise the TLS client side of it,

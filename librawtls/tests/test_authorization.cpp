@@ -1,230 +1,225 @@
-#include <array>
-#include <cstring>
-#include <ctime>
-#include <filesystem>
-#include <gtest/gtest.h>
-#include <openssl/evp.h>
-#include <openssl/pem.h>
-#include <rawstd/uuid.h>
 #include <rawtls/authorization.hpp>
-#include <string>
+
+#include <rawstd/uuid.h>
+
+#include <gtest/gtest.h>
+#include <openssl/asn1.h>
+#include <openssl/x509.h>
+
+#include <cstring>
+#include <memory>
 #include <system_error>
 
 namespace {
 const std::string tenant = "018f4e2a-0000-7000-8000-000000000001";
-const std::string server = "018f4e2a-0000-7000-8000-000000000002";
+const std::string object = "018f4e2a-0000-7000-8000-000000000002";
+
 class Connection : public rawtls::Transport {
-    rawtls::SpiffeId _peer{
+public:
+    rawtls::SpiffeId identity{
         "spiffe://cluster.example/tenant/" + tenant + "/client/test"
     };
-    rawtls::SpiffeId _local{"spiffe://cluster.example/ost/" + server};
-
-public:
-    std::array<unsigned char, 32> digest{};
     uint64_t expiry = UINT64_MAX;
-    const rawtls::SpiffeId* peer() const noexcept override { return &_peer; }
-    const rawtls::SpiffeId* local() const noexcept override { return &_local; }
+
+    const rawtls::SpiffeId* peer() const noexcept override { return &identity; }
+
     uint64_t peer_expiry() const noexcept override { return expiry; }
-    std::array<unsigned char, 32> fingerprint(bool) const override {
-        return digest;
-    }
+
     rawstd::Task<size_t> send(const void*, size_t, unsigned int) override {
         throw std::logic_error("unused");
         co_return 0;
     }
+
     rawstd::Task<size_t> sendmsg(const msghdr*, unsigned int) override {
         throw std::logic_error("unused");
         co_return 0;
     }
+
     rawio::RecvStream
     recv_multishot(size_t, unsigned int, size_t, unsigned int) override {
         throw std::logic_error("unused");
     }
+
     void cancel_recv_multishot() noexcept override {}
 };
-class AuthorizationTest : public ::testing::Test {
-protected:
-    std::string dir;
-    std::string key, pub;
+
+using Cert = std::unique_ptr<X509, decltype(&X509_free)>;
+} // namespace
+
+TEST(AuthorizationTest, roles_are_intersected_with_object_masks) {
     Connection connection;
-    RawstorCapability token{};
-    void SetUp() override {
-        std::string pattern =
-            (std::filesystem::temp_directory_path() / "rawstor-auth-XXXXXX")
-                .string();
-        ASSERT_NE(mkdtemp(pattern.data()), nullptr);
-        dir = pattern;
-        key = dir + "/key.pem";
-        pub = dir + "/public.pem";
-        EVP_PKEY* signing = EVP_PKEY_Q_keygen(nullptr, nullptr, "ED25519");
-        ASSERT_NE(signing, nullptr);
-        FILE* f = fopen(key.c_str(), "w");
-        ASSERT_NE(f, nullptr);
-        ASSERT_EQ(
-            PEM_write_PrivateKey(
-                f, signing, nullptr, nullptr, 0, nullptr, nullptr
-            ),
-            1
-        );
-        fclose(f);
-        f = fopen(pub.c_str(), "w");
-        ASSERT_NE(f, nullptr);
-        ASSERT_EQ(PEM_write_PUBKEY(f, signing), 1);
-        fclose(f);
-        EVP_PKEY_free(signing);
-        RawstdUUID id{};
-        rawstd_uuid_from_string(&id, tenant.c_str());
-        memcpy(token.tenant_id, id.bytes, 16);
-        rawstd_uuid_from_string(&id, server.c_str());
-        memcpy(token.server_id, id.bytes, 16);
-        ASSERT_EQ(rawstd_uuid7_init(&id), 0);
-        memcpy(token.object_id, id.bytes, 16);
-        token.not_after = static_cast<uint64_t>(time(nullptr)) + 300;
-        token.rights = RAWSTOR_RIGHT_ALL;
-        token = rawtls::sign_capability(token, key);
-    }
-    void TearDown() override {
-        unsetenv("RAWSTOR_AUTH_KEYS");
-        std::filesystem::remove_all(dir);
-    }
-};
-TEST_F(AuthorizationTest, signed_capability_binds_all_fields) {
-    EXPECT_NO_THROW(
-        rawtls::verify_capability(token, pub, connection, time(nullptr))
-    );
-    // Every byte is authenticated, including the scope, expiry, rights and key
-    // ID.
-    for (size_t i = 0; i < sizeof(token); ++i) {
-        auto changed = token;
-        reinterpret_cast<unsigned char*>(&changed)[i] ^= 1;
-        EXPECT_THROW(
-            rawtls::verify_capability(changed, pub, connection, time(nullptr)),
-            std::system_error
-        ) << i;
-    }
-    auto expired = token;
-    expired.not_after = time(nullptr);
-    expired = rawtls::sign_capability(expired, key);
-    EXPECT_THROW(
-        rawtls::verify_capability(expired, pub, connection, time(nullptr)),
-        std::system_error
-    );
-    connection.digest[0] = 1;
-    EXPECT_THROW(
-        rawtls::verify_capability(token, pub, connection, time(nullptr)),
-        std::system_error
-    );
-}
-TEST_F(AuthorizationTest, rights_and_scope_are_checked_after_installation) {
-    setenv("RAWSTOR_AUTH_KEYS", pub.c_str(), 1);
-    rawtls::Authorization auth;
+    rawtls::Authorization authorization;
+    RawstdUUID id{};
+    ASSERT_EQ(rawstd_uuid_from_string(&id, object.c_str()), 0);
     EXPECT_EQ(
-        auth.check(connection, RAWSTOR_CMD_READ, token.object_id, 0, nullptr),
+        authorization.check(connection, RAWSTOR_CMD_READ, id.bytes, 0, nullptr),
         EACCES
     );
-    token.rights = RAWSTOR_RIGHT_READ;
-    token = rawtls::sign_capability(token, key);
-    auth.renew(token, connection);
-    EXPECT_EQ(
-        auth.check(connection, RAWSTOR_CMD_READ, token.object_id, 0, nullptr), 0
+    connection.identity.permissions(
+        {RAWSTOR_ACCESS_WRITER,
+         {{object, RAWSTOR_RIGHT_READ | RAWSTOR_RIGHT_MANAGE}}}
     );
     EXPECT_EQ(
-        auth.check(
-            connection, RAWSTOR_CMD_SET_OBJECT, token.object_id, 0, nullptr,
+        authorization.check(connection, RAWSTOR_CMD_READ, id.bytes, 0, nullptr),
+        0
+    );
+    EXPECT_EQ(
+        authorization.check(
+            connection, RAWSTOR_CMD_WRITE, id.bytes, 0, nullptr
+        ),
+        EACCES
+    );
+    EXPECT_EQ(
+        authorization.check(
+            connection, RAWSTOR_CMD_RELEASE, id.bytes, 0, nullptr
+        ),
+        EACCES
+    );
+    EXPECT_EQ(
+        authorization.check(
+            connection, RAWSTOR_CMD_FREEZE, id.bytes, 0, nullptr
+        ),
+        EACCES
+    );
+    EXPECT_EQ(
+        authorization.check(
+            connection, RAWSTOR_CMD_LOCATION_INFO, nullptr, 0, nullptr
+        ),
+        EACCES
+    );
+    EXPECT_EQ(
+        authorization.check(
+            connection, RAWSTOR_CMD_SET_OWNER, id.bytes, 0, nullptr
+        ),
+        EACCES
+    );
+    RawstdUUID other{};
+    ASSERT_EQ(rawstd_uuid7_init(&other), 0);
+    EXPECT_EQ(
+        authorization.check(
+            connection, RAWSTOR_CMD_WRITE, other.bytes, 0, nullptr
+        ),
+        0
+    );
+}
+
+TEST(AuthorizationTest, expired_certificates_and_foreign_owners_are_denied) {
+    Connection connection;
+    connection.identity.permissions({RAWSTOR_ACCESS_MANAGER, {}});
+    rawtls::Authorization authorization;
+    RawstdUUID owner{}, other{};
+    ASSERT_EQ(rawstd_uuid_from_string(&owner, tenant.c_str()), 0);
+    ASSERT_EQ(rawstd_uuid7_init(&other), 0);
+    EXPECT_EQ(authorization.owner(connection, owner.bytes), 0);
+    EXPECT_EQ(authorization.owner(connection, other.bytes), ENOENT);
+    connection.expiry = 1;
+    EXPECT_EQ(
+        authorization.check(connection, RAWSTOR_CMD_READ, nullptr, 0, nullptr),
+        EACCES
+    );
+    connection.identity =
+        rawtls::SpiffeId("spiffe://cluster.example/admin/operator");
+    EXPECT_EQ(
+        authorization.check(connection, RAWSTOR_CMD_META, nullptr, 0, nullptr),
+        EACCES
+    );
+}
+
+TEST(AuthorizationTest, snapshots_remain_readonly_for_managers) {
+    Connection connection;
+    connection.identity.permissions({RAWSTOR_ACCESS_MANAGER, {}});
+    rawtls::Authorization authorization;
+    RawstdUUID version{};
+    ASSERT_EQ(rawstd_uuid7_init(&version), 0);
+    EXPECT_EQ(
+        authorization.check(
+            connection, RAWSTOR_CMD_SET_OBJECT, nullptr, 0, version.bytes,
             RAWSTOR_READONLY
         ),
         0
     );
     EXPECT_EQ(
-        auth.check(
-            connection, RAWSTOR_CMD_SET_OBJECT, token.object_id, 0, nullptr, 0
+        authorization.check(
+            connection, RAWSTOR_CMD_WRITE, nullptr, 0, version.bytes
         ),
         EACCES
     );
     EXPECT_EQ(
-        auth.check(connection, RAWSTOR_CMD_WRITE, token.object_id, 0, nullptr),
+        authorization.check(
+            connection, RAWSTOR_CMD_DISCARD, nullptr, 0, version.bytes
+        ),
         EACCES
     );
     EXPECT_EQ(
-        auth.check(connection, RAWSTOR_CMD_LIST, token.object_id, 0, nullptr),
-        EACCES
-    );
-    EXPECT_EQ(
-        auth.check(connection, RAWSTOR_CMD_READ, token.object_id, 1, nullptr),
-        ENOENT
-    );
-    uint8_t wrong[16]{};
-    EXPECT_EQ(
-        auth.check(connection, RAWSTOR_CMD_READ, wrong, 0, nullptr), ENOENT
-    );
-    wrong[0] = 1;
-    EXPECT_EQ(
-        auth.check(connection, RAWSTOR_CMD_READ, token.object_id, 0, wrong),
-        ENOENT
-    );
-    EXPECT_EQ(
-        auth.check(connection, UINT16_MAX, token.object_id, 0, nullptr), EACCES
-    );
-    connection.expiry = static_cast<uint64_t>(time(nullptr));
-    EXPECT_EQ(
-        auth.check(connection, RAWSTOR_CMD_READ, token.object_id, 0, nullptr),
-        EACCES
-    );
-}
-TEST_F(AuthorizationTest, a_snapshot_manager_cannot_release_other_versions) {
-    setenv("RAWSTOR_AUTH_KEYS", pub.c_str(), 1);
-    RawstdUUID snapshot{}, other{};
-    ASSERT_EQ(rawstd_uuid7_init(&snapshot), 0);
-    ASSERT_EQ(rawstd_uuid7_init(&other), 0);
-    uint8_t live[16]{};
-    rawtls::Authorization auth;
-    // A live manager capability may clean up any version of its object.
-    auth.renew(token, connection);
-    EXPECT_EQ(
-        auth.check(connection, RAWSTOR_CMD_RELEASE, token.object_id, 0, live), 0
-    );
-    EXPECT_EQ(
-        auth.check(
-            connection, RAWSTOR_CMD_RELEASE, token.object_id, 0, snapshot.bytes
+        authorization.check(
+            connection, RAWSTOR_CMD_RELEASE, nullptr, 0, version.bytes
         ),
         0
-    );
-    memcpy(token.version_id, snapshot.bytes, 16);
-    token.rights = RAWSTOR_RIGHT_READ | RAWSTOR_RIGHT_MANAGE;
-    token = rawtls::sign_capability(token, key);
-    auth.renew(token, connection);
-    EXPECT_EQ(
-        auth.check(
-            connection, RAWSTOR_CMD_RELEASE, token.object_id, 0, snapshot.bytes
-        ),
-        0
-    );
-    EXPECT_EQ(
-        auth.check(connection, RAWSTOR_CMD_RELEASE, token.object_id, 0, live),
-        ENOENT
-    );
-    EXPECT_EQ(
-        auth.check(
-            connection, RAWSTOR_CMD_RELEASE, token.object_id, 0, other.bytes
-        ),
-        ENOENT
     );
 }
 
-TEST(AuthorizationPolicyTest, closed_provider_table) {
-    using rawtls::Role;
-    EXPECT_TRUE(rawtls::provider_member(Role::mds, RAWSTOR_CMD_META));
-    EXPECT_TRUE(rawtls::provider_member(Role::admin, RAWSTOR_CMD_ALLOCATE));
-    EXPECT_FALSE(rawtls::provider_member(Role::admin, RAWSTOR_CMD_WRITE));
-    EXPECT_FALSE(rawtls::provider_member(Role::mds, RAWSTOR_CMD_ALLOCATE));
-    EXPECT_FALSE(rawtls::provider_member(Role::ost, RAWSTOR_CMD_READ));
-    EXPECT_FALSE(rawtls::provider_member(Role::admin, UINT16_MAX));
-    EXPECT_EQ(
-        rawtls::member_right(RAWSTOR_CMD_WRITE_ZEROES, RAWSTOR_FLAG_UNMAP),
-        RAWSTOR_RIGHT_DISCARD
+TEST(
+    AuthorizationTest,
+    certificate_policy_roundtrips_and_missing_policy_grants_nothing
+) {
+    Cert certificate(X509_new(), X509_free);
+    ASSERT_NE(certificate, nullptr);
+    EXPECT_EQ(rawtls::certificate_permissions(certificate.get()).rights(), 0u);
+    rawtls::Permissions policy{RAWSTOR_ACCESS_MANAGER, {{object, 0}}};
+    rawtls::certificate_permissions(certificate.get(), policy);
+    auto decoded = rawtls::certificate_permissions(certificate.get());
+    EXPECT_EQ(decoded.role, policy.role);
+    EXPECT_EQ(decoded.objects, policy.objects);
+    RawstdUUID id{};
+    ASSERT_EQ(rawstd_uuid_from_string(&id, object.c_str()), 0);
+    EXPECT_EQ(decoded.rights(id.bytes), 0u);
+    EXPECT_EQ(decoded.rights(), RAWSTOR_RIGHT_ALL);
+}
+
+TEST(
+    AuthorizationTest, duplicate_and_malformed_certificate_policies_fail_closed
+) {
+    Cert certificate(X509_new(), X509_free);
+    rawtls::certificate_permissions(
+        certificate.get(), {RAWSTOR_ACCESS_READER, {}}
     );
-    EXPECT_EQ(
-        rawtls::member_right(RAWSTOR_CMD_SYNC_ACCEPT), RAWSTOR_RIGHT_WRITE
+    ASSERT_EQ(X509_get_ext_count(certificate.get()), 1);
+    ASSERT_EQ(
+        X509_add_ext(certificate.get(), X509_get_ext(certificate.get(), 0), -1),
+        1
+    );
+    EXPECT_THROW(
+        rawtls::certificate_permissions(certificate.get()), std::system_error
+    );
+    X509_EXTENSION_free(X509_delete_ext(certificate.get(), 1));
+    auto data = X509_EXTENSION_get_data(X509_get_ext(certificate.get(), 0));
+    unsigned char broken[] = {0x0c, 0x7f, 0x00};
+    ASSERT_EQ(ASN1_OCTET_STRING_set(data, broken, sizeof(broken)), 1);
+    EXPECT_THROW(
+        rawtls::certificate_permissions(certificate.get()), std::system_error
     );
 }
-} // namespace
+
+TEST(AuthorizationTest, invalid_policy_cannot_be_issued) {
+    Cert certificate(X509_new(), X509_free);
+    EXPECT_THROW(
+        rawtls::certificate_permissions(certificate.get(), {99, {}}),
+        std::system_error
+    );
+    EXPECT_THROW(
+        rawtls::certificate_permissions(
+            certificate.get(), {RAWSTOR_ACCESS_READER, {{object, 16}}}
+        ),
+        std::system_error
+    );
+    EXPECT_THROW(
+        rawtls::certificate_permissions(
+            certificate.get(), {RAWSTOR_ACCESS_READER, {{"not-a-uuid", 1}}}
+        ),
+        std::system_error
+    );
+    EXPECT_THROW(
+        rawtls::certificate_permissions(certificate.get(), {0, {{object, 1}}}),
+        std::system_error
+    );
+}

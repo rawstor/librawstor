@@ -1419,7 +1419,7 @@ TEST_F(ObjectStoreTest, reconstruct_restores_the_owner) {
 
 TEST_F(
     ObjectStoreTest,
-    authorization_uses_registered_tenant_roles_and_object_restrictions
+    authorization_uses_certificate_roles_and_object_restrictions
 ) {
     ObjectStore store = make_store();
     RawstdUUID tenant = make_id(), other = make_id(), object = make_id();
@@ -1442,7 +1442,7 @@ TEST_F(
         }
     };
     error(EACCES, [&] { store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object); });
-    store.set_principal(identity, RAWSTOR_PRINCIPAL_READER, {}, 0);
+    peer.permissions({RAWSTOR_ACCESS_READER, {}});
     EXPECT_EQ(
         store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object).rights,
         RAWSTOR_RIGHT_READ
@@ -1454,7 +1454,7 @@ TEST_F(
         store.authorize(&peer, RAWSTOR_CMD_OBJ_CREATE, {}, other);
     });
     error(EACCES, [&] { store.authorize(&peer, RAWSTOR_CMD_TENANT_CREATE); });
-    store.set_principal(identity, RAWSTOR_PRINCIPAL_MANAGER, {}, 0);
+    peer.permissions({RAWSTOR_ACCESS_MANAGER, {}});
     EXPECT_EQ(
         store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object).rights,
         RAWSTOR_RIGHT_ALL
@@ -1473,7 +1473,11 @@ TEST_F(
         store.authorize(&peer, RAWSTOR_CMD_OBJ_CREATE, unowned, tenant);
     });
     error(ENOENT, [&] { store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE); });
-    store.set_principal(identity, 0, object, RAWSTOR_RIGHT_READ);
+    RawstdUUIDString object_text;
+    rawstd_uuid_to_string(&object, &object_text);
+    peer.permissions(
+        {RAWSTOR_ACCESS_MANAGER, {{object_text, RAWSTOR_RIGHT_READ}}}
+    );
     error(EACCES, [&] {
         store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object);
     });
@@ -1483,7 +1487,7 @@ TEST_F(
     );
     store.transfer(make_id(), object, other);
     error(ENOENT, [&] { store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object); });
-    store.remove_principal(identity, {});
+    peer.permissions({});
     error(EACCES, [&] { store.authorize(&peer, RAWSTOR_CMD_LIST); });
 }
 
@@ -1498,7 +1502,7 @@ TEST_F(
     std::string identity = std::string("spiffe://cluster.example/tenant/") +
                            text + "/client/manager";
     rawtls::SpiffeId peer(identity);
-    store.set_principal(identity, RAWSTOR_PRINCIPAL_MANAGER, {}, 0);
+    peer.permissions({RAWSTOR_ACCESS_MANAGER, {}});
     store.create(
         tenant, make_id(), object, chunk_size, chunk_size, make_policy(1)
     );
@@ -1513,7 +1517,7 @@ TEST_F(
     EXPECT_THROW(
         store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object), std::system_error
     );
-    store.remove_principal(identity, {});
+    peer.permissions({});
     EXPECT_THROW(
         store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object, {}, mutation),
         std::system_error
@@ -1521,31 +1525,51 @@ TEST_F(
 }
 
 TEST_F(
-    ObjectStoreTest, remove_replays_preserve_the_original_capability_deadline
+    ObjectStoreTest, witness_authorization_uses_certificate_policy_and_owner
 ) {
     ObjectStore store = make_store();
-    RawstdUUID tenant = make_id(), object = make_id(), mutation = make_id();
-    store.create_tenant(make_id(), tenant);
+    RawstdUUID tenant = make_id(), foreign = make_id(), object = make_id();
     RawstdUUIDString text;
     rawstd_uuid_to_string(&tenant, &text);
-    std::string identity = std::string("spiffe://cluster.example/tenant/") +
-                           text + "/client/manager";
-    rawtls::SpiffeId peer(identity);
-    store.set_principal(identity, RAWSTOR_PRINCIPAL_MANAGER, {}, 0);
-    store.create(
-        tenant, make_id(), object, chunk_size, chunk_size, make_policy(1)
+    rawtls::SpiffeId peer(
+        std::string("spiffe://cluster.example/tenant/") + text +
+        "/client/writer"
     );
-    const uint64_t deadline = 12345;
-    store.remove(mutation, object, deadline);
-    EXPECT_EQ(
-        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object, {}, mutation)
-            .capability_deadline,
-        deadline
+    peer.permissions({RAWSTOR_ACCESS_MANAGER, {}});
+    RawstorObjectSpec spec{};
+    spec.size = chunk_size;
+    spec.chunk_size = chunk_size;
+    spec.width = 2;
+    store.create_witness(foreign, object, 0, spec);
+    EXPECT_THROW(
+        store.authorize_witness(&peer, RAWSTOR_CMD_META, object, 0),
+        std::system_error
     );
-    store.remove(mutation, object, deadline + 3600);
-    EXPECT_EQ(
-        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object, {}, mutation)
-            .capability_deadline,
-        deadline
+    EXPECT_THROW(
+        store.authorize_witness(&peer, RAWSTOR_CMD_ALLOCATE, object, 0, tenant),
+        std::system_error
+    );
+    store.remove_witness(object, 0);
+    EXPECT_NO_THROW(
+        store.authorize_witness(&peer, RAWSTOR_CMD_ALLOCATE, object, 0, tenant)
+    );
+    EXPECT_THROW(
+        store.authorize_witness(
+            &peer, RAWSTOR_CMD_ALLOCATE, object, 0, foreign
+        ),
+        std::system_error
+    );
+    store.create_witness(tenant, object, 0, spec);
+    EXPECT_NO_THROW(
+        store.authorize_witness(&peer, RAWSTOR_CMD_META, object, 0)
+    );
+    peer.permissions({RAWSTOR_ACCESS_READER, {}});
+    EXPECT_THROW(
+        store.authorize_witness(&peer, RAWSTOR_CMD_SYNC_ACCEPT, object, 0),
+        std::system_error
+    );
+    EXPECT_THROW(
+        store.authorize_witness(&peer, RAWSTOR_CMD_RELEASE, object, 0),
+        std::system_error
     );
 }

@@ -24,11 +24,7 @@ Opts Opts::from_env() {
         "RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY", opts.info_refresh_delay, 0,
         UINT_MAX, &opts.info_refresh_delay
     );
-    int lifetime = rawstd_env_uint(
-        "RAWSTOR_MDS_OPTS_CAPABILITY_LIFETIME", opts.capability_lifetime, 1,
-        3600, &opts.capability_lifetime
-    );
-    if (interval != 0 || concurrency != 0 || refresh != 0 || lifetime != 0) {
+    if (interval != 0 || concurrency != 0 || refresh != 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     return opts;

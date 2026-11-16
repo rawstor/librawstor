@@ -141,25 +141,18 @@ public:
         std::unique_lock<std::recursive_mutex> lock;
         uint32_t rights;
         RawstdUUID tenant;
-        // A recorded deletion cannot extend its original cleanup window.
-        uint64_t capability_deadline = UINT64_MAX;
     };
-    // Holds ownership/principal state stable through the synchronous operation.
+    // Holds ownership state stable through the synchronous operation.
     Access authorize(
         const rawtls::SpiffeId* peer, RawstorCommandType command,
         const RawstdUUID& object = {}, const RawstdUUID& tenant = {},
         const RawstdUUID& mutation = {}
     );
 
-    void set_principal(
-        const std::string& identity, uint32_t role, const RawstdUUID& object,
-        uint32_t rights
+    Access authorize_witness(
+        const rawtls::SpiffeId* peer, RawstorCommandType command,
+        const RawstdUUID& object, uint64_t offset, const RawstdUUID& tenant = {}
     );
-
-    void
-    remove_principal(const std::string& identity, const RawstdUUID& object);
-
-    std::vector<RawstorFramePrincipalPayload> list_principals();
 
     ObjectStore(const std::string& path, Topology topology);
 
@@ -318,10 +311,7 @@ public:
      * Returns the map the object had, for the caller's fan-out destroy
      * of its chunks.
      */
-    ObjectMap remove(
-        const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        uint64_t capability_deadline = 0
-    );
+    ObjectMap remove(const RawstdUUID& idempotency_key, const RawstdUUID& id);
 
     /*
      * Registers the version: members = exactly the chunk copies that

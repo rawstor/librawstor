@@ -35,15 +35,6 @@ constexpr const char* SCHEMA =
     "CREATE TABLE IF NOT EXISTS tenants ("
     " id BLOB PRIMARY KEY, created_at INTEGER NOT NULL"
     ") WITHOUT ROWID;"
-    "CREATE TABLE IF NOT EXISTS principals ("
-    " identity TEXT PRIMARY KEY, tenant_id BLOB NOT NULL REFERENCES "
-    "tenants(id), role INTEGER NOT NULL"
-    ");"
-    "CREATE TABLE IF NOT EXISTS principal_objects ("
-    " identity TEXT NOT NULL REFERENCES principals(identity) ON DELETE CASCADE,"
-    " object_id BLOB NOT NULL, rights INTEGER NOT NULL, PRIMARY KEY(identity, "
-    "object_id)"
-    ");"
     "CREATE TABLE IF NOT EXISTS witnesses ("
     " id BLOB NOT NULL, chunk_offset INTEGER NOT NULL, record BLOB NOT NULL,"
     " tenant_id BLOB NOT NULL,"
@@ -108,11 +99,6 @@ constexpr const char* SCHEMA =
     " idempotency_key BLOB PRIMARY KEY REFERENCES "
     "applied_mutations(idempotency_key) ON DELETE CASCADE,"
     " id BLOB NOT NULL, tenant_id BLOB NOT NULL"
-    ") WITHOUT ROWID;"
-    "CREATE TABLE IF NOT EXISTS removal_capabilities ("
-    " idempotency_key BLOB PRIMARY KEY REFERENCES "
-    "applied_mutations(idempotency_key) ON DELETE CASCADE,"
-    " not_after INTEGER NOT NULL"
     ") WITHOUT ROWID;";
 
 [[noreturn]] void throw_sqlite(sqlite3* db, const char* what) {
@@ -760,9 +746,6 @@ ObjectStore::Access ObjectStore::authorize(
         case RAWSTOR_CMD_TENANT_REMOVE:
         case RAWSTOR_CMD_OBJ_TRANSFER:
         case RAWSTOR_CMD_SET_OWNER:
-        case RAWSTOR_CMD_PRINCIPAL_SET:
-        case RAWSTOR_CMD_PRINCIPAL_REMOVE:
-        case RAWSTOR_CMD_PRINCIPAL_LIST:
         case RAWSTOR_CMD_ALLOCATE:
         case RAWSTOR_CMD_RELEASE:
         case RAWSTOR_CMD_META:
@@ -774,18 +757,9 @@ ObjectStore::Access ObjectStore::authorize(
     if (peer->role() != rawtls::Role::client)
         RAWSTD_THROW_SYSTEM_ERROR(EACCES);
     rawstd_uuid_from_string(&result.tenant, peer->tenant().c_str());
-    Stmt principal(
-        _db, "SELECT tenant_id,role FROM principals WHERE identity=?;"
+    result.rights = peer->permissions().rights(
+        rawstd_uuid_is_nil(&object) ? nullptr : object.bytes
     );
-    principal.bind_text(1, peer->uri().str());
-    if (!principal.step())
-        RAWSTD_THROW_SYSTEM_ERROR(EACCES);
-    RawstdUUID registered{};
-    principal.column_uuid(0, &registered);
-    if (rawstd_uuid_cmp(&registered, &result.tenant))
-        RAWSTD_THROW_SYSTEM_ERROR(EACCES);
-    result.rights =
-        rawtls::role_rights(static_cast<uint32_t>(principal.column_int64(1)));
     if (!rawstd_uuid_is_nil(&tenant) &&
         rawstd_uuid_cmp(&tenant, &result.tenant))
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
@@ -813,31 +787,16 @@ ObjectStore::Access ObjectStore::authorize(
         if (rawstd_uuid_is_nil(&owner) && command == RAWSTOR_CMD_OBJ_REMOVE &&
             !rawstd_uuid_is_nil(&mutation)) {
             Stmt removed(
-                _db, "SELECT "
-                     "removed_owners.tenant_id,COALESCE(removal_capabilities."
-                     "not_after,0) "
-                     "FROM removed_owners LEFT JOIN removal_capabilities "
-                     "USING(idempotency_key) "
-                     "WHERE removed_owners.idempotency_key=? AND "
-                     "removed_owners.id=?;"
+                _db, "SELECT tenant_id FROM removed_owners WHERE "
+                     "idempotency_key=? AND id=?;"
             );
             removed.bind_blob(1, mutation.bytes, sizeof(mutation.bytes))
                 .bind_blob(2, object.bytes, sizeof(object.bytes));
-            if (removed.step()) {
+            if (removed.step())
                 removed.column_uuid(0, &owner);
-                result.capability_deadline = removed.column_int64(1);
-            }
         }
         if (rawstd_uuid_cmp(&owner, &result.tenant) && !new_object)
             RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
-        Stmt restriction(
-            _db, "SELECT rights FROM principal_objects WHERE identity=? AND "
-                 "object_id=?;"
-        );
-        restriction.bind_text(1, peer->uri().str())
-            .bind_blob(2, object.bytes, sizeof(object.bytes));
-        if (restriction.step())
-            result.rights &= static_cast<uint32_t>(restriction.column_int64(0));
     }
     uint32_t required = 0;
     switch (command) {
@@ -865,88 +824,38 @@ ObjectStore::Access ObjectStore::authorize(
     return result;
 }
 
-void ObjectStore::set_principal(
-    const std::string& identity, uint32_t role, const RawstdUUID& object,
-    uint32_t rights
+ObjectStore::Access ObjectStore::authorize_witness(
+    const rawtls::SpiffeId* peer, RawstorCommandType command,
+    const RawstdUUID& object, uint64_t offset, const RawstdUUID& tenant
 ) {
-    rawtls::SpiffeId parsed(identity);
-    if (parsed.role() != rawtls::Role::client)
-        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-    RawstdUUID tenant{};
-    rawstd_uuid_from_string(&tenant, parsed.tenant().c_str());
-    std::lock_guard<std::recursive_mutex> lock(_mutex);
-    _require_tenant(tenant);
-    if (rawstd_uuid_is_nil(&object)) {
-        rawtls::role_rights(role);
-        Stmt update(
-            _db,
-            "INSERT INTO principals(identity,tenant_id,role) VALUES(?,?,?) ON "
-            "CONFLICT(identity) DO UPDATE SET role=excluded.role;"
-        );
-        update.bind_text(1, identity)
-            .bind_blob(2, tenant.bytes, sizeof(tenant.bytes))
-            .bind_int64(3, role)
-            .step();
-    } else {
-        if (role || (rights & ~RAWSTOR_RIGHT_ALL))
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        RawstdUUID owner = object_owner(_db, object);
-        if (rawstd_uuid_cmp(&owner, &tenant))
-            RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
-        Stmt exists(_db, "SELECT 1 FROM principals WHERE identity=?;");
-        exists.bind_text(1, identity);
-        if (!exists.step())
-            RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
-        Stmt update(
-            _db, "INSERT INTO principal_objects(identity,object_id,rights) "
-                 "VALUES(?,?,?) ON CONFLICT(identity,object_id) DO UPDATE SET "
-                 "rights=excluded.rights;"
-        );
-        update.bind_text(1, identity)
-            .bind_blob(2, object.bytes, sizeof(object.bytes))
-            .bind_int64(3, rights)
-            .step();
+    Access result{
+        std::unique_lock<std::recursive_mutex>(_mutex), RAWSTOR_RIGHT_ALL, {}
+    };
+    if (!peer)
+        return result;
+    if (peer->role() != rawtls::Role::client) {
+        if (!rawtls::provider_member(peer->role(), command))
+            RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+        return result;
     }
-}
-void ObjectStore::remove_principal(
-    const std::string& identity, const RawstdUUID& object
-) {
-    std::lock_guard<std::recursive_mutex> lock(_mutex);
-    Stmt del(
-        _db,
-        rawstd_uuid_is_nil(&object)
-            ? "DELETE FROM principals WHERE identity=?;"
-            : "DELETE FROM principal_objects WHERE identity=? AND object_id=?;"
-    );
-    del.bind_text(1, identity);
-    if (!rawstd_uuid_is_nil(&object))
-        del.bind_blob(2, object.bytes, sizeof(object.bytes));
-    del.step();
-}
-std::vector<RawstorFramePrincipalPayload> ObjectStore::list_principals() {
-    std::lock_guard<std::recursive_mutex> lock(_mutex);
-    Stmt select(
-        _db,
-        "SELECT identity,role,NULL,0 FROM principals UNION ALL SELECT "
-        "identity,0,object_id,rights FROM principal_objects ORDER BY identity;"
-    );
-    std::vector<RawstorFramePrincipalPayload> result;
-    while (select.step()) {
-        auto identity = select.column_blob(0);
-        if (identity.size() >= RAWSTOR_PRINCIPAL_ID_SIZE)
-            RAWSTD_THROW_SYSTEM_ERROR(EIO);
-        RawstorFramePrincipalPayload row{};
-        memcpy(row.identity, identity.data(), identity.size());
-        row.role = static_cast<uint32_t>(select.column_int64(1));
-        if (!row.role) {
-            RawstdUUID object{};
-            select.column_uuid(2, &object);
-            memcpy(row.object_id, object.bytes, 16);
-        }
-        row.rights = row.role ? rawtls::role_rights(row.role)
-                              : static_cast<uint32_t>(select.column_int64(3));
-        result.push_back(row);
+    rawstd_uuid_from_string(&result.tenant, peer->tenant().c_str());
+    result.rights = peer->permissions().rights(object.bytes);
+    uint32_t required = rawtls::member_right(command);
+    if (!required || (result.rights & required) != required)
+        RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+    if (command == RAWSTOR_CMD_ALLOCATE &&
+        rawstd_uuid_cmp(&tenant, &result.tenant))
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    RawstorObjectMeta meta{};
+    try {
+        meta = _load_witness(object, offset);
+    } catch (const std::system_error& e) {
+        if (command == RAWSTOR_CMD_ALLOCATE && e.code().value() == ENOENT)
+            return result;
+        throw;
     }
+    if (memcmp(meta.tenant_id, result.tenant.bytes, sizeof(meta.tenant_id)))
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     return result;
 }
 
@@ -1606,10 +1515,8 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
     );
 }
 
-ObjectMap ObjectStore::remove(
-    const RawstdUUID& idempotency_key, const RawstdUUID& id,
-    uint64_t capability_deadline
-) {
+ObjectMap
+ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     if (std::optional<std::vector<unsigned char>> recorded =
             replay_mutation(_db, idempotency_key, MutationType::remove, id)) {
@@ -1655,14 +1562,6 @@ ObjectMap ObjectStore::remove(
         saved.bind_blob(1, idempotency_key.bytes, sizeof(idempotency_key.bytes))
             .bind_blob(2, id.bytes, sizeof(id.bytes))
             .bind_blob(3, owner.bytes, sizeof(owner.bytes))
-            .step();
-        Stmt deadline(
-            _db, "INSERT INTO removal_capabilities(idempotency_key,not_after) "
-                 "VALUES(?,?);"
-        );
-        deadline
-            .bind_blob(1, idempotency_key.bytes, sizeof(idempotency_key.bytes))
-            .bind_int64(2, capability_deadline)
             .step();
     }
 
@@ -1969,8 +1868,6 @@ void ObjectStore::remove_tenant(
     }
 
     {
-        Stmt principals(_db, "DELETE FROM principals WHERE tenant_id=?;");
-        principals.bind_blob(1, tenant.bytes, sizeof(tenant.bytes)).step();
         Stmt del(_db, "DELETE FROM tenants WHERE id = ?;");
         del.bind_blob(1, tenant.bytes, sizeof(tenant.bytes)).step();
     }

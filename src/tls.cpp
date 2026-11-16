@@ -14,7 +14,6 @@
 #include <mutex>
 #include <optional>
 #include <set>
-#include <tuple>
 
 namespace {
 
@@ -30,12 +29,6 @@ std::map<std::string, std::string> ost_identities;
 // witness on its own port, so an ost:// address among them is that MDS
 // answering as the witness, and it presents its own identity.
 std::set<std::string> mds_hosts;
-using CapabilityKey =
-    std::tuple<std::string, std::string, uint64_t, std::string>;
-std::map<CapabilityKey, rawstor::tls::Capability> capabilities;
-std::string uuid_key(const void* id) {
-    return std::string(static_cast<const char*>(id), 16);
-}
 // What request_reload() reaches from a signal handler, without the lock.
 std::atomic<rawtls::Context*> signal_context{nullptr};
 
@@ -115,7 +108,6 @@ void terminate() noexcept {
     mds_identity.clear();
     ost_identities.clear();
     mds_hosts.clear();
-    capabilities.clear();
 }
 
 void request_reload() noexcept {
@@ -139,38 +131,6 @@ void expect_ost(const std::string& host, const RawstdUUID& ost_id) {
     rawstd_uuid_to_string(&ost_id, &id);
     ost_identities[host] =
         "spiffe://" + process_context->trust_domain() + "/ost/" + id;
-}
-
-void remember_capability(
-    const std::string& host, const RawstorCapability& token,
-    const std::string& resolver
-) {
-    if (!token.rights)
-        return;
-    std::lock_guard<std::mutex> lock(mutex);
-    capabilities[{
-        host, uuid_key(token.object_id), token.chunk_offset,
-        uuid_key(token.version_id)
-    }] = {token, resolver};
-}
-Capability capability(
-    const std::string& host, const RawstdUUID& object, uint64_t offset,
-    const RawstdUUID& version
-) {
-    std::lock_guard<std::mutex> lock(mutex);
-    auto it = capabilities.find(
-        {host, uuid_key(object.bytes), offset, uuid_key(version.bytes)}
-    );
-    if (it == capabilities.end()) {
-        RawstdUUID live{};
-        it = capabilities.find(
-            {host, uuid_key(object.bytes), offset, uuid_key(live.bytes)}
-        );
-        if (it == capabilities.end() ||
-            !(it->second.token.rights & RAWSTOR_RIGHT_MANAGE))
-            RAWSTD_THROW_SYSTEM_ERROR(EACCES);
-    }
-    return it->second;
 }
 
 rawstd::Task<std::unique_ptr<rawtls::Transport>> connect(

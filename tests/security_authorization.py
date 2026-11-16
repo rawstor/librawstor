@@ -48,8 +48,8 @@ def free_port():
         return connection.getsockname()[1]
 
 
-def renewal_probe(root, target, settings, readonly=False):
-    # Exercise the public C API on one open handle across capability expiry.
+def connection_probe(root, target, settings, readonly=False, renew=None):
+    # Exercise repeated IO on a single authenticated C API handle.
     os.environ.update(settings)
     library = ctypes.CDLL(str(root / ('src/.libs/librawstor.dylib' if sys.platform == 'darwin' else 'src/.libs/librawstor.so')))
     pointer = ctypes.c_void_p
@@ -93,7 +93,12 @@ def renewal_probe(root, target, settings, readonly=False):
             assert drive(lambda cb: library.rawstor_object_pread(obj, data, 4096, 0, cb, None), io=True) == 4096
         else:
             assert drive(lambda cb: library.rawstor_object_pwrite(obj, data, 4096, 0, False, cb, None), io=True) == 4096
-            time.sleep(11)  # The test MDS issues ten-second capabilities.
+            if renew:
+                renew()
+                library.rawstor_tls_request_reload()
+                time.sleep(4.1)
+            else:
+                time.sleep(.1)
             assert drive(lambda cb: library.rawstor_object_pwrite(obj, data, 4096, 0, False, cb, None), io=True) == 4096
         assert drive(lambda cb: library.rawstor_object_close(obj, cb, None)) == 0
     finally:
@@ -123,10 +128,7 @@ def main():
                         RAWSTOR_TLS_KEY=str(directory / (who + '.key')),
                         RAWSTOR_TLS_CA=str(directory / 'ca/ca.crt'),
                         RAWSTOR_TLS_MDS_ID=mds_id,
-                        RAWSTOR_AUTH_KEYS=str(directory / 'token.pub'),
-                        RAWSTOR_AUTH_SIGNING_KEY=str(directory / 'token.key'),
-                        RAWSTOR_MDS_OPTS_INFO_INTERVAL='100',
-                        RAWSTOR_MDS_OPTS_CAPABILITY_LIFETIME='10',
+                                                                        RAWSTOR_MDS_OPTS_INFO_INTERVAL='100',
                         RAWSTOR_OPTS_IO_ATTEMPTS='1')
         def connect(port, who):
             context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=directory / 'ca/ca.crt')
@@ -164,12 +166,10 @@ def main():
                 arguments = ['pki', 'issue', '--ca', directory / 'ca', '--cert', directory / (who + '.crt'),
                              '--key', directory / (who + '.key')]
                 if role == 'client':
-                    arguments += [role, other if who == 'foreign' else tenant, name]
+                    arguments += ['--role', 'reader' if who == 'reader' else 'manager', role, other if who == 'foreign' else tenant, name]
                 else:
                     arguments += [role, name]
                 run(arguments)
-            subprocess.run(['openssl', 'genpkey', '-algorithm', 'ED25519', '-out', directory / 'token.key'], check=True)
-            subprocess.run(['openssl', 'pkey', '-in', directory / 'token.key', '-pubout', '-out', directory / 'token.pub'], check=True)
             ost_port, mds_port = free_port(), free_port()
             (directory / 'objects').mkdir()
             topology = directory / 'topology.conf'
@@ -181,12 +181,6 @@ def main():
             location = f'mds://127.0.0.1:{mds_port}'
             for owner in [tenant, other]:
                 run(['tenant', 'create', location, '--uuid', owner], 'admin')
-            for who, owner, role in [('manager', tenant, 'manager'), ('reader', tenant, 'reader'), ('foreign', other, 'manager')]:
-                run(['access', 'set', f'spiffe://cluster.example/tenant/{owner}/client/{who}', role], 'admin', default_location=location)
-            assert 'RAWSTOR_LOCATION' in run(['access', 'list', '--help'], 'admin')
-            principals = json.loads(run(['access', 'list', '--format', 'json'], 'admin', default_location=location))
-            assert principals == json.loads(run(['access', 'list', location, '--format', 'json'], 'admin', default_location='mds://127.0.0.1:1'))
-            assert 'manager' in str(principals), principals
             # Wait for the MDS monitor to make the OST available for placement.
             deadline = time.monotonic() + 15
             while True:
@@ -199,8 +193,8 @@ def main():
                           '--mirrors', '1', '--format', 'value', '--column', 'target'], 'manager')
             object_id = uuid.UUID(target.rsplit('/', 1)[1]).bytes
             run(['testio', target, '--block-size', '4K', '--io-depth', '1', '--count', '4'], 'manager')
-            renewal_probe(root, target, environment('manager'))
-            renewal_probe(root, target, environment('reader'), readonly=True)
+            connection_probe(root, target, environment('manager'))
+            connection_probe(root, target, environment('reader'), readonly=True)
             run(['object', 'show', target], 'reader')
             run(['testio', target, '--block-size', '4K', '--io-depth', '1', '--count', '1'], 'reader', success=False)
             with connect(mds_port, 'foreign') as connection:
@@ -211,35 +205,21 @@ def main():
                 assert result == -errno.EACCES, result
                 result, data = request(connection, 0x41, struct.pack('<16sQ16sQ', object_id, 0, bytes(16), 0))
                 assert result > 0, result
-                # One chunk, one slot: capability is the fixed tail of RESOLVE.
-                token = data[-220:]
-                assert token[:7] == b'rstrcap', token[:8]
+            # OST authorizes the same certificate without a token or MDS lookup.
             with connect(ost_port, 'reader') as connection:
-                assert request(connection, 0x15, token)[0] == 0
                 assert request(connection, 0x00, struct.pack('<16s16sQ16sQ', uuid.uuid4().bytes, object_id, 0, bytes(16), 1))[0] == 0
                 assert request(connection, 0x01, struct.pack('<QQQIB', 0, 0, 0, 4096, 0))[0] == 4096
-                assert request(connection, 0x00, struct.pack('<16s16sQ16sQ', uuid.uuid4().bytes, uuid.uuid4().bytes, 0, bytes(16), 1))[0] == -errno.ENOENT
                 assert request(connection, 0x02, struct.pack('<QQQIB', 0, 0, 0, 0, 0))[0] == -errno.EACCES
-                altered = bytearray(token); altered[-1] ^= 1
-                assert request(connection, 0x15, altered)[0] == -errno.EACCES
-            with connect(ost_port, 'manager') as connection:
-                assert request(connection, 0x15, token)[0] == -errno.EACCES
+            with connect(ost_port, 'foreign') as connection:
+                assert request(connection, 0x0c, struct.pack('<16sQ16sQ', object_id, 0, bytes(16), 0))[0] == -errno.ENOENT
+                assert request(connection, 0x05, struct.pack('<16sQ16sQ', object_id, 0, bytes(16), 0))[0] == -errno.ENOENT
+                allocate = struct.pack('<16s16sQQQBBBB', uuid.UUID(other).bytes, object_id, 0, 65536, 0, 16, 0, 1, 1)
+                assert request(connection, 0x04, allocate)[0] == -errno.ENOENT
             with connect(ost_port, 'admin') as connection:
                 assert request(connection, 0x02, struct.pack('<QQQIB', 0, 0, 0, 0, 0))[0] == -errno.EACCES
             version = run(['version', 'create', target, '--format', 'value', '--column', 'target'], 'manager')
-            renewal_probe(root, version, environment('reader'), readonly=True)
+            connection_probe(root, version, environment('reader'), readonly=True)
             run(['version', 'show', version], 'reader')
-            snapshot_id = uuid.UUID(version.rsplit('/', 1)[1]).bytes
-            with connect(mds_port, 'manager') as connection:
-                result, snapshot_map = request(connection, 0x41, struct.pack('<16sQ16sQ', object_id, 0, snapshot_id, 0))
-                assert result > 0, result
-                snapshot_token = snapshot_map[-220:]
-            with connect(ost_port, 'manager') as connection:
-                assert request(connection, 0x15, snapshot_token)[0] == 0
-                for wrong_version in [bytes(16), uuid.uuid4().bytes]:
-                    assert request(connection, 0x05, struct.pack('<16sQ16sQ', object_id, 0, wrong_version, 0))[0] == -errno.ENOENT
-                assert request(connection, 0x0c, struct.pack('<16sQ16sQ', object_id, 0, snapshot_id, 0))[0] > 0
-
             run(['version', 'remove', version], 'reader', success=False)
             run(['version', 'remove', version], 'manager')
             # An even DATA width adds a witness hosted by the MDS itself.
@@ -266,27 +246,55 @@ def main():
             run(['testio', mirror, '--block-size', '4K', '--io-depth', '1', '--count', '2'], 'manager')
             run(['object', 'show', mirror], 'reader')
             run(['object', 'remove', mirror], 'manager')
-            # A lost remove response can be retried within its original window,
-            # but replay must neither extend that window nor regain expired IO.
-            doomed = run(['object', 'create', location, '--size', '64K', '--chunk-size', '64K',
-                          '--mirrors', '1', '--format', 'value', '--column', 'target'], 'manager')
-            doomed_id = uuid.UUID(doomed.rsplit('/', 1)[1]).bytes
-            remove_payload = struct.pack('<16s16s16sQ', doomed_id, uuid.uuid4().bytes, bytes(16), 0)
-            with connect(mds_port, 'manager') as connection:
-                result, removed_map = request(connection, 0x43, remove_payload)
-                assert result > 0, result
-                original_expiry = struct.unpack_from('<Q', removed_map[-220:], 144)[0]
-                result, retried_map = request(connection, 0x43, remove_payload)
-                assert result > 0, result
-                assert struct.unpack_from('<Q', retried_map[-220:], 144)[0] == original_expiry
-                time.sleep(max(0, original_expiry - time.time()) + .1)
-                assert request(connection, 0x43, remove_payload)[0] == -errno.ENOENT
-            # A role change and removal affect newly resolved capabilities.
-            identity = f'spiffe://cluster.example/tenant/{tenant}/client/manager'
-            run(['access', 'set', location, identity, 'rights', str(uuid.UUID(bytes=object_id)), '1'], 'admin')
-            run(['object', 'remove', target], 'manager', success=False)
-            run(['access', 'remove', identity], 'admin', default_location=location)
-            run(['object', 'show', target], 'manager', success=False)
+            # A newly issued policy restricts the object without modifying MDS.
+            restricted = ['pki', 'issue', '--ca', directory / 'ca', '--cert', directory / 'restricted.crt',
+                          '--key', directory / 'restricted.key', '--role', 'manager',
+                          '--object-rights', str(uuid.UUID(bytes=object_id)) + ':1', 'client', tenant, 'restricted']
+            run(restricted)
+            info = json.loads(run(['pki', 'show', '--cert', directory / 'restricted.crt', '--format', 'json']))
+            assert 'manager' in str(info) and str(uuid.UUID(bytes=object_id)) in str(info), info
+            run(['pki', 'renew', '--ca', directory / 'ca', '--cert', directory / 'restricted.crt',
+                 '--key', directory / 'restricted.key'])
+            renewed = json.loads(run(['pki', 'show', '--cert', directory / 'restricted.crt', '--format', 'json']))
+            assert 'manager' in str(renewed) and str(uuid.UUID(bytes=object_id)) in str(renewed), renewed
+            run(['object', 'show', target], 'restricted')
+            run(['testio', target, '--block-size', '4K', '--io-depth', '1', '--count', '1'], 'restricted', success=False)
+            run(['object', 'remove', target], 'restricted', success=False)
+            with connect(ost_port, 'restricted') as connection:
+                assert request(connection, 0x05, struct.pack('<16sQ16sQ', object_id, 0, bytes(16), 0))[0] == -errno.EACCES
+            # A renewed certificate is picked up by reconnecting an open handle.
+            run(['pki', 'issue', '--ca', directory / 'ca', '--cert', directory / 'rotating.crt',
+                 '--key', directory / 'rotating.key', '--role', 'manager', '--validity', '4s',
+                 'client', tenant, 'rotating'])
+            def renew_rotating():
+                run(['pki', 'renew', '--ca', directory / 'ca', '--cert', directory / 'rotating.crt',
+                     '--key', directory / 'rotating.key'])
+            settings = environment('rotating')
+            settings['RAWSTOR_OPTS_IO_ATTEMPTS'] = '3'
+            connection_probe(root, target, settings, renew=renew_rotating)
+            # Existing data connections must notice a tenant transfer.
+            with connect(ost_port, 'reader') as connection:
+                assert request(connection, 0x00, struct.pack('<16s16sQ16sQ', uuid.uuid4().bytes, object_id, 0, bytes(16), 1))[0] == 0
+                assert request(connection, 0x01, struct.pack('<QQQIB', 0, 0, 0, 4096, 0))[0] == 4096
+                run(['object', 'transfer', target, other], 'admin')
+                assert request(connection, 0x01, struct.pack('<QQQIB', 0, 0, 0, 4096, 0))[0] == -errno.ENOENT
+                run(['object', 'transfer', target, tenant], 'admin')
+                assert request(connection, 0x01, struct.pack('<QQQIB', 0, 0, 0, 4096, 0))[0] == 4096
+            # An established connection may not outlive its client certificate.
+            run(['pki', 'issue', '--ca', directory / 'ca', '--cert', directory / 'short.crt',
+                 '--key', directory / 'short.key', '--role', 'reader', '--validity', '4s',
+                 'client', tenant, 'short'])
+            with connect(ost_port, 'short') as connection:
+                assert request(connection, 0x00, struct.pack('<16s16sQ16sQ', uuid.uuid4().bytes, object_id, 0, bytes(16), 1))[0] == 0
+                time.sleep(4.1)
+                assert request(connection, 0x01, struct.pack('<QQQIB', 0, 0, 0, 4096, 0))[0] == -errno.EACCES
+            # Direct OST access continues while MDS is stopped.
+            processes[1].terminate()
+            processes[1].wait(timeout=10)
+            direct = f'ost://127.0.0.1:{ost_port}/' + str(uuid.UUID(bytes=object_id))
+            run(['object', 'show', direct], 'reader')
+            run(['testio', direct, '--block-size', '4K', '--io-depth', '1', '--count', '2'], 'manager')
+            run(['object', 'remove', direct], 'manager')
             print('Authorization integration: PASS')
         except BaseException:
             for log in files:

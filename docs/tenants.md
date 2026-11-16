@@ -3,9 +3,9 @@
 A **tenant** is a field of an object: the party that owns it. An object is
 addressed by its id alone (ids are unique on their own), and the tenant is
 what authorization checks against the authenticated caller. In TLS mode the
-certificate identifies the caller's tenant, and MDS principal records determine
-its role and object restrictions. The MDS issues certificate-bound capabilities
-for OST access. Plaintext `--insecure` has no tenant security boundary. See
+certificate identifies the caller's tenant and carries its signed role and
+object restrictions. MDS and OST independently enforce that policy against
+the object's owner. Plaintext `--insecure` has no tenant security boundary. See
 [Authorization](configuration.md#authorization).
 
 ## Status
@@ -22,8 +22,8 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | `--reconstruct` restores owners and registers their tenants | ✅ | `mds/src/store.cpp` |
 | CLI: `rawstor tenant create/list/remove` | ✅ | `cli/tenant.c` |
 | Transfer of an object to another tenant: `SET_OWNER`, `OBJ_TRANSFER`, `rawstor object transfer` | ✅ | `src/target.cpp`, `src/blk_backend.cpp`, `mds/src/store.cpp` |
-| Checking the caller's rights against the owner | ✅ | MDS authorization and OST capability checks |
-| Authentication, binding a tenant to a certificate | ✅ | mTLS SPIFFE identity and MDS principals |
+| Checking the caller's rights against the owner | ✅ | Independent MDS and OST certificate policy checks |
+| Authentication, binding a tenant to a certificate | ✅ | mTLS SPIFFE identity and signed certificate permissions |
 
 ## Model
 
@@ -296,7 +296,7 @@ records. `Location.tenants()`, `create_tenant()` and `remove_tenant()` raise
 
 ## Not here
 
-TLS authentication, principal roles and certificate-bound capabilities enforce
+TLS authentication, certificate roles and object restrictions enforce
 tenant access; see [Security](security.md). Quotas and per-tenant resource
 limits are separate work. An insecure deployment has no authenticated tenant
 boundary.

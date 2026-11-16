@@ -16,6 +16,7 @@ struct CertInfo {
     long long not_after;
     // Whether ca_file signed this certificate, or -1 when none was supplied.
     int issued;
+    Permissions permissions;
 };
 
 /*
@@ -53,7 +54,8 @@ private:
 
     std::string issue_id(
         const std::string& id, std::chrono::seconds validity,
-        const std::string& cert_file, const std::string& key_file
+        const std::string& cert_file, const std::string& key_file,
+        const Permissions& permissions
     ) const;
 
 public:
@@ -92,7 +94,7 @@ public:
     std::string issue(
         Role role, const std::string& tenant, const std::string& name,
         std::chrono::seconds validity, const std::string& cert_file,
-        const std::string& key_file
+        const std::string& key_file, const Permissions& permissions = {}
     ) const;
 
     // True if `cert_file` is a certificate this CA signed. Neither its

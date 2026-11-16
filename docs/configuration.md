@@ -89,7 +89,7 @@ rawstor pki init --trust-domain cluster.example ca
 rawstor pki issue --ca ca --cert ost.crt --key ost.key ost       # a new id
 rawstor pki issue --ca ca --cert mds.crt --key mds.key mds       # a new id
 rawstor pki issue --ca ca --cert hv1.crt --key hv1.key admin hv1
-rawstor pki issue --ca ca --cert vm.crt --key vm.key client <tenant uuid> vm-1
+rawstor pki issue --ca ca --cert vm.crt --key vm.key --role manager client <tenant uuid> vm-1
 rawstor pki renew --ca ca --cert ost.crt --key ost.key
 rawstor pki show --cert ost.crt                                  # what it says
 ```
@@ -158,60 +158,65 @@ mode to the other.
 
 ## Authorization
 
-TLS tenant clients are authorized by the MDS. Provider `admin` certificates
-manage principals and objects; provider `mds` certificates can scan OST
-metadata. Neither provider role may write data. An OST certificate grants no
-provider permissions. Plaintext `--insecure` deliberately bypasses these checks.
+The client certificate carries its tenant (the SPIFFE identity), access role,
+and optional object restrictions. Both MDS and OST authorize it directly:
+there is no client registration, permission database, or signing key on MDS.
+A client can use an OST directly while MDS is unavailable.
 
-The MDS signs capabilities using an Ed25519 key. Their default lifetime is
-five minutes; `RAWSTOR_MDS_OPTS_CAPABILITY_LIFETIME` sets seconds (1..3600). Configure
-`RAWSTOR_AUTH_SIGNING_KEY` on the MDS and `RAWSTOR_AUTH_KEYS` on every OST and
-on the MDS when it hosts a witness. The latter is a PEM bundle of trusted
-Ed25519 **public** keys, not a CA bundle. A missing key prevents tenant
-capabilities from being issued/accepted; it never falls back to unrestricted
-TLS. The topology UUID of a witness hosted on an MDS must equal the UUID in
-that MDS's certificate.
+Issue client credentials on the CA machine:
 
 ```sh
-umask 077
-openssl genpkey -algorithm ED25519 -out /etc/rawstor/tls/capability.key
-openssl pkey -in /etc/rawstor/tls/capability.key -pubout -out /etc/rawstor/tls/capability.pub
-chown rawstor:rawstor /etc/rawstor/tls/capability.key
-chmod 0644 /etc/rawstor/tls/capability.pub
+rawstor pki issue --ca ca --cert client.crt --key client.key \
+  --role manager client 018f4e2a-2222-7000-8000-000000000001 vm-1
 ```
 
-Only the MDS receives `capability.key`. Copy `capability.pub` to the verifiers.
-For rotation, distribute a bundle containing both public keys, switch the MDS
-signing key, wait at least the configured capability lifetime, then remove the old public key.
-A capability never outlives the client certificate that authenticates it.
-Keys are read when issuing or installing a capability, so replacing the key
-files applies to subsequent capabilities without a service restart.
+`--role` is required for a client: `reader` reads and lists objects, `writer`
+adds writes and discards, and `manager` adds creation, deletion and version
+management. The process role shown as `role=client` is separate from the
+`access_role` shown by `pki show`. Provider `admin` certificates manage tenants,
+objects and ownership; `mds` certificates scan OST metadata. Neither provider
+role may write data, and OST certificates grant no provider permissions.
 
-Using an admin certificate in the environment:
+To restrict particular objects, repeat `--object-rights UUID:MASK` when issuing
+the certificate (at most 128 entries). The mask intersects the role's rights:
+`read=1`, `write=2`, `discard=4`, `manage=8`; combine bits by addition, or use
+zero to deny the object. Other objects retain the role's rights. Restrictions
+apply to the object and all its versions; snapshots remain read-only.
+
+```sh
+rawstor pki issue --ca ca --cert reader.crt --key reader.key \
+  --role manager \
+  --object-rights 018f4e2a-2222-7000-8000-000000000002:1 \
+  --object-rights 018f4e2a-2222-7000-8000-000000000003:0 \
+  client 018f4e2a-2222-7000-8000-000000000001 vm-2
+rawstor pki show --cert reader.crt
+```
+
+With admin credentials, create the tenant in MDS before creating its objects:
 
 ```sh
 rawstor tenant create mds://mds:7776 --uuid 018f4e2a-2222-7000-8000-000000000001
-rawstor access set mds://mds:7776 spiffe://cluster.example/tenant/018f4e2a-2222-7000-8000-000000000001/client/vhost manager
-rawstor access list mds://mds:7776
 ```
 
-The tenant client then uses its own certificate. A location without a named
-tenant creates objects for the certificate's tenant; naming a different tenant
-is refused. `reader` can read and list its tenant's objects, `writer` adds data
-writes/discards, `manager` adds structural operations and versions. An admin
-can restrict a principal on one object using
-`rawstor access set LOCATION ID rights OBJECT MASK`; rights are intersected
-with the role, and a zero mask denies the object. Removing that restriction
-restores the tenant role with `rawstor access remove LOCATION ID OBJECT`.
-Removing the principal uses the same command without `OBJECT`.
+A location without a named tenant uses the client certificate's tenant.
+Naming another tenant is refused. OST checks the owner in local metadata;
+foreign objects return `ENOENT`, insufficient rights return `EACCES`.
 
-All `access` subcommands accept an optional `LOCATION`, defaulting to
-`RAWSTOR_LOCATION`; an explicit address takes precedence. Use
-`rawstor access --help` or `rawstor access set|list|remove --help` for details.
+`pki renew` preserves the signed role and restrictions. Use `pki issue` to
+change permissions. The old certificate retains its rights until expiry or
+revocation; replacing a file does not revoke copies of it. Reload credentials
+on clients to use the new certificate on new connections. The client library
+reconnects an expired TLS connection with the reloaded credentials when retrying
+I/O. Expiry is checked for
+new commands on established tenant connections as well as during handshakes.
+A configured CRL is checked on new TLS connections.
 
-The C API is `<rawstor/principal.h>`. Role changes, deletion and object
-restrictions affect new capabilities. Existing capabilities remain valid until
-their configured expiry (bounded by certificate expiry), including after ownership transfer. Expired
-connections deny new commands; the library re-resolves and renews before
-expiry. A certificate reload that changes the leaf certificate requires a new
-TLS connection when its old capability expires, preserving certificate binding.
+The C API in `<rawstor/pki.h>` accepts `RawstorPkiPermissions` in
+`rawstor_pki_issue()` and returns it in `RawstorPkiInfo.permissions`.
+Python `pki.issue_client(..., role="manager", object_rights={UUID: 1})` does
+the same; `pki.show()` returns `access_role` and `object_rights`.
+
+An external CA must issue the [authorization extension](protocol.md#authorization)
+in addition to the SPIFFE SAN. Missing permissions grant no tenant access;
+malformed or duplicate extensions are rejected. Plaintext `--insecure`
+deliberately bypasses authentication and authorization.

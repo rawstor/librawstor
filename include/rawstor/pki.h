@@ -7,6 +7,8 @@
 #ifndef RAWSTOR_PKI_H
 #define RAWSTOR_PKI_H
 
+#include <rawstor/protocol.h>
+
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -54,6 +56,21 @@ int rawstor_pki_init(
     const char* dir, const char* trust_domain, unsigned long validity
 );
 
+/** Per-object restrictions intersect the role's rights. Zero denies access. */
+#define RAWSTOR_PKI_MAX_OBJECT_RIGHTS 128
+
+struct RawstorPkiObjectRights {
+    char object_id[37];
+    unsigned int rights;
+};
+
+struct RawstorPkiPermissions {
+    unsigned int
+        role; /* RAWSTOR_ACCESS_READER, WRITER or MANAGER; 0 grants none */
+    size_t count;
+    struct RawstorPkiObjectRights objects[RAWSTOR_PKI_MAX_OBJECT_RIGHTS];
+};
+
 /**
  * Issues a certificate and a new private key for a process of `role`, valid
  * for `validity` seconds, into `cert_file` and `key_file`, replacing what is
@@ -64,12 +81,14 @@ int rawstor_pki_init(
  * OST or an MDS, which then gets a new id. The SPIFFE ID the certificate names
  * (see docs/security.md) is copied to `identity`, if it is not NULL, with room
  * for RAWSTOR_PKI_IDENTITY_SIZE bytes: `size` is checked before anything is
- * issued.
+ * issued. `permissions` applies to tenant clients only; NULL grants no tenant
+ * rights.
  */
 int rawstor_pki_issue(
     const char* dir, enum RawstorPkiRole role, const char* tenant,
     const char* name, unsigned long validity, const char* cert_file,
-    const char* key_file, char* identity, size_t size
+    const char* key_file, char* identity, size_t size,
+    const struct RawstorPkiPermissions* permissions
 );
 
 /**
@@ -92,6 +111,9 @@ struct RawstorPkiInfo {
     /** Whether the CA given to rawstor_pki_show() signed it: 1 or 0, and -1 if
      * no CA was given. */
     int issued;
+    /** Signed tenant role and object restrictions; zero for provider
+     * certificates. */
+    struct RawstorPkiPermissions permissions;
 };
 
 /**
