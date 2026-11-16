@@ -14,15 +14,18 @@ struct CertInfo {
     std::string identity;
     // When it expires, in seconds since the epoch.
     long long not_after;
+    // Whether ca_file signed this certificate, or -1 when none was supplied.
+    int issued;
 };
 
 /*
  * Reads a certificate of a process, issued by whoever: its identity, which is
  * checked to be one of the shapes of SpiffeId, and when it expires. Throws
  * ENOENT for a file that is not there and EINVAL for a file that is not a
- * certificate with such an identity.
+ * certificate with such an identity. With ca_file, also checks the signature
+ * using that CA certificate and the same in-memory leaf certificate.
  */
-CertInfo inspect(const std::string& cert_file);
+CertInfo inspect(const std::string& cert_file, const std::string& ca_file = "");
 
 /*
  * A small certificate authority for installations that have none: a directory
@@ -62,7 +65,8 @@ public:
         std::chrono::seconds validity
     );
 
-    // Opens the CA in `dir`; throws if it is not there or not readable.
+    // Opens the CA certificate and trust domain in `dir`; the private key is
+    // needed only when issuing or renewing certificates.
     explicit CA(const std::string& dir);
 
     const std::string& trust_domain() const noexcept { return _trust_domain; }
@@ -92,7 +96,7 @@ public:
     ) const;
 
     // True if `cert_file` is a certificate this CA signed. Neither its
-    // expiry nor its identity is looked at.
+    // expiry nor its identity is looked at. Needs no CA private key.
     bool issued(const std::string& cert_file) const;
 
     // Issues a new certificate and key for the identity of `cert_file`, which

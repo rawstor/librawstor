@@ -98,6 +98,7 @@ struct RawstorPkiInfo {
  * Reads the certificate `cert_file` of a process, whoever issued it, and
  * fills `info`; does not change anything. With `dir`, the directory of a CA,
  * it also tells whether that CA signed it; without (NULL), `issued` is -1.
+ * This check needs the CA certificate and trust domain, not its private key.
  * Fails with EINVAL if the file is not a certificate that names a process of
  * rawstor, and with ENOENT if it or the CA is not there.
  */

@@ -513,3 +513,68 @@ TEST_F(CATest, a_failed_certificate_publish_restores_a_key_symlink) {
         EXPECT_NE(entry.path().filename().string().front(), '.');
     }
 }
+
+TEST_F(CATest, verification_needs_only_the_ca_certificate) {
+    init();
+    rawtls::CA ca(dir.path("ca"));
+    ca.issue(
+        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        dir.path("ost.key")
+    );
+    fs::remove(dir.path("ca/ca.key"));
+
+    rawtls::CA verifier(dir.path("ca"));
+    EXPECT_TRUE(verifier.issued(dir.path("ost.crt")));
+    rawtls::CertInfo info =
+        rawtls::inspect(dir.path("ost.crt"), verifier.ca_file());
+    EXPECT_EQ(info.identity, ost_uri);
+    EXPECT_EQ(info.issued, 1);
+    EXPECT_EQ(rawtls::inspect(dir.path("ost.crt")).issued, -1);
+
+    rawtls::testing::Pki other;
+    rawtls::testing::IssueOptions options;
+    options.uris = {ost_uri};
+    auto foreign = other.issue("foreign", options);
+    EXPECT_FALSE(verifier.issued(foreign.cert_file));
+    EXPECT_EQ(rawtls::inspect(foreign.cert_file, verifier.ca_file()).issued, 0);
+    expect_errno(ENOENT, [&] {
+        verifier.renew(dir.path("ost.crt"), dir.path("ost.key"), hour);
+    });
+}
+
+TEST_F(CATest, a_forged_identity_is_not_renewed_or_reported_as_issued) {
+    init();
+    rawtls::CA ca(dir.path("ca"));
+    ca.issue(
+        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        dir.path("ost.key")
+    );
+    auto cert = load(dir.path("ost.crt"));
+    int index = X509_get_ext_by_NID(cert.get(), NID_subject_alt_name, -1);
+    ASSERT_GE(index, 0);
+    X509_EXTENSION_free(X509_delete_ext(cert.get(), index));
+    X509_EXTENSION* ext = X509V3_EXT_conf_nid(
+        nullptr, nullptr, NID_subject_alt_name,
+        "URI:spiffe://cluster.example/admin/forged"
+    );
+    ASSERT_NE(ext, nullptr);
+    ASSERT_EQ(X509_add_ext(cert.get(), ext, -1), 1);
+    X509_EXTENSION_free(ext);
+    // Refresh the encoded body without signing it: the signature must still
+    // be that of the original OST identity.
+    ASSERT_GT(i2d_re_X509_tbs(cert.get(), nullptr), 0);
+    FILE* f = fopen(dir.path("forged.crt").c_str(), "w");
+    ASSERT_NE(f, nullptr);
+    ASSERT_EQ(PEM_write_X509(f, cert.get()), 1);
+    ASSERT_EQ(fclose(f), 0);
+
+    rawtls::CertInfo info =
+        rawtls::inspect(dir.path("forged.crt"), ca.ca_file());
+    EXPECT_EQ(info.identity, "spiffe://cluster.example/admin/forged");
+    EXPECT_EQ(info.issued, 0);
+    std::string key = read_file(dir.path("ost.key"));
+    expect_errno(EINVAL, [&] {
+        ca.renew(dir.path("forged.crt"), dir.path("ost.key"), hour);
+    });
+    EXPECT_EQ(read_file(dir.path("ost.key")), key);
+}

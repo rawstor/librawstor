@@ -249,6 +249,8 @@ TEST_F(PkiTest, show_reads_a_certificate) {
     EXPECT_GT(info.not_after, (long long)time(nullptr));
     EXPECT_LE(info.not_after, (long long)time(nullptr) + 3600 + 5);
 
+    fs::remove(ca + "/ca.key");
+    fs::remove(other + "/ca.key");
     ASSERT_EQ(rawstor_pki_show(cert.c_str(), ca.c_str(), &info), 0);
     EXPECT_EQ(info.issued, 1);
     ASSERT_EQ(rawstor_pki_show(cert.c_str(), other.c_str(), &info), 0);

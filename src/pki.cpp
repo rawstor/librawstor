@@ -122,16 +122,14 @@ int rawstor_pki_show(
     const char* cert_file, const char* dir, struct RawstorPkiInfo* info
 ) {
     return guarded([&] {
-        rawtls::CertInfo found = rawtls::inspect(cert_file);
-        int issued = -1;
-        if (dir != nullptr) {
-            issued = rawtls::CA(dir).issued(cert_file) ? 1 : 0;
-        }
+        rawtls::CertInfo found = rawtls::inspect(
+            cert_file, dir != nullptr ? rawtls::CA(dir).ca_file() : ""
+        );
         std::memcpy(
             info->identity, found.identity.c_str(), found.identity.size() + 1
         );
         info->not_after = found.not_after;
-        info->issued = issued;
+        info->issued = found.issued;
     });
 }
 

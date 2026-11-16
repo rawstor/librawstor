@@ -337,6 +337,16 @@ Key read_key(const std::string& file) {
     return key;
 }
 
+// Signature verification needs only the issuer's public certificate.
+bool signed_by(X509* cert, X509* ca) {
+    Key public_key(X509_get_pubkey(ca));
+    check(public_key != nullptr, "CA public key");
+    bool ok = X509_check_issued(ca, cert) == X509_V_OK &&
+              X509_verify(cert, public_key.get()) == 1;
+    ERR_clear_error();
+    return ok;
+}
+
 // The one URI SAN of a certificate this CA issued.
 std::string identity_of(X509* cert, const std::string& file) {
     Names names(
@@ -447,8 +457,7 @@ void CA::init(
 
 CA::CA(const std::string& dir) : _dir(dir) {
     ERR_clear_error();
-    if (access(join(dir, "ca.crt").c_str(), R_OK) != 0 ||
-        access(join(dir, "ca.key").c_str(), R_OK) != 0) {
+    if (access(join(dir, "ca.crt").c_str(), R_OK) != 0) {
         raise(errno, "No CA in " + dir);
     }
     _trust_domain = read_text(join(dir, "trust_domain"));
@@ -535,10 +544,11 @@ std::string CA::renew(
 ) const {
     ERR_clear_error();
     // Not a certificate of this CA: whoever holds it must go through issue.
-    if (!issued(cert_file)) {
+    Cert old = read_cert(cert_file);
+    Cert ca = read_cert(ca_file());
+    if (!signed_by(old.get(), ca.get())) {
         raise(EINVAL, cert_file + " was not issued by this CA");
     }
-    Cert old = read_cert(cert_file);
     return issue_id(
         identity_of(old.get(), cert_file), validity, cert_file, key_file
     );
@@ -548,14 +558,10 @@ bool CA::issued(const std::string& cert_file) const {
     ERR_clear_error();
     Cert cert = read_cert(cert_file);
     Cert ca = read_cert(join(_dir, "ca.crt"));
-    Key ca_key = read_key(join(_dir, "ca.key"));
-    bool ok = X509_check_issued(ca.get(), cert.get()) == X509_V_OK &&
-              X509_verify(cert.get(), ca_key.get()) == 1;
-    ERR_clear_error();
-    return ok;
+    return signed_by(cert.get(), ca.get());
 }
 
-CertInfo inspect(const std::string& cert_file) {
+CertInfo inspect(const std::string& cert_file, const std::string& ca_file) {
     ERR_clear_error();
     Cert cert = read_cert(cert_file);
     std::string identity = identity_of(cert.get(), cert_file);
@@ -568,7 +574,12 @@ CertInfo inspect(const std::string& cert_file) {
     if (ASN1_TIME_to_tm(X509_get0_notAfter(cert.get()), &tm) != 1) {
         raise(EINVAL, cert_file + " has no expiry");
     }
-    return CertInfo{identity, static_cast<long long>(timegm(&tm))};
+    int issued = -1;
+    if (!ca_file.empty()) {
+        Cert ca = read_cert(ca_file);
+        issued = signed_by(cert.get(), ca.get()) ? 1 : 0;
+    }
+    return CertInfo{identity, static_cast<long long>(timegm(&tm)), issued};
 }
 
 } // namespace rawtls

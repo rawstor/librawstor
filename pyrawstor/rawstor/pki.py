@@ -142,7 +142,7 @@ class Info(NamedTuple):
 def show(cert_file: Path, directory: Optional[Path] = None) -> Info:
     """Reads the certificate ``cert_file`` of a process, whoever issued it; it
     changes nothing. With ``directory``, a CA, ``issued`` tells whether that CA
-    signed it. Raises ``OSError`` (``errno.EINVAL``) for a file that is not a
+    signed it, without needing its private key. Raises ``OSError`` (``errno.EINVAL``) for a file that is not a
     certificate that names a process of rawstor."""
     identity, not_after, issued = libpki.show(
         os.fspath(cert_file),

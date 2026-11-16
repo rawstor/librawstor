@@ -88,6 +88,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- PKI renewal and inspection verify the same certificate they read, using only the CA public key for signature checks.
+
 - PKI publication failures restore the previous key and allow incomplete CA initialization to be retried.
 
 - A mirror member that rejoins after an earlier resync of it was aborted, or its writer died, no longer serves stale data: the new resync copies every range the earlier one had recorded as written, instead of skipping it, which left old data in the member after the rejoin.
